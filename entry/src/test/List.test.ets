@@ -5,6 +5,8 @@ import sseParserTest from './SseParser.test';
 import utf8AndStateMachineTest from './Utf8StreamDecoder.test';
 import openAiUrlBuilderTest from './OpenAiUrlBuilder.test';
 import openAiSseDeltaParserTest from './OpenAiSseDeltaParser.test';
+import aliasBuilderTest from './AliasBuilder.test';
+import secureStorageErrorTest from './SecureStorageError.test';
 
 export default function testsuite() {
   localUnitTest();
@@ -14,4 +16,6 @@ export default function testsuite() {
   utf8AndStateMachineTest();
   openAiUrlBuilderTest();
   openAiSseDeltaParserTest();
+  aliasBuilderTest();
+  secureStorageErrorTest();
 }

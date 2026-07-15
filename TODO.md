@@ -126,20 +126,44 @@ Date: 2026-07-15
     - 安全验证:API Key 仅内存保存(ViewModel 私有字段,不暴露 getter),不落盘/不进 Preferences/不进 RDB/不进文件/不进日志;页面退出 cleanup() 清空 Key;工程源码内无硬编码密钥(测试文件中的 sk-abc123 等为脱敏逻辑测试 fixture)
     - 最终结论:**最终采用 @ohos.net.http**,无需 rcp;真实 OpenAI-compatible SSE 流式响应全链路验证通过
 
-### T-0.4 安全存储 PoC(huks 加密 API Key)
+### T-0.4 安全存储 PoC(Asset Store 优先,HUKS 兜底)
 
 - 依赖:T-0.1
 - 优先级:P0
-- 修改范围:`entry/src/main/ets/storage/`(新建)+ 临时验证
+- 修改范围:`entry/src/main/ets/storage/`(新建)+ `entry/src/main/ets/models/SecureStorageError.ets` + 临时验证
 - 内容:
-  - `storage/KeyStore.ets`:基于 `@ohos.security.huks` 的加密存储 PoC(AES-GCM)
-  - 验证 huks 在 API 23 对 AES-GCM 的支持
-  - 确认 code-linter 安全规则通过(不得使用 ECB/MD5/SHA1/3DES)
+  - `storage/KeyStore.ets`:平台无关安全存储抽象接口
+  - `storage/AliasBuilder.ets`:纯逻辑 alias 构建与校验
+  - `storage/AssetStoreKeyStore.ets`:基于 `@ohos.security.asset` 的 Asset Store Kit 实现
+  - `models/SecureStorageError.ets`:安全存储错误模型(与 NetworkError 隔离)
+  - 验证 Asset Store Kit 在 API 23 真机的 CRUD 行为
+  - 仅当 Asset Store 失败时才启用 HUKS 兜底
 - 验收标准:
-  - [ ] 可加密保存一段文本并解密还原
-  - [ ] 算法模式为 AES-GCM(或同等合规)
-  - [ ] code-linter 无 error
-  - [ ] 输出 PoC 结论:huks 是否满足 KeyStore 需求
+  - [x] 可安全保存并读取一段测试 secret
+  - [x] 可更新和删除
+  - [x] 真机 API 23 验证通过
+  - [x] code-linter 无 error
+  - [x] 日志和工程不存在明文真实 API Key
+  - [x] 输出最终安全存储选型
+- 实现说明:
+  - 最终选择:**Asset Store Kit**(`@ohos.security.asset`),HUKS 兜底未启用
+  - API 23 真机通过:华为 nova 13 Pro(OpenHarmony 6.1.0.115 Release)
+  - 敏感值存放:`Tag.SECRET`(平台自动加密,应用无需手动管理 AES/IV/authTag)
+  - alias 格式:`arktavern.provider.<providerId>.api-key`,只含 [a-zA-Z0-9.\-_],不含敏感信息
+  - Accessibility:`DEVICE_FIRST_UNLOCKED`(设备首次解锁后可访问)
+  - SyncType:`NEVER`(默认不同步)
+  - IS_PERSISTENT:不设置(应用卸载时默认删除)
+  - 不开启用户认证
+  - save 采用 upsert 语义(CONFLICT_RESOLUTION=OVERWRITE),update 不存在抛 NotFound,remove 幂等,read 不存在返回 null
+  - exists 使用 `RETURN_TYPE=ATTRIBUTES` 仅查询属性,不读取明文
+  - 实际使用的 HarmonyOS API:`@ohos.security.asset`(add/query/update/delete,since 11)、`@ohos.util.TextEncoder`(encodeInto,since 9)、`@ohos.util.TextDecoder`(decodeToString,since 12)、`@ohos.base.BusinessError`
+  - 测试情况:
+    - 本地单元测试:AliasBuilder 22 用例 + SecureStorageError 29 用例,全部通过
+    - ohosTest 设备测试:AssetStoreKeyStore 20 用例,全部通过(Tests run: 20, Failure: 0, Error: 0, Pass: 20)
+    - 跨进程持久性验证:阶段 A 保存 → force-stop → 阶段 B 读取,全部通过
+    - hilog 敏感值扫描:4 个测试 secret 关键字均无匹配
+    - 源码硬编码扫描:无真实 API Key,仅脱敏正则
+  - 已知限制:HUKS 兜底未实现(Asset Store 全部通过,无需兜底);尚未接入正式 Provider(Phase 1 T-1.2 将基于此 KeyStore 接口实现多 Provider 密钥)
 
 ### T-0.5 确立分层目录与导出约定
 
