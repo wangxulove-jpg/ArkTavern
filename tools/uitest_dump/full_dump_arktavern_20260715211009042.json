@@ -1,0 +1,764 @@
+{
+  "ProcessID": 65135,
+  "VsyncID": 12518909,
+  "WindowID": 1966,
+  "content": {
+    "$children": [
+      {
+        "$ID": 3,
+        "$attrs": {
+          "viewKey": "3"
+        },
+        "$children": [
+          {
+            "$ID": 5,
+            "$attrs": {
+              "BackgroundBrightness": {
+                "dynamicLightUpDegree": 0,
+                "dynamicLightUpRate": 0
+              },
+              "LightPosition": {},
+              "accessibilityDescription": "",
+              "accessibilityGroup": false,
+              "accessibilityLevel": "auto",
+              "accessibilityText": "",
+              "accessibilityTextHint": "",
+              "accessibilityVirtualNode": false,
+              "align": "Alignment.Center",
+              "alignSelf": "ItemAlign.Auto",
+              "aspectRatio": "",
+              "backdropBlur": 0,
+              "backgroundBlurStyle": {
+                "options": {
+                  "adaptiveColor": "AdaptiveColor.Default",
+                  "colorMode": "ThemeColorMode.System",
+                  "inactiveColor": "#00000000",
+                  "policy": "BlurStyleActivePolicy.ALWAYS_ACTIVE",
+                  "scale": 1,
+                  "type": "BlurType.WITHIN_WINDOW"
+                },
+                "value": "BlurStyle.NONE"
+              },
+              "backgroundColor": "#00000000",
+              "backgroundEffect": {
+                "options": {
+                  "adaptiveColor": "AdaptiveColor.Default",
+                  "blurOption": "[0,0]",
+                  "brightness": 1,
+                  "color": "#00000000",
+                  "inactiveColor": "#00000000",
+                  "policy": "BlurStyleActivePolicy.ALWAYS_ACTIVE",
+                  "radius": 0,
+                  "saturation": 1,
+                  "type": "WITHIN_WINDOW"
+                }
+              },
+              "backgroundImage": "NONE",
+              "backgroundImagePosition": {
+                "x": 0,
+                "y": 0
+              },
+              "backgroundImageResizable": "ImageResizableSlice: {left: 0.00px, right: 0.00px, top: 0.00px, bottom: 0.00px}",
+              "backgroundImageSize": "ImageSize.Auto",
+              "blendMode": 0,
+              "blur": 0,
+              "border": "{\"style\":\"BorderStyle.Solid\",\"color\":\"#FF000000\",\"width\":\"0.00vp\",\"radius\":{\"topLeft\":\"0.00vp\",\"topRight\":\"0.00vp\",\"bottomLeft\":\"0.00vp\",\"bottomRight\":\"0.00vp\"},\"dashGap\":\"0.00vp\",\"dashWidth\":\"0.00vp\"}",
+              "borderColor": "#FF000000",
+              "borderImage": "{\"source\":\"\",\"slice\":\"0.00px\",\"width\":\"0.00px\",\"outset\":\"0.00px\",\"repeat\":\"RepeatMode.Stretch\",\"fill\":\"false\"}",
+              "borderRadius": {
+                "bottomLeft": "0.00vp",
+                "bottomRight": "0.00vp",
+                "topLeft": "0.00vp",
+                "topRight": "0.00vp"
+              },
+              "borderStyle": "BorderStyle.Solid",
+              "borderWidth": "0.00vp",
+              "brightness": 1,
+              "chainWeight": {
+                "horizontal": 0,
+                "vertical": 0
+              },
+              "clip": "false",
+              "colorBlend": "",
+              "constraintSize": "{\"minWidth\":\"0.00vp\",\"minHeight\":\"0.00vp\",\"maxWidth\":\"Infinityvp\",\"maxHeight\":\"Infinityvp\"}",
+              "contrast": 1,
+              "defaultFocus": false,
+              "direction": "Direction.Auto",
+              "displayPriority": 1,
+              "dynamicDimming": 1,
+              "enabled": true,
+              "flexBasis": "auto",
+              "flexGrow": 0,
+              "flexShrink": 1,
+              "focusOnTouch": false,
+              "focusable": true,
+              "focused": true,
+              "foregroundColor": "#00000001",
+              "foregroundEffect": {
+                "radius": "0.000000"
+              },
+              "grayscale": 0,
+              "gridOffset": 0,
+              "gridSpan": 1,
+              "groupDefaultFocus": false,
+              "hasPendingRequest": false,
+              "height": "100.00%",
+              "hitTestBehavior": "HitTestMode.Default",
+              "hoverEffect": "HoverEffect.Auto",
+              "hueRotate": 0,
+              "id": "",
+              "ignoreLayoutSafeAreaOpts": "NA",
+              "isFirstBuilding": false,
+              "isLayoutDirtyMarked": false,
+              "isMeasureBoundary": false,
+              "isRenderDirtyMarked": false,
+              "layoutGravity": "Alignment.Center",
+              "layoutWeight": 0,
+              "lightUpEffect": 0,
+              "linearGradient": {},
+              "localizedAlignment": "center",
+              "margin": "0.00vp",
+              "markAnchor": {
+                "x": "",
+                "y": ""
+              },
+              "mask": {},
+              "monopolizeEvents": false,
+              "mouseResponseRegion": [],
+              "obscured": [],
+              "offset": {
+                "x": "",
+                "y": ""
+              },
+              "opacity": 1,
+              "outline": "{\"style\":\"OutlineStyle.SOLID\",\"color\":\"#FF000000\",\"width\":\"0.00vp\",\"radius\":{\"topLeft\":\"0.00vp\",\"topRight\":\"0.00vp\",\"bottomLeft\":\"0.00vp\",\"bottomRight\":\"0.00vp\"}}",
+              "outlineColor": "#FF000000",
+              "outlineRadius": {
+                "bottomLeft": "0.00vp",
+                "bottomRight": "0.00vp",
+                "topLeft": "0.00vp",
+                "topRight": "0.00vp"
+              },
+              "outlineStyle": "OutlineStyle.SOLID",
+              "outlineWidth": "0.00vp",
+              "overlay": {
+                "options": {
+                  "align": "Alignment.Center",
+                  "offset": {
+                    "x": "0.00px",
+                    "y": "0.00px"
+                  }
+                },
+                "title": ""
+              },
+              "padding": "0.00vp",
+              "pixelRound": "{\"start\":\"PixelRoundCalcPolicy.NO_FORCE_ROUND\",\"top\":\"PixelRoundCalcPolicy.NO_FORCE_ROUND\",\"end\":\"PixelRoundCalcPolicy.NO_FORCE_ROUND\",\"bottom\":\"PixelRoundCalcPolicy.NO_FORCE_ROUND\"}",
+              "pixelStretchEffect": {
+                "bottom": "0.00px",
+                "left": "0.00px",
+                "right": "0.00px",
+                "top": "0.00px"
+              },
+              "pointLight": {
+                "lightIntensity": 0
+              },
+              "position": {
+                "x": "",
+                "y": ""
+              },
+              "radialGradient": {},
+              "renderFit": "RenderFit.TOP_LEFT",
+              "renderGroup": "false",
+              "renderStrategy": "FAST",
+              "responseRegion": [],
+              "responseRegionMap": [],
+              "rotate": {},
+              "safeAreaExpandOpts": "NA",
+              "safeAreaPadding": "0.00vp",
+              "saturate": 1,
+              "scale": {},
+              "scrollable": false,
+              "sepia": 0,
+              "shadow": {
+                "color": "#FF000000",
+                "fill": "0",
+                "offsetX": "0.000000",
+                "offsetY": "0.000000",
+                "radius": "0.000000",
+                "type": "0"
+              },
+              "size": {
+                "height": "100.00%",
+                "width": "100.00%"
+              },
+              "sphericalEffect": 0,
+              "sweepGradient": {},
+              "systemBarEffect": "false",
+              "tabIndex": 0,
+              "tabStop": false,
+              "touchable": true,
+              "transform": {},
+              "translate": {},
+              "useEffect": "false",
+              "useEffectType": "EffectType.DEFAULT",
+              "useShadowBatching": "false",
+              "useSizeType": {
+                "default": {
+                  "offset": 0,
+                  "span": 1
+                }
+              },
+              "visibility": "Visibility.Visible",
+              "width": "100.00%",
+              "zIndex": 0
+            },
+            "$children": [
+              {
+                "$ID": 6,
+                "$attrs": {
+                  "BackgroundBrightness": {
+                    "dynamicLightUpDegree": 0,
+                    "dynamicLightUpRate": 0
+                  },
+                  "LightPosition": {},
+                  "accessibilityDescription": "",
+                  "accessibilityGroup": false,
+                  "accessibilityLevel": "auto",
+                  "accessibilityText": "",
+                  "accessibilityTextHint": "",
+                  "accessibilityVirtualNode": false,
+                  "actualFontSize": "50.00fp",
+                  "align": "Alignment.Start",
+                  "alignSelf": "ItemAlign.Auto",
+                  "aspectRatio": "",
+                  "backdropBlur": 0,
+                  "backgroundBlurStyle": {
+                    "options": {
+                      "adaptiveColor": "AdaptiveColor.Default",
+                      "colorMode": "ThemeColorMode.System",
+                      "inactiveColor": "#00000000",
+                      "policy": "BlurStyleActivePolicy.ALWAYS_ACTIVE",
+                      "scale": 1,
+                      "type": "BlurType.WITHIN_WINDOW"
+                    },
+                    "value": "BlurStyle.NONE"
+                  },
+                  "backgroundColor": "#00000000",
+                  "backgroundEffect": {
+                    "options": {
+                      "adaptiveColor": "AdaptiveColor.Default",
+                      "blurOption": "[0,0]",
+                      "brightness": 1,
+                      "color": "#00000000",
+                      "inactiveColor": "#00000000",
+                      "policy": "BlurStyleActivePolicy.ALWAYS_ACTIVE",
+                      "radius": 0,
+                      "saturation": 1,
+                      "type": "WITHIN_WINDOW"
+                    }
+                  },
+                  "backgroundImage": "NONE",
+                  "backgroundImagePosition": {
+                    "x": 0,
+                    "y": 0
+                  },
+                  "backgroundImageResizable": "ImageResizableSlice: {left: 0.00px, right: 0.00px, top: 0.00px, bottom: 0.00px}",
+                  "backgroundImageSize": "ImageSize.Auto",
+                  "baselineOffset": "0",
+                  "bindSelectionMenu": "[]",
+                  "blendMode": 0,
+                  "blur": 0,
+                  "border": "{\"style\":\"BorderStyle.Solid\",\"color\":\"#FF000000\",\"width\":\"0.00vp\",\"radius\":{\"topLeft\":\"0.00vp\",\"topRight\":\"0.00vp\",\"bottomLeft\":\"0.00vp\",\"bottomRight\":\"0.00vp\"},\"dashGap\":\"0.00vp\",\"dashWidth\":\"0.00vp\"}",
+                  "borderColor": "#FF000000",
+                  "borderImage": "{\"source\":\"\",\"slice\":\"0.00px\",\"width\":\"0.00px\",\"outset\":\"0.00px\",\"repeat\":\"RepeatMode.Stretch\",\"fill\":\"false\"}",
+                  "borderRadius": {
+                    "bottomLeft": "0.00vp",
+                    "bottomRight": "0.00vp",
+                    "topLeft": "0.00vp",
+                    "topRight": "0.00vp"
+                  },
+                  "borderStyle": "BorderStyle.Solid",
+                  "borderWidth": "0.00vp",
+                  "brightness": 1,
+                  "caretColor": "#FF0A59F7",
+                  "chainWeight": {
+                    "horizontal": 0,
+                    "vertical": 0
+                  },
+                  "clip": "false",
+                  "colorBlend": "",
+                  "compressLeadingPunctuation": "false",
+                  "constraintSize": "{\"minWidth\":\"0.00vp\",\"minHeight\":\"0.00vp\",\"maxWidth\":\"Infinityvp\",\"maxHeight\":\"Infinityvp\"}",
+                  "content": "Hello World",
+                  "contrast": 1,
+                  "copyOption": "CopyOptions.None",
+                  "dataDetectorConfig": "",
+                  "decoration": "{\"type\":\"TextDecorationType.None\",\"color\":\"#FF000000\",\"style\":\"TextDecorationStyle.SOLID\"}",
+                  "defaultFocus": false,
+                  "direction": "Direction.Auto",
+                  "displayPriority": 1,
+                  "dynamicDimming": 1,
+                  "effectStrategy": "SymbolEffectStrategy.NONE",
+                  "ellipsisMode": "EllipsisMode.END",
+                  "enableAutoSpacing": "0",
+                  "enableDataDetector": "false",
+                  "enableHapticFeedback": "true",
+                  "enableSelectedDataDetector": "true",
+                  "enabled": true,
+                  "fallbackLineSpacing": "0",
+                  "flexBasis": "auto",
+                  "flexGrow": 0,
+                  "flexShrink": 1,
+                  "focusOnTouch": false,
+                  "focusable": true,
+                  "focused": false,
+                  "font": "{\"style\":\"FontStyle.Normal\",\"size\":\"50.00fp\",\"weight\":\"FontWeight.Bold\",\"variableFontWeight\":\"0\",\"enableVariableFontWeight\":\"false\",\"family\":\"HarmonyOS Sans\"}",
+                  "fontColor": "#CE000000",
+                  "fontFamily": "HarmonyOS Sans",
+                  "fontSize": "50.00fp",
+                  "fontStyle": "FontStyle.Normal",
+                  "fontWeight": "FontWeight.Bold",
+                  "foregroundColor": "#00000001",
+                  "foregroundEffect": {
+                    "radius": "0.000000"
+                  },
+                  "grayscale": 0,
+                  "gridOffset": 0,
+                  "gridSpan": 1,
+                  "groupDefaultFocus": false,
+                  "hasPendingRequest": false,
+                  "height": "58.66vp",
+                  "heightAdaptivePolicy": "TextHeightAdaptivePolicy.MAX_LINES_FIRST",
+                  "hitTestBehavior": "HitTestMode.Default",
+                  "hoverEffect": "HoverEffect.Auto",
+                  "hueRotate": 0,
+                  "id": "HelloWorld",
+                  "ignoreLayoutSafeAreaOpts": "NA",
+                  "imageNodes": [],
+                  "includeFontPadding": "0",
+                  "isFirstBuilding": false,
+                  "isLayoutDirtyMarked": false,
+                  "isMeasureBoundary": false,
+                  "isRenderDirtyMarked": false,
+                  "layoutGravity": "Alignment.Center",
+                  "layoutWeight": 0,
+                  "letterSpacing": "0.00px",
+                  "lightUpEffect": 0,
+                  "lineBreakStrategy": "greedy",
+                  "lineHeight": "0.00vp",
+                  "lineSpacing": "0.00vp",
+                  "linearGradient": {},
+                  "localizedAlignment": "center",
+                  "margin": "0.00vp",
+                  "markAnchor": {
+                    "x": "",
+                    "y": ""
+                  },
+                  "marqueeOptions": "{\"start\":true,\"step\":\"13.50\",\"loop\":\"-1\",\"direction\":\"MarqueeDirection.DEFAULT\",\"delay\":\"0\",\"fadeout\":false,\"startPolicy\":\"MarqueeStartPolicy.DEFAULT\",\"spacing\":\"0.00px\",\"updatePolicy\":\"MarqueeUpdatePolicy.DEFAULT\"}",
+                  "mask": {},
+                  "maxFontScale": "3.200000",
+                  "maxFontSize": "0.00px",
+                  "maxLineHeight": "0.00fp",
+                  "maxLines": "4294967295",
+                  "minFontScale": "0.850000",
+                  "minFontSize": "0.00px",
+                  "minLineHeight": "0.00fp",
+                  "minLines": "0",
+                  "monopolizeEvents": false,
+                  "mouseResponseRegion": [],
+                  "obscured": [],
+                  "offset": {
+                    "x": "",
+                    "y": ""
+                  },
+                  "onlyBetweenLines": "false",
+                  "opacity": 1,
+                  "optimizeTrailingSpace": "false",
+                  "outline": "{\"style\":\"OutlineStyle.SOLID\",\"color\":\"#FF000000\",\"width\":\"0.00vp\",\"radius\":{\"topLeft\":\"0.00vp\",\"topRight\":\"0.00vp\",\"bottomLeft\":\"0.00vp\",\"bottomRight\":\"0.00vp\"}}",
+                  "outlineColor": "#FF000000",
+                  "outlineRadius": {
+                    "bottomLeft": "0.00vp",
+                    "bottomRight": "0.00vp",
+                    "topLeft": "0.00vp",
+                    "topRight": "0.00vp"
+                  },
+                  "outlineStyle": "OutlineStyle.SOLID",
+                  "outlineWidth": "0.00vp",
+                  "overlay": {
+                    "options": {
+                      "align": "Alignment.Center",
+                      "offset": {
+                        "x": "0.00px",
+                        "y": "0.00px"
+                      }
+                    },
+                    "title": ""
+                  },
+                  "padding": "0.00vp",
+                  "pixelRound": "{\"start\":\"PixelRoundCalcPolicy.NO_FORCE_ROUND\",\"top\":\"PixelRoundCalcPolicy.NO_FORCE_ROUND\",\"end\":\"PixelRoundCalcPolicy.NO_FORCE_ROUND\",\"bottom\":\"PixelRoundCalcPolicy.NO_FORCE_ROUND\"}",
+                  "pixelStretchEffect": {
+                    "bottom": "0.00px",
+                    "left": "0.00px",
+                    "right": "0.00px",
+                    "top": "0.00px"
+                  },
+                  "pointLight": {
+                    "lightIntensity": 0
+                  },
+                  "position": {
+                    "x": "",
+                    "y": ""
+                  },
+                  "privacySensitive": false,
+                  "radialGradient": {},
+                  "renderFit": "RenderFit.TOP_LEFT",
+                  "renderGroup": "false",
+                  "renderStrategy": "FAST",
+                  "renderingStrategy": "SymbolRenderingStrategy.SINGLE",
+                  "responseRegion": [
+                    "{\"x\":\"0.00px\",\"y\":\"0.00px\",\"width\":\"956.00px\",\"height\":\"198.00px\"}"
+                  ],
+                  "responseRegionMap": [],
+                  "rotate": {},
+                  "safeAreaExpandOpts": "NA",
+                  "safeAreaPadding": "0.00vp",
+                  "saturate": 1,
+                  "scale": {},
+                  "scrollable": false,
+                  "selectedBackgroundColor": "#330A59F7",
+                  "selectedDragPreviewStyle": "#FFFFFFFF",
+                  "selection": "[-1,-1]",
+                  "sepia": 0,
+                  "shaderStyle": {},
+                  "shadow": {
+                    "color": "#FF000000",
+                    "fill": "0",
+                    "offsetX": "0.000000",
+                    "offsetY": "0.000000",
+                    "radius": "0.000000",
+                    "type": "0"
+                  },
+                  "size": {
+                    "height": "58.66vp",
+                    "width": "283.25vp"
+                  },
+                  "sphericalEffect": 0,
+                  "sweepGradient": {},
+                  "symbolEffect": "{\"effectType\":0,\"scopeType\":0,\"commonSubType\":0,\"fillStyle\":0,\"isTxtActive\":false}",
+                  "symbolShadow": {},
+                  "systemBarEffect": "false",
+                  "tabIndex": 0,
+                  "tabStop": false,
+                  "textAlign": "TextAlign.Start",
+                  "textBaseline": "textBaseline.ALPHABETIC",
+                  "textCase": "TextCase.Normal",
+                  "textContentAlign": "TextContentAlign.TOP",
+                  "textDirection": "DEFAULT",
+                  "textOverflow": "TextOverflow.Clip",
+                  "textSelectable": "selectable-unfocusable",
+                  "textShadow": {
+                    "color": "#FF000000",
+                    "offsetX": "0.000000",
+                    "offsetY": "0.000000",
+                    "radius": "0.000000",
+                    "type": "0"
+                  },
+                  "textVerticalAlign": "TextVerticalAlign.BASELINE",
+                  "touchable": true,
+                  "transform": {},
+                  "translate": {},
+                  "useEffect": "false",
+                  "useEffectType": "EffectType.DEFAULT",
+                  "useShadowBatching": "false",
+                  "useSizeType": {
+                    "default": {
+                      "offset": 0,
+                      "span": 1
+                    }
+                  },
+                  "visibility": "Visibility.Visible",
+                  "width": "283.25vp",
+                  "wordBreak": "break-word",
+                  "zIndex": 0
+                },
+                "$debugLine": "",
+                "$rect": "[134.00, 1316.00],[1090.00,1514.00]",
+                "$type": "Text",
+                "type": "build-in"
+              },
+              {
+                "$ID": 7,
+                "$INTERNAL_IDS": [
+                  8
+                ],
+                "$attrs": {
+                  "BackgroundBrightness": {
+                    "dynamicLightUpDegree": 0,
+                    "dynamicLightUpRate": 0
+                  },
+                  "LightPosition": {},
+                  "accessibilityDescription": "",
+                  "accessibilityGroup": false,
+                  "accessibilityLevel": "auto",
+                  "accessibilityText": "",
+                  "accessibilityTextHint": "",
+                  "accessibilityVirtualNode": false,
+                  "align": "Alignment.Center",
+                  "alignSelf": "ItemAlign.Auto",
+                  "aspectRatio": "",
+                  "backdropBlur": 0,
+                  "backgroundBlurStyle": {
+                    "options": {
+                      "adaptiveColor": "AdaptiveColor.Default",
+                      "colorMode": "ThemeColorMode.System",
+                      "inactiveColor": "#00000000",
+                      "policy": "BlurStyleActivePolicy.ALWAYS_ACTIVE",
+                      "scale": 1,
+                      "type": "BlurType.WITHIN_WINDOW"
+                    },
+                    "value": "BlurStyle.NONE"
+                  },
+                  "backgroundColor": "#FF0A59F7",
+                  "backgroundEffect": {
+                    "options": {
+                      "adaptiveColor": "AdaptiveColor.Default",
+                      "blurOption": "[0,0]",
+                      "brightness": 1,
+                      "color": "#00000000",
+                      "inactiveColor": "#00000000",
+                      "policy": "BlurStyleActivePolicy.ALWAYS_ACTIVE",
+                      "radius": 0,
+                      "saturation": 1,
+                      "type": "WITHIN_WINDOW"
+                    }
+                  },
+                  "backgroundImage": "NONE",
+                  "backgroundImagePosition": {
+                    "x": 0,
+                    "y": 0
+                  },
+                  "backgroundImageResizable": "ImageResizableSlice: {left: 0.00px, right: 0.00px, top: 0.00px, bottom: 0.00px}",
+                  "backgroundImageSize": "ImageSize.Auto",
+                  "blendMode": 0,
+                  "blur": 0,
+                  "border": "{\"style\":\"BorderStyle.Solid\",\"color\":\"#FF000000\",\"width\":\"0.00vp\",\"radius\":{\"topLeft\":\"67.50px\",\"topRight\":\"67.50px\",\"bottomLeft\":\"67.50px\",\"bottomRight\":\"67.50px\"},\"dashGap\":\"0.00vp\",\"dashWidth\":\"0.00vp\"}",
+                  "borderColor": "#FF000000",
+                  "borderImage": "{\"source\":\"\",\"slice\":\"0.00px\",\"width\":\"0.00px\",\"outset\":\"0.00px\",\"repeat\":\"RepeatMode.Stretch\",\"fill\":\"false\"}",
+                  "borderRadius": {
+                    "bottomLeft": "67.50px",
+                    "bottomRight": "67.50px",
+                    "topLeft": "67.50px",
+                    "topRight": "67.50px"
+                  },
+                  "borderStyle": "BorderStyle.Solid",
+                  "borderWidth": "0.00vp",
+                  "brightness": 1,
+                  "buttonStyle": "ButtonStyleMode.EMPHASIZED",
+                  "chainWeight": {
+                    "horizontal": 0,
+                    "vertical": 0
+                  },
+                  "clip": "false",
+                  "colorBlend": "",
+                  "constraintSize": "{\"minWidth\":\"0.00vp\",\"minHeight\":\"0.00vp\",\"maxWidth\":\"Infinityvp\",\"maxHeight\":\"Infinityvp\"}",
+                  "contrast": 1,
+                  "controlSize": "ControlSize.NORMAL",
+                  "defaultFocus": false,
+                  "direction": "Direction.Auto",
+                  "displayPriority": 1,
+                  "dynamicDimming": 1,
+                  "enabled": true,
+                  "flexBasis": "auto",
+                  "flexGrow": 0,
+                  "flexShrink": 1,
+                  "focusOnTouch": false,
+                  "focusable": true,
+                  "focused": false,
+                  "fontColor": "#FFCC6600",
+                  "fontFamily": "HarmonyOS Sans",
+                  "fontSize": "14.00fp",
+                  "fontStyle": "FontStyle.Normal",
+                  "fontWeight": "FontWeight.Medium",
+                  "foregroundColor": "#FFCC6600",
+                  "foregroundEffect": {
+                    "radius": "0.000000"
+                  },
+                  "grayscale": 0,
+                  "gridOffset": 0,
+                  "gridSpan": 1,
+                  "groupDefaultFocus": false,
+                  "hasPendingRequest": false,
+                  "height": "0.00vp",
+                  "hitTestBehavior": "HitTestMode.Default",
+                  "hoverEffect": "HoverEffect.Auto",
+                  "hueRotate": 0,
+                  "id": "DevSseTestEntry",
+                  "ignoreLayoutSafeAreaOpts": "NA",
+                  "isFirstBuilding": false,
+                  "isLayoutDirtyMarked": false,
+                  "isMeasureBoundary": false,
+                  "isRenderDirtyMarked": false,
+                  "label": "真实 SSE 测试 [开发测试]",
+                  "labelStyle": "{\"overflow\":\"TextOverflow.Clip\",\"maxLines\":\"1\",\"minFontSize\":\"0.00px\",\"maxFontSize\":\"0.00px\",\"heightAdaptivePolicy\":\"TextHeightAdaptivePolicy.MAX_LINES_FIRST\",\"font\":\"{\\\"size\\\":\\\"14.00fp\\\",\\\"weight\\\":\\\"FontWeight.Medium\\\",\\\"family\\\":\\\"HarmonyOS Sans\\\",\\\"style\\\":\\\"FontStyle.Normal\\\"}\"}",
+                  "layoutGravity": "Alignment.Center",
+                  "layoutWeight": 0,
+                  "lightUpEffect": 0,
+                  "linearGradient": {},
+                  "localizedAlignment": "center",
+                  "margin": "{\"top\":\"20.00vp\",\"right\":\"0.00vp\",\"bottom\":\"0.00vp\",\"left\":\"0.00vp\"}",
+                  "markAnchor": {
+                    "x": "",
+                    "y": ""
+                  },
+                  "mask": {},
+                  "maxFontScale": "3.200000",
+                  "minFontScale": "0.850000",
+                  "monopolizeEvents": false,
+                  "mouseResponseRegion": [],
+                  "obscured": [],
+                  "offset": {
+                    "x": "",
+                    "y": ""
+                  },
+                  "opacity": 1,
+                  "options": "{\"type\":\"ButtonType.ROUNDED_RECTANGLE\",\"stateEffect\":\"true\"}",
+                  "outline": "{\"style\":\"OutlineStyle.SOLID\",\"color\":\"#FF000000\",\"width\":\"0.00vp\",\"radius\":{\"topLeft\":\"0.00vp\",\"topRight\":\"0.00vp\",\"bottomLeft\":\"0.00vp\",\"bottomRight\":\"0.00vp\"}}",
+                  "outlineColor": "#FF000000",
+                  "outlineRadius": {
+                    "bottomLeft": "0.00vp",
+                    "bottomRight": "0.00vp",
+                    "topLeft": "0.00vp",
+                    "topRight": "0.00vp"
+                  },
+                  "outlineStyle": "OutlineStyle.SOLID",
+                  "outlineWidth": "0.00vp",
+                  "overlay": {
+                    "options": {
+                      "align": "Alignment.Center",
+                      "offset": {
+                        "x": "0.00px",
+                        "y": "0.00px"
+                      }
+                    },
+                    "title": ""
+                  },
+                  "padding": "{\"top\":\"0.00vp\",\"right\":\"16.00vp\",\"bottom\":\"0.00vp\",\"left\":\"16.00vp\"}",
+                  "pixelRound": "{\"start\":\"PixelRoundCalcPolicy.NO_FORCE_ROUND\",\"top\":\"PixelRoundCalcPolicy.NO_FORCE_ROUND\",\"end\":\"PixelRoundCalcPolicy.NO_FORCE_ROUND\",\"bottom\":\"PixelRoundCalcPolicy.NO_FORCE_ROUND\"}",
+                  "pixelStretchEffect": {
+                    "bottom": "0.00px",
+                    "left": "0.00px",
+                    "right": "0.00px",
+                    "top": "0.00px"
+                  },
+                  "pointLight": {
+                    "lightIntensity": 0
+                  },
+                  "position": {
+                    "x": "",
+                    "y": ""
+                  },
+                  "radialGradient": {},
+                  "renderFit": "RenderFit.TOP_LEFT",
+                  "renderGroup": "false",
+                  "renderStrategy": "FAST",
+                  "responseRegion": [],
+                  "responseRegionMap": [],
+                  "role": "ButtonRole.NORMAL",
+                  "rotate": {},
+                  "safeAreaExpandOpts": "NA",
+                  "safeAreaPadding": "0.00vp",
+                  "saturate": 1,
+                  "scale": {},
+                  "scrollable": false,
+                  "sepia": 0,
+                  "shadow": {
+                    "color": "#FF000000",
+                    "fill": "0",
+                    "offsetX": "0.000000",
+                    "offsetY": "0.000000",
+                    "radius": "0.000000",
+                    "type": "0"
+                  },
+                  "size": {
+                    "height": "0.00vp",
+                    "width": "32.00vp"
+                  },
+                  "sphericalEffect": 0,
+                  "stateEffect": "true",
+                  "sweepGradient": {},
+                  "systemBarEffect": "false",
+                  "tabIndex": 0,
+                  "tabStop": false,
+                  "touchable": true,
+                  "transform": {},
+                  "translate": {},
+                  "type": "ButtonType.ROUNDED_RECTANGLE",
+                  "useEffect": "false",
+                  "useEffectType": "EffectType.DEFAULT",
+                  "useShadowBatching": "false",
+                  "useSizeType": {
+                    "default": {
+                      "offset": 0,
+                      "span": 1
+                    }
+                  },
+                  "visibility": "Visibility.Visible",
+                  "width": "32.00vp",
+                  "zIndex": 0
+                },
+                "$debugLine": "",
+                "$rect": "[558.00, 1581.00],[666.00,1581.00]",
+                "$type": "Button",
+                "type": "build-in"
+              }
+            ],
+            "$debugLine": "",
+            "$rect": "[0.00, 148.00],[1224.00,2682.00]",
+            "$type": "RelativeContainer",
+            "type": "build-in"
+          }
+        ],
+        "$debugLine": "{\"$line\":\"(0:0)\"}",
+        "$rect": "[0.00, 148.00],[1224.00,2682.00]",
+        "$type": "JsView",
+        "state": {
+          "observedPropertiesInfo": [
+            {
+              "decorator": "@State",
+              "dependentElementIds": {
+                "mode": "Compatible Mode",
+                "propertyDependencies": [
+                  "Text[6]"
+                ],
+                "trackPropertiesDependencies": []
+              },
+              "id": 0,
+              "inRenderingElementId": -1,
+              "length": -1,
+              "owningView": {
+                "componentName": "Index",
+                "id": 4
+              },
+              "propertyName": "message",
+              "syncPeers": [],
+              "value": "Hello World"
+            }
+          ],
+          "viewInfo": {
+            "componentName": "Index",
+            "id": 4,
+            "isV2": false,
+            "isViewActive_": true
+          }
+        },
+        "type": "custom",
+        "viewTag": "Index"
+      }
+    ],
+    "$resolution": "3.375000",
+    "$type": "root",
+    "height": "2776.000000",
+    "width": "1224.000000"
+  },
+  "type": "root"
+}

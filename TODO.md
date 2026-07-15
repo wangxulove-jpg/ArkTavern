@@ -76,10 +76,10 @@ Date: 2026-07-15
   - 临时 PoC:对接任意 OpenAI 兼容端点(需用户提供测试 Base URL + Key),增量打印 token
   - 确认 `@ohos.net.http` 的 `on('dataReceive')` 可用性;若不可用则验证 `rcp` 方案
 - 验收标准:
-  - [ ] SseParser 能正确解析多帧 SSE 数据
-  - [ ] PoC 能对接真实端点并增量输出
-  - [ ] 中断(abort)可正常工作
-  - [ ] 输出 PoC 结论:最终采用 http 还是 rcp
+  - [x] SseParser 能正确解析多帧 SSE 数据
+  - [x] PoC 能对接真实端点并增量输出
+  - [x] 中断(abort)可正常工作
+  - [x] 输出 PoC 结论:最终采用 http 还是 rcp
 - 子任务进度:
   - **T-0.3A(纯 ArkTS SSE 解析器):已完成**
     - 新增文件:`network/streaming/SseTypes.ets`(SseEvent/SseParseError/SseParseResult 类型)、`network/streaming/SseParser.ets`(有状态增量解析器,支持 feed/finish/reset/getBufferedLength)
@@ -106,7 +106,25 @@ Date: 2026-07-15
     - 修复记录:mock server `Connection` 头从 `keep-alive` 改为 `close`(模拟 OpenAI 发送 [DONE] 后关闭连接的行为,使 dataEnd 正确触发);HttpStreamTransport 的 RequestContext 实现 TransportAbortHandle 接口(修复 ArkTS ohosTest 编译 `arkts-no-untyped-obj-literals` 错误)
     - 最终选择 @ohos.net.http 的依据:设备集成测试全部通过 15 项验收标准(dataReceive≥3 次、间隔~500ms、中文/Emoji 无乱码、多行 data 合并、JSON 完整、[DONE] 识别、dataEnd 一次、onComplete 一次、abort 停止接收、abort 幂等、迟到回调不改终态、监听器移除、HttpRequest destroy、无真实 API Key),无需引入 rcp
     - 已知限制:测试使用 hdc rport 反向端口转发(真机无 WiFi 场景);mock server `Connection: close` 模拟 AI API 发送完毕后关闭连接的行为;未配置明文 HTTP cleartext policy(127.0.0.1 回环默认允许,正式 AI API 仍要求 HTTPS)
-  - T-0.3C(真实 AI 兼容端点验证):待开始,依赖 T-0.3B 运行验证通过
+  - **T-0.3C(真实 AI 兼容端点验证):已完成**
+    - 新增文件:`network/streaming/OpenAiSseDeltaParser.ets`(OpenAI delta content 解析,264 行,类型守卫安全 JSON 解析,容错 delta.content 缺失/null/空、delta.role、choices 空、usage 事件、finish_reason、非 JSON data、错误对象、[DONE])、`network/streaming/OpenAiUrlBuilder.ets`(URL 组合 + 请求体构建,123 行,处理 /chat/completions 后缀、/v1 后缀、末尾 /、协议校验)、`viewmodels/RealSsePocViewModel.ets`(PoC 状态机 + 内存 Key 管理 + Transport 集成,~490 行)、`pages/RealSsePocPage.ets`(临时 PoC 页面,密码模式输入,开发标注)、`test/OpenAiUrlBuilder.test.ets`(11 个用例)、`test/OpenAiSseDeltaParser.test.ets`(16 个用例)
+    - 修改文件:`pages/Index.ets`(添加"真实 SSE 测试 [开发测试]"入口,修复 alignRules 冲突导致按钮 height=0)、`resources/base/profile/main_pages.json`(注册 RealSsePocPage)
+    - 实际使用的 HarmonyOS API:`@ohos.net.http`(通过 HttpStreamTransport)、`router`(页面跳转)
+    - 测试情况:本地单元测试 30 个用例全部通过(OpenAiUrlBuilder 11 + OpenAiSseDeltaParser 16 + 现有 3);MCP `build_project` clean 编译通过
+    - 设备验证结果(真机 USB):
+      - 测试设备:华为 nova 13 Pro(真机 4BD9K24C18008717,USB 连接)
+      - HarmonyOS/API 版本:OpenHarmony 6.1.0.115 Release,API 23
+      - Provider 类型:OpenAI-compatible(DeepSeek)
+      - Base URL:`https://api.deepseek.com`,Model: `deepseek-v4-flash`
+      - 请求路径:`https://api.deepseek.com/v1/chat/completions`(URL builder 自动追加)
+      - 成功测试 3 次:35/59/91 chunks,81/115/200 SSE 事件,10/68 delta,[DONE] 正确结束,中英文 + Emoji 无乱码
+      - abort 测试通过:Streaming 状态点击"停止",状态变为 Cancelled,请求中断
+      - 无效 API Key 测试通过:返回 Authentication failed (HTTP 401)
+      - 错误 Base URL 测试通过:非法 URL 返回清晰校验错误
+      - 页面退出中断请求通过:aboutToDisappear 调用 cleanup() 主动 abort
+      - hilog 敏感信息检查通过:ArkTavern 应用日志无 API Key/Bearer 泄露,Logger 仅记录"Authorization set"
+    - 安全验证:API Key 仅内存保存(ViewModel 私有字段,不暴露 getter),不落盘/不进 Preferences/不进 RDB/不进文件/不进日志;页面退出 cleanup() 清空 Key;工程源码内无硬编码密钥(测试文件中的 sk-abc123 等为脱敏逻辑测试 fixture)
+    - 最终结论:**最终采用 @ohos.net.http**,无需 rcp;真实 OpenAI-compatible SSE 流式响应全链路验证通过
 
 ### T-0.4 安全存储 PoC(huks 加密 API Key)
 

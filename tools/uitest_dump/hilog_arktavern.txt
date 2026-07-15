@@ -1,0 +1,435 @@
+
+07-15 21:16:35.155  6041  6215 D A03200/encent.wetype.hmos:inputMethod/WXIME: <3> {"cli_ver":"1.0.0.17116","device_name":"HUAWEI;HUAWEI;MIS-AL00;23;OpenHarmony-6.1.0.115;phone","device_perf":2,"ilink_uin":"","label":"UserAssociationReportFeatures","msg":{"features":{"candidate_list":[{"cl":0,"dict_kind":65535,"em":false,"feat":null,"pos":0,"score":1.0,"sub_strategy":0,"word":"."},{"cl":0,"dict_kind":65535,"em":false,"feat":null,"pos":1,"score":1.0,"sub_strategy":0,"word":"/"},{"cl":0,"dict_kind":65535,"em":false,"feat":null,"pos":2,"score":1.0,"sub_strategy":0,"word":":"},{"cl":0,"dict_kind":65535,"em":false,"feat":null,"pos":3,"score":1.0,"sub_strategy":0,"word":"-"},{"cl":0,"dict_kind":65535,"em":false,"feat":null,"pos":4,"score":1.0,"sub_strategy":0,"word":"_"},{"cl":0,"dict_kind":65535,"em":false,"feat":null,"pos":5,"score":1.0,"sub_strategy":0,"word":"&"},{"cl":0,"dict_kind":65535,"em":false,"feat":null,"pos":6,"score":1.0,"sub_strategy":0,"word":"!"},{"cl":0,"dict_kind":65535,"em":false,"feat":null,"pos":7,"score":1.0,"sub_strategy":0,"word":"~"},{"cl":0,"dict_kind":65535,"em":false,"feat":null,"pos":8,"score":1.0,"sub_strategy":0,"word":"*"}],"context":"22$epseek.com","last_text":"","report_type":0,"selected_pos":0,"selected_text":"/","send_out":"","service_version":-1,"text_type":0},"k_t_id":"","random_id":"TNMIPOZNDXMZZLNE"},"platform":7,"session_config":"{\"app_env\":{\"app_name\":\"com.example.arktavern\",\"return_key_type\":9,\"scene\":0},\"aug_opt\":{\"aug\":3915535},\"cfg_bit\":49622,\"s2t\":0,\"session_id\":13}","trace_id":"GVHOKIFJVBYSTFNA_1"}
+07-15 21:16:35.155  6041  6215 D A03200/encent.wetype.hmos:inputMethod/WXIME: <3> {"cli_ver":"1.0.0.17116","device_name":"HUAWEI;HUAWEI;MIS-AL00;23;OpenHarmony-6.1.0.115;phone","device_perf":2,"ilink_uin":"","label":"UserActions","msg":{"act_count":2,"around_cur_txt":{"before":":htt//api.deepseek.com","change_rs":1},"cor_in":"","dropping_length":15,"emit_type":2,"is_potential_badcase":true,"k_t_id":"","kb_lt":{},"s_ratio":"1.0","t_0":{"random_id":"TNMIPOZNDXMZZLNE"},"t_1":{"auxiliary":null,"c_flag":0,"c_ver":0,"candidate_flag":1048576,"cover_input_len":-1,"dict":-1,"input_scene":-1,"is_c":false,"origin_from_kind":0,"original_dict":65535,"position":0,"random_id":"IURMOUQDNZULYYOF","s_t_c":-1,"strategy":1,"sub_strategy":0,"syllable":"","t_c":-1,"t_s":1784121395155,"time_stamp":0,"type":1,"word":"/"},"u_shift":{}},"platform":7,"session_config":"{\"app_env\":{\"app_name\":\"com.example.arktavern\",\"return_key_type\":9,\"scene\":0},\"aug_opt\":{\"aug\":3915535},\"cfg_bit\":49622,\"s2t\":0,\"session_id\":13}","trace_id":"GVHOKIFJVBYSTFNA_1"}
+07-15 21:16:35.156  6041  6215 D A03200/encent.wetype.hmos:inputMethod/WXIME: <3> {"cli_ver":"1.0.0.17116","device_name":"HUAWEI;HUAWEI;MIS-AL00;23;OpenHarmony-6.1.0.115;phone","device_perf":2,"ilink_uin":"8848083607359464","label":"EmitInputAndActInfo","msg":{"act_time_ser":[{"c_flag":0,"c_ver":0,"candidate_flag":1048576,"cover_input_len":-1,"dict":-1,"input_scene":-1,"is_c":false,"origin_from_kind":0,"original_dict":65535,"position":0,"s_t_c":-1,"strategy":1,"sub_strategy":0,"t_c":-1,"t_s":1784121395155,"time_stamp":0,"type":1}],"e_w_a_r_c":"{\"r_1_c\":1,\"r_1_s_c\":1}","emit_type":2,"is_force_emit":false,"pending_clear_count":0,"s_c_i":"[{\"c_f\":1048576,\"c_i_l\":-1,\"d_k\":65535,\"f_b_s\":false,\"i_s\":-1,\"s_s\":1,\"w_a_r_i\":{\"r_1_c\":1,\"r_1_s_c\":1}}]","s_c_p":[0],"s_c_p_b_c":[-1],"t_c":1.08125,"txt_before_size":22},"platform":7,"session_config":"{\"app_env\":{\"app_name\":\"com.example.arktavern\",\"return_key_type\":9,\"scene\":0},\"aug_opt\":{\"aug\":3915535},\"cfg_bit\":49622,\"cn_user_dict_cnt\":9631,\"cn_user_load_time\":22,\"en_user_dict_cnt\":225,\"en_user_load_time\":1,\"potential_user_dict_cnt\":1,\"potential_user_load_time\":4,\"pure_en_user_dict_cnt\":1403,\"pure_en_user_load_time\":3,\"s2t\":0,\"session_id\":13}","trace_id":"GVHOKIFJVBYSTFNA_1"}
+07-15 21:16:37.866  7244  7244 I A000FF/i.hmos.inputmethod:inputMethod/HMKeyboard_FakeInputConnection: onInputStart, bundle: com.example.arktavern
+07-15 21:16:37.901  7244  7244 I A000FF/i.hmos.inputmethod:inputMethod/HMKeyboard_CeliaAgentRecHelper: current bundleName is com.example.arktavern
+07-15 21:16:38.059  7244  7244 I A000FF/i.hmos.inputmethod:inputMethod/HMKeyboard_PackageNameHelper: lastTimeCallInputAppPackageName: com.example.arktavern, packageName: com.example.arktavern
+07-15 21:16:47.664  2540  2540 W A01B01/com.ohos.sceneboard/HOME: SCBSCS: [RecentEnterAnimations] showInRecent from false to true. reason: initCurrentContainerSession, extra: EntryAbility/com.example.arktavern/entry/0(persistentId: 1967)(containerId: 524)
+07-15 21:16:48.043  2540  2540 W A01B01/com.ohos.sceneboard/HOME: SCBSCS: [RecentEnterAnimations] posX from 0 to 3125.7095100864553. reason: inheritFollowingContainerSession, extra: EntryAbility/com.example.arktavern/entry/0(persistentId: 1967)(containerId: 524)
+07-15 21:16:48.043  2540  2540 W A01B01/com.ohos.sceneboard/HOME: SCBSCS: [RecentEnterAnimations] translateX from -4.298460954649581 to -244.73765403822335. reason: inheritFollowingContainerSession, extra: EntryAbility/com.example.arktavern/entry/0(persistentId: 1967)(containerId: 524)
+07-15 21:16:48.043  2540  2540 W A01C06/com.ohos.sceneboard/ICON: AppIconCommonEvent --> onInactive bundleName:com.example.arktavern, [containerSessionEnterRecentView] set icon from show to [show], caller: undefined, extra info: undefined.
+07-15 21:16:48.062  2540  2540 W A01B00/com.ohos.sceneboard/SCB: IconResourceManager: combIcon is empty: false, bundleName: **.example.arktavern
+07-15 21:16:48.085  2540  2540 W A01B01/com.ohos.sceneboard/HOME: SCBSCS: [RecentEnterAnimations] translateX from -244.73765403822335 to 0. reason: setContainerSessionTranslate, extra: EntryAbility/com.example.arktavern/entry/0(persistentId: 1967)(containerId: 524)
+07-15 21:16:48.085  2540  2540 W A01B01/com.ohos.sceneboard/HOME: SCBSCS: [RecentEnterAnimations] translateY from -4.952490794215684 to 0.12592592592591245. reason: setContainerSessionTranslate, extra: EntryAbility/com.example.arktavern/entry/0(persistentId: 1967)(containerId: 524)
+07-15 21:16:49.495  2540  2540 W A0420A/com.ohos.sceneboard/WMSLife: requestSceneBackground, name: EntryAbility/com.example.arktavern/entry/0(persistentId: 1967)(containerId: 524) isToDeskTop:undefined isDelegator:undefined isSaveSnapshot:undefined
+07-15 21:16:49.495  2540  2540 I A04200/com.ohos.sceneboard/WMS: modifyPersistentMap, bundleName: com.example.arktavern
+07-15 21:16:49.496  2540  2540 I A04223/com.ohos.sceneboard/SCBMain: requestSceneSessionBackground: name: EntryAbility/com.example.arktavern/entry/0(persistentId: 1967)
+07-15 21:16:49.497  2540  2540 W A01B01/com.ohos.sceneboard/HOME: SCBSCS: [RecentExit] translateX from 0 to 240.43925545682566. reason: exitRecentWithAnimation, extra: EntryAbility/com.example.arktavern/entry/0(persistentId: 1967)(containerId: 524)
+07-15 21:16:49.921  2540  2540 W A01B01/com.ohos.sceneboard/HOME: SCBSCS: [RecentExit] showInRecent from true to false. reason: exitRecentWithAnimation, extra: EntryAbility/com.example.arktavern/entry/0(persistentId: 1967)(containerId: 524)
+07-15 21:16:49.924  2540  2540 W A01B01/com.ohos.sceneboard/HOME: SCBSCS: [SCBSCS] translateX from -293.55292987512007 to 0. reason: init, extra: EntryAbility/com.example.arktavern/entry/0(persistentId: 1967)(containerId: 524)
+07-15 21:16:49.925  2540  2540 W A01B01/com.ohos.sceneboard/HOME: SCBSCS: [SCBSCS] translateY from 0.12592592592591245 to 0. reason: init, extra: EntryAbility/com.example.arktavern/entry/0(persistentId: 1967)(containerId: 524)
+07-15 21:16:49.939  2630  2630 I A06666/com.huawei.hmos.aidataservice/160002364: AppUsageAbility: publishAppUsage appUsage {"timestamp":1784121409939,"dataName":"AppUsage","bundleName":"com.example.arktavern","appUid":20020432,"state":"OUT","installationFree":false,"hasIcon":true,"isSplitScreenMode":false,"isFloatingWindowMode":false,"isSplit":false,"startTime":1784121284110,"duration":125829}
+07-15 21:16:49.961  2540  2540 W A01B01/com.ohos.sceneboard/HOME: SCBSceneContainer: [SCBMain] EntryAbility/com.example.arktavern/entry/0(persistentId: 1967)(containerId: 524) enableShow change from true to false. Detail:isPrebuildStageEnableShow:false, showInRecent:false, sceneContainerSession.enableShow:false, showInScrolling:false
+07-15 21:17:13.662  2540  2540 W A01B00/com.ohos.sceneboard/SCB: IconResourceManager: combIcon is empty: false, bundleName: **.example.arktavern
+07-15 21:17:18.602  8396  8396 I A06666/AppGalleryService/AG/AppGallery: [a92ab18857c019e 22e6cd0 14f21c5]random:1784121563264, index:0,[HarServiceMarketStaticSubscriberExtAbility]:onReceiveChange, bundleName:com.example.arktavern, index: 0
+07-15 21:17:18.880  8396  8396 I A06666/AppGalleryService/AG/AppGallery: [a92ab18857c019e 5840b5 3e7eef4]random:1784122435032, index:0,[SyncAppExtensionConfigUtil]:onInstall bundleName:com.example.arktavern, appIndex:0, isUpdate:true
+07-15 21:17:18.985  8396  8396 I A06666/AppGalleryService/AG/AppGallery: [a92ab18857c019e 5840b5 3e7eef4]random:1784121596363, index:0,[AppPrivacyManager]:onInstall bundleName:com.example.arktavern, appIndex:0, isUpdate:false
+07-15 21:17:18.987  8396  8396 I A06666/AppGalleryService/AG/AppGallery: [a92ab18857c019e 5840b5 3e7eef4]random:1784122037722, index:0,[InstalledAppInfoUtil]:getBundleInfoForOs bundleFlags:227, bundleName:com.example.arktavern
+07-15 21:17:19.098  8396  8396 I A06666/AppGalleryService/AG/AppGallery: [a92ab18857c019e 296ba8a 16a0f42]random:1784121636051, index:0,[AiCloudPrioritySpHelper]:idletask# removeSpInfoByPkgName pkg:com.example.arktavern
+07-15 21:17:19.141  8396  8396 I A06666/AppGalleryService/AG/AppGallery: [a92ab18857c019e 389903b 342fe3b]random:1784121525914, index:0,[AtomicServiceUpgradeInfoDao]:deleteAtomicUpgradeInfoByBundleName success, com.example.arktavern|0 
+07-15 21:17:19.141  8396  8396 I A06666/AppGalleryService/AG/AppGallery: [a92ab18857c019e 222c813 33448f6]random:1784122114365, index:0,[CrowdTestUpgradeInfoDao]:deleteUpgradeInfoByPackageName success, pkg:com.example.arktavern|res:0
+07-15 21:17:19.141  8396  8396 I A06666/AppGalleryService/AG/AppGallery: [a92ab18857c019e 3cf42ab 4996c8]random:1784121701050, index:0,[ProfileUpgradeInfoDao]:deleteProfileInfoByBundleNameAndType success, com.example.arktavern|1|0 
+07-15 21:17:21.875  8396  8396 I A06666/AppGalleryService/AG/AppGallery: random:1784122169434, index:0,[PackageEventSubscriber]:event callback: usual.event.PACKAGE_CHANGED, bundleName: com.example.arktavern
+07-15 21:17:21.878  8396  8396 I A06666/AppGalleryService/AG/AppGallery: random:1784121464849, index:0,[InstalledAppInfoCache]:onPackageChange cache is empty! bundleName com.example.arktavern
+07-15 21:17:21.878  8396  8396 I A06666/AppGalleryService/AG/AppGallery: random:1784122371535, index:0,[PackageEventSubscriber]:onPackageChange#, bundleName:com.example.arktavern}
+07-15 21:17:22.326  8396  8396 I A06666/AppGalleryService/AG/AppGallery: [a92ab18857c019e 19315d0 493a30]random:1784121489568, index:0,[AppExtensionConfigRequest]: syncAppExtConfigData sync syncType: 1apps [{"bundleName":"com.example.arktavern"}]
+07-15 21:17:22.335  8396  8396 I A06666/AppGalleryService/AG/AppGallery: [a92ab18857c019e 657f98 38dd2ec]random:1784122065216, index:0,[AppExtensionConfigRequest]: syncAppExtConfigData sync syncType: 1apps [{"bundleName":"com.example.arktavern"}]
+07-15 21:17:26.996  8033  8033 W A03200/encent.wetype.hmos:inputMethod/WXIME: [a92ab18866ae702 0 0][        6103D950]    session_creator.cpp:1148  WARN| .   .   type: 0, is_wifi: 0, platform: 7, async: 1, exp mode: 0, most likely: 1, s2t: 0, sp: 0, augment option: 3915535, cloud[input: 1,most likely: 1,correction: 0,book_video: 0,rewrite: 1,book_video_feature_flag: 0], cloud cloud app_name: com.example.arktavern, with_nnlm_dict: 0, device_perf: 2
+07-15 21:17:27.004  8033  8033 D A03200/encent.wetype.hmos:inputMethod/WXIME: [a92ab18866ae702 0 0]<9> {"cli_ver":"1.0.0.17116","device_name":"HUAWEI;HUAWEI;MIS-AL00;23;OpenHarmony-6.1.0.115;phone","device_perf":2,"ilink_uin":"8848083607359464","label":"CreateSession","msg":{"create_session":{"session_id":5,"time_cost":8.253125},"type":3},"platform":7,"session_config":"{\"app_env\":{\"app_name\":\"com.example.arktavern\",\"return_key_type\":9,\"scene\":0},\"aug_opt\":{\"aug\":3915535},\"cfg_bit\":49622,\"s2t\":0,\"session_id\":5}","trace_id":"HGVCKCMJXKJOKWXD_1"}
+07-15 21:17:28.399  9646  9646 I A000FF/i.hmos.inputmethod:inputMethod/HMKeyboard_CeliaAgentRecHelper: [a92ab2886848043 0 0]current bundleName is com.example.arktavern
+07-15 21:17:29.165  9646  9646 I A000FF/i.hmos.inputmethod:inputMethod/HMKeyboard_PackageNameHelper: lastTimeCallInputAppPackageName: com.example.arktavern, packageName: com.example.arktavern
+07-15 21:17:29.175  9646  9646 I A000FF/i.hmos.inputmethod:inputMethod/HMKeyboard_CeliaAgentRecHelper: current bundleName is com.example.arktavern
+07-15 21:17:30.411  9737  9737 I A0FF03/wordvault:AutoFillAbility:1854/PasswordVault: AutoFillAbility: onFillRequest :: onFillRequest start, bundleName is com.example.arktavern
+07-15 21:17:36.367  9646  9646 I A000FF/i.hmos.inputmethod:inputMethod/HMKeyboard_PackageNameHelper: lastTimeCallInputAppPackageName: com.example.arktavern, packageName: com.example.arktavern
+07-15 21:17:36.375  9646  9646 I A000FF/i.hmos.inputmethod:inputMethod/HMKeyboard_FakeInputConnection: onInputStart, bundle: com.example.arktavern
+07-15 21:17:39.198  9967  9967 W A03200/encent.wetype.hmos:inputMethod/WXIME: [        6103D950]    session_creator.cpp:1148  WARN| .   .   type: 0, is_wifi: 0, platform: 7, async: 1, exp mode: 0, most likely: 1, s2t: 0, sp: 0, augment option: 3915535, cloud[input: 1,most likely: 1,correction: 0,book_video: 0,rewrite: 1,book_video_feature_flag: 0], cloud cloud app_name: com.example.arktavern, with_nnlm_dict: 0, device_perf: 2
+07-15 21:17:39.201  9967  9967 D A03200/encent.wetype.hmos:inputMethod/WXIME: <9> {"cli_ver":"1.0.0.17116","device_name":"HUAWEI;HUAWEI;MIS-AL00;23;OpenHarmony-6.1.0.115;phone","device_perf":2,"ilink_uin":"8848083607359464","label":"CreateSession","msg":{"create_session":{"session_id":3,"time_cost":2.407292},"type":3},"platform":7,"session_config":"{\"app_env\":{\"app_name\":\"com.example.arktavern\",\"return_key_type\":9,\"scene\":0},\"aug_opt\":{\"aug\":3915535},\"cfg_bit\":49622,\"s2t\":0,\"session_id\":3}","trace_id":"NYOZPZLTUVIKITCB_1"}
+07-15 21:17:51.025  9967  9967 W A03200/encent.wetype.hmos:inputMethod/WXIME: [        6103D950]    session_creator.cpp:1148  WARN| .   .   type: 0, is_wifi: 0, platform: 7, async: 1, exp mode: 0, most likely: 1, s2t: 0, sp: 0, augment option: 3915535, cloud[input: 1,most likely: 1,correction: 0,book_video: 0,rewrite: 1,book_video_feature_flag: 0], cloud cloud app_name: com.example.arktavern, with_nnlm_dict: 0, device_perf: 2
+07-15 21:17:51.027  9967  9967 D A03200/encent.wetype.hmos:inputMethod/WXIME: <9> {"cli_ver":"1.0.0.17116","device_name":"HUAWEI;HUAWEI;MIS-AL00;23;OpenHarmony-6.1.0.115;phone","device_perf":2,"ilink_uin":"8848083607359464","label":"CreateSession","msg":{"create_session":{"session_id":4,"time_cost":1.985938},"type":3},"platform":7,"session_config":"{\"app_env\":{\"app_name\":\"com.example.arktavern\",\"return_key_type\":9,\"scene\":0},\"aug_opt\":{\"aug\":3915535},\"cfg_bit\":49622,\"s2t\":0,\"session_id\":4}","trace_id":"ROWGJPFOJLQMRPVW_1"}
+07-15 21:17:51.105  9967  9967 D A03200/encent.wetype.hmos:inputMethod/WXIME: <9> {"cli_ver":"1.0.0.17116","device_name":"HUAWEI;HUAWEI;MIS-AL00;23;OpenHarmony-6.1.0.115;phone","device_perf":2,"ilink_uin":"8848083607359464","label":"CreateSession","msg":{"create_session":{"session_id":5,"time_cost":2.446875},"type":3},"platform":7,"session_config":"{\"app_env\":{\"app_name\":\"com.example.arktavern\",\"return_key_type\":9,\"scene\":0},\"aug_opt\":{\"aug\":3915535},\"cfg_bit\":49622,\"s2t\":0,\"session_id\":5}","trace_id":"VDXXBXQNINVKSNHZ_1"}
+07-15 21:18:04.130  9967  9967 W A03200/encent.wetype.hmos:inputMethod/WXIME: [        6103D950]    session_creator.cpp:1148  WARN| .   .   type: 0, is_wifi: 0, platform: 7, async: 1, exp mode: 0, most likely: 1, s2t: 0, sp: 0, augment option: 3915535, cloud[input: 1,most likely: 1,correction: 0,book_video: 0,rewrite: 1,book_video_feature_flag: 0], cloud cloud app_name: com.example.arktavern, with_nnlm_dict: 0, device_perf: 2
+07-15 21:18:04.132  9967  9967 D A03200/encent.wetype.hmos:inputMethod/WXIME: <9> {"cli_ver":"1.0.0.17116","device_name":"HUAWEI;HUAWEI;MIS-AL00;23;OpenHarmony-6.1.0.115;phone","device_perf":2,"ilink_uin":"8848083607359464","label":"CreateSession","msg":{"create_session":{"session_id":6,"time_cost":2.104166},"type":3},"platform":7,"session_config":"{\"app_env\":{\"app_name\":\"com.example.arktavern\",\"return_key_type\":9,\"scene\":0},\"aug_opt\":{\"aug\":3915535},\"cfg_bit\":49622,\"s2t\":0,\"session_id\":6}","trace_id":"ZMEWWAHYGCIKBUJH_1"}
+07-15 21:18:06.637  9423  9423 I A00000/com.example.arktavern/ArkTavern: SSE PoC request starting | Authorization set
+07-15 21:18:06.987  9423  9423 I A00000/com.example.arktavern/ArkTavern: SSE PoC headers received | code=0
+07-15 21:18:08.825  9423  9423 I A00000/com.example.arktavern/ArkTavern: SSE PoC [DONE] received
+07-15 21:18:08.826  9423  9423 I A00000/com.example.arktavern/ArkTavern: SSE PoC complete | code=0 chunks=35 events=81
+07-15 21:18:44.042  9423  9423 I A00000/com.example.arktavern/ArkTavern: SSE PoC request starting | Authorization set
+07-15 21:18:44.183  9423  9423 I A00000/com.example.arktavern/ArkTavern: SSE PoC headers received | code=0
+07-15 21:18:46.192  9423  9423 I A00000/com.example.arktavern/ArkTavern: SSE PoC [DONE] received
+07-15 21:18:46.193  9423  9423 I A00000/com.example.arktavern/ArkTavern: SSE PoC complete | code=0 chunks=59 events=115
+07-15 21:18:48.277  9967  9967 W A03200/encent.wetype.hmos:inputMethod/WXIME: [        6103D950]    session_creator.cpp:1148  WARN| .   .   type: 0, is_wifi: 0, platform: 7, async: 1, exp mode: 0, most likely: 1, s2t: 0, sp: 0, augment option: 3915535, cloud[input: 1,most likely: 1,correction: 0,book_video: 0,rewrite: 1,book_video_feature_flag: 0], cloud cloud app_name: com.example.arktavern, with_nnlm_dict: 0, device_perf: 2
+07-15 21:18:48.282  9967  9967 D A03200/encent.wetype.hmos:inputMethod/WXIME: <9> {"cli_ver":"1.0.0.17116","device_name":"HUAWEI;HUAWEI;MIS-AL00;23;OpenHarmony-6.1.0.115;phone","device_perf":2,"ilink_uin":"8848083607359464","label":"CreateSession","msg":{"create_session":{"session_id":7,"time_cost":5.048437},"type":3},"platform":7,"session_config":"{\"app_env\":{\"app_name\":\"com.example.arktavern\",\"return_key_type\":9,\"scene\":0},\"aug_opt\":{\"aug\":3915535},\"cfg_bit\":49622,\"s2t\":0,\"session_id\":7}","trace_id":"CZMCCRRPLAANTJCR_1"}
+07-15 21:18:53.730  9967 10285 D A03200/encent.wetype.hmos:inputMethod/WXIME: <3> {"cli_ver":"1.0.0.17116","device_name":"HUAWEI;HUAWEI;MIS-AL00;23;OpenHarmony-6.1.0.115;phone","device_perf":2,"ilink_uin":"","label":"UserActionsWithCandidateFeatures","msg":{"candidates":[{"feature":{"candidate":{"12":2,"13":2,"14":"-3.772072","15":{"swt_2":1.0},"16":1,"19":{"cod_score":"0.00"},"2":"-0.893759","39":"-0.893759","40":{"506":1.0},"8":1},"path":{"27":1,"28":1,"3":1},"syllable":[{"0":"e_h;i_i_a;P_i_0;","1":{"P_i_1":1.0,"i":1.0,"i__a":1.0}}]},"kind":"sent_multi_0_eng_0_","label":0,"position":1,"syllable":"hai","word":"还"},{"feature":{"candidate":{"12":2,"13":2,"14":"-3.874512","15":{"swt_2":1.0},"16":1,"19":{"cod_score":"0.00"},"2":"-0.996199","39":"-0.996199","40":{"506":1.0},"8":1},"path":{"27":1,"28":1,"3":1},"syllable":[{"0":"e_h;i_i_u;P_i_0;","1":{"P_i_1":1.0,"i":1.0,"i__u":1.0}}]},"kind":"sent_multi_0_eng_0_","label":0,"position":2,"syllable":"hui","word":"会"},{"feature":{"candidate":{"12":2,"13":2,"14":"-6.056223","15":{"swt_2":1.0},"16":1,"19":{"cod_score":"0.00"},"2":"-3.177910","39":"-1.337336","40":{"506":1.0},"8":1},"path":{"27":1,"28":1,"3":1},"syllable":[{"0":"e_h;i_i_u;P_i_0;","1":{"P_i_1":1.0,"i":1.0,"i__u":1.0}}]},"kind":"sent_multi_0_eng_0_","label":0,"position":3,"syllable":"hui","word":"回"},{"feature":{"candidate":{"12":2,"13":2,"14":"-6.239045","15":{"swt_2":1.0},"16":1,"19":{"cod_score":"0.00"},"2":"-3.017754","39":"-1.238206","8":1},"path":{"27":1,"28":1,"3":1},"syllable":[{"0":"r_h_y;P_r_0;e_i;","1":{"P_r_0":1.0,"r":1.0,"r__y":1.0,"r_h_":1.0}}]},"kind":"sent_multi_0_eng_0_","label":0,"position":4,"syllable":"yi","word":"一"},{"feature":{"candidate":{"12":2,"13":2,"14":"-6.239045","15":{"swt_2":1.0},"16":1,"19":{"cod_score":"0.00"},"2":"-3.017754","39":"-1.238206","8":1},"path":{"27":1,"28":1,"3":1},"syllable":[{"0":"r_h_y;P_r_0;e_i;","1":{"P_r_0":1.0,"r":1.0,"r__y":1.0,"r_h_":1.0}}]},"kind":"sent_multi_0_eng_0_","label":0,"position":5,"syllable":"yi","word":"1️⃣"},{"feature":{"candidate":{"10":12,"11":130,"12":2,"13":2,"14":"-3.096197","15":{},"2":"-3.096197","20":1,"21":[[5,0],[0,10],[3,0],[4,0],[1,0],[2,0]],"22":"0.018892","33":"0.000000","40":{"506":1.0},"7":1,"9":"84302.000000"},"syllable":[{"0":"e_h;e_i;","1":{}}]},"kind":"word_128","label":1,"position":0,"syllable":"hi","word":"hi"},{"feature":{"candidate":{"10":36,"11":128,"12":1,"13":2,"14":"-3.560938","17":1,"2":"-2.974514","20":1,"21":[[5,0],[0,36],[2,0],[1,0],[4,0],[3,0]],"22":"0.950968","33":"0.000000","36":2,"40":{"506":1.0},"46":[[5,0],[3,0],[0,32],[4,0],[1,0],[2,0]],"9":"6157.000000"},"syllable":[{"0":"c_h_1;P_c_0;","1":{"P_c_0":1.0,"R_c_0":1.0,"c":1.0,"c_h_":1.0}}]},"kind":"word_128","label":0,"position":16,"syllable":"huo","word":"或"},[{"count":7,"coverage":2,"kind":"sent_multi_0_eng_0_"},{"count":1,"coverage":2,"kind":"word_128"}]],"k_t_id":"","random_id":"VQKJIUBLMPMRZNJQ"},"platform":7,"session_config":"{\"app_env\":{\"app_name\":\"com.example.arktavern\",\"return_key_type\":9,\"scene\":0},\"aug_opt\":{\"aug\":3915535},\"cfg_bit\":49622,\"s2t\":0,\"session_id\":7}","trace_id":"CZMCCRRPLAANTJCR_1"}
+07-15 21:18:53.731  9967 10285 D A03200/encent.wetype.hmos:inputMethod/WXIME: <3> {"cli_ver":"1.0.0.17116","device_name":"HUAWEI;HUAWEI;MIS-AL00;23;OpenHarmony-6.1.0.115;phone","device_perf":2,"ilink_uin":"","label":"UserActions","msg":{"act_count":3,"around_cur_txt":{"change_rs":1},"cor_in":"","dropping_length":42,"emit_type":1,"is_potential_badcase":true,"k_t_id":"","kb_lt":{},"s_ratio":"1.0","t_0":{"auxiliary":[{"timestamp":1784121532926,"x":727,"y":311}],"key":"h","s_t_c":13,"t_c":2,"time_stamp":1784121532926,"type":0},"t_1":{"auxiliary":[{"timestamp":1784121533132,"x":885,"y":94}],"key":"i","s_t_c":9,"t_c":0,"time_stamp":1784121533132,"type":0},"t_2":{"auxiliary":null,"c_flag":0,"c_ver":0,"candidate_flag":64,"cover_input_len":2,"dict":-1,"input_scene":0,"is_c":false,"origin_from_kind":0,"original_dict":130,"position":0,"random_id":"VQKJIUBLMPMRZNJQ","s_t_c":0,"strategy":2,"sub_strategy":0,"syllable":"hi","t_c":0,"t_s":1784121533727,"time_stamp":0,"type":1,"word":"hi"},"u_shift":{}},"platform":7,"session_config":"{\"app_env\":{\"app_name\":\"com.example.arktavern\",\"return_key_type\":9,\"scene\":0},\"aug_opt\":{\"aug\":3915535},\"cfg_bit\":49622,\"s2t\":0,\"session_id\":7}","trace_id":"CZMCCRRPLAANTJCR_1"}
+07-15 21:18:53.731  9967 10285 D A03200/encent.wetype.hmos:inputMethod/WXIME: <3> {"cli_ver":"1.0.0.17116","device_name":"HUAWEI;HUAWEI;MIS-AL00;23;OpenHarmony-6.1.0.115;phone","device_perf":2,"ilink_uin":"8848083607359464","label":"EmitInputAndActInfo","msg":{"act_time_ser":[{"s_t_c":13,"t_c":2,"time_stamp":1784121532926,"type":0},{"s_t_c":9,"t_c":0,"time_stamp":1784121533132,"type":0},{"c_flag":0,"c_ver":0,"candidate_flag":64,"cover_input_len":2,"dict":-1,"input_scene":0,"is_c":false,"origin_from_kind":0,"original_dict":130,"position":0,"s_t_c":0,"strategy":2,"sub_strategy":0,"t_c":0,"t_s":1784121533727,"time_stamp":0,"type":1}],"e_w_a_r_c":"{\"r_1_c\":2,\"r_1_s_c\":1}","emit_type":1,"is_force_emit":false,"p_k_n":2,"pending_clear_count":0,"s_c_i":"[{\"c_f\":64,\"c_i_l\":2,\"d_k\":130,\"f_b_s\":false,\"i_s\":0,\"s_s\":2,\"w_a_r_i\":{\"r_1_c\":2,\"r_1_s_c\":1}}]","s_c_p":[0],"s_c_p_b_c":[-1],"t_c":795.55,"txt_before_size":0},"platform":7,"session_config":"{\"app_env\":{\"app_name\":\"com.example.arktavern\",\"return_key_type\":9,\"scene\":0},\"aug_opt\":{\"aug\":3915535},\"cfg_bit\":49622,\"cn_user_dict_cnt\":9631,\"cn_user_load_time\":17,\"en_user_dict_cnt\":225,\"en_user_load_time\":1,\"potential_user_dict_cnt\":1,\"potential_user_load_time\":4,\"pure_en_user_dict_cnt\":1403,\"pure_en_user_load_time\":3,\"s2t\":0,\"session_id\":7}","trace_id":"CZMCCRRPLAANTJCR_1"}
+07-15 21:18:55.312  9423  9423 I A00000/com.example.arktavern/ArkTavern: SSE PoC headers received | code=0
+07-15 21:18:58.505  9423  9423 I A00000/com.example.arktavern/ArkTavern: SSE PoC [DONE] received
+07-15 21:18:58.506  9423  9423 I A00000/com.example.arktavern/ArkTavern: SSE PoC complete | code=0 chunks=91 events=200
+07-15 21:19:01.026  9967  9967 D A03200/encent.wetype.hmos:inputMethod/WXIME: <9> {"cli_ver":"1.0.0.17116","device_name":"HUAWEI;HUAWEI;MIS-AL00;23;OpenHarmony-6.1.0.115;phone","device_perf":2,"ilink_uin":"8848083607359464","label":"CreateSession","msg":{"create_session":{"session_id":8,"time_cost":2.15625},"type":3},"platform":7,"session_config":"{\"app_env\":{\"app_name\":\"com.example.arktavern\",\"return_key_type\":9,\"scene\":0},\"aug_opt\":{\"aug\":3915535},\"cfg_bit\":49622,\"s2t\":0,\"session_id\":8}","trace_id":"WBXUVARIMXXDROET_1"}
+07-15 21:19:14.830   517  2681 E C02D15/hiview/XPower: [task_63]#Can not get process info: /system/bin/render_service_com.example.arktavern
+07-15 21:19:14.833   517  2681 D C01120/hiview/BMS: [bundle_mgr_proxy.cpp(GetUidByBundleName:778)]begin to get uid of /system/bin/render_service_com.example.arktavern, userId : 100, appIndex : 0
+07-15 21:19:14.834  1387 59385 D C01120/foundation/BMS: [bundle_mgr_host_impl.cpp(GetUidByBundleName:3662)]bundleName : /system/bin/render_service_com.example.arktavern, userId : 100
+07-15 21:19:14.834  1387 59385 D C01120/foundation/BMS: [bundle_data_mgr.cpp(GetUidByBundleName:10484)]GetUidByBundleName not found /system/bin/render_service_com.example.arktavern
+07-15 21:19:14.835   517  2681 E C02D15/hiview/XPower: [task_63]#pkgname is: /system/bin/render_service_com.example.arktavern, uid is : -1
+07-15 21:19:14.984  9423  9464 D C01201/com.example.arktavern/InnerEvent: innerEventId is 1, caller is [watchdog.cpp(Timer:255)]
+07-15 21:19:14.984  9423  9464 D C01201/com.example.arktavern/EventHandler: Current event id is 400971170039337 .
+07-15 21:19:14.984  9423  9464 D C01201/com.example.arktavern/EventQueueBase: Insert task: 400971170039337 0.
+07-15 21:19:14.984  9423  9423 D C01201/com.example.arktavern/EventHandler: EventName: 1, eventId: 400971170039337, priority: 0
+07-15 21:19:15.487  2540  3595 D C0420C/com.ohos.sceneboard/WMSEvent: GetFullWindowInfoList: [EventDispatch] windowName=arktavern0 bundleName=com.example.arktavern windowId=1982 activeStatus=1
+07-15 21:19:15.493  2540  3595 D C0420C/com.ohos.sceneboard/WMSEvent: GetFullWindowInfoList: [EventDispatch] windowName=arktavern0 bundleName=com.example.arktavern windowId=1982 activeStatus=1
+07-15 21:19:15.495  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[WindowScene_arktavern1982] nodeid:[10909217511493] pid:[2540] nodeType:[4] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:15.495  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[arktavern0] nodeid:[40471476830210] pid:[9423] nodeType:[1] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:15.495  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [arktavern0, 40471476830210] DirtyRect[0, 0, 0, 0]
+07-15 21:19:15.495  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [WindowScene_arktavern1982, 10909217511493] DirtyRect[0, 0, 0, 0]
+07-15 21:19:15.495  1385  1385 D C01406/render_service/RSUniRenderVisitor: CalculateOpaqueAndTransparentRegion Node: WindowScene_arktavern1982, NodeId: 10909217511493 not paticipate in occlusion
+07-15 21:19:15.500  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable ondraw name:WindowScene_arktavern1982 nodeId:[10909217511493]
+07-15 21:19:15.500  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable::OnDraw node:10909217511493, name:WindowScene_arktavern1982,OcclusionVisible:0 Bound:(0.000000, 0.000000, 1224.000000, 2776.000000)
+07-15 21:19:15.501  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable ondraw name:arktavern0 nodeId:[40471476830210]
+07-15 21:19:15.501  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable::OnDraw node:40471476830210, name:arktavern0,OcclusionVisible:0 Bound:(0.000000, 0.000000, 1224.000000, 2776.000000)
+07-15 21:19:15.501  1385  1599 D C01406/render_service/skia: SurfaceNodeDrawable DrawSurfaceWatermark Name:arktavern0 Id:40471476830210 water mark count is zero
+07-15 21:19:15.501  1385  1599 D C01406/render_service/skia: SurfaceNodeDrawable DrawSurfaceWatermark Name:WindowScene_arktavern1982 Id:10909217511493 water mark count is zero
+07-15 21:19:15.627  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[WindowScene_arktavern1982] nodeid:[10909217511493] pid:[2540] nodeType:[4] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:15.627  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[arktavern0] nodeid:[40471476830210] pid:[9423] nodeType:[1] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:15.627  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [arktavern0, 40471476830210] DirtyRect[0, 0, 0, 0]
+07-15 21:19:15.627  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [WindowScene_arktavern1982, 10909217511493] DirtyRect[0, 0, 0, 0]
+07-15 21:19:15.627  1385  1385 D C01406/render_service/RSUniRenderVisitor: CalculateOpaqueAndTransparentRegion Node: WindowScene_arktavern1982, NodeId: 10909217511493 not paticipate in occlusion
+07-15 21:19:16.974  9423 10967 D C057C6/com.example.arktavern/BinderInvoker: ~BinderInvoker: :31483008
+07-15 21:19:16.974  9423 10967 D C057C4/com.example.arktavern/IPCThreadSkeleton: ~IPCThreadSkeleton: thread exit, instance:30518656 name:OS_FFRT_4_3 threadType:-1330597712
+07-15 21:19:17.983  9423  9464 D C01201/com.example.arktavern/InnerEvent: innerEventId is 1, caller is [watchdog.cpp(Timer:255)]
+07-15 21:19:17.983  9423  9464 D C01201/com.example.arktavern/EventHandler: Current event id is 400974169583607 .
+07-15 21:19:17.983  9423  9464 D C01201/com.example.arktavern/EventQueueBase: Insert task: 400974169583607 0.
+07-15 21:19:17.984  9423  9423 D C01201/com.example.arktavern/EventHandler: EventName: 1, eventId: 400974169583607, priority: 0
+07-15 21:19:18.034  9423  9500 D C01201/com.example.arktavern/InnerEvent: event taskName is 'ARKTS_IDLE_NOTIFY', caller is [ark_idle_monitor.cpp(CheckIntervalIdle:454)]
+07-15 21:19:18.034  9423  9500 D C01201/com.example.arktavern/EventHandler: Current event id is 400974220510170 .
+07-15 21:19:18.034  9423  9500 D C01201/com.example.arktavern/EventQueueBase: Insert task: 400974220510170 0.
+07-15 21:19:18.034  9423  9423 D C01201/com.example.arktavern/EventHandler: EventName: ARKTS_IDLE_NOTIFY, eventId: 400974220510170, priority: 1
+07-15 21:19:18.034  9423  9423 D C01201/com.example.arktavern/EventHandler: excute event taskCallback
+07-15 21:19:18.035  9423  9423 D C03F00/com.example.arktavern/ArkCompiler: [gc] IdleGCTrigger: check young GC semi Space size since gc:1304528
+07-15 21:19:18.217   754 10964 D C02801/multimodalinput/MMIService: [|4954]The application main thread and event reading thread are combined, such as:programName:com.example.arktavern, pid:9423, mainThreadId:9423, readThreadId:9423
+07-15 21:19:18.474  2540  3595 D C0420C/com.ohos.sceneboard/WMSEvent: GetFullWindowInfoList: [EventDispatch] windowName=arktavern0 bundleName=com.example.arktavern windowId=1982 activeStatus=1
+07-15 21:19:18.483  2540  3595 D C0420C/com.ohos.sceneboard/WMSEvent: GetFullWindowInfoList: [EventDispatch] windowName=arktavern0 bundleName=com.example.arktavern windowId=1982 activeStatus=1
+07-15 21:19:18.483  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[WindowScene_arktavern1982] nodeid:[10909217511493] pid:[2540] nodeType:[4] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:18.483  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[arktavern0] nodeid:[40471476830210] pid:[9423] nodeType:[1] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:18.484  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [arktavern0, 40471476830210] DirtyRect[0, 0, 0, 0]
+07-15 21:19:18.484  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [WindowScene_arktavern1982, 10909217511493] DirtyRect[0, 0, 0, 0]
+07-15 21:19:18.484  1385  1385 D C01406/render_service/RSUniRenderVisitor: CalculateOpaqueAndTransparentRegion Node: WindowScene_arktavern1982, NodeId: 10909217511493 not paticipate in occlusion
+07-15 21:19:18.490  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable ondraw name:WindowScene_arktavern1982 nodeId:[10909217511493]
+07-15 21:19:18.490  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable::OnDraw node:10909217511493, name:WindowScene_arktavern1982,OcclusionVisible:0 Bound:(0.000000, 0.000000, 1224.000000, 2776.000000)
+07-15 21:19:18.490  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable ondraw name:arktavern0 nodeId:[40471476830210]
+07-15 21:19:18.490  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable::OnDraw node:40471476830210, name:arktavern0,OcclusionVisible:0 Bound:(0.000000, 0.000000, 1224.000000, 2776.000000)
+07-15 21:19:18.491  1385  1599 D C01406/render_service/skia: SurfaceNodeDrawable DrawSurfaceWatermark Name:arktavern0 Id:40471476830210 water mark count is zero
+07-15 21:19:18.491  1385  1599 I C01406/render_service/skia: RSSurfaceRenderNodeDrawable::OnDraw name:arktavern0, the number of total processedNodes: 2
+07-15 21:19:18.491  1385  1599 D C01406/render_service/skia: SurfaceNodeDrawable DrawSurfaceWatermark Name:WindowScene_arktavern1982 Id:10909217511493 water mark count is zero
+07-15 21:19:18.615  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[WindowScene_arktavern1982] nodeid:[10909217511493] pid:[2540] nodeType:[4] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:18.615  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[arktavern0] nodeid:[40471476830210] pid:[9423] nodeType:[1] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:18.615  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [arktavern0, 40471476830210] DirtyRect[0, 0, 0, 0]
+07-15 21:19:18.615  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [WindowScene_arktavern1982, 10909217511493] DirtyRect[0, 0, 0, 0]
+07-15 21:19:18.615  1385  1385 D C01406/render_service/RSUniRenderVisitor: CalculateOpaqueAndTransparentRegion Node: WindowScene_arktavern1982, NodeId: 10909217511493 not paticipate in occlusion
+07-15 21:19:18.665  9423 11078 D C057C6/com.example.arktavern/BinderInvoker: ~BinderInvoker: :297693568
+07-15 21:19:18.665  9423 11078 D C057C4/com.example.arktavern/IPCThreadSkeleton: ~IPCThreadSkeleton: thread exit, instance:111840864 name:OS_FFRT_5_5 threadType:-1330597712
+07-15 21:19:20.983  9423  9464 D C01201/com.example.arktavern/InnerEvent: innerEventId is 1, caller is [watchdog.cpp(Timer:255)]
+07-15 21:19:20.983  9423  9464 D C01201/com.example.arktavern/EventHandler: Current event id is 400977169503399 .
+07-15 21:19:20.983  9423  9464 D C01201/com.example.arktavern/EventQueueBase: Insert task: 400977169503399 0.
+07-15 21:19:20.984  9423  9423 D C01201/com.example.arktavern/EventHandler: EventName: 1, eventId: 400977169503399, priority: 0
+07-15 21:19:21.500  2540  3595 D C0420C/com.ohos.sceneboard/WMSEvent: GetFullWindowInfoList: [EventDispatch] windowName=arktavern0 bundleName=com.example.arktavern windowId=1982 activeStatus=1
+07-15 21:19:21.504  2540  3595 D C0420C/com.ohos.sceneboard/WMSEvent: GetFullWindowInfoList: [EventDispatch] windowName=arktavern0 bundleName=com.example.arktavern windowId=1982 activeStatus=1
+07-15 21:19:21.505  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[WindowScene_arktavern1982] nodeid:[10909217511493] pid:[2540] nodeType:[4] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:21.505  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[arktavern0] nodeid:[40471476830210] pid:[9423] nodeType:[1] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:21.506  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [arktavern0, 40471476830210] DirtyRect[0, 0, 0, 0]
+07-15 21:19:21.506  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [WindowScene_arktavern1982, 10909217511493] DirtyRect[0, 0, 0, 0]
+07-15 21:19:21.506  1385  1385 D C01406/render_service/RSUniRenderVisitor: CalculateOpaqueAndTransparentRegion Node: WindowScene_arktavern1982, NodeId: 10909217511493 not paticipate in occlusion
+07-15 21:19:21.511  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable ondraw name:WindowScene_arktavern1982 nodeId:[10909217511493]
+07-15 21:19:21.511  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable::OnDraw node:10909217511493, name:WindowScene_arktavern1982,OcclusionVisible:0 Bound:(0.000000, 0.000000, 1224.000000, 2776.000000)
+07-15 21:19:21.511  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable ondraw name:arktavern0 nodeId:[40471476830210]
+07-15 21:19:21.511  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable::OnDraw node:40471476830210, name:arktavern0,OcclusionVisible:0 Bound:(0.000000, 0.000000, 1224.000000, 2776.000000)
+07-15 21:19:21.511  1385  1599 D C01406/render_service/skia: SurfaceNodeDrawable DrawSurfaceWatermark Name:arktavern0 Id:40471476830210 water mark count is zero
+07-15 21:19:21.511  1385  1599 D C01406/render_service/skia: SurfaceNodeDrawable DrawSurfaceWatermark Name:WindowScene_arktavern1982 Id:10909217511493 water mark count is zero
+07-15 21:19:21.638  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[WindowScene_arktavern1982] nodeid:[10909217511493] pid:[2540] nodeType:[4] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:21.638  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[arktavern0] nodeid:[40471476830210] pid:[9423] nodeType:[1] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:21.638  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [arktavern0, 40471476830210] DirtyRect[0, 0, 0, 0]
+07-15 21:19:21.638  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [WindowScene_arktavern1982, 10909217511493] DirtyRect[0, 0, 0, 0]
+07-15 21:19:21.638  1385  1385 D C01406/render_service/RSUniRenderVisitor: CalculateOpaqueAndTransparentRegion Node: WindowScene_arktavern1982, NodeId: 10909217511493 not paticipate in occlusion
+07-15 21:19:22.037  9423  9503 D C057C6/com.example.arktavern/BinderInvoker: ~BinderInvoker: :112286336
+07-15 21:19:22.037  9423  9503 D C057C4/com.example.arktavern/IPCThreadSkeleton: ~IPCThreadSkeleton: thread exit, instance:111383312 name:OS_FFRT_3_3 threadType:-1330597712
+07-15 21:19:22.439  2540  3595 D C0420C/com.ohos.sceneboard/WMSEvent: GetFullWindowInfoList: [EventDispatch] windowName=arktavern0 bundleName=com.example.arktavern windowId=1982 activeStatus=1
+07-15 21:19:22.451  2540  3595 D C0420C/com.ohos.sceneboard/WMSEvent: GetFullWindowInfoList: [EventDispatch] windowName=arktavern0 bundleName=com.example.arktavern windowId=1982 activeStatus=1
+07-15 21:19:22.452  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[WindowScene_arktavern1982] nodeid:[10909217511493] pid:[2540] nodeType:[4] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:22.452  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[arktavern0] nodeid:[40471476830210] pid:[9423] nodeType:[1] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:22.452  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [arktavern0, 40471476830210] DirtyRect[0, 0, 0, 0]
+07-15 21:19:22.452  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [WindowScene_arktavern1982, 10909217511493] DirtyRect[0, 0, 0, 0]
+07-15 21:19:22.453  1385  1385 D C01406/render_service/RSUniRenderVisitor: CalculateOpaqueAndTransparentRegion Node: WindowScene_arktavern1982, NodeId: 10909217511493 not paticipate in occlusion
+07-15 21:19:22.457  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable ondraw name:WindowScene_arktavern1982 nodeId:[10909217511493]
+07-15 21:19:22.458  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable::OnDraw node:10909217511493, name:WindowScene_arktavern1982,OcclusionVisible:0 Bound:(0.000000, 0.000000, 1224.000000, 2776.000000)
+07-15 21:19:22.458  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable ondraw name:arktavern0 nodeId:[40471476830210]
+07-15 21:19:22.458  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable::OnDraw node:40471476830210, name:arktavern0,OcclusionVisible:0 Bound:(0.000000, 0.000000, 1224.000000, 2776.000000)
+07-15 21:19:22.458  1385  1599 D C01406/render_service/skia: SurfaceNodeDrawable DrawSurfaceWatermark Name:arktavern0 Id:40471476830210 water mark count is zero
+07-15 21:19:22.458  1385  1599 D C01406/render_service/skia: SurfaceNodeDrawable DrawSurfaceWatermark Name:WindowScene_arktavern1982 Id:10909217511493 water mark count is zero
+07-15 21:19:22.584  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[WindowScene_arktavern1982] nodeid:[10909217511493] pid:[2540] nodeType:[4] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:22.584  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[arktavern0] nodeid:[40471476830210] pid:[9423] nodeType:[1] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:22.585  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [arktavern0, 40471476830210] DirtyRect[0, 0, 0, 0]
+07-15 21:19:22.585  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [WindowScene_arktavern1982, 10909217511493] DirtyRect[0, 0, 0, 0]
+07-15 21:19:22.585  1385  1385 D C01406/render_service/RSUniRenderVisitor: CalculateOpaqueAndTransparentRegion Node: WindowScene_arktavern1982, NodeId: 10909217511493 not paticipate in occlusion
+07-15 21:19:23.984  9423  9464 D C01201/com.example.arktavern/InnerEvent: innerEventId is 1, caller is [watchdog.cpp(Timer:255)]
+07-15 21:19:23.984  9423  9464 D C01201/com.example.arktavern/EventHandler: Current event id is 400980170652877 .
+07-15 21:19:23.985  9423  9464 D C01201/com.example.arktavern/EventQueueBase: Insert task: 400980170652877 0.
+07-15 21:19:23.985  9423  9423 D C01201/com.example.arktavern/EventHandler: EventName: 1, eventId: 400980170652877, priority: 0
+07-15 21:19:24.269  1267  9532 D C01120/parent_control_service/BMS: [bundle_mgr_proxy.cpp(GetAppIdByBundleName:848)]begin to get appId of com.example.arktavern
+07-15 21:19:24.270  1387 59385 D C01120/foundation/BMS: [bundle_mgr_host_impl.cpp(GetAppIdByBundleName:3609)]bundleName : com.example.arktavern, userId : 100
+07-15 21:19:24.270  1387 59385 D C01120/foundation/BMS: [bundle_data_mgr.cpp(GetInnerBundleInfoWithFlags:5399)]GetInnerBundleInfoWithFlags: com.example.arktavern
+07-15 21:19:24.270  1387 59385 D C01120/foundation/BMS: [inner_bundle_info.cpp(GetBundleWithAbilities:3181)]bundleName:com.example.arktavern userid:100
+07-15 21:19:24.270  1387 59385 D C01121/foundation/BMSQuery: bundle_data_mgr.cpp:GetBundleInfo:3192 get bundleInfo(com.example.arktavern) successfully in user(100)
+07-15 21:19:24.509  2540  3595 D C0420C/com.ohos.sceneboard/WMSEvent: GetFullWindowInfoList: [EventDispatch] windowName=arktavern0 bundleName=com.example.arktavern windowId=1982 activeStatus=1
+07-15 21:19:24.516  2540  3595 D C0420C/com.ohos.sceneboard/WMSEvent: GetFullWindowInfoList: [EventDispatch] windowName=arktavern0 bundleName=com.example.arktavern windowId=1982 activeStatus=1
+07-15 21:19:24.518  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[WindowScene_arktavern1982] nodeid:[10909217511493] pid:[2540] nodeType:[4] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:24.518  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[arktavern0] nodeid:[40471476830210] pid:[9423] nodeType:[1] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:24.518  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [arktavern0, 40471476830210] DirtyRect[0, 0, 0, 0]
+07-15 21:19:24.519  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [WindowScene_arktavern1982, 10909217511493] DirtyRect[0, 0, 0, 0]
+07-15 21:19:24.519  1385  1385 D C01406/render_service/RSUniRenderVisitor: CalculateOpaqueAndTransparentRegion Node: WindowScene_arktavern1982, NodeId: 10909217511493 not paticipate in occlusion
+07-15 21:19:24.523  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable ondraw name:WindowScene_arktavern1982 nodeId:[10909217511493]
+07-15 21:19:24.523  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable::OnDraw node:10909217511493, name:WindowScene_arktavern1982,OcclusionVisible:0 Bound:(0.000000, 0.000000, 1224.000000, 2776.000000)
+07-15 21:19:24.523  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable ondraw name:arktavern0 nodeId:[40471476830210]
+07-15 21:19:24.524  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable::OnDraw node:40471476830210, name:arktavern0,OcclusionVisible:0 Bound:(0.000000, 0.000000, 1224.000000, 2776.000000)
+07-15 21:19:24.524  1385  1599 D C01406/render_service/skia: SurfaceNodeDrawable DrawSurfaceWatermark Name:arktavern0 Id:40471476830210 water mark count is zero
+07-15 21:19:24.524  1385  1599 I C01406/render_service/skia: RSSurfaceRenderNodeDrawable::OnDraw name:arktavern0, the number of total processedNodes: 2
+07-15 21:19:24.524  1385  1599 D C01406/render_service/skia: SurfaceNodeDrawable DrawSurfaceWatermark Name:WindowScene_arktavern1982 Id:10909217511493 water mark count is zero
+07-15 21:19:24.649  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[WindowScene_arktavern1982] nodeid:[10909217511493] pid:[2540] nodeType:[4] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:24.649  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[arktavern0] nodeid:[40471476830210] pid:[9423] nodeType:[1] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:24.649  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [arktavern0, 40471476830210] DirtyRect[0, 0, 0, 0]
+07-15 21:19:24.650  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [WindowScene_arktavern1982, 10909217511493] DirtyRect[0, 0, 0, 0]
+07-15 21:19:24.650  1385  1385 D C01406/render_service/RSUniRenderVisitor: CalculateOpaqueAndTransparentRegion Node: WindowScene_arktavern1982, NodeId: 10909217511493 not paticipate in occlusion
+07-15 21:19:25.500  2540  3595 D C0420C/com.ohos.sceneboard/WMSEvent: GetFullWindowInfoList: [EventDispatch] windowName=arktavern0 bundleName=com.example.arktavern windowId=1982 activeStatus=1
+07-15 21:19:25.512  2540  3595 D C0420C/com.ohos.sceneboard/WMSEvent: GetFullWindowInfoList: [EventDispatch] windowName=arktavern0 bundleName=com.example.arktavern windowId=1982 activeStatus=1
+07-15 21:19:25.513  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[WindowScene_arktavern1982] nodeid:[10909217511493] pid:[2540] nodeType:[4] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:25.513  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[arktavern0] nodeid:[40471476830210] pid:[9423] nodeType:[1] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:25.514  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [arktavern0, 40471476830210] DirtyRect[0, 0, 0, 0]
+07-15 21:19:25.514  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [WindowScene_arktavern1982, 10909217511493] DirtyRect[0, 0, 0, 0]
+07-15 21:19:25.514  1385  1385 D C01406/render_service/RSUniRenderVisitor: CalculateOpaqueAndTransparentRegion Node: WindowScene_arktavern1982, NodeId: 10909217511493 not paticipate in occlusion
+07-15 21:19:25.519  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable ondraw name:WindowScene_arktavern1982 nodeId:[10909217511493]
+07-15 21:19:25.519  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable::OnDraw node:10909217511493, name:WindowScene_arktavern1982,OcclusionVisible:0 Bound:(0.000000, 0.000000, 1224.000000, 2776.000000)
+07-15 21:19:25.519  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable ondraw name:arktavern0 nodeId:[40471476830210]
+07-15 21:19:25.519  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable::OnDraw node:40471476830210, name:arktavern0,OcclusionVisible:0 Bound:(0.000000, 0.000000, 1224.000000, 2776.000000)
+07-15 21:19:25.520  1385  1599 D C01406/render_service/skia: SurfaceNodeDrawable DrawSurfaceWatermark Name:arktavern0 Id:40471476830210 water mark count is zero
+07-15 21:19:25.520  1385  1599 D C01406/render_service/skia: SurfaceNodeDrawable DrawSurfaceWatermark Name:WindowScene_arktavern1982 Id:10909217511493 water mark count is zero
+07-15 21:19:25.646  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[WindowScene_arktavern1982] nodeid:[10909217511493] pid:[2540] nodeType:[4] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:25.646  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[arktavern0] nodeid:[40471476830210] pid:[9423] nodeType:[1] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:25.646  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [arktavern0, 40471476830210] DirtyRect[0, 0, 0, 0]
+07-15 21:19:25.646  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [WindowScene_arktavern1982, 10909217511493] DirtyRect[0, 0, 0, 0]
+07-15 21:19:25.646  1385  1385 D C01406/render_service/RSUniRenderVisitor: CalculateOpaqueAndTransparentRegion Node: WindowScene_arktavern1982, NodeId: 10909217511493 not paticipate in occlusion
+07-15 21:19:26.984  9423  9464 D C01201/com.example.arktavern/InnerEvent: innerEventId is 1, caller is [watchdog.cpp(Timer:255)]
+07-15 21:19:26.984  9423  9464 D C01201/com.example.arktavern/EventHandler: Current event id is 400983170465377 .
+07-15 21:19:26.984  9423  9464 D C01201/com.example.arktavern/EventQueueBase: Insert task: 400983170465377 0.
+07-15 21:19:26.985  9423  9423 D C01201/com.example.arktavern/EventHandler: EventName: 1, eventId: 400983170465377, priority: 0
+07-15 21:19:27.490  2540  3595 D C0420C/com.ohos.sceneboard/WMSEvent: GetFullWindowInfoList: [EventDispatch] windowName=arktavern0 bundleName=com.example.arktavern windowId=1982 activeStatus=1
+07-15 21:19:27.498  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[WindowScene_arktavern1982] nodeid:[10909217511493] pid:[2540] nodeType:[4] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:27.498  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[arktavern0] nodeid:[40471476830210] pid:[9423] nodeType:[1] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:27.498  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [arktavern0, 40471476830210] DirtyRect[0, 0, 0, 0]
+07-15 21:19:27.498  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [WindowScene_arktavern1982, 10909217511493] DirtyRect[0, 0, 0, 0]
+07-15 21:19:27.498  1385  1385 D C01406/render_service/RSUniRenderVisitor: CalculateOpaqueAndTransparentRegion Node: WindowScene_arktavern1982, NodeId: 10909217511493 not paticipate in occlusion
+07-15 21:19:27.498  2540  3595 D C0420C/com.ohos.sceneboard/WMSEvent: GetFullWindowInfoList: [EventDispatch] windowName=arktavern0 bundleName=com.example.arktavern windowId=1982 activeStatus=1
+07-15 21:19:27.503  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable ondraw name:WindowScene_arktavern1982 nodeId:[10909217511493]
+07-15 21:19:27.503  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable::OnDraw node:10909217511493, name:WindowScene_arktavern1982,OcclusionVisible:0 Bound:(0.000000, 0.000000, 1224.000000, 2776.000000)
+07-15 21:19:27.503  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable ondraw name:arktavern0 nodeId:[40471476830210]
+07-15 21:19:27.503  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable::OnDraw node:40471476830210, name:arktavern0,OcclusionVisible:0 Bound:(0.000000, 0.000000, 1224.000000, 2776.000000)
+07-15 21:19:27.503  1385  1599 D C01406/render_service/skia: SurfaceNodeDrawable DrawSurfaceWatermark Name:arktavern0 Id:40471476830210 water mark count is zero
+07-15 21:19:27.503  1385  1599 D C01406/render_service/skia: SurfaceNodeDrawable DrawSurfaceWatermark Name:WindowScene_arktavern1982 Id:10909217511493 water mark count is zero
+07-15 21:19:27.632  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[WindowScene_arktavern1982] nodeid:[10909217511493] pid:[2540] nodeType:[4] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:27.633  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[arktavern0] nodeid:[40471476830210] pid:[9423] nodeType:[1] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:27.633  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [arktavern0, 40471476830210] DirtyRect[0, 0, 0, 0]
+07-15 21:19:27.633  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [WindowScene_arktavern1982, 10909217511493] DirtyRect[0, 0, 0, 0]
+07-15 21:19:27.633  1385  1385 D C01406/render_service/RSUniRenderVisitor: CalculateOpaqueAndTransparentRegion Node: WindowScene_arktavern1982, NodeId: 10909217511493 not paticipate in occlusion
+07-15 21:19:28.547  2540  3595 D C0420C/com.ohos.sceneboard/WMSEvent: GetFullWindowInfoList: [EventDispatch] windowName=arktavern0 bundleName=com.example.arktavern windowId=1982 activeStatus=1
+07-15 21:19:28.559  2540  3595 D C0420C/com.ohos.sceneboard/WMSEvent: GetFullWindowInfoList: [EventDispatch] windowName=arktavern0 bundleName=com.example.arktavern windowId=1982 activeStatus=1
+07-15 21:19:28.561  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[WindowScene_arktavern1982] nodeid:[10909217511493] pid:[2540] nodeType:[4] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:28.561  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[arktavern0] nodeid:[40471476830210] pid:[9423] nodeType:[1] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:28.561  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [arktavern0, 40471476830210] DirtyRect[0, 0, 0, 0]
+07-15 21:19:28.561  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [WindowScene_arktavern1982, 10909217511493] DirtyRect[0, 0, 0, 0]
+07-15 21:19:28.561  1385  1385 D C01406/render_service/RSUniRenderVisitor: CalculateOpaqueAndTransparentRegion Node: WindowScene_arktavern1982, NodeId: 10909217511493 not paticipate in occlusion
+07-15 21:19:28.566  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable ondraw name:WindowScene_arktavern1982 nodeId:[10909217511493]
+07-15 21:19:28.566  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable::OnDraw node:10909217511493, name:WindowScene_arktavern1982,OcclusionVisible:0 Bound:(0.000000, 0.000000, 1224.000000, 2776.000000)
+07-15 21:19:28.567  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable ondraw name:arktavern0 nodeId:[40471476830210]
+07-15 21:19:28.567  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable::OnDraw node:40471476830210, name:arktavern0,OcclusionVisible:0 Bound:(0.000000, 0.000000, 1224.000000, 2776.000000)
+07-15 21:19:28.567  1385  1599 D C01406/render_service/skia: SurfaceNodeDrawable DrawSurfaceWatermark Name:arktavern0 Id:40471476830210 water mark count is zero
+07-15 21:19:28.567  1385  1599 D C01406/render_service/skia: SurfaceNodeDrawable DrawSurfaceWatermark Name:WindowScene_arktavern1982 Id:10909217511493 water mark count is zero
+07-15 21:19:28.693  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[WindowScene_arktavern1982] nodeid:[10909217511493] pid:[2540] nodeType:[4] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:28.693  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[arktavern0] nodeid:[40471476830210] pid:[9423] nodeType:[1] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:28.693  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [arktavern0, 40471476830210] DirtyRect[0, 0, 0, 0]
+07-15 21:19:28.693  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [WindowScene_arktavern1982, 10909217511493] DirtyRect[0, 0, 0, 0]
+07-15 21:19:28.693  1385  1385 D C01406/render_service/RSUniRenderVisitor: CalculateOpaqueAndTransparentRegion Node: WindowScene_arktavern1982, NodeId: 10909217511493 not paticipate in occlusion
+07-15 21:19:29.984  9423  9464 D C01201/com.example.arktavern/InnerEvent: innerEventId is 1, caller is [watchdog.cpp(Timer:255)]
+07-15 21:19:29.984  9423  9464 D C01201/com.example.arktavern/EventHandler: Current event id is 400986170294543 .
+07-15 21:19:29.984  9423  9464 D C01201/com.example.arktavern/EventQueueBase: Insert task: 400986170294543 0.
+07-15 21:19:29.984  9423  9423 D C01201/com.example.arktavern/EventHandler: EventName: 1, eventId: 400986170294543, priority: 0
+07-15 21:19:30.035  9423  9500 D C01201/com.example.arktavern/InnerEvent: event taskName is 'ARKTS_IDLE_NOTIFY', caller is [ark_idle_monitor.cpp(CheckIntervalIdle:454)]
+07-15 21:19:30.035  9423  9500 D C01201/com.example.arktavern/EventHandler: Current event id is 400986221433606 .
+07-15 21:19:30.035  9423  9500 D C01201/com.example.arktavern/EventQueueBase: Insert task: 400986221433606 0.
+07-15 21:19:30.036  9423  9423 D C01201/com.example.arktavern/EventHandler: EventName: ARKTS_IDLE_NOTIFY, eventId: 400986221433606, priority: 1
+07-15 21:19:30.036  9423  9423 D C01201/com.example.arktavern/EventHandler: excute event taskCallback
+07-15 21:19:30.036  9423  9423 D C03F00/com.example.arktavern/ArkCompiler: [gc] IdleGCTrigger: check young GC semi Space size since gc:1304528
+07-15 21:19:30.493  2540  3595 D C0420C/com.ohos.sceneboard/WMSEvent: GetFullWindowInfoList: [EventDispatch] windowName=arktavern0 bundleName=com.example.arktavern windowId=1982 activeStatus=1
+07-15 21:19:30.500  2540  3595 D C0420C/com.ohos.sceneboard/WMSEvent: GetFullWindowInfoList: [EventDispatch] windowName=arktavern0 bundleName=com.example.arktavern windowId=1982 activeStatus=1
+07-15 21:19:30.502  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[WindowScene_arktavern1982] nodeid:[10909217511493] pid:[2540] nodeType:[4] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:30.502  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[arktavern0] nodeid:[40471476830210] pid:[9423] nodeType:[1] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:30.502  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [arktavern0, 40471476830210] DirtyRect[0, 0, 0, 0]
+07-15 21:19:30.502  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [WindowScene_arktavern1982, 10909217511493] DirtyRect[0, 0, 0, 0]
+07-15 21:19:30.502  1385  1385 D C01406/render_service/RSUniRenderVisitor: CalculateOpaqueAndTransparentRegion Node: WindowScene_arktavern1982, NodeId: 10909217511493 not paticipate in occlusion
+07-15 21:19:30.508  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable ondraw name:WindowScene_arktavern1982 nodeId:[10909217511493]
+07-15 21:19:30.508  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable::OnDraw node:10909217511493, name:WindowScene_arktavern1982,OcclusionVisible:0 Bound:(0.000000, 0.000000, 1224.000000, 2776.000000)
+07-15 21:19:30.508  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable ondraw name:arktavern0 nodeId:[40471476830210]
+07-15 21:19:30.508  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable::OnDraw node:40471476830210, name:arktavern0,OcclusionVisible:0 Bound:(0.000000, 0.000000, 1224.000000, 2776.000000)
+07-15 21:19:30.508  1385  1599 D C01406/render_service/skia: SurfaceNodeDrawable DrawSurfaceWatermark Name:arktavern0 Id:40471476830210 water mark count is zero
+07-15 21:19:30.508  1385  1599 I C01406/render_service/skia: RSSurfaceRenderNodeDrawable::OnDraw name:arktavern0, the number of total processedNodes: 2
+07-15 21:19:30.508  1385  1599 D C01406/render_service/skia: SurfaceNodeDrawable DrawSurfaceWatermark Name:WindowScene_arktavern1982 Id:10909217511493 water mark count is zero
+07-15 21:19:30.634  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[WindowScene_arktavern1982] nodeid:[10909217511493] pid:[2540] nodeType:[4] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:30.634  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[arktavern0] nodeid:[40471476830210] pid:[9423] nodeType:[1] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:30.634  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [arktavern0, 40471476830210] DirtyRect[0, 0, 0, 0]
+07-15 21:19:30.634  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [WindowScene_arktavern1982, 10909217511493] DirtyRect[0, 0, 0, 0]
+07-15 21:19:30.634  1385  1385 D C01406/render_service/RSUniRenderVisitor: CalculateOpaqueAndTransparentRegion Node: WindowScene_arktavern1982, NodeId: 10909217511493 not paticipate in occlusion
+07-15 21:19:31.602  2540  3595 D C0420C/com.ohos.sceneboard/WMSEvent: GetFullWindowInfoList: [EventDispatch] windowName=arktavern0 bundleName=com.example.arktavern windowId=1982 activeStatus=1
+07-15 21:19:31.613  2540  3595 D C0420C/com.ohos.sceneboard/WMSEvent: GetFullWindowInfoList: [EventDispatch] windowName=arktavern0 bundleName=com.example.arktavern windowId=1982 activeStatus=1
+07-15 21:19:31.614  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[WindowScene_arktavern1982] nodeid:[10909217511493] pid:[2540] nodeType:[4] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:31.615  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[arktavern0] nodeid:[40471476830210] pid:[9423] nodeType:[1] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:31.615  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [arktavern0, 40471476830210] DirtyRect[0, 0, 0, 0]
+07-15 21:19:31.615  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [WindowScene_arktavern1982, 10909217511493] DirtyRect[0, 0, 0, 0]
+07-15 21:19:31.615  1385  1385 D C01406/render_service/RSUniRenderVisitor: CalculateOpaqueAndTransparentRegion Node: WindowScene_arktavern1982, NodeId: 10909217511493 not paticipate in occlusion
+07-15 21:19:31.620  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable ondraw name:WindowScene_arktavern1982 nodeId:[10909217511493]
+07-15 21:19:31.620  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable::OnDraw node:10909217511493, name:WindowScene_arktavern1982,OcclusionVisible:0 Bound:(0.000000, 0.000000, 1224.000000, 2776.000000)
+07-15 21:19:31.620  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable ondraw name:arktavern0 nodeId:[40471476830210]
+07-15 21:19:31.620  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable::OnDraw node:40471476830210, name:arktavern0,OcclusionVisible:0 Bound:(0.000000, 0.000000, 1224.000000, 2776.000000)
+07-15 21:19:31.620  1385  1599 D C01406/render_service/skia: SurfaceNodeDrawable DrawSurfaceWatermark Name:arktavern0 Id:40471476830210 water mark count is zero
+07-15 21:19:31.620  1385  1599 D C01406/render_service/skia: SurfaceNodeDrawable DrawSurfaceWatermark Name:WindowScene_arktavern1982 Id:10909217511493 water mark count is zero
+07-15 21:19:31.746  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[WindowScene_arktavern1982] nodeid:[10909217511493] pid:[2540] nodeType:[4] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:31.746  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[arktavern0] nodeid:[40471476830210] pid:[9423] nodeType:[1] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:31.746  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [arktavern0, 40471476830210] DirtyRect[0, 0, 0, 0]
+07-15 21:19:31.746  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [WindowScene_arktavern1982, 10909217511493] DirtyRect[0, 0, 0, 0]
+07-15 21:19:31.746  1385  1385 D C01406/render_service/RSUniRenderVisitor: CalculateOpaqueAndTransparentRegion Node: WindowScene_arktavern1982, NodeId: 10909217511493 not paticipate in occlusion
+07-15 21:19:32.984  9423  9464 D C01201/com.example.arktavern/InnerEvent: innerEventId is 1, caller is [watchdog.cpp(Timer:255)]
+07-15 21:19:32.984  9423  9464 D C01201/com.example.arktavern/EventHandler: Current event id is 400989170192980 .
+07-15 21:19:32.984  9423  9464 D C01201/com.example.arktavern/EventQueueBase: Insert task: 400989170192980 0.
+07-15 21:19:32.984  9423  9423 D C01201/com.example.arktavern/EventHandler: EventName: 1, eventId: 400989170192980, priority: 0
+07-15 21:19:33.492  2540  3595 D C0420C/com.ohos.sceneboard/WMSEvent: GetFullWindowInfoList: [EventDispatch] windowName=arktavern0 bundleName=com.example.arktavern windowId=1982 activeStatus=1
+07-15 21:19:33.499  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[WindowScene_arktavern1982] nodeid:[10909217511493] pid:[2540] nodeType:[4] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:33.499  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[arktavern0] nodeid:[40471476830210] pid:[9423] nodeType:[1] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:33.499  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [arktavern0, 40471476830210] DirtyRect[0, 0, 0, 0]
+07-15 21:19:33.499  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [WindowScene_arktavern1982, 10909217511493] DirtyRect[0, 0, 0, 0]
+07-15 21:19:33.500  2540  3595 D C0420C/com.ohos.sceneboard/WMSEvent: GetFullWindowInfoList: [EventDispatch] windowName=arktavern0 bundleName=com.example.arktavern windowId=1982 activeStatus=1
+07-15 21:19:33.500  1385  1385 D C01406/render_service/RSUniRenderVisitor: CalculateOpaqueAndTransparentRegion Node: WindowScene_arktavern1982, NodeId: 10909217511493 not paticipate in occlusion
+07-15 21:19:33.505  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable ondraw name:WindowScene_arktavern1982 nodeId:[10909217511493]
+07-15 21:19:33.505  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable::OnDraw node:10909217511493, name:WindowScene_arktavern1982,OcclusionVisible:0 Bound:(0.000000, 0.000000, 1224.000000, 2776.000000)
+07-15 21:19:33.505  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable ondraw name:arktavern0 nodeId:[40471476830210]
+07-15 21:19:33.505  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable::OnDraw node:40471476830210, name:arktavern0,OcclusionVisible:0 Bound:(0.000000, 0.000000, 1224.000000, 2776.000000)
+07-15 21:19:33.505  1385  1599 D C01406/render_service/skia: SurfaceNodeDrawable DrawSurfaceWatermark Name:arktavern0 Id:40471476830210 water mark count is zero
+07-15 21:19:33.505  1385  1599 D C01406/render_service/skia: SurfaceNodeDrawable DrawSurfaceWatermark Name:WindowScene_arktavern1982 Id:10909217511493 water mark count is zero
+07-15 21:19:33.562  1035  3182 D C02270/msdp/UserStatus: in ConvertAppName, can not find appname: com.example.arktavern
+07-15 21:19:33.563  1035  3182 D C02270/msdp/UserStatus: in ConvertAppName, can not find appname: com.example.arktavern
+07-15 21:19:33.630  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[WindowScene_arktavern1982] nodeid:[10909217511493] pid:[2540] nodeType:[4] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:33.630  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[arktavern0] nodeid:[40471476830210] pid:[9423] nodeType:[1] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:33.630  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [arktavern0, 40471476830210] DirtyRect[0, 0, 0, 0]
+07-15 21:19:33.630  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [WindowScene_arktavern1982, 10909217511493] DirtyRect[0, 0, 0, 0]
+07-15 21:19:33.630  1385  1385 D C01406/render_service/RSUniRenderVisitor: CalculateOpaqueAndTransparentRegion Node: WindowScene_arktavern1982, NodeId: 10909217511493 not paticipate in occlusion
+07-15 21:19:34.560   745  5360 D C02699/memmgrservice/MM: GetBundlePrioSet insert bundle [20020432][com.example.arktavern] to set, priority=0
+07-15 21:19:35.984  9423  9464 D C01201/com.example.arktavern/InnerEvent: innerEventId is 1, caller is [watchdog.cpp(Timer:255)]
+07-15 21:19:35.984  9423  9464 D C01201/com.example.arktavern/EventHandler: Current event id is 400992169899750 .
+07-15 21:19:35.984  9423  9464 D C01201/com.example.arktavern/EventQueueBase: Insert task: 400992169899750 0.
+07-15 21:19:35.984  9423  9423 D C01201/com.example.arktavern/EventHandler: EventName: 1, eventId: 400992169899750, priority: 0
+07-15 21:19:36.483  2540  3595 D C0420C/com.ohos.sceneboard/WMSEvent: GetFullWindowInfoList: [EventDispatch] windowName=arktavern0 bundleName=com.example.arktavern windowId=1982 activeStatus=1
+07-15 21:19:36.487  2540  3595 D C0420C/com.ohos.sceneboard/WMSEvent: GetFullWindowInfoList: [EventDispatch] windowName=arktavern0 bundleName=com.example.arktavern windowId=1982 activeStatus=1
+07-15 21:19:36.488  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[WindowScene_arktavern1982] nodeid:[10909217511493] pid:[2540] nodeType:[4] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:36.489  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[arktavern0] nodeid:[40471476830210] pid:[9423] nodeType:[1] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:36.489  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [arktavern0, 40471476830210] DirtyRect[0, 0, 0, 0]
+07-15 21:19:36.489  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [WindowScene_arktavern1982, 10909217511493] DirtyRect[0, 0, 0, 0]
+07-15 21:19:36.489  1385  1385 D C01406/render_service/RSUniRenderVisitor: CalculateOpaqueAndTransparentRegion Node: WindowScene_arktavern1982, NodeId: 10909217511493 not paticipate in occlusion
+07-15 21:19:36.493  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable ondraw name:WindowScene_arktavern1982 nodeId:[10909217511493]
+07-15 21:19:36.493  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable::OnDraw node:10909217511493, name:WindowScene_arktavern1982,OcclusionVisible:0 Bound:(0.000000, 0.000000, 1224.000000, 2776.000000)
+07-15 21:19:36.493  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable ondraw name:arktavern0 nodeId:[40471476830210]
+07-15 21:19:36.493  1385  1599 D C01406/render_service/skia: RSSurfaceRenderNodeDrawable::OnDraw node:40471476830210, name:arktavern0,OcclusionVisible:0 Bound:(0.000000, 0.000000, 1224.000000, 2776.000000)
+07-15 21:19:36.493  1385  1599 D C01406/render_service/skia: SurfaceNodeDrawable DrawSurfaceWatermark Name:arktavern0 Id:40471476830210 water mark count is zero
+07-15 21:19:36.493  1385  1599 I C01406/render_service/skia: RSSurfaceRenderNodeDrawable::OnDraw name:arktavern0, the number of total processedNodes: 2
+07-15 21:19:36.493  1385  1599 D C01406/render_service/skia: SurfaceNodeDrawable DrawSurfaceWatermark Name:WindowScene_arktavern1982 Id:10909217511493 water mark count is zero
+07-15 21:19:36.619  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[WindowScene_arktavern1982] nodeid:[10909217511493] pid:[2540] nodeType:[4] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:36.619  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepareSurfaceRenderNode:[arktavern0] nodeid:[40471476830210] pid:[9423] nodeType:[1] subTreeDirty[0] crossDisplay[0]
+07-15 21:19:36.620  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [arktavern0, 40471476830210] DirtyRect[0, 0, 0, 0]
+07-15 21:19:36.620  1385  1385 D C01406/render_service/RSUniRenderVisitor: QuickPrepare [WindowScene_arktavern1982, 10909217511493] DirtyRect[0, 0, 0, 0]
+07-15 21:19:36.620  1385  1385 D C01406/render_service/RSUniRenderVisitor: CalculateOpaqueAndTransparentRegion Node: WindowScene_arktavern1982, NodeId: 10909217511493 not paticipate in occlusion
+07-15 21:19:36.687  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.688  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.688  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.688  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.688  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.688  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.688  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.688  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.688  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.688  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.688  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.688  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.688  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.688  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.688  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.688  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.688  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.688  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.688  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.688  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.689  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.689  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.689  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.689  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.689  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.689  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.689  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.689  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.689  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.689  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.689  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.689  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.689  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.689  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.689  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.689  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.689  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.689  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.689  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.689  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.689  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.689  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.690  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.690  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.690  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.690  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.690  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.690  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.690  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.690  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.690  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[25] rowCnt[25] rowPos[25]!
+07-15 21:19:36.690  9423 11454 I C02D07/com.example.arktavern/ProcessorProxy: end to take data from observer=ha_app_event, seq=1, size=25
+07-15 21:19:36.690  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.690  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.690  9423 11454 I C04707/com.example.arktavern/HaAppEvent: OnEvents, 25
+07-15 21:19:36.690  9423 11454 D C01800/com.example.arktavern/SAMGR: DynamicCache QueryResult Recompute
+07-15 21:19:36.690  9423 11454 D C057C4/com.example.arktavern/IPCThreadSkeleton: IPCThreadSkeleton: instance:17616672 name:OS_FFRT_2_11
+07-15 21:19:36.690  9423 11454 D C057C6/com.example.arktavern/BinderInvoker: BinderInvoker: :31483648
+07-15 21:19:36.690  9423 11454 D C057C2/com.example.arktavern/IPCObjectProxy: UnRegisterBinderDeathRecipient: unregister result:1, handle:35
+07-15 21:19:36.690  9423 11454 D C057C2/com.example.arktavern/IPCObjectProxy: RemoveDeathRecipient: handle:35 desc:*.ICommonEvent addr:1714544512, result:1
+07-15 21:19:36.690  9423 11454 D C01810/com.example.arktavern/SA_CLIENT: GetSaWrap:Waiting for SA:401, 
+07-15 21:19:36.690  9423 11454 D C01810/com.example.arktavern/SA_CLIENT: CheckSystemAbility called, SA:401, isExist is 0
+07-15 21:19:36.690  9423  9463 D C057C2/com.example.arktavern/IPCObjectProxy: OnLastStrongRef: handle:35 proto:0
+07-15 21:19:36.691  9423  9463 D C057C6/com.example.arktavern/BinderInvoker: ReleaseHandle: handle:35
+07-15 21:19:36.691  9423  9463 D C057C1/com.example.arktavern/ProcessSkeleton: DetachObject: erase desc:IPCObjectProxy35
+07-15 21:19:36.691  9423  9463 D C057C2/com.example.arktavern/IPCObjectProxy: ~IPCObjectProxy: handle:4294967295 desc:*.ICommonEvent 1714544512
+07-15 21:19:36.691  9423  9463 D C057C1/com.example.arktavern/ProcessSkeleton: DetachValidObject: erase 1714544512 
+07-15 21:19:36.691  9423 11454 D C057C1/com.example.arktavern/ProcessSkeleton: QueryObject: The value of lockflag is:0
+07-15 21:19:36.691  9423 11454 D C057C5/com.example.arktavern/IPCProcessSkeleton: FindOrNewObject: handle:3 proto:0 new:0
+07-15 21:19:36.691  9423 11454 D C057C2/com.example.arktavern/IPCObjectProxy: AddDeathRecipient: death recipient is already registered, handle:3 desc:*.BundleMgr
+07-15 21:19:36.691  9423 11454 D C01120/com.example.arktavern/BMS: [bundle_mgr_proxy.cpp(BundleMgrProxy:97)]create bundle mgr proxy instance
+07-15 21:19:36.691  9423 11454 D C01810/com.example.arktavern/SAFWK: AddCacheApi Cache api(ohos.appexecfwk.BundleMgr, apiCode:98) already exists
+07-15 21:19:36.691  9423 11454 D C01120/com.example.arktavern/BMS: [bundle_mgr_proxy.cpp(GetOdid:4924)]GetOdid Called
+07-15 21:19:36.692  9423 11454 D C01120/com.example.arktavern/BMS: [bundle_mgr_proxy.cpp(GetOdid:4939)]GetOdid ret: 0, odid: <private>
+07-15 21:19:36.692  9423 11454 D C01120/com.example.arktavern/BMS: [bundle_mgr_proxy.cpp(~BundleMgrProxy:109)]destroy create bundle mgr proxy instance
+07-15 21:19:36.694  9423 11454 I C04707/com.example.arktavern/HaEcc: set app freq, *o*_*u*w*i*h*o*_*d*_*c*: quota: 50, minutes: 5
+07-15 21:19:36.694  9423 11454 I C04707/com.example.arktavern/HaEcc: consumeQueue_ = 0 0 0 0 0 
+07-15 21:19:36.697  9423 11454 I C02D07/com.example.arktavern/EventMappingDao: delete 25 records, observerSeq=1, ret=0
+07-15 21:19:36.697  9423 11454 D C01650/com.example.arktavern/AbsSharedResultSet: GoToRow:position[0] rowCnt[0] rowPos[-1]!
+07-15 21:19:36.698  9423 11454 I C02D07/com.example.arktavern/EventDao: delete 25 records, ret=0
+07-15 21:19:36.698  9423 11454 I C02D07/com.example.arktavern/Store: delete 0 params unused
+

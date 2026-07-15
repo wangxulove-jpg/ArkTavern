@@ -3,6 +3,8 @@ import timeTest from './Time.test';
 import networkErrorTest from './NetworkError.test';
 import sseParserTest from './SseParser.test';
 import utf8AndStateMachineTest from './Utf8StreamDecoder.test';
+import openAiUrlBuilderTest from './OpenAiUrlBuilder.test';
+import openAiSseDeltaParserTest from './OpenAiSseDeltaParser.test';
 
 export default function testsuite() {
   localUnitTest();
@@ -10,4 +12,6 @@ export default function testsuite() {
   networkErrorTest();
   sseParserTest();
   utf8AndStateMachineTest();
+  openAiUrlBuilderTest();
+  openAiSseDeltaParserTest();
 }
