@@ -37,10 +37,15 @@ Date: 2026-07-15
   - `utils/Uuid.ets`:ArkTS UUID v4 生成
   - `utils/Time.ets`:时间戳与格式化工具
 - 验收标准:
-  - [ ] Logger 可分级输出且对 `apiKey`/`Authorization` 等关键字段脱敏
-  - [ ] Uuid 生成符合 v4 格式
-  - [ ] Time 可生成毫秒时间戳与 ISO 字符串
-  - [ ] code-linter 无 error
+  - [x] Logger 可分级输出且对 `apiKey`/`Authorization` 等关键字段脱敏
+  - [x] Uuid 生成符合 v4 格式
+  - [x] Time 可生成毫秒时间戳与 ISO 字符串
+  - [x] code-linter 无 error
+- 实现说明:
+  - 实际使用的 HarmonyOS API:`@kit.PerformanceAnalysisKit` 的 `hilog`(Logger)、`@kit.CryptoArchitectureKit` 的 `cryptoFramework.createRandom().generateRandomSync(16)`(Uuid)、`Date.now()`/`Date.prototype.toISOString()`(Time,纯 JS 能力)
+  - 测试情况:本地单元测试通过(`entry/src/test/Time.test.ets`,7 个用例);Logger/Uuid 纯函数测试在 `entry/src/ohosTest/`(设备测试,11 + 14 个用例),需真机/模拟器运行
+  - 设备验证要求:Logger 实际 hilog 输出、Uuid.generateUuid 调用 cryptoFramework 需真机验证;纯函数 `isSensitiveKey`/`redactString`/`redactMap`/`formatUuidV4`/`isUuidV4` 已通过 ohosTest 编译,待真机执行
+  - 已知限制:`mock-config.json5` 为空,模块级导入 `@kit.*` 的文件无法在本地单元测试运行,只能放 ohosTest;`hvigorw codeLinter` 命令行因 `local.properties` 无 SDK 路径报 "SDK component missing",改用 MCP `build_project` 验证编译(CompileArkTS 通过)
 
 ### T-0.2 定义网络核心错误模型与 HttpClient 接口
 
@@ -51,9 +56,14 @@ Date: 2026-07-15
   - `models/NetworkError.ets`:定义 ApiError / TimeoutError / AuthError / ParseError 等枚举与类
   - `network/core/HttpClient.ets`:HTTP 客户端接口(请求/响应抽象,不绑定具体实现)
 - 验收标准:
-  - [ ] 错误类型可区分网络/超时/鉴权/解析
-  - [ ] HttpClient 为 interface,无具体 SDK 耦合
-  - [ ] 不含 any
+  - [x] 错误类型可区分网络/超时/鉴权/解析
+  - [x] HttpClient 为 interface,无具体 SDK 耦合
+  - [x] 不含 any
+- 实现说明:
+  - 实际使用的 HarmonyOS API:无(纯 ArkTS 接口定义与类型,不依赖设备 API)
+  - 测试情况:本地单元测试通过(`entry/src/test/NetworkError.test.ets`,16 个用例),覆盖 400/401/403/408/429/500/599/200 状态码映射、Cancelled 与 Timeout 区分、causeMessage 脱敏(Bearer/sk-token)、retryable 默认值与自定义;覆盖率:NetworkError.ets 函数 100%、行 97.96%、分支 96.43%
+  - 设备验证要求:无(纯类型定义,无设备依赖)
+  - 已知限制:`HttpHeaders` 使用 `Map<string, string>` 而非 `Record` 以规避 ArkTS 严格模式动态索引错误;HttpClient 仅接口,具体实现由 T-0.3+ 提供
 
 ### T-0.3 SSE 流式接收 PoC(关键技术验证)
 
@@ -70,6 +80,33 @@ Date: 2026-07-15
   - [ ] PoC 能对接真实端点并增量输出
   - [ ] 中断(abort)可正常工作
   - [ ] 输出 PoC 结论:最终采用 http 还是 rcp
+- 子任务进度:
+  - **T-0.3A(纯 ArkTS SSE 解析器):已完成**
+    - 新增文件:`network/streaming/SseTypes.ets`(SseEvent/SseParseError/SseParseResult 类型)、`network/streaming/SseParser.ets`(有状态增量解析器,支持 feed/finish/reset/getBufferedLength)
+    - 实际使用的 HarmonyOS API:无(纯 ArkTS,不依赖 hilog/http/rcp 等设备 API,脱敏逻辑内联实现以保持本地可测试性)
+    - 测试情况:本地单元测试 25 个用例全部通过(`entry/src/test/SseParser.test.ets`),覆盖率 SseParser.ets 函数 100%、行 95.07%、分支 83.33%;MCP `build_project` clean 编译通过(CompileArkTS 4.13s)
+    - 已知限制:缓冲区上限 65536 字符(超出返回 recoverable=false 错误并清空);错误 rawData 限 256 字符并脱敏;未实现字节到字符串转换(由上层网络层负责)
+  - **T-0.3B(@ohos.net.http 流式 PoC):已完成**
+    - 新增文件:`network/streaming/Utf8StreamDecoder.ets`(纯逻辑 UTF-8 增量解码器,211 行)、`network/streaming/StreamTransportTypes.ets`(TransportState 状态机 + TransportCallbacks + TransportRequestOptions + TransportAbortHandle,88 行)、`network/streaming/HttpStreamTransport.ets`(基于 `@ohos.net.http` 的流式 HTTP 传输层,344 行)
+    - 开发工具:`tools/sse_mock_server.py`(仅 Python 标准库的 SSE mock server,不进入 HAP)
+    - 修改文件:`entry/src/main/module.json5`(添加 `ohos.permission.INTERNET`)、`entry/src/main/resources/base/element/string.json`(添加 `permission_internet_reason`)
+    - 测试文件:`entry/src/test/Utf8StreamDecoder.test.ets`(本地单元测试,21 个用例,覆盖中文跨 chunk/Emoji 跨 chunk/多字符边界/flush 正常/flush 非法尾部/非法起始字节/非法后续字节/过长编码/代理对范围/reset/空输入/混合 ASCII/终态判断/状态转换校验)、`entry/src/ohosTest/ets/test/HttpStreamTransport.test.ets`(设备集成测试,5 个用例:完整流式接收/中文无乱码/Emoji 无乱码/abort 停止接收/dataReceive 时间戳)
+    - SDK 审计:本地 SDK 6.1.1 确认 `http.createHttp()`(since 6)、`HttpRequest.requestInStream(url, options?): Promise<number>`(since 18)、`on('dataReceive', Callback<ArrayBuffer>)`(since 10)、`on('dataEnd', Callback<void>)`(since 10)、`on('headersReceive', Callback<Object>)`(since 8)、`off(...)`(对应版本)、`destroy()`(since 6)
+    - 实际使用的 HarmonyOS API:`@ohos.net.http`(流式传输)、`util.TextDecoder` 可用但因依赖设备 API 不便本地测试,改用纯逻辑 `Utf8StreamDecoder` 以同时满足生产可用 + 本地可测
+    - 测试情况:本地单元测试全部通过;MCP `build_project` 编译通过;**设备集成测试全部通过**(Tests run: 5, Failure: 0, Error: 0, Pass: 5)
+    - 设备验证结果(真机 USB + hdc rport):
+      - 测试设备:华为 nova 13 Pro(真机 4BD9K24C18008717,USB 连接)
+      - HarmonyOS/API 版本:OpenHarmony 6.1.0.115 Release,API 23
+      - mock server 地址:`http://127.0.0.1:8765/sse`(hdc rport tcp:8765 tcp:8765 反向端口转发)
+      - dataReceive 次数:每个测试 7 次(与 mock server 7 段 SSE 事件一致),间隔 497-504ms(与服务器 500ms 节奏一致)
+      - dataEnd 结果:每个测试触发 1 次,随后 requestInStream resolve(code=200)
+      - abort 结果:收到 1 个 dataReceive 后 abort,destroy 触发 requestInStream reject(code=2300023),handleError 检测 state=ABORTED 直接 return(迟到回调不改变终态)
+      - UTF-8 结果:中文"你好世界"完整无乱码,Emoji"🌍🚀"完整无乱码,多行 data 正确合并,JSON data 完整,[DONE] 识别为 isDone=true
+      - 资源释放:cleanup() 调用 off('headersReceive')/off('dataReceive')/off('dataEnd') + destroy()
+    - 修复记录:mock server `Connection` 头从 `keep-alive` 改为 `close`(模拟 OpenAI 发送 [DONE] 后关闭连接的行为,使 dataEnd 正确触发);HttpStreamTransport 的 RequestContext 实现 TransportAbortHandle 接口(修复 ArkTS ohosTest 编译 `arkts-no-untyped-obj-literals` 错误)
+    - 最终选择 @ohos.net.http 的依据:设备集成测试全部通过 15 项验收标准(dataReceive≥3 次、间隔~500ms、中文/Emoji 无乱码、多行 data 合并、JSON 完整、[DONE] 识别、dataEnd 一次、onComplete 一次、abort 停止接收、abort 幂等、迟到回调不改终态、监听器移除、HttpRequest destroy、无真实 API Key),无需引入 rcp
+    - 已知限制:测试使用 hdc rport 反向端口转发(真机无 WiFi 场景);mock server `Connection: close` 模拟 AI API 发送完毕后关闭连接的行为;未配置明文 HTTP cleartext policy(127.0.0.1 回环默认允许,正式 AI API 仍要求 HTTPS)
+  - T-0.3C(真实 AI 兼容端点验证):待开始,依赖 T-0.3B 运行验证通过
 
 ### T-0.4 安全存储 PoC(huks 加密 API Key)
 

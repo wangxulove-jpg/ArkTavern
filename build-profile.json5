@@ -1,6 +1,20 @@
 {
   "app": {
-    "signingConfigs": [],
+    "signingConfigs": [
+      {
+        "name": "default",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "C:\\Users\\35595\\.ohos\\config\\default_ArkTavern_EBaux8267JaPrvMdJyiulMrvxV02V0rUI6OIsFqXebY=.cer",
+          "keyAlias": "debugKey",
+          "keyPassword": "0000001B7E79035865B046BCA99403EE93C6866355A1808CCD2B1C3E90279A3857D721B15146FF56D6156E",
+          "profile": "C:\\Users\\35595\\.ohos\\config\\default_ArkTavern_EBaux8267JaPrvMdJyiulMrvxV02V0rUI6OIsFqXebY=.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "C:\\Users\\35595\\.ohos\\config\\default_ArkTavern_EBaux8267JaPrvMdJyiulMrvxV02V0rUI6OIsFqXebY=.p12",
+          "storePassword": "0000001BCC7EDE9FB684FBAF53CFCB2DBF72DD6816D41DF7D52E09D4B83CF1BF6A5D3E8145AADE9CCD26B0"
+        }
+      }
+    ],
     "products": [
       {
         "name": "default",
