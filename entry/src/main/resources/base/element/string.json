@@ -427,6 +427,166 @@
     {
       "name": "character_export_filename",
       "value": "%s.json"
+    },
+    {
+      "name": "lorebook_no_lorebooks",
+      "value": "暂无世界书"
+    },
+    {
+      "name": "lorebook_no_lorebooks_desc",
+      "value": "点击右下角创建第一个世界书"
+    },
+    {
+      "name": "lorebook_new",
+      "value": "新建"
+    },
+    {
+      "name": "lorebook_edit",
+      "value": "编辑"
+    },
+    {
+      "name": "lorebook_set_current",
+      "value": "设为当前"
+    },
+    {
+      "name": "lorebook_current_badge",
+      "value": "当前"
+    },
+    {
+      "name": "lorebook_delete",
+      "value": "删除"
+    },
+    {
+      "name": "lorebook_delete_confirm",
+      "value": "确定删除世界书\"%s\"吗?所有条目也将一并删除。"
+    },
+    {
+      "name": "lorebook_form_name",
+      "value": "名称"
+    },
+    {
+      "name": "lorebook_form_name_placeholder",
+      "value": "请输入世界书名称"
+    },
+    {
+      "name": "lorebook_form_description",
+      "value": "描述"
+    },
+    {
+      "name": "lorebook_form_description_placeholder",
+      "value": "世界书的简要描述"
+    },
+    {
+      "name": "lorebook_form_save",
+      "value": "保存"
+    },
+    {
+      "name": "lorebook_form_cancel",
+      "value": "取消"
+    },
+    {
+      "name": "lorebook_form_title_new",
+      "value": "新建世界书"
+    },
+    {
+      "name": "lorebook_form_title_edit",
+      "value": "编辑世界书"
+    },
+    {
+      "name": "lorebook_enabled",
+      "value": "已启用"
+    },
+    {
+      "name": "lorebook_disabled",
+      "value": "已禁用"
+    },
+    {
+      "name": "lorebook_enable",
+      "value": "启用"
+    },
+    {
+      "name": "lorebook_disable",
+      "value": "禁用"
+    },
+    {
+      "name": "lorebook_entries",
+      "value": "条目"
+    },
+    {
+      "name": "lorebook_no_entries",
+      "value": "暂无条目"
+    },
+    {
+      "name": "lorebook_new_entry",
+      "value": "新建条目"
+    },
+    {
+      "name": "lorebook_entry_form_title_new",
+      "value": "新建条目"
+    },
+    {
+      "name": "lorebook_entry_form_title_edit",
+      "value": "编辑条目"
+    },
+    {
+      "name": "lorebook_entry_name",
+      "value": "名称"
+    },
+    {
+      "name": "lorebook_entry_name_placeholder",
+      "value": "条目名称"
+    },
+    {
+      "name": "lorebook_entry_keys",
+      "value": "关键词"
+    },
+    {
+      "name": "lorebook_entry_keys_placeholder",
+      "value": "逗号或换行分隔"
+    },
+    {
+      "name": "lorebook_entry_secondary_keys",
+      "value": "次关键词"
+    },
+    {
+      "name": "lorebook_entry_secondary_keys_placeholder",
+      "value": "逗号或换行分隔(Selective 模式)"
+    },
+    {
+      "name": "lorebook_entry_content",
+      "value": "内容"
+    },
+    {
+      "name": "lorebook_entry_content_placeholder",
+      "value": "注入到聊天中的世界书内容"
+    },
+    {
+      "name": "lorebook_entry_constant",
+      "value": "恒定(始终激活)"
+    },
+    {
+      "name": "lorebook_entry_selective",
+      "value": "Selective(主+次关键词)"
+    },
+    {
+      "name": "lorebook_entry_priority",
+      "value": "优先级"
+    },
+    {
+      "name": "lorebook_entry_position",
+      "value": "插入位置"
+    },
+    {
+      "name": "lorebook_entry_position_before",
+      "value": "角色前"
+    },
+    {
+      "name": "lorebook_entry_position_after",
+      "value": "角色后"
+    },
+    {
+      "name": "lorebook_entry_delete_confirm",
+      "value": "确定删除条目\"%s\"吗?"
     }
   ]
 }

@@ -652,6 +652,49 @@ Date: 2026-07-15
 
 ---
 
+### T-2.4 Lorebook MVP：世界书模型、持久化、管理页面、关键词匹配和聊天注入
+
+- 依赖:T-2.1
+- 优先级:P2
+- 修改范围:`models/Lorebook.ets`(新建)、`storage/LorebookStore.ets`(新建)、`services/LorebookService.ets`(新建)、`viewmodels/LorebookViewModel.ets`(新建)、`pages/LorebookPage.ets`(重写)、`services/ChatService.ets`、`services/AppServices.ets`、资源文件、测试
+- 内容:
+  - 世界书模型:Lorebook(id/name/description/enabled/entries/createdAt/updatedAt)、LorebookEntry(id/name/keys/secondaryKeys/content/enabled/constant/selective/position/priority/createdAt/updatedAt),Position 仅支持 BeforeCharacter/AfterCharacter
+  - 持久化:LorebookStore 基于 Preferences(schemaVersion=1),键名 lorebook_list_v1/current_lorebook_id_v1,支持 list/getById/save/update/remove/setCurrentLorebookId/getCurrentLorebook
+  - 业务服务:LorebookService 提供 CRUD 和 matchEntries/buildInjectionAsync,关键词匹配规则(扫描最近 10 条 User/Assistant 消息,英文不区分大小写,中文原文本包含匹配,constant 始终激活,selective 需主+次关键词,disabled 跳过,priority 排序,最大字符限制 12000)
+  - 聊天注入:ChatService 每次发送前调用 buildInjectionAsync,BeforeCharacter 放 System Prompt 之前,AfterCharacter 放之后,世界书内容不显示为聊天气泡,不永久加入 visible messages
+  - 页面:LorebookPage 支持世界书列表/新建/编辑/删除/设为当前/启用/禁用/条目管理/关键词逗号或换行分隔/Constant/Selective 开关/Priority 数字/Position 选择/空状态和错误提示
+- 验收标准:
+  - [x] 世界书模型含必填字段,不依赖 ArkUI,提供校验和不可变更新
+  - [x] 世界书持久化,重启后仍存在
+  - [x] 世界书页面可新建/编辑/删除/设为当前/启用/禁用
+  - [x] 删除当前世界书时清空选择
+  - [x] 条目可新建/编辑/删除,关键词逗号或换行分隔
+  - [x] Constant 条目始终匹配
+  - [x] 普通关键词匹配(英文不区分大小写,中文原文本包含)
+  - [x] Selective 主关键词+次关键词同时匹配
+  - [x] 禁用条目不匹配
+  - [x] Priority 排序
+  - [x] Before/After 注入顺序正确
+  - [x] 世界书 System 消息不显示为聊天气泡
+  - [x] 无世界书时聊天行为无回归
+  - [x] hilog 不记录世界书正文或聊天正文
+  - [x] entry@default + entry@ohosTest 编译通过
+- 完成情况(2026-07-17):
+  - [x] Lorebook.ets:纯数据模型(~280 行),createLorebook()/updateLorebook()/validateLorebook()/createLorebookEntry()/updateLorebookEntry()/validateLorebookEntry()/addEntryToLorebook()/removeEntryFromLorebook()/updateEntryInLorebook()
+  - [x] LorebookStore.ets:基于 Preferences 的 JSON 序列化持久化(~240 行),key 为 lorebook_list_v1 和 current_lorebook_id_v1
+  - [x] LorebookService.ets:封装 LorebookStore 的业务逻辑层(~280 行),含 matchEntriesForLorebook()/buildInjectionAsync()/matchEntryInText() 匹配引擎
+  - [x] LorebookViewModel.ets:@Observed 装饰,管理世界书页状态(~220 行)
+  - [x] LorebookPage.ets:完整世界书管理页(~540 行),含世界书卡片/条目列表/新建编辑删除对话框/空状态/新建 FAB
+  - [x] ChatService.buildRequestMessages():构建带世界书注入的请求消息列表,BeforeCharacter→System Prompt→AfterCharacter→其他消息
+  - [x] AppServices:注册 LorebookStore/LorebookService 为全局服务,注入 ChatService 构造函数
+  - [x] MCP build entry@default + entry@ohosTest BUILD SUCCESSFUL
+  - [x] 模拟器验证:LorebookPage 正常显示,创建世界书成功,按钮(设为当前/编辑/禁用/删除)正常
+  - [x] hilog 无 API Key/世界书正文/聊天正文泄漏
+  - 未实现:向量匹配、正则表达式、递归扫描、概率触发、PromptBuilder、Preset
+  - 已知限制:设备测试无法通过命令行运行(MCP build --mode module 导致 main HAP 缺少 test runner),需在 DevEco Studio IDE 中运行;实机端到端聊天注入验证需用户手动操作
+
+---
+
 ## Phase 3:角色卡导入
 
 ### T-3.1 定义 Character 内部模型

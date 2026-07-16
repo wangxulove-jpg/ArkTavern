@@ -66,7 +66,8 @@ export struct ChatPage {
     // 避免复用已 disposed 的单例导致 sendMessage 静默失败
     const modelService = AppServices.getModelService();
     const characterService = AppServices.getCharacterService();
-    const chatService = new ChatService(modelService);
+    const lorebookService = AppServices.getLorebookService();
+    const chatService = new ChatService(modelService, lorebookService);
     const vm: ChatViewModel = new ChatViewModel(chatService, modelService, characterService);
     // 通过回调将 ViewModel 的 messages 同步到独立 @State 变量
     // 这是确保 ForEach 响应式刷新的关键

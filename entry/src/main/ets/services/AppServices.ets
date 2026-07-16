@@ -25,7 +25,9 @@ import { AssetStoreKeyStore } from '../storage/AssetStoreKeyStore';
 import { ProviderKeyStore } from '../storage/ProviderKeyStore';
 import { CharacterStore } from '../storage/CharacterStore';
 import { CharacterAssetStore } from '../storage/CharacterAssetStore';
+import { LorebookStore } from '../storage/LorebookStore';
 import { CharacterService } from './CharacterService';
+import { LorebookService } from './LorebookService';
 import { ModelService } from './ModelService';
 import { DefaultProviderFactory } from './ProviderFactory';
 import { Logger } from '../utils/Logger';
@@ -45,6 +47,8 @@ export class AppServices {
   readonly modelService: ModelService;
   /** CharacterService 角色服务 */
   readonly characterService: CharacterService;
+  /** LorebookService 世界书服务 */
+  readonly lorebookService: LorebookService;
 
   /**
    * 私有构造,组装全部依赖。
@@ -60,6 +64,8 @@ export class AppServices {
     const characterStore: CharacterStore = new CharacterStore();
     const characterAssetStore: CharacterAssetStore = new CharacterAssetStore();
     this.characterService = new CharacterService(characterStore, characterAssetStore);
+    const lorebookStore: LorebookStore = new LorebookStore();
+    this.lorebookService = new LorebookService(lorebookStore);
   }
 
   /**
@@ -79,6 +85,7 @@ export class AppServices {
     AppServices.instance = services;
     AppServices.readyPromise = services.modelService.initialize(context)
       .then((): Promise<void> => services.characterService.initialize(context))
+      .then((): Promise<void> => services.lorebookService.initialize(context))
       .then((): void => {
         Logger.info(LOG_TAG, 'initialize ok');
       })
@@ -139,5 +146,12 @@ export class AppServices {
    */
   static getCharacterService(): CharacterService {
     return AppServices.getInstance().characterService;
+  }
+
+  /**
+   * 获取 LorebookService 实例。
+   */
+  static getLorebookService(): LorebookService {
+    return AppServices.getInstance().lorebookService;
   }
 }

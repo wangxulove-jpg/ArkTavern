@@ -24,6 +24,7 @@
  */
 
 import { ModelService } from './ModelService';
+import { LorebookService, LorebookInjection } from './LorebookService';
 import { ChatMessage, ChatMessageStatus, createChatMessage } from '../models/ChatMessage';
 import { ChatRequestOptions } from '../models/ChatRequest';
 import { ChatRole } from '../models/ChatRole';
@@ -89,11 +90,13 @@ export class ChatService {
   private disposed: boolean = false;
   private startTimerId: number = -1;
   private readonly modelService: ModelService;
+  private readonly lorebookService: LorebookService | null;
   /** 最近一次使用的回调(用于 stopGeneration/clearConversation 通知状态) */
   private lastCallbacks: ChatServiceCallbacks | null = null;
 
-  constructor(modelService: ModelService) {
+  constructor(modelService: ModelService, lorebookService: LorebookService | null = null) {
     this.modelService = modelService;
+    this.lorebookService = lorebookService;
   }
 
   /**
@@ -322,10 +325,10 @@ export class ChatService {
 
   // ===== 内部方法 =====
 
-  private doStream(
+  private async doStream(
     assistantId: string,
     callbacks: ChatServiceCallbacks
-  ): void {
+  ): Promise<void> {
     const streamCallbacks: ChatStreamCallbacks = {
       onStart: (): void => {
         this.clearStartTimer();
@@ -378,8 +381,11 @@ export class ChatService {
     // 启动超时保护
     this.startStartTimer(assistantId, callbacks);
 
+    // 构建世界书注入后的消息列表
+    const requestMessages: ChatMessage[] = await this.buildRequestMessages();
+
     try {
-      this.currentHandle = this.modelService.streamCurrentChat(this.messages, DEFAULT_OPTIONS, streamCallbacks);
+      this.currentHandle = this.modelService.streamCurrentChat(requestMessages, DEFAULT_OPTIONS, streamCallbacks);
       this.setState(ChatState.Streaming, callbacks);
     } catch (e) {
       this.clearStartTimer();
@@ -388,6 +394,85 @@ export class ChatService {
       this.setState(ChatState.Failed, callbacks);
       callbacks.onError(String(e));
     }
+  }
+
+  /**
+   * 构建带世界书注入的请求消息列表。
+   *
+   * 顺序:BeforeCharacter 世界书 → Character System Prompt → AfterCharacter 世界书 → 其他消息
+   * 世界书内容作为 System 消息发送,不显示为聊天气泡,不永久加入 this.messages。
+   * 无当前世界书时返回原始消息列表。
+   */
+  private async buildRequestMessages(): Promise<ChatMessage[]> {
+    if (this.lorebookService === null) {
+      return this.messages;
+    }
+
+    const injection: LorebookInjection = await this.lorebookService.buildInjectionAsync(this.messages);
+    if (injection.before.length === 0 && injection.after.length === 0) {
+      return this.messages;
+    }
+
+    // 找到 Character System Prompt 在 messages 中的位置
+    let systemIndex: number = -1;
+    for (let i = 0; i < this.messages.length; i++) {
+      if (this.messages[i].role === ChatRole.System) {
+        systemIndex = i;
+        break;
+      }
+    }
+
+    const result: ChatMessage[] = [];
+    const now: number = Date.now();
+
+    // BeforeCharacter 世界书
+    if (injection.before.length > 0) {
+      const beforeMsg: ChatMessage = createChatMessage(
+        'msg-lorebook-before-' + generateUuid(),
+        ChatRole.System,
+        injection.before,
+        now
+      );
+      result.push(beforeMsg);
+    }
+
+    if (systemIndex >= 0) {
+      // 有 Character System Prompt:插入它
+      result.push(this.messages[systemIndex]);
+      // AfterCharacter 世界书
+      if (injection.after.length > 0) {
+        const afterMsg: ChatMessage = createChatMessage(
+          'msg-lorebook-after-' + generateUuid(),
+          ChatRole.System,
+          injection.after,
+          now
+        );
+        result.push(afterMsg);
+      }
+      // 添加 System 之后的所有消息
+      for (let i = systemIndex + 1; i < this.messages.length; i++) {
+        result.push(this.messages[i]);
+      }
+    } else {
+      // 无 Character System Prompt:AfterCharacter 放在所有消息之前
+      if (injection.after.length > 0) {
+        const afterMsg: ChatMessage = createChatMessage(
+          'msg-lorebook-after-' + generateUuid(),
+          ChatRole.System,
+          injection.after,
+          now
+        );
+        result.push(afterMsg);
+      }
+      // 添加所有消息
+      for (let i = 0; i < this.messages.length; i++) {
+        result.push(this.messages[i]);
+      }
+    }
+
+    Logger.info(LOG_TAG, 'buildRequestMessages: injected lorebook before=' + injection.before.length.toString()
+      + ' after=' + injection.after.length.toString());
+    return result;
   }
 
   /**

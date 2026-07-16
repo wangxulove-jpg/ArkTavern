@@ -15,6 +15,7 @@ import chatViewModelDeviceTest from './ChatViewModel.test';
 import parserDeviceTest from './CharacterCardJsonParser.test';
 import writerDeviceTest from './CharacterCardJsonWriter.test';
 import pngParserDeviceTest from './PngCharacterCardParser.test';
+import lorebookStoreDeviceTest from './LorebookStore.test';
 
 export default function testsuite() {
   abilityTest();
@@ -34,4 +35,5 @@ export default function testsuite() {
   parserDeviceTest();
   writerDeviceTest();
   pngParserDeviceTest();
+  lorebookStoreDeviceTest();
 }
