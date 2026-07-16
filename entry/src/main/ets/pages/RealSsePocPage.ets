@@ -10,14 +10,15 @@
  * - 页面退出时主动 abort 并清空 API Key
  *
  * 完成正式设置页后删除该入口。
+ *
+ * 导航说明:Phase 1A 统一为 NavDestination,通过首页 NavPathStack 访问。
+ * PoC 网络逻辑(ViewModel)未修改,仅页面外壳从 @Entry/router 改为 NavDestination。
  */
 
-import { router } from '@kit.ArkUI';
 import { RealSsePocViewModel, PocState, PocCallbackImpl, PocStats } from '../viewmodels/RealSsePocViewModel';
 
-@Entry
 @Component
-struct RealSsePocPage {
+export struct RealSsePocPage {
   @State baseUrl: string = '';
   @State model: string = '';
   @State apiKey: string = '';
@@ -85,10 +86,6 @@ struct RealSsePocPage {
     this.errorText = '';
   }
 
-  onBack(): void {
-    router.back();
-  }
-
   canStart(): boolean {
     return this.displayState !== PocState.Streaming && this.displayState !== PocState.Connecting;
   }
@@ -98,177 +95,165 @@ struct RealSsePocPage {
   }
 
   build() {
-    Column() {
-      // 顶部标题栏
-      Row() {
-        Button('返回')
-          .fontSize(14)
-          .onClick(() => this.onBack())
-        Text('真实 SSE 测试')
-          .fontSize(18)
-          .fontWeight(FontWeight.Bold)
-          .layoutWeight(1)
-          .textAlign(TextAlign.Center)
-        Blank().width(60)
+    NavDestination() {
+      Column() {
+        // 开发测试警告
+        Text('⚠ 开发测试页面,配置仅保存在内存中')
+          .fontSize(12)
+          .fontColor('#cc6600')
+          .width('100%')
+          .padding(8)
+          .backgroundColor('#fff3e0')
+
+        Scroll() {
+          Column() {
+            // 输入区域
+            Column() {
+              Text('Base URL').fontSize(14).margin({ bottom: 4 })
+              TextInput({ text: this.baseUrl, placeholder: 'https://api.example.com/v1' })
+                .fontSize(14)
+                .onChange((v: string) => { this.baseUrl = v })
+                .width('100%')
+
+              Text('Model').fontSize(14).margin({ top: 8, bottom: 4 })
+              TextInput({ text: this.model, placeholder: 'gpt-4o / deepseek-chat' })
+                .fontSize(14)
+                .onChange((v: string) => { this.model = v })
+                .width('100%')
+
+              Text('API Key').fontSize(14).margin({ top: 8, bottom: 4 })
+              TextInput({ text: this.apiKey, placeholder: 'sk-...' })
+                .type(InputType.Password)
+                .fontSize(14)
+                .onChange((v: string) => { this.apiKey = v })
+                .width('100%')
+
+              Text('测试消息').fontSize(14).margin({ top: 8, bottom: 4 })
+              TextInput({ text: this.message, placeholder: '输入测试消息' })
+                .fontSize(14)
+                .onChange((v: string) => { this.message = v })
+                .width('100%')
+
+              // 临时:一键填充 DeepSeek 示例(仅 Base URL + Model,API Key 仍需手动输入)
+              // 完成正式设置页后删除
+              Button('填充 DeepSeek 示例 [仅 Base URL + Model]')
+                .id('FillDeepSeekExample')
+                .fontSize(12)
+                .fontColor('#cc6600')
+                .height(40)
+                .margin({ top: 8 })
+                .width('100%')
+                .onClick(() => {
+                  this.baseUrl = 'https://api.deepseek.com';
+                  this.model = 'deepseek-v4-flash';
+                })
+            }
+            .width('100%')
+            .padding(12)
+
+            // 按钮区域
+            Row() {
+              Button('开始')
+                .enabled(this.canStart())
+                .layoutWeight(1)
+                .fontSize(14)
+                .onClick(() => this.onStart())
+
+              Button('停止')
+                .enabled(this.canStop())
+                .layoutWeight(1)
+                .fontSize(14)
+                .margin({ left: 8 })
+                .onClick(() => this.onStop())
+
+              Button('清除敏感信息')
+                .layoutWeight(1)
+                .fontSize(14)
+                .margin({ left: 8 })
+                .onClick(() => this.onClearSensitive())
+            }
+            .width('100%')
+            .padding({ left: 12, right: 12 })
+
+            // 状态信息
+            Column() {
+              Row() {
+                Text('状态:').fontSize(13).fontColor('#666')
+                Text(this.displayState.toString())
+                  .fontSize(13)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor(this.stateColor(this.displayState))
+              }
+              .width('100%')
+
+              Row() {
+                Text('Chunk 数量:').fontSize(13).fontColor('#666')
+                Text(this.chunkCount.toString()).fontSize(13)
+                Blank()
+                Text('SSE 事件:').fontSize(13).fontColor('#666')
+                Text(this.sseEventCount.toString()).fontSize(13)
+                Blank()
+                Text('Delta:').fontSize(13).fontColor('#666')
+                Text(this.deltaCount.toString()).fontSize(13)
+              }
+              .width('100%')
+              .margin({ top: 4 })
+
+              Row() {
+                Text('[DONE]:').fontSize(13).fontColor('#666')
+                Text(this.doneReceived ? '是' : '否')
+                  .fontSize(13)
+                  .fontColor(this.doneReceived ? '#4caf50' : '#999')
+              }
+              .width('100%')
+              .margin({ top: 4 })
+            }
+            .width('100%')
+            .padding(12)
+
+            // 错误提示
+            if (this.errorText.length > 0) {
+              Text(this.errorText)
+                .fontSize(13)
+                .fontColor('#f44336')
+                .width('100%')
+                .padding(8)
+                .backgroundColor('#ffebee')
+                .margin({ left: 12, right: 12 })
+            }
+
+            // 回复文本
+            Column() {
+              Text('增量回复').fontSize(14).fontWeight(FontWeight.Bold).margin({ bottom: 4 })
+              if (this.replyText.length > 0) {
+                Text(this.replyText)
+                  .fontSize(14)
+                  .width('100%')
+                  .padding(8)
+                  .backgroundColor('#f5f5f5')
+                  .borderRadius(4)
+              } else {
+                Text('(等待回复...)')
+                  .fontSize(13)
+                  .fontColor('#999')
+                  .width('100%')
+                  .padding(8)
+              }
+            }
+            .width('100%')
+            .padding(12)
+            .alignItems(HorizontalAlign.Start)
+          }
+          .width('100%')
+        }
+        .layoutWeight(1)
+        .scrollBar(BarState.Auto)
       }
       .width('100%')
-      .height(48)
-      .padding({ left: 12, right: 12 })
-
-      // 开发测试警告
-      Text('⚠ 开发测试页面,配置仅保存在内存中')
-        .fontSize(12)
-        .fontColor('#cc6600')
-        .width('100%')
-        .padding(8)
-        .backgroundColor('#fff3e0')
-
-      Scroll() {
-        Column() {
-          // 输入区域
-          Column() {
-            Text('Base URL').fontSize(14).margin({ bottom: 4 })
-            TextInput({ text: this.baseUrl, placeholder: 'https://api.example.com/v1' })
-              .fontSize(14)
-              .onChange((v: string) => { this.baseUrl = v })
-              .width('100%')
-
-            Text('Model').fontSize(14).margin({ top: 8, bottom: 4 })
-            TextInput({ text: this.model, placeholder: 'gpt-4o / deepseek-chat' })
-              .fontSize(14)
-              .onChange((v: string) => { this.model = v })
-              .width('100%')
-
-            Text('API Key').fontSize(14).margin({ top: 8, bottom: 4 })
-            TextInput({ text: this.apiKey, placeholder: 'sk-...' })
-              .type(InputType.Password)
-              .fontSize(14)
-              .onChange((v: string) => { this.apiKey = v })
-              .width('100%')
-
-            Text('测试消息').fontSize(14).margin({ top: 8, bottom: 4 })
-            TextInput({ text: this.message, placeholder: '输入测试消息' })
-              .fontSize(14)
-              .onChange((v: string) => { this.message = v })
-              .width('100%')
-
-            // 临时:一键填充 DeepSeek 示例(仅 Base URL + Model,API Key 仍需手动输入)
-            // 完成正式设置页后删除
-            Button('填充 DeepSeek 示例 [仅 Base URL + Model]')
-              .id('FillDeepSeekExample')
-              .fontSize(12)
-              .fontColor('#cc6600')
-              .height(40)
-              .margin({ top: 8 })
-              .width('100%')
-              .onClick(() => {
-                this.baseUrl = 'https://api.deepseek.com';
-                this.model = 'deepseek-v4-flash';
-              })
-          }
-          .width('100%')
-          .padding(12)
-
-          // 按钮区域
-          Row() {
-            Button('开始')
-              .enabled(this.canStart())
-              .layoutWeight(1)
-              .fontSize(14)
-              .onClick(() => this.onStart())
-
-            Button('停止')
-              .enabled(this.canStop())
-              .layoutWeight(1)
-              .fontSize(14)
-              .margin({ left: 8 })
-              .onClick(() => this.onStop())
-
-            Button('清除敏感信息')
-              .layoutWeight(1)
-              .fontSize(14)
-              .margin({ left: 8 })
-              .onClick(() => this.onClearSensitive())
-          }
-          .width('100%')
-          .padding({ left: 12, right: 12 })
-
-          // 状态信息
-          Column() {
-            Row() {
-              Text('状态:').fontSize(13).fontColor('#666')
-              Text(this.displayState.toString())
-                .fontSize(13)
-                .fontWeight(FontWeight.Bold)
-                .fontColor(this.stateColor(this.displayState))
-            }
-            .width('100%')
-
-            Row() {
-              Text('Chunk 数量:').fontSize(13).fontColor('#666')
-              Text(this.chunkCount.toString()).fontSize(13)
-              Blank()
-              Text('SSE 事件:').fontSize(13).fontColor('#666')
-              Text(this.sseEventCount.toString()).fontSize(13)
-              Blank()
-              Text('Delta:').fontSize(13).fontColor('#666')
-              Text(this.deltaCount.toString()).fontSize(13)
-            }
-            .width('100%')
-            .margin({ top: 4 })
-
-            Row() {
-              Text('[DONE]:').fontSize(13).fontColor('#666')
-              Text(this.doneReceived ? '是' : '否')
-                .fontSize(13)
-                .fontColor(this.doneReceived ? '#4caf50' : '#999')
-            }
-            .width('100%')
-            .margin({ top: 4 })
-          }
-          .width('100%')
-          .padding(12)
-
-          // 错误提示
-          if (this.errorText.length > 0) {
-            Text(this.errorText)
-              .fontSize(13)
-              .fontColor('#f44336')
-              .width('100%')
-              .padding(8)
-              .backgroundColor('#ffebee')
-              .margin({ left: 12, right: 12 })
-          }
-
-          // 回复文本
-          Column() {
-            Text('增量回复').fontSize(14).fontWeight(FontWeight.Bold).margin({ bottom: 4 })
-            if (this.replyText.length > 0) {
-              Text(this.replyText)
-                .fontSize(14)
-                .width('100%')
-                .padding(8)
-                .backgroundColor('#f5f5f5')
-                .borderRadius(4)
-            } else {
-              Text('(等待回复...)')
-                .fontSize(13)
-                .fontColor('#999')
-                .width('100%')
-                .padding(8)
-            }
-          }
-          .width('100%')
-          .padding(12)
-          .alignItems(HorizontalAlign.Start)
-        }
-        .width('100%')
-      }
-      .layoutWeight(1)
-      .scrollBar(BarState.Auto)
+      .height('100%')
     }
-    .width('100%')
-    .height('100%')
+    .title('真实 SSE 测试')
+    .backgroundColor('#f5f5f5')
   }
 
   private stateColor(state: PocState): string {

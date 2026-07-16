@@ -3,6 +3,50 @@
     {
       "name": "start_window_background",
       "value": "#FFFFFF"
+    },
+    {
+      "name": "home_background",
+      "value": "#F5F5F5"
+    },
+    {
+      "name": "home_card_background",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "home_primary_text",
+      "value": "#1A1A1A"
+    },
+    {
+      "name": "home_secondary_text",
+      "value": "#666666"
+    },
+    {
+      "name": "home_accent",
+      "value": "#5B7CFA"
+    },
+    {
+      "name": "home_divider",
+      "value": "#E0E0E0"
+    },
+    {
+      "name": "home_dev_background",
+      "value": "#FFF8E1"
+    },
+    {
+      "name": "home_dev_text",
+      "value": "#996600"
+    },
+    {
+      "name": "page_background",
+      "value": "#F5F5F5"
+    },
+    {
+      "name": "page_primary_text",
+      "value": "#1A1A1A"
+    },
+    {
+      "name": "page_secondary_text",
+      "value": "#666666"
     }
   ]
 }

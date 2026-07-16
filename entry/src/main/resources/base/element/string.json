@@ -10,11 +10,111 @@
     },
     {
       "name": "EntryAbility_label",
-      "value": "label"
+      "value": "ArkTavern"
     },
     {
       "name": "permission_internet_reason",
       "value": "Access network for AI chat streaming"
+    },
+    {
+      "name": "home_app_name",
+      "value": "方舟酒馆"
+    },
+    {
+      "name": "home_app_subtitle",
+      "value": "ArkTavern"
+    },
+    {
+      "name": "home_description",
+      "value": "HarmonyOS NEXT 原生 AI 角色聊天客户端"
+    },
+    {
+      "name": "home_start_chat",
+      "value": "开始聊天"
+    },
+    {
+      "name": "home_characters",
+      "value": "角色"
+    },
+    {
+      "name": "home_lorebook",
+      "value": "世界书"
+    },
+    {
+      "name": "home_model_settings",
+      "value": "模型设置"
+    },
+    {
+      "name": "home_app_settings",
+      "value": "应用设置"
+    },
+    {
+      "name": "home_dev_tools",
+      "value": "开发工具"
+    },
+    {
+      "name": "home_dev_sse_test",
+      "value": "真实 SSE 测试"
+    },
+    {
+      "name": "home_no_sessions",
+      "value": "暂无会话"
+    },
+    {
+      "name": "home_no_sessions_desc",
+      "value": "完成模型配置后即可开始聊天"
+    },
+    {
+      "name": "home_model_not_configured",
+      "value": "尚未配置模型"
+    },
+    {
+      "name": "home_version",
+      "value": "Development Preview · v0.1"
+    },
+    {
+      "name": "nav_chat_title",
+      "value": "聊天"
+    },
+    {
+      "name": "nav_chat_empty",
+      "value": "尚未创建会话。完成模型配置后即可开始聊天。"
+    },
+    {
+      "name": "nav_character_title",
+      "value": "角色"
+    },
+    {
+      "name": "nav_character_empty",
+      "value": "尚未导入角色。后续支持 JSON 和 PNG 角色卡。"
+    },
+    {
+      "name": "nav_lorebook_title",
+      "value": "世界书"
+    },
+    {
+      "name": "nav_lorebook_empty",
+      "value": "世界书功能将在后续阶段开放。"
+    },
+    {
+      "name": "nav_model_settings_title",
+      "value": "模型设置"
+    },
+    {
+      "name": "nav_model_settings_empty",
+      "value": "模型配置功能正在开发中。"
+    },
+    {
+      "name": "nav_app_settings_title",
+      "value": "应用设置"
+    },
+    {
+      "name": "nav_app_settings_empty",
+      "value": "应用设置功能正在开发中。"
+    },
+    {
+      "name": "common_dev_test_label",
+      "value": "[开发测试]"
     }
   ]
 }

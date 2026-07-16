@@ -206,8 +206,20 @@ Date: 2026-07-15
   - `models/ChatMessage.ets`(role / content / created)
   - `models/ChatRequest.ets`(model / messages / temperature / stream 等)
 - 验收标准:
-  - [ ] 所有模型为 interface 或 class,无 any
-  - [ ] 字段覆盖 OpenAI Chat Completions 常用参数
+  - [x] 所有模型为 interface 或 class,无 any
+  - [x] 字段覆盖 OpenAI Chat Completions 常用参数
+- 实现说明:
+  - ProviderType:6 种 Provider 类型枚举,不硬编码 Base URL 或域名
+  - ProviderConfig:不可变 class,提供 `create` 工厂方法和 `withUpdates` 副本方法;不包含 API Key、Authorization;集中定义校验常量(TEMPERATURE_MIN/MAX/DEFAULT、TOP_P_MIN/MAX/DEFAULT、MAX_TOKENS_MIN/MAX/DEFAULT、STREAM_DEFAULT、ENABLED_DEFAULT)和校验函数(isValidTemperature/isValidTopP/isValidMaxTokens/isValidId/isValidName/isValidBaseUrl/isValidModelName)
+  - ChatRole:System/User/Assistant 枚举,值与 OpenAI API 格式一致(system/user/assistant)
+  - ChatMessage:interface,含 id/role/content/createdAt + 可选 updatedAt/isStreaming/errorMessage;不加入 Character/Lorebook/Swipe 字段;不依赖 ArkUI
+  - ChatRequest:interface,含 model/messages/temperature/topP/maxTokens/stream;不包含 URL/API Key/Header/UI 状态;createChatRequest 默认 stream=true
+  - 本地单元测试:`test/ProviderConfig.test.ets`,覆盖 15+ 项(默认值/边界校验/空值校验/API Key 字段不存在/withUpdates/消息顺序/stream 默认值/敏感字段不存在)
+  - Phase 1A 应用外壳:Index.ets 改造为正式首页(Navigation + NavPathStack),5 个静态占位页面(ChatPage/CharacterListPage/LorebookPage/ModelSettingsPage/AppSettingsPage),base + dark 颜色资源,string 资源,float 资源
+  - PoC 页面(RealSsePocPage)继续保留,通过开发工具折叠区访问;Phase 1A 将 PoC 页面外壳从 @Entry/router 统一改造为 NavDestination,消除 router.pushUrl/router.back deprecated warning,PoC 网络逻辑(ViewModel)未修改
+  - main_pages.json 仅注册 pages/Index,5 个正式页面 + PoC 页面均通过 NavPathStack 内部导航,不注册进 main_pages.json
+  - 构建验证:clean build(entry@default)BUILD SUCCESSFUL 无 warning;ohosTest 编译 BUILD SUCCESSFUL;本地单元测试 15+ 项覆盖
+  - 真机验证:nova 13 Pro 模拟器(API 23)部署成功;首页 13 项元素正常显示;5 个正式入口可打开并可返回;系统返回键正常;开发工具折叠区可展开,真实 SSE 测试入口可进入 PoC 页面;深色模式颜色资源正确加载(背景 #121212、卡片 #1E1E1E、文字 #F0F0F0);hilog 无 API Key/apiKey/Authorization/Bearer/sk- 泄漏
 
 ### T-1.2 实现多密钥 KeyStore
 

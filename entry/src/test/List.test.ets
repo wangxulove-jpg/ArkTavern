@@ -7,6 +7,7 @@ import openAiUrlBuilderTest from './OpenAiUrlBuilder.test';
 import openAiSseDeltaParserTest from './OpenAiSseDeltaParser.test';
 import aliasBuilderTest from './AliasBuilder.test';
 import secureStorageErrorTest from './SecureStorageError.test';
+import providerConfigTest from './ProviderConfig.test';
 
 export default function testsuite() {
   localUnitTest();
@@ -18,4 +19,5 @@ export default function testsuite() {
   openAiSseDeltaParserTest();
   aliasBuilderTest();
   secureStorageErrorTest();
+  providerConfigTest();
 }
