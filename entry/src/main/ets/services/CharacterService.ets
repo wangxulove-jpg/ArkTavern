@@ -16,27 +16,37 @@ import { fileIo } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
 import { Character, createCharacter, updateCharacter, validateCharacter, CharacterUpdates } from '../models/Character';
 import { CharacterStore } from '../storage/CharacterStore';
+import { CharacterAssetStore } from '../storage/CharacterAssetStore';
 import { generateUuid } from '../utils/Uuid';
 import { Logger } from '../utils/Logger';
 import { parseCharacterJson, ParseResult, ParsedCharacterCard } from '../parser/CharacterCardJsonParser';
 import { writeCharacterToJson } from '../parser/CharacterCardJsonWriter';
+import { parsePngCharacterCard, PngParseResult } from '../parser/PngCharacterCardParser';
 
 const LOG_TAG: string = 'CharacterService';
 
+/** PNG 导入解析结果 */
+export interface PngImportResult {
+  result: PngParseResult;
+  bytes: ArrayBuffer;
+}
+
 export class CharacterService {
-  private readonly store: CharacterStore;
+  private store: CharacterStore;
+  private assetStore: CharacterAssetStore;
   private initialized: boolean = false;
 
-  constructor(store: CharacterStore) {
+  constructor(store: CharacterStore, assetStore: CharacterAssetStore) {
     this.store = store;
+    this.assetStore = assetStore;
   }
 
   async initialize(context: common.Context): Promise<void> {
     if (this.initialized) {
       return;
     }
-    Logger.info(LOG_TAG, 'initialize');
     await this.store.initialize(context);
+    this.assetStore.initialize(context);
     this.initialized = true;
     Logger.info(LOG_TAG, 'initialize ok');
   }
@@ -101,6 +111,8 @@ export class CharacterService {
   async remove(id: string): Promise<void> {
     this.requireInit();
     await this.store.remove(id);
+    // 删除角色时同步删除头像
+    await this.assetStore.deleteAvatar(id);
     Logger.info(LOG_TAG, 'remove ok id=' + id);
   }
 
@@ -138,10 +150,12 @@ export class CharacterService {
    * id 冲突时生成新 UUID,不覆盖现有角色。
    *
    * @param parsed 解析后的角色卡
+   * @param avatarUri 可选的头像 URI(覆盖 parsed 中的 avatarUri)
    * @returns 新创建的 Character
    */
-  async importFromParsed(parsed: ParsedCharacterCard): Promise<Character> {
+  async importFromParsed(parsed: ParsedCharacterCard, avatarUri?: string): Promise<Character> {
     this.requireInit();
+    const finalAvatarUri: string = avatarUri !== undefined ? avatarUri : parsed.avatarUri;
     const character: Character = createCharacter(
       'char-' + generateUuid(),
       parsed.name,
@@ -150,7 +164,7 @@ export class CharacterService {
       parsed.scenario,
       parsed.firstMessage,
       parsed.systemPrompt,
-      parsed.avatarUri
+      finalAvatarUri
     );
     const error: string | null = validateCharacter(character);
     if (error !== null) {
@@ -266,5 +280,105 @@ export class CharacterService {
     const jsonString: string = await this.exportToJson(id);
     await this.writeFileContent(uri, jsonString);
     Logger.info(LOG_TAG, 'exportToFile ok id=' + id);
+  }
+
+  // ===== PNG 导入 =====
+
+  /**
+   * 从 URI 读取二进制文件内容。
+   *
+   * @param uri 文件 URI
+   * @returns ArrayBuffer
+   */
+  async readFileBytes(uri: string): Promise<ArrayBuffer> {
+    try {
+      const file: fileIo.File = fileIo.openSync(uri, fileIo.OpenMode.READ_ONLY);
+      const stat: fileIo.Stat = fileIo.statSync(file.fd);
+      if (stat.size > 50 * 1024 * 1024) {
+        fileIo.closeSync(file);
+        throw new Error('文件过大,不能超过 50MB');
+      }
+      const buffer: ArrayBuffer = new ArrayBuffer(stat.size);
+      const readLen: number = fileIo.readSync(file.fd, buffer);
+      fileIo.closeSync(file);
+      Logger.info(LOG_TAG, 'readFileBytes ok size=' + String(readLen));
+      return buffer;
+    } catch (e) {
+      if (e instanceof Error && e.message.includes('文件过大')) {
+        throw e;
+      }
+      Logger.error(LOG_TAG, 'readFileBytes failed: ' + String(e));
+      throw new Error('读取文件失败');
+    }
+  }
+
+  /**
+   * 从 PNG 文件 URI 解析角色卡(不保存)。
+   * 用于导入前预览。
+   *
+   * @param uri PNG 文件 URI
+   * @returns { result: PngParseResult, bytes: ArrayBuffer } 解析结果和 PNG 字节数据
+   */
+  async importPngFromFile(uri: string): Promise<PngImportResult> {
+    const bytes: ArrayBuffer = await this.readFileBytes(uri);
+    const uint8: Uint8Array = new Uint8Array(bytes);
+    const pngResult: PngParseResult = parsePngCharacterCard(uint8);
+
+    if (!pngResult.success) {
+      const result: PngImportResult = { result: pngResult, bytes: bytes };
+      return result;
+    }
+
+    // 复用 CharacterCardJsonParser 解析 JSON
+    const jsonResult: ParseResult = parseCharacterJson(pngResult.jsonString);
+    if (!jsonResult.success) {
+      const errorResult: PngImportResult = {
+        result: {
+          success: false,
+          jsonString: '',
+          sourceFormat: pngResult.sourceFormat,
+          error: '角色卡 JSON 解析失败: ' + (jsonResult.error !== null ? jsonResult.error : '')
+        },
+        bytes: bytes
+      };
+      return errorResult;
+    }
+
+    const okResult: PngImportResult = { result: pngResult, bytes: bytes };
+    return okResult;
+  }
+
+  /**
+   * 确认 PNG 导入:保存头像 + 保存角色。
+   *
+   * @param parsed 解析后的角色卡
+   * @param pngUri 原始 PNG 文件 URI
+   * @returns 新创建的 Character
+   */
+  async confirmPngImport(parsed: ParsedCharacterCard, pngUri: string): Promise<Character> {
+    this.requireInit();
+    const characterId: string = 'char-' + generateUuid();
+    // 保存头像
+    const avatarUri: string = await this.assetStore.saveAvatar(pngUri, characterId);
+    // 创建并保存角色
+    const character: Character = createCharacter(
+      characterId,
+      parsed.name,
+      parsed.description,
+      parsed.personality,
+      parsed.scenario,
+      parsed.firstMessage,
+      parsed.systemPrompt,
+      avatarUri
+    );
+    const error: string | null = validateCharacter(character);
+    if (error !== null) {
+      // 回滚:删除已保存的头像
+      await this.assetStore.deleteAvatar(characterId);
+      throw new Error(error);
+    }
+    await this.store.save(character);
+    Logger.info(LOG_TAG, 'confirmPngImport ok id=' + character.id);
+    return character;
   }
 }

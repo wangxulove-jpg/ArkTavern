@@ -24,6 +24,7 @@ import { ProviderConfigStore } from '../storage/ProviderConfigStore';
 import { AssetStoreKeyStore } from '../storage/AssetStoreKeyStore';
 import { ProviderKeyStore } from '../storage/ProviderKeyStore';
 import { CharacterStore } from '../storage/CharacterStore';
+import { CharacterAssetStore } from '../storage/CharacterAssetStore';
 import { CharacterService } from './CharacterService';
 import { ModelService } from './ModelService';
 import { DefaultProviderFactory } from './ProviderFactory';
@@ -57,7 +58,8 @@ export class AppServices {
     const factory: DefaultProviderFactory = new DefaultProviderFactory(providerKeyStore);
     this.modelService = new ModelService(configStore, providerKeyStore, factory);
     const characterStore: CharacterStore = new CharacterStore();
-    this.characterService = new CharacterService(characterStore);
+    const characterAssetStore: CharacterAssetStore = new CharacterAssetStore();
+    this.characterService = new CharacterService(characterStore, characterAssetStore);
   }
 
   /**

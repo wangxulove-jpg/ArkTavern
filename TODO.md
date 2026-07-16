@@ -607,6 +607,51 @@ Date: 2026-07-15
 
 ---
 
+### T-2.3 PNG 角色卡导入
+
+- 依赖:T-2.2
+- 优先级:P1
+- 修改范围:`parser/PngCharacterCardParser.ets`(新建)、`storage/CharacterAssetStore.ets`(新建)、`services/CharacterService.ets`、`services/AppServices.ets`、`viewmodels/CharacterListViewModel.ets`、`pages/CharacterListPage.ets`、测试
+- 参考文件:`ArkTavern-Reference/SillyTavern-release/src/character-card-parser.js`(只读,PNG 元数据 chunk 关键字参考)
+- 内容:
+  - PngCharacterCardParser:纯逻辑 PNG 解析,校验 8 字节签名,遍历 chunk,读取 tEXt chunk 中 `chara`(V2)/`ccv3`(V3)关键字,Base64 解码后返回 JSON 字符串
+  - CharacterAssetStore:将导入 PNG 复制到应用私有目录 `filesDir/avatars/`,生成安全文件名 `avatar_{id}.png`,删除角色时同步删除头像
+  - CharacterService:新增 readFileBytes/importPngFromFile/confirmPngImport,复用 CharacterCardJsonParser 解析 JSON
+  - CharacterListViewModel:自动检测 `.png` 后缀分流到 startPngImport,预览状态含 isPngImport/previewPngUri
+  - CharacterListPage:导入预览对话框增加 PNG 头像 Image 组件
+  - 文件大小限制 50MB,chunk 数据限制 100MB,text 限制 10MB
+  - 导入失败时无残留文件(confirmPngImport 失败回滚删除头像)
+- 验收标准:
+  - [x] 正常 V2 PNG(chara tEXt chunk)解析成功
+  - [x] 正常 V3 PNG(ccv3 tEXt chunk)解析成功
+  - [x] V3 优先于 V2
+  - [x] 无元数据 PNG 返回可读错误
+  - [x] PNG 签名错误返回可读错误
+  - [x] chunk 数据越界返回可读错误
+  - [x] Base64 非法返回可读错误
+  - [x] 超大文件(>50MB)返回可读错误
+  - [x] 中文角色名正确解析(UTF-8 编解码)
+  - [x] URL-safe Base64 支持
+  - [x] id 冲突生成新 UUID
+  - [x] 导入成功后头像保存到应用私有目录
+  - [x] 删除角色时头像同步清理
+  - [x] 取消导入无残留文件
+  - [x] JSON 导入现有功能无回归
+  - [x] hilog 不记录角色正文或图片元数据全文
+- 完成情况(2026-07-16):
+  - [x] parser/PngCharacterCardParser.ets:纯逻辑 PNG 解析(约 280 行),含 tEXt 解析、Base64 解码、UTF-8 解码、Latin-1 解码,不依赖设备 API
+  - [x] storage/CharacterAssetStore.ets:头像文件持久化(约 95 行),使用 @kit.CoreFileKit 的 fileIo
+  - [x] CharacterService 新增 PngImportResult 接口、readFileBytes/importPngFromFile/confirmPngImport 方法
+  - [x] CharacterListViewModel 新增 isPngImport/previewPngUri 状态、startPngImport 分流
+  - [x] CharacterListPage 新增 PNG 头像预览(80x80 Image 组件)
+  - [x] AppServices 初始化 CharacterAssetStore 并注入 CharacterService
+  - [x] 设备测试:PngCharacterCardParser 9/9 通过(含 V2/V3/中文/URL-safe/错误处理)
+  - [x] MCP build entry@default + entry@ohosTest BUILD SUCCESSFUL
+  - 未实现:zTXt/iTXt chunk 解析(当前规范仅需 tEXt)、Lorebook、alternate greetings、在线角色市场
+  - 已知限制:本地单元测试需在 DevEco Studio IDE 中运行(命令行 hvigorw test 报 SDK component missing);真机 PNG 导入需用户手动操作
+
+---
+
 ## Phase 3:角色卡导入
 
 ### T-3.1 定义 Character 内部模型

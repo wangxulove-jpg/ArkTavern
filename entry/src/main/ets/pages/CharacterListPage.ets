@@ -23,6 +23,7 @@ import { sanitizeFileName } from '../parser/CharacterCardJsonWriter';
 import { AppServices } from '../services/AppServices';
 import { picker } from '@kit.CoreFileKit';
 import { promptAction } from '@kit.ArkUI';
+import { image } from '@kit.ImageKit';
 
 @Entry
 @Component
@@ -545,6 +546,16 @@ export struct CharacterListPage {
           .width('100%')
           .textAlign(TextAlign.Center)
           .margin({ bottom: 16 })
+
+        // PNG 头像预览
+        if (this.viewModel!.isPngImport && this.viewModel!.previewPngUri.length > 0) {
+          Image(this.viewModel!.previewPngUri)
+            .width(80)
+            .height(80)
+            .borderRadius(12)
+            .objectFit(ImageFit.Cover)
+            .margin({ bottom: 12 })
+        }
 
         this.importPreviewField('名称', this.viewModel!.previewCard!.name, true);
         this.importPreviewField('描述', this.viewModel!.previewCard!.description, false);

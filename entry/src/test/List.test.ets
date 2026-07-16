@@ -15,6 +15,7 @@ import openAiProviderStreamTest from './OpenAIProviderStream.test';
 import harmonyHttpClientHelpersTest from './HarmonyHttpClientHelpers.test';
 import parserTest from './CharacterCardJsonParser.test';
 import writerTest from './CharacterCardJsonWriter.test';
+import pngParserTest from './PngCharacterCardParser.test';
 
 export default function testsuite() {
   localUnitTest();
@@ -34,4 +35,5 @@ export default function testsuite() {
   harmonyHttpClientHelpersTest();
   parserTest();
   writerTest();
+  pngParserTest();
 }

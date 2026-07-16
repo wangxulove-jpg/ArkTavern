@@ -8,6 +8,7 @@
 import { Character, CharacterUpdates } from '../models/Character';
 import { CharacterService } from '../services/CharacterService';
 import { ParsedCharacterCard } from '../parser/CharacterCardJsonParser';
+import { PngParseResult } from '../parser/PngCharacterCardParser';
 import { Logger } from '../utils/Logger';
 
 const LOG_TAG: string = 'CharacterListViewModel';
@@ -37,6 +38,9 @@ export class CharacterListViewModel {
   importJsonBuffer: string = '';
   importing: boolean = false;
   importError: string = '';
+  /** PNG 导入特有状态 */
+  isPngImport: boolean = false;
+  previewPngUri: string = '';
   /** 导出 */
   exporting: boolean = false;
   exportError: string = '';
@@ -160,16 +164,31 @@ export class CharacterListViewModel {
 
   /**
    * 从文件 URI 读取并解析角色卡,显示预览。
-   * 页面调用此方法后,检查 showImportPreview 以显示预览对话框。
+   * 自动检测 PNG 或 JSON 格式。
    *
    * @param uri 文件 URI
    */
   async startImportFile(uri: string): Promise<void> {
+    // 检测文件类型
+    const lowerUri: string = uri.toLowerCase();
+    if (lowerUri.endsWith('.png')) {
+      await this.startPngImport(uri);
+      return;
+    }
+    await this.startJsonImport(uri);
+  }
+
+  /**
+   * JSON 导入流程。
+   */
+  private async startJsonImport(uri: string): Promise<void> {
     this.importing = true;
     this.importError = '';
     this.previewCard = null;
     this.importJsonBuffer = '';
     this.showImportPreview = false;
+    this.isPngImport = false;
+    this.previewPngUri = '';
     try {
       const jsonString: string = await this.service.readFileContent(uri);
       const result = this.service.parseCharacterJson(jsonString);
@@ -182,7 +201,58 @@ export class CharacterListViewModel {
       this.showImportPreview = true;
     } catch (e) {
       this.importError = '导入失败: ' + String(e);
-      Logger.error(LOG_TAG, 'startImportFile failed: ' + String(e));
+      Logger.error(LOG_TAG, 'startJsonImport failed: ' + String(e));
+    } finally {
+      this.importing = false;
+    }
+  }
+
+  /**
+   * PNG 导入流程。
+   * 解析 PNG → 复用 CharacterCardJsonParser 解析 JSON → 显示预览。
+   */
+  private async startPngImport(uri: string): Promise<void> {
+    this.importing = true;
+    this.importError = '';
+    this.previewCard = null;
+    this.importJsonBuffer = '';
+    this.showImportPreview = false;
+    this.isPngImport = false;
+    this.previewPngUri = '';
+    try {
+      const pngImport = await this.service.importPngFromFile(uri);
+      const pngResult: PngParseResult = pngImport.result;
+
+      if (!pngResult.success) {
+        this.importError = pngResult.error;
+        return;
+      }
+
+      // 复用 CharacterCardJsonParser 解析 JSON
+      const jsonResult = this.service.parseCharacterJson(pngResult.jsonString);
+      if (!jsonResult.success || jsonResult.card === null) {
+        this.importError = jsonResult.error !== null ? jsonResult.error : '导入失败';
+        return;
+      }
+
+      this.previewCard = jsonResult.card;
+      // 设置来源格式为 PNG 中的格式(chara_card_v2/chara_card_v3)
+      this.previewCard = {
+        name: jsonResult.card.name,
+        description: jsonResult.card.description,
+        personality: jsonResult.card.personality,
+        scenario: jsonResult.card.scenario,
+        firstMessage: jsonResult.card.firstMessage,
+        systemPrompt: jsonResult.card.systemPrompt,
+        avatarUri: jsonResult.card.avatarUri,
+        sourceFormat: pngResult.sourceFormat
+      };
+      this.previewPngUri = uri;
+      this.isPngImport = true;
+      this.showImportPreview = true;
+    } catch (e) {
+      this.importError = 'PNG 导入失败: ' + String(e);
+      Logger.error(LOG_TAG, 'startPngImport failed: ' + String(e));
     } finally {
       this.importing = false;
     }
@@ -190,6 +260,7 @@ export class CharacterListViewModel {
 
   /**
    * 确认导入:保存预览中的角色卡。
+   * PNG 导入时保存头像并创建角色,JSON 导入时直接创建角色。
    * 导入成功后刷新列表,但不自动设为当前角色。
    */
   async confirmImport(): Promise<void> {
@@ -199,10 +270,18 @@ export class CharacterListViewModel {
     this.importing = true;
     this.importError = '';
     try {
-      await this.service.importFromParsed(this.previewCard);
+      if (this.isPngImport && this.previewPngUri.length > 0) {
+        // PNG 导入:保存头像 + 角色
+        await this.service.confirmPngImport(this.previewCard, this.previewPngUri);
+      } else {
+        // JSON 导入
+        await this.service.importFromParsed(this.previewCard);
+      }
       this.showImportPreview = false;
       this.previewCard = null;
       this.importJsonBuffer = '';
+      this.isPngImport = false;
+      this.previewPngUri = '';
       await this.load();
     } catch (e) {
       this.importError = '保存失败: ' + String(e);
@@ -220,6 +299,9 @@ export class CharacterListViewModel {
     this.previewCard = null;
     this.importJsonBuffer = '';
     this.importError = '';
+    this.isPngImport = false;
+    // 不删除原始 PNG 文件(只取消导入,不产生残留)
+    this.previewPngUri = '';
   }
 
   /**
