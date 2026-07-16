@@ -47,6 +47,34 @@
     {
       "name": "page_secondary_text",
       "value": "#AAAAAA"
+    },
+    {
+      "name": "model_settings_accent",
+      "value": "#7B9BFF"
+    },
+    {
+      "name": "model_settings_chip_bg",
+      "value": "#2A2A2A"
+    },
+    {
+      "name": "model_settings_selected_bg",
+      "value": "#2A3552"
+    },
+    {
+      "name": "model_settings_field_bg",
+      "value": "#1E1E1E"
+    },
+    {
+      "name": "model_settings_button_text",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "model_settings_success",
+      "value": "#81C784"
+    },
+    {
+      "name": "model_settings_danger",
+      "value": "#EF5350"
     }
   ]
 }

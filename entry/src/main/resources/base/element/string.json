@@ -115,6 +115,102 @@
     {
       "name": "common_dev_test_label",
       "value": "[开发测试]"
+    },
+    {
+      "name": "home_model_configured",
+      "value": "当前模型:%1$s · %2$s"
+    },
+    {
+      "name": "model_settings_config_list",
+      "value": "配置列表"
+    },
+    {
+      "name": "model_settings_no_configs",
+      "value": "尚无配置,点击下方按钮新建"
+    },
+    {
+      "name": "model_settings_new_config",
+      "value": "新建配置"
+    },
+    {
+      "name": "model_settings_current_badge",
+      "value": "当前"
+    },
+    {
+      "name": "model_settings_form_title",
+      "value": "配置详情"
+    },
+    {
+      "name": "model_settings_name",
+      "value": "配置名称"
+    },
+    {
+      "name": "model_settings_name_placeholder",
+      "value": "给配置起个名字"
+    },
+    {
+      "name": "model_settings_provider_type",
+      "value": "Provider 类型"
+    },
+    {
+      "name": "model_settings_base_url",
+      "value": "Base URL"
+    },
+    {
+      "name": "model_settings_model",
+      "value": "模型名称"
+    },
+    {
+      "name": "model_settings_api_key",
+      "value": "API Key"
+    },
+    {
+      "name": "model_settings_api_key_configured",
+      "value": "API Key 已配置,留空保留原 Key"
+    },
+    {
+      "name": "model_settings_api_key_placeholder",
+      "value": "输入 API Key(新建必填)"
+    },
+    {
+      "name": "model_settings_temperature",
+      "value": "Temperature"
+    },
+    {
+      "name": "model_settings_top_p",
+      "value": "Top P"
+    },
+    {
+      "name": "model_settings_max_tokens",
+      "value": "Max Tokens"
+    },
+    {
+      "name": "model_settings_stream",
+      "value": "流式请求"
+    },
+    {
+      "name": "model_settings_enabled",
+      "value": "启用"
+    },
+    {
+      "name": "model_settings_save",
+      "value": "保存"
+    },
+    {
+      "name": "model_settings_test",
+      "value": "测试连接"
+    },
+    {
+      "name": "model_settings_set_current",
+      "value": "设为当前"
+    },
+    {
+      "name": "model_settings_delete",
+      "value": "删除"
+    },
+    {
+      "name": "model_settings_delete_confirm",
+      "value": "确定删除该配置吗?API Key 也将一并清除。"
     }
   ]
 }

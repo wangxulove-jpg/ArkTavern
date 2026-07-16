@@ -20,12 +20,48 @@ import { LorebookPage } from './LorebookPage';
 import { ModelSettingsPage } from './ModelSettingsPage';
 import { AppSettingsPage } from './AppSettingsPage';
 import { RealSsePocPage } from './RealSsePocPage';
+import { AppServices } from '../services/AppServices';
+import { ProviderConfig } from '../models/ProviderConfig';
 
 @Entry
 @Component
 struct Index {
   @State pathStack: NavPathStack = new NavPathStack();
   @State isDevToolsExpanded: boolean = false;
+  @State currentConfig: ProviderConfig | null = null;
+  @State modelStateText: string = '';
+
+  async aboutToAppear(): Promise<void> {
+    try {
+      await AppServices.whenReady();
+      await this.refreshCurrentConfig();
+    } catch (e) {
+      this.modelStateText = '';
+    }
+  }
+
+  onPageShow(): void {
+    // 从模型设置页返回时刷新当前配置状态
+    if (AppServices.isStarted()) {
+      AppServices.whenReady().then((): Promise<void> => this.refreshCurrentConfig())
+        .catch((): void => {});
+    }
+  }
+
+  private async refreshCurrentConfig(): Promise<void> {
+    try {
+      const config: ProviderConfig | null = await AppServices.getInstance().modelService.getCurrentConfig();
+      this.currentConfig = config;
+      if (config !== null) {
+        this.modelStateText = config.name + ' · ' + config.modelName;
+      } else {
+        this.modelStateText = '';
+      }
+    } catch (e) {
+      this.currentConfig = null;
+      this.modelStateText = '';
+    }
+  }
 
   /**
    * NavDestination 页面构建器。
@@ -140,9 +176,16 @@ struct Index {
           // ===== 模型连接状态卡片 =====
           Row() {
             Column() {
-              Text($r('app.string.home_model_not_configured'))
-                .fontSize($r('app.float.home_body_font_size'))
-                .fontColor($r('app.color.home_secondary_text'))
+              if (this.currentConfig !== null) {
+                Text($r('app.string.home_model_configured',
+                  this.currentConfig.name, this.currentConfig.modelName))
+                  .fontSize($r('app.float.home_body_font_size'))
+                  .fontColor($r('app.color.home_primary_text'))
+              } else {
+                Text($r('app.string.home_model_not_configured'))
+                  .fontSize($r('app.float.home_body_font_size'))
+                  .fontColor($r('app.color.home_secondary_text'))
+              }
             }
             .layoutWeight(1)
             .alignItems(HorizontalAlign.Start)

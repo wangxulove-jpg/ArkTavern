@@ -9,6 +9,7 @@ import harmonyHttpClientDeviceTest from './HarmonyHttpClient.test';
 import openAiProviderDeviceTest from './OpenAIProvider.test';
 import openAiProviderStreamDeviceTest from './OpenAIProviderStream.test';
 import modelServiceDeviceTest from './ModelService.test';
+import modelSettingsViewModelTest from './ModelSettingsViewModel.test';
 
 export default function testsuite() {
   abilityTest();
@@ -22,4 +23,5 @@ export default function testsuite() {
   openAiProviderDeviceTest();
   openAiProviderStreamDeviceTest();
   modelServiceDeviceTest();
+  modelSettingsViewModelTest();
 }

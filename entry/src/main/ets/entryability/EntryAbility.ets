@@ -1,6 +1,7 @@
 import { AbilityConstant, ConfigurationConstant, UIAbility, Want } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
+import { AppServices } from '../services/AppServices';
 
 const DOMAIN = 0x0000;
 
@@ -12,6 +13,10 @@ export default class EntryAbility extends UIAbility {
       hilog.error(DOMAIN, 'testTag', 'Failed to set colorMode. Cause: %{public}s', JSON.stringify(err));
     }
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onCreate');
+    // 启动应用服务初始化(异步,不阻塞 onCreate)
+    AppServices.initialize(this.context).catch((e: Object): void => {
+      hilog.error(DOMAIN, 'testTag', 'AppServices initialize failed: %{public}s', (e as Error).message);
+    });
   }
 
   onDestroy(): void {

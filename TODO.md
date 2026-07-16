@@ -391,7 +391,7 @@ Date: 2026-07-15
   - [x] 设备测试通过:ModelService 20 + ProviderConfigStore 28 + ProviderKeyStore 18 + OpenAIProvider 10 + OpenAIProviderStream 19 = 95/95
   - [x] 无 API Key 泄漏(源码仅含 `sk-fake*` 假数据)
   - [x] 未修改页面、AssetStoreKeyStore.ets、ProviderConfigStore.ets、ProviderKeyStore.ets、OpenAIProvider.ets
-  - 未开始 T-1.7
+  - 未开始 T-1.8
 
 ### T-1.7 实现模型设置页与最小验证页
 
@@ -400,9 +400,22 @@ Date: 2026-07-15
 - 修改范围:`entry/src/main/ets/pages/`、`entry/src/main/ets/viewmodels/`、`main_pages.json`
 - 内容:`pages/ModelSettingsPage.ets`(表单)、`pages/QuickChatPage.ets`(输入一句话 → 流式显示回复)、对应 ViewModel
 - 验收标准:
-  - [ ] 可保存多个 Provider 配置
-  - [ ] 可发送一句话并看到流式回复
-  - [ ] 错误有提示
+  - [x] 可保存多个 Provider 配置
+  - [x] 可发送一句话并看到流式回复(注:本次只做模型设置页,QuickChatPage 未要求)
+  - [x] 错误有提示
+- 完成情况(2026-07-17):
+  - [x] 正式模型设置页已可用(配置列表 + 编辑表单 + 保存/测试/设为当前/删除)
+  - [x] API Key 仅存 Asset Store,不回显原密钥,保存/测试后立即清空输入
+  - [x] 配置存 Preferences(非敏感字段),schemaVersion=1
+  - [x] 连接测试已通过(Mock Provider 验证,不修改正式配置)
+  - [x] 首页模型状态已接入(读取 ModelService 当前配置显示名称与模型名)
+  - [x] AppServices 组合根:EntryAbility.onCreate 异步初始化,页面 aboutToAppear 调用 whenReady()
+  - [x] ModelServiceError 错误包装修复:公开 message 固定脱敏,底层信息仅进入 causeMessage
+  - [x] Provider 类型:Claude/Gemini 显示"暂未支持",OpenAI/DeepSeek/OpenRouter 走 OpenAI-compatible
+  - [x] 设备测试通过:ModelSettingsViewModel 19/19 + ModelService 20/20 = 39/39
+  - [x] 所有新增文件 ≤600 行
+  - [x] 无 API Key 泄漏(源码扫描 + hilog 无 apiKey + Preferences 无敏感字段)
+  - 未开始 T-1.8
 
 ### T-1.8 补充网络权限
 

@@ -455,18 +455,22 @@ export class ModelService {
     if (isPreferencesError(e)) {
       const err: PreferencesError = e as PreferencesError;
       return createModelServiceError(
-        ModelServiceErrorType.StorageFailure, context + ': ' + err.message, err.causeMessage
+        ModelServiceErrorType.StorageFailure, context, this.combineCause(err.message, err.causeMessage)
       );
     }
     if (e instanceof SecureStorageError) {
       const err: SecureStorageError = e as SecureStorageError;
       return createModelServiceError(
-        ModelServiceErrorType.StorageFailure, context + ': ' + err.message, err.causeMessage
+        ModelServiceErrorType.StorageFailure, context, this.combineCause(err.message, err.causeMessage)
       );
     }
     return createModelServiceError(
       ModelServiceErrorType.StorageFailure, context + ': unknown error', String(e)
     );
+  }
+
+  private combineCause(message: string, causeMessage?: string): string {
+    return causeMessage !== undefined ? message + ' | cause: ' + causeMessage : message;
   }
 
   private wrapCreateConfigError(e: Object, id: string): ModelServiceError {
@@ -478,7 +482,7 @@ export class ModelService {
         );
       }
       return createModelServiceError(
-        ModelServiceErrorType.StorageFailure, 'createConfig save failed: ' + err.message, err.causeMessage
+        ModelServiceErrorType.StorageFailure, 'createConfig save failed', this.combineCause(err.message, err.causeMessage)
       );
     }
     return createModelServiceError(
@@ -495,7 +499,7 @@ export class ModelService {
         );
       }
       return createModelServiceError(
-        ModelServiceErrorType.StorageFailure, 'updateConfig failed: ' + err.message, err.causeMessage
+        ModelServiceErrorType.StorageFailure, 'updateConfig failed', this.combineCause(err.message, err.causeMessage)
       );
     }
     return createModelServiceError(
@@ -506,7 +510,7 @@ export class ModelService {
   private wrapKeyError(e: Object, targetType: ModelServiceErrorType, message: string): ModelServiceError {
     if (e instanceof SecureStorageError) {
       const err: SecureStorageError = e as SecureStorageError;
-      return createModelServiceError(targetType, message, err.causeMessage);
+      return createModelServiceError(targetType, message, this.combineCause(err.message, err.causeMessage));
     }
     return createModelServiceError(targetType, message, String(e));
   }
@@ -520,7 +524,7 @@ export class ModelService {
         );
       }
       return createModelServiceError(
-        ModelServiceErrorType.StorageFailure, 'setCurrentConfig failed: ' + err.message, err.causeMessage
+        ModelServiceErrorType.StorageFailure, 'setCurrentConfig failed', this.combineCause(err.message, err.causeMessage)
       );
     }
     return createModelServiceError(
@@ -531,12 +535,8 @@ export class ModelService {
   private wrapNetworkError(e: Object, message: string): ModelServiceError {
     if (e instanceof NetworkError) {
       const err: NetworkError = e as NetworkError;
-      // err.message 可能含敏感信息,改为通过 causeMessage 传递并脱敏
-      const cause: string = err.causeMessage !== undefined
-        ? err.message + ' | cause: ' + err.causeMessage
-        : err.message;
       return createModelServiceError(
-        ModelServiceErrorType.NetworkFailure, message, cause
+        ModelServiceErrorType.NetworkFailure, message, this.combineCause(err.message, err.causeMessage)
       );
     }
     return createModelServiceError(
