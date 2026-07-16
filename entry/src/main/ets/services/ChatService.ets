@@ -24,7 +24,8 @@
  */
 
 import { ModelService } from './ModelService';
-import { LorebookService, LorebookInjection } from './LorebookService';
+import { LorebookService } from './LorebookService';
+import { PromptBuilder, PromptBuildContext, PromptBuildResult } from './PromptBuilder';
 import { ChatMessage, ChatMessageStatus, createChatMessage } from '../models/ChatMessage';
 import { ChatRequestOptions } from '../models/ChatRequest';
 import { ChatRole } from '../models/ChatRole';
@@ -38,6 +39,7 @@ import {
 } from '../models/ChatStreamTypes';
 import { NetworkError } from '../models/NetworkError';
 import { Character, buildCharacterSystemContent } from '../models/Character';
+import { Lorebook } from '../models/Lorebook';
 import { generateUuid } from '../utils/Uuid';
 import { Logger } from '../utils/Logger';
 
@@ -91,12 +93,20 @@ export class ChatService {
   private startTimerId: number = -1;
   private readonly modelService: ModelService;
   private readonly lorebookService: LorebookService | null;
+  private readonly promptBuilder: PromptBuilder | null;
+  /** 当前角色(用于 PromptBuilder 构建) */
+  private character: Character | null = null;
   /** 最近一次使用的回调(用于 stopGeneration/clearConversation 通知状态) */
   private lastCallbacks: ChatServiceCallbacks | null = null;
 
-  constructor(modelService: ModelService, lorebookService: LorebookService | null = null) {
+  constructor(
+    modelService: ModelService,
+    lorebookService: LorebookService | null = null,
+    promptBuilder: PromptBuilder | null = null
+  ) {
     this.modelService = modelService;
     this.lorebookService = lorebookService;
+    this.promptBuilder = promptBuilder;
   }
 
   /**
@@ -110,6 +120,7 @@ export class ChatService {
    * @returns 是否添加了 firstMessage(用于通知页面显示开场白)
    */
   initContext(character: Character | null): boolean {
+    this.character = character;
     if (this.messages.length > 0) {
       return false;
     }
@@ -381,7 +392,7 @@ export class ChatService {
     // 启动超时保护
     this.startStartTimer(assistantId, callbacks);
 
-    // 构建世界书注入后的消息列表
+    // 构建请求消息(通过 PromptBuilder 统一构建)
     const requestMessages: ChatMessage[] = await this.buildRequestMessages();
 
     try {
@@ -397,82 +408,40 @@ export class ChatService {
   }
 
   /**
-   * 构建带世界书注入的请求消息列表。
+   * 构建请求消息列表(通过 PromptBuilder 统一构建)。
    *
-   * 顺序:BeforeCharacter 世界书 → Character System Prompt → AfterCharacter 世界书 → 其他消息
-   * 世界书内容作为 System 消息发送,不显示为聊天气泡,不永久加入 this.messages。
-   * 无当前世界书时返回原始消息列表。
+   * 角色、世界书和聊天历史由 PromptBuilder 按固定顺序组装。
+   * 世界书内容不会写入 this.messages。
+   * 无 PromptBuilder 或无角色时,返回原始消息列表(跳过 System 消息)。
    */
   private async buildRequestMessages(): Promise<ChatMessage[]> {
-    if (this.lorebookService === null) {
-      return this.messages;
-    }
-
-    const injection: LorebookInjection = await this.lorebookService.buildInjectionAsync(this.messages);
-    if (injection.before.length === 0 && injection.after.length === 0) {
-      return this.messages;
-    }
-
-    // 找到 Character System Prompt 在 messages 中的位置
-    let systemIndex: number = -1;
-    for (let i = 0; i < this.messages.length; i++) {
-      if (this.messages[i].role === ChatRole.System) {
-        systemIndex = i;
-        break;
-      }
-    }
-
-    const result: ChatMessage[] = [];
-    const now: number = Date.now();
-
-    // BeforeCharacter 世界书
-    if (injection.before.length > 0) {
-      const beforeMsg: ChatMessage = createChatMessage(
-        'msg-lorebook-before-' + generateUuid(),
-        ChatRole.System,
-        injection.before,
-        now
-      );
-      result.push(beforeMsg);
-    }
-
-    if (systemIndex >= 0) {
-      // 有 Character System Prompt:插入它
-      result.push(this.messages[systemIndex]);
-      // AfterCharacter 世界书
-      if (injection.after.length > 0) {
-        const afterMsg: ChatMessage = createChatMessage(
-          'msg-lorebook-after-' + generateUuid(),
-          ChatRole.System,
-          injection.after,
-          now
-        );
-        result.push(afterMsg);
-      }
-      // 添加 System 之后的所有消息
-      for (let i = systemIndex + 1; i < this.messages.length; i++) {
-        result.push(this.messages[i]);
-      }
-    } else {
-      // 无 Character System Prompt:AfterCharacter 放在所有消息之前
-      if (injection.after.length > 0) {
-        const afterMsg: ChatMessage = createChatMessage(
-          'msg-lorebook-after-' + generateUuid(),
-          ChatRole.System,
-          injection.after,
-          now
-        );
-        result.push(afterMsg);
-      }
-      // 添加所有消息
+    if (this.promptBuilder === null) {
+      // 无 PromptBuilder:跳过 System 消息,保留 User/Assistant
+      const filtered: ChatMessage[] = [];
       for (let i = 0; i < this.messages.length; i++) {
-        result.push(this.messages[i]);
+        if (this.messages[i].role !== ChatRole.System) {
+          filtered.push(this.messages[i]);
+        }
       }
+      return filtered;
     }
 
-    Logger.info(LOG_TAG, 'buildRequestMessages: injected lorebook before=' + injection.before.length.toString()
-      + ' after=' + injection.after.length.toString());
-    return result;
+    // 获取当前世界书
+    let lorebook: Lorebook | undefined = undefined;
+    if (this.lorebookService !== null) {
+      lorebook = await this.lorebookService.getCurrentLorebook() ?? undefined;
+    }
+
+    const context: PromptBuildContext = {
+      character: this.character !== null ? this.character : undefined,
+      lorebook: lorebook,
+      messages: this.messages
+    };
+
+    const result: PromptBuildResult = this.promptBuilder.build(context);
+    Logger.info(LOG_TAG, 'buildRequestMessages: segments=' + result.messages.length.toString()
+      + ' lorebook=' + result.matchedLorebookEntryIds.length.toString());
+    return result.messages;
   }
 
   /**

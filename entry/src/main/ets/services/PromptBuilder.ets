@@ -1,0 +1,162 @@
+/**
+ * PromptBuilder 提示词构建器
+ *
+ * 统一构建发送给模型的最终请求消息。
+ * 将角色提示词、世界书注入和聊天历史按固定顺序组装。
+ *
+ * 职责:
+ * - 接收角色、世界书和聊天消息
+ * - 动态匹配世界书条目
+ * - 构建最终 ChatMessage[]
+ * - 不修改传入的原始消息数组
+ * - 不保存状态
+ * - 不访问页面或网络层
+ *
+ * 固定消息顺序:
+ * 1. BeforeCharacter 世界书(System)
+ * 2. Character System Prompt(System)
+ * 3. AfterCharacter 世界书(System)
+ * 4. firstMessage 和聊天历史(Assistant/User)
+ */
+
+import { Character, buildCharacterSystemContent } from '../models/Character';
+import { Lorebook, LorebookEntry, LorebookPosition } from '../models/Lorebook';
+import { ChatMessage, createChatMessage } from '../models/ChatMessage';
+import { ChatRole } from '../models/ChatRole';
+import {
+  PromptSegment,
+  PromptSegmentPosition,
+  createPromptSegment,
+  sortSegments
+} from '../models/PromptSegment';
+import { LorebookService } from './LorebookService';
+import { generateUuid } from '../utils/Uuid';
+import { Logger } from '../utils/Logger';
+
+const LOG_TAG: string = 'PromptBuilder';
+
+/**
+ * Prompt 构建上下文。
+ */
+export interface PromptBuildContext {
+  /** 当前角色(可选) */
+  character?: Character;
+  /** 当前世界书(可选) */
+  lorebook?: Lorebook;
+  /** 当前聊天消息列表 */
+  messages: ChatMessage[];
+}
+
+/**
+ * Prompt 构建结果。
+ */
+export interface PromptBuildResult {
+  /** 构建后的请求消息列表 */
+  messages: ChatMessage[];
+  /** 匹配到的世界书条目 ID 列表 */
+  matchedLorebookEntryIds: string[];
+}
+
+/**
+ * 提示词构建器。
+ */
+export class PromptBuilder {
+  private readonly lorebookService: LorebookService;
+
+  constructor(lorebookService: LorebookService) {
+    this.lorebookService = lorebookService;
+  }
+
+  /**
+   * 构建最终请求消息。
+   *
+   * 顺序:BeforeCharacter → Character System Prompt → AfterCharacter → 聊天历史
+   * 世界书内容作为 System 消息发送,不进入 ChatService 可见消息。
+   * 不修改传入的 messages 数组。
+   *
+   * @param context 构建上下文
+   * @returns 构建结果
+   */
+  build(context: PromptBuildContext): PromptBuildResult {
+    const segments: PromptSegment[] = [];
+    const matchedIds: string[] = [];
+    const now: number = Date.now();
+
+    // 1. BeforeCharacter 世界书
+    if (context.lorebook !== undefined && context.lorebook !== null && context.lorebook.enabled) {
+      const loreEntries: LorebookEntry[] = this.lorebookService.matchEntriesForLorebook(
+        context.lorebook, context.messages
+      );
+      for (let i = 0; i < loreEntries.length; i++) {
+        const entry: LorebookEntry = loreEntries[i];
+        matchedIds.push(entry.id);
+        const position: PromptSegmentPosition = entry.position === LorebookPosition.BeforeCharacter
+          ? PromptSegmentPosition.BeforeCharacter
+          : PromptSegmentPosition.AfterCharacter;
+        const seg: PromptSegment = createPromptSegment(
+          'lorebook-' + entry.id,
+          position,
+          ChatRole.System,
+          entry.content,
+          entry.priority
+        );
+        segments.push(seg);
+      }
+    }
+
+    // 2. Character System Prompt
+    if (context.character !== undefined && context.character !== null) {
+      const systemContent: string = buildCharacterSystemContent(context.character);
+      if (systemContent.length > 0) {
+        const charSeg: PromptSegment = createPromptSegment(
+          'character-system',
+          PromptSegmentPosition.Character,
+          ChatRole.System,
+          systemContent,
+          0
+        );
+        segments.push(charSeg);
+      }
+    }
+
+    // 3. Conversation:跳过 System 消息(角色 System Prompt 已在上面处理),保留 User/Assistant 消息
+    for (let i = 0; i < context.messages.length; i++) {
+      const msg: ChatMessage = context.messages[i];
+      if (msg.role === ChatRole.System) {
+        // 跳过所有 System 消息(角色 System Prompt 和任何世界书消息)
+        continue;
+      }
+      const convSeg: PromptSegment = createPromptSegment(
+        msg.id,
+        PromptSegmentPosition.Conversation,
+        msg.role,
+        msg.content,
+        0
+      );
+      segments.push(convSeg);
+    }
+
+    // 排序:position → priority
+    const sorted: PromptSegment[] = sortSegments(segments);
+
+    // 转换为 ChatMessage[]
+    const resultMessages: ChatMessage[] = [];
+    for (let i = 0; i < sorted.length; i++) {
+      const seg: PromptSegment = sorted[i];
+      const msg: ChatMessage = createChatMessage(
+        seg.id,
+        seg.role,
+        seg.content,
+        now
+      );
+      resultMessages.push(msg);
+    }
+
+    Logger.info(LOG_TAG, 'build: segments=' + sorted.length + ' lorebook=' + matchedIds.length);
+    const result: PromptBuildResult = {
+      messages: resultMessages,
+      matchedLorebookEntryIds: matchedIds
+    };
+    return result;
+  }
+}

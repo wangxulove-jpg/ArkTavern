@@ -28,6 +28,7 @@ import { CharacterAssetStore } from '../storage/CharacterAssetStore';
 import { LorebookStore } from '../storage/LorebookStore';
 import { CharacterService } from './CharacterService';
 import { LorebookService } from './LorebookService';
+import { PromptBuilder } from './PromptBuilder';
 import { ModelService } from './ModelService';
 import { DefaultProviderFactory } from './ProviderFactory';
 import { Logger } from '../utils/Logger';
@@ -49,6 +50,8 @@ export class AppServices {
   readonly characterService: CharacterService;
   /** LorebookService 世界书服务 */
   readonly lorebookService: LorebookService;
+  /** PromptBuilder 提示词构建器 */
+  readonly promptBuilder: PromptBuilder;
 
   /**
    * 私有构造,组装全部依赖。
@@ -66,6 +69,7 @@ export class AppServices {
     this.characterService = new CharacterService(characterStore, characterAssetStore);
     const lorebookStore: LorebookStore = new LorebookStore();
     this.lorebookService = new LorebookService(lorebookStore);
+    this.promptBuilder = new PromptBuilder(this.lorebookService);
   }
 
   /**
@@ -153,5 +157,12 @@ export class AppServices {
    */
   static getLorebookService(): LorebookService {
     return AppServices.getInstance().lorebookService;
+  }
+
+  /**
+   * 获取 PromptBuilder 实例。
+   */
+  static getPromptBuilder(): PromptBuilder {
+    return AppServices.getInstance().promptBuilder;
   }
 }

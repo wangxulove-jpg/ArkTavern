@@ -67,7 +67,8 @@ export struct ChatPage {
     const modelService = AppServices.getModelService();
     const characterService = AppServices.getCharacterService();
     const lorebookService = AppServices.getLorebookService();
-    const chatService = new ChatService(modelService, lorebookService);
+    const promptBuilder = AppServices.getPromptBuilder();
+    const chatService = new ChatService(modelService, lorebookService, promptBuilder);
     const vm: ChatViewModel = new ChatViewModel(chatService, modelService, characterService);
     // 通过回调将 ViewModel 的 messages 同步到独立 @State 变量
     // 这是确保 ForEach 响应式刷新的关键

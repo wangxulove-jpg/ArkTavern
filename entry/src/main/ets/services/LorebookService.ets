@@ -371,8 +371,9 @@ export class LorebookService {
 
   /**
    * 对指定世界书和消息列表执行匹配。
+   * 公开方法,供 PromptBuilder 等外部调用。
    */
-  private matchEntriesForLorebook(
+  matchEntriesForLorebook(
     lorebook: Lorebook,
     messages: ChatMessage[]
   ): LorebookEntry[] {

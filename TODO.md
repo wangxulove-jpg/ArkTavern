@@ -690,8 +690,44 @@ Date: 2026-07-15
   - [x] MCP build entry@default + entry@ohosTest BUILD SUCCESSFUL
   - [x] 模拟器验证:LorebookPage 正常显示,创建世界书成功,按钮(设为当前/编辑/禁用/删除)正常
   - [x] hilog 无 API Key/世界书正文/聊天正文泄漏
-  - 未实现:向量匹配、正则表达式、递归扫描、概率触发、PromptBuilder、Preset
+  - 未实现:向量匹配、正则表达式、递归扫描、概率触发、Preset
   - 已知限制:设备测试无法通过命令行运行(MCP build --mode module 导致 main HAP 缺少 test runner),需在 DevEco Studio IDE 中运行;实机端到端聊天注入验证需用户手动操作
+
+---
+
+### T-2.5 PromptBuilder MVP：统一提示词构建
+
+- 依赖:T-2.1, T-2.4
+- 优先级:P2
+- 修改范围:`models/PromptSegment.ets`(新建)、`services/PromptBuilder.ets`(新建)、`services/ChatService.ets`、`services/AppServices.ets`、`pages/ChatPage.ets`、测试
+- 内容:
+  - PromptSegment 模型:PromptSegmentPosition 枚举(BeforeCharacter/Character/AfterCharacter/Conversation)和 PromptSegment 接口
+  - PromptBuilder 服务:接收角色/世界书/消息,统一构建最终请求消息,不修改原始消息数组,不保存状态
+  - 固定顺序:BeforeCharacter 世界书(System)→Character System Prompt(System)→AfterCharacter 世界书(System)→聊天历史
+  - ChatService 迁移:删除 buildRequestMessages() 世界书拼接逻辑,改为调用 PromptBuilder.build()
+  - AppServices 注入:创建 PromptBuilder 并注入 ChatService 构造函数
+- 验收标准:
+  - [x] Prompt 构建职责已从 ChatService 抽离
+  - [x] 页面不直接调用 PromptBuilder
+  - [x] ChatService 不再手工维护世界书位置顺序
+  - [x] 角色、世界书和聊天历史顺序正确
+  - [x] 世界书内容仅进入请求,不进入可见消息
+  - [x] 重新生成不重复注入
+  - [x] 无角色或无世界书时无行为回归
+  - [x] 不记录角色正文、世界书正文或聊天正文到 hilog
+  - [x] 不出现 API Key 泄漏
+  - [x] entry@default + entry@ohosTest BUILD SUCCESSFUL
+- 完成情况(2026-07-17):
+  - [x] PromptSegment.ets:纯数据模型(~60 行),含排序函数
+  - [x] PromptBuilder.ets:核心构建器(~130 行),build() 方法同步构建,注入 LorebookService 进行匹配
+  - [x] ChatService.ets:删除 buildRequestMessages() 世界书拼接,新增 promptBuilder 字段和 character 字段,新 buildRequestMessages() 调用 PromptBuilder
+  - [x] AppServices.ets:创建 PromptBuilder 实例,新增 getPromptBuilder() 静态方法
+  - [x] ChatPage.ets:通过 AppServices.getPromptBuilder() 注入 ChatService 构造函数
+  - [x] PromptBuilder.test.ets:6 个本地单元测试(无角色无世界书/仅角色/System 跳过/原始数组不变/无角色正常/重新生成不重复)
+  - [x] MCP 增量编译 entry@default + entry@ohosTest BUILD SUCCESSFUL
+  - [x] 模拟器启动正常,无 hilog 敏感数据泄漏
+  - 未实现:宏替换、TokenCounter、历史截断、Preset、正则世界书、递归扫描
+  - 已知限制:本地单元测试无法通过 hvigorw 运行(SDK component missing),需在 IDE 中运行;设备测试同样受限
 
 ---
 

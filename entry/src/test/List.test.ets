@@ -17,6 +17,7 @@ import parserTest from './CharacterCardJsonParser.test';
 import writerTest from './CharacterCardJsonWriter.test';
 import pngParserTest from './PngCharacterCardParser.test';
 import lorebookTest from './Lorebook.test';
+import promptBuilderTest from './PromptBuilder.test';
 
 export default function testsuite() {
   localUnitTest();
@@ -38,4 +39,5 @@ export default function testsuite() {
   writerTest();
   pngParserTest();
   lorebookTest();
+  promptBuilderTest();
 }

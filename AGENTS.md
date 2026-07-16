@@ -636,3 +636,45 @@ AGENTS.md 前文 "Project Structure" 中的 `Reference/` 段落仅作概念性�
 例外:`viewmodels/RealSsePocViewModel.ets` 为临时 PoC,直接依赖 `network/streaming/*`,Phase 1 正式 Provider 完成后删除。
 
 详细的目录职责表、依赖方向、导入顺序、命名约定见 ARCHITECTURE.md 的 "T-0.5 分层目录与导出约定" 章节。
+
+## 快速验证规则
+
+1. 普通功能开发采用分级验证：
+   - 编码过程中只做静态检查。
+   - 完成一批相关修改后，仅执行一次 entry@default 增量编译。
+   - 编译通过后，仅运行本任务直接相关测试。
+   - 最后执行一次最小实机冒烟验证。
+
+2. 默认禁止 clean build。仅在以下情况允许：
+   - 修改构建配置、模块配置或签名配置；
+   - 删除文件后存在旧产物引用；
+   - 增量编译连续两次出现明确缓存异常；
+   - Phase 完成后执行正式回归。
+
+3. 不运行全部历史测试，除非：
+   - Phase 完成；
+   - 修改公共底层模块；
+   - 用户明确要求全量回归。
+
+4. 同一编译命令最多运行 3 次：
+   - 第一次发现错误；
+   - 第二次验证修复；
+   - 第三次最终确认。
+   不得无证据重复 clean、重装或改变构建方式。
+
+5. 同一设备测试命令最多运行 2 次。
+   若两次均为相同环境错误，记录并停止，不再猜测重试。
+
+6. 以下已知错误视为环境限制：
+   - SDK component missing
+   - Cannot find module OpenHarmonyTestRunner
+   - Test Runner HAP 构建或安装异常
+   当 entry@ohosTest 已编译通过且错误与本次代码无直接关系时，不阻塞当前功能交付。
+
+7. 遇到 App died：
+   - 先读取 faultlog；
+   - 未取得直接错误证据前，不得猜测是进程冲突、HAP 安装顺序或 force-stop 问题；
+   - 相同 faultlog 不重复分析。
+
+8. 普通任务仅验证受影响链路。
+   页面功能的实机验证控制在 3–6 个关键操作，不做全应用巡检。
