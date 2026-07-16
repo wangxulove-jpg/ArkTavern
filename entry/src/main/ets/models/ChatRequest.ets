@@ -21,6 +21,20 @@ import { ChatMessage } from './ChatMessage';
 import { TEMPERATURE_DEFAULT, TOP_P_DEFAULT, MAX_TOKENS_DEFAULT } from './ProviderConfig';
 
 /**
+ * 聊天请求选项(不含 model,由 ModelService 填充)。
+ */
+export interface ChatRequestOptions {
+  /** 采样温度 */
+  readonly temperature: number;
+  /** 核采样概率 */
+  readonly topP: number;
+  /** 最大生成 token 数 */
+  readonly maxTokens: number;
+  /** 是否流式请求 */
+  readonly stream: boolean;
+}
+
+/**
  * 聊天请求模型。
  */
 export interface ChatRequest {

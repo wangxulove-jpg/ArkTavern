@@ -4,7 +4,7 @@
  * 使用 Mock ChatService + Mock ModelService 验证 ViewModel 的 UI 状态管理。
  * 不依赖真实网络或 Mock Server。
  *
- * 覆盖项:
+ * 覆盖项(16 项):
  * 1. 初始化读取当前配置
  * 2. 无当前配置时 hasCurrentModel=false
  * 3. canSend 空输入为 false
@@ -17,6 +17,10 @@
  * 10. clear 清空消息
  * 11. dispose 清理
  * 12. 错误映射为中文(无配置/禁用/Auth/429/Timeout/Network/Server/Parse/Unknown)
+ * 13. 初始化失败处理
+ * 14. sendMessage 抛异常时恢复 isGenerating 并显示错误
+ * 15. send 成功后输入框清空且消息显示
+ * 16. onMessagesChanged 每次产生新数组引用
  */
 
 import { describe, it, expect } from '@ohos/hypium';
@@ -36,14 +40,23 @@ class MockChatService {
   stopCalled: boolean = false;
   clearCalled: boolean = false;
   disposeCalled: boolean = false;
+  regenerateCalled: boolean = false;
   sendCallCount: number = 0;
   lastCallbacks: ChatServiceCallbacks | null = null;
   /** 注入错误 */
   injectError: string | null = null;
+  /** 可重新生成 */
+  _canRegenerate: boolean = false;
+  /** sendMessage 同步抛出异常(模拟 disposed 或同步错误) */
+  throwOnSend: Error | null = null;
 
   async sendMessage(userContent: string, callbacks: ChatServiceCallbacks): Promise<void> {
     this.sendCallCount++;
     this.lastCallbacks = callbacks;
+
+    if (this.throwOnSend !== null) {
+      throw this.throwOnSend;
+    }
 
     // 检查并发
     if (this.generating) {
@@ -115,6 +128,40 @@ class MockChatService {
     this.state = ChatState.Idle;
   }
 
+  canRegenerate(): boolean {
+    return this._canRegenerate;
+  }
+
+  async regenerateLastResponse(callbacks: ChatServiceCallbacks): Promise<void> {
+    this.regenerateCalled = true;
+    this.lastCallbacks = callbacks;
+    if (this.injectError !== null) {
+      this.generating = false;
+      this.state = ChatState.Failed;
+      callbacks.onStateChanged(ChatState.Failed);
+      callbacks.onError(this.injectError);
+      return;
+    }
+    this.generating = true;
+    this.state = ChatState.Sending;
+    callbacks.onStateChanged(ChatState.Sending);
+    this.state = ChatState.Streaming;
+    callbacks.onStateChanged(ChatState.Streaming);
+    // 模拟 regenerate 完成
+    this.messages[this.messages.length - 1] = {
+      id: this.messages[this.messages.length - 1].id,
+      role: ChatRole.Assistant,
+      content: 'regenerated reply',
+      createdAt: this.messages[this.messages.length - 1].createdAt,
+      updatedAt: Date.now(),
+      isStreaming: false
+    };
+    callbacks.onMessagesChanged(this.messages.slice());
+    this.generating = false;
+    this.state = ChatState.Completed;
+    callbacks.onStateChanged(ChatState.Completed);
+  }
+
   getMessages(): ChatMessage[] {
     return this.messages.slice();
   }
@@ -130,9 +177,12 @@ class MockChatService {
     this.stopCalled = false;
     this.clearCalled = false;
     this.disposeCalled = false;
+    this.regenerateCalled = false;
     this.sendCallCount = 0;
     this.lastCallbacks = null;
     this.injectError = null;
+    this._canRegenerate = false;
+    this.throwOnSend = null;
   }
 }
 
@@ -517,6 +567,68 @@ export default function chatViewModelDeviceTest() {
 
       expect(viewModel.hasCurrentModel).assertFalse();
       expect(viewModel.currentModelName.indexOf('失败') >= 0).assertTrue();
+      viewModel.dispose();
+    });
+
+    // 14. sendMessage 抛异常时恢复 isGenerating 并显示错误
+    it('send_recovers_when_chat_service_throws', 0, async () => {
+      const result = createViewModel(); const mockChatService = result.mockChatService; const mockModelService = result.mockModelService; const viewModel = result.viewModel;
+
+      mockModelService.setCurrentConfig(makeConfig('test', 'model'));
+      await viewModel.initialize();
+
+      mockChatService.throwOnSend = new Error('ChatService disposed');
+      viewModel.updateInput('test');
+      await viewModel.send();
+
+      // isGenerating 必须恢复
+      expect(viewModel.isGenerating).assertFalse();
+      // 输入框不应清空(消息未成功加入)
+      expect(viewModel.inputText.length > 0).assertTrue();
+      // 错误提示应包含"退出"或"重试"
+      expect(viewModel.errorMessage.length > 0).assertTrue();
+      viewModel.dispose();
+    });
+
+    // 15. send 成功后输入框清空且消息显示
+    it('send_clears_input_only_after_message_created', 0, async () => {
+      const result = createViewModel(); const mockChatService = result.mockChatService; const mockModelService = result.mockModelService; const viewModel = result.viewModel;
+
+      mockModelService.setCurrentConfig(makeConfig('test', 'model'));
+      await viewModel.initialize();
+
+      viewModel.updateInput('Hello');
+      await viewModel.send();
+
+      // 消息创建成功后输入框清空
+      expect(viewModel.inputText.length).assertEqual(0);
+      // 消息已显示
+      expect(viewModel.messages.length >= 2).assertTrue();
+      // 第一条是 User
+      expect(viewModel.messages[0].role).assertEqual(ChatRole.User);
+      expect(viewModel.messages[0].content).assertEqual('Hello');
+      viewModel.dispose();
+    });
+
+    // 16. onMessagesChanged 每次产生新数组引用
+    it('onMessagesChanged_produces_new_array_reference', 0, async () => {
+      const result = createViewModel(); const mockChatService = result.mockChatService; const mockModelService = result.mockModelService; const viewModel = result.viewModel;
+
+      mockModelService.setCurrentConfig(makeConfig('test', 'model'));
+      await viewModel.initialize();
+
+      viewModel.updateInput('Hello');
+      await viewModel.send();
+
+      const ref1: ChatMessage[] = viewModel.messages;
+      // 触发一次额外的 onMessagesChanged
+      if (mockChatService.lastCallbacks !== null) {
+        mockChatService.lastCallbacks.onMessagesChanged([
+          { id: 'extra', role: ChatRole.User, content: 'extra', createdAt: Date.now() }
+        ]);
+      }
+      const ref2: ChatMessage[] = viewModel.messages;
+      expect(ref2 !== ref1).assertTrue();
       viewModel.dispose();
     });
   });

@@ -113,6 +113,34 @@
       "value": "正在发送…"
     },
     {
+      "name": "chat_regenerate",
+      "value": "重新生成"
+    },
+    {
+      "name": "chat_copy",
+      "value": "复制"
+    },
+    {
+      "name": "chat_copy_success",
+      "value": "已复制"
+    },
+    {
+      "name": "chat_scroll_to_bottom",
+      "value": "回到底部"
+    },
+    {
+      "name": "chat_cancelled",
+      "value": "已停止"
+    },
+    {
+      "name": "chat_failed",
+      "value": "生成失败"
+    },
+    {
+      "name": "chat_empty_response",
+      "value": "未收到回复,请重试"
+    },
+    {
       "name": "nav_character_title",
       "value": "角色"
     },

@@ -13,6 +13,20 @@
 import { ChatRole } from './ChatRole';
 
 /**
+ * Assistant 消息状态。
+ */
+export enum ChatMessageStatus {
+  /** 流式生成中 */
+  Streaming = 'streaming',
+  /** 已完成 */
+  Completed = 'completed',
+  /** 已取消(用户停止) */
+  Cancelled = 'cancelled',
+  /** 生成失败 */
+  Failed = 'failed'
+}
+
+/**
  * 聊天消息模型。
  */
 export interface ChatMessage {
@@ -26,10 +40,12 @@ export interface ChatMessage {
   readonly createdAt: number;
   /** 更新时间(可选,毫秒时间戳) */
   readonly updatedAt?: number;
-  /** 是否正在流式生成中 */
+  /** 是否正在流式生成中(与 status 字段冗余,保留兼容) */
   readonly isStreaming?: boolean;
   /** 错误信息(生成失败时) */
   readonly errorMessage?: string;
+  /** Assistant 消息状态 */
+  readonly status?: ChatMessageStatus;
 }
 
 /**

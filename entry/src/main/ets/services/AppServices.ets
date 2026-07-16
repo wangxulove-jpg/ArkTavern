@@ -32,6 +32,7 @@ const LOG_TAG: string = 'AppServices';
 /**
  * 应用服务组装根。
  * 仅暴露 modelService 供上层使用,不提供通用 Service Locator 查询。
+ * ChatService 由 ChatPage 按页面生命周期创建,不在应用级保存单例。
  */
 export class AppServices {
   private static instance: AppServices | null = null;
@@ -115,5 +116,12 @@ export class AppServices {
    */
   static isStarted(): boolean {
     return AppServices.instance !== null;
+  }
+
+  /**
+   * 获取 ModelService 实例。
+   */
+  static getModelService(): ModelService {
+    return AppServices.getInstance().modelService;
   }
 }

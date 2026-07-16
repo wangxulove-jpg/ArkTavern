@@ -1,77 +1,93 @@
 /**
- * ChatViewModel 聊天 ViewModel
+ * ChatViewModel 聊天页面状态管理
  *
- * 管理聊天页面的 UI 状态,作为 ChatPage 与 ChatService 之间的唯一桥梁。
+ * 页面与 ChatService 之间的唯一桥梁。
+ * 页面不直接处理流式 handle、不直接调用 Provider/KeyStore/ConfigStore。
  *
  * 设计原则:
- * - 只调用 ChatService,不直接操作 ModelService/Provider/KeyStore
- * - 页面不直接处理流式 handle
- * - 防重复发送、空输入拒绝
- * - 初始化时读取当前配置信息
- * - 退出时调用 dispose
- * - 不使用全局单例、不使用 any
- * - 不通过 @Builder 参数传递 ViewModel(直接 @State 绑定)
+ * - @Observed 装饰,ArkUI 可直接绑定
+ * - 只调用 ChatService
+ * - send 防止重复点击
+ * - 空输入不能发送
+ * - 无当前模型时不能发送
+ * - 初始化时读取当前配置
+ * - 页面退出时调用 dispose
+ * - 不出现 @Builder 参数导致状态不刷新的问题
+ * - messages 始终以新引用赋值,确保 ArkUI 检测到变化
  */
 
 import { ChatService, ChatState, ChatServiceCallbacks } from '../services/ChatService';
-import { ChatMessage } from '../models/ChatMessage';
 import { ModelService } from '../services/ModelService';
+import { ChatMessage, ChatMessageStatus } from '../models/ChatMessage';
+import { ChatRole } from '../models/ChatRole';
 import { ProviderConfig } from '../models/ProviderConfig';
 import { Logger } from '../utils/Logger';
-import { NetworkErrorType } from '../models/NetworkError';
 
-const LOG_TAG: string = 'ChatVM';
+const LOG_TAG: string = 'ChatViewModel';
 
-/**
- * 聊天 ViewModel。
- * 使用 @Observed 装饰,使页面能响应字段变更。
- */
 @Observed
 export class ChatViewModel {
-  // ===== 消息 =====
   messages: ChatMessage[] = [];
-
-  // ===== 输入 =====
   inputText: string = '';
-
-  // ===== 状态 =====
   isGenerating: boolean = false;
   statusMessage: string = '';
   errorMessage: string = '';
-
-  // ===== 模型信息 =====
   currentModelName: string = '';
   hasCurrentModel: boolean = false;
-
-  // ===== 计算属性 =====
-  get canSend(): boolean {
-    return !this.isGenerating && this.hasCurrentModel && this.inputText.trim().length > 0;
-  }
+  canRegenerate: boolean = false;
+  /** 用户是否主动上滑(用于控制自动滚动) */
+  userScrolledUp: boolean = false;
+  /** 复制提示 */
+  copyToast: string = '';
 
   private chatService: ChatService;
   private modelService: ModelService;
   private disposed: boolean = false;
+
+  /**
+   * UI 状态同步回调。
+   *
+   * ArkUI 中 @State 持有 @Observed 对象时,ForEach 对内部数组属性变化的
+   * 响应式刷新不完整。通过回调将状态同步到 ChatPage 的独立 @State 变量,
+   * 确保 ForEach 能检测到数据源引用变化并重新渲染。
+   */
+  onMessagesUpdate?: (messages: ChatMessage[]) => void;
 
   constructor(chatService: ChatService, modelService: ModelService) {
     this.chatService = chatService;
     this.modelService = modelService;
   }
 
+  get canSend(): boolean {
+    return !this.isGenerating && this.hasCurrentModel && this.inputText.trim().length > 0;
+  }
+
+  get canStop(): boolean {
+    return this.isGenerating;
+  }
+
   async initialize(): Promise<void> {
-    Logger.info(LOG_TAG, 'initialize');
+    if (this.disposed) {
+      return;
+    }
     try {
       const config: ProviderConfig | null = await this.modelService.getCurrentConfig();
-      if (config !== null) {
+      if (config !== null && config.enabled) {
         this.hasCurrentModel = true;
         this.currentModelName = config.name + ' · ' + config.modelName;
+      } else if (config !== null && !config.enabled) {
+        this.hasCurrentModel = false;
+        this.currentModelName = '模型已禁用';
       } else {
         this.hasCurrentModel = false;
         this.currentModelName = '尚未配置模型';
       }
     } catch (e) {
       this.hasCurrentModel = false;
-      this.currentModelName = '加载模型配置失败';
+      this.currentModelName = '加载配置失败';
+      Logger.error(LOG_TAG, 'initialize failed: ' + String(e));
     }
+    Logger.info(LOG_TAG, 'initialize currentModelName=' + this.currentModelName);
   }
 
   async send(): Promise<void> {
@@ -83,91 +99,96 @@ export class ChatViewModel {
       return;
     }
     Logger.info(LOG_TAG, 'send');
-    this.inputText = '';
     this.errorMessage = '';
     this.statusMessage = '';
     this.isGenerating = true;
+    this.canRegenerate = false;
+    this.userScrolledUp = false;
 
-    const callbacks: ChatServiceCallbacks = {
-      onMessagesChanged: (messages: ChatMessage[]): void => {
-        if (this.disposed) {
-          return;
-        }
-        this.messages = messages;
-      },
-      onStateChanged: (state: ChatState): void => {
-        if (this.disposed) {
-          return;
-        }
-        switch (state) {
-          case ChatState.Sending:
-            this.isGenerating = true;
-            this.statusMessage = '正在发送…';
-            break;
-          case ChatState.Streaming:
-            this.isGenerating = true;
-            this.statusMessage = '';
-            break;
-          case ChatState.Completed:
-            this.isGenerating = false;
-            this.statusMessage = '';
-            break;
-          case ChatState.Cancelled:
-            this.isGenerating = false;
-            this.statusMessage = '';
-            break;
-          case ChatState.Failed:
-            this.isGenerating = false;
-            this.statusMessage = '';
-            break;
-          case ChatState.Idle:
-            this.isGenerating = false;
-            this.statusMessage = '';
-            break;
-        }
-      },
-      onError: (message: string): void => {
-        if (this.disposed) {
-          return;
-        }
-        this.errorMessage = this.toUserError(message);
-        this.isGenerating = false;
-      }
-    };
+    const callbacks: ChatServiceCallbacks = this.createCallbacks();
 
     try {
       await this.chatService.sendMessage(content, callbacks);
+      // User 消息成功加入列表后再清空输入框
+      this.inputText = '';
     } catch (e) {
-      if (this.disposed) {
-        return;
-      }
-      this.errorMessage = this.toUserError(String(e));
+      // sendMessage 抛出异常(disposed 或同步错误)时恢复状态
       this.isGenerating = false;
+      this.errorMessage = this.toUserError(String(e));
+      this.statusMessage = '';
+      Logger.error(LOG_TAG, 'send failed: ' + String(e));
+    }
+  }
+
+  async regenerate(): Promise<void> {
+    if (this.disposed || this.isGenerating || !this.canRegenerate) {
+      return;
+    }
+    Logger.info(LOG_TAG, 'regenerate');
+    this.errorMessage = '';
+    this.statusMessage = '';
+    this.isGenerating = true;
+    this.canRegenerate = false;
+    this.userScrolledUp = false;
+
+    const callbacks: ChatServiceCallbacks = this.createCallbacks();
+
+    try {
+      await this.chatService.regenerateLastResponse(callbacks);
+    } catch (e) {
+      this.isGenerating = false;
+      this.errorMessage = this.toUserError(String(e));
+      this.statusMessage = '';
+      Logger.error(LOG_TAG, 'regenerate failed: ' + String(e));
     }
   }
 
   stop(): void {
-    if (this.disposed) {
-      return;
-    }
-    Logger.info(LOG_TAG, 'stop');
     this.chatService.stopGeneration();
+    this.isGenerating = false;
+    this.statusMessage = '已停止';
+    this.canRegenerate = this.chatService.canRegenerate();
   }
 
   clear(): void {
-    if (this.disposed) {
-      return;
-    }
-    Logger.info(LOG_TAG, 'clear');
     this.chatService.clearConversation();
     this.messages = [];
     this.errorMessage = '';
     this.statusMessage = '';
     this.isGenerating = false;
+    this.canRegenerate = false;
+    this.userScrolledUp = false;
+    // 同步清空到 ChatPage 的独立 @State 变量
+    if (this.onMessagesUpdate !== undefined) {
+      this.onMessagesUpdate([]);
+    }
   }
 
   updateInput(value: string): void {
     this.inputText = value;
+  }
+
+  /** 获取消息的状态显示文本 */
+  getMessageStatusText(message: ChatMessage): string {
+    if (message.role !== ChatRole.Assistant) {
+      return '';
+    }
+    if (message.status === ChatMessageStatus.Streaming) {
+      return '生成中…';
+    }
+    if (message.status === ChatMessageStatus.Cancelled) {
+      return '已停止';
+    }
+    if (message.status === ChatMessageStatus.Failed) {
+      return message.errorMessage !== undefined ? message.errorMessage : '生成失败';
+    }
+    return '';
+  }
+
+  /** 获取消息状态是否异常 */
+  isMessageStatusError(message: ChatMessage): boolean {
+    return message.status === ChatMessageStatus.Cancelled
+      || message.status === ChatMessageStatus.Failed;
   }
 
   dispose(): void {
@@ -176,49 +197,113 @@ export class ChatViewModel {
     Logger.info(LOG_TAG, 'dispose');
   }
 
+  // ===== 内部方法 =====
+
   /**
-   * 前往模型设置(由页面调用路径跳转)。
+   * 创建 ChatService 回调集合。
+   * 所有回调都检查 disposed 状态,确保页面退出后不更新旧实例。
    */
-  goToModelSettings(): void {
-    // 页面处理路径跳转,ViewModel 仅提供语义方法
+  private createCallbacks(): ChatServiceCallbacks {
+    return {
+      onMessagesChanged: (messages: ChatMessage[]): void => {
+        if (this.disposed) {
+          return;
+        }
+        // 始终创建新引用,确保 ArkUI @Observed 检测到变化
+        this.messages = [...messages];
+        this.canRegenerate = this.chatService.canRegenerate();
+        // 同步到 ChatPage 的独立 @State 变量,确保 ForEach 响应式刷新
+        // (ArkUI 中 @State 持有 @Observed 对象时,ForEach 对内部数组属性
+        //  变化的响应式刷新不完整,实测日志:ForEachNode skip mark dirty)
+        if (this.onMessagesUpdate !== undefined) {
+          this.onMessagesUpdate([...this.messages]);
+        }
+      },
+      onStateChanged: (state: ChatState): void => {
+        if (this.disposed) {
+          return;
+        }
+        this.updateStateFromChatState(state);
+      },
+      onError: (message: string): void => {
+        if (this.disposed) {
+          return;
+        }
+        this.errorMessage = this.toUserError(message);
+        this.statusMessage = '';
+      }
+    };
+  }
+
+  private updateStateFromChatState(state: ChatState): void {
+    switch (state) {
+      case ChatState.Sending:
+        this.isGenerating = true;
+        this.statusMessage = '发送中…';
+        break;
+      case ChatState.Streaming:
+        this.isGenerating = true;
+        this.statusMessage = '生成中…';
+        break;
+      case ChatState.Completed:
+        this.isGenerating = false;
+        this.statusMessage = '';
+        this.canRegenerate = this.chatService.canRegenerate();
+        break;
+      case ChatState.Cancelled:
+        this.isGenerating = false;
+        this.statusMessage = '已停止';
+        this.canRegenerate = this.chatService.canRegenerate();
+        break;
+      case ChatState.Failed:
+        this.isGenerating = false;
+        this.statusMessage = '';
+        this.canRegenerate = this.chatService.canRegenerate();
+        break;
+      default:
+        break;
+    }
   }
 
   private toUserError(message: string): string {
-    if (message.includes('No current provider config')) {
+    if (message.includes('No current provider config') || message.includes('尚未配置')) {
       return '尚未配置模型,请前往模型设置';
     }
     if (message.includes('disabled')) {
-      return '当前模型已禁用,请前往模型设置切换';
+      return '当前模型已禁用,请前往模型设置';
     }
-    if (message.includes('hasApiKey') || message.includes('API Key')) {
-      return 'API Key 未配置,请前往模型设置配置';
+    if (message.includes('model name is empty') || message.includes('model name')) {
+      return '模型名称未配置,请前往模型设置选择具体模型';
     }
-    if (message.includes('Unsupported provider')) {
-      return '当前 Provider 类型暂未支持';
+    if (message.includes('API Key') || message.includes('api key') || message.includes('apiKey')) {
+      return 'API Key 未配置,请前往模型设置';
     }
-    if (message.includes('Authentication') || message.includes('401') || message.includes('auth')) {
+    if (message.includes('Authentication') || message.includes('401') || message.includes('Unauthorized')) {
       return '鉴权失败,请检查 API Key 是否正确';
     }
     if (message.includes('RateLimit') || message.includes('429')) {
       return '请求频率过高,请稍后重试';
     }
-    if (message.includes('Timeout') || message.includes('timeout')) {
-      return '请求超时,请检查网络或 Base URL';
+    if (message.includes('Timeout') || message.includes('timeout') || message.includes('超时')) {
+      return '请求超时,请检查网络后重试';
     }
-    if (message.includes('Network') || message.includes('network') || message.includes('connect')) {
-      return '网络连接失败,请检查网络或 Base URL';
+    if (message.includes('Network') || message.includes('connect') || message.includes('ECONNREFUSED')) {
+      return '网络连接失败,请检查网络设置';
     }
-    if (message.includes('Server') || message.includes('500') || message.includes('502')) {
+    if (message.includes('Server') || message.includes('500') || message.includes('502') || message.includes('503')) {
       return '服务器错误,请稍后重试';
     }
-    if (message.includes('Parse') || message.includes('parse')) {
-      return '响应解析失败,请确认 Base URL 正确';
-    }
-    if (message.includes('model name is empty') || message.includes('model name')) {
-      return '模型名称未配置,请前往模型设置选择具体模型';
+    if (message.includes('Parse') || message.includes('parse') || message.includes('Invalid JSON')) {
+      return '响应解析失败,请重试';
     }
     if (message.includes('Cancelled') || message.includes('cancel')) {
       return '已取消';
+    }
+    if (message.includes('空回复')) {
+      return '模型返回了空回复,请重试';
+    }
+    if (message.includes('disposed')) {
+      return '页面已退出,请重新进入';
     }
     return '请求失败,请重试';
   }

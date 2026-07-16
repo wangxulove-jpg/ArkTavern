@@ -4,7 +4,7 @@
  * 使用可控 Mock ModelService 验证 ChatService 的状态机与消息管理行为。
  * 不依赖 Mock Server,所有场景通过注入 mock 实现。
  *
- * 覆盖项(28 项):
+ * 覆盖项(36 项):
  * 1. 发送正常消息
  * 2. 用户消息立即加入列表
  * 3. Assistant 占位消息立即创建
@@ -33,13 +33,21 @@
  * 26. dispose 停止请求
  * 27. 连续发送保持消息顺序
  * 28. 页面退出不接受迟到回调
+ * 29. dispose 后 sendMessage 抛 Error(不可复用)
+ * 30. onMessagesChanged 每次返回新数组引用
+ * 31. delta 更新后返回新 ChatMessage 对象
+ * 32. 仅 onComplete.content 有内容时回填
+ * 33. complete 内容与 delta 不一致时以 complete 为准
+ * 34. 空回复映射为 Failed
+ * 35. 部分回复后失败保留内容
+ * 36. stop 后 Assistant 标记为 Cancelled
  */
 
 import { describe, it, expect } from '@ohos/hypium';
 import { ChatService, ChatState, ChatServiceCallbacks } from '../../../main/ets/services/ChatService';
-import { ChatMessage } from '../../../main/ets/models/ChatMessage';
+import { ChatMessage, ChatMessageStatus } from '../../../main/ets/models/ChatMessage';
 import { ChatRole } from '../../../main/ets/models/ChatRole';
-import { ChatRequest } from '../../../main/ets/models/ChatRequest';
+import { ChatRequestOptions } from '../../../main/ets/models/ChatRequest';
 import {
   ChatStreamCallbacks,
   ChatStreamHandle,
@@ -68,15 +76,19 @@ class ControllableStreamHandle implements ChatStreamHandle {
 /** 可控 ModelService,支持注入流式回调 */
 class MockModelService {
   streamChatCallCount: number = 0;
-  lastRequest: ChatRequest | null = null;
+  lastMessages: ChatMessage[] | null = null;
   private pendingCallbacks: ChatStreamCallbacks | null = null;
   private pendingHandle: ControllableStreamHandle | null = null;
-  /** 注入错误(在 streamChat 调用时同步抛出) */
+  /** 注入错误(在 streamCurrentChat 调用时同步抛出) */
   throwError: Error | null = null;
 
-  streamChat(request: ChatRequest, callbacks: ChatStreamCallbacks): ChatStreamHandle {
+  streamCurrentChat(
+    messages: ChatMessage[],
+    _options: ChatRequestOptions,
+    callbacks: ChatStreamCallbacks
+  ): ChatStreamHandle {
     this.streamChatCallCount++;
-    this.lastRequest = request;
+    this.lastMessages = messages;
     if (this.throwError !== null) {
       throw this.throwError;
     }
@@ -122,6 +134,22 @@ class MockModelService {
     }
   }
 
+  /** 触发完成并携带最终 content(用于测试 complete 回填) */
+  fireCompleteWithContent(content: string): void {
+    if (this.pendingCallbacks !== null) {
+      const result: ChatStreamResult = {
+        content: content,
+        finishReason: 'stop',
+        model: 'mock-model',
+        chunkCount: 3,
+        eventCount: 3,
+        deltaCount: 3,
+        receivedDone: true
+      };
+      this.pendingCallbacks.onComplete(result);
+    }
+  }
+
   /** 触发错误 */
   fireError(type: NetworkErrorType, message: string): void {
     if (this.pendingCallbacks !== null) {
@@ -137,7 +165,7 @@ class MockModelService {
 
   reset(): void {
     this.streamChatCallCount = 0;
-    this.lastRequest = null;
+    this.lastMessages = null;
     this.pendingCallbacks = null;
     this.pendingHandle = null;
     this.throwError = null;
@@ -633,6 +661,179 @@ export default function chatServiceDeviceTest() {
       mockMs.fireComplete();
 
       expect(service.getMessages().length).assertEqual(0);
+    });
+
+    // 29. dispose 后 sendMessage 抛 Error(不可复用)
+    it('disposed_service_send_throws', 0, async () => {
+      const svc = createService(); const service = svc.service;
+      const collector = createCollector();
+      const callbacks = createCallbacks(collector);
+
+      service.dispose();
+
+      let threw: boolean = false;
+      try {
+        await service.sendMessage('test', callbacks);
+      } catch (e) {
+        threw = true;
+      }
+      expect(threw).assertTrue();
+      expect(collector.messages.length).assertEqual(0);
+    });
+
+    // 30. onMessagesChanged 每次返回新数组引用
+    it('onMessagesChanged_returns_new_array_reference', 0, async () => {
+      const svc = createService(); const mockMs = svc.mockMs; const service = svc.service;
+      const collector = createCollector();
+      const callbacks = createCallbacks(collector);
+
+      await service.sendMessage('test', callbacks);
+
+      // sendMessage 内部触发两次 onMessagesChanged(user + assistant)
+      // 加上初始空数组,至少 2 次回调
+      expect(collector.messageChangeCount >= 2).assertTrue();
+
+      // 记录当前数组引用
+      const firstRef: ChatMessage[] = collector.messages;
+
+      mockMs.fireDelta('A', 0);
+      const secondRef: ChatMessage[] = collector.messages;
+      expect(secondRef !== firstRef).assertTrue();
+
+      mockMs.fireDelta('B', 1);
+      const thirdRef: ChatMessage[] = collector.messages;
+      expect(thirdRef !== secondRef).assertTrue();
+
+      mockMs.fireComplete();
+      const finalRef: ChatMessage[] = collector.messages;
+      expect(finalRef !== thirdRef).assertTrue();
+
+      service.dispose();
+    });
+
+    // 31. delta 更新后返回新 ChatMessage 对象
+    it('delta_returns_new_chat_message_object', 0, async () => {
+      const svc = createService(); const mockMs = svc.mockMs; const service = svc.service;
+      const collector = createCollector();
+      const callbacks = createCallbacks(collector);
+
+      await service.sendMessage('test', callbacks);
+
+      const placeholder: ChatMessage = collector.messages[1];
+      const placeholderIdentity: ChatMessage = placeholder;
+
+      mockMs.fireDelta('delta content', 0);
+
+      const updated: ChatMessage = collector.messages[1];
+      // 不同对象引用
+      expect(updated !== placeholderIdentity).assertTrue();
+      // 内容已更新
+      expect(updated.content).assertEqual('delta content');
+      // 原对象未被修改(不可变)
+      expect(placeholder.content).assertEqual('');
+      service.dispose();
+    });
+
+    // 32. 仅 onComplete.content 有内容时回填
+    it('complete_content_backfills_empty_assistant', 0, async () => {
+      const svc = createService(); const mockMs = svc.mockMs; const service = svc.service;
+      const collector = createCollector();
+      const callbacks = createCallbacks(collector);
+
+      await service.sendMessage('test', callbacks);
+
+      // 不触发任何 delta,直接 complete 且携带最终内容
+      mockMs.fireCompleteWithContent('final content from complete');
+
+      expect(collector.messages[1].content).assertEqual('final content from complete');
+      expect(collector.messages[1].isStreaming).assertEqual(false);
+      expect(collector.messages[1].status).assertEqual(ChatMessageStatus.Completed);
+      expect(service.isGenerating()).assertFalse();
+      service.dispose();
+    });
+
+    // 33. complete 内容与 delta 不一致时以 complete 为准
+    it('complete_content_overrides_inconsistent_delta', 0, async () => {
+      const svc = createService(); const mockMs = svc.mockMs; const service = svc.service;
+      const collector = createCollector();
+      const callbacks = createCallbacks(collector);
+
+      await service.sendMessage('test', callbacks);
+
+      // delta 拼接出 A
+      mockMs.fireDelta('DeltaA', 0);
+      expect(collector.messages[1].content).assertEqual('DeltaA');
+
+      // complete 携带不同的最终内容,应覆盖
+      mockMs.fireCompleteWithContent('FinalContent');
+
+      expect(collector.messages[1].content).assertEqual('FinalContent');
+      expect(collector.messages[1].status).assertEqual(ChatMessageStatus.Completed);
+      service.dispose();
+    });
+
+    // 34. 空回复映射为 Failed
+    it('empty_reply_mapped_to_failed', 0, async () => {
+      const svc = createService(); const mockMs = svc.mockMs; const service = svc.service;
+      const collector = createCollector();
+      const callbacks = createCallbacks(collector);
+
+      await service.sendMessage('test', callbacks);
+
+      // 既无 delta,complete.content 也为空
+      mockMs.fireComplete();
+
+      expect(collector.messages[1].content).assertEqual('');
+      expect(collector.messages[1].status).assertEqual(ChatMessageStatus.Failed);
+      expect(collector.messages[1].errorMessage !== undefined).assertTrue();
+      expect(collector.messages[1].errorMessage!.indexOf('空回复') >= 0).assertTrue();
+      expect(service.isGenerating()).assertFalse();
+      expect(collector.states.indexOf(ChatState.Failed) >= 0).assertTrue();
+      service.dispose();
+    });
+
+    // 35. 部分回复后失败保留内容
+    it('partial_reply_failure_preserves_content', 0, async () => {
+      const svc = createService(); const mockMs = svc.mockMs; const service = svc.service;
+      const collector = createCollector();
+      const callbacks = createCallbacks(collector);
+
+      await service.sendMessage('test', callbacks);
+      mockMs.fireDelta('partial ', 0);
+      mockMs.fireDelta('reply', 1);
+
+      // 失败
+      mockMs.fireError(NetworkErrorType.Network, 'Connection lost');
+
+      // 内容保留
+      expect(collector.messages[1].content).assertEqual('partial reply');
+      expect(collector.messages[1].status).assertEqual(ChatMessageStatus.Failed);
+      expect(collector.messages[1].isStreaming).assertEqual(false);
+      expect(collector.messages[1].errorMessage !== undefined).assertTrue();
+      expect(service.isGenerating()).assertFalse();
+      expect(collector.errors.length > 0).assertTrue();
+      service.dispose();
+    });
+
+    // 36. stop 后 Assistant 标记为 Cancelled
+    it('stop_marks_assistant_cancelled', 0, async () => {
+      const svc = createService(); const mockMs = svc.mockMs; const service = svc.service;
+      const collector = createCollector();
+      const callbacks = createCallbacks(collector);
+
+      await service.sendMessage('test', callbacks);
+      mockMs.fireDelta('partial', 0);
+
+      service.stopGeneration();
+
+      // getMessages 返回的 assistant 应为 Cancelled 状态
+      const msgs: ChatMessage[] = service.getMessages();
+      expect(msgs.length).assertEqual(2);
+      expect(msgs[1].status).assertEqual(ChatMessageStatus.Cancelled);
+      expect(msgs[1].isStreaming).assertEqual(false);
+      expect(service.isGenerating()).assertFalse();
+      expect(collector.states.indexOf(ChatState.Cancelled) >= 0).assertTrue();
+      service.dispose();
     });
   });
 }

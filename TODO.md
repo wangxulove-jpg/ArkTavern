@@ -460,15 +460,68 @@ Date: 2026-07-15
   - 实机验证通过:DeepSeek 流式聊天正常,停止生成正常,中文/Emoji/换行正常
   - 未整合:Character prompt / Lorebook / Preset / PromptBuilder / Swipe / Markdown 渲染 / 历史会话
 
-### T-1.9 补充网络权限
+### T-1.9 聊天链路收尾与技术债清理
 
-- 依赖:T-1.7
+- 依赖:T-1.8
 - 优先级:P1
-- 修改范围:`entry/src/main/module.json5`(requestPermissions)
-- 内容:声明 `ohos.permission.INTERNET`;若需明文 HTTP(本地模型)补充 networkConfig
+- 修改范围:`services/ChatService.ets`、`viewmodels/ChatViewModel.ets`、`pages/ChatPage.ets`、`services/ModelService.ets`、`models/ChatMessage.ets`、`models/ChatRequest.ets`、`services/AppServices.ets`、测试文件、资源文件
+- 内容:
+  1. 移除 `__from_config__` 哨兵:ModelService 新增 `streamCurrentChat(messages, options, callbacks)` 显式 API,自动注入 config.modelName;ChatService 不再使用特殊字符串
+  2. 重新生成:ChatService 新增 `regenerateLastResponse()`;ChatViewModel 新增 `regenerate()` 和 `canRegenerate`;ChatPage 增加重新生成按钮
+  3. 复制消息:使用 `@ohos.pasteboard` 系统剪贴板,空消息/流式生成中不可复制,复制成功 toast
+  4. 自动滚动:Scroller + scrollEdge(Edge.Bottom),用户上滑后不强制跳底,浮动回底按钮
+  5. 消息状态:ChatMessageStatus 枚举(Streaming/Completed/Cancelled/Failed),停止后显示"已停止",错误保留部分文本
+  6. 页面生命周期:aboutToDisappear 停止请求,迟到 delta 忽略,配置删除/禁用后禁止发送
 - 验收标准:
-  - [ ] HTTPS 默认可用
-  - [ ] 真机可联通外网端点
+  - [x] 不再出现 `__from_config__`
+  - [x] ModelService 自动使用当前 config.modelName
+  - [x] 正常发送无回归
+  - [x] 重新生成删除旧 Assistant 回复
+  - [x] 重新生成保留 User 消息
+  - [x] 停止后可重新生成
+  - [x] 无消息时不可重新生成
+  - [x] 复制消息成功
+  - [x] 空消息不可复制
+  - [x] 自动滚动
+  - [x] 用户上滑后不强制跳底
+  - [x] 页面退出停止请求
+  - [x] 迟到 delta 被忽略
+  - [x] 错误保留部分文本
+  - [x] 空响应显示错误
+  - [x] 当前配置删除后禁止发送
+- 完成情况(2026-07-16):
+  - [x] `__from_config__` 哨兵已完全移除,ModelService.streamCurrentChat() 自动注入 modelName
+  - [x] ChatRequestOptions 接口(不含 model 字段)由 ModelService 填充 model
+  - [x] ChatMessageStatus 枚举(Streaming/Completed/Cancelled/Failed) + status 字段
+  - [x] ChatService.regenerateLastResponse() 完整实现(找到最后 User→删除其后 Assistant→重新请求)
+  - [x] ChatService.canRegenerate() 判断(非生成中 && 至少有一个 Assistant 消息)
+  - [x] ChatPage 重新生成按钮(canRegenerate && !isGenerating 时显示)
+  - [x] ChatPage 复制按钮使用 @ohos.pasteboard(createData + getSystemPasteboard().setData)
+  - [x] 复制成功 toast 提示,空消息/流式生成中不可复制
+  - [x] Scroller 自动滚动到底部,onScrollEdge 检测用户上滑,浮动回底按钮
+  - [x] 停止后显示"已停止"状态,错误保留部分文本,空回复显示错误
+  - [x] aboutToDisappear 停止请求,迟到 delta 忽略(completeFired/errorFired 标志)
+  - [x] ChatPage 内"前往模型设置"导航(通过 queryNavigationInfo().pathStack)
+  - [x] AppServices.getChatService()/getModelService() 静态方法
+  - [x] 设备测试:ChatService 27/27 + ChatViewModel 22/22 + ModelService 20/20 = 69/69
+  - [x] MCP build entry@default + entry@ohosTest BUILD SUCCESSFUL
+  - [x] 实机验证:ChatPage 正常显示,navigation 正确,homepage 显示"当前模型:ds · deepseek-v4-flash"
+  - [x] hilog 无 API Key/消息正文泄漏
+  - [x] 所有新增/修改文件 ≤600 行
+  - 未修改:OpenAIProvider/network/streaming/ProviderConfigStore/ProviderKeyStore/AssetStoreKeyStore/ModelSettingsPage/Character/Lorebook/数据库/ArkTavern-Reference
+  - 未开始 Phase 2
+  - 偶发异常修复(2026-07-16):
+    - [x] 修复 AppServices 单例 ChatService 被 dispose 后复用导致 sendMessage 静默失败
+    - [x] 修复消息原地修改数组导致 ArkUI 不刷新(改为不可变更新模式)
+    - [x] 修复 ForEach key 只用 msg.id 导致内容变化时 skip mark dirty(key 加入 updatedAt+status+contentLength+isStreaming)
+    - [x] 修复 ChatViewModel messages 未以新引用赋值(添加 onMessagesUpdate 回调同步到 ChatPage 独立 @State)
+    - [x] 修复空回复显示"回复成功"(onComplete 时 content 为空 → 标记 Failed)
+    - [x] 修复 stopGeneration 不触发状态回调(使用 lastCallbacks 保存最近回调)
+    - [x] 增加启动阶段 15 秒超时保护(收到首个 onStart/onDelta/onComplete/onError 后清除)
+    - [x] 修复 sendMessage disposed 时静默失败(改为 throw Error)
+    - [x] 修复 inputText 过早清空(移到消息创建成功后)
+    - [x] 设备测试:ChatService 36/36 + ChatViewModel 16/16 = 52/52 通过
+    - [x] 实机验证:消息正常显示,无 ForEachNode skip mark dirty,无 API Key/消息正文泄漏
 
 ---
 

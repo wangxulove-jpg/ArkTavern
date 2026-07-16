@@ -19,7 +19,7 @@
 
 import { common } from '@kit.AbilityKit';
 import { ProviderConfig } from '../models/ProviderConfig';
-import { ChatRequest } from '../models/ChatRequest';
+import { ChatRequest, ChatRequestOptions } from '../models/ChatRequest';
 import { ChatResponse } from '../models/ChatResponse';
 import { ChatMessage, createChatMessage } from '../models/ChatMessage';
 import { ChatRole } from '../models/ChatRole';
@@ -241,11 +241,10 @@ export class ModelService {
   async sendChat(request: ChatRequest): Promise<ChatResponse> {
     this.requireInitialized();
     const config: ProviderConfig = await this.resolveCurrentConfigForRequest();
-    const req: ChatRequest = this.mergeRequestModel(request, config);
     const provider: AiProvider = this.resolveProvider(config);
-    Logger.info(LOG_TAG, 'sendChat providerId=' + config.id + ' model=' + req.model);
+    Logger.info(LOG_TAG, 'sendChat providerId=' + config.id + ' model=' + request.model);
     try {
-      return await provider.sendChat(config, req);
+      return await provider.sendChat(config, request);
     } catch (e) {
       throw this.wrapNetworkError(e, 'sendChat failed');
     }
@@ -260,6 +259,33 @@ export class ModelService {
     const holder: StreamHandleHolder = createStreamHandleHolder();
 
     this.startStreamAsync(request, callbacks, holder).then((): void => {
+      // 正常完成
+    }, (err: Object): void => {
+      if (!holder.fired) {
+        holder.fired = true;
+        const error: NetworkError = err instanceof ModelServiceError
+          ? toNetworkError(err)
+          : createUnknownNetworkError(String(err));
+        callbacks.onError(error);
+      }
+    });
+
+    return holder.handle;
+  }
+
+  /**
+   * 使用当前配置发送流式聊天,ModelService 自动注入 modelName。
+   * 调用方只需提供 messages 和 options,无需关心具体模型名称。
+   */
+  streamCurrentChat(
+    messages: ChatMessage[],
+    options: ChatRequestOptions,
+    callbacks: ChatStreamCallbacks
+  ): ChatStreamHandle {
+    this.requireInitialized();
+    const holder: StreamHandleHolder = createStreamHandleHolder();
+
+    this.startStreamWithMessagesAsync(messages, options, callbacks, holder).then((): void => {
       // 正常完成
     }, (err: Object): void => {
       if (!holder.fired) {
@@ -371,8 +397,7 @@ export class ModelService {
     }
 
     const provider: AiProvider = this.resolveProvider(config);
-    const req: ChatRequest = this.mergeRequestModel(request, config);
-    Logger.info(LOG_TAG, 'streamChat providerId=' + config.id + ' model=' + req.model);
+    Logger.info(LOG_TAG, 'streamChat providerId=' + config.id + ' model=' + request.model);
 
     const wrappedCallbacks: ChatStreamCallbacks = {
       onStart: callbacks.onStart,
@@ -384,7 +409,67 @@ export class ModelService {
       }
     };
 
-    const innerHandle: ChatStreamHandle = provider.streamChat(config, req, wrappedCallbacks);
+    const innerHandle: ChatStreamHandle = provider.streamChat(config, request, wrappedCallbacks);
+    holder.setInner(innerHandle);
+  }
+
+  private async startStreamWithMessagesAsync(
+    messages: ChatMessage[],
+    options: ChatRequestOptions,
+    callbacks: ChatStreamCallbacks,
+    holder: StreamHandleHolder
+  ): Promise<void> {
+    let config: ProviderConfig;
+    try {
+      config = await this.resolveCurrentConfigForRequest();
+    } catch (e) {
+      if (!holder.fired) {
+        holder.fired = true;
+        const err: ModelServiceError = e instanceof ModelServiceError
+          ? e
+          : createModelServiceError(ModelServiceErrorType.Unknown,
+            'streamCurrentChat resolve config failed', String(e));
+        callbacks.onError(toNetworkError(err));
+      }
+      return;
+    }
+
+    const modelName: string = config.modelName.trim();
+    if (modelName.length === 0) {
+      if (!holder.fired) {
+        holder.fired = true;
+        const err: ModelServiceError = createModelServiceError(
+          ModelServiceErrorType.InvalidConfig,
+          'model name is empty for config: ' + config.id
+        );
+        callbacks.onError(toNetworkError(err));
+      }
+      return;
+    }
+
+    const request: ChatRequest = {
+      model: modelName,
+      messages: messages,
+      temperature: options.temperature,
+      topP: options.topP,
+      maxTokens: options.maxTokens,
+      stream: options.stream
+    };
+
+    const provider: AiProvider = this.resolveProvider(config);
+    Logger.info(LOG_TAG, 'streamCurrentChat providerId=' + config.id + ' model=' + request.model);
+
+    const wrappedCallbacks: ChatStreamCallbacks = {
+      onStart: callbacks.onStart,
+      onDelta: callbacks.onDelta,
+      onComplete: callbacks.onComplete,
+      onError: (error: NetworkError): void => {
+        holder.fired = true;
+        callbacks.onError(error);
+      }
+    };
+
+    const innerHandle: ChatStreamHandle = provider.streamChat(config, request, wrappedCallbacks);
     holder.setInner(innerHandle);
   }
 
@@ -544,26 +629,6 @@ export class ModelService {
     return createModelServiceError(
       ModelServiceErrorType.NetworkFailure, message + ': unknown error', String(e)
     );
-  }
-
-  private mergeRequestModel(request: ChatRequest, config: ProviderConfig): ChatRequest {
-    const modelName: string = config.modelName.trim();
-    if (modelName.length === 0) {
-      throw createModelServiceError(
-        ModelServiceErrorType.InvalidConfig, 'model name is empty for config: ' + config.id
-      );
-    }
-    if (request.model.length === 0 || request.model === '__from_config__') {
-      return {
-        model: modelName,
-        messages: request.messages,
-        temperature: request.temperature,
-        topP: request.topP,
-        maxTokens: request.maxTokens,
-        stream: request.stream
-      };
-    }
-    return request;
   }
 }
 
