@@ -5,6 +5,8 @@ import httpStreamTransportTest from './HttpStreamTransport.test';
 import assetStoreKeyStoreTest from './AssetStoreKeyStore.test';
 import providerKeyStoreDeviceTest from './ProviderKeyStore.test';
 import providerConfigStoreDeviceTest from './ProviderConfigStore.test';
+import harmonyHttpClientDeviceTest from './HarmonyHttpClient.test';
+import openAiProviderDeviceTest from './OpenAIProvider.test';
 
 export default function testsuite() {
   abilityTest();
@@ -14,4 +16,6 @@ export default function testsuite() {
   assetStoreKeyStoreTest();
   providerKeyStoreDeviceTest();
   providerConfigStoreDeviceTest();
+  harmonyHttpClientDeviceTest();
+  openAiProviderDeviceTest();
 }

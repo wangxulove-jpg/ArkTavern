@@ -302,8 +302,43 @@ Date: 2026-07-15
 - 参考文件:`SillyTavern-release/src/endpoints/backends/chat-completions.js`(只读)
 - 内容:`network/providers/OpenAIProvider.ets`,实现 POST `/v1/chat/completions`,Authorization: Bearer
 - 验收标准:
-  - [ ] 可发送非流式请求并解析 choices
-  - [ ] 鉴权失败返回 AuthError
+  - [x] 可发送非流式请求并解析 choices
+  - [x] 鉴权失败返回 AuthError
+- 实现说明:
+  - 新增文件:
+    - `network/providers/AiProvider.ets`(70 行):Provider 抽象基类,仅定义 `sendChat(config, request): Promise<ChatResponse>` 接口
+    - `network/providers/OpenAITypes.ets`(324 行):OpenAI 请求/响应类型定义,类型守卫安全 JSON 解析(禁用 any、as unknown as),extractResponseBody/extractErrorDetail/truncateErrorMessage 提取函数
+    - `network/providers/OpenAIProvider.ets`(393 行):OpenAI-compatible 非流式 Provider,依赖注入 HttpClient 和 ProviderKeyStore
+    - `network/core/HarmonyHttpClient.ets`(301 行):基于 `@ohos.net.http` 的 HttpClient 实现,支持 GET/POST/PUT/DELETE,错误映射为 NetworkError
+    - `models/ChatResponse.ets`(72 行):统一聊天响应模型,仅含 content/finishReason/model/tokens/providerRequestId 等非敏感字段
+  - 修改文件:
+    - `tools/sse_mock_server.py`:扩展支持 POST `/v1/chat/completions`,16 种场景(401/403/400/404/408/429/500/503/invalid-json/empty-choices/missing-content/null-content/error-in-2xx/usage/long-reply/slow),支持通过 URL query、X-Mock-Scenario header、model 名前缀 `mock-<scenario>-` 三种方式触发场景
+  - 测试文件:
+    - `test/OpenAIProvider.test.ets`:本地单元测试 45+ 用例,使用 MockHttpClient 内存实现,覆盖正常返回/401/403/429/500/非法 JSON/空 choices/缺失 content/null content/2xx 错误/usage 解析/长回复/URL 构建/请求体构建/ProviderConfig 无 apiKey 字段
+    - `test/MockHttpClient.ets`:测试用 HttpClient 内存实现
+    - `ohosTest/ets/test/OpenAIProvider.test.ets`:设备集成测试 10 用例(9 自动 + 1 manual),使用真实 HarmonyHttpClient + AssetStoreKeyStore + Python Mock Server
+    - `ohosTest/ets/test/HarmonyHttpClient.test.ets`:设备集成测试 11 用例
+  - 设计要点:
+    - 依赖注入:OpenAIProvider 构造时注入 HttpClient 和 ProviderKeyStore,不内部 new 平台实现
+    - API Key 安全:每次请求从 ProviderKeyStore 读取,不缓存到成员变量,不记录到日志,不放入错误对象
+    - stream 强制 false:即使传入 request.stream=true,请求体中 stream 字段始终为 false
+    - URL 构建:复用 OpenAiUrlBuilder,不复制第二套 URL 拼接逻辑
+    - HTTP 错误映射:401/403→Authentication,408→Timeout,429→RateLimit,400→InvalidRequest,5xx→Server,其他→Unknown
+    - 类型守卫:所有 JSON 解析使用类型守卫函数,禁用 any 和 as unknown as
+    - ArkTS catch 块:使用 instanceof NetworkError 收窄类型,不用 as 转型(运行时不生效)
+  - 实际使用的 HarmonyOS API:`@ohos.net.http`(HttpRequest.request/destroy,since 6)、`@ohos.util.TextDecoder`(TextDecoder.create + decodeToString,since 12)、`@ohos.base.BusinessError`
+  - 测试情况:
+    - 设备集成测试:117 项全部通过(Tests run: 117, Failure: 0, Error: 0, Pass: 117),含 OpenAIProviderDeviceTest 10 项 + HarmonyHttpClientDeviceTest 11 项 + ProviderConfigStore 27 项 + 其他 69 项
+    - 本地单元测试:命令行 hvigorw test 报 "SDK component missing"(环境配置问题),逻辑已通过设备测试间接验证
+    - MCP build_project 编译:entry@default BUILD SUCCESSFUL;entry@ohosTest BUILD SUCCESSFUL
+  - Mock Server 场景触发策略:URL query → X-Mock-Scenario header → model 名前缀 `mock-<scenario>-`(因 OpenAiUrlBuilder 对含 query 的 URL 会追加路径导致 query 丢失,设备测试改用 model 名触发)
+  - 设备测试运行命令:`hdc shell aa test -b com.example.arktavern -m entry_test -s unittest OpenHarmonyTestRunner -s timeout 600000`
+  - hilog 敏感扫描:无 apiKey/api_key/secret/authorization/token/password/sk- 泄漏
+  - 源码扫描:无 sk- 真实密钥,无硬编码 apiKey,无 any/TODO/Node.js/浏览器 API
+  - 文件行数:AiProvider 70、OpenAITypes 324、OpenAIProvider 393、HarmonyHttpClient 301、ChatResponse 72(均 ≤600)
+  - 未接入页面(Index / ModelSettingsPage / ChatPage 未修改)
+  - 未修改 ProviderConfig / ProviderKeyStore / KeyStore / AssetStoreKeyStore / HttpClient 接口底层实现
+  - 已知限制:本地单元测试需在 DevEco Studio IDE 中运行(命令行 hvigorw test 报 SDK component missing);OpenAiUrlBuilder 对含 query 参数的 URL 会追加路径导致 query 丢失(已通过 model 名触发场景规避)
 
 ### T-1.5 实现 OpenAIProvider(流式)
 

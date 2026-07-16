@@ -10,6 +10,8 @@ import secureStorageErrorTest from './SecureStorageError.test';
 import providerConfigTest from './ProviderConfig.test';
 import providerKeyStoreTest from './ProviderKeyStore.test';
 import providerConfigCodecTest from './ProviderConfigCodec.test';
+import openAiProviderTest from './OpenAIProvider.test';
+import harmonyHttpClientHelpersTest from './HarmonyHttpClientHelpers.test';
 
 export default function testsuite() {
   localUnitTest();
@@ -24,4 +26,6 @@ export default function testsuite() {
   providerConfigTest();
   providerKeyStoreTest();
   providerConfigCodecTest();
+  openAiProviderTest();
+  harmonyHttpClientHelpersTest();
 }

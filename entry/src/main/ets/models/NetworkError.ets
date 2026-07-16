@@ -4,6 +4,9 @@
  * 定义网络层统一的错误类型与错误对象。
  * 提供从 HTTP 状态码到错误类型的纯函数映射。
  * 错误对象中不存储请求头、API Key 等敏感信息。
+ *
+ * 继承自 Error,满足 ArkTS 严格模式的 arkts-limited-throw 规则
+ * (仅允许 throw Error 子类)。
  */
 
 // Bearer token 脱敏正则
@@ -39,13 +42,12 @@ export enum NetworkErrorType {
 
 /**
  * 网络错误对象。
+ * 继承自 Error 以满足 ArkTS 的 arkts-limited-throw 规则。
  * 不包含请求头、API Key 等敏感字段。
  */
-export interface NetworkError {
+export class NetworkError extends Error {
   /** 错误类型 */
   readonly type: NetworkErrorType;
-  /** 人类可读错误消息(不含敏感信息) */
-  readonly message: string;
   /** HTTP 状态码(可选) */
   readonly statusCode?: number;
   /** Provider 特定错误码(可选) */
@@ -54,6 +56,23 @@ export interface NetworkError {
   readonly retryable: boolean;
   /** 原因消息(可选,已脱敏) */
   readonly causeMessage?: string;
+
+  constructor(
+    type: NetworkErrorType,
+    message: string,
+    retryable: boolean,
+    statusCode?: number,
+    providerCode?: string,
+    causeMessage?: string
+  ) {
+    super(message);
+    this.type = type;
+    this.retryable = retryable;
+    this.statusCode = statusCode;
+    this.providerCode = providerCode;
+    this.causeMessage = causeMessage;
+    this.name = 'NetworkError';
+  }
 }
 
 /**
@@ -154,15 +173,18 @@ export function createNetworkError(
     ? options.retryable
     : defaultRetryable(type);
 
-  const error: NetworkError = {
-    type: type,
-    message: message,
-    statusCode: options !== undefined ? options.statusCode : undefined,
-    providerCode: options !== undefined ? options.providerCode : undefined,
-    retryable: retryable,
-    causeMessage: options !== undefined && options.causeMessage !== undefined
-      ? redactCause(options.causeMessage)
-      : undefined
-  };
-  return error;
+  const statusCode: number | undefined = options !== undefined ? options.statusCode : undefined;
+  const providerCode: string | undefined = options !== undefined ? options.providerCode : undefined;
+  const causeMessage: string | undefined = options !== undefined && options.causeMessage !== undefined
+    ? redactCause(options.causeMessage)
+    : undefined;
+
+  return new NetworkError(
+    type,
+    message,
+    retryable,
+    statusCode,
+    providerCode,
+    causeMessage
+  );
 }

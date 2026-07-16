@@ -589,24 +589,26 @@ export default function providerConfigCodecTest() {
       expect(containsSensitiveFields(withoutSensitive)).assertFalse();
 
       // 解码时拒绝包含敏感字段的项
-      const json: string = JSON.stringify({
-        schemaVersion: 1,
-        configs: [{
-          id: 'sens-1',
-          name: 'name',
-          type: ProviderType.OpenAICompatible,
-          baseUrl: 'https://api.example.com',
-          modelName: 'gpt-4',
-          temperature: 0.7,
-          topP: 1.0,
-          maxTokens: 1024,
-          stream: true,
-          enabled: true,
-          createdAt: 1000,
-          updatedAt: 1000,
-          apiKey: 'should-not-be-here'
-        }]
-      });
+      const sensConfig: Record<string, Object> = {
+        'id': 'sens-1',
+        'name': 'name',
+        'type': ProviderType.OpenAICompatible,
+        'baseUrl': 'https://api.example.com',
+        'modelName': 'gpt-4',
+        'temperature': 0.7,
+        'topP': 1.0,
+        'maxTokens': 1024,
+        'stream': true,
+        'enabled': true,
+        'createdAt': 1000,
+        'updatedAt': 1000,
+        'apiKey': 'should-not-be-here'
+      };
+      const jsonObj: Record<string, Object> = {
+        'schemaVersion': 1,
+        'configs': [sensConfig]
+      };
+      const json: string = JSON.stringify(jsonObj);
       const result: CodecDecodeResult = decodeConfigs(json);
       expect(result.success).assertTrue();
       expect(result.configs.length).assertEqual(0);
