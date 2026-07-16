@@ -415,9 +415,52 @@ Date: 2026-07-15
   - [x] 设备测试通过:ModelSettingsViewModel 19/19 + ModelService 20/20 = 39/39
   - [x] 所有新增文件 ≤600 行
   - [x] 无 API Key 泄漏(源码扫描 + hilog 无 apiKey + Preferences 无敏感字段)
+- T-1.7F 缺陷修复(2026-07-16):
+  - [x] 保存无反应根因修复:@Builder 参数传递 vm 导致 @Observed 属性变更不触发 UI 重渲染
+  - [x] 页面不再通过 @Builder 参数传递 ViewModel,直接使用 @State 绑定
+  - [x] 错误消息从滚动底部移至页面顶部,背景色区分错误/成功
+  - [x] 保存按钮状态反馈:显示"保存中…"/"测试中…",按钮禁用
+  - [x] save() 使用 try/catch/finally 确保 isSaving 恢复
+  - [x] 保存失败不清空 API Key,方便用户修改后重试
+  - [x] populateForm 不再调用 applyPresetForType 覆盖已加载的 baseUrl/modelName
+  - [x] API Key 使用 InputType.Normal + 页面圆点掩码 + 显隐切换,不触发系统安全键盘
+  - [x] API Key 关闭复制(CopyOptions.None)
+  - [x] DeepSeek 预设模式:自动填充 URL/Model,只填 Key 即可保存
+  - [x] DeepSeek V4 Flash / V4 Pro 可选择,模型切换自动更新 modelName
+  - [x] DeepSeek URL 自动设为 `https://api.deepseek.com/chat/completions`
+  - [x] ProviderPreset.ets 预设数据模型(preset 不含 API Key,不存 Preferences)
+  - [x] OpenAI Compatible 继续要求用户填写 Base URL 和 Model
+  - [x] 设备测试:ModelSettingsViewModel 28/28 + ModelService 20/20 = 48/48
+  - T-1.7F 实机验证通过：DeepSeek 配置保存、当前配置切换、API Key 安全存储、普通键盘输入均正常。
   - 未开始 T-1.8
 
-### T-1.8 补充网络权限
+### T-1.8 最小可用流式聊天
+
+- 依赖:T-1.7
+- 优先级:P1
+- 修改范围:`services/ChatService.ets`(新建)、`viewmodels/ChatViewModel.ets`(新建)、`pages/ChatPage.ets`(重写)、`models/ModelServiceError.ets`、`models/ChatStreamTypes.ets`、资源文件
+- 内容:内存中单次临时流式聊天,不做数据库和历史会话
+- 验收标准:
+  - [x] 用户输入消息后发送,实时看到模型流式回复
+  - [x] 点击停止生成,保留已生成文本
+  - [x] 清空当前临时对话
+  - [x] 页面返回后不崩溃
+  - [x] 无模型配置时显示"尚未配置模型"+"前往模型设置"按钮
+  - [x] 错误映射为中文提示(Auth/429/Timeout/Network/Server/Parse/模型名称未配置等)
+  - [x] 状态机单向切换:Idle→Sending→Streaming→Completed/Cancelled/Failed
+  - [x] 页面不直接调用 OpenAIProvider/ProviderKeyStore/ProviderConfigStore
+  - [x] ChatService 只通过 ModelService 发送请求
+  - [x] 不缓存 API Key,不记录消息全文到日志
+  - [x] 同一时间只允许一个生成请求
+  - [x] stopGeneration 调用 ChatStreamHandle.abort
+  - [x] ModelService 自动从 ProviderConfig 填充 modelName(mergeRequestModel)
+  - [x] 设备测试:ChatService 27/27 + ChatViewModel 22/22 = 49/49
+  - [x] 所有新增文件 ≤600 行
+  - [x] 无 API Key 或消息正文泄漏到 hilog
+  - 实机验证通过:DeepSeek 流式聊天正常,停止生成正常,中文/Emoji/换行正常
+  - 未整合:Character prompt / Lorebook / Preset / PromptBuilder / Swipe / Markdown 渲染 / 历史会话
+
+### T-1.9 补充网络权限
 
 - 依赖:T-1.7
 - 优先级:P1

@@ -241,10 +241,11 @@ export class ModelService {
   async sendChat(request: ChatRequest): Promise<ChatResponse> {
     this.requireInitialized();
     const config: ProviderConfig = await this.resolveCurrentConfigForRequest();
+    const req: ChatRequest = this.mergeRequestModel(request, config);
     const provider: AiProvider = this.resolveProvider(config);
-    Logger.info(LOG_TAG, 'sendChat providerId=' + config.id + ' model=' + request.model);
+    Logger.info(LOG_TAG, 'sendChat providerId=' + config.id + ' model=' + req.model);
     try {
-      return await provider.sendChat(config, request);
+      return await provider.sendChat(config, req);
     } catch (e) {
       throw this.wrapNetworkError(e, 'sendChat failed');
     }
@@ -370,7 +371,8 @@ export class ModelService {
     }
 
     const provider: AiProvider = this.resolveProvider(config);
-    Logger.info(LOG_TAG, 'streamChat providerId=' + config.id + ' model=' + request.model);
+    const req: ChatRequest = this.mergeRequestModel(request, config);
+    Logger.info(LOG_TAG, 'streamChat providerId=' + config.id + ' model=' + req.model);
 
     const wrappedCallbacks: ChatStreamCallbacks = {
       onStart: callbacks.onStart,
@@ -382,7 +384,7 @@ export class ModelService {
       }
     };
 
-    const innerHandle: ChatStreamHandle = provider.streamChat(config, request, wrappedCallbacks);
+    const innerHandle: ChatStreamHandle = provider.streamChat(config, req, wrappedCallbacks);
     holder.setInner(innerHandle);
   }
 
@@ -542,6 +544,26 @@ export class ModelService {
     return createModelServiceError(
       ModelServiceErrorType.NetworkFailure, message + ': unknown error', String(e)
     );
+  }
+
+  private mergeRequestModel(request: ChatRequest, config: ProviderConfig): ChatRequest {
+    const modelName: string = config.modelName.trim();
+    if (modelName.length === 0) {
+      throw createModelServiceError(
+        ModelServiceErrorType.InvalidConfig, 'model name is empty for config: ' + config.id
+      );
+    }
+    if (request.model.length === 0 || request.model === '__from_config__') {
+      return {
+        model: modelName,
+        messages: request.messages,
+        temperature: request.temperature,
+        topP: request.topP,
+        maxTokens: request.maxTokens,
+        stream: request.stream
+      };
+    }
+    return request;
   }
 }
 

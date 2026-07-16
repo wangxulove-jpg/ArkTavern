@@ -75,6 +75,22 @@
     {
       "name": "model_settings_danger",
       "value": "#D32F2F"
+    },
+    {
+      "name": "chat_user_bubble",
+      "value": "#5B7CFA"
+    },
+    {
+      "name": "chat_user_text",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "chat_assistant_bubble",
+      "value": "#F2F2F2"
+    },
+    {
+      "name": "chat_divider",
+      "value": "#E0E0E0"
     }
   ]
 }

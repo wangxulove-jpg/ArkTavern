@@ -5,17 +5,20 @@
  * - 配置列表(显示全部配置,当前配置有标记)
  * - 编辑表单(名称/Provider/Base URL/Model/API Key/参数)
  * - 操作(保存/测试连接/设为当前/删除)
+ * - DeepSeek 预设模式:自动填充 URL/Model,选择模型即可
  *
- * 页面只通过 ModelSettingsViewModel 调用 ModelService,不直接接触 Store/Provider。
- * API Key 使用密码输入控件,不显示原密钥,保存/测试后立即清空。
+ * 页面只通过 ModelSettingsViewModel 调用 ModelService。
+ * API Key 使用普通输入框+页面自行掩码,不触发系统安全键盘。
+ * 修复:不再通过 @Builder 参数传递 ViewModel,直接使用 @State 绑定。
  */
 
 import { ModelSettingsViewModel } from '../viewmodels/ModelSettingsViewModel';
 import { AppServices } from '../services/AppServices';
 import { ProviderConfig } from '../models/ProviderConfig';
 import { ProviderType } from '../models/ProviderType';
+import { ModelOption } from '../models/ProviderPreset';
+import { getPreset } from '../models/ProviderPreset';
 
-/** Provider 类型选项 */
 interface TypeOption {
   readonly value: ProviderType;
   readonly label: string;
@@ -59,7 +62,7 @@ export struct ModelSettingsPage {
       if (this.viewModel === null) {
         this.loadingView()
       } else {
-        this.mainView(this.viewModel)
+        this.mainView()
       }
     }
     .title($r('app.string.nav_model_settings_title'))
@@ -86,12 +89,35 @@ export struct ModelSettingsPage {
   }
 
   @Builder
-  mainView(vm: ModelSettingsViewModel) {
+  mainView() {
     Scroll() {
       Column() {
-        this.configListSection(vm)
-        this.formSection(vm)
-        this.actionsSection(vm)
+        // 状态消息置顶
+        if (this.viewModel !== null) {
+          if (this.viewModel.errorMessage.length > 0) {
+            Text(this.viewModel.errorMessage)
+              .fontSize($r('app.float.home_body_font_size'))
+              .fontColor($r('app.color.model_settings_danger'))
+              .padding(12)
+              .width('100%')
+              .backgroundColor('#FFE0E0')
+              .borderRadius(8)
+              .margin({ top: 8 })
+          }
+          if (this.viewModel.statusMessage.length > 0) {
+            Text(this.viewModel.statusMessage)
+              .fontSize($r('app.float.home_body_font_size'))
+              .fontColor($r('app.color.model_settings_success'))
+              .padding(12)
+              .width('100%')
+              .backgroundColor('#E0FFE0')
+              .borderRadius(8)
+              .margin({ top: 8 })
+          }
+        }
+        this.configListSection()
+        this.formSection()
+        this.actionsSection()
       }
       .width('100%')
       .padding({ left: 16, right: 16, bottom: 32 })
@@ -104,7 +130,7 @@ export struct ModelSettingsPage {
   }
 
   @Builder
-  configListSection(vm: ModelSettingsViewModel) {
+  configListSection() {
     Column() {
       Text($r('app.string.model_settings_config_list'))
         .fontSize($r('app.float.nav_body_font_size'))
@@ -112,16 +138,16 @@ export struct ModelSettingsPage {
         .fontColor($r('app.color.page_primary_text'))
         .margin({ top: 12, bottom: 8 })
 
-      if (vm.configs.length === 0) {
+      if (this.viewModel !== null && this.viewModel.configs.length === 0) {
         Text($r('app.string.model_settings_no_configs'))
           .fontSize($r('app.float.home_caption_font_size'))
           .fontColor($r('app.color.page_secondary_text'))
           .padding(12)
-      } else {
+      } else if (this.viewModel !== null) {
         Scroll() {
           Row({ space: 8 }) {
-            ForEach(vm.configs, (config: ProviderConfig) => {
-              this.configChip(vm, config)
+            ForEach(this.viewModel.configs, (config: ProviderConfig) => {
+              this.configChip(config)
             })
           }
           .padding({ left: 2, right: 2 })
@@ -140,7 +166,9 @@ export struct ModelSettingsPage {
         .borderRadius(8)
         .margin({ top: 8 })
         .onClick(() => {
-          vm.startCreate();
+          if (this.viewModel !== null) {
+            this.viewModel.startCreate();
+          }
         })
     }
     .width('100%')
@@ -148,19 +176,20 @@ export struct ModelSettingsPage {
   }
 
   @Builder
-  configChip(vm: ModelSettingsViewModel, config: ProviderConfig) {
+  configChip(config: ProviderConfig) {
     Column() {
       Row() {
         Text(config.name)
           .fontSize($r('app.float.home_body_font_size'))
-          .fontColor(vm.selectedConfigId === config.id
+          .fontColor(this.viewModel !== null && this.viewModel.selectedConfigId === config.id
             ? $r('app.color.model_settings_accent') : $r('app.color.page_primary_text'))
-          .fontWeight(vm.selectedConfigId === config.id ? FontWeight.Bold : FontWeight.Normal)
+          .fontWeight(this.viewModel !== null && this.viewModel.selectedConfigId === config.id
+            ? FontWeight.Bold : FontWeight.Normal)
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .layoutWeight(1)
 
-        if (vm.currentConfigId === config.id) {
+        if (this.viewModel !== null && this.viewModel.currentConfigId === config.id) {
           Text($r('app.string.model_settings_current_badge'))
             .fontSize($r('app.float.home_caption_font_size'))
             .fontColor($r('app.color.model_settings_accent'))
@@ -177,16 +206,18 @@ export struct ModelSettingsPage {
         .margin({ top: 2 })
     }
     .padding({ left: 12, right: 12, top: 8, bottom: 8 })
-    .backgroundColor(vm.selectedConfigId === config.id
+    .backgroundColor(this.viewModel !== null && this.viewModel.selectedConfigId === config.id
       ? $r('app.color.model_settings_selected_bg') : $r('app.color.model_settings_chip_bg'))
     .borderRadius(8)
     .onClick(() => {
-      vm.selectConfig(config.id);
+      if (this.viewModel !== null) {
+        this.viewModel.selectConfig(config.id);
+      }
     })
   }
 
   @Builder
-  formSection(vm: ModelSettingsViewModel) {
+  formSection() {
     Column() {
       Text($r('app.string.model_settings_form_title'))
         .fontSize($r('app.float.nav_body_font_size'))
@@ -195,93 +226,143 @@ export struct ModelSettingsPage {
         .margin({ top: 20, bottom: 8 })
 
       this.fieldLabel($r('app.string.model_settings_name'))
-      TextInput({ text: vm.name, placeholder: $r('app.string.model_settings_name_placeholder') })
+      TextInput({ text: this.viewModel !== null ? this.viewModel.name : '', placeholder: $r('app.string.model_settings_name_placeholder') })
         .width('100%')
         .height(44)
         .fontSize($r('app.float.home_body_font_size'))
         .fontColor($r('app.color.page_primary_text'))
         .backgroundColor($r('app.color.model_settings_field_bg'))
         .borderRadius(8)
-        .onChange((v: string) => { vm.name = v; })
+        .onChange((v: string) => { if (this.viewModel !== null) { this.viewModel.name = v; } })
 
       this.fieldLabel($r('app.string.model_settings_provider_type'))
       Select(TYPE_OPTIONS.map((opt: TypeOption): SelectOption => {
         return { value: opt.label };
       }))
-        .selected(this.typeIndex(vm.providerType))
+        .selected(this.typeIndex())
         .width('100%')
         .height(44)
         .fontColor($r('app.color.page_primary_text'))
         .backgroundColor($r('app.color.model_settings_field_bg'))
         .borderRadius(8)
         .onSelect((index: number) => {
-          if (index >= 0 && index < TYPE_OPTIONS.length) {
-            vm.providerType = TYPE_OPTIONS[index].value;
+          if (this.viewModel !== null && index >= 0 && index < TYPE_OPTIONS.length) {
+            this.viewModel.onProviderTypeChange(TYPE_OPTIONS[index].value);
           }
         })
 
-      this.fieldLabel($r('app.string.model_settings_base_url'))
-      TextInput({ text: vm.baseUrl, placeholder: 'https://api.example.com' })
-        .width('100%')
-        .height(44)
-        .fontSize($r('app.float.home_body_font_size'))
-        .fontColor($r('app.color.page_primary_text'))
-        .backgroundColor($r('app.color.model_settings_field_bg'))
-        .borderRadius(8)
-        .onChange((v: string) => { vm.baseUrl = v; })
+      // 预设模式:隐藏 Base URL,显示模型选择
+      if (this.viewModel !== null && this.viewModel.isPresetMode) {
+        this.modelSelectSection()
+      } else {
+        this.fieldLabel($r('app.string.model_settings_base_url'))
+        TextInput({ text: this.viewModel !== null ? this.viewModel.baseUrl : '', placeholder: 'https://api.example.com' })
+          .width('100%')
+          .height(44)
+          .fontSize($r('app.float.home_body_font_size'))
+          .fontColor($r('app.color.page_primary_text'))
+          .backgroundColor($r('app.color.model_settings_field_bg'))
+          .borderRadius(8)
+          .onChange((v: string) => { if (this.viewModel !== null) { this.viewModel.baseUrl = v; } })
 
-      this.fieldLabel($r('app.string.model_settings_model'))
-      TextInput({ text: vm.modelName, placeholder: 'gpt-4o / deepseek-chat' })
-        .width('100%')
-        .height(44)
-        .fontSize($r('app.float.home_body_font_size'))
-        .fontColor($r('app.color.page_primary_text'))
-        .backgroundColor($r('app.color.model_settings_field_bg'))
-        .borderRadius(8)
-        .onChange((v: string) => { vm.modelName = v; })
+        this.fieldLabel($r('app.string.model_settings_model'))
+        TextInput({ text: this.viewModel !== null ? this.viewModel.modelName : '', placeholder: 'gpt-4o' })
+          .width('100%')
+          .height(44)
+          .fontSize($r('app.float.home_body_font_size'))
+          .fontColor($r('app.color.page_primary_text'))
+          .backgroundColor($r('app.color.model_settings_field_bg'))
+          .borderRadius(8)
+          .onChange((v: string) => { if (this.viewModel !== null) { this.viewModel.modelName = v; } })
+      }
 
+      // API Key:普通输入框 + 页面自行掩码
       this.fieldLabel($r('app.string.model_settings_api_key'))
-      if (vm.apiKeyConfigured && vm.selectedConfigId !== null) {
+      if (this.viewModel !== null && this.viewModel.apiKeyConfigured && this.viewModel.selectedConfigId !== null) {
         Text($r('app.string.model_settings_api_key_configured'))
           .fontSize($r('app.float.home_caption_font_size'))
           .fontColor($r('app.color.page_secondary_text'))
           .margin({ bottom: 4 })
       }
-      TextInput({ text: vm.apiKey, placeholder: $r('app.string.model_settings_api_key_placeholder') })
-        .type(InputType.Password)
-        .width('100%')
-        .height(44)
-        .fontSize($r('app.float.home_body_font_size'))
-        .fontColor($r('app.color.page_primary_text'))
-        .backgroundColor($r('app.color.model_settings_field_bg'))
-        .borderRadius(8)
-        .onChange((v: string) => { vm.apiKey = v; })
+      Row() {
+        TextInput({ text: this.getApiKeyDisplay(), placeholder: $r('app.string.model_settings_api_key_placeholder') })
+          .type(InputType.Normal)
+          .width('100%')
+          .height(44)
+          .fontSize($r('app.float.home_body_font_size'))
+          .fontColor($r('app.color.page_primary_text'))
+          .backgroundColor($r('app.color.model_settings_field_bg'))
+          .borderRadius(8)
+          .copyOption(CopyOptions.None)
+          .layoutWeight(1)
+          .onChange((v: string) => {
+            if (this.viewModel !== null) {
+              if (this.viewModel.showApiKey) {
+                this.viewModel.apiKey = v;
+              } else {
+                // 掩码模式:新输入追加到 apiKey
+                if (v.length > this.viewModel.apiKey.length) {
+                  const added: string = v.substring(this.viewModel.apiKey.length);
+                  this.viewModel.apiKey = this.viewModel.apiKey + added;
+                } else if (v.length < this.viewModel.apiKey.length) {
+                  this.viewModel.apiKey = this.viewModel.apiKey.substring(0, v.length);
+                }
+              }
+            }
+          })
+        Button(this.viewModel !== null && this.viewModel.showApiKey ? '隐藏' : '显示')
+          .width(52)
+          .height(44)
+          .fontSize(12)
+          .fontColor($r('app.color.page_secondary_text'))
+          .backgroundColor($r('app.color.model_settings_field_bg'))
+          .borderRadius(8)
+          .margin({ left: 4 })
+          .onClick(() => {
+            if (this.viewModel !== null) {
+              this.viewModel.showApiKey = !this.viewModel.showApiKey;
+            }
+          })
+      }
+      .width('100%')
 
       this.fieldLabel($r('app.string.model_settings_temperature'))
-      this.numberInput(vm.temperature.toString(), (v: string) => {
-        const n: number = parseFloat(v);
-        if (!isNaN(n)) { vm.temperature = n; }
-      })
+      this.numberInput(
+        this.viewModel !== null ? this.viewModel.temperature.toString() : '0.7',
+        (v: string) => {
+          if (this.viewModel !== null) {
+            const n: number = parseFloat(v);
+            if (!isNaN(n)) { this.viewModel.temperature = n; }
+          }
+        })
 
       this.fieldLabel($r('app.string.model_settings_top_p'))
-      this.numberInput(vm.topP.toString(), (v: string) => {
-        const n: number = parseFloat(v);
-        if (!isNaN(n)) { vm.topP = n; }
-      })
+      this.numberInput(
+        this.viewModel !== null ? this.viewModel.topP.toString() : '1.0',
+        (v: string) => {
+          if (this.viewModel !== null) {
+            const n: number = parseFloat(v);
+            if (!isNaN(n)) { this.viewModel.topP = n; }
+          }
+        })
 
       this.fieldLabel($r('app.string.model_settings_max_tokens'))
-      this.numberInput(vm.maxTokens.toString(), (v: string) => {
-        const n: number = parseInt(v, 10);
-        if (!isNaN(n)) { vm.maxTokens = n; }
-      })
+      this.numberInput(
+        this.viewModel !== null ? this.viewModel.maxTokens.toString() : '1024',
+        (v: string) => {
+          if (this.viewModel !== null) {
+            const n: number = parseInt(v, 10);
+            if (!isNaN(n)) { this.viewModel.maxTokens = n; }
+          }
+        })
 
       Row() {
         Text($r('app.string.model_settings_stream'))
           .fontSize($r('app.float.home_body_font_size'))
           .fontColor($r('app.color.page_primary_text'))
           .layoutWeight(1)
-        Toggle({ type: ToggleType.Switch, isOn: vm.stream })
-          .onChange((on: boolean) => { vm.stream = on; })
+        Toggle({ type: ToggleType.Switch, isOn: this.viewModel !== null ? this.viewModel.stream : true })
+          .onChange((on: boolean) => { if (this.viewModel !== null) { this.viewModel.stream = on; } })
       }
       .width('100%')
       .height(44)
@@ -292,12 +373,75 @@ export struct ModelSettingsPage {
           .fontSize($r('app.float.home_body_font_size'))
           .fontColor($r('app.color.page_primary_text'))
           .layoutWeight(1)
-        Toggle({ type: ToggleType.Switch, isOn: vm.enabled })
-          .onChange((on: boolean) => { vm.enabled = on; })
+        Toggle({ type: ToggleType.Switch, isOn: this.viewModel !== null ? this.viewModel.enabled : true })
+          .onChange((on: boolean) => { if (this.viewModel !== null) { this.viewModel.enabled = on; } })
       }
       .width('100%')
       .height(44)
       .margin({ top: 8 })
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+  }
+
+  @Builder
+  modelSelectSection() {
+    Column() {
+      Text('DeepSeek 模型')
+        .fontSize($r('app.float.home_caption_font_size'))
+        .fontColor($r('app.color.page_secondary_text'))
+        .margin({ top: 12, bottom: 4 })
+
+      if (this.viewModel !== null && this.viewModel.activePreset !== null) {
+        ForEach(this.viewModel.activePreset.availableModels, (model: ModelOption, index: number) => {
+          Row() {
+            Column() {
+              Text(model.displayName)
+                .fontSize($r('app.float.home_body_font_size'))
+                .fontColor(this.viewModel !== null && this.viewModel.selectedModelIndex === index
+                  ? $r('app.color.model_settings_accent') : $r('app.color.page_primary_text'))
+                .fontWeight(this.viewModel !== null && this.viewModel.selectedModelIndex === index
+                  ? FontWeight.Bold : FontWeight.Normal)
+              if (model.description !== undefined) {
+                Text(model.description)
+                  .fontSize($r('app.float.home_caption_font_size'))
+                  .fontColor($r('app.color.page_secondary_text'))
+                  .margin({ top: 2 })
+              }
+            }
+            .alignItems(HorizontalAlign.Start)
+            .layoutWeight(1)
+
+            if (this.viewModel !== null && this.viewModel.selectedModelIndex === index) {
+              Text('✓')
+                .fontSize(18)
+                .fontColor($r('app.color.model_settings_accent'))
+            }
+          }
+          .width('100%')
+          .padding(12)
+          .margin({ top: 4 })
+          .backgroundColor(this.viewModel !== null && this.viewModel.selectedModelIndex === index
+            ? $r('app.color.model_settings_selected_bg') : $r('app.color.model_settings_chip_bg'))
+          .borderRadius(8)
+          .onClick(() => {
+            if (this.viewModel !== null) {
+              this.viewModel.onModelSelect(index);
+            }
+          })
+        })
+      }
+
+      // Base URL 只读显示
+      Text('Base URL: ' + (this.viewModel !== null ? this.viewModel.baseUrl : ''))
+        .fontSize($r('app.float.home_caption_font_size'))
+        .fontColor($r('app.color.page_secondary_text'))
+        .margin({ top: 8 })
+
+      Text('Model: ' + (this.viewModel !== null ? this.viewModel.modelName : ''))
+        .fontSize($r('app.float.home_caption_font_size'))
+        .fontColor($r('app.color.page_secondary_text'))
+        .margin({ top: 2 })
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)
@@ -325,41 +469,36 @@ export struct ModelSettingsPage {
   }
 
   @Builder
-  actionsSection(vm: ModelSettingsViewModel) {
+  actionsSection() {
     Column() {
-      if (vm.statusMessage.length > 0) {
-        Text(vm.statusMessage)
-          .fontSize($r('app.float.home_body_font_size'))
-          .fontColor($r('app.color.model_settings_success'))
-          .margin({ top: 16, bottom: 4 })
-      }
-      if (vm.errorMessage.length > 0) {
-        Text(vm.errorMessage)
-          .fontSize($r('app.float.home_body_font_size'))
-          .fontColor($r('app.color.model_settings_danger'))
-          .margin({ top: 16, bottom: 4 })
-      }
-
       Row({ space: 8 }) {
-        Button($r('app.string.model_settings_save'))
+        Button(this.viewModel !== null && this.viewModel.isSaving ? '保存中…' : $r('app.string.model_settings_save'))
           .width('50%')
           .height(48)
           .fontSize($r('app.float.home_entry_font_size'))
           .fontColor($r('app.color.model_settings_button_text'))
           .backgroundColor($r('app.color.model_settings_accent'))
           .borderRadius(8)
-          .enabled(!vm.isSaving && !vm.isTesting)
-          .onClick(() => { vm.save(); })
+          .enabled(this.viewModel !== null && !this.viewModel.isSaving && !this.viewModel.isTesting)
+          .onClick(() => {
+            if (this.viewModel !== null) {
+              this.viewModel.save();
+            }
+          })
 
-        Button($r('app.string.model_settings_test'))
+        Button(this.viewModel !== null && this.viewModel.isTesting ? '测试中…' : $r('app.string.model_settings_test'))
           .width('50%')
           .height(48)
           .fontSize($r('app.float.home_entry_font_size'))
           .fontColor($r('app.color.model_settings_button_text'))
           .backgroundColor($r('app.color.model_settings_accent'))
           .borderRadius(8)
-          .enabled(!vm.isSaving && !vm.isTesting)
-          .onClick(() => { vm.testConnection(); })
+          .enabled(this.viewModel !== null && !this.viewModel.isSaving && !this.viewModel.isTesting)
+          .onClick(() => {
+            if (this.viewModel !== null) {
+              this.viewModel.testConnection();
+            }
+          })
       }
       .width('100%')
       .margin({ top: 16 })
@@ -372,8 +511,13 @@ export struct ModelSettingsPage {
           .fontColor($r('app.color.page_primary_text'))
           .backgroundColor($r('app.color.model_settings_field_bg'))
           .borderRadius(8)
-          .enabled(!vm.isSaving && !vm.isTesting && vm.selectedConfigId !== null)
-          .onClick(() => { vm.setCurrent(); })
+          .enabled(this.viewModel !== null && !this.viewModel.isSaving && !this.viewModel.isTesting
+            && this.viewModel.selectedConfigId !== null)
+          .onClick(() => {
+            if (this.viewModel !== null) {
+              this.viewModel.setCurrent();
+            }
+          })
 
         Button($r('app.string.model_settings_delete'))
           .width('50%')
@@ -382,19 +526,24 @@ export struct ModelSettingsPage {
           .fontColor($r('app.color.model_settings_danger'))
           .backgroundColor($r('app.color.model_settings_field_bg'))
           .borderRadius(8)
-          .enabled(!vm.isSaving && !vm.isTesting && vm.selectedConfigId !== null)
+          .enabled(this.viewModel !== null && !this.viewModel.isSaving && !this.viewModel.isTesting
+            && this.viewModel.selectedConfigId !== null)
           .onClick(() => {
-            AlertDialog.show({
-              title: $r('app.string.model_settings_delete'),
-              message: $r('app.string.model_settings_delete_confirm'),
-              confirm: {
-                value: $r('app.string.model_settings_delete'),
-                action: () => {
-                  vm.deleteSelected();
-                }
-              },
-              cancel: () => {}
-            });
+            if (this.viewModel !== null) {
+              AlertDialog.show({
+                title: $r('app.string.model_settings_delete'),
+                message: $r('app.string.model_settings_delete_confirm'),
+                confirm: {
+                  value: $r('app.string.model_settings_delete'),
+                  action: () => {
+                    if (this.viewModel !== null) {
+                      this.viewModel.deleteSelected();
+                    }
+                  }
+                },
+                cancel: () => {}
+              });
+            }
           })
       }
       .width('100%')
@@ -404,15 +553,31 @@ export struct ModelSettingsPage {
     .alignItems(HorizontalAlign.Start)
   }
 
-  /**
-   * 根据 ProviderType 返回选项索引。
-   */
-  private typeIndex(type: ProviderType): number {
+  private typeIndex(): number {
+    if (this.viewModel === null) {
+      return 0;
+    }
+    const type: ProviderType = this.viewModel.providerType;
     for (let i = 0; i < TYPE_OPTIONS.length; i++) {
       if (TYPE_OPTIONS[i].value === type) {
         return i;
       }
     }
     return 0;
+  }
+
+  private getApiKeyDisplay(): string {
+    if (this.viewModel === null) {
+      return '';
+    }
+    if (this.viewModel.showApiKey) {
+      return this.viewModel.apiKey;
+    }
+    // 掩码显示圆点
+    let result: string = '';
+    for (let i = 0; i < this.viewModel.apiKey.length; i++) {
+      result += '●';
+    }
+    return result;
   }
 }

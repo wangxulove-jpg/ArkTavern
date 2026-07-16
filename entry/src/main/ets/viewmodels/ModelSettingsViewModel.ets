@@ -2,34 +2,36 @@
  * ModelSettingsViewModel 模型设置 ViewModel
  *
  * 管理模型配置页面的状态与操作,作为页面与 ModelService 之间的唯一桥梁。
- * 页面只通过本 ViewModel 调用 ModelService,不直接接触 ProviderConfigStore / KeyStore / Provider。
  *
  * 设计原则:
  * - 不依赖具体 ArkUI 页面实例
- * - 不使用全局单例
- * - 不使用 any
- * - API Key 仅存在于输入状态(apiKey 字段),保存或测试完成后立即清空
+ * - 不使用全局单例、不使用 any
+ * - API Key 仅存在于输入状态(apiKey 字段),保存/测试后立即清空
  * - 不从 KeyStore 读取并回显原密钥;已有密钥只显示"已配置"
- * - 编辑配置但不输入新 Key 时,保留旧 Key
- * - 新建配置必须要求 API Key
+ * - 编辑配置不输入新 Key 时保留旧 Key;新建必须 API Key
  * - 防止重复点击保存、删除和测试连接
+ * - 支持 Provider 预设模式:DeepSeek 自动填充 URL/Model,只填 Key 即可
  *
  * 状态机:
  * - selectedConfigId === null:新建模式
- * - selectedConfigId !== null:编辑模式(编辑已有配置)
+ * - selectedConfigId !== null:编辑模式
  */
 
 import { ModelService } from '../services/ModelService';
 import { ProviderConfig } from '../models/ProviderConfig';
-import {
-  ProviderType
-} from '../models/ProviderType';
+import { ProviderType } from '../models/ProviderType';
 import { ChatResponse } from '../models/ChatResponse';
 import {
   ModelServiceError,
   ModelServiceErrorType,
   isModelServiceError
 } from '../models/ModelServiceError';
+import {
+  ProviderPreset,
+  ModelOption,
+  getPreset,
+  hasPreset
+} from '../models/ProviderPreset';
 import { generateUuid } from '../utils/Uuid';
 import { Logger } from '../utils/Logger';
 import {
@@ -48,9 +50,6 @@ import {
 
 const LOG_TAG: string = 'ModelSettingsVM';
 
-/**
- * 表单校验结果。
- */
 interface ValidationResult {
   readonly valid: boolean;
   readonly message: string;
@@ -80,12 +79,24 @@ export class ModelSettingsViewModel {
   enabled: boolean = ENABLED_DEFAULT;
   apiKeyConfigured: boolean = false;
 
+  // ===== 预设模式状态 =====
+  /** 当前 Provider 的预设(无预设时为 null) */
+  activePreset: ProviderPreset | null = null;
+  /** 预设模式下选中的模型索引(-1 表示无) */
+  selectedModelIndex: number = -1;
+  /** 使用预设模式(baseUrl/modelName 自动填充,页面隐藏对应输入) */
+  get isPresetMode(): boolean {
+    return this.activePreset !== null;
+  }
+
   // ===== 交互状态 =====
   isLoading: boolean = false;
   isSaving: boolean = false;
   isTesting: boolean = false;
   statusMessage: string = '';
   errorMessage: string = '';
+  /** API Key 显隐切换(页面自行掩码,非系统 Password) */
+  showApiKey: boolean = false;
 
   private modelService: ModelService;
 
@@ -93,9 +104,8 @@ export class ModelSettingsViewModel {
     this.modelService = modelService;
   }
 
-  /**
-   * 初始化:加载配置列表与当前选中配置。
-   */
+  // ===== 公共方法 =====
+
   async initialize(): Promise<void> {
     Logger.info(LOG_TAG, 'initialize');
     this.isLoading = true;
@@ -105,8 +115,7 @@ export class ModelSettingsViewModel {
       const current: ProviderConfig | null = await this.modelService.getCurrentConfig();
       this.currentConfigId = current !== null ? current.id : null;
       if (this.configs.length > 0) {
-        const firstId: string = this.configs[0].id;
-        await this.selectConfig(firstId);
+        await this.selectConfig(this.configs[0].id);
       } else {
         this.startCreate();
       }
@@ -117,10 +126,6 @@ export class ModelSettingsViewModel {
     }
   }
 
-  /**
-   * 选择并加载指定配置到表单。
-   * 不读取 API Key 明文,仅查询是否已配置。
-   */
   async selectConfig(id: string): Promise<void> {
     Logger.info(LOG_TAG, 'selectConfig id=' + id);
     this.selectedConfigId = id;
@@ -133,24 +138,13 @@ export class ModelSettingsViewModel {
         this.errorMessage = '配置不存在';
         return;
       }
-      this.name = config.name;
-      this.providerType = config.type;
-      this.baseUrl = config.baseUrl;
-      this.modelName = config.modelName;
-      this.temperature = config.temperature;
-      this.topP = config.topP;
-      this.maxTokens = config.maxTokens;
-      this.stream = config.stream;
-      this.enabled = config.enabled;
+      this.populateForm(config);
       this.apiKeyConfigured = await this.modelService.hasApiKey(id);
     } catch (e) {
       this.errorMessage = this.toUserMessage(e, '读取配置失败');
     }
   }
 
-  /**
-   * 进入新建模式,重置表单为默认值。
-   */
   startCreate(): void {
     Logger.info(LOG_TAG, 'startCreate');
     this.selectedConfigId = null;
@@ -167,24 +161,39 @@ export class ModelSettingsViewModel {
     this.apiKeyConfigured = false;
     this.errorMessage = '';
     this.statusMessage = '';
+    this.showApiKey = false;
+    this.applyPresetForType(ProviderType.OpenAICompatible);
   }
 
   /**
-   * 保存当前表单(新建或更新)。
-   * 防止重复点击。API Key 保存后立即清空。
+   * 切换 Provider 类型。
+   * 页面 Select onChange 时调用,自动应用预设。
    */
+  onProviderTypeChange(type: ProviderType): void {
+    Logger.info(LOG_TAG, 'providerType changed to ' + type);
+    this.providerType = type;
+    this.errorMessage = '';
+    this.applyPresetForType(type);
+  }
+
   async save(): Promise<void> {
     if (this.isSaving) {
+      Logger.info(LOG_TAG, 'save blocked: already saving');
       return;
     }
+    Logger.info(LOG_TAG, 'save clicked mode=' + (this.selectedConfigId === null ? 'create' : 'update'));
+    this.errorMessage = '';
+    this.statusMessage = '';
+
     const validation: ValidationResult = this.validateForm();
     if (!validation.valid) {
+      Logger.info(LOG_TAG, 'save validation failed: ' + validation.message);
       this.errorMessage = validation.message;
       return;
     }
+    Logger.info(LOG_TAG, 'save validation passed');
+
     this.isSaving = true;
-    this.errorMessage = '';
-    this.statusMessage = '';
     try {
       if (this.selectedConfigId === null) {
         await this.saveNew();
@@ -192,16 +201,13 @@ export class ModelSettingsViewModel {
         await this.saveUpdate();
       }
     } catch (e) {
+      Logger.info(LOG_TAG, 'save error type=' + (isModelServiceError(e) ? (e as ModelServiceError).type : 'unknown'));
       this.errorMessage = this.toUserMessage(e, '保存失败');
     } finally {
       this.isSaving = false;
     }
   }
 
-  /**
-   * 删除当前选中的配置。
-   * 防止重复点击。删除后刷新列表。
-   */
   async deleteSelected(): Promise<void> {
     if (this.isSaving) {
       return;
@@ -232,9 +238,6 @@ export class ModelSettingsViewModel {
     }
   }
 
-  /**
-   * 将当前选中配置设为当前 Provider。
-   */
   async setCurrent(): Promise<void> {
     if (this.isSaving) {
       return;
@@ -261,11 +264,6 @@ export class ModelSettingsViewModel {
     }
   }
 
-  /**
-   * 测试当前表单内容的连接。
-   * 使用当前表单值构造临时配置,不修改正式配置。
-   * API Key 输入在测试后立即清空。
-   */
   async testConnection(): Promise<void> {
     if (this.isTesting) {
       return;
@@ -293,30 +291,23 @@ export class ModelSettingsViewModel {
       this.errorMessage = this.toUserMessage(e, '连接测试失败');
     } finally {
       this.apiKey = '';
+      this.showApiKey = false;
       this.isTesting = false;
     }
   }
 
-  /**
-   * 清空 API Key 输入。
-   */
   clearApiKeyInput(): void {
     this.apiKey = '';
+    this.showApiKey = false;
   }
 
-  /**
-   * 释放资源(页面退出时调用)。
-   * 清空 API Key 输入,防止残留。
-   */
   dispose(): void {
     this.apiKey = '';
+    this.showApiKey = false;
     this.errorMessage = '';
     this.statusMessage = '';
   }
 
-  /**
-   * 判断 Provider 类型是否当前正式支持。
-   */
   isSupportedType(type: ProviderType): boolean {
     return type === ProviderType.OpenAICompatible
       || type === ProviderType.OpenAI
@@ -326,46 +317,119 @@ export class ModelSettingsViewModel {
 
   // ===== 内部方法 =====
 
+  private populateForm(config: ProviderConfig): void {
+    this.name = config.name;
+    this.providerType = config.type;
+    this.baseUrl = config.baseUrl;
+    this.modelName = config.modelName;
+    this.temperature = config.temperature;
+    this.topP = config.topP;
+    this.maxTokens = config.maxTokens;
+    this.stream = config.stream;
+    this.enabled = config.enabled;
+    this.showApiKey = false;
+    // 加载预设信息但不覆盖已加载的 baseUrl/modelName
+    const preset: ProviderPreset | null = getPreset(config.type);
+    this.activePreset = preset;
+    if (preset !== null) {
+      this.syncModelIndexFromName(config.modelName);
+    } else {
+      this.selectedModelIndex = -1;
+    }
+  }
+
+  private syncModelIndexFromName(modelName: string): void {
+    if (this.activePreset === null) {
+      return;
+    }
+    const models: ModelOption[] = this.activePreset.availableModels;
+    for (let i = 0; i < models.length; i++) {
+      if (models[i].id === modelName) {
+        this.selectedModelIndex = i;
+        return;
+      }
+    }
+    this.selectedModelIndex = -1;
+  }
+
   /**
-   * 新建配置保存逻辑。
-   * 新建必须提供 API Key。保存成功后自动选中,首次配置自动设为当前。
+   * 根据 Provider 类型应用预设。
    */
+  private applyPresetForType(type: ProviderType): void {
+    const preset: ProviderPreset | null = getPreset(type);
+    this.activePreset = preset;
+
+    if (preset !== null) {
+      this.baseUrl = preset.defaultBaseUrl;
+      this.selectedModelIndex = 0;
+      this.modelName = preset.defaultModel.id;
+      // 自动命名
+      if (this.name.length === 0 || this.name === this.modelName) {
+        this.name = preset.defaultModel.displayName;
+      }
+    } else {
+      this.selectedModelIndex = -1;
+      // 从预设模式切换回自定义模式时,清空 baseUrl/modelName
+      if (type !== ProviderType.DeepSeek) {
+        this.baseUrl = '';
+        this.modelName = '';
+      }
+    }
+  }
+
+  /**
+   * 切换预设模式下的模型选择。
+   */
+  onModelSelect(index: number): void {
+    if (this.activePreset === null) {
+      return;
+    }
+    const models: ModelOption[] = this.activePreset.availableModels;
+    if (index >= 0 && index < models.length) {
+      this.selectedModelIndex = index;
+      this.modelName = models[index].id;
+      if (this.name.length === 0 || this.name === models[this.selectedModelIndex].displayName) {
+        this.name = models[index].displayName;
+      }
+    }
+  }
+
   private async saveNew(): Promise<void> {
     const id: string = generateUuid();
     const config: ProviderConfig = this.buildFormConfig(id);
     const apiKeyToSave: string = this.apiKey;
+    Logger.info(LOG_TAG, 'saveNew id=' + id + ' type=' + config.type);
     await this.modelService.createConfig(config, apiKeyToSave);
     this.configs = await this.modelService.listConfigs();
     const current: ProviderConfig | null = await this.modelService.getCurrentConfig();
     if (current === null) {
-      // 首次配置自动设为当前
       await this.modelService.setCurrentConfig(id);
       this.currentConfigId = id;
     } else {
       this.currentConfigId = current.id;
     }
     await this.selectConfig(id);
-    this.statusMessage = '已保存';
+    this.apiKey = '';
+    this.showApiKey = false;
+    this.statusMessage = '配置保存成功';
+    Logger.info(LOG_TAG, 'saveNew ok id=' + id);
   }
 
-  /**
-   * 更新配置保存逻辑。
-   * API Key 为空表示保留原密钥;非空表示替换。
-   */
   private async saveUpdate(): Promise<void> {
     const config: ProviderConfig = this.buildFormConfig(this.selectedConfigId as string);
     const apiKeyParam: string | undefined = this.apiKey.length > 0 ? this.apiKey : undefined;
+    Logger.info(LOG_TAG, 'saveUpdate id=' + config.id);
     await this.modelService.updateConfig(config, apiKeyParam);
     this.configs = await this.modelService.listConfigs();
     const current: ProviderConfig | null = await this.modelService.getCurrentConfig();
     this.currentConfigId = current !== null ? current.id : null;
     await this.selectConfig(this.selectedConfigId as string);
-    this.statusMessage = '已保存';
+    this.apiKey = '';
+    this.showApiKey = false;
+    this.statusMessage = '配置保存成功';
+    Logger.info(LOG_TAG, 'saveUpdate ok id=' + config.id);
   }
 
-  /**
-   * 使用当前表单字段构造 ProviderConfig。
-   */
   private buildFormConfig(id: string): ProviderConfig {
     const now: number = Date.now();
     return new ProviderConfig(
@@ -384,23 +448,35 @@ export class ModelSettingsViewModel {
     );
   }
 
-  /**
-   * 校验表单字段。
-   * 新建模式要求 API Key 非空;编辑模式允许 API Key 为空(保留原密钥)。
-   */
   private validateForm(): ValidationResult {
     if (this.name.trim().length === 0) {
       return { valid: false, message: '请输入配置名称' };
     }
-    if (this.baseUrl.trim().length === 0) {
-      return { valid: false, message: '请输入 Base URL' };
+    if (!this.isSupportedType(this.providerType)) {
+      return { valid: false, message: '该 Provider 类型暂未支持' };
     }
-    if (!this.isValidUrl(this.baseUrl)) {
-      return { valid: false, message: 'Base URL 格式不合法' };
+
+    if (this.isPresetMode) {
+      // 预设模式:baseUrl/modelName 由预设生成,不要求用户填写,但仍需非空
+      if (this.baseUrl.trim().length === 0) {
+        return { valid: false, message: '预设 Base URL 未配置' };
+      }
+      if (this.modelName.trim().length === 0) {
+        return { valid: false, message: '请选择模型' };
+      }
+    } else {
+      // 自定义模式:要求用户填写 baseUrl 和 modelName
+      if (this.baseUrl.trim().length === 0) {
+        return { valid: false, message: '请输入 Base URL' };
+      }
+      if (!this.isValidUrl(this.baseUrl)) {
+        return { valid: false, message: 'Base URL 格式不合法' };
+      }
+      if (this.modelName.trim().length === 0) {
+        return { valid: false, message: '请输入模型名称' };
+      }
     }
-    if (this.modelName.trim().length === 0) {
-      return { valid: false, message: '请输入模型名称' };
-    }
+
     if (this.temperature < TEMPERATURE_MIN || this.temperature > TEMPERATURE_MAX) {
       return { valid: false, message: 'Temperature 必须在 ' + TEMPERATURE_MIN + ' ~ ' + TEMPERATURE_MAX };
     }
@@ -410,18 +486,12 @@ export class ModelSettingsViewModel {
     if (!Number.isInteger(this.maxTokens) || this.maxTokens < MAX_TOKENS_MIN || this.maxTokens > MAX_TOKENS_MAX) {
       return { valid: false, message: 'Max Tokens 必须为整数且在 ' + MAX_TOKENS_MIN + ' ~ ' + MAX_TOKENS_MAX };
     }
-    if (!this.isSupportedType(this.providerType)) {
-      return { valid: false, message: '该 Provider 类型暂未支持' };
-    }
     if (this.selectedConfigId === null && this.apiKey.trim().length === 0) {
       return { valid: false, message: '新建配置必须输入 API Key' };
     }
     return { valid: true, message: '' };
   }
 
-  /**
-   * 简单 URL 格式校验(只校验协议和基本结构)。
-   */
   private isValidUrl(url: string): boolean {
     if (url.startsWith('https://') && url.length > 8) {
       return true;
@@ -432,10 +502,6 @@ export class ModelSettingsViewModel {
     return false;
   }
 
-  /**
-   * 格式化测试连接结果为简短状态消息。
-   * 不展示完整回复正文。
-   */
   private formatTestResult(response: ChatResponse): string {
     const parts: string[] = ['连接成功'];
     if (response.model !== undefined && response.model.length > 0) {
@@ -449,9 +515,6 @@ export class ModelSettingsViewModel {
     return parts.join(' | ');
   }
 
-  /**
-   * 将底层错误转换为用户可读消息,不暴露堆栈。
-   */
   private toUserMessage(e: Object, fallback: string): string {
     if (isModelServiceError(e)) {
       const err: ModelServiceError = e as ModelServiceError;

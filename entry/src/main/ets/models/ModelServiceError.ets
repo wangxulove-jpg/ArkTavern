@@ -47,6 +47,8 @@ export enum ModelServiceErrorType {
   NetworkFailure = 'NetworkFailure',
   /** 部分失败(如配置保存成功但密钥保存失败,已回滚但仍可能残留) */
   PartialFailure = 'PartialFailure',
+  /** 配置无效(如 model name 为空) */
+  InvalidConfig = 'InvalidConfig',
   /** 未知错误 */
   Unknown = 'Unknown'
 }
@@ -107,6 +109,7 @@ function defaultRetryable(type: ModelServiceErrorType): boolean {
     case ModelServiceErrorType.UnsupportedProvider:
     case ModelServiceErrorType.ConfigAlreadyExists:
     case ModelServiceErrorType.PartialFailure:
+    case ModelServiceErrorType.InvalidConfig:
     case ModelServiceErrorType.Unknown:
       return false;
     default:

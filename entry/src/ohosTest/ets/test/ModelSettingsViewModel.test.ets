@@ -585,5 +585,169 @@ export default function modelSettingsViewModelTest() {
         await safeClear(env);
       }
     });
+
+    // ===== DeepSeek 预设测试 =====
+
+    it('deepseek_preset_default_url', 0, async () => {
+      const env: TestEnv = await createEnv();
+      try {
+        const vm: ModelSettingsViewModel = new ModelSettingsViewModel(env.modelService);
+        await vm.initialize();
+        vm.startCreate();
+        vm.onProviderTypeChange(ProviderType.DeepSeek);
+        expect(vm.baseUrl === 'https://api.deepseek.com/chat/completions').assertTrue();
+        expect(vm.isPresetMode).assertTrue();
+        vm.dispose();
+      } finally {
+        await safeClear(env);
+      }
+    });
+
+    it('deepseek_preset_default_model', 0, async () => {
+      const env: TestEnv = await createEnv();
+      try {
+        const vm: ModelSettingsViewModel = new ModelSettingsViewModel(env.modelService);
+        await vm.initialize();
+        vm.startCreate();
+        vm.onProviderTypeChange(ProviderType.DeepSeek);
+        expect(vm.modelName === 'deepseek-v4-flash').assertTrue();
+        expect(vm.selectedModelIndex === 0).assertTrue();
+        vm.dispose();
+      } finally {
+        await safeClear(env);
+      }
+    });
+
+    it('deepseek_model_switch_flash_to_pro', 0, async () => {
+      const env: TestEnv = await createEnv();
+      try {
+        const vm: ModelSettingsViewModel = new ModelSettingsViewModel(env.modelService);
+        await vm.initialize();
+        vm.startCreate();
+        vm.onProviderTypeChange(ProviderType.DeepSeek);
+        vm.onModelSelect(1); // Pro
+        expect(vm.modelName === 'deepseek-v4-pro').assertTrue();
+        expect(vm.selectedModelIndex === 1).assertTrue();
+        vm.dispose();
+      } finally {
+        await safeClear(env);
+      }
+    });
+
+    it('deepseek_save_only_key_required', 0, async () => {
+      const env: TestEnv = await createEnv();
+      try {
+        const vm: ModelSettingsViewModel = new ModelSettingsViewModel(env.modelService);
+        await vm.initialize();
+        vm.startCreate();
+        vm.onProviderTypeChange(ProviderType.DeepSeek);
+        vm.apiKey = FAKE_KEY_A;
+        await vm.save();
+        expect(vm.errorMessage === '').assertTrue();
+        expect(vm.configs.length === 1).assertTrue();
+        expect(vm.baseUrl === 'https://api.deepseek.com/chat/completions').assertTrue();
+        expect(vm.modelName === 'deepseek-v4-flash').assertTrue();
+        vm.dispose();
+      } finally {
+        await safeClear(env);
+      }
+    });
+
+    it('deepseek_no_url_required', 0, async () => {
+      const env: TestEnv = await createEnv();
+      try {
+        const vm: ModelSettingsViewModel = new ModelSettingsViewModel(env.modelService);
+        await vm.initialize();
+        vm.startCreate();
+        vm.onProviderTypeChange(ProviderType.DeepSeek);
+        vm.apiKey = FAKE_KEY_A;
+        await vm.save();
+        expect(vm.errorMessage === '').assertTrue();
+        vm.dispose();
+      } finally {
+        await safeClear(env);
+      }
+    });
+
+    it('openai_compatible_requires_url_and_model', 0, async () => {
+      const env: TestEnv = await createEnv();
+      try {
+        const vm: ModelSettingsViewModel = new ModelSettingsViewModel(env.modelService);
+        await vm.initialize();
+        vm.startCreate();
+        vm.name = 'occ';
+        vm.providerType = ProviderType.OpenAICompatible;
+        vm.apiKey = FAKE_KEY_A;
+        // baseUrl and modelName left empty
+        await vm.save();
+        expect(vm.errorMessage.length > 0).assertTrue();
+        expect(vm.configs.length === 0).assertTrue();
+        vm.dispose();
+      } finally {
+        await safeClear(env);
+      }
+    });
+
+    it('save_failure_does_not_clear_key', 0, async () => {
+      const env: TestEnv = await createEnv();
+      try {
+        const vm: ModelSettingsViewModel = new ModelSettingsViewModel(env.modelService);
+        await vm.initialize();
+        vm.name = 't';
+        vm.providerType = ProviderType.OpenAICompatible;
+        vm.baseUrl = 'https://a.example.com';
+        vm.modelName = 'm1';
+        vm.apiKey = FAKE_KEY_A;
+        await vm.save();
+        vm.apiKey = FAKE_KEY_B;
+        vm.name = '  '; // invalid
+        await vm.save();
+        expect(vm.errorMessage.length > 0).assertTrue();
+        expect(vm.apiKey === FAKE_KEY_B).assertTrue();
+        vm.dispose();
+      } finally {
+        await safeClear(env);
+      }
+    });
+
+    it('save_success_sets_status_message', 0, async () => {
+      const env: TestEnv = await createEnv();
+      try {
+        const vm: ModelSettingsViewModel = new ModelSettingsViewModel(env.modelService);
+        await vm.initialize();
+        vm.name = 't';
+        vm.providerType = ProviderType.OpenAICompatible;
+        vm.baseUrl = 'https://a.example.com';
+        vm.modelName = 'm1';
+        vm.apiKey = FAKE_KEY_A;
+        await vm.save();
+        expect(vm.statusMessage.length > 0).assertTrue();
+        expect(vm.errorMessage === '').assertTrue();
+        expect(vm.apiKey === '').assertTrue();
+        vm.dispose();
+      } finally {
+        await safeClear(env);
+      }
+    });
+
+    it('is_saving_guards_double_click', 0, async () => {
+      const env: TestEnv = await createEnv();
+      try {
+        const vm: ModelSettingsViewModel = new ModelSettingsViewModel(env.modelService);
+        await vm.initialize();
+        vm.name = 't';
+        vm.providerType = ProviderType.OpenAICompatible;
+        vm.baseUrl = 'https://a.example.com';
+        vm.modelName = 'm1';
+        vm.apiKey = FAKE_KEY_A;
+        vm.isSaving = true; // simulate saving
+        await vm.save(); // should be blocked
+        expect(vm.errorMessage === '').assertTrue();
+        expect(vm.configs.length === 0).assertTrue();
+        vm.dispose();
+      } finally {
+        await safeClear(env);
+      }
+    });
   });
 }

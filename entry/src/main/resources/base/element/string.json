@@ -78,7 +78,39 @@
     },
     {
       "name": "nav_chat_empty",
-      "value": "尚未创建会话。完成模型配置后即可开始聊天。"
+      "value": "在下方输入消息开始聊天"
+    },
+    {
+      "name": "chat_no_model",
+      "value": "尚未配置模型"
+    },
+    {
+      "name": "chat_go_settings",
+      "value": "前往模型设置"
+    },
+    {
+      "name": "chat_input_placeholder",
+      "value": "输入消息…"
+    },
+    {
+      "name": "chat_send",
+      "value": "发送"
+    },
+    {
+      "name": "chat_stop",
+      "value": "停止"
+    },
+    {
+      "name": "chat_clear",
+      "value": "清空"
+    },
+    {
+      "name": "chat_generating",
+      "value": "生成中…"
+    },
+    {
+      "name": "chat_sending",
+      "value": "正在发送…"
     },
     {
       "name": "nav_character_title",

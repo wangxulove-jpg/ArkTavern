@@ -10,6 +10,8 @@ import openAiProviderDeviceTest from './OpenAIProvider.test';
 import openAiProviderStreamDeviceTest from './OpenAIProviderStream.test';
 import modelServiceDeviceTest from './ModelService.test';
 import modelSettingsViewModelTest from './ModelSettingsViewModel.test';
+import chatServiceDeviceTest from './ChatService.test';
+import chatViewModelDeviceTest from './ChatViewModel.test';
 
 export default function testsuite() {
   abilityTest();
@@ -24,4 +26,6 @@ export default function testsuite() {
   openAiProviderStreamDeviceTest();
   modelServiceDeviceTest();
   modelSettingsViewModelTest();
+  chatServiceDeviceTest();
+  chatViewModelDeviceTest();
 }
