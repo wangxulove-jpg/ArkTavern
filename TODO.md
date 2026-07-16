@@ -225,11 +225,30 @@ Date: 2026-07-15
 
 - 依赖:T-0.4、T-1.1
 - 优先级:P1
-- 修改范围:`entry/src/main/ets/storage/KeyStore.ets`(扩展)
+- 修改范围:`entry/src/main/ets/storage/ProviderKeyStore.ets`(新建)
 - 内容:支持按 Provider id 存取多个密钥;密钥不入数据库、不入日志
 - 验收标准:
-  - [ ] 可按 id 加密保存/读取/删除密钥
-  - [ ] 失败时返回明确错误,不抛明文
+  - [x] 可按 id 加密保存/读取/删除密钥
+  - [x] 失败时返回明确错误,不抛明文
+- 实现说明:
+  - 新增 `storage/ProviderKeyStore.ets`:Provider 级密钥管理,依赖 KeyStore 抽象(不直接调用 Asset Store API)
+  - 使用 `ProviderConfig.id` 通过 `AliasBuilder` 生成 alias:`arktavern.provider.<providerId>.api-key`
+  - 支持多配置独立密钥:每个 ProviderConfig.id 对应唯一 alias,同一 ProviderType 的不同配置 id 密钥互相隔离
+  - 不按 ProviderType 共用密钥
+  - API Key 不进入 ProviderConfig(模型层不依赖 storage)
+  - 提供 6 个方法:saveKey / readKey / updateKey / removeKey / hasKey / replaceKey
+  - saveKey: upsert 语义;updateKey: 不存在抛 NotFound;replaceKey: 安全 upsert(先 exists 判断);removeKey: 幂等;hasKey: 不读取明文
+  - 不缓存密钥,每次 read 都从 KeyStore 读取;不维护全局密钥 Map
+  - 不暴露 alias 给调用方;日志只记录 providerId 和操作类型,不记录 secret
+  - 所有错误保持 SecureStorageError 语义
+  - 本地单元测试(`test/ProviderKeyStore.test.ets`):24 项,含 MockKeyStore 内存实现,覆盖 save/read/update/replace/remove/hasKey/隔离/校验/错误传播/不缓存
+  - 真机集成测试(`ohosTest/ets/test/ProviderKeyStore.test.ets`):18 项,API 23 模拟器通过,覆盖 A/B 隔离/同类型多配置隔离/更新不影响/删除保留/新实例读取/持久化/幂等/replaceKey/hasKey/校验
+  - 全量回归测试:68 项全部通过(含 HttpStreamTransport 5 项,需 hdc rport tcp:8765 tcp:8765 + SSE Mock Server)
+  - hilog 扫描:无 `provider-key-test-value` / `sk-` 泄漏
+  - 源码扫描:无 `sk-` 真实密钥、无 any/TODO/Node.js/浏览器 API
+  - 文件行数:ProviderKeyStore.ets 195 行,本地测试 480 行,真机测试 410 行(均 ≤ 600)
+  - 未接入页面(ModelSettingsPage / Index / RealSsePocPage 未修改)
+  - 未修改 KeyStore / AssetStoreKeyStore / AliasBuilder / SecureStorageError / Logger 底层实现
 
 ### T-1.3 实现 Preferences(用户设置)
 
