@@ -9,6 +9,7 @@ import aliasBuilderTest from './AliasBuilder.test';
 import secureStorageErrorTest from './SecureStorageError.test';
 import providerConfigTest from './ProviderConfig.test';
 import providerKeyStoreTest from './ProviderKeyStore.test';
+import providerConfigCodecTest from './ProviderConfigCodec.test';
 
 export default function testsuite() {
   localUnitTest();
@@ -22,4 +23,5 @@ export default function testsuite() {
   secureStorageErrorTest();
   providerConfigTest();
   providerKeyStoreTest();
+  providerConfigCodecTest();
 }

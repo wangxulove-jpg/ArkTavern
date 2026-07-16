@@ -254,11 +254,45 @@ Date: 2026-07-15
 
 - 依赖:T-0.5
 - 优先级:P1
-- 修改范围:`entry/src/main/ets/storage/Preferences.ets`(新建)
-- 内容:基于 `@ohos.data.preferences` 存储当前选中 Provider id、当前角色、当前聊天等非敏感设置
+- 修改范围:`entry/src/main/ets/storage/`(AppPreferences.ets、ProviderConfigStore.ets、ProviderConfigCodec.ets 新建)、`entry/src/main/ets/models/PreferencesError.ets`(新建)
+- 内容:基于 `@ohos.data.preferences` 存储当前选中 Provider id、ProviderConfig 列表等非敏感设置
 - 验收标准:
-  - [ ] 可读写非敏感设置
-  - [ ] 无明文密钥
+  - [x] 可读写非敏感设置
+  - [x] 无明文密钥
+- 实现说明:
+  - 新增文件:
+    - `models/PreferencesError.ets`(247 行):Preferences 错误模型(NotInitialized/SerializationFailed/CorruptedData/AlreadyExists/NotFound/InvalidSelection/UnsupportedVersion)+ isPreferencesError 类型守卫
+    - `storage/AppPreferences.ets`(302 行):封装 HarmonyOS Preferences 实例,提供 get/put/delete/flush/clear/getString/has,initialize(context) 初始化
+    - `storage/ProviderConfigCodec.ets`(499 行):ProviderConfig ↔ JSON 纯逻辑编解码,schemaVersion=1,敏感字段防御,损坏数据恢复(skippedCount)
+    - `storage/ProviderConfigStore.ets`(430 行):ProviderConfig 列表 CRUD + 当前选中 Provider 管理,Promise 序列化并发保护
+  - 测试文件:
+    - `test/ProviderConfigCodec.test.ets`(651 行):本地单元测试 26+1 用例(编解码/字段匹配/顺序/schemaVersion/敏感字段/损坏恢复/round-trip)
+    - `ohosTest/ets/test/ProviderConfigStore.test.ets`(716 行):设备集成测试 27 用例(初始化/CRUD/重复/顺序/选中/清理/并发/损坏恢复/敏感字段)
+  - Preferences 文件名:`arktavern_settings`
+  - 键:`provider_configs_v1`(ProviderConfig 列表 JSON)、`current_provider_id`(当前选中 id)
+  - schemaVersion=1,ProviderConfig 列表序列化为单个版本化 JSON 字符串
+  - 敏感字段防御:apikey/api_key/secret/authorization/token/password 不写入 Preferences;编码前检查;解码时拒绝含敏感字段的配置项
+  - 并发写保护:Promise 序列化(writeChain),写失败不污染链,错误正确传播
+  - 损坏恢复:整个 JSON 无法解析返回 CorruptedData;单个坏配置跳过并计入 skippedCount,不影响有效配置
+  - Context:使用 UIAbility context(getCurrentTopAbility),ApplicationContext 对 Preferences 无效(报 401)
+  - 删除当前选中 ProviderConfig 自动清空 current_provider_id
+  - setCurrentProviderId(null) 允许清空选择;非空 id 不存在时抛 InvalidSelection
+  - save 重复 id 抛 AlreadyExists;update 不存在抛 NotFound;remove 幂等
+  - list 按 createdAt 升序稳定排序
+  - 每次修改调用 flush();写失败不更新内存状态
+  - 实际使用的 HarmonyOS API:`@kit.ArkData` 的 preferences(getPreferences/put/get/delete/flush/clear/has),since 9
+  - 测试情况:
+    - ohosTest 设备测试:96 项全部通过(Tests run: 96, Failure: 0, Error: 0, Pass: 96),含 ProviderConfigStore 27 项 + AssetStoreKeyStore 20 项 + HttpStreamTransport 5 项 + 其他 44 项
+    - 本地单元测试:命令行 hvigorw test 报 "SDK component missing"(环境配置问题,需在 DevEco Studio IDE 中运行);ProviderConfigCodec 逻辑已通过 ohosTest 间接验证(ProviderConfigStore 使用 Codec)
+    - MCP build_project 编译:entry@default BUILD SUCCESSFUL;entry@ohosTest BUILD SUCCESSFUL
+    - test 27 preferences_no_apiKey_field 修复:JSON key 检查改为带引号匹配 `"token"`,避免误判 `maxTokens` 字段名
+    - ProviderConfigCodec.ets 行数精简:694 → 499 行(≤600);validateAndExtractFields 函数 54 行(≤100);tryParseItem 函数 7 行(≤100)
+  - hilog 敏感扫描:无 apikey/api_key/secret/authorization/token/password/sk- 泄漏
+  - 源码扫描:无 sk- 真实密钥,无硬编码 apiKey
+  - 文件行数:AppPreferences 302、ProviderConfigCodec 499、ProviderConfigStore 430、PreferencesError 247(均 ≤600)
+  - 未接入页面(ModelSettingsPage / Index 未修改)
+  - 未修改 ProviderConfig / ProviderType / KeyStore / ProviderKeyStore 底层实现
+  - 已知限制:本地单元测试需在 DevEco Studio IDE 中运行(命令行 hvigorw test 报 SDK component missing);跨进程持久性需手工两阶段验证
 
 ### T-1.4 实现 OpenAIProvider(非流式)
 
