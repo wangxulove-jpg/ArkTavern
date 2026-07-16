@@ -82,6 +82,12 @@ class RequestContext implements TransportAbortHandle {
   private statusCode: number = 0;
   private aborted: boolean = false;
   private dataReceiveCount: number = 0;
+  /** headersReceive 先于 Promise resolve 时缓存的响应头 */
+  private pendingHeaders: Map<string, string> | null = null;
+  /** 标记 headersReceive 已触发(无论 statusCode 是否已知) */
+  private headersReceived: boolean = false;
+  /** dataEnd 先于 Promise resolve 时缓存的完成信号 */
+  private dataEndPending: boolean = false;
 
   constructor(options: TransportRequestOptions, callbacks: TransportCallbacks) {
     this.options = options;
@@ -102,7 +108,17 @@ class RequestContext implements TransportAbortHandle {
       this.httpRequest.requestInStream(this.options.url, httpOptions)
         .then((code: number) => {
           this.statusCode = code;
-          // dataEnd 回调会处理完成,这里只记录状态码
+          // 如果 headersReceive 已触发但当时 statusCode 未知(=0),现在补发 onHeaders
+          if (this.headersReceived && this.pendingHeaders !== null) {
+            const cached: Map<string, string> = this.pendingHeaders;
+            this.pendingHeaders = null;
+            this.invokeOnHeaders(cached);
+          }
+          // 如果 dataEnd 已触发但当时 statusCode 未知(=0),现在补发完成
+          if (this.dataEndPending) {
+            this.dataEndPending = false;
+            this.handleDataEnd();
+          }
         })
         .catch((err: BusinessError) => {
           this.handleError(err);
@@ -164,13 +180,32 @@ class RequestContext implements TransportAbortHandle {
 
   /**
    * 处理响应头。
+   * headersReceive 事件可能在 requestInStream Promise resolve 之前触发,
+   * 此时 statusCode 仍为 0。缓存 headers,等 Promise resolve 后补发 onHeaders。
    */
   private handleHeaders(header: Object): void {
     if (isTerminalState(this.state)) {
       return;
     }
     const headers: Map<string, string> = convertHeaders(header);
-    // 从响应头读取状态码(部分场景 headersReceive 不含状态码,实际状态码由 requestInStream Promise 提供)
+    this.headersReceived = true;
+
+    if (this.statusCode === 0) {
+      // Promise 还未 resolve,缓存 headers,等 statusCode 已知后再触发
+      this.pendingHeaders = headers;
+      return;
+    }
+
+    this.invokeOnHeaders(headers);
+  }
+
+  /**
+   * 触发 onHeaders 回调(使用当前已知 statusCode)。
+   */
+  private invokeOnHeaders(headers: Map<string, string>): void {
+    if (isTerminalState(this.state)) {
+      return;
+    }
     if (this.callbacks.onHeaders !== undefined) {
       this.callbacks.onHeaders(this.statusCode, headers);
     }
@@ -178,6 +213,8 @@ class RequestContext implements TransportAbortHandle {
 
   /**
    * 处理数据块。
+   * 如果 statusCode 未知(Promise 还未 resolve),仍传递给 onData。
+   * OpenAIStreamSession 会在 handleHeaders 中检查状态码并处理错误。
    */
   private handleDataReceive(data: ArrayBuffer): void {
     if (isTerminalState(this.state)) {
@@ -194,9 +231,15 @@ class RequestContext implements TransportAbortHandle {
 
   /**
    * 处理数据结束。
+   * 如果 Promise 还未 resolve(statusCode=0),缓存信号等 Promise resolve 后补发。
    */
   private handleDataEnd(): void {
     if (isTerminalState(this.state)) {
+      return;
+    }
+    // 如果 statusCode 未知(Promise 还未 resolve),缓存 dataEnd 信号
+    if (this.statusCode === 0) {
+      this.dataEndPending = true;
       return;
     }
     // flush 解码器剩余字节

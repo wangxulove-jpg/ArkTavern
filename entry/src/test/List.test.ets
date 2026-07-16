@@ -11,6 +11,7 @@ import providerConfigTest from './ProviderConfig.test';
 import providerKeyStoreTest from './ProviderKeyStore.test';
 import providerConfigCodecTest from './ProviderConfigCodec.test';
 import openAiProviderTest from './OpenAIProvider.test';
+import openAiProviderStreamTest from './OpenAIProviderStream.test';
 import harmonyHttpClientHelpersTest from './HarmonyHttpClientHelpers.test';
 
 export default function testsuite() {
@@ -27,5 +28,6 @@ export default function testsuite() {
   providerKeyStoreTest();
   providerConfigCodecTest();
   openAiProviderTest();
+  openAiProviderStreamTest();
   harmonyHttpClientHelpersTest();
 }

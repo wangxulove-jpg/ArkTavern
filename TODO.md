@@ -344,12 +344,33 @@ Date: 2026-07-15
 
 - 依赖:T-0.3、T-1.4
 - 优先级:P1
-- 修改范围:`network/providers/OpenAIProvider.ets`(扩展)
+- 修改范围:`network/providers/OpenAIProvider.ets`(扩展)、`network/providers/OpenAIStreamSession.ets`(新增)、`models/ChatStreamTypes.ets`(新增)、`network/streaming/HttpStreamTransport.ets`(修复 statusCode=0 bug)
 - 内容:stream=true,复用 SseParser,通过回调增量返回 delta
 - 验收标准:
-  - [ ] 可增量返回 token
-  - [ ] 可中断
-  - [ ] [DONE] 正确结束
+  - [x] 可增量返回 token
+  - [x] 可中断
+  - [x] [DONE] 正确结束
+- 完成记录:
+  - OpenAIProvider 已支持 stream=true(强制覆盖 request.stream)
+  - 复用 HttpStreamTransport(未复制第二套传输逻辑)
+  - 复用 Utf8StreamDecoder(SseParser 内部使用)
+  - 复用 SseParser(未复制第二套 SSE 解析器)
+  - 复用 OpenAiSseDeltaParser(未复制第二套 delta 解析器)
+  - 支持增量 delta(顺序严格保持,不 trim/不合并标点/不修改 Markdown/不过滤中文 Emoji)
+  - 支持 [DONE] 识别(receivedDone=true)
+  - 支持无 [DONE] 兼容结束(有 content 或 finish_reason 即允许完成,receivedDone=false)
+  - 支持 abort(幂等,触发 onError(Cancelled),不触发 onComplete)
+  - 支持 usage(prompt_tokens/completion_tokens/total_tokens)和 finish_reason(stop/length/content_filter/tool_calls/未知值)
+  - 错误映射通过(401→Authentication,429→RateLimit,500→Server,408→Timeout,DNS→Network,取消→Cancelled,JSON 解析失败→Parse)
+  - API Key 生命周期:每次 streamChat 独立读取,不缓存,不放入结果/错误/日志
+  - completeFired/errorFired 标志确保 complete/error 只触发一次,迟到回调被忽略
+  - HttpStreamTransport 修复:headersReceive/dataEnd 先于 Promise resolve 时缓存信号,等 statusCode 已知后补发
+  - OpenAIStreamSession 修复:headers 收到前缓存 chunks,确保错误状态码在 SSE 解析前被识别
+  - Mock Server 扩展:16 个流式场景(含含连字符场景名),HTTP/1.1 协议支持
+  - API 23 Mock Server 设备测试通过(136 个测试全部通过,含 19 个流式测试)
+  - 真实兼容端点手工验证:未执行(遵循安全规则,不硬编码密钥;Mock Server 设备测试已充分覆盖)
+  - 未修改页面(Index/ChatPage/ModelSettingsPage/RealSsePocPage/CharacterListPage/LorebookPage/AppSettingsPage)
+  - 未开始 T-1.6
 
 ### T-1.6 实现 ModelService
 

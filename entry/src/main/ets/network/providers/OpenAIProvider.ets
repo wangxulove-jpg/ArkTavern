@@ -49,29 +49,49 @@ import {
 } from './OpenAITypes';
 import { buildChatCompletionsUrl } from '../streaming/OpenAiUrlBuilder';
 import { Logger } from '../../utils/Logger';
+import {
+  ChatStreamCallbacks,
+  ChatStreamHandle
+} from '../../models/ChatStreamTypes';
+import { OpenAIStreamSession, StreamLauncher } from './OpenAIStreamSession';
 
 /** 日志标签 */
 const LOG_TAG: string = 'OpenAIProvider';
 
 /**
- * OpenAI-compatible 非流式 Provider。
+ * OpenAI-compatible Provider(非流式 + 流式)。
  *
- * 构造时注入 HttpClient 和 ProviderKeyStore,不内部 new 任何平台实现。
+ * 构造时注入 HttpClient(非流式)、ProviderKeyStore(密钥)和可选的 streamLauncher(流式)。
+ * 不内部 new 任何平台实现。
+ *
+ * streamLauncher 可选:未提供时 streamChat 抛 NotSupported。
+ * 这样非流式场景(T-1.4)不需要注入流式传输层。
  */
 export class OpenAIProvider extends AiProvider {
   private readonly httpClient: HttpClient;
   private readonly providerKeyStore: ProviderKeyStore;
+  private readonly streamLauncher: StreamLauncher | null;
 
   /**
    * 构造 OpenAIProvider。
    *
    * @param httpClient HTTP 客户端抽象(如 HarmonyHttpClient)
    * @param providerKeyStore Provider 密钥管理
+   * @param streamLauncher 流式请求发起函数(可选,流式场景需要)
+   *        设备代码示例:
+   *        const transport = new HttpStreamTransport();
+   *        const provider = new OpenAIProvider(httpClient, keyStore,
+   *          (opts, cbs) => transport.requestStream(opts, cbs));
    */
-  constructor(httpClient: HttpClient, providerKeyStore: ProviderKeyStore) {
+  constructor(
+    httpClient: HttpClient,
+    providerKeyStore: ProviderKeyStore,
+    streamLauncher?: StreamLauncher
+  ) {
     super();
     this.httpClient = httpClient;
     this.providerKeyStore = providerKeyStore;
+    this.streamLauncher = streamLauncher !== undefined ? streamLauncher : null;
   }
 
   /**
@@ -165,6 +185,126 @@ export class OpenAIProvider extends AiProvider {
     // 7. 解析响应
     return parseResponse(response, config.id);
   }
+
+  /**
+   * 发送流式聊天请求,通过回调增量返回内容。
+   *
+   * 流程(异步执行,streamChat 同步返回 ChatStreamHandle):
+   * 1. 立即创建 OpenAIStreamSession 并返回(调用方可立即 abort)
+   * 2. 校验 streamLauncher 不为 null
+   * 3. 校验 request(复用 validateRequest)
+   * 4. 从 ProviderKeyStore 读取 API Key
+   * 5. 构造 URL(复用 buildChatCompletionsUrl)
+   * 6. 构造请求体(强制 stream=true,复用 buildRequestBody(request, true))
+   * 7. 构造 Header(复用 buildHeaders)
+   * 8. 调用 session.start() 启动流式请求
+   * 9. 任一步骤失败 → 调用 session.failBeforeStart(callbacks, error)
+   *
+   * 安全要求:
+   * - API Key 只在构造 Header 时使用,不保存到成员变量
+   * - 请求完成后不保留 Key 引用
+   * - 不记录 API Key、Authorization、请求 Body、完整回复
+   *
+   * @param config Provider 配置
+   * @param request 聊天请求
+   * @param callbacks 流式回调
+   * @returns 流式请求句柄(可立即用于 abort)
+   */
+  streamChat(
+    config: ProviderConfig,
+    request: ChatRequest,
+    callbacks: ChatStreamCallbacks
+  ): ChatStreamHandle {
+    // 立即创建 session 并返回(调用方可立即 abort)
+    const session: OpenAIStreamSession = new OpenAIStreamSession();
+
+    // 异步执行校验、读 Key、构造请求、启动 session
+    this.startStreamAsync(config, request, callbacks, session);
+
+    return session;
+  }
+
+  /**
+   * streamChat 的异步执行体。
+   * 分离出来以保持 streamChat 同步返回 handle 的契约。
+   */
+  private async startStreamAsync(
+    config: ProviderConfig,
+    request: ChatRequest,
+    callbacks: ChatStreamCallbacks,
+    session: OpenAIStreamSession
+  ): Promise<void> {
+    // 1. 校验 streamLauncher
+    if (this.streamLauncher === null) {
+      session.failBeforeStart(callbacks, createNetworkError(
+        NetworkErrorType.Unknown,
+        'Stream launcher not configured for this provider'
+      ));
+      return;
+    }
+    const launcher: StreamLauncher = this.streamLauncher;
+
+    // 2. 校验 request(复用 validateRequest)
+    const validationError: NetworkError | null = validateRequest(request);
+    if (validationError !== null) {
+      session.failBeforeStart(callbacks, validationError);
+      return;
+    }
+
+    Logger.info(LOG_TAG, 'streamChat providerId=' + config.id + ' model=' + request.model);
+
+    // 3. 读取 API Key
+    let apiKey: string | null;
+    try {
+      apiKey = await this.providerKeyStore.readKey(config.id);
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'readKey failed providerId=' + config.id);
+      session.failBeforeStart(callbacks, createNetworkError(
+        NetworkErrorType.Authentication,
+        'Failed to read API Key for provider ' + config.id
+      ));
+      return;
+    }
+    if (apiKey === null) {
+      Logger.warn(LOG_TAG, 'API Key not found providerId=' + config.id);
+      session.failBeforeStart(callbacks, createNetworkError(
+        NetworkErrorType.Authentication,
+        'API Key not configured for provider ' + config.id
+      ));
+      return;
+    }
+    if (apiKey.trim().length === 0) {
+      Logger.warn(LOG_TAG, 'API Key is empty providerId=' + config.id);
+      session.failBeforeStart(callbacks, createNetworkError(
+        NetworkErrorType.Authentication,
+        'API Key is empty for provider ' + config.id
+      ));
+      return;
+    }
+
+    // 4. 构造 URL
+    const urlResult = buildChatCompletionsUrl(config.baseUrl);
+    if (!urlResult.success) {
+      Logger.warn(LOG_TAG, 'URL build failed providerId=' + config.id);
+      session.failBeforeStart(callbacks, createNetworkError(
+        NetworkErrorType.InvalidRequest,
+        'Invalid base URL: ' + urlResult.error
+      ));
+      return;
+    }
+
+    // 5. 构造请求体(强制 stream=true)
+    const body: string = buildRequestBody(request, true);
+
+    // 6. 构造 Header(API Key 只在此处运行时使用)
+    const headers: HttpHeaders = buildHeaders(apiKey);
+
+    // 7. 启动 session(如果 session 已被 abort,start 会直接返回)
+    session.start(urlResult.url, body, headers, callbacks, launcher);
+
+    // 8. 释放 Key 引用(局部变量随函数结束被回收)
+    // apiKey 不保存到成员变量,此处无需显式置空
+  }
 }
 
 // ===== 请求校验与构建 =====
@@ -218,7 +358,8 @@ export function validateRequest(request: ChatRequest): NetworkError | null {
 
 /**
  * 构建请求体 JSON 字符串。
- * 强制 stream=false,即使传入 request.stream=true。
+ * 默认强制 stream=false(非流式);传入 forceStream=true 时强制 stream=true(流式)。
+ * 即使传入 request.stream 值不同,也以 forceStream 参数为准。
  *
  * 请求体结构:
  * {
@@ -227,13 +368,14 @@ export function validateRequest(request: ChatRequest): NetworkError | null {
  *   "temperature": 0.7,
  *   "top_p": 1.0,
  *   "max_tokens": 1024,
- *   "stream": false
+ *   "stream": false | true
  * }
  *
  * @param request 聊天请求
+ * @param forceStream 强制 stream 值(默认 false)
  * @returns JSON 字符串
  */
-export function buildRequestBody(request: ChatRequest): string {
+export function buildRequestBody(request: ChatRequest, forceStream: boolean = false): string {
   const messages: OpenAIRequestMessage[] = [];
   for (let i = 0; i < request.messages.length; i++) {
     const msg = request.messages[i];
@@ -249,7 +391,7 @@ export function buildRequestBody(request: ChatRequest): string {
     temperature: request.temperature,
     top_p: request.topP,
     max_tokens: request.maxTokens,
-    stream: false
+    stream: forceStream
   };
 
   return JSON.stringify(requestBody);

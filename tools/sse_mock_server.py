@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SSE Mock Server for ArkTavern T-0.3B PoC and T-1.4 device tests
+SSE Mock Server for ArkTavern T-0.3B PoC, T-1.4 and T-1.5 device tests
 
 Development-only test server. Not a HAP runtime dependency.
 Only uses Python standard library.
@@ -14,6 +14,7 @@ Endpoints:
   GET  /sse                          - SSE streaming (existing, T-0.3B)
   GET  /health                       - Health check (existing)
   POST /v1/chat/completions          - Non-streaming Chat Completions (T-1.4)
+  POST /v1/chat/completions          - Streaming Chat Completions when stream=true (T-1.5)
   POST /v1/chat/completions?scenario=<name>
     scenarios:
       - default: 200 standard response
@@ -33,6 +34,24 @@ Endpoints:
       - slow: delayed 200 response
       - usage: 200 with full usage statistics
       - long-reply: 200 with very long content
+
+Streaming scenarios (triggered by model prefix 'mock-stream-<scenario>-*'):
+  - mock-stream-normal-*      : normal streaming with [DONE]
+  - mock-stream-chinese-*     : Chinese content
+  - mock-stream-emoji-*       : Emoji content
+  - mock-stream-multiline-*   : multi-line content (\\n)
+  - mock-stream-no-done-*     : no [DONE] marker
+  - mock-stream-empty-delta-* : empty content delta events
+  - mock-stream-role-only-*   : role-only events (no content)
+  - mock-stream-usage-*       : usage-only final event
+  - mock-stream-finish-length-*: finish_reason=length
+  - mock-stream-invalid-json-*: non-JSON data event
+  - mock-stream-empty-choices-*: empty choices array
+  - mock-stream-401-*         : 401 auth error
+  - mock-stream-429-*         : 429 rate limit
+  - mock-stream-500-*         : 500 server error
+  - mock-stream-slow-*        : slow streaming (long delay between chunks)
+  - mock-stream-abort-*       : streaming that can be aborted (long delay)
 """
 
 import argparse
@@ -80,10 +99,10 @@ def build_error_response(message, type=None, code=None):
     return json.dumps({'error': err})
 
 
-# ===== Scenario map =====
+# ===== Non-streaming scenario map =====
 
 def get_scenario_response(scenario, request_body=None):
-    """Return (status_code, headers_dict, body_string) for a scenario."""
+    """Return (status_code, headers_dict, body_string) for a non-streaming scenario."""
     if scenario in ('401',):
         return (401, {'Content-Type': 'application/json'},
                 build_error_response('Invalid API key', 'invalid_request_error', 'invalid_api_key'))
@@ -145,8 +164,211 @@ def get_scenario_response(scenario, request_body=None):
             build_success_response())
 
 
+# ===== Streaming scenario builders =====
+
+def build_stream_delta_event(content, role=None, finish_reason=None, model='gpt-4-test',
+                              id='chatcmpl-stream-001', index=0):
+    """Build a single OpenAI streaming Chat Completions chunk as SSE 'data: ...' string."""
+    delta = {}
+    if role is not None:
+        delta['role'] = role
+    if content is not None:
+        delta['content'] = content
+    choice = {
+        'index': index,
+        'delta': delta,
+    }
+    if finish_reason is not None:
+        choice['finish_reason'] = finish_reason
+    body = {
+        'id': id,
+        'object': 'chat.completion.chunk',
+        'created': 1700000000,
+        'model': model,
+        'choices': [choice],
+    }
+    return 'data: ' + json.dumps(body) + '\n\n'
+
+
+def build_stream_usage_event(prompt_tokens=10, completion_tokens=5, total_tokens=15,
+                              model='gpt-4-test', id='chatcmpl-stream-001'):
+    """Build a usage-only final event (no choices, only usage)."""
+    body = {
+        'id': id,
+        'object': 'chat.completion.chunk',
+        'created': 1700000000,
+        'model': model,
+        'choices': [],
+        'usage': {
+            'prompt_tokens': prompt_tokens,
+            'completion_tokens': completion_tokens,
+            'total_tokens': total_tokens,
+        },
+    }
+    return 'data: ' + json.dumps(body) + '\n\n'
+
+
+def build_stream_done():
+    """Build the [DONE] marker as SSE event."""
+    return 'data: [DONE]\n\n'
+
+
+def get_stream_scenario_chunks(scenario):
+    """Return list of SSE chunk strings for a streaming scenario.
+
+    Each chunk is a complete SSE event string (with trailing \\n\\n).
+    The handler will write each chunk with a small delay and flush.
+    Returns None if scenario is a non-streaming error (401/429/500).
+    For error scenarios, returns ('error', status_code, body) tuple instead.
+    """
+    # Error scenarios: return special marker
+    if scenario == '401':
+        return ('error', 401, build_error_response('Invalid API key', 'invalid_request_error', 'invalid_api_key'))
+    if scenario == '429':
+        return ('error', 429, build_error_response('Rate limit exceeded', 'rate_limit_error'))
+    if scenario == '500':
+        return ('error', 500, build_error_response('Internal server error'))
+
+    chunks = []
+
+    if scenario == 'normal':
+        # Normal streaming: role + 3 content deltas + finish + DONE
+        chunks.append(build_stream_delta_event(content=None, role='assistant'))
+        chunks.append(build_stream_delta_event(content='Hello'))
+        chunks.append(build_stream_delta_event(content=' from'))
+        chunks.append(build_stream_delta_event(content=' stream'))
+        chunks.append(build_stream_delta_event(content='', finish_reason='stop'))
+        chunks.append(build_stream_done())
+
+    elif scenario == 'chinese':
+        # Chinese content
+        chunks.append(build_stream_delta_event(content=None, role='assistant'))
+        chunks.append(build_stream_delta_event(content='你好'))
+        chunks.append(build_stream_delta_event(content='世界'))
+        chunks.append(build_stream_delta_event(content='!'))
+        chunks.append(build_stream_delta_event(content='', finish_reason='stop'))
+        chunks.append(build_stream_done())
+
+    elif scenario == 'emoji':
+        # Emoji content
+        chunks.append(build_stream_delta_event(content=None, role='assistant'))
+        chunks.append(build_stream_delta_event(content='Hello '))
+        chunks.append(build_stream_delta_event(content='🌍🚀'))
+        chunks.append(build_stream_delta_event(content='🎉'))
+        chunks.append(build_stream_delta_event(content='', finish_reason='stop'))
+        chunks.append(build_stream_done())
+
+    elif scenario == 'multiline':
+        # Multi-line content with \n
+        chunks.append(build_stream_delta_event(content=None, role='assistant'))
+        chunks.append(build_stream_delta_event(content='Line 1\n'))
+        chunks.append(build_stream_delta_event(content='Line 2\n'))
+        chunks.append(build_stream_delta_event(content='Line 3'))
+        chunks.append(build_stream_delta_event(content='', finish_reason='stop'))
+        chunks.append(build_stream_done())
+
+    elif scenario == 'no-done':
+        # No [DONE] marker, just finish_reason and connection end
+        chunks.append(build_stream_delta_event(content=None, role='assistant'))
+        chunks.append(build_stream_delta_event(content='No done marker'))
+        chunks.append(build_stream_delta_event(content='', finish_reason='stop'))
+        # No [DONE]
+
+    elif scenario == 'empty-delta':
+        # Empty content delta events (valid but no content)
+        chunks.append(build_stream_delta_event(content=None, role='assistant'))
+        chunks.append(build_stream_delta_event(content=''))
+        chunks.append(build_stream_delta_event(content=''))
+        chunks.append(build_stream_delta_event(content='after empty'))
+        chunks.append(build_stream_delta_event(content='', finish_reason='stop'))
+        chunks.append(build_stream_done())
+
+    elif scenario == 'role-only':
+        # Role-only events (delta.role but no content)
+        chunks.append(build_stream_delta_event(content=None, role='assistant'))
+        chunks.append(build_stream_delta_event(content=None))  # no content, no role
+        chunks.append(build_stream_delta_event(content='', finish_reason='stop'))
+        chunks.append(build_stream_done())
+
+    elif scenario == 'usage':
+        # Streaming with usage in final event
+        chunks.append(build_stream_delta_event(content=None, role='assistant'))
+        chunks.append(build_stream_delta_event(content='Hi'))
+        chunks.append(build_stream_delta_event(content='', finish_reason='stop'))
+        chunks.append(build_stream_usage_event(prompt_tokens=10, completion_tokens=5, total_tokens=15))
+        chunks.append(build_stream_done())
+
+    elif scenario == 'finish-length':
+        # finish_reason=length
+        chunks.append(build_stream_delta_event(content=None, role='assistant'))
+        chunks.append(build_stream_delta_event(content='Truncated'))
+        chunks.append(build_stream_delta_event(content='', finish_reason='length'))
+        chunks.append(build_stream_done())
+
+    elif scenario == 'invalid-json':
+        # Non-JSON data event
+        chunks.append(build_stream_delta_event(content=None, role='assistant'))
+        chunks.append('data: This is not JSON\n\n')
+        chunks.append(build_stream_done())
+
+    elif scenario == 'empty-choices':
+        # Empty choices array
+        chunks.append(build_stream_delta_event(content=None, role='assistant'))
+        chunks.append('data: ' + json.dumps({
+            'id': 'chatcmpl-stream-001',
+            'object': 'chat.completion.chunk',
+            'created': 1700000000,
+            'model': 'gpt-4-test',
+            'choices': [],
+        }) + '\n\n')
+        chunks.append(build_stream_delta_event(content='after empty choices'))
+        chunks.append(build_stream_delta_event(content='', finish_reason='stop'))
+        chunks.append(build_stream_done())
+
+    elif scenario == 'slow':
+        # Slow streaming: longer delay between chunks
+        chunks.append(build_stream_delta_event(content=None, role='assistant'))
+        chunks.append(build_stream_delta_event(content='slow'))
+        chunks.append(build_stream_delta_event(content=' response'))
+        chunks.append(build_stream_delta_event(content='', finish_reason='stop'))
+        chunks.append(build_stream_done())
+
+    elif scenario == 'abort':
+        # Abort scenario: long delay so client can abort
+        chunks.append(build_stream_delta_event(content=None, role='assistant'))
+        chunks.append(build_stream_delta_event(content='before abort'))
+        # Long delay expected by client abort
+        chunks.append(build_stream_delta_event(content='after abort'))
+        chunks.append(build_stream_delta_event(content='', finish_reason='stop'))
+        chunks.append(build_stream_done())
+
+    else:
+        # Default: same as normal
+        chunks.append(build_stream_delta_event(content=None, role='assistant'))
+        chunks.append(build_stream_delta_event(content='Hello'))
+        chunks.append(build_stream_delta_event(content=' from'))
+        chunks.append(build_stream_delta_event(content=' stream'))
+        chunks.append(build_stream_delta_event(content='', finish_reason='stop'))
+        chunks.append(build_stream_done())
+
+    return ('stream', chunks)
+
+
+# ===== Known scenario lists =====
+
+NON_STREAMING_SCENARIOS = ['401', '403', '400', '404', '408', '429', '500', '503',
+                           'invalid', 'empty', 'missing', 'null', 'error2xx', 'usage', 'long', 'slow']
+
+STREAM_SCENARIOS = ['normal', 'chinese', 'emoji', 'multiline', 'no-done', 'empty-delta',
+                    'role-only', 'usage', 'finish-length', 'invalid-json', 'empty-choices',
+                    '401', '429', '500', 'slow', 'abort']
+
+
 class SSEHandler(http.server.BaseHTTPRequestHandler):
-    """Handles /sse path with streaming SSE response and /v1/chat/completions for non-streaming."""
+    """Handles /sse path with streaming SSE response and /v1/chat/completions for non-streaming and streaming."""
+
+    # 使用 HTTP/1.1 以支持 chunked 传输和流式 POST 响应
+    protocol_version = 'HTTP/1.1'
 
     def do_GET(self):
         if self.path == '/sse':
@@ -237,7 +459,7 @@ class SSEHandler(http.server.BaseHTTPRequestHandler):
             time.sleep(0.5)
 
     def _handle_chat_completions(self):
-        """Handle non-streaming Chat Completions requests."""
+        """Handle Chat Completions requests (streaming and non-streaming)."""
         # Read request body
         content_length: int = int(self.headers.get('Content-Length', 0))
         # Do not print request body (security)
@@ -248,32 +470,58 @@ class SSEHandler(http.server.BaseHTTPRequestHandler):
             except Exception:
                 pass
 
-        # Parse scenario from query string OR X-Mock-Scenario header OR model name
+        # Parse request JSON to check stream flag and model
+        request_json = None
+        is_stream = False
+        model = ''
+        try:
+            request_json = json.loads(request_body_str)
+            if isinstance(request_json, dict):
+                is_stream = bool(request_json.get('stream', False))
+                model = request_json.get('model', '')
+                if not isinstance(model, str):
+                    model = ''
+        except Exception:
+            pass
+
+        # Determine scenario
         parsed = urlparse(self.path)
         query_params = parse_qs(parsed.query)
         scenario: str = 'default'
+        stream_scenario: str = 'normal'
+
         if 'scenario' in query_params:
             scenario = query_params['scenario'][0]
         elif 'X-Mock-Scenario' in self.headers:
             scenario = self.headers['X-Mock-Scenario']
-        else:
-            # Parse model from request body; if model starts with 'mock-<scenario>-', use that scenario
-            try:
-                req_json = json.loads(request_body_str)
-                model = req_json.get('model', '')
-                if isinstance(model, str) and model.startswith('mock-'):
-                    # Format: mock-<scenario>-model
-                    parts = model.split('-')
-                    if len(parts) >= 2:
-                        candidate = parts[1]
-                        # Only accept known scenarios
-                        known = ['401', '403', '400', '404', '408', '429', '500', '503',
-                                 'invalid', 'empty', 'missing', 'null', 'error2xx', 'usage', 'long', 'slow']
-                        if candidate in known:
-                            scenario = candidate
-            except Exception:
-                pass
+        elif isinstance(model, str) and model.startswith('mock-stream-'):
+            # Streaming scenario: mock-stream-<scenario>-*
+            # 使用前缀移除法,支持场景名含连字符(如 no-done, empty-delta, role-only, finish-length, invalid-json, empty-choices)
+            suffix = model[len('mock-stream-'):]
+            # 移除尾部 -<id> 部分(最后一个连字符后的内容如果像是序号)
+            # 场景名为 suffix 中第一个连字符之前的部分,但如果场景名本身含连字符,
+            # 需要匹配 STREAM_SCENARIOS 列表
+            stream_scenario = 'normal'
+            for sc in STREAM_SCENARIOS:
+                if suffix == sc or suffix.startswith(sc + '-'):
+                    stream_scenario = sc
+                    break
+        elif isinstance(model, str) and model.startswith('mock-'):
+            # Non-streaming scenario: mock-<scenario>-*
+            suffix = model[len('mock-'):]
+            for sc in NON_STREAMING_SCENARIOS:
+                if suffix == sc or suffix.startswith(sc + '-'):
+                    scenario = sc
+                    break
 
+        # Route to streaming or non-streaming handler
+        if is_stream:
+            self._handle_streaming_response(stream_scenario)
+        else:
+            self._handle_non_streaming_response(scenario)
+
+    def _handle_non_streaming_response(self, scenario: str):
+        """Handle non-streaming Chat Completions response."""
         # Handle slow scenario (sleep before responding)
         if scenario == 'slow':
             time.sleep(2.0)
@@ -289,6 +537,52 @@ class SSEHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(body.encode('utf-8'))
         except (BrokenPipeError, ConnectionResetError):
             pass
+
+    def _handle_streaming_response(self, scenario: str):
+        """Handle streaming Chat Completions response."""
+        result = get_stream_scenario_chunks(scenario)
+
+        # Error scenario: return non-streaming error response
+        if isinstance(result, tuple) and len(result) == 3 and result[0] == 'error':
+            _, status_code, body = result
+            self.send_response(status_code)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            try:
+                self.wfile.write(body.encode('utf-8'))
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            return
+
+        # Streaming scenario: return SSE response
+        if not (isinstance(result, tuple) and len(result) == 2 and result[0] == 'stream'):
+            return
+        chunks = result[1]
+
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/event-stream')
+        self.send_header('Cache-Control', 'no-cache')
+        self.send_header('Connection', 'close')
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.end_headers()
+
+        # Delay between chunks: slow/abort scenarios use longer delay
+        delay = 0.3
+        if scenario == 'slow':
+            delay = 1.5
+        elif scenario == 'abort':
+            delay = 2.0
+
+        for chunk in chunks:
+            if self.server._shutdown_requested:
+                return
+            try:
+                self.wfile.write(chunk.encode('utf-8'))
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                return
+            time.sleep(delay)
 
     def log_message(self, format, *args):
         """Override to reduce noise. Do not log Authorization."""
@@ -313,7 +607,7 @@ class ThreadedHTTPServer(http.server.ThreadingHTTPServer):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='SSE Mock Server for ArkTavern PoC and T-1.4 tests')
+    parser = argparse.ArgumentParser(description='SSE Mock Server for ArkTavern PoC, T-1.4 and T-1.5 tests')
     parser.add_argument('--host', default='0.0.0.0', help='Listen address')
     parser.add_argument('--port', type=int, default=8765, help='Listen port')
     args = parser.parse_args()
@@ -323,7 +617,8 @@ def main():
     print(f'[SSE Mock] SSE endpoint: http://{args.host}:{args.port}/sse')
     print(f'[SSE Mock] Chat Completions: http://{args.host}:{args.port}/v1/chat/completions')
     print(f'[SSE Mock] Health check: http://{args.host}:{args.port}/health')
-    print(f'[SSE Mock] Scenarios: ?scenario=<401|403|400|404|408|429|500|503|invalid-json|empty-choices|missing-content|null-content|error-in-2xx|usage|long-reply|slow>')
+    print(f'[SSE Mock] Non-stream scenarios: ?scenario=<401|403|400|404|408|429|500|503|invalid-json|empty-choices|missing-content|null-content|error-in-2xx|usage|long-reply|slow>')
+    print(f'[SSE Mock] Stream scenarios: model=mock-stream-<normal|chinese|emoji|multiline|no-done|empty-delta|role-only|usage|finish-length|invalid-json|empty-choices|401|429|500|slow|abort>-*')
     print('[SSE Mock] Press Ctrl+C to stop')
 
     try:
