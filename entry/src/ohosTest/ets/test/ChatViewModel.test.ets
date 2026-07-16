@@ -28,6 +28,8 @@ import { ChatViewModel } from '../../../main/ets/viewmodels/ChatViewModel';
 import { ChatService, ChatState, ChatServiceCallbacks } from '../../../main/ets/services/ChatService';
 import { ChatMessage } from '../../../main/ets/models/ChatMessage';
 import { ChatRole } from '../../../main/ets/models/ChatRole';
+import { Character } from '../../../main/ets/models/Character';
+import { CharacterService } from '../../../main/ets/services/CharacterService';
 import { ProviderConfig } from '../../../main/ets/models/ProviderConfig';
 import { ProviderType } from '../../../main/ets/models/ProviderType';
 
@@ -170,6 +172,10 @@ class MockChatService {
     this.disposeCalled = true;
   }
 
+  initContext(_character: Object | null): boolean {
+    return false;
+  }
+
   reset(): void {
     this.messages = [];
     this.state = ChatState.Idle;
@@ -213,6 +219,24 @@ class MockModelService {
   }
 }
 
+// ===== Mock CharacterService =====
+
+class MockCharacterService {
+  private character: Character | null = null;
+
+  setCurrentCharacter(c: Character | null): void {
+    this.character = c;
+  }
+
+  async getCurrentCharacter(): Promise<Character | null> {
+    return this.character;
+  }
+
+  reset(): void {
+    this.character = null;
+  }
+}
+
 // ===== 辅助 =====
 
 function makeConfig(name: string, modelName: string): ProviderConfig {
@@ -226,19 +250,23 @@ function makeConfig(name: string, modelName: string): ProviderConfig {
 interface ViewModelFixture {
   mockChatService: MockChatService;
   mockModelService: MockModelService;
+  mockCharacterService: MockCharacterService;
   viewModel: ChatViewModel;
 }
 
 function createViewModel(): ViewModelFixture {
   const mockChatService: MockChatService = new MockChatService();
   const mockModelService: MockModelService = new MockModelService();
+  const mockCharacterService: MockCharacterService = new MockCharacterService();
   const viewModel: ChatViewModel = new ChatViewModel(
     mockChatService as Object as ChatService,
-    mockModelService as Object as import('../../../main/ets/services/ModelService').ModelService
+    mockModelService as Object as import('../../../main/ets/services/ModelService').ModelService,
+    mockCharacterService as Object as CharacterService
   );
   const fixture: ViewModelFixture = {
     mockChatService: mockChatService,
     mockModelService: mockModelService,
+    mockCharacterService: mockCharacterService,
     viewModel: viewModel
   };
   return fixture;

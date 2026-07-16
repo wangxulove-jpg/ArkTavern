@@ -65,8 +65,9 @@ export struct ChatPage {
     // 每次进入页面创建新的 ChatService(跟随页面生命周期)
     // 避免复用已 disposed 的单例导致 sendMessage 静默失败
     const modelService = AppServices.getModelService();
+    const characterService = AppServices.getCharacterService();
     const chatService = new ChatService(modelService);
-    const vm: ChatViewModel = new ChatViewModel(chatService, modelService);
+    const vm: ChatViewModel = new ChatViewModel(chatService, modelService, characterService);
     // 通过回调将 ViewModel 的 messages 同步到独立 @State 变量
     // 这是确保 ForEach 响应式刷新的关键
     vm.onMessagesUpdate = (msgs: ChatMessage[]): void => {
@@ -89,7 +90,9 @@ export struct ChatPage {
       Column() {
         // 顶部状态区
         Row() {
-          Text(this.viewModel!.currentModelName)
+          Text(this.viewModel!.characterName.length > 0
+            ? this.viewModel!.characterName + ' · ' + this.viewModel!.currentModelName
+            : this.viewModel!.currentModelName)
             .fontSize(14)
             .fontColor($r('sys.color.ohos_id_color_text_secondary'))
             .maxLines(1)
@@ -127,7 +130,9 @@ export struct ChatPage {
                 // 强制 ForEach 在消息内容/状态变化时重新渲染
                 // (ArkUI ForEach 的 diff 基于 key,key 相同会 skip mark dirty)
                 ForEach(this.messages, (msg: ChatMessage, _index: number) => {
-                  this.messageBubble(msg);
+                  if (msg.role !== ChatRole.System) {
+                    this.messageBubble(msg);
+                  }
                 }, (msg: ChatMessage) => msg.id + '_' + (msg.updatedAt ?? 0) + '_'
                   + (msg.status ?? '') + '_' + msg.content.length + '_'
                   + (msg.isStreaming === true ? '1' : '0'));
@@ -249,7 +254,9 @@ export struct ChatPage {
       .height('100%')
       .backgroundColor($r('sys.color.ohos_id_color_sub_background'))
     }
-    .title($r('app.string.' + RES_NAV_CHAT_TITLE))
+    .title(this.viewModel!.characterName.length > 0
+      ? this.viewModel!.characterName
+      : $r('app.string.' + RES_NAV_CHAT_TITLE))
     .hideTitleBar(false)
   }
 

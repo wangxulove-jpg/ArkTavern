@@ -23,6 +23,8 @@ import { AppPreferences } from '../storage/AppPreferences';
 import { ProviderConfigStore } from '../storage/ProviderConfigStore';
 import { AssetStoreKeyStore } from '../storage/AssetStoreKeyStore';
 import { ProviderKeyStore } from '../storage/ProviderKeyStore';
+import { CharacterStore } from '../storage/CharacterStore';
+import { CharacterService } from './CharacterService';
 import { ModelService } from './ModelService';
 import { DefaultProviderFactory } from './ProviderFactory';
 import { Logger } from '../utils/Logger';
@@ -40,6 +42,8 @@ export class AppServices {
 
   /** ModelService 业务编排服务(唯一对外暴露的服务) */
   readonly modelService: ModelService;
+  /** CharacterService 角色服务 */
+  readonly characterService: CharacterService;
 
   /**
    * 私有构造,组装全部依赖。
@@ -52,6 +56,8 @@ export class AppServices {
     const providerKeyStore: ProviderKeyStore = new ProviderKeyStore(assetKeyStore);
     const factory: DefaultProviderFactory = new DefaultProviderFactory(providerKeyStore);
     this.modelService = new ModelService(configStore, providerKeyStore, factory);
+    const characterStore: CharacterStore = new CharacterStore();
+    this.characterService = new CharacterService(characterStore);
   }
 
   /**
@@ -70,6 +76,8 @@ export class AppServices {
     const services: AppServices = new AppServices();
     AppServices.instance = services;
     AppServices.readyPromise = services.modelService.initialize(context)
+      .then((): Promise<void> => services.characterService.initialize(context))
+      .then((): Promise<void> => services.ensureDefaultCharacter())
       .then((): void => {
         Logger.info(LOG_TAG, 'initialize ok');
       })
@@ -123,5 +131,35 @@ export class AppServices {
    */
   static getModelService(): ModelService {
     return AppServices.getInstance().modelService;
+  }
+
+  /**
+   * 获取 CharacterService 实例。
+   */
+  static getCharacterService(): CharacterService {
+    return AppServices.getInstance().characterService;
+  }
+
+  /**
+   * 确保至少有一个默认角色(用于开发测试)。
+   * 仅在角色列表为空时创建,不覆盖已有角色。
+   */
+  private async ensureDefaultCharacter(): Promise<void> {
+    try {
+      const chars = await this.characterService.list();
+      if (chars.length === 0) {
+        await this.characterService.create(
+          '艾伦',
+          '一位来自北方的年轻冒险者，有着金色的短发和蓝色的眼睛',
+          '勇敢、善良、有些冲动但心地纯真',
+          '奇幻中世纪冒险世界',
+          '你好，旅行者！我是艾伦，来自北方的冒险者。有什么我可以帮你的吗？',
+          ''
+        );
+        Logger.info(LOG_TAG, 'default character created');
+      }
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'ensureDefaultCharacter failed: ' + String(e));
+    }
   }
 }

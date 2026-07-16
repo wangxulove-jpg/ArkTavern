@@ -21,6 +21,8 @@ import { ModelService } from '../services/ModelService';
 import { ChatMessage, ChatMessageStatus } from '../models/ChatMessage';
 import { ChatRole } from '../models/ChatRole';
 import { ProviderConfig } from '../models/ProviderConfig';
+import { Character } from '../models/Character';
+import { CharacterService } from '../services/CharacterService';
 import { Logger } from '../utils/Logger';
 
 const LOG_TAG: string = 'ChatViewModel';
@@ -33,6 +35,8 @@ export class ChatViewModel {
   statusMessage: string = '';
   errorMessage: string = '';
   currentModelName: string = '';
+  /** 当前角色名称(无角色时为空) */
+  characterName: string = '';
   hasCurrentModel: boolean = false;
   canRegenerate: boolean = false;
   /** 用户是否主动上滑(用于控制自动滚动) */
@@ -42,6 +46,7 @@ export class ChatViewModel {
 
   private chatService: ChatService;
   private modelService: ModelService;
+  private characterService: CharacterService;
   private disposed: boolean = false;
 
   /**
@@ -53,9 +58,10 @@ export class ChatViewModel {
    */
   onMessagesUpdate?: (messages: ChatMessage[]) => void;
 
-  constructor(chatService: ChatService, modelService: ModelService) {
+  constructor(chatService: ChatService, modelService: ModelService, characterService: CharacterService) {
     this.chatService = chatService;
     this.modelService = modelService;
+    this.characterService = characterService;
   }
 
   get canSend(): boolean {
@@ -87,6 +93,25 @@ export class ChatViewModel {
       this.currentModelName = '加载配置失败';
       Logger.error(LOG_TAG, 'initialize failed: ' + String(e));
     }
+
+    // 加载当前角色并初始化聊天上下文
+    try {
+      const character: Character | null = await this.characterService.getCurrentCharacter();
+      if (character !== null) {
+        this.characterName = character.name;
+        const hasFirstMessage: boolean = this.chatService.initContext(character);
+        if (hasFirstMessage) {
+          // 角色开场白已添加到 ChatService,同步到 ViewModel
+          this.messages = [...this.chatService.getMessages()];
+          if (this.onMessagesUpdate !== undefined) {
+            this.onMessagesUpdate([...this.messages]);
+          }
+        }
+      }
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'load character failed: ' + String(e));
+    }
+
     Logger.info(LOG_TAG, 'initialize currentModelName=' + this.currentModelName);
   }
 

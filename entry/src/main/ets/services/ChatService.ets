@@ -36,6 +36,7 @@ import {
   isStreamTerminalState
 } from '../models/ChatStreamTypes';
 import { NetworkError } from '../models/NetworkError';
+import { Character, buildCharacterSystemContent } from '../models/Character';
 import { generateUuid } from '../utils/Uuid';
 import { Logger } from '../utils/Logger';
 
@@ -93,6 +94,51 @@ export class ChatService {
 
   constructor(modelService: ModelService) {
     this.modelService = modelService;
+  }
+
+  /**
+   * 初始化角色聊天上下文。
+   * 有角色时:
+   * - 注入 System 消息(角色 systemPrompt 或组合 prompt)
+   * - 注入 firstMessage 作为 Assistant 开场消息
+   * 无角色时:不做任何初始化。
+   * 只在消息列表为空时生效,防止重复注入。
+   *
+   * @returns 是否添加了 firstMessage(用于通知页面显示开场白)
+   */
+  initContext(character: Character | null): boolean {
+    if (this.messages.length > 0) {
+      return false;
+    }
+    if (character === null) {
+      return false;
+    }
+    Logger.info(LOG_TAG, 'initContext character=' + character.name);
+
+    const systemContent: string = buildCharacterSystemContent(character);
+    const newMessages: ChatMessage[] = [];
+
+    if (systemContent.length > 0) {
+      const systemMsg: ChatMessage = createChatMessage(
+        'msg-' + generateUuid(), ChatRole.System, systemContent, Date.now()
+      );
+      newMessages.push(systemMsg);
+    }
+
+    if (character.firstMessage.length > 0) {
+      const firstMsg: ChatMessage = {
+        id: 'msg-' + generateUuid(),
+        role: ChatRole.Assistant,
+        content: character.firstMessage,
+        createdAt: Date.now(),
+        isStreaming: false,
+        status: ChatMessageStatus.Completed
+      };
+      newMessages.push(firstMsg);
+    }
+
+    this.messages = newMessages;
+    return character.firstMessage.length > 0;
   }
 
   /**

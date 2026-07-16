@@ -271,6 +271,114 @@
     {
       "name": "model_settings_delete_confirm",
       "value": "确定删除该配置吗?API Key 也将一并清除。"
+    },
+    {
+      "name": "nav_character_list_title",
+      "value": "角色列表"
+    },
+    {
+      "name": "character_no_characters",
+      "value": "暂无角色"
+    },
+    {
+      "name": "character_no_characters_desc",
+      "value": "点击右下角创建第一个角色"
+    },
+    {
+      "name": "character_new",
+      "value": "新建"
+    },
+    {
+      "name": "character_edit",
+      "value": "编辑"
+    },
+    {
+      "name": "character_set_current",
+      "value": "设为当前"
+    },
+    {
+      "name": "character_current_badge",
+      "value": "当前"
+    },
+    {
+      "name": "character_delete",
+      "value": "删除"
+    },
+    {
+      "name": "character_delete_confirm",
+      "value": "确定删除角色\"%s\"吗?此操作不可撤销。"
+    },
+    {
+      "name": "character_form_name",
+      "value": "名称"
+    },
+    {
+      "name": "character_form_name_placeholder",
+      "value": "请输入角色名称"
+    },
+    {
+      "name": "character_form_description",
+      "value": "描述"
+    },
+    {
+      "name": "character_form_description_placeholder",
+      "value": "角色的外貌、背景等"
+    },
+    {
+      "name": "character_form_personality",
+      "value": "性格"
+    },
+    {
+      "name": "character_form_personality_placeholder",
+      "value": "角色的性格特点"
+    },
+    {
+      "name": "character_form_scenario",
+      "value": "场景"
+    },
+    {
+      "name": "character_form_scenario_placeholder",
+      "value": "所处的世界观和场景"
+    },
+    {
+      "name": "character_form_first_message",
+      "value": "开场白"
+    },
+    {
+      "name": "character_form_first_message_placeholder",
+      "value": "角色首次对话时的开场白"
+    },
+    {
+      "name": "character_form_system_prompt",
+      "value": "System Prompt"
+    },
+    {
+      "name": "character_form_system_prompt_placeholder",
+      "value": "自定义系统提示词,留空则自动组合"
+    },
+    {
+      "name": "character_form_save",
+      "value": "保存"
+    },
+    {
+      "name": "character_form_cancel",
+      "value": "取消"
+    },
+    {
+      "name": "character_current_char",
+      "value": "当前角色: %s"
+    },
+    {
+      "name": "character_no_current",
+      "value": "无当前角色"
+    },
+    {
+      "name": "character_form_title_new",
+      "value": "新建角色"
+    },
+    {
+      "name": "character_form_title_edit",
+      "value": "编辑角色"
     }
   ]
 }

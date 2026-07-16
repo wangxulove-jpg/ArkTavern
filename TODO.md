@@ -527,56 +527,43 @@ Date: 2026-07-15
 
 ## Phase 2:基础聊天
 
-### T-2.1 定义内存态聊天视图模型
+### T-2.1 Character MVP：角色模型、手工创建、角色选择和基础角色聊天
 
-- 依赖:T-1.6
+- 依赖:T-1.9
 - 优先级:P1
-- 修改范围:`entry/src/main/ets/viewmodels/`
-- 内容:`viewmodels/ChatViewModel.ets`:消息列表状态、输入态、流式态、错误态
+- 修改范围:`models/Character.ets`(新建)、`storage/CharacterStore.ets`(新建)、`services/CharacterService.ets`(新建)、`viewmodels/CharacterListViewModel.ets`(新建)、`pages/CharacterListPage.ets`(重写)、`services/ChatService.ets`、`viewmodels/ChatViewModel.ets`、`pages/ChatPage.ets`、`services/AppServices.ets`、资源文件、测试
+- 内容:
+  - 角色模型:Character.ets(id/name/description/personality/scenario/firstMessage/systemPrompt/avatarUri/createdAt/updatedAt),不依赖ArkUI,提供校验和不可变更新
+  - 角色持久化:CharacterStore 基于 Preferences 保存角色列表(schemaVersion=1),支持 list/getById/save/update/remove/setCurrentCharacterId/getCurrentCharacter
+  - 角色列表页:CharacterListPage 完整可用(列表/新建/编辑/删除确认/设为当前/当前标记/空状态),表单字段含名称/描述/性格/场景/开场白/System Prompt
+  - 角色接入聊天:ChatPage 顶部显示当前角色名称;有角色时注入 System 消息和 firstMessage 开场白;无角色时保持普通聊天;System 消息不显示为聊天气泡
 - 验收标准:
-  - [ ] 状态可观察(@State / @Observed)
-  - [ ] 无网络层直接调用
-
-### T-2.2 实现 ChatService(内存态)
-
-- 依赖:T-1.6、T-2.1
-- 优先级:P1
-- 修改范围:`entry/src/main/ets/services/ChatService.ets`(新建)
-- 内容:发送消息 → 调用 ModelService → 增量更新 ViewModel;支持中断
-- 验收标准:
-  - [ ] 可发送并接收流式回复
-  - [ ] 可中断生成
-
-### T-2.3 实现消息气泡组件
-
-- 依赖:T-2.1
-- 优先级:P1
-- 修改范围:`entry/src/main/ets/components/`(新建)
-- 内容:`components/MessageBubble.ets`:用户/助手区分、Markdown 简化渲染(粗体/斜体/代码块)
-- 验收标准:
-  - [ ] 用户与助手气泡视觉区分
-  - [ ] 代码块等基础格式可读
-
-### T-2.4 实现输入区组件
-
-- 依赖:T-2.1
-- 优先级:P1
-- 修改范围:`entry/src/main/ets/components/ChatInput.ets`
-- 内容:多行输入、发送、停止按钮、空输入禁用发送
-- 验收标准:
-  - [ ] 可输入并发送
-  - [ ] 生成中按钮切换为"停止"
-
-### T-2.5 实现 ChatPage 与流式渲染
-
-- 依赖:T-2.2、T-2.3、T-2.4
-- 优先级:P1
-- 修改范围:`entry/src/main/ets/pages/ChatPage.ets`、`main_pages.json`
-- 内容:消息列表(LazyForEach)+ 输入区 + 流式指示器;新消息自动滚到底部
-- 验收标准:
-  - [ ] 流式渲染不卡顿
-  - [ ] 长列表性能可接受
-  - [ ] 生成中可滚动查看历史
+  - [x] 角色模型含必填字段,不依赖 ArkUI
+  - [x] 角色持久化,重启后仍存在
+  - [x] 角色列表页可新建/编辑/删除/设为当前
+  - [x] 删除当前角色时清空选择
+  - [x] 首条请求包含角色 System 消息
+  - [x] firstMessage 只添加一次,不重复
+  - [x] 重新生成不重复注入角色提示
+  - [x] 无角色时普通聊天无回归
+  - [x] 聊天消息响应式刷新正常
+  - [x] hilog 不记录角色聊天正文
+- 完成情况(2026-07-16):
+  - [x] Character.ets:纯数据模型,createCharacter()/updateCharacter()/validateCharacter()/buildCharacterSystemContent()
+  - [x] CharacterStore.ets:基于 Preferences 的 JSON 序列化持久化,key 为 character_list_v1 和 current_character_id_v1
+  - [x] CharacterService.ets:封装 CharacterStore 的业务逻辑层
+  - [x] CharacterListViewModel.ets:@Observed 装饰,管理角色列表页状态
+  - [x] CharacterListPage.ets:完整角色列表页(文字头像+名称+描述+当前标记+操作按钮+空状态+新建FAB+删除确认+编辑对话框)
+  - [x] ChatService.initContext(character):消息列表为空时注入 System 消息和 firstMessage
+  - [x] ChatPage 过滤 System 角色消息(不显示为聊天气泡)
+  - [x] ChatPage 标题栏显示角色名
+  - [x] AppServices.ensureDefaultCharacter() 在无角色时自动创建默认角色
+  - [x] 表单字段使用 @State + $$ 双向绑定(兼容 MCP inputText 工具)
+  - [x] 设备测试:ChatService 35/35 + ChatViewModel 25/25 = 60/60 通过
+  - [x] MCP build entry@default BUILD SUCCESSFUL
+  - [x] 实机验证:默认角色创建、设为当前、聊天页显示角色名和开场白、系统消息隐藏、返回再进入不重复开场白
+  - 未修改:OpenAIProvider/network/streaming/AssetStoreKeyStore/模型设置页/Lorebook/PNG 解析/RDB/ArkTavern-Reference
+  - 已知限制:MCP inputText 不触发 ArkUI onChange 回调,改用 @State + $$ 双向绑定 + 程序化创建默认角色;PNG 角色卡导入、Lorebook、数据库迁移未开发
 
 ---
 
