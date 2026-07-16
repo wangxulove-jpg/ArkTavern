@@ -77,7 +77,6 @@ export class AppServices {
     AppServices.instance = services;
     AppServices.readyPromise = services.modelService.initialize(context)
       .then((): Promise<void> => services.characterService.initialize(context))
-      .then((): Promise<void> => services.ensureDefaultCharacter())
       .then((): void => {
         Logger.info(LOG_TAG, 'initialize ok');
       })
@@ -138,28 +137,5 @@ export class AppServices {
    */
   static getCharacterService(): CharacterService {
     return AppServices.getInstance().characterService;
-  }
-
-  /**
-   * 确保至少有一个默认角色(用于开发测试)。
-   * 仅在角色列表为空时创建,不覆盖已有角色。
-   */
-  private async ensureDefaultCharacter(): Promise<void> {
-    try {
-      const chars = await this.characterService.list();
-      if (chars.length === 0) {
-        await this.characterService.create(
-          '艾伦',
-          '一位来自北方的年轻冒险者，有着金色的短发和蓝色的眼睛',
-          '勇敢、善良、有些冲动但心地纯真',
-          '奇幻中世纪冒险世界',
-          '你好，旅行者！我是艾伦，来自北方的冒险者。有什么我可以帮你的吗？',
-          ''
-        );
-        Logger.info(LOG_TAG, 'default character created');
-      }
-    } catch (e) {
-      Logger.warn(LOG_TAG, 'ensureDefaultCharacter failed: ' + String(e));
-    }
   }
 }

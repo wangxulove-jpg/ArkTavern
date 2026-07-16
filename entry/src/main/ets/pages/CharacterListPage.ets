@@ -1,7 +1,7 @@
 /**
  * CharacterListPage 角色列表页面
  *
- * 展示角色列表,支持新建/编辑/删除/设为当前角色。
+ * 展示角色列表,支持新建/编辑/删除/设为当前角色/导入/导出。
  * 仅通过 CharacterListViewModel 访问业务能力。
  *
  * 要求:
@@ -10,13 +10,19 @@
  * - 编辑角色
  * - 删除角色二次确认
  * - 设为当前角色
+ * - JSON 导入(含预览)
+ * - JSON 导出
  * - 无角色空状态
  * - 本次不做头像上传
  */
 
 import { CharacterListViewModel } from '../viewmodels/CharacterListViewModel';
 import { Character } from '../models/Character';
+import { ParsedCharacterCard } from '../parser/CharacterCardJsonParser';
+import { sanitizeFileName } from '../parser/CharacterCardJsonWriter';
 import { AppServices } from '../services/AppServices';
+import { picker } from '@kit.CoreFileKit';
+import { promptAction } from '@kit.ArkUI';
 
 @Entry
 @Component
@@ -41,6 +47,37 @@ export struct CharacterListPage {
     NavDestination() {
       Stack() {
         Column() {
+          // 顶部操作栏
+          Row() {
+            Text($r('app.string.nav_character_list_title'))
+              .fontSize(18)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('sys.color.ohos_id_color_text_primary'))
+              .layoutWeight(1)
+
+            Button($r('app.string.character_import'))
+              .fontSize(13)
+              .backgroundColor($r('sys.color.ohos_id_color_emphasize'))
+              .fontColor(Color.White)
+              .borderRadius(16)
+              .height(32)
+              .padding({ left: 12, right: 12 })
+              .onClick(() => {
+                this.openImportPicker();
+              })
+          }
+          .width('100%')
+          .padding({ left: 16, right: 16, top: 12, bottom: 4 })
+
+          // 导入错误提示
+          if (this.viewModel!.importError.length > 0) {
+            Text(this.viewModel!.importError)
+              .fontSize(13)
+              .fontColor('#E74C3C')
+              .width('100%')
+              .padding({ left: 16, right: 16, top: 4, bottom: 4 })
+          }
+
           // 角色列表
           Scroll() {
             Column() {
@@ -85,13 +122,18 @@ export struct CharacterListPage {
         if (this.viewModel!.showEditDialog) {
           this.editDialogOverlay();
         }
+
+        // 导入预览对话框
+        if (this.viewModel!.showImportPreview && this.viewModel!.previewCard !== null) {
+          this.importPreviewDialog();
+        }
       }
       .width('100%')
       .height('100%')
       .backgroundColor($r('sys.color.ohos_id_color_sub_background'))
     }
     .title($r('app.string.nav_character_list_title'))
-    .hideTitleBar(false)
+    .hideTitleBar(true)
   }
 
   // ===== 空状态 =====
@@ -187,6 +229,16 @@ export struct CharacterListPage {
           .onClick(() => {
             this.viewModel!.showEditDialogFor(char);
             this.syncFormFromViewModel();
+          })
+
+        Button($r('app.string.character_export'))
+          .fontSize(12)
+          .backgroundColor(Color.Transparent)
+          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+          .height(32)
+          .padding({ left: 8, right: 8 })
+          .onClick(() => {
+            this.openExportPicker(char);
           })
 
         Button($r('app.string.character_delete'))
@@ -459,7 +511,6 @@ export struct CharacterListPage {
     .alignItems(HorizontalAlign.Center)
     .backgroundColor('rgba(0,0,0,0.5)')
     .onClick(() => {
-      // 点击蒙层关闭
       this.viewModel!.deleteTarget = null;
     })
   }
@@ -469,17 +520,181 @@ export struct CharacterListPage {
   @Builder
   editDialogOverlay() {
     Column() {
-      // 蒙层上半部分
       Blank()
         .backgroundColor('rgba(0,0,0,0.3)')
         .onClick(() => {
           this.viewModel!.closeEditDialog();
         })
 
-      // 编辑表单
       this.editDialog();
     }
     .width('100%')
     .height('100%')
+  }
+
+  // ===== 导入预览对话框 =====
+
+  @Builder
+  importPreviewDialog() {
+    Column() {
+      Column() {
+        Text($r('app.string.character_import_preview'))
+          .fontSize(18)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('sys.color.ohos_id_color_text_primary'))
+          .width('100%')
+          .textAlign(TextAlign.Center)
+          .margin({ bottom: 16 })
+
+        this.importPreviewField('名称', this.viewModel!.previewCard!.name, true);
+        this.importPreviewField('描述', this.viewModel!.previewCard!.description, false);
+        this.importPreviewField('性格', this.viewModel!.previewCard!.personality, false);
+        this.importPreviewField('场景', this.viewModel!.previewCard!.scenario, false);
+        this.importPreviewField('开场白', this.viewModel!.previewCard!.firstMessage, false);
+        this.importPreviewField('System Prompt', this.viewModel!.previewCard!.systemPrompt, false);
+
+        // 来源格式
+        Text('来源格式: ' + this.formatSourceLabel(this.viewModel!.previewCard!.sourceFormat))
+          .fontSize(12)
+          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+          .width('100%')
+          .margin({ top: 8, bottom: 16 })
+
+        if (this.viewModel!.importError.length > 0) {
+          Text(this.viewModel!.importError)
+            .fontSize(13)
+            .fontColor('#E74C3C')
+            .width('100%')
+            .margin({ bottom: 12 })
+        }
+
+        Row() {
+          Button($r('app.string.character_import_cancel'))
+            .fontSize(14)
+            .backgroundColor(Color.Transparent)
+            .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+            .height(40)
+            .layoutWeight(1)
+            .onClick(() => {
+              this.viewModel!.cancelImport();
+            })
+
+          Button($r('app.string.character_import_confirm'))
+            .fontSize(14)
+            .backgroundColor($r('sys.color.ohos_id_color_emphasize'))
+            .fontColor(Color.White)
+            .borderRadius(20)
+            .height(40)
+            .layoutWeight(1)
+            .margin({ left: 12 })
+            .onClick(() => {
+              this.viewModel!.confirmImport();
+            })
+        }
+        .width('100%')
+      }
+      .width('85%')
+      .padding(20)
+      .backgroundColor($r('sys.color.ohos_id_color_dialog_bg'))
+      .borderRadius(16)
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+    .backgroundColor('rgba(0,0,0,0.5)')
+    .onClick(() => {
+      this.viewModel!.cancelImport();
+    })
+  }
+
+  @Builder
+  importPreviewField(label: string, value: string, isRequired: boolean) {
+    if (value.length > 0 || isRequired) {
+      Column() {
+        Row() {
+          Text(label)
+            .fontSize(12)
+            .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+            .fontWeight(FontWeight.Medium)
+          if (isRequired) {
+            Text(' *')
+              .fontSize(12)
+              .fontColor('#E74C3C')
+          }
+        }
+        .width('100%')
+
+        Text(value.length > 0 ? value : '(空)')
+          .fontSize(13)
+          .fontColor(value.length > 0
+            ? $r('sys.color.ohos_id_color_text_primary')
+            : $r('sys.color.ohos_id_color_text_secondary'))
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+          .margin({ top: 2, bottom: 8 })
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Start)
+    }
+  }
+
+  // ===== 文件选择器 =====
+
+  private async openImportPicker(): Promise<void> {
+    try {
+      const documentPicker = new picker.DocumentViewPicker();
+      const options = new picker.DocumentSelectOptions();
+      options.maxSelectNumber = 1;
+      const uris: string[] = await documentPicker.select(options);
+      if (uris.length === 0) {
+        return;
+      }
+      await this.viewModel!.startImportFile(uris[0]);
+      if (this.viewModel!.importError.length > 0) {
+        promptAction.showToast({
+          message: this.viewModel!.importError,
+          duration: 2000
+        });
+      }
+    } catch (e) {
+      // 用户取消选择,静默处理
+    }
+  }
+
+  private async openExportPicker(char: Character): Promise<void> {
+    try {
+      const documentPicker = new picker.DocumentViewPicker();
+      const options = new picker.DocumentSaveOptions();
+      options.newFileNames = [sanitizeFileName(char.name)];
+      const uris: string[] = await documentPicker.save(options);
+      if (uris.length === 0) {
+        return;
+      }
+      await this.viewModel!.exportToFile(char.id, uris[0]);
+      promptAction.showToast({
+        message: $r('app.string.character_export_success'),
+        duration: 1500
+      });
+    } catch (e) {
+      promptAction.showToast({
+        message: $r('app.string.character_export_failed'),
+        duration: 2000
+      });
+    }
+  }
+
+  private formatSourceLabel(sourceFormat: string): string {
+    if (sourceFormat === 'arktavern_v1') {
+      return 'ArkTavern v1';
+    }
+    if (sourceFormat === 'chara_card_v2') {
+      return 'Character Card V2';
+    }
+    if (sourceFormat === 'chara_card_v3') {
+      return 'Character Card V3';
+    }
+    return sourceFormat;
   }
 }

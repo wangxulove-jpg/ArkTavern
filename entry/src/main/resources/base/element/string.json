@@ -379,6 +379,54 @@
     {
       "name": "character_form_title_edit",
       "value": "编辑角色"
+    },
+    {
+      "name": "character_import",
+      "value": "导入"
+    },
+    {
+      "name": "character_export",
+      "value": "导出"
+    },
+    {
+      "name": "character_import_title",
+      "value": "导入角色"
+    },
+    {
+      "name": "character_import_preview",
+      "value": "预览角色"
+    },
+    {
+      "name": "character_import_confirm",
+      "value": "确认导入"
+    },
+    {
+      "name": "character_import_cancel",
+      "value": "取消"
+    },
+    {
+      "name": "character_import_source_format",
+      "value": "来源格式: %s"
+    },
+    {
+      "name": "character_import_success",
+      "value": "导入成功"
+    },
+    {
+      "name": "character_import_failed",
+      "value": "导入失败"
+    },
+    {
+      "name": "character_export_success",
+      "value": "导出成功"
+    },
+    {
+      "name": "character_export_failed",
+      "value": "导出失败"
+    },
+    {
+      "name": "character_export_filename",
+      "value": "%s.json"
     }
   ]
 }

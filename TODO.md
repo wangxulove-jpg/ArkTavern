@@ -567,6 +567,46 @@ Date: 2026-07-15
 
 ---
 
+### T-2.2 Character JSON 导入、导出与格式兼容
+
+- 依赖:T-2.1
+- 优先级:P1
+- 修改范围:`parser/CharacterCardJsonParser.ets`(新建)、`parser/CharacterCardJsonWriter.ets`(新建)、`services/CharacterService.ets`、`viewmodels/CharacterListViewModel.ets`、`pages/CharacterListPage.ets`、`services/AppServices.ets`、资源文件、测试
+- 参考文件:`ArkTavern-Reference/SillyTavern-release/src/character-card-parser.js`、`src/types/spec-v2.d.ts`(只读)
+- 内容:
+  - 格式解析独立到 parser 层,页面不得直接 JSON.parse 角色卡
+  - CharacterCardJsonParser:解析 ArkTavern schemaVersion=1、V2(chara_card_v2)、V3(chara_card_v3)格式,映射 name/description/personality/scenario/first_mes→firstMessage/system_prompt→systemPrompt 等字段,缺 name 拒绝,损坏 JSON/未知版本/超大文件给可读错误
+  - CharacterCardJsonWriter:导出 ArkTavern schemaVersion=1,文件名安全处理,不含 API Key/模型配置/聊天记录/本地绝对路径
+  - CharacterService:新增 importFromJson/exportToJson/readFileContent/writeFileContent/importFromFile/exportToFile
+  - CharacterListViewModel:导入预览状态(showImportPreview/previewCard/importJsonBuffer),导出操作
+  - CharacterListPage:"导入"按钮(文件选择器→预览→确认→刷新列表),"导出"按钮(每角色→保存位置选择器),不自动设为当前角色
+  - id 冲突时生成新 UUID,不覆盖现有角色
+  - 修正:移除 ensureDefaultCharacter(),正式首次启动角色列表为空;不强制选中角色
+- 验收标准:
+  - [x] ArkTavern JSON 往返(read→write→read 字段一致)
+  - [x] V2/V3 常见字段映射(name/first_mes→firstMessage/system_prompt→systemPrompt)
+  - [x] 非法 JSON、空 name、未知版本给可读错误
+  - [x] id 冲突生成新 UUID
+  - [x] 导入不覆盖当前角色
+  - [x] 导出无敏感数据(apiKey/authorization/token)
+  - [x] 现有角色聊天无回归
+  - [x] 正式首次启动角色列表为空
+  - [x] CharacterListPage 在 main_pages.json 注册(因 @Entry 装饰器要求)
+- 完成情况(2026-07-16):
+  - [x] parser/CharacterCardJsonParser.ets:ParsedCharacterCard 中间格式,parseCharacterJson() 统一入口,支持 ArkTavern v1/V2/V3,含错误处理与字段截断
+  - [x] parser/CharacterCardJsonWriter.ets:writeCharacterToJson() 导出,findSensitiveKeys() 敏感键检测,sanitizeFileName() 安全文件名
+  - [x] CharacterService 新增 parseCharacterJson/importFromParsed/importFromJson/exportToJson/readFileContent/writeFileContent/importFromFile/exportToFile(8 个方法)
+  - [x] CharacterListViewModel 新增 startImportFile/confirmImport/cancelImport/exportToFile
+  - [x] CharacterListPage 新增"导入"按钮(顶部操作栏)、"导出"按钮(每角色卡片)、导入预览对话框(含来源格式标识)、导入错误提示
+  - [x] AppServices 移除 ensureDefaultCharacter(),默认角色列表为空
+  - [x] 设备测试:CharacterCardJsonParser 18/18 + CharacterCardJsonWriter 18/18 + 现有 ChatService 35/35 + ChatViewModel 25/25 = 96/96 通过
+  - [x] MCP build entry@default + entry@ohosTest BUILD SUCCESSFUL
+  - [x] hilog 无敏感数据泄露
+  - 未实现:PNG 元数据解析、头像文件复制、Lorebook、alternate greetings、在线角色市场、RDB
+  - 已知限制:模拟器 DocumentViewPicker 不可用(真机正常),导入/导出仅真机可测试
+
+---
+
 ## Phase 3:角色卡导入
 
 ### T-3.1 定义 Character 内部模型

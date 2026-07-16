@@ -7,6 +7,7 @@
 
 import { Character, CharacterUpdates } from '../models/Character';
 import { CharacterService } from '../services/CharacterService';
+import { ParsedCharacterCard } from '../parser/CharacterCardJsonParser';
 import { Logger } from '../utils/Logger';
 
 const LOG_TAG: string = 'CharacterListViewModel';
@@ -30,6 +31,15 @@ export class CharacterListViewModel {
   editSystemPrompt: string = '';
   /** 删除确认 */
   deleteTarget: Character | null = null;
+  /** 导入预览 */
+  showImportPreview: boolean = false;
+  previewCard: ParsedCharacterCard | null = null;
+  importJsonBuffer: string = '';
+  importing: boolean = false;
+  importError: string = '';
+  /** 导出 */
+  exporting: boolean = false;
+  exportError: string = '';
 
   private readonly service: CharacterService;
 
@@ -144,5 +154,91 @@ export class CharacterListViewModel {
   /** 是否为当前角色 */
   isCurrent(character: Character): boolean {
     return this.currentCharacterId === character.id;
+  }
+
+  // ===== 导入导出 =====
+
+  /**
+   * 从文件 URI 读取并解析角色卡,显示预览。
+   * 页面调用此方法后,检查 showImportPreview 以显示预览对话框。
+   *
+   * @param uri 文件 URI
+   */
+  async startImportFile(uri: string): Promise<void> {
+    this.importing = true;
+    this.importError = '';
+    this.previewCard = null;
+    this.importJsonBuffer = '';
+    this.showImportPreview = false;
+    try {
+      const jsonString: string = await this.service.readFileContent(uri);
+      const result = this.service.parseCharacterJson(jsonString);
+      if (!result.success || result.card === null) {
+        this.importError = result.error !== null ? result.error : '导入失败';
+        return;
+      }
+      this.previewCard = result.card;
+      this.importJsonBuffer = jsonString;
+      this.showImportPreview = true;
+    } catch (e) {
+      this.importError = '导入失败: ' + String(e);
+      Logger.error(LOG_TAG, 'startImportFile failed: ' + String(e));
+    } finally {
+      this.importing = false;
+    }
+  }
+
+  /**
+   * 确认导入:保存预览中的角色卡。
+   * 导入成功后刷新列表,但不自动设为当前角色。
+   */
+  async confirmImport(): Promise<void> {
+    if (this.previewCard === null) {
+      return;
+    }
+    this.importing = true;
+    this.importError = '';
+    try {
+      await this.service.importFromParsed(this.previewCard);
+      this.showImportPreview = false;
+      this.previewCard = null;
+      this.importJsonBuffer = '';
+      await this.load();
+    } catch (e) {
+      this.importError = '保存失败: ' + String(e);
+      Logger.error(LOG_TAG, 'confirmImport failed: ' + String(e));
+    } finally {
+      this.importing = false;
+    }
+  }
+
+  /**
+   * 取消导入预览。
+   */
+  cancelImport(): void {
+    this.showImportPreview = false;
+    this.previewCard = null;
+    this.importJsonBuffer = '';
+    this.importError = '';
+  }
+
+  /**
+   * 导出角色到文件 URI。
+   *
+   * @param id 角色 ID
+   * @param uri 文件 URI
+   */
+  async exportToFile(id: string, uri: string): Promise<void> {
+    this.exporting = true;
+    this.exportError = '';
+    try {
+      await this.service.exportToFile(id, uri);
+    } catch (e) {
+      this.exportError = '导出失败: ' + String(e);
+      Logger.error(LOG_TAG, 'exportToFile failed: ' + String(e));
+      throw new Error(String(e));
+    } finally {
+      this.exporting = false;
+    }
   }
 }

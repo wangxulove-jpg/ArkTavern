@@ -13,6 +13,8 @@ import providerConfigCodecTest from './ProviderConfigCodec.test';
 import openAiProviderTest from './OpenAIProvider.test';
 import openAiProviderStreamTest from './OpenAIProviderStream.test';
 import harmonyHttpClientHelpersTest from './HarmonyHttpClientHelpers.test';
+import parserTest from './CharacterCardJsonParser.test';
+import writerTest from './CharacterCardJsonWriter.test';
 
 export default function testsuite() {
   localUnitTest();
@@ -30,4 +32,6 @@ export default function testsuite() {
   openAiProviderTest();
   openAiProviderStreamTest();
   harmonyHttpClientHelpersTest();
+  parserTest();
+  writerTest();
 }

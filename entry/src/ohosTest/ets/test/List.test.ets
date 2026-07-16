@@ -12,6 +12,8 @@ import modelServiceDeviceTest from './ModelService.test';
 import modelSettingsViewModelTest from './ModelSettingsViewModel.test';
 import chatServiceDeviceTest from './ChatService.test';
 import chatViewModelDeviceTest from './ChatViewModel.test';
+import parserDeviceTest from './CharacterCardJsonParser.test';
+import writerDeviceTest from './CharacterCardJsonWriter.test';
 
 export default function testsuite() {
   abilityTest();
@@ -28,4 +30,6 @@ export default function testsuite() {
   modelSettingsViewModelTest();
   chatServiceDeviceTest();
   chatViewModelDeviceTest();
+  parserDeviceTest();
+  writerDeviceTest();
 }
