@@ -172,8 +172,22 @@ Date: 2026-07-15
 - 修改范围:仅约定,不创建空目录
 - 内容:在 AGENTS.md / ARCHITECTURE.md 基础上,确认实际目录与模块导出方式(Barrel export 或直接路径),记录到后续任务
 - 验收标准:
-  - [ ] 明确每个新文件的归属目录
-  - [ ] 不存在空目录或占位文件
+  - [x] 明确每个新文件的归属目录
+  - [x] 不存在空目录或占位文件
+- 实现说明:
+  - 修改文档:ARCHITECTURE.md(新增 T-0.5 章节)、AGENTS.md(新增 T-0.5 补充规则)、TODO.md(标记完成)
+  - 采用明确相对路径导入,暂不使用 barrel export
+  - 不创建 `index.ets`、不创建统一 `exports.ets`、不使用路径别名
+  - 目录按任务实际需求创建,禁止预先创建空目录或占位文件
+  - 临时 PoC 文件(RealSsePocPage / RealSsePocViewModel / Index 入口 / main_pages 注册)暂时保留
+  - Phase 1 正式 Provider / ModelService / ModelSettingsPage / 正式聊天页完成后,按 ARCHITECTURE.md T-0.5.6 删除条件删除 PoC
+  - Phase 1 首批允许创建的目录:`network/providers/`、`services/`、`components/`
+  - Phase 1 暂不创建:`repositories/`、`database/`、`parser/`、`theme/`
+  - 当前工程无空目录、无占位文件、无 barrel export、无循环依赖
+  - 依赖方向:pages → viewmodels → services → network/providers / repositories / storage / parser → network/core / network/streaming / database / HarmonyOS SDK
+  - models 与 utils 可被多个上层模块使用,必须避免循环依赖
+  - 明确禁止:network 依赖 pages、storage 依赖 pages、repositories 依赖 viewmodels、models 依赖 ArkUI 页面、components 直接调用 Provider、pages 直接调用 AssetStoreKeyStore / HttpStreamTransport、Provider 直接操作 UI 状态、Service 引用具体页面类
+  - 例外:RealSsePocViewModel 为临时 PoC,直接依赖 network/streaming/*,Phase 1 正式 Provider 完成后删除
 
 ---
 
