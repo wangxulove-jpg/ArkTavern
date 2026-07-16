@@ -376,11 +376,22 @@ Date: 2026-07-15
 
 - 依赖:T-1.2、T-1.3、T-1.5
 - 优先级:P1
-- 修改范围:`entry/src/main/ets/services/`(新建)
-- 内容:`services/ModelService.ets`:Provider 配置 CRUD、当前选中 Provider、发送聊天请求(流式/非流式)
+- 修改范围:`entry/src/main/ets/services/`(新建)、`entry/src/main/ets/models/ModelServiceError.ets`(新建)、`entry/src/ohosTest/ets/test/ModelService.test.ets`(新建)、`entry/src/ohosTest/ets/test/List.test.ets`(注册测试)、`entry/src/main/ets/network/streaming/HttpStreamTransport.ets`(修复 unusedSymbol warning)
+- 内容:`services/ModelService.ets` 统一编排 ProviderConfigStore / ProviderKeyStore / AiProvider,提供 13 个公共方法(initialize/listConfigs/getConfig/getCurrentConfig/createConfig/updateConfig/deleteConfig/setCurrentConfig/hasApiKey/sendChat/streamChat/testConnection);`services/ProviderFactory.ets` 工厂与辅助函数;`models/ModelServiceError.ets` 11 种错误类型 + 脱敏 causeMessage
 - 验收标准:
-  - [ ] 页面层不直接接触网络层
-  - [ ] 可切换 Provider
+  - [x] 页面层不直接接触网络层(ModelService 作为唯一入口)
+  - [x] 可切换 Provider(setCurrentConfig + ProviderConfigStore 当前选中管理)
+  - [x] 事务回滚:createConfig 密钥失败回滚配置删除;updateConfig 未传 apiKey 保留原密钥;deleteConfig 部分失败明确返回 PartialFailure
+  - [x] testConnection 不污染正式配置(使用 `__test__.<id>` 临时 alias,测试后清理)
+  - [x] Claude/Gemini 返回 UnsupportedProvider;OpenAICompatible/OpenAI/DeepSeek/OpenRouter 走 OpenAI-compatible 协议
+  - [x] 不缓存 API Key,不修改 ProviderConfig 增加 API Key,不将 API Key 写入 Preferences
+  - [x] wrapNetworkError 不将 err.message 直接拼入 message(脱敏通过 causeMessage 传递)
+  - [x] HttpStreamTransport 两个 unusedSymbol warning 已修复(移除 errorTypeFromStatusCode import 和 dataReceiveCount 字段)
+  - [x] 所有新增文件 ≤600 行(ModelService.ets 600 / ProviderFactory.ets 147 / ModelServiceError.ets 145 / ModelService.test.ets 586)
+  - [x] 设备测试通过:ModelService 20 + ProviderConfigStore 28 + ProviderKeyStore 18 + OpenAIProvider 10 + OpenAIProviderStream 19 = 95/95
+  - [x] 无 API Key 泄漏(源码仅含 `sk-fake*` 假数据)
+  - [x] 未修改页面、AssetStoreKeyStore.ets、ProviderConfigStore.ets、ProviderKeyStore.ets、OpenAIProvider.ets
+  - 未开始 T-1.7
 
 ### T-1.7 实现模型设置页与最小验证页
 

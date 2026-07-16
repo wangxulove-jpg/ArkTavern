@@ -16,7 +16,7 @@
  */
 
 import http from '@ohos.net.http';
-import { NetworkError, NetworkErrorType, createNetworkError, errorTypeFromStatusCode } from '../../models/NetworkError';
+import { NetworkError, NetworkErrorType, createNetworkError } from '../../models/NetworkError';
 import { Utf8StreamDecoder } from './Utf8StreamDecoder';
 import { TransportState, TransportCallbacks, isTerminalState, canTransitionTo } from './StreamTransportTypes';
 
@@ -81,7 +81,6 @@ class RequestContext implements TransportAbortHandle {
   private httpRequest: http.HttpRequest | null = null;
   private statusCode: number = 0;
   private aborted: boolean = false;
-  private dataReceiveCount: number = 0;
   /** headersReceive 先于 Promise resolve 时缓存的响应头 */
   private pendingHeaders: Map<string, string> | null = null;
   /** 标记 headersReceive 已触发(无论 statusCode 是否已知) */
@@ -220,7 +219,6 @@ class RequestContext implements TransportAbortHandle {
     if (isTerminalState(this.state)) {
       return;
     }
-    this.dataReceiveCount++;
     const bytes: Uint8Array = new Uint8Array(data);
     const byteLength: number = bytes.length;
     const chunk: string = this.decoder.feed(bytes);
