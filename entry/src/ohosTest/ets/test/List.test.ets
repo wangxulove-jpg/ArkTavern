@@ -23,6 +23,7 @@ import chatPersistenceOperationsDeviceTest from './ChatPersistenceOperations.tes
 import chatPersistenceServiceDeviceTest from './ChatPersistenceService.test';
 import chatServicePersistenceDeviceTest from './ChatServicePersistence.test';
 import messageRepositoryPersistenceExtensionsDeviceTest from './MessageRepositoryPersistenceExtensions.test';
+import chatSessionRepositoryDeviceTest from './ChatSessionRepository.test';
 
 export default function testsuite() {
   abilityTest();
@@ -49,4 +50,5 @@ export default function testsuite() {
   chatPersistenceServiceDeviceTest();
   chatServicePersistenceDeviceTest();
   messageRepositoryPersistenceExtensionsDeviceTest();
+  chatSessionRepositoryDeviceTest();
 }

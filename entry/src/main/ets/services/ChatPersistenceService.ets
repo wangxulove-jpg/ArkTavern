@@ -226,6 +226,62 @@ export class ChatPersistenceService {
     Logger.info(LOG_TAG, 'deleteSession id=' + chatId.substring(0, 8));
   }
 
+  /**
+   * 列出当前聊天上下文下的会话。
+   * 用于 T-4.5 多会话列表。
+   *
+   * - characterId 为字符串:精确查询 character_id = ?
+   * - characterId 为 undefined:精确查询 character_id IS NULL(仅普通助手会话)
+   * - 始终排除 archived
+   * - 排序:last_message_at DESC → updated_at DESC → id ASC
+   * - 默认最多读取 50 条
+   * - 返回新数组,不修改 Chat 对象
+   * - 不查询消息正文
+   * - 不做 N+1 消息数量查询
+   *
+   * @param characterId 角色 id(可选,undefined 表示普通助手)
+   * @param limit 上限(可选,默认 50)
+   * @returns 会话列表(可能为空)
+   */
+  async listSessionsForContext(
+    characterId?: string,
+    limit?: number
+  ): Promise<Chat[]> {
+    const effectiveLimit: number = limit !== undefined && limit > 0 ? limit : 50;
+    const chats: Chat[] = await this.chatRepository.listByExactCharacterId(
+      characterId, { limit: effectiveLimit, offset: 0 }
+    );
+    Logger.info(LOG_TAG, 'listSessionsForContext count=' + chats.length.toString());
+    return chats;
+  }
+
+  /**
+   * 创建新会话(不删除旧会话)。
+   * 用于 T-4.5 多会话新建。
+   *
+   * - 创建全新的 Chat ID(旧会话保留)
+   * - 有角色 firstMessage 时,事务创建 Chat 和 firstMessage
+   * - 无 firstMessage 时创建空 Chat
+   * - firstMessage 只持久化一次
+   * - 不自动删除旧会话
+   * - 不自动归档旧会话
+   *
+   * @param characterId 角色 id(可选)
+   * @param firstMessage 开场白消息(可选,有值时持久化为 sequence=1)
+   * @param title 会话标题(可选,默认"新对话")
+   * @returns 持久化会话(含 firstMessage 或空消息列表)
+   */
+  async createNewSession(
+    characterId?: string,
+    firstMessage?: ChatMessage,
+    title?: string
+  ): Promise<PersistedChatSession> {
+    if (firstMessage === undefined) {
+      return await this.createSession(characterId, title);
+    }
+    return await this.createSessionWithFirstMessage(characterId, title, firstMessage);
+  }
+
   // ===== 消息级操作 =====
 
   /**

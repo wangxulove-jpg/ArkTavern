@@ -45,6 +45,15 @@ export interface ChatListOptions {
   readonly offset?: number;
 }
 
+/**
+ * 会话列表上下文查询选项。
+ * 用于 listByExactCharacterId,精确区分"指定角色"与"普通助手(character_id IS NULL)"。
+ */
+export interface ChatContextListOptions {
+  readonly limit?: number;
+  readonly offset?: number;
+}
+
 function chatToBucket(chat: Chat): relationalStore.ValuesBucket {
   const bucket: relationalStore.ValuesBucket = {};
   bucket[COLUMN_ID] = chat.id;
@@ -354,6 +363,66 @@ export class ChatRepository {
         return null;
       }
       return chatFromRow(rs);
+    } finally {
+      rs.close();
+    }
+  }
+
+  /**
+   * 按当前聊天上下文精确查询未归档会话列表。
+   *
+   * 与 list() 的差异:
+   * - list() 把 characterId === undefined 解释为"不筛选",会返回所有 Chat(含角色 Chat)
+   * - 本方法把 characterId === undefined 解释为"character_id IS NULL"(仅普通助手会话)
+   * - characterId 为字符串时精确 equalTo
+   * - 始终排除 archived
+   * - 排序与 list()/getLatestByCharacterId() 一致:
+   *   last_message_at DESC → updated_at DESC → id ASC
+   *
+   * 用于 T-4.5 多会话列表的当前上下文过滤。
+   */
+  async listByExactCharacterId(
+    characterId: string | undefined,
+    options?: ChatContextListOptions
+  ): Promise<Chat[]> {
+    const limit: number =
+      options !== undefined && options.limit !== undefined
+        ? options.limit
+        : DEFAULT_LIMIT;
+    const offset: number =
+      options !== undefined && options.offset !== undefined
+        ? options.offset
+        : 0;
+
+    if (limit < 1 || limit > MAX_LIMIT) {
+      throw DatabaseError.invalidData('limit out of range');
+    }
+    if (offset < 0) {
+      throw DatabaseError.invalidData('offset out of range');
+    }
+
+    const store: relationalStore.RdbStore = this.dbHelper.getStore();
+    const predicates: relationalStore.RdbPredicates =
+      new relationalStore.RdbPredicates(TABLE_CHATS);
+    predicates.equalTo(COLUMN_IS_ARCHIVED, 0);
+    if (characterId !== undefined) {
+      predicates.equalTo(COLUMN_CHARACTER_ID, characterId);
+    } else {
+      predicates.isNull(COLUMN_CHARACTER_ID);
+    }
+    predicates.orderByDesc(COLUMN_LAST_MESSAGE_AT);
+    predicates.orderByDesc(COLUMN_UPDATED_AT);
+    predicates.orderByAsc(COLUMN_ID);
+    predicates.limitAs(limit);
+    predicates.offsetAs(offset);
+
+    const rs: relationalStore.ResultSet = await store.query(predicates);
+    try {
+      const chats: Chat[] = [];
+      while (rs.goToNextRow()) {
+        chats.push(chatFromRow(rs));
+      }
+      return chats;
     } finally {
       rs.close();
     }

@@ -20,6 +20,7 @@ import { ChatService, ChatState, ChatServiceCallbacks } from '../services/ChatSe
 import { ModelService } from '../services/ModelService';
 import { ChatMessage, ChatMessageStatus } from '../models/ChatMessage';
 import { ChatRole } from '../models/ChatRole';
+import { Chat } from '../models/Chat';
 import { ProviderConfig } from '../models/ProviderConfig';
 import { Character } from '../models/Character';
 import { CharacterService } from '../services/CharacterService';
@@ -49,6 +50,22 @@ export class ChatViewModel {
   isSessionReady: boolean = false;
   /** 会话初始化失败错误信息(空表示无错误) */
   initError: string = '';
+
+  // ===== T-4.5 会话列表状态 =====
+  /** 当前上下文的会话列表 */
+  sessions: Chat[] = [];
+  /** 是否显示会话列表面板 */
+  showSessionList: boolean = false;
+  /** 会话列表加载中 */
+  isLoadingSessions: boolean = false;
+  /** 会话操作进行中(新建/切换/删除) */
+  isSessionOperating: boolean = false;
+  /** 会话操作错误信息(空表示无错误) */
+  sessionError: string = '';
+  /** 待删除的会话 id(确认对话框使用) */
+  pendingDeleteChatId: string = '';
+  /** 是否显示删除会话确认对话框 */
+  showDeleteSessionConfirm: boolean = false;
 
   private chatService: ChatService;
   private modelService: ModelService;
@@ -244,6 +261,203 @@ export class ChatViewModel {
 
   updateInput(value: string): void {
     this.inputText = value;
+  }
+
+  // ===== T-4.5 会话列表方法 =====
+
+  /**
+   * 打开会话列表面板。
+   * 进入 Loading,加载完成后填充 sessions。
+   */
+  async openSessionList(): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
+    this.showSessionList = true;
+    this.sessionError = '';
+    await this.refreshSessions();
+  }
+
+  /** 关闭会话列表面板(不取消已发起的删除确认) */
+  closeSessionList(): void {
+    this.showSessionList = false;
+    // 关闭面板时不清除 sessionError,避免关闭瞬间闪错误提示
+  }
+
+  /** 刷新会话列表 */
+  async refreshSessions(): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
+    this.isLoadingSessions = true;
+    try {
+      this.sessions = await this.chatService.listSessions();
+    } catch (e) {
+      this.sessionError = '加载会话列表失败';
+      Logger.error(LOG_TAG, 'refreshSessions failed: ' + String(e));
+    } finally {
+      this.isLoadingSessions = false;
+    }
+  }
+
+  /** 新建会话 */
+  async createNewSession(): Promise<void> {
+    if (this.disposed || this.isSessionOperating || this.isGenerating) {
+      return;
+    }
+    this.isSessionOperating = true;
+    this.sessionError = '';
+    try {
+      await this.chatService.startNewSession();
+      this.messages = [...this.chatService.getMessages()];
+      if (this.onMessagesUpdate !== undefined) {
+        this.onMessagesUpdate([...this.messages]);
+      }
+      this.canRegenerate = this.chatService.canRegenerate();
+      this.errorMessage = '';
+      this.statusMessage = '';
+      await this.refreshSessions();
+    } catch (e) {
+      this.sessionError = this.toSessionOpError(String(e));
+      Logger.error(LOG_TAG, 'createNewSession failed: ' + String(e));
+    } finally {
+      this.isSessionOperating = false;
+    }
+  }
+
+  /** 选择并切换到指定会话 */
+  async selectSession(chatId: string): Promise<void> {
+    if (this.disposed || this.isSessionOperating || this.isGenerating) {
+      return;
+    }
+    if (chatId.length === 0) {
+      return;
+    }
+    if (this.isCurrentSession(chatId)) {
+      this.showSessionList = false;
+      return;
+    }
+    this.isSessionOperating = true;
+    this.sessionError = '';
+    try {
+      await this.chatService.switchSession(chatId);
+      this.messages = [...this.chatService.getMessages()];
+      if (this.onMessagesUpdate !== undefined) {
+        this.onMessagesUpdate([...this.messages]);
+      }
+      this.canRegenerate = this.chatService.canRegenerate();
+      this.errorMessage = '';
+      this.statusMessage = '';
+      this.showSessionList = false;
+      await this.refreshSessions();
+    } catch (e) {
+      this.sessionError = this.toSessionOpError(String(e));
+      Logger.error(LOG_TAG, 'selectSession failed: ' + String(e));
+    } finally {
+      this.isSessionOperating = false;
+    }
+  }
+
+  /** 请求删除会话(显示确认对话框) */
+  requestDeleteSession(chatId: string): void {
+    if (this.disposed || this.isSessionOperating || this.isGenerating) {
+      return;
+    }
+    if (chatId.length === 0) {
+      return;
+    }
+    this.pendingDeleteChatId = chatId;
+    this.showDeleteSessionConfirm = true;
+    this.sessionError = '';
+  }
+
+  /** 取消删除会话 */
+  cancelDeleteSession(): void {
+    this.pendingDeleteChatId = '';
+    this.showDeleteSessionConfirm = false;
+  }
+
+  /** 确认删除会话 */
+  async confirmDeleteSession(): Promise<void> {
+    if (this.disposed || this.isSessionOperating || this.isGenerating) {
+      return;
+    }
+    const chatId: string = this.pendingDeleteChatId;
+    if (chatId.length === 0) {
+      this.showDeleteSessionConfirm = false;
+      return;
+    }
+    this.isSessionOperating = true;
+    this.showDeleteSessionConfirm = false;
+    try {
+      await this.chatService.deleteSession(chatId);
+      // 删除可能切换了当前会话,同步 messages
+      this.messages = [...this.chatService.getMessages()];
+      if (this.onMessagesUpdate !== undefined) {
+        this.onMessagesUpdate([...this.messages]);
+      }
+      this.canRegenerate = this.chatService.canRegenerate();
+      this.errorMessage = '';
+      this.statusMessage = '';
+      this.pendingDeleteChatId = '';
+      await this.refreshSessions();
+    } catch (e) {
+      this.sessionError = this.toSessionOpError(String(e));
+      this.pendingDeleteChatId = '';
+      Logger.error(LOG_TAG, 'confirmDeleteSession failed: ' + String(e));
+    } finally {
+      this.isSessionOperating = false;
+    }
+  }
+
+  /** 判断指定会话是否为当前会话 */
+  isCurrentSession(chatId: string): boolean {
+    const currentId: string | undefined = this.chatService.getCurrentChatId();
+    return currentId !== undefined && currentId === chatId;
+  }
+
+  /** 会话操作按钮是否可用(生成中或操作中禁用) */
+  get canOperateSessions(): boolean {
+    return !this.isGenerating && !this.isSessionOperating && this.isSessionReady;
+  }
+
+  /** 获取会话标题(空 title 显示"新对话") */
+  getSessionTitle(chat: Chat): string {
+    return chat.title.length > 0 ? chat.title : '新对话';
+  }
+
+  /** 获取会话副标题(格式化更新时间) */
+  getSessionSubtitle(chat: Chat): string {
+    const ts: number = chat.lastMessageAt > 0 ? chat.lastMessageAt : chat.updatedAt;
+    if (ts <= 0) {
+      return '';
+    }
+    const d: Date = new Date(ts);
+    const month: string = (d.getMonth() + 1).toString().padStart(2, '0');
+    const day: string = d.getDate().toString().padStart(2, '0');
+    const hour: string = d.getHours().toString().padStart(2, '0');
+    const minute: string = d.getMinutes().toString().padStart(2, '0');
+    return month + '-' + day + ' ' + hour + ':' + minute;
+  }
+
+  /** 将 ChatService 抛出的错误转换为用户可读的会话操作错误 */
+  private toSessionOpError(message: string): string {
+    if (message.includes('请先停止当前回复')) {
+      return '请先停止当前回复';
+    }
+    if (message.includes('会话操作进行中')) {
+      return '操作进行中,请稍候';
+    }
+    if (message.includes('会话不存在') || message.includes('已删除')) {
+      return '会话不存在或已删除';
+    }
+    if (message.includes('不属于当前聊天上下文')) {
+      return '会话不属于当前上下文';
+    }
+    if (message.includes('会话 id 为空')) {
+      return '会话 id 无效';
+    }
+    return '会话操作失败,请重试';
   }
 
   /** 获取消息的状态显示文本 */

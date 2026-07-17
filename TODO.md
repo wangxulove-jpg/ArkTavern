@@ -1016,14 +1016,22 @@ Date: 2026-07-15
   - [ ] 可按 chatId 分页查询消息
   - [ ] 增删改落库
 
-### T-4.5 Service 层切换为 Repository
+### T-4.5 Chat Session List MVP
 
-- 依赖:T-4.3、T-4.4、T-2.2、T-3.4
+> 原"Service 层切换为 Repository"中的聊天持久化部分已由 T-4.4 完成;
+> 本任务完成多会话列表、新建、切换和删除。
+
+- 依赖:T-4.4、T-2.2、T-3.4
 - 优先级:P1
-- 修改范围:`services/ChatService.ets`、`services/CharacterService.ets`
+- 修改范围:`services/ChatService.ets`、`services/ChatPersistenceService.ets`、`viewmodels/ChatViewModel.ets`、`pages/ChatPage.ets`、`components/ChatSessionListPanel.ets`、`repositories/ChatRepository.ets`
 - 验收标准:
-  - [ ] 重启后数据保留
-  - [ ] 多会话切换正常
+  - [ ] 当前上下文会话列表可见
+  - [ ] 可新建、切换、删除会话
+  - [ ] 删除当前会话后自动回退或新建
+  - [ ] 角色与普通助手会话严格隔离
+  - [ ] 生成中禁止会话变更
+  - [ ] 应用重启后会话仍存在
+  - [ ] 无正文/SQL/Prompt/API Key 日志泄漏
 
 ---
 
@@ -1842,6 +1850,7 @@ hilog 关键日志确认持久化流程完整跑通:
 
 这些项由 60 项测试代码覆盖(编译通过),实际执行受 Test Runner 环境限制,需在 DevEco Studio IDE 中手动运行或后续实机验证。
 
+
 ### 14. 尚未解决的问题
 
 - **多会话列表 UI 尚未实现**:本任务仅实现内部 `startNewSession()` 能力(未实现按钮),未实现完整聊天列表页 / 搜索 / 重命名 / 归档 / 删除 UI
@@ -1861,3 +1870,76 @@ hilog 关键日志确认持久化流程完整跑通:
 - Lorebook RDB
 - Summary / Swipe / Preset
 
+
+- [x] 人工运行验收通过：
+  - User 消息持久化
+  - Assistant 完整回复持久化
+  - 页面退出后恢复
+  - 应用重启后恢复
+  - regenerate 后数据库与页面一致
+  - Streaming 中断后恢复为 Cancelled
+  - 普通聊天与角色聊天隔离
+  - firstMessage 不重复
+  - 页面退出时最后一批 delta 未丢失
+- [x] T-4.4 正式验收通过
+
+
+## T-4.5 Chat Session List MVP 完成记录(2026-07-17)
+
+> 说明:本任务对应 TODO.md 计划中的 T-4.5。在 T-4.4 持久化基础上增加正式多会话管理能力:
+> 当前上下文会话列表、新建、切换、删除、删除当前会话自动回退、生成期间保护、角色与普通助手隔离。
+
+### 实现概要
+
+- **会话列表实现形式**:ChatPage 内部覆盖层 `components/ChatSessionListPanel.ets`,通过 `@ObjectLink` 引用 ChatViewModel,不引入跨页面回调和全局选择状态。
+- **当前角色与普通助手隔离**:`ChatRepository.listByExactCharacterId(characterId, options)` 精确匹配;有角色时 `equalTo('character_id', id)`,无角色时 `isNull('character_id')`;始终排除 `is_archived = true`。
+- **新建会话流程**:`ChatService.startNewSession()` → flush pending → `ChatPersistenceService.createNewSession(characterId, firstMessage, title)` → 设置 currentChatId/currentSequenceNumber → 替换 messages 数组 → 通知 onMessagesUpdate → 刷新列表。
+- **切换会话流程**:`ChatService.switchSession(chatId)` → 校验目标属于当前上下文 → flush pending → 加载目标会话 → normalize interrupted Streaming 消息 → 替换状态 → 通知页面。
+- **删除会话及当前会话回退规则**:`ChatPersistenceOperations.removeChatWithMessages()` 事务删除 Chat+Message;删除当前会话后查询剩余会话,有则切换最近,无则自动新建(有角色 firstMessage 时只创建一次)。
+- **生成期间操作保护**:`isGenerating()` 为 true 时禁止 listSessions/startNewSession/switchSession/deleteSession,UI 按钮置灰。
+- **会话操作串行化**:`sessionOperationInProgress` 布尔锁,每次操作进入检查、finally 释放,防止并发新建/切换/删除。
+
+### AppServices / ChatService / ChatViewModel 接入
+
+- **AppServices**:沿用 T-4.4 的 `createChatService()`,无新增。
+- **ChatService**:新增 `listSessions()` / `startNewSession()` / `switchSession(chatId)` / `deleteSession(chatId)` / `getCurrentChatId()` / `isSessionOperationInProgress()`。
+- **ChatViewModel**:新增 `sessions` / `showSessionList` / `isLoadingSessions` / `isSessionOperating` / `sessionError` / `pendingDeleteChatId` / `showDeleteSessionConfirm` 状态 + `openSessionList()` / `closeSessionList()` / `refreshSessions()` / `createNewSession()` / `selectSession(chatId)` / `requestDeleteSession(chatId)` / `cancelDeleteSession()` / `confirmDeleteSession()` / `isCurrentSession(chatId)` 方法。
+
+### Repository 最小扩展
+
+- `ChatRepository.listByExactCharacterId(characterId: string | undefined, options?: ChatContextListOptions): Promise<Chat[]>`
+- `ChatContextListOptions { limit?: number; offset?: number }`
+- 不改变现有 `list()` 旧语义。
+
+### ChatPersistenceService 扩展
+
+- `listSessionsForContext(characterId?, limit?): Promise<Chat[]>`(默认 limit=50,不查消息正文,不 N+1)
+- `createNewSession(characterId?, firstMessage?, title?): Promise<PersistedChatSession>`(事务创建 Chat + firstMessage,只持久化一次)
+- `deleteSession(chatId)` 沿用 `ChatPersistenceOperations.removeChatWithMessages()`
+
+### 定向测试
+
+- **测试代码编译状态**:
+  - `entry@default` BUILD SUCCESSFUL
+  - `entry@ohosTest` BUILD SUCCESSFUL
+- **测试实际执行状态**:本会话仅完成编译验证,未在 DevEco Studio IDE 中运行设备测试(按快速执行规则,设备测试需在 IDE 中执行,本会话不启动设备测试)。
+- 测试文件:
+  - `entry/src/test/ChatSessionService.test.ets`(本地 34 项,LocalMockPersistenceService 内存 mock)
+  - `entry/src/test/ChatSessionViewModel.test.ets`(本地 16 项,MockChatServiceForSession)
+  - `entry/src/ohosTest/ets/test/ChatSessionRepository.test.ets`(设备 12 项,独立测试数据库)
+
+### 尚未解决的问题
+
+- 设备测试实际执行结果待在 DevEco Studio IDE 中验证(本会话仅编译通过)。
+- 模拟器人工验收 5 个场景未执行(需设备环境)。
+- 应用重启后会话恢复的实机验证未执行(需设备环境)。
+- CharacterRepository / Summary / Swipe / Preset / Lorebook RDB / 会话搜索 / 重命名 / 归档 / 正文生成标题:均按任务要求不实现。
+
+### 日志泄漏检查
+
+- ChatService 会话操作日志仅输出:`ChatSession | list count=N` / `ChatSession | created` / `ChatSession | switched` / `ChatSession | deleted`。
+- 不输出 chatId 完整值、title 原文、消息正文、firstMessage、SQL、ValuesBucket、Character Prompt、世界书正文、API Key、Authorization、宏替换结果。
+
+- [x] T-4.5 正式验收通过(编译层面)
+- [ ] T-4.5 设备测试实际执行验证(待 IDE 中运行)
+- [ ] T-4.5 模拟器人工验收(待设备环境)

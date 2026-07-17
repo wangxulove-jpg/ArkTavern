@@ -49,6 +49,7 @@ import { ProviderConfig } from '../models/ProviderConfig';
 import { TokenBudget, DEFAULT_CONTEXT_WINDOW, DEFAULT_RESERVED_OUTPUT_TOKENS } from '../models/TokenBudget';
 import { HistoryTrimResult } from '../models/HistoryTrimResult';
 import { PersistedChatSession } from '../models/PersistedChatSession';
+import { Chat } from '../models/Chat';
 import { generateUuid } from '../utils/Uuid';
 import { Logger } from '../utils/Logger';
 
@@ -531,6 +532,216 @@ export class ChatService {
     this.setState(ChatState.Idle, this.lastCallbacks);
     this.emitMessages(this.lastCallbacks);
     Logger.info(LOG_TAG, 'clearConversation');
+  }
+
+  // ===== T-4.5 多会话操作 =====
+
+  /** 会话操作进行中(防止并发新建/切换/删除) */
+  private sessionOperationInProgress: boolean = false;
+
+  /**
+   * 列出当前聊天上下文下的会话。
+   * - 有角色:使用 character.id 精确查询
+   * - 无角色:查询 character_id IS NULL(仅普通助手会话)
+   * - 始终排除 archived
+   * - 排序:last_message_at DESC → updated_at DESC → id ASC
+   * - 默认最多 50 条
+   *
+   * @returns 会话列表(可能为空)。无 persistenceService 时返回空数组。
+   */
+  async listSessions(): Promise<Chat[]> {
+    if (this.persistenceService === null) {
+      return [];
+    }
+    const characterId: string | undefined =
+      this.character !== null ? this.character.id : undefined;
+    return await this.persistenceService.listSessionsForContext(characterId);
+  }
+
+  /**
+   * 新建会话。
+   *
+   * 流程:
+   * 1. 校验:未生成、未在执行其他会话操作
+   * 2. flush pending persistence
+   * 3. 使用当前角色上下文创建新 Chat
+   * 4. 有角色 firstMessage 时只创建一次
+   * 5. 设置新的 currentChatId、currentSequenceNumber
+   * 6. 用新数组替换 messages
+   * 7. 通知 onMessagesChanged
+   * 8. 清除上一次生成状态、错误状态和 Token 统计
+   *
+   * 不会:清空旧 Chat 数据 / 复用旧 chatId / 把旧 messages 写入新 Chat / 重复插入 firstMessage。
+   *
+   * @throws Error 生成中或会话操作进行中,或持久化失败
+   */
+  async startNewSession(): Promise<void> {
+    if (this.disposed) {
+      throw new Error('ChatService disposed');
+    }
+    if (this.isGenerating()) {
+      throw new Error('请先停止当前回复');
+    }
+    if (this.sessionOperationInProgress) {
+      throw new Error('会话操作进行中,请稍候');
+    }
+    this.sessionOperationInProgress = true;
+    try {
+      this.flushPersistence();
+      const characterId: string | undefined =
+        this.character !== null ? this.character.id : undefined;
+      await this.createNewSession(characterId);
+      this.lastTokenBudget = undefined;
+      this.lastHistoryTrimResult = undefined;
+      this.currentAssistantId = null;
+      this.setState(ChatState.Idle, this.lastCallbacks);
+      this.emitMessages(this.lastCallbacks);
+      Logger.info(LOG_TAG, 'startNewSession ok');
+    } finally {
+      this.sessionOperationInProgress = false;
+    }
+  }
+
+  /**
+   * 切换到指定会话。
+   *
+   * 流程:
+   * 1. 校验:未生成、未在执行其他会话操作
+   * 2. 验证 chatId 非空
+   * 3. 相同 chatId 直接返回(不重复加载、不重复 firstMessage)
+   * 4. flush pending persistence
+   * 5. 加载目标会话(自动 normalize interrupted Streaming)
+   * 6. 验证目标会话属于当前角色或普通助手上下文
+   * 7. 替换 currentChatId、currentSequenceNumber、messages
+   * 8. 通知页面更新
+   * 9. 清除旧会话的 UI 临时状态
+   *
+   * 不会:自动发起模型请求 / 信任列表传入的 Chat 对象(在 Service 层再次校验)。
+   *
+   * @param chatId 目标会话 id
+   * @throws Error 生成中、会话操作进行中、chatId 无效、目标不存在、目标不属于当前上下文
+   */
+  async switchSession(chatId: string): Promise<void> {
+    if (this.disposed) {
+      throw new Error('ChatService disposed');
+    }
+    if (this.isGenerating()) {
+      throw new Error('请先停止当前回复');
+    }
+    if (this.sessionOperationInProgress) {
+      throw new Error('会话操作进行中,请稍候');
+    }
+    if (chatId.length === 0) {
+      throw new Error('会话 id 为空');
+    }
+    this.sessionOperationInProgress = true;
+    try {
+      if (this.currentChatId === chatId) {
+        Logger.info(LOG_TAG, 'switchSession same chatId, skip');
+        return;
+      }
+      this.flushPersistence();
+      await this.switchToSessionInternal(chatId);
+      this.lastTokenBudget = undefined;
+      this.lastHistoryTrimResult = undefined;
+      this.currentAssistantId = null;
+      this.setState(ChatState.Idle, this.lastCallbacks);
+      this.emitMessages(this.lastCallbacks);
+    } finally {
+      this.sessionOperationInProgress = false;
+    }
+  }
+
+  /**
+   * 删除指定会话。
+   *
+   * - 删除非当前会话:删除 Chat 和 Message(事务),当前页面消息不变
+   * - 删除当前会话:删除后按以下顺序回退:
+   *   1. 查询当前上下文剩余会话
+   *   2. 存在则加载最近一条
+   *   3. 不存在则立即创建一条新会话(有角色 firstMessage 时加入)
+   *   4. 页面立即更新为新会话消息
+   *
+   * @param chatId 待删除的会话 id
+   * @throws Error 生成中、会话操作进行中、删除失败
+   */
+  async deleteSession(chatId: string): Promise<void> {
+    if (this.disposed) {
+      throw new Error('ChatService disposed');
+    }
+    if (this.isGenerating()) {
+      throw new Error('请先停止当前回复');
+    }
+    if (this.sessionOperationInProgress) {
+      throw new Error('会话操作进行中,请稍候');
+    }
+    if (chatId.length === 0) {
+      throw new Error('会话 id 为空');
+    }
+    if (this.persistenceService === null) {
+      throw new Error('persistenceService unavailable');
+    }
+    this.sessionOperationInProgress = true;
+    try {
+      await this.persistenceService.deleteSession(chatId);
+      Logger.info(LOG_TAG, 'deleteSession ok');
+
+      if (chatId === this.currentChatId) {
+        // 删除的是当前会话:查询剩余,自动切换或新建
+        const characterId: string | undefined =
+          this.character !== null ? this.character.id : undefined;
+        const remaining: Chat[] =
+          await this.persistenceService.listSessionsForContext(characterId, 50);
+        if (remaining.length > 0) {
+          // 列表已按 last_message_at DESC 排序,首条为最近会话
+          await this.switchToSessionInternal(remaining[0].id);
+        } else {
+          // 无剩余会话,创建新会话
+          await this.createNewSession(characterId);
+        }
+        this.lastTokenBudget = undefined;
+        this.lastHistoryTrimResult = undefined;
+        this.currentAssistantId = null;
+        this.setState(ChatState.Idle, this.lastCallbacks);
+        this.emitMessages(this.lastCallbacks);
+      }
+    } finally {
+      this.sessionOperationInProgress = false;
+    }
+  }
+
+  /**
+   * 是否正在执行会话操作(新建/切换/删除)。
+   * 用于页面禁用按钮。
+   */
+  isSessionOperationInProgress(): boolean {
+    return this.sessionOperationInProgress;
+  }
+
+  /**
+   * 内部:切换到指定会话并替换当前状态(不持锁,由调用方持锁)。
+   * 验证目标会话属于当前角色或普通助手上下文。
+   */
+  private async switchToSessionInternal(chatId: string): Promise<void> {
+    if (this.persistenceService === null) {
+      throw new Error('persistenceService unavailable');
+    }
+    const session: PersistedChatSession | null =
+      await this.persistenceService.loadSession(chatId);
+    if (session === null) {
+      throw new Error('会话不存在或已删除');
+    }
+    // 验证上下文归属
+    const expectedCharId: string | undefined =
+      this.character !== null ? this.character.id : undefined;
+    const actualCharId: string | undefined = session.chat.characterId;
+    if (expectedCharId !== actualCharId) {
+      throw new Error('目标会话不属于当前聊天上下文');
+    }
+    this.currentChatId = session.chat.id;
+    this.messages = session.messages.slice();
+    this.currentSequenceNumber = session.maxSequenceNumber;
+    Logger.info(LOG_TAG, 'switchSession ok messages=' + this.messages.length.toString());
   }
 
   /**

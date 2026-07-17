@@ -19,6 +19,7 @@ import { ChatRole } from '../models/ChatRole';
 import { promptAction } from '@kit.ArkUI';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { AppServices } from '../services/AppServices';
+import { ChatSessionListPanel } from '../components/ChatSessionListPanel';
 
 // ===== 资源引用 =====
 const RES_NAV_CHAT_TITLE: string = 'nav_chat_title';
@@ -85,31 +86,62 @@ export struct ChatPage {
     this.messages = [];
   }
 
+  onBackPress(): boolean {
+    if (this.viewModel !== null) {
+      // 删除确认对话框优先关闭
+      if (this.viewModel!.showDeleteSessionConfirm) {
+        this.viewModel!.cancelDeleteSession();
+        return true;
+      }
+      // 会话列表面板次优先关闭
+      if (this.viewModel!.showSessionList) {
+        this.viewModel!.closeSessionList();
+        return true;
+      }
+    }
+    return false;
+  }
+
   build() {
     NavDestination() {
-      Column() {
-        // 顶部状态区
-        Row() {
-          Text(this.viewModel!.characterName.length > 0
-            ? this.viewModel!.characterName + ' · ' + this.viewModel!.currentModelName
-            : this.viewModel!.currentModelName)
-            .fontSize(14)
-            .fontColor($r('sys.color.ohos_id_color_text_secondary'))
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .layoutWeight(1)
+      Stack() {
+        Column() {
+          // 顶部状态区
+          Row() {
+            Text(this.viewModel!.characterName.length > 0
+              ? this.viewModel!.characterName + ' · ' + this.viewModel!.currentModelName
+              : this.viewModel!.currentModelName)
+              .fontSize(14)
+              .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .layoutWeight(1)
 
-          if (this.viewModel!.statusMessage.length > 0) {
-            Text(this.viewModel!.statusMessage)
+            if (this.viewModel!.statusMessage.length > 0) {
+              Text(this.viewModel!.statusMessage)
+                .fontSize(13)
+                .fontColor(this.viewModel!.isGenerating
+                  ? $r('sys.color.ohos_id_color_text_primary')
+                  : COLOR_STATUS_WARN)
+                .margin({ left: 8 })
+            }
+
+            // T-4.5 会话列表入口
+            Button('会话')
               .fontSize(13)
-              .fontColor(this.viewModel!.isGenerating
-                ? $r('sys.color.ohos_id_color_text_primary')
-                : COLOR_STATUS_WARN)
+              .backgroundColor($r('sys.color.ohos_id_color_button_normal'))
+              .fontColor($r('sys.color.ohos_id_color_text_primary'))
+              .borderRadius(16)
+              .height(32)
+              .padding({ left: 12, right: 12 })
               .margin({ left: 8 })
+              .enabled(this.viewModel!.isSessionReady)
+              .onClick(() => {
+                this.viewModel!.openSessionList();
+              })
           }
-        }
-        .width('100%')
-        .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+          .width('100%')
+          .padding({ left: 16, right: 16, top: 8, bottom: 8 })
 
         if (this.viewModel!.errorMessage.length > 0) {
           Text(this.viewModel!.errorMessage)
@@ -259,6 +291,12 @@ export struct ChatPage {
       .width('100%')
       .height('100%')
       .backgroundColor($r('sys.color.ohos_id_color_sub_background'))
+
+      // T-4.5 会话列表面板覆盖层(全屏覆盖在主内容之上)
+      if (this.viewModel !== null && this.viewModel!.showSessionList) {
+        ChatSessionListPanel({ viewModel: this.viewModel! })
+      }
+    }
     }
     .title(this.viewModel!.characterName.length > 0
       ? this.viewModel!.characterName
