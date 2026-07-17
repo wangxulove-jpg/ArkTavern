@@ -24,6 +24,7 @@ import tokenCounterTest from './TokenCounter.test';
 import chatServiceTokenTest from './ChatServiceToken.test';
 import historyTrimmerTest from './HistoryTrimmer.test';
 import databaseSchemaTest from './DatabaseSchema.test';
+import repositoryMappersTest from './RepositoryMappers.test';
 
 export default function testsuite() {
   localUnitTest();
@@ -51,4 +52,5 @@ export default function testsuite() {
   tokenCounterTest();
   chatServiceTokenTest();
   historyTrimmerTest();
+  repositoryMappersTest();
 }

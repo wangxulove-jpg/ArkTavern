@@ -20,7 +20,11 @@ export enum DatabaseErrorType {
   TransactionFailed,
   UnsupportedVersion,
   QueryFailed,
-  Closed
+  Closed,
+  NotFound,
+  AlreadyExists,
+  InvalidData,
+  ConstraintFailed
 }
 
 export class DatabaseError extends Error {
@@ -94,6 +98,38 @@ export class DatabaseError extends Error {
     return new DatabaseError(
       DatabaseErrorType.QueryFailed,
       'query failed',
+      cause
+    );
+  }
+
+  static notFound(cause: string = ''): DatabaseError {
+    return new DatabaseError(
+      DatabaseErrorType.NotFound,
+      'record not found',
+      cause
+    );
+  }
+
+  static alreadyExists(cause: string = ''): DatabaseError {
+    return new DatabaseError(
+      DatabaseErrorType.AlreadyExists,
+      'record already exists',
+      cause
+    );
+  }
+
+  static invalidData(cause: string = ''): DatabaseError {
+    return new DatabaseError(
+      DatabaseErrorType.InvalidData,
+      'invalid data',
+      cause
+    );
+  }
+
+  static constraintFailed(cause: string = ''): DatabaseError {
+    return new DatabaseError(
+      DatabaseErrorType.ConstraintFailed,
+      'constraint failed',
       cause
     );
   }

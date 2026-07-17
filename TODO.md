@@ -1357,3 +1357,139 @@ T-0.1 → T-0.2 → (T-0.3 ‖ T-0.4) → T-0.5 → T-1.1 → T-1.2 → T-1.3 �
 - T-4.4 ChatRepository / MessageRepository
 - Repository 阶段再注入 DbHelper
 
+---
+
+## T-4.3 ChatRepository + MessageRepository MVP 完成记录(2026-07-17)
+
+> 说明:本任务对应 TODO.md 计划中的 T-4.4(ChatRepository / MessageRepository)。任务编号沿用用户下发的 T-4.3。T-4.3 CharacterRepository 暂未实现,不在本任务范围。
+
+### 1. 新增和修改文件
+
+#### 新增文件(9 个)
+
+- `entry/src/main/ets/models/Chat.ets`(87 行)— Chat 纯数据模型 + 工厂/不可变更新
+- `entry/src/main/ets/repositories/RepositoryMappers.ets`(131 行)— 枚举解析/校验/工具函数
+- `entry/src/main/ets/repositories/ChatRepository.ets`(320 行)— Chat CRUD + 分页 + WithStore
+- `entry/src/main/ets/repositories/MessageRepository.ets`(561 行)— Message CRUD + 分页 + 批量插入 + WithStore
+- `entry/src/main/ets/repositories/ChatPersistenceOperations.ets`(71 行)— 联合删除事务
+- `entry/src/test/RepositoryMappers.test.ets`(415 行)— 本地纯逻辑测试
+- `entry/src/ohosTest/ets/test/ChatRepository.test.ets`(618 行)— 设备测试 25 项
+- `entry/src/ohosTest/ets/test/MessageRepository.test.ets`(999 行)— 设备测试 40 项
+- `entry/src/ohosTest/ets/test/ChatPersistenceOperations.test.ets`(372 行)— 设备测试 7 项
+
+#### 修改文件(4 个)
+
+- `entry/src/main/ets/models/DatabaseError.ets`— 新增 `NotFound` / `AlreadyExists` / `InvalidData` / `ConstraintFailed` 4 个错误类型及静态工厂
+- `entry/src/test/List.test.ets`— 注册 `repositoryMappersTest`
+- `entry/src/ohosTest/ets/test/List.test.ets`— 注册 `chatRepositoryDeviceTest` / `messageRepositoryDeviceTest` / `chatPersistenceOperationsDeviceTest`
+- `TODO.md`— 本完成记录
+
+### 2. Chat 模型设计
+
+- 纯数据 interface,无 ArkUI / RDB / 页面依赖
+- 字段:`id` / `characterId?` / `title` / `createdAt` / `updatedAt` / `lastMessageAt` / `isArchived`
+- 工厂函数 `createChat(options?)`:id 默认 UUID,时间默认 `nowMillis()`,title 默认空串,characterId 为空表示普通助手聊天
+- 不可变更新 `updateChat(chat, updates)`:所有更新返回新对象,`characterId: null` 用于清空
+- 不含 API Key / Provider Secret / Prompt 正文
+
+### 3. ChatRepository 接口及行为
+
+- `insert(chat)`:ValuesBucket 写入,id 重复映射 ConstraintFailed,characterId 为空写 null,boolean 用 0/1
+- `getById(id)`:不存在返回 null(不抛 NotFound),ResultSet 必关
+- `list(options?)`:默认排除 archived,按 `last_message_at DESC → updated_at DESC → id ASC` 稳定排序,默认 limit=50,limit/offset 校验(非法抛 InvalidData),用 RdbPredicates 链式构造(不拼接 SQL)
+- `update(chat)`:依据 affected 行数判断 NotFound,不改 id
+- `remove(id)`:幂等,不抛错,不级联删消息
+- `setArchived(id, archived)`
+- `updateLastMessageAt(id, lastMessageAt, updatedAt)`
+- `count()`
+- WithStore 内部方法:`insertWithStore` / `removeWithStore` / `chatExistsWithStore` — 用于事务组合,避免嵌套事务
+
+### 4. MessageRepository 接口及行为
+
+- `insert(message, chatId, sequenceNumber)`:先检查 Chat 是否存在(NotFound),再写入
+- `insertMany(chatId, records)`:事务包裹,预校验所有记录,事务中只检查一次 Chat 存在,空数组直接返回,中途失败整批回滚,不修改输入数组
+- `getById(id)`:不存在返回 null
+- `listByChat(chatId, options?)`:按 sequence_number ASC/DESC,limit 1-200,offset ≥ 0
+- `listRecordsByChat(chatId, options?)`:返回 `StoredChatMessage[]`(含 chatId / sequenceNumber / message)
+- `getMaxSequenceNumber(chatId)`:空聊天返回 0
+- `update(message)`:依据 affected 行数判断 NotFound
+- `remove(id)`:幂等
+- `removeByChatId(chatId)`:返回删除行数,幂等
+- `countByChatId(chatId)`
+- WithStore 内部方法:`insertWithStore` / `removeByChatIdWithStore` / `chatExistsWithStore`
+
+### 5. Row/枚举映射和数据损坏处理
+
+- `parseChatRole` / `parseChatMessageStatus` / `parseChatMessageSource`:显式 `if (value === X) return X` 链,禁止 `as ChatRole` / `as unknown as`
+- role 非法 → InvalidData;status 非法 → InvalidData;source 为空 → undefined;source 非法 → InvalidData
+- `booleanToInt` / `intToBoolean`:只接受 0/1,其他抛 InvalidData
+- `isValidTimestamp`:有限非负整数
+- `isValidSequence`:非负整数
+- `extractCauseMessage` / `isConstraintViolation`:脱敏错误处理,不暴露 BusinessError
+- 数据损坏不导致崩溃,统一抛 DatabaseError
+
+### 6. 分页与排序规则
+
+- Chat 列表:`last_message_at DESC → updated_at DESC → id ASC`(三级稳定排序)
+- Message 列表:`sequence_number ASC` 或 `DESC`(UNIQUE 索引保证稳定)
+- limit 默认 50(Chat)/ 50(Message),范围 1-200;offset 默认 0,最小 0
+- 非法参数抛 InvalidData,不拼接用户输入 SQL
+
+### 7. 批量插入和联合删除事务
+
+- `insertMany`:DbHelper.runInTransaction 包裹,预校验所有记录(事务前),事务中按顺序插入,任一失败 rollBack,空数组直接返回
+- `ChatPersistenceOperations.removeChatWithMessages(chatId)`:一个事务中先删 messages 后删 chat,任一失败全部回滚,幂等
+- 通过 WithStore 内部方法操作,避免嵌套事务
+- 不暴露任意 SQL 执行接口
+
+### 8. 动态 Prompt 消息防持久化规则
+
+- `isPersistableSource`:仅允许 `Conversation` / `CharacterFirstMessage` / `ExternalSystem` 持久化
+- `CharacterPrompt` / `LorebookBefore` / `LorebookAfter` 在 `buildValidatedMessageBucket` 中被拒绝,抛 InvalidData
+- 不静默改成 Conversation,不依赖正文识别
+- source 为空时保持为空(兼容旧消息)
+- `resolveIsStreaming`:Streaming 状态必须 `is_streaming=1`,其他状态必须 `is_streaming=0`,矛盾抛 InvalidData
+
+### 9. 定向测试:区分编译结果与实际运行结果
+
+#### 本地纯逻辑测试(RepositoryMappers.test.ets)
+
+- 覆盖:ChatRole / ChatMessageStatus / ChatMessageSource 解析与往返、非法枚举拒绝、boolean 0/1 转换、timestamp/sequence 校验、source 持久化白名单、isStreaming 一致性、extractCauseMessage、isConstraintViolation、输入不修改
+- **编译通过**(entry@default),未在命令行单独执行
+
+#### 设备测试(ChatRepository 25 项 + MessageRepository 40 项 + ChatPersistenceOperations 7 项)
+
+- **测试代码编译通过**(entry@ohosTest BUILD SUCCESSFUL)
+- **设备测试未在命令行执行**:依据 `project_memory.md` 已知限制(`aa test` 模式构建会破坏主 HAP Test Runner),设备测试必须在 DevEco Studio IDE 中手动运行
+- 测试覆盖完整 spec:CRUD / 分页 / 排序 / 批量插入回滚 / 联合删除事务原子性(stub 模拟底层失败)/ source 白名单 / isStreaming 一致性 / 枚举安全映射 / 中文 Emoji Markdown 往返 / 输入不可变性
+- 可在 DevEco Studio 中右键 `run 'entry@ohosTest'` 验证
+
+### 10. 编译结果
+
+- `entry@default` BUILD SUCCESSFUL(17.7 s,首次通过)
+- `entry@ohosTest` BUILD SUCCESSFUL(22.2 s,修复 1 次后通过)
+  - 修复内容:`MessageRepository.test.ets:957-958` optional 字段类型标注(`ChatMessageStatus | undefined` / `boolean | undefined`)
+- 警告均为已知的 "Function may throw exceptions. Special handling is required."(try/catch 中 await 调用),非新增问题
+
+### 11. 模拟器回归结果
+
+- 设备:nova 13 Pro_23
+- 应用安装启动成功(`start ability successfully`)
+- 首页渲染正常:显示"方舟酒馆"/"ArkTavern"/"HarmonyOS NEXT 原生 AI 角色聊天客户端"/"暂无会话"/4 个功能按钮(开始聊天/角色/世界书/模型设置)/"当前模型:ds · deepseek-v4-flash"
+- hilog Error 级别:无 crash(旧 crash 时间戳 2026-07-17 00:44:45 为 Test Runner 环境限制,非本次启动触发),无 SQL 全文,无 message content,无 API Key,无 Character Prompt,无 Lorebook 正文
+- Repository 未接入 AppServices,应用行为与之前完全一致,无回归
+
+### 12. 尚未解决的问题
+
+- 设备测试未在命令行实际执行,需在 DevEco Studio IDE 中手动验证
+- `dbHelperDeviceTest` 在 `List.test.ets` 中已导入但未在 `testsuite()` 中调用(T-4.2 遗留,非本任务范围)
+- `databaseSchemaTest` 在本地 `List.test.ets` 中已导入但未在 `testsuite()` 中调用(T-4.1 遗留,非本任务范围)
+- Repository 尚未接入 ChatService / AppServices(按任务要求,下一阶段统一组合)
+- 聊天历史 UI / 多会话列表 / 自动创建 Chat / Preferences 数据迁移 均未实现(按任务要求不推进)
+
+### 后续任务
+
+- T-4.3 CharacterRepository( TODO.md 原编号,本任务未覆盖)
+- T-4.5 Service 层切换为 Repository(接入 ChatService 持久化)
+- 聊天历史 UI / 多会话列表
+
