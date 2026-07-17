@@ -18,6 +18,7 @@ import writerTest from './CharacterCardJsonWriter.test';
 import pngParserTest from './PngCharacterCardParser.test';
 import lorebookTest from './Lorebook.test';
 import lorebookViewModelTest from './LorebookViewModel.test';
+import macroReplacerTest from './MacroReplacer.test';
 import promptBuilderTest from './PromptBuilder.test';
 
 export default function testsuite() {
@@ -41,5 +42,6 @@ export default function testsuite() {
   pngParserTest();
   lorebookTest();
   lorebookViewModelTest();
+  macroReplacerTest();
   promptBuilderTest();
 }

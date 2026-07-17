@@ -23,6 +23,7 @@ import { Character, buildCharacterSystemContent } from '../models/Character';
 import { Lorebook, LorebookEntry, LorebookPosition } from '../models/Lorebook';
 import { ChatMessage, createChatMessage } from '../models/ChatMessage';
 import { ChatRole } from '../models/ChatRole';
+import { MacroContext } from '../models/MacroContext';
 import {
   PromptSegment,
   PromptSegmentPosition,
@@ -30,6 +31,7 @@ import {
   sortSegments
 } from '../models/PromptSegment';
 import { LorebookService } from './LorebookService';
+import { MacroReplacer } from './MacroReplacer';
 import { generateUuid } from '../utils/Uuid';
 import { Logger } from '../utils/Logger';
 
@@ -45,6 +47,8 @@ export interface PromptBuildContext {
   lorebook?: Lorebook;
   /** 当前聊天消息列表 */
   messages: ChatMessage[];
+  /** 宏替换上下文(可选,提供时对最终消息执行宏替换) */
+  macroContext?: MacroContext;
 }
 
 /**
@@ -62,9 +66,11 @@ export interface PromptBuildResult {
  */
 export class PromptBuilder {
   private readonly lorebookService: LorebookService;
+  private readonly macroReplacer: MacroReplacer;
 
-  constructor(lorebookService: LorebookService) {
+  constructor(lorebookService: LorebookService, macroReplacer: MacroReplacer) {
     this.lorebookService = lorebookService;
+    this.macroReplacer = macroReplacer;
   }
 
   /**
@@ -137,20 +143,26 @@ export class PromptBuilder {
     // 排序:position → priority
     const sorted: PromptSegment[] = sortSegments(segments);
 
-    // 转换为 ChatMessage[]
+    // 转换为 ChatMessage[](如提供 macroContext,对每条消息内容执行宏替换)
+    const macroCtx: MacroContext | undefined = context.macroContext;
     const resultMessages: ChatMessage[] = [];
     for (let i = 0; i < sorted.length; i++) {
       const seg: PromptSegment = sorted[i];
+      let content: string = seg.content;
+      if (macroCtx !== undefined) {
+        content = this.macroReplacer.replace(content, macroCtx);
+      }
       const msg: ChatMessage = createChatMessage(
         seg.id,
         seg.role,
-        seg.content,
+        content,
         now
       );
       resultMessages.push(msg);
     }
 
-    Logger.info(LOG_TAG, 'build: segments=' + sorted.length + ' lorebook=' + matchedIds.length);
+    Logger.info(LOG_TAG, 'build: segments=' + sorted.length + ' lorebook=' + matchedIds.length
+      + ' macro=' + (macroCtx !== undefined ? 'on' : 'off'));
     const result: PromptBuildResult = {
       messages: resultMessages,
       matchedLorebookEntryIds: matchedIds

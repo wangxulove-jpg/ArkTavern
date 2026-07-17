@@ -40,6 +40,7 @@ import {
 import { NetworkError } from '../models/NetworkError';
 import { Character } from '../models/Character';
 import { Lorebook } from '../models/Lorebook';
+import { MacroContext, createMacroContext } from '../models/MacroContext';
 import { generateUuid } from '../utils/Uuid';
 import { Logger } from '../utils/Logger';
 
@@ -47,6 +48,9 @@ const LOG_TAG: string = 'ChatService';
 
 /** 启动阶段超时(毫秒),收到首个 onStart/onDelta/onComplete/onError 后清除 */
 const START_TIMEOUT_MS: number = 15000;
+
+/** 默认用户名(本阶段固定值,后续可扩展为用户设置) */
+const DEFAULT_USER_NAME: string = 'User';
 
 /**
  * 聊天状态枚举。
@@ -425,10 +429,17 @@ export class ChatService {
       lorebook = await this.lorebookService.getCurrentLorebook() ?? undefined;
     }
 
+    // 构建宏替换上下文(characterName 来自角色,userName 为固定默认值)
+    const macroContext: MacroContext = createMacroContext(
+      this.character !== null ? this.character.name : '',
+      DEFAULT_USER_NAME
+    );
+
     const context: PromptBuildContext = {
       character: this.character !== null ? this.character : undefined,
       lorebook: lorebook,
-      messages: this.messages
+      messages: this.messages,
+      macroContext: macroContext
     };
 
     const result: PromptBuildResult = this.promptBuilder.build(context);

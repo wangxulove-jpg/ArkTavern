@@ -22,6 +22,7 @@
 import { describe, it, expect } from '@ohos/hypium';
 import { PromptBuilder, PromptBuildContext, PromptBuildResult } from '../main/ets/services/PromptBuilder';
 import { LorebookService } from '../main/ets/services/LorebookService';
+import { MacroReplacer } from '../main/ets/services/MacroReplacer';
 import { LorebookStore } from '../main/ets/storage/LorebookStore';
 import {
   Lorebook,
@@ -35,6 +36,7 @@ import {
 import { Character, createCharacter } from '../main/ets/models/Character';
 import { ChatMessage, createChatMessage } from '../main/ets/models/ChatMessage';
 import { ChatRole } from '../main/ets/models/ChatRole';
+import { MacroContext, createMacroContext } from '../main/ets/models/MacroContext';
 
 function makeUserMsg(content: string): ChatMessage {
   return createChatMessage('msg-u-' + content, ChatRole.User, content, 1000);
@@ -53,7 +55,7 @@ function createTestLorebookService(): LorebookService {
 }
 
 function builder(): PromptBuilder {
-  return new PromptBuilder(createTestLorebookService());
+  return new PromptBuilder(createTestLorebookService(), new MacroReplacer());
 }
 
 export default function promptBuilderTest(): void {
@@ -376,6 +378,202 @@ export default function promptBuilderTest(): void {
 
       expect(result1.messages.length).assertEqual(result2.messages.length);
       expect(result1.messages[0].content).assertEqual(result2.messages[0].content);
+    });
+
+    // ===== 宏替换测试 =====
+
+    // 13. Character System Prompt 宏替换
+    it('Macro_character_system_prompt_replaced', 0, () => {
+      const b: PromptBuilder = builder();
+      const char: Character = createCharacter('Alice', '描述{{user}}');
+      const msgs: ChatMessage[] = [makeUserMsg('你好')];
+      const macroCtx: MacroContext = createMacroContext('Alice', 'User');
+      const context: PromptBuildContext = { character: char, messages: msgs, macroContext: macroCtx };
+
+      const result: PromptBuildResult = b.build(context);
+
+      // System Prompt 应包含 "描述User" 而非 "描述{{user}}"
+      expect(result.messages[0].role).assertEqual(ChatRole.System);
+      expect(result.messages[0].content).assertContain('描述User');
+      expect(result.messages[0].content).assertNotContain('{{user}}');
+    });
+
+    // 14. BeforeCharacter 世界书宏替换
+    it('Macro_before_lorebook_replaced', 0, () => {
+      const b: PromptBuilder = builder();
+      const lb: Lorebook = createLorebook('世界书', '', true);
+      const entry: LorebookEntry = createLorebookEntry(
+        'before', ['酒馆'], [], '{{char}} 正站在酒馆中。', true, true, false, LorebookPosition.BeforeCharacter, 10
+      );
+      const lb2: Lorebook = addEntryToLorebook(lb, entry);
+      const msgs: ChatMessage[] = [makeUserMsg('酒馆')];
+      const macroCtx: MacroContext = createMacroContext('Alice', 'User');
+      const context: PromptBuildContext = { lorebook: lb2, messages: msgs, macroContext: macroCtx };
+
+      const result: PromptBuildResult = b.build(context);
+
+      expect(result.messages[0].content).assertEqual('Alice 正站在酒馆中。');
+    });
+
+    // 15. AfterCharacter 世界书宏替换
+    it('Macro_after_lorebook_replaced', 0, () => {
+      const b: PromptBuilder = builder();
+      const lb: Lorebook = createLorebook('世界书', '', true);
+      const entry: LorebookEntry = createLorebookEntry(
+        'after', ['酒馆'], [], '{{user}} 来到酒馆。', true, true, false, LorebookPosition.AfterCharacter, 10
+      );
+      const lb2: Lorebook = addEntryToLorebook(lb, entry);
+      const msgs: ChatMessage[] = [makeUserMsg('酒馆')];
+      const macroCtx: MacroContext = createMacroContext('Alice', 'John');
+      const context: PromptBuildContext = { lorebook: lb2, messages: msgs, macroContext: macroCtx };
+
+      const result: PromptBuildResult = b.build(context);
+
+      expect(result.messages[0].content).assertEqual('John 来到酒馆。');
+    });
+
+    // 16. firstMessage 宏替换且不重复
+    it('Macro_firstMessage_replaced_not_duplicated', 0, () => {
+      const b: PromptBuilder = builder();
+      const char: Character = createCharacter('Alice', '描述', '', '', '你好，{{user}}，我是{{char}}。');
+      const msgs: ChatMessage[] = [makeAssistantMsg('你好，{{user}}，我是{{char}}。')];
+      const macroCtx: MacroContext = createMacroContext('Alice', 'User');
+      const context: PromptBuildContext = { character: char, messages: msgs, macroContext: macroCtx };
+
+      const result: PromptBuildResult = b.build(context);
+
+      // Character System Prompt + firstMessage = 2 条
+      expect(result.messages.length).assertEqual(2);
+      // firstMessage 宏被替换
+      expect(result.messages[1].role).assertEqual(ChatRole.Assistant);
+      expect(result.messages[1].content).assertEqual('你好，User，我是Alice。');
+    });
+
+    // 17. User 消息宏替换
+    it('Macro_user_message_replaced', 0, () => {
+      const b: PromptBuilder = builder();
+      const msgs: ChatMessage[] = [makeUserMsg('{{user}} 想说话')];
+      const macroCtx: MacroContext = createMacroContext('Alice', 'John');
+      const context: PromptBuildContext = { messages: msgs, macroContext: macroCtx };
+
+      const result: PromptBuildResult = b.build(context);
+
+      expect(result.messages[0].content).assertEqual('John 想说话');
+    });
+
+    // 18. Assistant 消息宏替换
+    it('Macro_assistant_message_replaced', 0, () => {
+      const b: PromptBuilder = builder();
+      const msgs: ChatMessage[] = [makeAssistantMsg('{{char}} 微笑')];
+      const macroCtx: MacroContext = createMacroContext('Alice', 'User');
+      const context: PromptBuildContext = { messages: msgs, macroContext: macroCtx };
+
+      const result: PromptBuildResult = b.build(context);
+
+      expect(result.messages[0].content).assertEqual('Alice 微笑');
+    });
+
+    // 19. 合法 System 消息宏替换
+    it('Macro_system_message_replaced', 0, () => {
+      const b: PromptBuilder = builder();
+      const msgs: ChatMessage[] = [makeSystemMsg('规则：{{char}} 是主角')];
+      const macroCtx: MacroContext = createMacroContext('Alice', 'User');
+      const context: PromptBuildContext = { messages: msgs, macroContext: macroCtx };
+
+      const result: PromptBuildResult = b.build(context);
+
+      expect(result.messages[0].content).assertEqual('规则：Alice 是主角');
+    });
+
+    // 20. 原始消息数组和消息对象未修改
+    it('Macro_original_messages_not_modified', 0, () => {
+      const b: PromptBuilder = builder();
+      const msgs: ChatMessage[] = [makeUserMsg('{{user}} 测试'), makeAssistantMsg('{{char}} 回复')];
+      const originalUserContent: string = msgs[0].content;
+      const originalAssistantContent: string = msgs[1].content;
+      const macroCtx: MacroContext = createMacroContext('Alice', 'John');
+      const context: PromptBuildContext = { messages: msgs, macroContext: macroCtx };
+
+      b.build(context);
+
+      expect(msgs[0].content).assertEqual(originalUserContent);
+      expect(msgs[1].content).assertEqual(originalAssistantContent);
+      expect(msgs.length).assertEqual(2);
+    });
+
+    // 21. 原始 Character 对象未修改
+    it('Macro_original_character_not_modified', 0, () => {
+      const b: PromptBuilder = builder();
+      const char: Character = createCharacter('Alice', '描述{{user}}', '', '', '你好{{char}}');
+      const originalDesc: string = char.description;
+      const originalFirstMsg: string = char.firstMessage;
+      const msgs: ChatMessage[] = [makeUserMsg('hi')];
+      const macroCtx: MacroContext = createMacroContext('Alice', 'User');
+      const context: PromptBuildContext = { character: char, messages: msgs, macroContext: macroCtx };
+
+      b.build(context);
+
+      expect(char.description).assertEqual(originalDesc);
+      expect(char.firstMessage).assertEqual(originalFirstMsg);
+    });
+
+    // 22. 原始 LorebookEntry 内容未修改
+    it('Macro_original_lorebook_entry_not_modified', 0, () => {
+      const b: PromptBuilder = builder();
+      const lb: Lorebook = createLorebook('世界书', '', true);
+      const entry: LorebookEntry = createLorebookEntry(
+        'e', ['酒馆'], [], '{{char}} 在酒馆', true, true, false, LorebookPosition.BeforeCharacter, 10
+      );
+      const lb2: Lorebook = addEntryToLorebook(lb, entry);
+      const originalContent: string = entry.content;
+      const msgs: ChatMessage[] = [makeUserMsg('酒馆')];
+      const macroCtx: MacroContext = createMacroContext('Alice', 'User');
+      const context: PromptBuildContext = { lorebook: lb2, messages: msgs, macroContext: macroCtx };
+
+      b.build(context);
+
+      expect(entry.content).assertEqual(originalContent);
+    });
+
+    // 23. 无角色时角色宏保持原样
+    it('Macro_no_character_preserves_char_macro', 0, () => {
+      const b: PromptBuilder = builder();
+      const msgs: ChatMessage[] = [makeUserMsg('{{char}} is here')];
+      const macroCtx: MacroContext = createMacroContext('', 'User');
+      const context: PromptBuildContext = { messages: msgs, macroContext: macroCtx };
+
+      const result: PromptBuildResult = b.build(context);
+
+      expect(result.messages[0].content).assertEqual('{{char}} is here');
+    });
+
+    // 24. 重新生成不会重复消息
+    it('Macro_rebuild_no_duplicate', 0, () => {
+      const b: PromptBuilder = builder();
+      const char: Character = createCharacter('Alice', '描述{{user}}', '', '', '你好{{char}}');
+      const msgs: ChatMessage[] = [makeAssistantMsg('你好{{char}}'), makeUserMsg('继续')];
+      const macroCtx: MacroContext = createMacroContext('Alice', 'User');
+      const context: PromptBuildContext = { character: char, messages: msgs, macroContext: macroCtx };
+
+      const result1: PromptBuildResult = b.build(context);
+      const result2: PromptBuildResult = b.build(context);
+
+      expect(result1.messages.length).assertEqual(result2.messages.length);
+      expect(result1.messages[0].content).assertEqual(result2.messages[0].content);
+      expect(result1.messages[1].content).assertEqual(result2.messages[1].content);
+    });
+
+    // 额外:无 macroContext 时不执行替换(向后兼容)
+    it('Macro_no_context_no_replacement', 0, () => {
+      const b: PromptBuilder = builder();
+      const char: Character = createCharacter('Alice', '描述{{user}}');
+      const msgs: ChatMessage[] = [makeUserMsg('你好 {{char}}')];
+      const context: PromptBuildContext = { character: char, messages: msgs };
+
+      const result: PromptBuildResult = b.build(context);
+
+      // 无 macroContext,宏保持原样
+      expect(result.messages[1].content).assertEqual('你好 {{char}}');
     });
   });
 }

@@ -28,6 +28,7 @@ import { CharacterAssetStore } from '../storage/CharacterAssetStore';
 import { LorebookStore } from '../storage/LorebookStore';
 import { CharacterService } from './CharacterService';
 import { LorebookService } from './LorebookService';
+import { MacroReplacer } from './MacroReplacer';
 import { PromptBuilder } from './PromptBuilder';
 import { ChatService } from './ChatService';
 import { ModelService } from './ModelService';
@@ -70,7 +71,8 @@ export class AppServices {
     this.characterService = new CharacterService(characterStore, characterAssetStore);
     const lorebookStore: LorebookStore = new LorebookStore();
     this.lorebookService = new LorebookService(lorebookStore);
-    this.promptBuilder = new PromptBuilder(this.lorebookService);
+    const macroReplacer: MacroReplacer = new MacroReplacer();
+    this.promptBuilder = new PromptBuilder(this.lorebookService, macroReplacer);
   }
 
   /**
