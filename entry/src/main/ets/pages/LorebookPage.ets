@@ -27,12 +27,18 @@ const COLOR_ENTRY_BG: string = '#F5F5F5';
 @Component
 export struct LorebookPage {
   @State viewModel: LorebookViewModel | null = null;
+  @State lorebooks: Lorebook[] = [];
+  @State currentLorebookId: string | null = null;
   pathStack: NavPathStack = new NavPathStack();
 
   aboutToAppear(): void {
     const service: LorebookService = AppServices.getLorebookService();
     const vm: LorebookViewModel = new LorebookViewModel(service);
     this.viewModel = vm;
+    vm.onDataUpdate = () => {
+      this.lorebooks = [...vm.lorebooks];
+      this.currentLorebookId = vm.currentLorebookId;
+    };
     vm.load();
   }
 
@@ -50,16 +56,14 @@ export struct LorebookPage {
           }
 
           // 内容区
-          if (this.viewModel !== null && this.viewModel.lorebooks.length === 0) {
+          if (this.lorebooks.length === 0) {
             this.emptyState();
           } else {
             Scroll() {
               Column() {
-                if (this.viewModel !== null) {
-                  ForEach(this.viewModel.lorebooks, (lb: Lorebook) => {
-                    this.lorebookCard(lb);
-                  }, (lb: Lorebook) => lb.id + '_' + lb.updatedAt);
-                }
+                ForEach(this.lorebooks, (lb: Lorebook) => {
+                  this.lorebookCard(lb);
+                }, (lb: Lorebook) => lb.id + '_' + lb.updatedAt);
                 Blank().height(80);
               }
               .width('100%')
@@ -86,30 +90,30 @@ export struct LorebookPage {
               this.viewModel!.showNewLorebookDialog();
             })
         }
+
+        // 世界书编辑对话框
+        if (this.viewModel !== null && this.viewModel.showLorebookDialog) {
+          this.lorebookDialog();
+        }
+
+        // 条目编辑对话框
+        if (this.viewModel !== null && this.viewModel.showEntryDialog) {
+          this.entryDialog();
+        }
+
+        // 删除确认(世界书)
+        if (this.viewModel !== null && this.viewModel.deleteTargetLorebook !== null) {
+          this.deleteLorebookConfirm();
+        }
+
+        // 删除确认(条目)
+        if (this.viewModel !== null && this.viewModel.deleteTargetEntry !== null) {
+          this.deleteEntryConfirm();
+        }
       }
       .width('100%')
       .height('100%')
       .backgroundColor($r('sys.color.ohos_id_color_sub_background'))
-
-      // 世界书编辑对话框
-      if (this.viewModel !== null && this.viewModel.showLorebookDialog) {
-        this.lorebookDialog();
-      }
-
-      // 条目编辑对话框
-      if (this.viewModel !== null && this.viewModel.showEntryDialog) {
-        this.entryDialog();
-      }
-
-      // 删除确认(世界书)
-      if (this.viewModel !== null && this.viewModel.deleteTargetLorebook !== null) {
-        this.deleteLorebookConfirm();
-      }
-
-      // 删除确认(条目)
-      if (this.viewModel !== null && this.viewModel.deleteTargetEntry !== null) {
-        this.deleteEntryConfirm();
-      }
     }
     .title($r('app.string.nav_lorebook_title'))
     .backgroundColor($r('sys.color.ohos_id_color_sub_background'))
@@ -143,7 +147,7 @@ export struct LorebookPage {
       Row() {
         Column() {
           Row() {
-            if (this.viewModel !== null && this.viewModel.isCurrent(lb)) {
+            if (this.currentLorebookId === lb.id) {
               Text($r('app.string.lorebook_current_badge'))
                 .fontSize(11)
                 .fontColor(Color.White)
@@ -230,7 +234,7 @@ export struct LorebookPage {
           .onClick(() => {
             if (this.viewModel !== null) {
               this.viewModel.setCurrentLorebook(
-                this.viewModel.isCurrent(lb) ? null : lb.id
+                this.currentLorebookId === lb.id ? null : lb.id
               );
             }
           })
@@ -421,122 +425,123 @@ export struct LorebookPage {
 
   @Builder
   lorebookDialog() {
-    Column() {
-      // 遮罩
+    Stack() {
+      Column() {
+        // 遮罩
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor('rgba(0,0,0,0.4)')
+      .onClick(() => {
+        if (this.viewModel !== null) {
+          this.viewModel.closeLorebookDialog();
+        }
+      })
+
+      Column() {
+        Text(this.viewModel !== null && this.viewModel.editingLorebook !== null
+          ? $r('app.string.lorebook_form_title_edit')
+          : $r('app.string.lorebook_form_title_new'))
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .width('100%')
+          .textAlign(TextAlign.Center)
+          .margin({ bottom: 16 })
+
+        Text($r('app.string.lorebook_form_name'))
+          .fontSize(13)
+          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+          .width('100%')
+          .margin({ bottom: 4 })
+
+        TextInput({
+          placeholder: $r('app.string.lorebook_form_name_placeholder'),
+          text: this.viewModel !== null ? this.viewModel.editLorebookName : ''
+        })
+          .fontSize(14)
+          .width('100%')
+          .margin({ bottom: 12 })
+          .onChange((value: string) => {
+            if (this.viewModel !== null) {
+              this.viewModel.editLorebookName = value;
+            }
+          })
+
+        Text($r('app.string.lorebook_form_description'))
+          .fontSize(13)
+          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+          .width('100%')
+          .margin({ bottom: 4 })
+
+        TextInput({
+          placeholder: $r('app.string.lorebook_form_description_placeholder'),
+          text: this.viewModel !== null ? this.viewModel.editLorebookDescription : ''
+        })
+          .fontSize(14)
+          .width('100%')
+          .margin({ bottom: 16 })
+          .onChange((value: string) => {
+            if (this.viewModel !== null) {
+              this.viewModel.editLorebookDescription = value;
+            }
+          })
+
+        Row() {
+          Button($r('app.string.lorebook_form_cancel'))
+            .fontSize(14)
+            .backgroundColor($r('sys.color.ohos_id_color_button_normal'))
+            .borderRadius(20)
+            .layoutWeight(1)
+            .height(40)
+            .margin({ right: 8 })
+            .onClick(() => {
+              if (this.viewModel !== null) {
+                this.viewModel.closeLorebookDialog();
+              }
+            })
+
+          Button($r('app.string.lorebook_form_save'))
+            .fontSize(14)
+            .backgroundColor($r('sys.color.ohos_id_color_emphasize'))
+            .borderRadius(20)
+            .layoutWeight(1)
+            .height(40)
+            .onClick(() => {
+              if (this.viewModel !== null) {
+                this.viewModel.saveLorebook();
+              }
+            })
+        }
+        .width('100%')
+      }
+      .width('85%')
+      .backgroundColor($r('sys.color.ohos_id_color_background'))
+      .borderRadius(12)
+      .padding(20)
+      .position({ x: '7.5%', y: '25%' })
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('rgba(0,0,0,0.4)')
-    .justifyContent(FlexAlign.Center)
-    .alignItems(HorizontalAlign.Center)
-    .onClick(() => {
-      if (this.viewModel !== null) {
-        this.viewModel.closeLorebookDialog();
-      }
-    })
-
-    Column() {
-      Text(this.viewModel !== null && this.viewModel.editingLorebook !== null
-        ? $r('app.string.lorebook_form_title_edit')
-        : $r('app.string.lorebook_form_title_new'))
-        .fontSize(16)
-        .fontWeight(FontWeight.Medium)
-        .width('100%')
-        .textAlign(TextAlign.Center)
-        .margin({ bottom: 16 })
-
-      Text($r('app.string.lorebook_form_name'))
-        .fontSize(13)
-        .fontColor($r('sys.color.ohos_id_color_text_secondary'))
-        .width('100%')
-        .margin({ bottom: 4 })
-
-      TextInput({
-        placeholder: $r('app.string.lorebook_form_name_placeholder'),
-        text: this.viewModel !== null ? this.viewModel.editLorebookName : ''
-      })
-        .fontSize(14)
-        .width('100%')
-        .margin({ bottom: 12 })
-        .onChange((value: string) => {
-          if (this.viewModel !== null) {
-            this.viewModel.editLorebookName = value;
-          }
-        })
-
-      Text($r('app.string.lorebook_form_description'))
-        .fontSize(13)
-        .fontColor($r('sys.color.ohos_id_color_text_secondary'))
-        .width('100%')
-        .margin({ bottom: 4 })
-
-      TextInput({
-        placeholder: $r('app.string.lorebook_form_description_placeholder'),
-        text: this.viewModel !== null ? this.viewModel.editLorebookDescription : ''
-      })
-        .fontSize(14)
-        .width('100%')
-        .margin({ bottom: 16 })
-        .onChange((value: string) => {
-          if (this.viewModel !== null) {
-            this.viewModel.editLorebookDescription = value;
-          }
-        })
-
-      Row() {
-        Button($r('app.string.lorebook_form_cancel'))
-          .fontSize(14)
-          .backgroundColor($r('sys.color.ohos_id_color_button_normal'))
-          .borderRadius(20)
-          .layoutWeight(1)
-          .height(40)
-          .margin({ right: 8 })
-          .onClick(() => {
-            if (this.viewModel !== null) {
-              this.viewModel.closeLorebookDialog();
-            }
-          })
-
-        Button($r('app.string.lorebook_form_save'))
-          .fontSize(14)
-          .backgroundColor($r('sys.color.ohos_id_color_emphasize'))
-          .borderRadius(20)
-          .layoutWeight(1)
-          .height(40)
-          .onClick(() => {
-            if (this.viewModel !== null) {
-              this.viewModel.saveLorebook();
-            }
-          })
-      }
-      .width('100%')
-    }
-    .width('85%')
-    .backgroundColor($r('sys.color.ohos_id_color_background'))
-    .borderRadius(12)
-    .padding(20)
-    .position({ x: '7.5%', y: '25%' })
   }
 
   // ===== 条目编辑对话框 =====
 
   @Builder
   entryDialog() {
-    Column() {
-      // 遮罩
-    }
-    .width('100%')
-    .height('100%')
-    .backgroundColor('rgba(0,0,0,0.4)')
-    .justifyContent(FlexAlign.Center)
-    .alignItems(HorizontalAlign.Center)
-    .onClick(() => {
-      if (this.viewModel !== null) {
-        this.viewModel.closeEntryDialog();
+    Stack() {
+      Column() {
+        // 遮罩
       }
-    })
+      .width('100%')
+      .height('100%')
+      .backgroundColor('rgba(0,0,0,0.4)')
+      .onClick(() => {
+        if (this.viewModel !== null) {
+          this.viewModel.closeEntryDialog();
+        }
+      })
 
-    Scroll() {
+      Scroll() {
       Column() {
         Text(this.viewModel !== null && this.viewModel.editingEntry !== null
           ? $r('app.string.lorebook_entry_form_title_edit')
@@ -725,6 +730,9 @@ export struct LorebookPage {
     .borderRadius(12)
     .padding(20)
     .position({ x: '7.5%', y: '15%' })
+    }
+    .width('100%')
+    .height('100%')
   }
 
   @Builder
@@ -770,15 +778,21 @@ export struct LorebookPage {
 
   @Builder
   deleteLorebookConfirm() {
-    Column() {
-    }
-    .width('100%')
-    .height('100%')
-    .backgroundColor('rgba(0,0,0,0.4)')
-    .justifyContent(FlexAlign.Center)
-    .alignItems(HorizontalAlign.Center)
+    Stack() {
+      Column() {
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor('rgba(0,0,0,0.4)')
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+      .onClick(() => {
+        if (this.viewModel !== null) {
+          this.viewModel.deleteTargetLorebook = null;
+        }
+      })
 
-    Column() {
+      Column() {
       Text('删除世界书')
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
@@ -824,21 +838,30 @@ export struct LorebookPage {
     .backgroundColor($r('sys.color.ohos_id_color_background'))
     .borderRadius(12)
     .padding(20)
+    }
+    .width('100%')
+    .height('100%')
   }
 
   // ===== 删除确认(条目) =====
 
   @Builder
   deleteEntryConfirm() {
-    Column() {
-    }
-    .width('100%')
-    .height('100%')
-    .backgroundColor('rgba(0,0,0,0.4)')
-    .justifyContent(FlexAlign.Center)
-    .alignItems(HorizontalAlign.Center)
+    Stack() {
+      Column() {
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor('rgba(0,0,0,0.4)')
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+      .onClick(() => {
+        if (this.viewModel !== null) {
+          this.viewModel.deleteTargetEntry = null;
+        }
+      })
 
-    Column() {
+      Column() {
       Text('删除条目')
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
@@ -887,5 +910,8 @@ export struct LorebookPage {
     .backgroundColor($r('sys.color.ohos_id_color_background'))
     .borderRadius(12)
     .padding(20)
+    }
+    .width('100%')
+    .height('100%')
   }
 }

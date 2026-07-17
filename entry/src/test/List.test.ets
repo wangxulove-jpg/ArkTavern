@@ -17,6 +17,7 @@ import parserTest from './CharacterCardJsonParser.test';
 import writerTest from './CharacterCardJsonWriter.test';
 import pngParserTest from './PngCharacterCardParser.test';
 import lorebookTest from './Lorebook.test';
+import lorebookViewModelTest from './LorebookViewModel.test';
 import promptBuilderTest from './PromptBuilder.test';
 
 export default function testsuite() {
@@ -39,5 +40,6 @@ export default function testsuite() {
   writerTest();
   pngParserTest();
   lorebookTest();
+  lorebookViewModelTest();
   promptBuilderTest();
 }

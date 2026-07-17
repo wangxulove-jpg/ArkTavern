@@ -3,17 +3,20 @@
  *
  * 覆盖:
  * 1. 无角色、无世界书时，消息顺序不变
- * 2. 只有角色时，Character System Prompt 正确注入
- * 3. 只有世界书时，BeforeCharacter 和 AfterCharacter 顺序正确
- * 4. 角色与世界书同时存在时，顺序正确
- * 5. constant 条目始终注入
- * 6. 普通关键词命中后注入
- * 7. selective 条目必须主关键词和次关键词同时命中
- * 8. disabled 世界书不注入
- * 9. disabled 条目不注入
- * 10. priority 排序正确
- * 11. 原始消息数组未被修改
- * 12. 重新生成不重复注入
+ * 2. 输入存在合法 System 消息时不会被无条件删除
+ * 3. 只有角色时，Character System Prompt 正确注入
+ * 4. 只有世界书时，BeforeCharacter 和 AfterCharacter 顺序正确
+ * 5. 角色与世界书同时存在时，顺序正确
+ * 6. constant 条目始终注入
+ * 7. 普通关键词命中后注入
+ * 8. selective 条目必须主关键词和次关键词同时命中
+ * 9. selective 只命中主关键词时不注入
+ * 10. disabled 世界书不注入
+ * 11. disabled 条目不注入
+ * 12. priority 排序正确
+ * 13. 原始消息数组未被修改
+ * 14. firstMessage 不重复
+ * 15. 重新生成不重复注入角色或世界书内容
  */
 
 import { describe, it, expect } from '@ohos/hypium';
@@ -55,7 +58,8 @@ function builder(): PromptBuilder {
 
 export default function promptBuilderTest(): void {
   describe('PromptBuilder', () => {
-    // 1. 无角色、无世界书时，消息顺序不变
+    // ===== 基础:无角色无世界书 =====
+
     it('No_character_no_lorebook_preserves_message_order', 0, () => {
       const b: PromptBuilder = builder();
       const msgs: ChatMessage[] = [makeUserMsg('你好'), makeAssistantMsg('你好')];
@@ -71,7 +75,29 @@ export default function promptBuilderTest(): void {
       expect(result.matchedLorebookEntryIds.length).assertEqual(0);
     });
 
-    // 2. 只有角色时，Character System Prompt 正确注入
+    // ===== System 消息不被无条件删除 =====
+
+    it('Input_System_messages_are_preserved_not_dropped', 0, () => {
+      const b: PromptBuilder = builder();
+      const msgs: ChatMessage[] = [
+        makeSystemMsg('合法系统提示'),
+        makeUserMsg('你好'),
+        makeAssistantMsg('你好')
+      ];
+      const context: PromptBuildContext = { messages: msgs };
+
+      const result: PromptBuildResult = b.build(context);
+
+      // 输入中的 System 消息应保留(3条输入 → 3条输出)
+      expect(result.messages.length).assertEqual(3);
+      expect(result.messages[0].role).assertEqual(ChatRole.System);
+      expect(result.messages[0].content).assertEqual('合法系统提示');
+      expect(result.messages[1].role).assertEqual(ChatRole.User);
+      expect(result.messages[2].role).assertEqual(ChatRole.Assistant);
+    });
+
+    // ===== 仅角色 =====
+
     it('Only_character_injects_system_prompt', 0, () => {
       const b: PromptBuilder = builder();
       const char: Character = createCharacter('测试角色', '测试描述');
@@ -80,36 +106,234 @@ export default function promptBuilderTest(): void {
 
       const result: PromptBuildResult = b.build(context);
 
-      // System Prompt 应该在 User 消息之前
+      // Character System Prompt + User = 2 条
       expect(result.messages.length).assertEqual(2);
       expect(result.messages[0].role).assertEqual(ChatRole.System);
       expect(result.messages[0].content).assertContain('测试角色');
       expect(result.messages[1].role).assertEqual(ChatRole.User);
-      expect(result.messages[1].content).assertEqual('你好');
     });
 
-    // 3. System 消息不被泄露到输出
-    it('System_messages_in_input_are_skipped', 0, () => {
+    // ===== 仅世界书:Before/After 顺序 =====
+
+    it('Only_lorebook_before_after_order', 0, () => {
       const b: PromptBuilder = builder();
-      const char: Character = createCharacter('角色', '描述');
-      const msgs: ChatMessage[] = [
-        makeSystemMsg('系统提示'),
-        makeUserMsg('你好'),
-        makeAssistantMsg('回复')
-      ];
-      const context: PromptBuildContext = { character: char, messages: msgs };
+      const lb: Lorebook = createLorebook('测试世界书', '', true);
+      const entryBefore: LorebookEntry = createLorebookEntry(
+        'before', ['酒馆'], [], '这里是酒馆', true, false, false, LorebookPosition.BeforeCharacter, 10
+      );
+      const entryAfter: LorebookEntry = createLorebookEntry(
+        'after', ['酒馆'], [], '酒馆之后', true, false, false, LorebookPosition.AfterCharacter, 10
+      );
+      let lb2: Lorebook = addEntryToLorebook(lb, entryBefore);
+      lb2 = addEntryToLorebook(lb2, entryAfter);
+      const msgs: ChatMessage[] = [makeUserMsg('酒馆')];
+      const context: PromptBuildContext = { lorebook: lb2, messages: msgs };
 
       const result: PromptBuildResult = b.build(context);
 
-      // 只有 Character System Prompt(1个) + User(1个) + Assistant(1个) = 3个
+      // BeforeCharacter System + AfterCharacter System + User = 3 条
       expect(result.messages.length).assertEqual(3);
+      // 第一条是 BeforeCharacter 世界书
       expect(result.messages[0].role).assertEqual(ChatRole.System);
-      expect(result.messages[0].content).assertContain('角色');
-      expect(result.messages[1].role).assertEqual(ChatRole.User);
-      expect(result.messages[2].role).assertEqual(ChatRole.Assistant);
+      expect(result.messages[0].content).assertEqual('这里是酒馆');
+      // 第二条是 AfterCharacter 世界书
+      expect(result.messages[1].role).assertEqual(ChatRole.System);
+      expect(result.messages[1].content).assertEqual('酒馆之后');
+      // 第三条是 User
+      expect(result.messages[2].role).assertEqual(ChatRole.User);
+      expect(result.matchedLorebookEntryIds.length).assertEqual(2);
     });
 
-    // 4. 原始消息数组未被修改
+    // ===== 角色 + 世界书:完整顺序 =====
+
+    it('Character_and_lorebook_full_order', 0, () => {
+      const b: PromptBuilder = builder();
+      const char: Character = createCharacter('角色', '描述');
+      const lb: Lorebook = createLorebook('世界书', '', true);
+      const entryBefore: LorebookEntry = createLorebookEntry(
+        'before', ['酒馆'], [], '酒馆情景', true, false, false, LorebookPosition.BeforeCharacter, 10
+      );
+      const entryAfter: LorebookEntry = createLorebookEntry(
+        'after', ['酒馆'], [], '酒馆后记', true, false, false, LorebookPosition.AfterCharacter, 10
+      );
+      let lb2: Lorebook = addEntryToLorebook(lb, entryBefore);
+      lb2 = addEntryToLorebook(lb2, entryAfter);
+      const msgs: ChatMessage[] = [makeAssistantMsg('欢迎'), makeUserMsg('酒馆里有什么')];
+      const context: PromptBuildContext = { character: char, lorebook: lb2, messages: msgs };
+
+      const result: PromptBuildResult = b.build(context);
+
+      // 顺序:BeforeCharacter → Character System Prompt → AfterCharacter → Conversation
+      expect(result.messages.length).assertEqual(5);
+      // 1. BeforeCharacter 世界书
+      expect(result.messages[0].role).assertEqual(ChatRole.System);
+      expect(result.messages[0].content).assertEqual('酒馆情景');
+      // 2. Character System Prompt
+      expect(result.messages[1].role).assertEqual(ChatRole.System);
+      expect(result.messages[1].content).assertContain('角色');
+      // 3. AfterCharacter 世界书
+      expect(result.messages[2].role).assertEqual(ChatRole.System);
+      expect(result.messages[2].content).assertEqual('酒馆后记');
+      // 4-5. Conversation
+      expect(result.messages[3].role).assertEqual(ChatRole.Assistant);
+      expect(result.messages[4].role).assertEqual(ChatRole.User);
+      expect(result.matchedLorebookEntryIds.length).assertEqual(2);
+    });
+
+    // ===== constant 条目 =====
+
+    it('Constant_entry_always_injected', 0, () => {
+      const b: PromptBuilder = builder();
+      const lb: Lorebook = createLorebook('世界书', '', true);
+      const constEntry: LorebookEntry = createLorebookEntry(
+        'const', [], [], '恒定内容', true, true, false, LorebookPosition.BeforeCharacter, 0
+      );
+      const lb2: Lorebook = addEntryToLorebook(lb, constEntry);
+      // 没有匹配关键词的消息
+      const msgs: ChatMessage[] = [makeUserMsg('你好')];
+      const context: PromptBuildContext = { lorebook: lb2, messages: msgs };
+
+      const result: PromptBuildResult = b.build(context);
+
+      // constant 条目始终注入,包含 1 条 System + 1 条 User
+      expect(result.messages.length).assertEqual(2);
+      expect(result.messages[0].content).assertEqual('恒定内容');
+      expect(result.matchedLorebookEntryIds.length).assertEqual(1);
+    });
+
+    // ===== 普通关键词匹配 =====
+
+    it('Keyword_match_injects_entry', 0, () => {
+      const b: PromptBuilder = builder();
+      const lb: Lorebook = createLorebook('世界书', '', true);
+      const entry: LorebookEntry = createLorebookEntry(
+        'kw', ['酒馆'], [], '酒馆内容', true, false, false, LorebookPosition.BeforeCharacter, 0
+      );
+      const lb2: Lorebook = addEntryToLorebook(lb, entry);
+      const msgs: ChatMessage[] = [makeUserMsg('我们来到了酒馆')];
+      const context: PromptBuildContext = { lorebook: lb2, messages: msgs };
+
+      const result: PromptBuildResult = b.build(context);
+
+      expect(result.matchedLorebookEntryIds.length).assertEqual(1);
+      expect(result.messages[0].content).assertEqual('酒馆内容');
+    });
+
+    it('English_keyword_case_insensitive', 0, () => {
+      const b: PromptBuilder = builder();
+      const lb: Lorebook = createLorebook('世界书', '', true);
+      const entry: LorebookEntry = createLorebookEntry(
+        'en', ['Tavern'], [], 'English tavern', true, false, false, LorebookPosition.BeforeCharacter, 0
+      );
+      const lb2: Lorebook = addEntryToLorebook(lb, entry);
+      const msgs: ChatMessage[] = [makeUserMsg('Welcome to the tavern!')];
+      const context: PromptBuildContext = { lorebook: lb2, messages: msgs };
+
+      const result: PromptBuildResult = b.build(context);
+
+      expect(result.matchedLorebookEntryIds.length).assertEqual(1);
+      expect(result.messages[0].content).assertEqual('English tavern');
+    });
+
+    // ===== selective 条目 =====
+
+    it('Selective_entry_both_keys_match', 0, () => {
+      const b: PromptBuilder = builder();
+      const lb: Lorebook = createLorebook('世界书', '', true);
+      const entry: LorebookEntry = createLorebookEntry(
+        'sel', ['酒馆'], ['战斗'], '选择性战斗', true, false, true, LorebookPosition.BeforeCharacter, 0
+      );
+      const lb2: Lorebook = addEntryToLorebook(lb, entry);
+      const msgs: ChatMessage[] = [makeUserMsg('酒馆里发生了战斗')];
+      const context: PromptBuildContext = { lorebook: lb2, messages: msgs };
+
+      const result: PromptBuildResult = b.build(context);
+
+      expect(result.matchedLorebookEntryIds.length).assertEqual(1);
+      expect(result.messages[0].content).assertEqual('选择性战斗');
+    });
+
+    it('Selective_entry_only_primary_key_not_injected', 0, () => {
+      const b: PromptBuilder = builder();
+      const lb: Lorebook = createLorebook('世界书', '', true);
+      const entry: LorebookEntry = createLorebookEntry(
+        'sel', ['酒馆'], ['战斗'], '选择性战斗', true, false, true, LorebookPosition.BeforeCharacter, 0
+      );
+      const lb2: Lorebook = addEntryToLorebook(lb, entry);
+      // 只命中主关键词,未命中次关键词
+      const msgs: ChatMessage[] = [makeUserMsg('我们来到了酒馆')];
+      const context: PromptBuildContext = { lorebook: lb2, messages: msgs };
+
+      const result: PromptBuildResult = b.build(context);
+
+      // selective 只命中主关键词→不注入
+      expect(result.matchedLorebookEntryIds.length).assertEqual(0);
+    });
+
+    // ===== disabled 世界书 =====
+
+    it('Disabled_lorebook_not_injected', 0, () => {
+      const b: PromptBuilder = builder();
+      const lb: Lorebook = createLorebook('禁用世界书', '', false);
+      const entry: LorebookEntry = createLorebookEntry(
+        'kw', ['酒馆'], [], '酒馆内容', true, false, false, LorebookPosition.BeforeCharacter, 0
+      );
+      const lb2: Lorebook = addEntryToLorebook(lb, entry);
+      const msgs: ChatMessage[] = [makeUserMsg('酒馆')];
+      const context: PromptBuildContext = { lorebook: lb2, messages: msgs };
+
+      const result: PromptBuildResult = b.build(context);
+
+      expect(result.matchedLorebookEntryIds.length).assertEqual(0);
+      // 只有 User 消息,无世界书注入
+      expect(result.messages.length).assertEqual(1);
+    });
+
+    // ===== disabled 条目 =====
+
+    it('Disabled_entry_not_injected', 0, () => {
+      const b: PromptBuilder = builder();
+      const lb: Lorebook = createLorebook('世界书', '', true);
+      const entry: LorebookEntry = createLorebookEntry(
+        'disabled', ['酒馆'], [], '禁用条目', false, false, false, LorebookPosition.BeforeCharacter, 0
+      );
+      const lb2: Lorebook = addEntryToLorebook(lb, entry);
+      const msgs: ChatMessage[] = [makeUserMsg('酒馆')];
+      const context: PromptBuildContext = { lorebook: lb2, messages: msgs };
+
+      const result: PromptBuildResult = b.build(context);
+
+      expect(result.matchedLorebookEntryIds.length).assertEqual(0);
+    });
+
+    // ===== priority 排序 =====
+
+    it('Priority_sorting_descending', 0, () => {
+      const b: PromptBuilder = builder();
+      const lb: Lorebook = createLorebook('世界书', '', true);
+      const low: LorebookEntry = createLorebookEntry(
+        'low', ['酒馆'], [], '低优先级', true, false, false, LorebookPosition.BeforeCharacter, 1
+      );
+      const high: LorebookEntry = createLorebookEntry(
+        'high', ['酒馆'], [], '高优先级', true, false, false, LorebookPosition.BeforeCharacter, 100
+      );
+      let lb2: Lorebook = addEntryToLorebook(lb, low);
+      lb2 = addEntryToLorebook(lb2, high);
+      const msgs: ChatMessage[] = [makeUserMsg('酒馆')];
+      const context: PromptBuildContext = { lorebook: lb2, messages: msgs };
+
+      const result: PromptBuildResult = b.build(context);
+
+      // 同位置 BeforeCharacter 内按 priority 降序
+      expect(result.matchedLorebookEntryIds.length).assertEqual(2);
+      expect(result.matchedLorebookEntryIds[0]).assertEqual('high');
+      expect(result.matchedLorebookEntryIds[1]).assertEqual('low');
+      expect(result.messages[0].content).assertEqual('高优先级');
+      expect(result.messages[1].content).assertEqual('低优先级');
+    });
+
+    // ===== 原始消息数组不变 =====
+
     it('Original_messages_array_not_modified', 0, () => {
       const b: PromptBuilder = builder();
       const msgs: ChatMessage[] = [makeUserMsg('测试')];
@@ -122,19 +346,25 @@ export default function promptBuilderTest(): void {
       expect(msgs[0].content).assertEqual('测试');
     });
 
-    // 5. 无角色时行为正常
-    it('No_character_no_lorebook_works', 0, () => {
+    // ===== firstMessage 不重复 =====
+
+    it('FirstMessage_not_duplicated', 0, () => {
       const b: PromptBuilder = builder();
-      const msgs: ChatMessage[] = [makeUserMsg('你好'), makeAssistantMsg('你好')];
-      const context: PromptBuildContext = { messages: msgs };
+      const char: Character = createCharacter('角色', '描述', '', '', '你好，我是角色');
+      const msgs: ChatMessage[] = [makeAssistantMsg('你好，我是角色')];
+      const context: PromptBuildContext = { character: char, messages: msgs };
 
       const result: PromptBuildResult = b.build(context);
 
+      // Character System Prompt + firstMessage = 2 条,firstMessage 不重复
       expect(result.messages.length).assertEqual(2);
-      expect(result.matchedLorebookEntryIds.length).assertEqual(0);
+      expect(result.messages[0].role).assertEqual(ChatRole.System);
+      expect(result.messages[1].role).assertEqual(ChatRole.Assistant);
+      expect(result.messages[1].content).assertEqual('你好，我是角色');
     });
 
-    // 6. 重新生成不重复注入(每次调用 build 独立构建)
+    // ===== 重新生成不重复注入 =====
+
     it('Rebuild_does_not_duplicate_injections', 0, () => {
       const b: PromptBuilder = builder();
       const char: Character = createCharacter('角色', '描述');
@@ -144,7 +374,6 @@ export default function promptBuilderTest(): void {
       const result1: PromptBuildResult = b.build(context);
       const result2: PromptBuildResult = b.build(context);
 
-      // 每次构建结果一致，不重复注入
       expect(result1.messages.length).assertEqual(result2.messages.length);
       expect(result1.messages[0].content).assertEqual(result2.messages[0].content);
     });

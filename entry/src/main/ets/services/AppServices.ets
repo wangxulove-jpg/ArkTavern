@@ -29,6 +29,7 @@ import { LorebookStore } from '../storage/LorebookStore';
 import { CharacterService } from './CharacterService';
 import { LorebookService } from './LorebookService';
 import { PromptBuilder } from './PromptBuilder';
+import { ChatService } from './ChatService';
 import { ModelService } from './ModelService';
 import { DefaultProviderFactory } from './ProviderFactory';
 import { Logger } from '../utils/Logger';
@@ -160,9 +161,18 @@ export class AppServices {
   }
 
   /**
-   * 获取 PromptBuilder 实例。
+   * 创建新的 ChatService 实例。
+   * 每次 ChatPage 进入时调用,保证生命周期独立。
+   * 内部完成 ModelService、LorebookService、PromptBuilder 的依赖注入。
+   *
+   * @returns 新创建的 ChatService 实例
    */
-  static getPromptBuilder(): PromptBuilder {
-    return AppServices.getInstance().promptBuilder;
+  static createChatService(): ChatService {
+    const services: AppServices = AppServices.getInstance();
+    return new ChatService(
+      services.modelService,
+      services.lorebookService,
+      services.promptBuilder
+    );
   }
 }

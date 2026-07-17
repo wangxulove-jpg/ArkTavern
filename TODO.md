@@ -721,11 +721,12 @@ Date: 2026-07-15
   - [x] PromptSegment.ets:纯数据模型(~60 行),含排序函数
   - [x] PromptBuilder.ets:核心构建器(~130 行),build() 方法同步构建,注入 LorebookService 进行匹配
   - [x] ChatService.ets:删除 buildRequestMessages() 世界书拼接,新增 promptBuilder 字段和 character 字段,新 buildRequestMessages() 调用 PromptBuilder
-  - [x] AppServices.ets:创建 PromptBuilder 实例,新增 getPromptBuilder() 静态方法
-  - [x] ChatPage.ets:通过 AppServices.getPromptBuilder() 注入 ChatService 构造函数
-  - [x] PromptBuilder.test.ets:6 个本地单元测试(无角色无世界书/仅角色/System 跳过/原始数组不变/无角色正常/重新生成不重复)
+  - [x] AppServices.ets:创建 PromptBuilder 实例,新增 createChatService() 工厂方法
+  - [x] ChatPage.ets:通过 AppServices.createChatService() 获取 ChatService,不再直接依赖 PromptBuilder
+  - [x] System 消息修复:PromptBuilder 不再无条件跳过 System 消息;ChatService.initContext 不再存储 System 消息到 messages
+  - [x] PromptBuilder.test.ets:15 个本地单元测试(覆盖 System 保留/character+worldbook 顺序/constant/关键词/selective/disabled/priority/firstMessage/rebuild)
   - [x] MCP 增量编译 entry@default + entry@ohosTest BUILD SUCCESSFUL
-  - [x] 模拟器启动正常,无 hilog 敏感数据泄漏
+  - [x] 模拟器启动正常,无 hilog 敏感数据泄漏,无崩溃
   - 未实现:宏替换、TokenCounter、历史截断、Preset、正则世界书、递归扫描
   - 已知限制:本地单元测试无法通过 hvigorw 运行(SDK component missing),需在 IDE 中运行;设备测试同样受限
 

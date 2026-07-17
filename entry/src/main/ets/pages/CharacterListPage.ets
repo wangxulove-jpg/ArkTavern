@@ -50,12 +50,7 @@ export struct CharacterListPage {
         Column() {
           // 顶部操作栏
           Row() {
-            Text($r('app.string.nav_character_list_title'))
-              .fontSize(18)
-              .fontWeight(FontWeight.Medium)
-              .fontColor($r('sys.color.ohos_id_color_text_primary'))
-              .layoutWeight(1)
-
+            Blank()
             Button($r('app.string.character_import'))
               .fontSize(13)
               .backgroundColor($r('sys.color.ohos_id_color_emphasize'))
@@ -134,7 +129,6 @@ export struct CharacterListPage {
       .backgroundColor($r('sys.color.ohos_id_color_sub_background'))
     }
     .title($r('app.string.nav_character_list_title'))
-    .hideTitleBar(true)
   }
 
   // ===== 空状态 =====

@@ -119,13 +119,11 @@ export class PromptBuilder {
       }
     }
 
-    // 3. Conversation:跳过 System 消息(角色 System Prompt 已在上面处理),保留 User/Assistant 消息
+    // 3. Conversation:保留输入中的所有消息(包括合法 System 消息)
+    // Character System Prompt 已由 Step 2 动态生成,不再从输入中取
+    // 世界书 System 消息已由 Step 1 动态生成
     for (let i = 0; i < context.messages.length; i++) {
       const msg: ChatMessage = context.messages[i];
-      if (msg.role === ChatRole.System) {
-        // 跳过所有 System 消息(角色 System Prompt 和任何世界书消息)
-        continue;
-      }
       const convSeg: PromptSegment = createPromptSegment(
         msg.id,
         PromptSegmentPosition.Conversation,

@@ -24,6 +24,9 @@ export class LorebookViewModel {
   loading: boolean = false;
   errorMessage: string = '';
 
+  /** 数据变更回调,用于页面将 @State 变量同步到 ViewModel */
+  onDataUpdate: (() => void) | null = null;
+
   /** 展开的世界书 ID(用于显示条目列表) */
   expandedLorebookId: string | null = null;
 
@@ -64,11 +67,18 @@ export class LorebookViewModel {
     try {
       this.lorebooks = await this.service.list();
       this.currentLorebookId = await this.service.getCurrentLorebookId();
+      this.notifyDataUpdate();
     } catch (e) {
       this.errorMessage = '加载世界书列表失败';
       Logger.error(LOG_TAG, 'load failed: ' + String(e));
     } finally {
       this.loading = false;
+    }
+  }
+
+  private notifyDataUpdate(): void {
+    if (this.onDataUpdate !== null) {
+      this.onDataUpdate();
     }
   }
 
@@ -137,6 +147,7 @@ export class LorebookViewModel {
     try {
       await this.service.setCurrentLorebookId(id);
       this.currentLorebookId = await this.service.getCurrentLorebookId();
+      this.notifyDataUpdate();
     } catch (e) {
       this.errorMessage = '设置失败: ' + String(e);
       Logger.error(LOG_TAG, 'setCurrentLorebook failed: ' + String(e));
