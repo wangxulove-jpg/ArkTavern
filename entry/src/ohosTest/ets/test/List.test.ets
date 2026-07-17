@@ -20,6 +20,9 @@ import dbHelperDeviceTest from './DbHelper.test';
 import chatRepositoryDeviceTest from './ChatRepository.test';
 import messageRepositoryDeviceTest from './MessageRepository.test';
 import chatPersistenceOperationsDeviceTest from './ChatPersistenceOperations.test';
+import chatPersistenceServiceDeviceTest from './ChatPersistenceService.test';
+import chatServicePersistenceDeviceTest from './ChatServicePersistence.test';
+import messageRepositoryPersistenceExtensionsDeviceTest from './MessageRepositoryPersistenceExtensions.test';
 
 export default function testsuite() {
   abilityTest();
@@ -43,4 +46,7 @@ export default function testsuite() {
   chatRepositoryDeviceTest();
   messageRepositoryDeviceTest();
   chatPersistenceOperationsDeviceTest();
+  chatPersistenceServiceDeviceTest();
+  chatServicePersistenceDeviceTest();
+  messageRepositoryPersistenceExtensionsDeviceTest();
 }

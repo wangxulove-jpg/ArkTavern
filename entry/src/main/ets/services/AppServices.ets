@@ -33,7 +33,11 @@ import { PromptBuilder } from './PromptBuilder';
 import { TokenCounter } from './TokenCounter';
 import { HistoryTrimmer } from './HistoryTrimmer';
 import { DbHelper } from '../database/DbHelper';
+import { ChatRepository } from '../repositories/ChatRepository';
+import { MessageRepository } from '../repositories/MessageRepository';
+import { ChatPersistenceOperations } from '../repositories/ChatPersistenceOperations';
 import { ChatService } from './ChatService';
+import { ChatPersistenceService } from './ChatPersistenceService';
 import { ModelService } from './ModelService';
 import { DefaultProviderFactory } from './ProviderFactory';
 import { Logger } from '../utils/Logger';
@@ -63,6 +67,14 @@ export class AppServices {
   private readonly historyTrimmer: HistoryTrimmer;
   /** DbHelper 数据库底座(不对页面公开) */
   private readonly dbHelper: DbHelper;
+  /** ChatRepository 聊天仓储(不对页面公开) */
+  private readonly chatRepository: ChatRepository;
+  /** MessageRepository 消息仓储(不对页面公开) */
+  private readonly messageRepository: MessageRepository;
+  /** ChatPersistenceOperations 联合事务操作(不对页面公开) */
+  private readonly chatPersistenceOperations: ChatPersistenceOperations;
+  /** ChatPersistenceService 聊天持久化协调服务(不对页面公开) */
+  private readonly chatPersistenceService: ChatPersistenceService;
 
   /**
    * 私有构造,组装全部依赖。
@@ -85,6 +97,20 @@ export class AppServices {
     this.tokenCounter = new TokenCounter();
     this.historyTrimmer = new HistoryTrimmer(this.tokenCounter);
     this.dbHelper = new DbHelper();
+    // 持久化层组合:全部 Repository 共享同一 DbHelper 实例
+    this.chatRepository = new ChatRepository(this.dbHelper);
+    this.messageRepository = new MessageRepository(this.dbHelper);
+    this.chatPersistenceOperations = new ChatPersistenceOperations(
+      this.dbHelper,
+      this.chatRepository,
+      this.messageRepository
+    );
+    this.chatPersistenceService = new ChatPersistenceService(
+      this.dbHelper,
+      this.chatRepository,
+      this.messageRepository,
+      this.chatPersistenceOperations
+    );
   }
 
   /**
@@ -178,7 +204,12 @@ export class AppServices {
   /**
    * 创建新的 ChatService 实例。
    * 每次 ChatPage 进入时调用,保证生命周期独立。
-   * 内部完成 ModelService、LorebookService、PromptBuilder、TokenCounter、HistoryTrimmer 的依赖注入。
+   * 内部完成 ModelService、LorebookService、PromptBuilder、TokenCounter、HistoryTrimmer、
+   * ChatPersistenceService 的依赖注入。
+   *
+   * 持久化服务为应用级共享实例(自身无页面状态),所有 ChatService 共用。
+   * DbHelper 必须在 initialize() 完成后才允许 ChatService 加载会话,
+   * 调用方需通过 AppServices.whenReady() 等待初始化完成后再创建 ChatService。
    *
    * @returns 新创建的 ChatService 实例
    */
@@ -189,7 +220,8 @@ export class AppServices {
       services.lorebookService,
       services.promptBuilder,
       services.tokenCounter,
-      services.historyTrimmer
+      services.historyTrimmer,
+      services.chatPersistenceService
     );
   }
 }

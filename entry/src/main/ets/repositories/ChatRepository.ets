@@ -251,6 +251,26 @@ export class ChatRepository {
       throw DatabaseError.invalidData('updatedAt invalid');
     }
     const store: relationalStore.RdbStore = this.dbHelper.getStore();
+    await this.updateLastMessageAtWithStore(store, id, lastMessageAt, updatedAt);
+  }
+
+  /**
+   * 在给定 store 上更新 Chat 的 lastMessageAt 和 updatedAt。
+   * 用于事务组合,避免嵌套事务。
+   * Chat 不存在时抛 NotFound。
+   */
+  async updateLastMessageAtWithStore(
+    store: relationalStore.RdbStore,
+    id: string,
+    lastMessageAt: number,
+    updatedAt: number
+  ): Promise<void> {
+    if (!isValidTimestamp(lastMessageAt)) {
+      throw DatabaseError.invalidData('lastMessageAt invalid');
+    }
+    if (!isValidTimestamp(updatedAt)) {
+      throw DatabaseError.invalidData('updatedAt invalid');
+    }
     const bucket: relationalStore.ValuesBucket = {};
     bucket[COLUMN_LAST_MESSAGE_AT] = lastMessageAt;
     bucket[COLUMN_UPDATED_AT] = updatedAt;
@@ -298,6 +318,42 @@ export class ChatRepository {
     const rs: relationalStore.ResultSet = await store.query(predicates);
     try {
       return rs.goToFirstRow();
+    } finally {
+      rs.close();
+    }
+  }
+
+  /**
+   * 获取指定角色(或普通助手)的最近未归档会话。
+   *
+   * - characterId 为 undefined 时,查询 character_id IS NULL
+   * - characterId 为字符串时,查询 character_id = ?
+   * - 不包含 archived
+   * - 排序:last_message_at DESC → updated_at DESC → id ASC(取首条)
+   * - 不存在返回 null
+   */
+  async getLatestByCharacterId(characterId?: string): Promise<Chat | null> {
+    const store: relationalStore.RdbStore = this.dbHelper.getStore();
+    const predicates: relationalStore.RdbPredicates =
+      new relationalStore.RdbPredicates(TABLE_CHATS);
+    predicates.equalTo(COLUMN_IS_ARCHIVED, 0);
+    if (characterId !== undefined) {
+      predicates.equalTo(COLUMN_CHARACTER_ID, characterId);
+    } else {
+      predicates.isNull(COLUMN_CHARACTER_ID);
+    }
+    predicates.orderByDesc(COLUMN_LAST_MESSAGE_AT);
+    predicates.orderByDesc(COLUMN_UPDATED_AT);
+    predicates.orderByAsc(COLUMN_ID);
+    predicates.limitAs(1);
+    predicates.offsetAs(0);
+
+    const rs: relationalStore.ResultSet = await store.query(predicates);
+    try {
+      if (!rs.goToFirstRow()) {
+        return null;
+      }
+      return chatFromRow(rs);
     } finally {
       rs.close();
     }

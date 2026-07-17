@@ -27,6 +27,7 @@ import { ChatMessage, ChatMessageStatus } from '../models/ChatMessage';
 import { ChatRole } from '../models/ChatRole';
 import { ChatMessageSource } from '../models/ChatMessageSource';
 import { DatabaseError } from '../models/DatabaseError';
+import { nowMillis } from '../utils/Time';
 import {
   TABLE_MESSAGES,
   TABLE_CHATS,
@@ -556,6 +557,92 @@ export class MessageRepository {
       return rs.goToFirstRow();
     } finally {
       rs.close();
+    }
+  }
+
+  /**
+   * 删除指定 chat 中 sequence_number > sequenceNumber 的所有消息。
+   * 不删除 sequence_number 等于传入值的消息(保留边界 User 消息)。
+   * 返回删除行数。对不存在的 chat 执行返回 0(幂等)。
+   *
+   * 使用 RdbPredicates.greaterThan,不拼接用户输入 SQL。
+   */
+  async removeAfterSequence(
+    chatId: string,
+    sequenceNumber: number
+  ): Promise<number> {
+    if (chatId === '') {
+      throw DatabaseError.invalidData('chatId empty');
+    }
+    if (!isValidSequence(sequenceNumber)) {
+      throw DatabaseError.invalidData('sequenceNumber invalid');
+    }
+    const store: relationalStore.RdbStore = this.dbHelper.getStore();
+    return await this.removeAfterSequenceWithStore(store, chatId, sequenceNumber);
+  }
+
+  /**
+   * 在给定 store 上删除 sequence_number > sequenceNumber 的所有消息。
+   * 用于事务组合,避免嵌套事务。
+   * 不删除边界消息(sequence_number 等于传入值)。
+   * 对不存在的 chat 执行返回 0(幂等)。
+   */
+  async removeAfterSequenceWithStore(
+    store: relationalStore.RdbStore,
+    chatId: string,
+    sequenceNumber: number
+  ): Promise<number> {
+    if (chatId === '') {
+      throw DatabaseError.invalidData('chatId empty');
+    }
+    if (!isValidSequence(sequenceNumber)) {
+      throw DatabaseError.invalidData('sequenceNumber invalid');
+    }
+    const predicates: relationalStore.RdbPredicates =
+      new relationalStore.RdbPredicates(TABLE_MESSAGES);
+    predicates.equalTo(COLUMN_CHAT_ID, chatId);
+    predicates.greaterThan(COLUMN_SEQUENCE_NUMBER, sequenceNumber);
+    try {
+      return await store.delete(predicates);
+    } catch (err) {
+      throw DatabaseError.queryFailed(
+        `message.removeAfterSequence: ${extractCauseMessage(err)}`
+      );
+    }
+  }
+
+  /**
+   * 规范化指定 chat 中所有 Streaming 状态的异常中断消息:
+   * - status: Streaming → Cancelled
+   * - is_streaming: 1 → 0
+   *
+   * 用于应用启动后恢复会话时,把上次未正常结束的 Streaming 消息转为 Cancelled。
+   * 不修改 Completed/Cancelled/Failed 消息。
+   * 返回受影响行数。
+   *
+   * errorMessage 不被覆盖(保留原有值,通常为空)。
+   */
+  async normalizeInterruptedMessages(chatId: string): Promise<number> {
+    if (chatId === '') {
+      throw DatabaseError.invalidData('chatId empty');
+    }
+    const store: relationalStore.RdbStore = this.dbHelper.getStore();
+    const bucket: relationalStore.ValuesBucket = {};
+    bucket[COLUMN_STATUS] = chatMessageStatusToString(ChatMessageStatus.Cancelled);
+    bucket[COLUMN_IS_STREAMING] = 0;
+    bucket[COLUMN_UPDATED_AT] = nowMillis();
+
+    const predicates: relationalStore.RdbPredicates =
+      new relationalStore.RdbPredicates(TABLE_MESSAGES);
+    predicates.equalTo(COLUMN_CHAT_ID, chatId);
+    predicates.equalTo(COLUMN_STATUS, chatMessageStatusToString(ChatMessageStatus.Streaming));
+
+    try {
+      return await store.update(bucket, predicates);
+    } catch (err) {
+      throw DatabaseError.queryFailed(
+        `message.normalizeInterrupted: ${extractCauseMessage(err)}`
+      );
     }
   }
 }

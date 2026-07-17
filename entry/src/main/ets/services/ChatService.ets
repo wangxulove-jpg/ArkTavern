@@ -28,7 +28,9 @@ import { LorebookService } from './LorebookService';
 import { PromptBuilder, PromptBuildContext, PromptBuildResult } from './PromptBuilder';
 import { TokenCounter } from './TokenCounter';
 import { HistoryTrimmer } from './HistoryTrimmer';
+import { ChatPersistenceService } from './ChatPersistenceService';
 import { ChatMessage, ChatMessageStatus, createChatMessage } from '../models/ChatMessage';
+import { ChatMessageSource } from '../models/ChatMessageSource';
 import { ChatRequestOptions } from '../models/ChatRequest';
 import { ChatRole } from '../models/ChatRole';
 import {
@@ -46,6 +48,7 @@ import { MacroContext, createMacroContext } from '../models/MacroContext';
 import { ProviderConfig } from '../models/ProviderConfig';
 import { TokenBudget, DEFAULT_CONTEXT_WINDOW, DEFAULT_RESERVED_OUTPUT_TOKENS } from '../models/TokenBudget';
 import { HistoryTrimResult } from '../models/HistoryTrimResult';
+import { PersistedChatSession } from '../models/PersistedChatSession';
 import { generateUuid } from '../utils/Uuid';
 import { Logger } from '../utils/Logger';
 
@@ -56,6 +59,12 @@ const START_TIMEOUT_MS: number = 15000;
 
 /** 默认用户名(本阶段固定值,后续可扩展为用户设置) */
 const DEFAULT_USER_NAME: string = 'User';
+
+/** delta 持久化节流间隔(毫秒) */
+const PERSISTENCE_THROTTLE_MS: number = 400;
+
+/** delta 持久化触发的最小字符增量 */
+const PERSISTENCE_MIN_CHARS: number = 64;
 
 /**
  * 聊天状态枚举。
@@ -105,6 +114,7 @@ export class ChatService {
   private readonly promptBuilder: PromptBuilder | null;
   private readonly tokenCounter: TokenCounter | null;
   private readonly historyTrimmer: HistoryTrimmer | null;
+  private readonly persistenceService: ChatPersistenceService | null;
   /** 当前角色(用于 PromptBuilder 构建) */
   private character: Character | null = null;
   /** 最近一次使用的回调(用于 stopGeneration/clearConversation 通知状态) */
@@ -114,22 +124,42 @@ export class ChatService {
   /** 最近一次历史裁剪结果(只读) */
   private lastHistoryTrimResult: HistoryTrimResult | undefined = undefined;
 
+  // ===== 持久化状态 =====
+  /** 当前会话 id(未初始化时为 undefined) */
+  private currentChatId: string | undefined = undefined;
+  /** 当前会话的最大 sequenceNumber(空会话为 0) */
+  private currentSequenceNumber: number = 0;
+  /** 会话是否已初始化 */
+  private contextInitialized: boolean = false;
+  /** 初始化进行中的 Promise(防止并发) */
+  private initializingPromise: Promise<void> | null = null;
+
+  // ===== 流式 delta 持久化节流 =====
+  /** 节流定时器 id */
+  private persistenceTimerId: number = -1;
+  /** 上次持久化时的 Assistant content 长度 */
+  private lastPersistedContentLength: number = 0;
+  /** 待持久化的 Assistant id */
+  private pendingPersistAssistantId: string | null = null;
+
   constructor(
     modelService: ModelService,
     lorebookService: LorebookService | null = null,
     promptBuilder: PromptBuilder | null = null,
     tokenCounter: TokenCounter | null = null,
-    historyTrimmer: HistoryTrimmer | null = null
+    historyTrimmer: HistoryTrimmer | null = null,
+    persistenceService: ChatPersistenceService | null = null
   ) {
     this.modelService = modelService;
     this.lorebookService = lorebookService;
     this.promptBuilder = promptBuilder;
     this.tokenCounter = tokenCounter;
     this.historyTrimmer = historyTrimmer;
+    this.persistenceService = persistenceService;
   }
 
   /**
-   * 初始化角色聊天上下文。
+   * 初始化角色聊天上下文(无持久化版本)。
    * 有角色时:
    * - 注入 firstMessage 作为 Assistant 开场消息
    * - Character System Prompt 由 PromptBuilder 在每次发送/重新生成时动态生成,
@@ -137,10 +167,14 @@ export class ChatService {
    * 无角色时:不做任何初始化。
    * 只在消息列表为空时生效,防止重复注入。
    *
+   * 此方法不访问数据库,用于无 persistenceService 的场景(如旧测试)。
+   * 新代码应使用 initializeSession()。
+   *
    * @returns 是否添加了 firstMessage(用于通知页面显示开场白)
    */
   initContext(character: Character | null): boolean {
     this.character = character;
+    this.contextInitialized = true;
     if (this.messages.length > 0) {
       return false;
     }
@@ -158,7 +192,8 @@ export class ChatService {
         content: character.firstMessage,
         createdAt: Date.now(),
         isStreaming: false,
-        status: ChatMessageStatus.Completed
+        status: ChatMessageStatus.Completed,
+        source: ChatMessageSource.CharacterFirstMessage
       };
       newMessages.push(firstMsg);
     }
@@ -168,9 +203,133 @@ export class ChatService {
   }
 
   /**
+   * 异步初始化会话(持久化版本)。
+   *
+   * 流程:
+   * 1. 尝试加载最近会话(openLatestSession)
+   * 2. 若存在:恢复 messages 和 currentSequenceNumber
+   * 3. 若不存在:创建新会话,有角色且 firstMessage 非空时注入开场白
+   * 4. 标记 contextInitialized = true
+   *
+   * 同一 ChatService 实例只初始化一次。
+   * 并发调用只执行一次,其他调用等待结果。
+   * 初始化失败抛异常,页面应捕获并显示错误。
+   *
+   * @param character 当前角色(可选)
+   */
+  async initializeSession(character?: Character): Promise<void> {
+    if (this.disposed) {
+      throw new Error('ChatService disposed, cannot initialize session');
+    }
+    if (this.contextInitialized) {
+      return;
+    }
+    if (this.initializingPromise !== null) {
+      await this.initializingPromise;
+      return;
+    }
+    const promise: Promise<void> = this.doInitializeSession(character);
+    this.initializingPromise = promise;
+    try {
+      await promise;
+    } finally {
+      this.initializingPromise = null;
+    }
+  }
+
+  private async doInitializeSession(character?: Character): Promise<void> {
+    this.character = character !== undefined ? character : null;
+
+    // 无持久化服务:回退到同步 initContext
+    if (this.persistenceService === null) {
+      this.initContext(this.character);
+      return;
+    }
+
+    const characterId: string | undefined =
+      this.character !== null ? this.character.id : undefined;
+    try {
+      const session: PersistedChatSession | null =
+        await this.persistenceService.openLatestSession(characterId);
+
+      if (session !== null) {
+        // 恢复已有会话
+        this.currentChatId = session.chat.id;
+        this.messages = session.messages.slice();
+        this.currentSequenceNumber = session.maxSequenceNumber;
+        Logger.info(LOG_TAG, 'session restored messages=' + this.messages.length.toString()
+          + ' maxSeq=' + this.currentSequenceNumber.toString());
+      } else {
+        // 创建新会话
+        await this.createNewSession(characterId);
+      }
+      this.contextInitialized = true;
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      Logger.error(LOG_TAG, 'initializeSession failed: ' + msg);
+      throw new Error('会话初始化失败: ' + msg);
+    }
+  }
+
+  /**
+   * 创建新会话并注入 firstMessage(如果有角色且 firstMessage 非空)。
+   */
+  private async createNewSession(characterId?: string): Promise<void> {
+    if (this.persistenceService === null) {
+      return;
+    }
+
+    const hasFirstMessage: boolean =
+      this.character !== null && this.character.firstMessage.length > 0;
+
+    if (hasFirstMessage && this.character !== null) {
+      const firstMsg: ChatMessage = {
+        id: 'msg-' + generateUuid(),
+        role: ChatRole.Assistant,
+        content: this.character.firstMessage,
+        createdAt: Date.now(),
+        isStreaming: false,
+        status: ChatMessageStatus.Completed,
+        source: ChatMessageSource.CharacterFirstMessage
+      };
+      const session: PersistedChatSession =
+        await this.persistenceService.createSessionWithFirstMessage(
+          characterId, undefined, firstMsg
+        );
+      this.currentChatId = session.chat.id;
+      this.messages = [firstMsg];
+      this.currentSequenceNumber = 1;
+    } else {
+      const session: PersistedChatSession =
+        await this.persistenceService.createSession(characterId);
+      this.currentChatId = session.chat.id;
+      this.messages = [];
+      this.currentSequenceNumber = 0;
+    }
+  }
+
+  /**
+   * 获取当前会话 id(未初始化时为 undefined)。
+   */
+  getCurrentChatId(): string | undefined {
+    return this.currentChatId;
+  }
+
+  /**
+   * 会话是否已初始化(可用于页面判断是否可发送)。
+   */
+  isSessionReady(): boolean {
+    return this.contextInitialized;
+  }
+
+  /**
    * 发送用户消息并开始流式生成。
-   * 顺序:校验 → 创建 User 消息 → 创建 Assistant 占位 → 通知 → 启动网络。
-   * 即使网络启动失败,页面也必须看到 User 消息和 Failed 状态的 Assistant 气泡。
+   * 顺序:校验 → 创建 User 消息 → 持久化 → 创建 Assistant 占位 → 持久化 → 启动网络。
+   *
+   * 持久化策略:
+   * - 有 persistenceService 时:先持久化 User + Streaming Assistant(事务),
+   *   失败则不启动网络请求,页面显示错误
+   * - 无 persistenceService 时:仅更新内存(兼容旧测试)
    */
   async sendMessage(userContent: string, callbacks: ChatServiceCallbacks): Promise<void> {
     if (this.disposed) {
@@ -189,12 +348,15 @@ export class ChatService {
     this.lastCallbacks = callbacks;
 
     // 1. 创建用户消息
-    const userMsg: ChatMessage = createChatMessage(
-      'msg-' + generateUuid(), ChatRole.User, userContent, Date.now()
-    );
-    this.messages = [...this.messages, userMsg];
-    this.setState(ChatState.Sending, callbacks);
-    this.emitMessages(callbacks);
+    const userMsg: ChatMessage = {
+      id: 'msg-' + generateUuid(),
+      role: ChatRole.User,
+      content: userContent,
+      createdAt: Date.now(),
+      isStreaming: false,
+      status: ChatMessageStatus.Completed,
+      source: ChatMessageSource.Conversation
+    };
 
     // 2. 创建空 Assistant 占位消息
     const assistantId: string = 'msg-' + generateUuid();
@@ -204,19 +366,47 @@ export class ChatService {
       content: '',
       createdAt: Date.now(),
       isStreaming: true,
-      status: ChatMessageStatus.Streaming
+      status: ChatMessageStatus.Streaming,
+      source: ChatMessageSource.Conversation
     };
-    this.messages = [...this.messages, assistantMsg];
+
+    // 3. 持久化(如果有 persistenceService)
+    if (this.persistenceService !== null && this.currentChatId !== undefined) {
+      try {
+        const result =
+          await this.persistenceService.appendUserAndStreamingAssistant(
+            this.currentChatId, userMsg, assistantMsg
+          );
+        this.currentSequenceNumber = result.assistantSequenceNumber;
+        this.lastPersistedContentLength = 0;
+        this.pendingPersistAssistantId = assistantId;
+      } catch (e) {
+        // 持久化失败:不启动请求,显示错误
+        const msg: string = e instanceof Error ? e.message : String(e);
+        Logger.error(LOG_TAG, 'sendMessage persist failed: ' + msg);
+        this.setState(ChatState.Failed, callbacks);
+        callbacks.onError('消息保存失败,请重试');
+        return;
+      }
+    }
+
+    // 4. 更新内存(持久化成功后)
+    this.messages = [...this.messages, userMsg, assistantMsg];
     this.currentAssistantId = assistantId;
+    this.setState(ChatState.Sending, callbacks);
     this.emitMessages(callbacks);
 
-    // 3. 启动网络请求(失败也保留消息)
+    // 5. 启动网络请求(失败也保留消息)
     this.doStream(assistantId, callbacks);
   }
 
   /**
    * 重新生成最后一条 Assistant 回复。
    * 找到最后一个 User 消息,删除其后的 Assistant 消息,重新请求。
+   *
+   * 持久化策略:
+   * - 有 persistenceService 时:事务删除旧 Assistant + 创建新 Streaming Assistant
+   * - 无 persistenceService 时:仅更新内存(兼容旧测试)
    */
   async regenerateLastResponse(callbacks: ChatServiceCallbacks): Promise<void> {
     if (this.disposed) {
@@ -240,10 +430,7 @@ export class ChatService {
     if (lastUserIdx < 0) {
       return;
     }
-
-    // 删除 User 之后的所有消息(创建新数组)
-    this.messages = this.messages.slice(0, lastUserIdx + 1);
-    this.emitMessages(callbacks);
+    const userMessageId: string = this.messages[lastUserIdx].id;
 
     // 创建空 Assistant 占位消息
     const assistantId: string = 'msg-' + generateUuid();
@@ -253,8 +440,31 @@ export class ChatService {
       content: '',
       createdAt: Date.now(),
       isStreaming: true,
-      status: ChatMessageStatus.Streaming
+      status: ChatMessageStatus.Streaming,
+      source: ChatMessageSource.Conversation
     };
+
+    // 持久化(事务删除旧 Assistant + 创建新 Streaming Assistant)
+    if (this.persistenceService !== null && this.currentChatId !== undefined) {
+      try {
+        const newSeq =
+          await this.persistenceService.replaceMessagesAfterUserAndAppend(
+            this.currentChatId, userMessageId, assistantMsg
+          );
+        this.currentSequenceNumber = newSeq;
+        this.lastPersistedContentLength = 0;
+        this.pendingPersistAssistantId = assistantId;
+      } catch (e) {
+        const msg: string = e instanceof Error ? e.message : String(e);
+        Logger.error(LOG_TAG, 'regenerate persist failed: ' + msg);
+        this.setState(ChatState.Failed, callbacks);
+        callbacks.onError('重新生成失败,请重试');
+        return;
+      }
+    }
+
+    // 更新内存(持久化成功后)
+    this.messages = this.messages.slice(0, lastUserIdx + 1);
     this.messages = [...this.messages, assistantMsg];
     this.currentAssistantId = assistantId;
     this.setState(ChatState.Sending, callbacks);
@@ -290,9 +500,13 @@ export class ChatService {
       this.currentHandle = null;
     }
     if (this.state === ChatState.Sending || this.state === ChatState.Streaming) {
+      // flush 任何 pending delta 持久化
+      this.flushPersistence();
       // 将当前 Assistant 消息标记为已取消(创建新对象和新数组)
       this.markAssistant(this.currentAssistantId, ChatMessageStatus.Cancelled, undefined, undefined);
       this.emitMessages(this.lastCallbacks);
+      // 持久化最终 Cancelled 状态
+      this.persistFinalAssistant(this.currentAssistantId);
       this.currentAssistantId = null;
       this.setState(ChatState.Cancelled, this.lastCallbacks);
     }
@@ -348,6 +562,7 @@ export class ChatService {
 
   /**
    * 释放资源,停止当前请求。dispose 后不可复用。
+   * 释放前 flush 任何 pending delta 持久化。
    */
   dispose(): void {
     if (this.disposed) {
@@ -355,10 +570,13 @@ export class ChatService {
     }
     this.disposed = true;
     this.clearStartTimer();
+    this.clearPersistenceTimer();
     if (this.currentHandle !== null) {
       this.currentHandle.abort();
       this.currentHandle = null;
     }
+    // flush 任何 pending delta(不等待 Promise,尽力而为)
+    this.flushPersistenceSync();
     this.messages = [];
     this.currentAssistantId = null;
     this.lastCallbacks = null;
@@ -385,6 +603,8 @@ export class ChatService {
           return;
         }
         this.appendDelta(assistantId, delta.content, callbacks);
+        // 节流持久化 delta
+        this.schedulePersistenceFlush(assistantId);
       },
       onComplete: (result: ChatStreamResult): void => {
         this.clearStartTimer();
@@ -394,10 +614,16 @@ export class ChatService {
         if (this.state !== ChatState.Streaming && this.state !== ChatState.Sending) {
           return;
         }
+        // flush 任何 pending delta 持久化
+        this.flushPersistence();
         const finalStatus: ChatMessageStatus = this.finalizeAssistant(
           assistantId, result.content, ChatMessageStatus.Completed, undefined, callbacks
         );
         this.currentAssistantId = null;
+        // 持久化最终状态
+        this.persistFinalAssistant(assistantId);
+        // 更新 Chat 活跃时间
+        this.persistChatActivity();
         // 空回复时 finalizeAssistant 返回 Failed,state 也应为 Failed
         if (finalStatus === ChatMessageStatus.Failed) {
           this.setState(ChatState.Failed, callbacks);
@@ -415,8 +641,14 @@ export class ChatService {
         if (this.state === ChatState.Cancelled) {
           return;
         }
+        // flush 任何 pending delta 持久化
+        this.flushPersistence();
         this.finalizeAssistant(assistantId, '', ChatMessageStatus.Failed, error.message, callbacks);
         this.currentAssistantId = null;
+        // 持久化最终 Failed 状态
+        this.persistFinalAssistant(assistantId);
+        // 更新 Chat 活跃时间
+        this.persistChatActivity();
         this.setState(ChatState.Failed, callbacks);
         callbacks.onError(error.message);
         Logger.info(LOG_TAG, 'stream failed: ' + error.message);
@@ -434,6 +666,7 @@ export class ChatService {
       this.clearStartTimer();
       this.finalizeAssistant(assistantId, '', ChatMessageStatus.Failed, String(e), callbacks);
       this.currentAssistantId = null;
+      this.persistFinalAssistant(assistantId);
       this.setState(ChatState.Failed, callbacks);
       callbacks.onError(String(e));
       return;
@@ -452,6 +685,7 @@ export class ChatService {
       this.clearStartTimer();
       this.finalizeAssistant(assistantId, '', ChatMessageStatus.Failed, String(e), callbacks);
       this.currentAssistantId = null;
+      this.persistFinalAssistant(assistantId);
       this.setState(ChatState.Failed, callbacks);
       callbacks.onError(String(e));
     }
@@ -775,10 +1009,158 @@ export class ChatService {
           updatedAt: Date.now(),
           isStreaming: false,
           errorMessage: errorMessage !== undefined ? errorMessage : msg.errorMessage,
-          status: status
+          status: status,
+          source: msg.source
         };
       }
       return msg;
     });
+  }
+
+  // ===== 持久化辅助方法 =====
+
+  /**
+   * 节流调度 delta 持久化。
+   * - 累计 PERSISTENCE_THROTTLE_MS 毫秒或 PERSISTENCE_MIN_CHARS 字符后触发
+   * - 已有定时器则不重复创建
+   */
+  private schedulePersistenceFlush(assistantId: string): void {
+    if (this.persistenceService === null || this.currentChatId === undefined) {
+      return;
+    }
+    this.pendingPersistAssistantId = assistantId;
+
+    // 检查字符增量是否已达到阈值
+    const currentMsg: ChatMessage | undefined = this.findMessageById(assistantId);
+    if (currentMsg !== undefined) {
+      const charDelta: number = currentMsg.content.length - this.lastPersistedContentLength;
+      if (charDelta >= PERSISTENCE_MIN_CHARS) {
+        // 达到字符阈值,立即 flush
+        this.flushPersistence();
+        return;
+      }
+    }
+
+    // 未达到字符阈值,启动/重置定时器
+    if (this.persistenceTimerId === -1) {
+      this.persistenceTimerId = setTimeout((): void => {
+        this.persistenceTimerId = -1;
+        this.flushPersistence();
+      }, PERSISTENCE_THROTTLE_MS);
+    }
+  }
+
+  /**
+   * 强制 flush 当前 pending delta 持久化(异步,不等待)。
+   * 用于 onComplete/onError/stopGeneration 时确保最后一批 delta 写入。
+   */
+  private flushPersistence(): void {
+    this.clearPersistenceTimer();
+    if (this.persistenceService === null || this.currentChatId === undefined) {
+      return;
+    }
+    const assistantId: string | null = this.pendingPersistAssistantId;
+    if (assistantId === null) {
+      return;
+    }
+    const msg: ChatMessage | undefined = this.findMessageById(assistantId);
+    if (msg === undefined) {
+      return;
+    }
+    // 内容长度未变化则跳过
+    if (msg.content.length === this.lastPersistedContentLength) {
+      return;
+    }
+    this.lastPersistedContentLength = msg.content.length;
+    // 异步写入,不等待,失败仅记录 warning
+    this.persistenceService.updateMessage(this.currentChatId, msg).catch(
+      (e: Object): void => {
+        Logger.warn(LOG_TAG, 'delta persist failed: '
+          + (e instanceof Error ? e.message : String(e)));
+      }
+    );
+  }
+
+  /**
+   * 同步 flush(dispose 时使用)。
+   * 只清除定时器,不发起异步写入(避免 dispose 后异步回调访问已释放状态)。
+   */
+  private flushPersistenceSync(): void {
+    this.clearPersistenceTimer();
+    this.pendingPersistAssistantId = null;
+  }
+
+  private clearPersistenceTimer(): void {
+    if (this.persistenceTimerId !== -1) {
+      clearTimeout(this.persistenceTimerId);
+      this.persistenceTimerId = -1;
+    }
+  }
+
+  /**
+   * 持久化 Assistant 最终状态(Completed/Cancelled/Failed)。
+   * 包含 1 次立即重试,失败仅记录 warning,不阻塞流程。
+   */
+  private persistFinalAssistant(assistantId: string | null): void {
+    if (assistantId === null) {
+      return;
+    }
+    if (this.persistenceService === null || this.currentChatId === undefined) {
+      return;
+    }
+    const msg: ChatMessage | undefined = this.findMessageById(assistantId);
+    if (msg === undefined) {
+      return;
+    }
+    this.lastPersistedContentLength = msg.content.length;
+    this.pendingPersistAssistantId = null;
+
+    // 异步写入,1 次重试
+    this.persistWithRetry(msg, 1);
+  }
+
+  private persistWithRetry(msg: ChatMessage, retriesLeft: number): void {
+    if (this.persistenceService === null || this.currentChatId === undefined) {
+      return;
+    }
+    const chatId: string = this.currentChatId;
+    this.persistenceService.updateMessage(chatId, msg).then((): void => {
+      Logger.info(LOG_TAG, 'final persist ok');
+    }).catch((e: Object): void => {
+      const msg2: string = e instanceof Error ? e.message : String(e);
+      if (retriesLeft > 0) {
+        Logger.warn(LOG_TAG, 'final persist retry: ' + msg2);
+        this.persistWithRetry(msg, retriesLeft - 1);
+      } else {
+        Logger.warn(LOG_TAG, 'final persist failed: ' + msg2);
+      }
+    });
+  }
+
+  /**
+   * 更新 Chat 活跃时间(异步,不等待)。
+   */
+  private persistChatActivity(): void {
+    if (this.persistenceService === null || this.currentChatId === undefined) {
+      return;
+    }
+    this.persistenceService.updateChatActivity(this.currentChatId, Date.now()).catch(
+      (e: Object): void => {
+        Logger.warn(LOG_TAG, 'chat activity persist failed: '
+          + (e instanceof Error ? e.message : String(e)));
+      }
+    );
+  }
+
+  /**
+   * 在 messages 中查找指定 id 的消息。
+   */
+  private findMessageById(id: string): ChatMessage | undefined {
+    for (let i = 0; i < this.messages.length; i++) {
+      if (this.messages[i].id === id) {
+        return this.messages[i];
+      }
+    }
+    return undefined;
   }
 }

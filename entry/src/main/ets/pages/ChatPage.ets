@@ -124,7 +124,13 @@ export struct ChatPage {
           Scroll(this.scroller) {
             Column() {
               if (this.messages.length === 0) {
-                this.emptyState();
+                if (this.viewModel!.isInitializing) {
+                  this.loadingState();
+                } else if (this.viewModel!.initError.length > 0) {
+                  this.initErrorState();
+                } else {
+                  this.emptyState();
+                }
               } else {
                 // key 包含 id + updatedAt + status + contentLength + isStreaming
                 // 强制 ForEach 在消息内容/状态变化时重新渲染
@@ -258,6 +264,45 @@ export struct ChatPage {
       ? this.viewModel!.characterName
       : $r('app.string.' + RES_NAV_CHAT_TITLE))
     .hideTitleBar(false)
+  }
+
+  // ===== 加载/错误状态 =====
+
+  @Builder
+  loadingState() {
+    Column() {
+      LoadingProgress()
+        .width(48)
+        .height(48)
+        .color($r('sys.color.ohos_id_color_text_secondary'))
+        .margin({ bottom: 12 })
+      Text('加载会话中…')
+        .fontSize(14)
+        .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+  }
+
+  @Builder
+  initErrorState() {
+    Column() {
+      Text('会话初始化失败')
+        .fontSize(16)
+        .fontColor(COLOR_STATUS_ERROR)
+        .margin({ bottom: 8 })
+      Text(this.viewModel!.initError)
+        .fontSize(13)
+        .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+        .textAlign(TextAlign.Center)
+        .padding({ left: 24, right: 24 })
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
   }
 
   // ===== 空状态 =====

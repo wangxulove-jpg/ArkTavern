@@ -43,6 +43,12 @@ export class ChatViewModel {
   userScrolledUp: boolean = false;
   /** 复制提示 */
   copyToast: string = '';
+  /** 会话初始化中(从数据库加载历史或创建新会话) */
+  isInitializing: boolean = true;
+  /** 会话已就绪(可发送/重新生成) */
+  isSessionReady: boolean = false;
+  /** 会话初始化失败错误信息(空表示无错误) */
+  initError: string = '';
 
   private chatService: ChatService;
   private modelService: ModelService;
@@ -65,17 +71,48 @@ export class ChatViewModel {
   }
 
   get canSend(): boolean {
-    return !this.isGenerating && this.hasCurrentModel && this.inputText.trim().length > 0;
+    return !this.isGenerating && this.hasCurrentModel && this.inputText.trim().length > 0
+      && this.isSessionReady;
   }
 
   get canStop(): boolean {
     return this.isGenerating;
   }
 
+  /**
+   * 异步初始化会话。
+   *
+   * 流程:
+   * 1. 加载模型配置
+   * 2. 加载当前角色
+   * 3. 调用 chatService.initializeSession(character) 从数据库恢复或创建新会话
+   * 4. 同步 messages 到 ViewModel
+   *
+   * 初始化期间:
+   * - isInitializing = true
+   * - isSessionReady = false
+   * - 禁止发送、重新生成
+   *
+   * 初始化成功:
+   * - isInitializing = false
+   * - isSessionReady = true
+   * - messages 从 chatService 同步
+   *
+   * 初始化失败:
+   * - isInitializing = false
+   * - isSessionReady = false
+   * - initError 设置错误信息
+   * - 页面显示错误但不崩溃
+   */
   async initialize(): Promise<void> {
     if (this.disposed) {
       return;
     }
+    this.isInitializing = true;
+    this.isSessionReady = false;
+    this.initError = '';
+
+    // 1. 加载模型配置
     try {
       const config: ProviderConfig | null = await this.modelService.getCurrentConfig();
       if (config !== null && config.enabled) {
@@ -91,28 +128,44 @@ export class ChatViewModel {
     } catch (e) {
       this.hasCurrentModel = false;
       this.currentModelName = '加载配置失败';
-      Logger.error(LOG_TAG, 'initialize failed: ' + String(e));
+      Logger.error(LOG_TAG, 'initialize model config failed: ' + String(e));
     }
 
-    // 加载当前角色并初始化聊天上下文
+    // 2. 加载当前角色
+    let character: Character | null = null;
     try {
-      const character: Character | null = await this.characterService.getCurrentCharacter();
+      character = await this.characterService.getCurrentCharacter();
       if (character !== null) {
         this.characterName = character.name;
-        const hasFirstMessage: boolean = this.chatService.initContext(character);
-        if (hasFirstMessage) {
-          // 角色开场白已添加到 ChatService,同步到 ViewModel
-          this.messages = [...this.chatService.getMessages()];
-          if (this.onMessagesUpdate !== undefined) {
-            this.onMessagesUpdate([...this.messages]);
-          }
-        }
       }
     } catch (e) {
       Logger.warn(LOG_TAG, 'load character failed: ' + String(e));
     }
 
-    Logger.info(LOG_TAG, 'initialize currentModelName=' + this.currentModelName);
+    // 3. 异步初始化会话(从数据库恢复或创建新会话)
+    try {
+      await this.chatService.initializeSession(
+        character !== null ? character : undefined
+      );
+      // 4. 同步 messages 到 ViewModel(创建新数组引用)
+      this.messages = [...this.chatService.getMessages()];
+      if (this.onMessagesUpdate !== undefined) {
+        this.onMessagesUpdate([...this.messages]);
+      }
+      this.isSessionReady = true;
+      this.canRegenerate = this.chatService.canRegenerate();
+      Logger.info(LOG_TAG, 'session ready chatId=' + this.chatService.getCurrentChatId()
+        + ' messages=' + this.messages.length.toString());
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      this.initError = '会话初始化失败: ' + msg;
+      Logger.error(LOG_TAG, 'initializeSession failed: ' + msg);
+    } finally {
+      this.isInitializing = false;
+    }
+
+    Logger.info(LOG_TAG, 'initialize currentModelName=' + this.currentModelName
+      + ' ready=' + this.isSessionReady.toString());
   }
 
   async send(): Promise<void> {
@@ -146,7 +199,7 @@ export class ChatViewModel {
   }
 
   async regenerate(): Promise<void> {
-    if (this.disposed || this.isGenerating || !this.canRegenerate) {
+    if (this.disposed || this.isGenerating || !this.canRegenerate || !this.isSessionReady) {
       return;
     }
     Logger.info(LOG_TAG, 'regenerate');
