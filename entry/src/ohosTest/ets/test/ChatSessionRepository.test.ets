@@ -28,6 +28,7 @@ import { DbHelper } from '../../../main/ets/database/DbHelper';
 import { ChatRepository } from '../../../main/ets/repositories/ChatRepository';
 import { MessageRepository } from '../../../main/ets/repositories/MessageRepository';
 import { ChatPersistenceOperations } from '../../../main/ets/repositories/ChatPersistenceOperations';
+import { MessageSwipeRepository } from '../../../main/ets/repositories/MessageSwipeRepository';
 import { Chat, createChat, updateChat } from '../../../main/ets/models/Chat';
 import { ChatMessage, ChatMessageStatus } from '../../../main/ets/models/ChatMessage';
 import { ChatRole } from '../../../main/ets/models/ChatRole';
@@ -35,7 +36,9 @@ import { ChatMessageSource } from '../../../main/ets/models/ChatMessageSource';
 import {
   TABLE_CHARACTERS,
   TABLE_CHATS,
-  TABLE_MESSAGES
+  TABLE_MESSAGES,
+  TABLE_MESSAGE_SWIPE_GROUPS,
+  TABLE_MESSAGE_SWIPE_CANDIDATES
 } from '../../../main/ets/database/DatabaseConstants';
 
 const REPO_TEST_DB_NAME: string = 'arktavern_repository_test.db';
@@ -63,6 +66,8 @@ async function deleteTestDbIfExists(ctx: common.Context): Promise<void> {
     await store.executeSql('DROP TABLE IF EXISTS ' + TABLE_MESSAGES);
     await store.executeSql('DROP TABLE IF EXISTS ' + TABLE_CHATS);
     await store.executeSql('DROP TABLE IF EXISTS ' + TABLE_CHARACTERS);
+    await store.executeSql('DROP TABLE IF EXISTS ' + TABLE_MESSAGE_SWIPE_GROUPS);
+    await store.executeSql('DROP TABLE IF EXISTS ' + TABLE_MESSAGE_SWIPE_CANDIDATES);
     await store.close();
   } catch (e) {
     /* cleanup best-effort */
@@ -250,7 +255,7 @@ export default function chatSessionRepositoryDeviceTest(): void {
       try {
         const chatRepo: ChatRepository = new ChatRepository(helper);
         const msgRepo: MessageRepository = new MessageRepository(helper);
-        const ops: ChatPersistenceOperations = new ChatPersistenceOperations(helper, chatRepo, msgRepo);
+        const ops: ChatPersistenceOperations = new ChatPersistenceOperations(helper, chatRepo, msgRepo, new MessageSwipeRepository(helper));
         const chat: Chat = createChat({ id: uniqueId('chat'), createdAt: 1000 });
         await chatRepo.insert(chat);
         // 插入消息(createChatMessage 不带 status,需用对象字面量补充字段)
@@ -278,7 +283,7 @@ export default function chatSessionRepositoryDeviceTest(): void {
       try {
         const chatRepo: ChatRepository = new ChatRepository(helper);
         const msgRepo: MessageRepository = new MessageRepository(helper);
-        const ops: ChatPersistenceOperations = new ChatPersistenceOperations(helper, chatRepo, msgRepo);
+        const ops: ChatPersistenceOperations = new ChatPersistenceOperations(helper, chatRepo, msgRepo, new MessageSwipeRepository(helper));
         const c1: Chat = createChat({ id: uniqueId('chat'), createdAt: 1000 });
         const c2: Chat = createChat({ id: uniqueId('chat'), createdAt: 1000 });
         await chatRepo.insert(c1);

@@ -21,6 +21,7 @@ import { DbHelper } from '../../../main/ets/database/DbHelper';
 import { ChatRepository } from '../../../main/ets/repositories/ChatRepository';
 import { MessageRepository } from '../../../main/ets/repositories/MessageRepository';
 import { ChatPersistenceOperations } from '../../../main/ets/repositories/ChatPersistenceOperations';
+import { MessageSwipeRepository } from '../../../main/ets/repositories/MessageSwipeRepository';
 import {
   ChatPersistenceService,
   AppendUserAndAssistantResult
@@ -46,7 +47,9 @@ import {
 import {
   TABLE_CHARACTERS,
   TABLE_CHATS,
-  TABLE_MESSAGES
+  TABLE_MESSAGES,
+  TABLE_MESSAGE_SWIPE_GROUPS,
+  TABLE_MESSAGE_SWIPE_CANDIDATES
 } from '../../../main/ets/database/DatabaseConstants';
 
 const REPO_TEST_DB_NAME: string = 'arktavern_repository_test.db';
@@ -74,6 +77,8 @@ async function deleteTestDbIfExists(ctx: common.Context): Promise<void> {
     await store.executeSql('DROP TABLE IF EXISTS ' + TABLE_MESSAGES);
     await store.executeSql('DROP TABLE IF EXISTS ' + TABLE_CHATS);
     await store.executeSql('DROP TABLE IF EXISTS ' + TABLE_CHARACTERS);
+    await store.executeSql('DROP TABLE IF EXISTS ' + TABLE_MESSAGE_SWIPE_GROUPS);
+    await store.executeSql('DROP TABLE IF EXISTS ' + TABLE_MESSAGE_SWIPE_CANDIDATES);
     await store.close();
   } catch (e) {
     /* best-effort cleanup */
@@ -101,8 +106,9 @@ async function cleanupHelper(helper: DbHelper): Promise<void> {
 function makePersistenceService(helper: DbHelper): ChatPersistenceService {
   const chatRepo: ChatRepository = new ChatRepository(helper);
   const msgRepo: MessageRepository = new MessageRepository(helper);
+  const swipeRepo: MessageSwipeRepository = new MessageSwipeRepository(helper);
   const ops: ChatPersistenceOperations =
-    new ChatPersistenceOperations(helper, chatRepo, msgRepo);
+    new ChatPersistenceOperations(helper, chatRepo, msgRepo, swipeRepo);
   return new ChatPersistenceService(helper, chatRepo, msgRepo, ops);
 }
 
@@ -206,8 +212,9 @@ class FailingPersistenceService extends ChatPersistenceService {
   constructor(helper: DbHelper) {
     const chatRepo: ChatRepository = new ChatRepository(helper);
     const msgRepo: MessageRepository = new MessageRepository(helper);
+    const swipeRepo: MessageSwipeRepository = new MessageSwipeRepository(helper);
     const ops: ChatPersistenceOperations =
-      new ChatPersistenceOperations(helper, chatRepo, msgRepo);
+      new ChatPersistenceOperations(helper, chatRepo, msgRepo, swipeRepo);
     super(helper, chatRepo, msgRepo, ops);
   }
 

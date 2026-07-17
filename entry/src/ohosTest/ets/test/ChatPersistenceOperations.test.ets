@@ -25,6 +25,7 @@ import {
   MessageInsertRecord
 } from '../../../main/ets/repositories/MessageRepository';
 import { ChatPersistenceOperations } from '../../../main/ets/repositories/ChatPersistenceOperations';
+import { MessageSwipeRepository } from '../../../main/ets/repositories/MessageSwipeRepository';
 import { ChatMessage, ChatMessageStatus } from '../../../main/ets/models/ChatMessage';
 import { ChatRole } from '../../../main/ets/models/ChatRole';
 import { Chat, createChat } from '../../../main/ets/models/Chat';
@@ -32,7 +33,9 @@ import { DatabaseError } from '../../../main/ets/models/DatabaseError';
 import {
   TABLE_CHARACTERS,
   TABLE_CHATS,
-  TABLE_MESSAGES
+  TABLE_MESSAGES,
+  TABLE_MESSAGE_SWIPE_GROUPS,
+  TABLE_MESSAGE_SWIPE_CANDIDATES
 } from '../../../main/ets/database/DatabaseConstants';
 
 const REPO_TEST_DB_NAME: string = 'arktavern_repository_test.db';
@@ -60,6 +63,8 @@ async function deleteTestDbIfExists(ctx: common.Context): Promise<void> {
     await store.executeSql('DROP TABLE IF EXISTS ' + TABLE_MESSAGES);
     await store.executeSql('DROP TABLE IF EXISTS ' + TABLE_CHATS);
     await store.executeSql('DROP TABLE IF EXISTS ' + TABLE_CHARACTERS);
+    await store.executeSql('DROP TABLE IF EXISTS ' + TABLE_MESSAGE_SWIPE_GROUPS);
+    await store.executeSql('DROP TABLE IF EXISTS ' + TABLE_MESSAGE_SWIPE_CANDIDATES);
     await store.close();
   } catch (e) {
     /* cleanup best-effort */
@@ -167,7 +172,7 @@ export default function chatPersistenceOperationsDeviceTest(): void {
         const chatRepo: ChatRepository = new ChatRepository(helper);
         const msgRepo: MessageRepository = new MessageRepository(helper);
         const ops: ChatPersistenceOperations = new ChatPersistenceOperations(
-          helper, chatRepo, msgRepo
+          helper, chatRepo, msgRepo, new MessageSwipeRepository(helper)
         );
         const chatId: string = uniqueId('chat');
         await setupChat(chatRepo, chatId);
@@ -192,7 +197,7 @@ export default function chatPersistenceOperationsDeviceTest(): void {
         const chatRepo: ChatRepository = new ChatRepository(helper);
         const msgRepo: MessageRepository = new MessageRepository(helper);
         const ops: ChatPersistenceOperations = new ChatPersistenceOperations(
-          helper, chatRepo, msgRepo
+          helper, chatRepo, msgRepo, new MessageSwipeRepository(helper)
         );
         const chatId: string = uniqueId('chat');
         await setupChat(chatRepo, chatId);
@@ -215,7 +220,7 @@ export default function chatPersistenceOperationsDeviceTest(): void {
         const chatRepo: ChatRepository = new ChatRepository(helper);
         const msgRepo: MessageRepository = new MessageRepository(helper);
         const ops: ChatPersistenceOperations = new ChatPersistenceOperations(
-          helper, chatRepo, msgRepo
+          helper, chatRepo, msgRepo, new MessageSwipeRepository(helper)
         );
         const chatId: string = uniqueId('nonexistent');
 
@@ -236,7 +241,7 @@ export default function chatPersistenceOperationsDeviceTest(): void {
         const failingMsgRepo: FailingMessageRepository =
           new FailingMessageRepository(helper);
         const ops: ChatPersistenceOperations = new ChatPersistenceOperations(
-          helper, chatRepo, failingMsgRepo
+          helper, chatRepo, failingMsgRepo, new MessageSwipeRepository(helper)
         );
         const chatId: string = uniqueId('chat');
         await setupChat(chatRepo, chatId);
@@ -272,7 +277,7 @@ export default function chatPersistenceOperationsDeviceTest(): void {
           new FailingChatRepository(helper);
         const msgRepo: MessageRepository = new MessageRepository(helper);
         const ops: ChatPersistenceOperations = new ChatPersistenceOperations(
-          helper, failingChatRepo, msgRepo
+          helper, failingChatRepo, msgRepo, new MessageSwipeRepository(helper)
         );
         const chatId: string = uniqueId('chat');
         // 用正常 chatRepo 插入,用 failingChatRepo 删除
@@ -307,7 +312,7 @@ export default function chatPersistenceOperationsDeviceTest(): void {
         const chatRepo: ChatRepository = new ChatRepository(helper);
         const msgRepo: MessageRepository = new MessageRepository(helper);
         const ops: ChatPersistenceOperations = new ChatPersistenceOperations(
-          helper, chatRepo, msgRepo
+          helper, chatRepo, msgRepo, new MessageSwipeRepository(helper)
         );
         const chatId1: string = uniqueId('chat');
         await setupChat(chatRepo, chatId1);
@@ -338,7 +343,7 @@ export default function chatPersistenceOperationsDeviceTest(): void {
         const chatRepo: ChatRepository = new ChatRepository(helper);
         const msgRepo: MessageRepository = new MessageRepository(helper);
         const ops: ChatPersistenceOperations = new ChatPersistenceOperations(
-          helper, chatRepo, msgRepo
+          helper, chatRepo, msgRepo, new MessageSwipeRepository(helper)
         );
         const chatId1: string = uniqueId('chat');
         const chatId2: string = uniqueId('chat');

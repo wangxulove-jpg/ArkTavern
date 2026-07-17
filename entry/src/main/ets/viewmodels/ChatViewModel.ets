@@ -106,12 +106,22 @@ export class ChatViewModel {
   }
 
   get canSend(): boolean {
-    return !this.isGenerating && this.hasCurrentModel && this.inputText.trim().length > 0
+    return !this.busy && this.hasCurrentModel && this.inputText.trim().length > 0
       && this.isSessionReady;
   }
 
   get canStop(): boolean {
     return this.isGenerating;
+  }
+
+  /**
+   * T-6.3: 统一忙碌状态。
+   * busy = isGenerating || isSwipeOperating
+   * 会话操作(isSessionOperating)单独保护 createNewSession/selectSession/confirmDeleteSession。
+   * 忙碌时禁用:Send / Regenerate / 左右 Swipe / Chat 删除 / Chat 切换 / 新建 Chat
+   */
+  get busy(): boolean {
+    return this.isGenerating || this.isSwipeOperating;
   }
 
   /**
@@ -237,7 +247,7 @@ export class ChatViewModel {
   }
 
   async regenerate(): Promise<void> {
-    if (this.disposed || this.isGenerating || !this.canRegenerate || !this.isSessionReady) {
+    if (this.disposed || this.busy || !this.canRegenerate || !this.isSessionReady) {
       return;
     }
     Logger.info(LOG_TAG, 'regenerate');
@@ -358,7 +368,7 @@ export class ChatViewModel {
    * 使用 ChatService 内部 callbacks 同步状态变化。
    */
   async regenerateAsNewCandidate(): Promise<void> {
-    if (this.disposed || this.isGenerating || !this.canRegenerate || !this.isSessionReady) {
+    if (this.disposed || this.busy || !this.canRegenerate || !this.isSessionReady) {
       return;
     }
     Logger.info(LOG_TAG, 'regenerateAsNewCandidate');
@@ -431,7 +441,7 @@ export class ChatViewModel {
 
   /** 新建会话 */
   async createNewSession(): Promise<void> {
-    if (this.disposed || this.isSessionOperating || this.isGenerating) {
+    if (this.disposed || this.isSessionOperating || this.busy) {
       return;
     }
     this.isSessionOperating = true;
@@ -456,7 +466,7 @@ export class ChatViewModel {
 
   /** 选择并切换到指定会话 */
   async selectSession(chatId: string): Promise<void> {
-    if (this.disposed || this.isSessionOperating || this.isGenerating) {
+    if (this.disposed || this.isSessionOperating || this.busy) {
       return;
     }
     if (chatId.length === 0) {
@@ -489,7 +499,7 @@ export class ChatViewModel {
 
   /** 请求删除会话(显示确认对话框) */
   requestDeleteSession(chatId: string): void {
-    if (this.disposed || this.isSessionOperating || this.isGenerating) {
+    if (this.disposed || this.isSessionOperating || this.busy) {
       return;
     }
     if (chatId.length === 0) {
@@ -508,7 +518,7 @@ export class ChatViewModel {
 
   /** 确认删除会话 */
   async confirmDeleteSession(): Promise<void> {
-    if (this.disposed || this.isSessionOperating || this.isGenerating) {
+    if (this.disposed || this.isSessionOperating || this.busy) {
       return;
     }
     const chatId: string = this.pendingDeleteChatId;

@@ -124,6 +124,14 @@ function setupService(helper: DbHelper): MessageSwipePersistenceService {
 }
 
 /**
+ * 创建 Chat 并插入一条 Assistant 消息的结果。
+ */
+interface ChatAndMessageResult {
+  readonly chatId: string;
+  readonly messageId: string;
+}
+
+/**
  * 创建 Chat 并插入一条 Assistant 消息,返回 chatId 和 messageId。
  */
 async function createChatAndAssistantMessage(
@@ -132,7 +140,7 @@ async function createChatAndAssistantMessage(
   content: string,
   status?: ChatMessageStatus,
   source?: ChatMessageSource
-): Promise<{ chatId: string; messageId: string }> {
+): Promise<ChatAndMessageResult> {
   const chatRepo: ChatRepository = new ChatRepository(helper);
   const msgRepo: MessageRepository = new MessageRepository(helper);
   const chatId: string = uniqueId('chat');
@@ -140,7 +148,8 @@ async function createChatAndAssistantMessage(
   await chatRepo.insert(chat);
   const message: ChatMessage = makeMessage(msgId, ChatRole.Assistant, content, status, source);
   await msgRepo.insert(message, chatId, 1);
-  return { chatId: chatId, messageId: msgId };
+  const result: ChatAndMessageResult = { chatId: chatId, messageId: msgId };
+  return result;
 }
 
 /**
@@ -175,9 +184,11 @@ export default function messageSwipeRuntimeRecoveryTest(): void {
     it('active_index_preserved_after_normalize', 0, async () => {
       const helper: DbHelper = await makeHelper();
       try {
-        const { chatId, messageId } = await createChatAndAssistantMessage(
+        const chatMsgResult: ChatAndMessageResult = await createChatAndAssistantMessage(
           helper, uniqueId('msg'), 'original content'
         );
+        const chatId: string = chatMsgResult.chatId;
+        const messageId: string = chatMsgResult.messageId;
         const service: MessageSwipePersistenceService = setupService(helper);
         // 创建 Group + Candidate 0
         const initial: MessageSwipeState = await service.ensureSwipeState(messageId);
@@ -210,9 +221,11 @@ export default function messageSwipeRuntimeRecoveryTest(): void {
     it('candidate_count_preserved_after_normalize', 0, async () => {
       const helper: DbHelper = await makeHelper();
       try {
-        const { chatId, messageId } = await createChatAndAssistantMessage(
+        const chatMsgResult: ChatAndMessageResult = await createChatAndAssistantMessage(
           helper, uniqueId('msg'), 'original'
         );
+        const chatId: string = chatMsgResult.chatId;
+        const messageId: string = chatMsgResult.messageId;
         const service: MessageSwipePersistenceService = setupService(helper);
         await service.ensureSwipeState(messageId);
         // 追加 3 个候选(共 4 个: index 0 + 1 + 2 + 3)
@@ -242,9 +255,11 @@ export default function messageSwipeRuntimeRecoveryTest(): void {
     it('message_content_equals_active_candidate_after_normalize', 0, async () => {
       const helper: DbHelper = await makeHelper();
       try {
-        const { chatId, messageId } = await createChatAndAssistantMessage(
+        const chatMsgResult: ChatAndMessageResult = await createChatAndAssistantMessage(
           helper, uniqueId('msg'), 'original content'
         );
+        const chatId: string = chatMsgResult.chatId;
+        const messageId: string = chatMsgResult.messageId;
         const service: MessageSwipePersistenceService = setupService(helper);
         await service.ensureSwipeState(messageId);
         // 追加一个候选并激活
@@ -280,9 +295,11 @@ export default function messageSwipeRuntimeRecoveryTest(): void {
     it('streaming_active_candidate_cancelled_after_normalize', 0, async () => {
       const helper: DbHelper = await makeHelper();
       try {
-        const { chatId, messageId } = await createChatAndAssistantMessage(
+        const chatMsgResult: ChatAndMessageResult = await createChatAndAssistantMessage(
           helper, uniqueId('msg'), 'original'
         );
+        const chatId: string = chatMsgResult.chatId;
+        const messageId: string = chatMsgResult.messageId;
         const service: MessageSwipePersistenceService = setupService(helper);
         await service.ensureSwipeState(messageId);
         // 追加一个 Streaming 候选并激活(模拟中断的流)
@@ -323,9 +340,11 @@ export default function messageSwipeRuntimeRecoveryTest(): void {
     it('candidate_and_message_both_cancelled_after_normalize', 0, async () => {
       const helper: DbHelper = await makeHelper();
       try {
-        const { chatId, messageId } = await createChatAndAssistantMessage(
+        const chatMsgResult: ChatAndMessageResult = await createChatAndAssistantMessage(
           helper, uniqueId('msg'), 'original'
         );
+        const chatId: string = chatMsgResult.chatId;
+        const messageId: string = chatMsgResult.messageId;
         const service: MessageSwipePersistenceService = setupService(helper);
         await service.ensureSwipeState(messageId);
         // 追加 Streaming 候选并激活
@@ -362,9 +381,11 @@ export default function messageSwipeRuntimeRecoveryTest(): void {
     it('partial_content_preserved_after_normalize', 0, async () => {
       const helper: DbHelper = await makeHelper();
       try {
-        const { chatId, messageId } = await createChatAndAssistantMessage(
+        const chatMsgResult: ChatAndMessageResult = await createChatAndAssistantMessage(
           helper, uniqueId('msg'), 'original'
         );
+        const chatId: string = chatMsgResult.chatId;
+        const messageId: string = chatMsgResult.messageId;
         const service: MessageSwipePersistenceService = setupService(helper);
         await service.ensureSwipeState(messageId);
         // 追加 Streaming 候选并激活,模拟已收到部分内容
@@ -400,9 +421,11 @@ export default function messageSwipeRuntimeRecoveryTest(): void {
       const helper: DbHelper = await makeHelper();
       try {
         const originalContent: string = 'original active content';
-        const { chatId, messageId } = await createChatAndAssistantMessage(
+        const chatMsgResult: ChatAndMessageResult = await createChatAndAssistantMessage(
           helper, uniqueId('msg'), originalContent
         );
+        const chatId: string = chatMsgResult.chatId;
+        const messageId: string = chatMsgResult.messageId;
         const service: MessageSwipePersistenceService = setupService(helper);
         await service.ensureSwipeState(messageId);
         // 追加一个非活跃的 Streaming 候选(不激活)
@@ -449,9 +472,11 @@ export default function messageSwipeRuntimeRecoveryTest(): void {
       const helper: DbHelper = await makeHelper();
       try {
         const completedContent: string = 'This is a completed response';
-        const { chatId, messageId } = await createChatAndAssistantMessage(
+        const chatMsgResult: ChatAndMessageResult = await createChatAndAssistantMessage(
           helper, uniqueId('msg'), completedContent
         );
+        const chatId: string = chatMsgResult.chatId;
+        const messageId: string = chatMsgResult.messageId;
         const service: MessageSwipePersistenceService = setupService(helper);
         await service.ensureSwipeState(messageId);
         // 追加一个 Completed 候选
@@ -488,9 +513,11 @@ export default function messageSwipeRuntimeRecoveryTest(): void {
       const helper: DbHelper = await makeHelper();
       try {
         const originalContent: string = 'original candidate';
-        const { chatId, messageId } = await createChatAndAssistantMessage(
+        const chatMsgResult: ChatAndMessageResult = await createChatAndAssistantMessage(
           helper, uniqueId('msg'), originalContent
         );
+        const chatId: string = chatMsgResult.chatId;
+        const messageId: string = chatMsgResult.messageId;
         const service: MessageSwipePersistenceService = setupService(helper);
         await service.ensureSwipeState(messageId);
         // 追加一个候选(不激活)
@@ -532,9 +559,11 @@ export default function messageSwipeRuntimeRecoveryTest(): void {
       const helper: DbHelper = await makeHelper();
       try {
         const msgId: string = uniqueId('msg');
-        const { chatId, messageId } = await createChatAndAssistantMessage(
+        const chatMsgResult: ChatAndMessageResult = await createChatAndAssistantMessage(
           helper, msgId, 'original'
         );
+        const chatId: string = chatMsgResult.chatId;
+        const messageId: string = chatMsgResult.messageId;
         const service: MessageSwipePersistenceService = setupService(helper);
         await service.ensureSwipeState(messageId);
         // 追加一个候选

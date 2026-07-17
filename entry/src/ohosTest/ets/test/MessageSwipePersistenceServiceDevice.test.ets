@@ -174,6 +174,14 @@ function setupService(helper: DbHelper): MessageSwipePersistenceService {
 }
 
 /**
+ * 创建 Chat 并插入一条 Assistant 消息的结果。
+ */
+interface ChatAndMessageResult {
+  readonly chatId: string;
+  readonly messageId: string;
+}
+
+/**
  * 创建 Chat 并插入一条 Assistant 消息,返回 chatId 和 messageId。
  */
 async function createChatAndAssistantMessage(
@@ -182,7 +190,7 @@ async function createChatAndAssistantMessage(
   content: string,
   status?: ChatMessageStatus,
   source?: ChatMessageSource
-): Promise<{ chatId: string; messageId: string }> {
+): Promise<ChatAndMessageResult> {
   const chatRepo: ChatRepository = new ChatRepository(helper);
   const msgRepo: MessageRepository = new MessageRepository(helper);
   const chatId: string = uniqueId('chat');
@@ -190,7 +198,8 @@ async function createChatAndAssistantMessage(
   await chatRepo.insert(chat);
   const message: ChatMessage = makeMessage(msgId, ChatRole.Assistant, content, status, source);
   await msgRepo.insert(message, chatId, 1);
-  return { chatId: chatId, messageId: msgId };
+  const result: ChatAndMessageResult = { chatId: chatId, messageId: msgId };
+  return result;
 }
 
 /**
@@ -202,7 +211,7 @@ async function createChatAndMessageWithRole(
   role: ChatRole,
   content: string,
   source?: ChatMessageSource
-): Promise<{ chatId: string; messageId: string }> {
+): Promise<ChatAndMessageResult> {
   const chatRepo: ChatRepository = new ChatRepository(helper);
   const msgRepo: MessageRepository = new MessageRepository(helper);
   const chatId: string = uniqueId('chat');
@@ -210,7 +219,8 @@ async function createChatAndMessageWithRole(
   await chatRepo.insert(chat);
   const message: ChatMessage = makeMessage(msgId, role, content, ChatMessageStatus.Completed, source);
   await msgRepo.insert(message, chatId, 1);
-  return { chatId: chatId, messageId: msgId };
+  const result: ChatAndMessageResult = { chatId: chatId, messageId: msgId };
+  return result;
 }
 
 /**
@@ -257,9 +267,11 @@ export default function messageSwipePersistenceServiceDeviceTest(): void {
     it('ensure_creates_group_for_old_assistant', 0, async () => {
       const helper: DbHelper = await makeHelper();
       try {
-        const { chatId, messageId } = await createChatAndAssistantMessage(
+        const chatMsgResult: ChatAndMessageResult = await createChatAndAssistantMessage(
           helper, uniqueId('msg'), 'Hello, world!'
         );
+        const chatId: string = chatMsgResult.chatId;
+        const messageId: string = chatMsgResult.messageId;
         const service: MessageSwipePersistenceService = setupService(helper);
         const state: MessageSwipeState = await service.ensureSwipeState(messageId);
         expect(state.group.assistantMessageId).assertEqual(messageId);
@@ -276,9 +288,10 @@ export default function messageSwipePersistenceServiceDeviceTest(): void {
       const helper: DbHelper = await makeHelper();
       try {
         const content: string = 'Original assistant response';
-        const { messageId } = await createChatAndAssistantMessage(
+        const chatMsgResult: ChatAndMessageResult = await createChatAndAssistantMessage(
           helper, uniqueId('msg'), content
         );
+        const messageId: string = chatMsgResult.messageId;
         const service: MessageSwipePersistenceService = setupService(helper);
         const state: MessageSwipeState = await service.ensureSwipeState(messageId);
         expect(state.candidates[0].content).assertEqual(content);
@@ -292,9 +305,10 @@ export default function messageSwipePersistenceServiceDeviceTest(): void {
     it('ensure_idempotent', 0, async () => {
       const helper: DbHelper = await makeHelper();
       try {
-        const { messageId } = await createChatAndAssistantMessage(
+        const chatMsgResult: ChatAndMessageResult = await createChatAndAssistantMessage(
           helper, uniqueId('msg'), 'content'
         );
+        const messageId: string = chatMsgResult.messageId;
         const service: MessageSwipePersistenceService = setupService(helper);
         const first: MessageSwipeState = await service.ensureSwipeState(messageId);
         const second: MessageSwipeState = await service.ensureSwipeState(messageId);
@@ -314,9 +328,10 @@ export default function messageSwipePersistenceServiceDeviceTest(): void {
     it('ensure_rejects_user_message', 0, async () => {
       const helper: DbHelper = await makeHelper();
       try {
-        const { messageId } = await createChatAndMessageWithRole(
+        const chatMsgResult: ChatAndMessageResult = await createChatAndMessageWithRole(
           helper, uniqueId('msg'), ChatRole.User, 'user message'
         );
+        const messageId: string = chatMsgResult.messageId;
         const service: MessageSwipePersistenceService = setupService(helper);
         let threw: boolean = false;
         let errorType: number = -1;
@@ -338,10 +353,11 @@ export default function messageSwipePersistenceServiceDeviceTest(): void {
     it('ensure_rejects_character_first_message', 0, async () => {
       const helper: DbHelper = await makeHelper();
       try {
-        const { messageId } = await createChatAndAssistantMessage(
+        const chatMsgResult: ChatAndMessageResult = await createChatAndAssistantMessage(
           helper, uniqueId('msg'), 'first message',
           ChatMessageStatus.Completed, ChatMessageSource.CharacterFirstMessage
         );
+        const messageId: string = chatMsgResult.messageId;
         const service: MessageSwipePersistenceService = setupService(helper);
         let threw: boolean = false;
         let errorType: number = -1;
@@ -363,10 +379,11 @@ export default function messageSwipePersistenceServiceDeviceTest(): void {
     it('ensure_rejects_external_system', 0, async () => {
       const helper: DbHelper = await makeHelper();
       try {
-        const { messageId } = await createChatAndAssistantMessage(
+        const chatMsgResult: ChatAndMessageResult = await createChatAndAssistantMessage(
           helper, uniqueId('msg'), 'external system',
           ChatMessageStatus.Completed, ChatMessageSource.ExternalSystem
         );
+        const messageId: string = chatMsgResult.messageId;
         const service: MessageSwipePersistenceService = setupService(helper);
         let threw: boolean = false;
         let errorType: number = -1;
@@ -431,9 +448,10 @@ export default function messageSwipePersistenceServiceDeviceTest(): void {
     it('append_auto_increments_index', 0, async () => {
       const helper: DbHelper = await makeHelper();
       try {
-        const { messageId } = await createChatAndAssistantMessage(
+        const chatMsgResult: ChatAndMessageResult = await createChatAndAssistantMessage(
           helper, uniqueId('msg'), 'original'
         );
+        const messageId: string = chatMsgResult.messageId;
         const service: MessageSwipePersistenceService = setupService(helper);
         await service.ensureSwipeState(messageId);
         const opts: CreateSwipeCandidateOptions = {
@@ -456,9 +474,10 @@ export default function messageSwipePersistenceServiceDeviceTest(): void {
       const helper: DbHelper = await makeHelper();
       try {
         const originalContent: string = 'original content';
-        const { messageId } = await createChatAndAssistantMessage(
+        const chatMsgResult: ChatAndMessageResult = await createChatAndAssistantMessage(
           helper, uniqueId('msg'), originalContent
         );
+        const messageId: string = chatMsgResult.messageId;
         const service: MessageSwipePersistenceService = setupService(helper);
         await service.ensureSwipeState(messageId);
         const opts: CreateSwipeCandidateOptions = {
@@ -480,9 +499,10 @@ export default function messageSwipePersistenceServiceDeviceTest(): void {
     it('append_active_updates_message', 0, async () => {
       const helper: DbHelper = await makeHelper();
       try {
-        const { messageId } = await createChatAndAssistantMessage(
+        const chatMsgResult: ChatAndMessageResult = await createChatAndAssistantMessage(
           helper, uniqueId('msg'), 'original'
         );
+        const messageId: string = chatMsgResult.messageId;
         const service: MessageSwipePersistenceService = setupService(helper);
         await service.ensureSwipeState(messageId);
         const newContent: string = 'active candidate content';
@@ -509,9 +529,10 @@ export default function messageSwipePersistenceServiceDeviceTest(): void {
       const helper: DbHelper = await makeHelper();
       try {
         const originalContent: string = 'original';
-        const { messageId } = await createChatAndAssistantMessage(
+        const chatMsgResult: ChatAndMessageResult = await createChatAndAssistantMessage(
           helper, uniqueId('msg'), originalContent
         );
+        const messageId: string = chatMsgResult.messageId;
         const service: MessageSwipePersistenceService = setupService(helper);
         await service.ensureSwipeState(messageId);
         // 追加一个候选但不激活
@@ -545,9 +566,10 @@ export default function messageSwipePersistenceServiceDeviceTest(): void {
     it('update_active_syncs_message', 0, async () => {
       const helper: DbHelper = await makeHelper();
       try {
-        const { messageId } = await createChatAndAssistantMessage(
+        const chatMsgResult: ChatAndMessageResult = await createChatAndAssistantMessage(
           helper, uniqueId('msg'), 'original'
         );
+        const messageId: string = chatMsgResult.messageId;
         const service: MessageSwipePersistenceService = setupService(helper);
         await service.ensureSwipeState(messageId);
         // 更新活跃候选(index 0)
@@ -574,9 +596,10 @@ export default function messageSwipePersistenceServiceDeviceTest(): void {
       const helper: DbHelper = await makeHelper();
       try {
         const originalContent: string = 'original';
-        const { messageId } = await createChatAndAssistantMessage(
+        const chatMsgResult: ChatAndMessageResult = await createChatAndAssistantMessage(
           helper, uniqueId('msg'), originalContent
         );
+        const messageId: string = chatMsgResult.messageId;
         const service: MessageSwipePersistenceService = setupService(helper);
         await service.ensureSwipeState(messageId);
         // 追加一个候选
@@ -602,9 +625,10 @@ export default function messageSwipePersistenceServiceDeviceTest(): void {
     it('activate_candidate_one', 0, async () => {
       const helper: DbHelper = await makeHelper();
       try {
-        const { messageId } = await createChatAndAssistantMessage(
+        const chatMsgResult: ChatAndMessageResult = await createChatAndAssistantMessage(
           helper, uniqueId('msg'), 'original'
         );
+        const messageId: string = chatMsgResult.messageId;
         const service: MessageSwipePersistenceService = setupService(helper);
         await service.ensureSwipeState(messageId);
         const newContent: string = 'candidate 1 content';
@@ -629,9 +653,10 @@ export default function messageSwipePersistenceServiceDeviceTest(): void {
     it('activate_nonexistent_candidate_fails', 0, async () => {
       const helper: DbHelper = await makeHelper();
       try {
-        const { messageId } = await createChatAndAssistantMessage(
+        const chatMsgResult: ChatAndMessageResult = await createChatAndAssistantMessage(
           helper, uniqueId('msg'), 'original'
         );
+        const messageId: string = chatMsgResult.messageId;
         const service: MessageSwipePersistenceService = setupService(helper);
         await service.ensureSwipeState(messageId);
         let threw: boolean = false;
@@ -657,9 +682,10 @@ export default function messageSwipePersistenceServiceDeviceTest(): void {
       const helper: DbHelper = await makeHelper();
       try {
         const originalContent: string = 'original';
-        const { messageId } = await createChatAndAssistantMessage(
+        const chatMsgResult: ChatAndMessageResult = await createChatAndAssistantMessage(
           helper, uniqueId('msg'), originalContent
         );
+        const messageId: string = chatMsgResult.messageId;
         const service: MessageSwipePersistenceService = setupService(helper);
         await service.ensureSwipeState(messageId);
         const c1Content: string = 'candidate 1';
@@ -686,9 +712,10 @@ export default function messageSwipePersistenceServiceDeviceTest(): void {
     it('activate_streaming_candidate', 0, async () => {
       const helper: DbHelper = await makeHelper();
       try {
-        const { messageId } = await createChatAndAssistantMessage(
+        const chatMsgResult: ChatAndMessageResult = await createChatAndAssistantMessage(
           helper, uniqueId('msg'), 'original'
         );
+        const messageId: string = chatMsgResult.messageId;
         const service: MessageSwipePersistenceService = setupService(helper);
         await service.ensureSwipeState(messageId);
         const streamingContent: string = 'partial streaming...';
@@ -713,9 +740,10 @@ export default function messageSwipePersistenceServiceDeviceTest(): void {
     it('streaming_to_completed_syncs', 0, async () => {
       const helper: DbHelper = await makeHelper();
       try {
-        const { messageId } = await createChatAndAssistantMessage(
+        const chatMsgResult: ChatAndMessageResult = await createChatAndAssistantMessage(
           helper, uniqueId('msg'), 'original'
         );
+        const messageId: string = chatMsgResult.messageId;
         const service: MessageSwipePersistenceService = setupService(helper);
         await service.ensureSwipeState(messageId);
         // 追加 Streaming 候选并激活
@@ -746,9 +774,10 @@ export default function messageSwipePersistenceServiceDeviceTest(): void {
     it('streaming_to_cancelled_syncs', 0, async () => {
       const helper: DbHelper = await makeHelper();
       try {
-        const { messageId } = await createChatAndAssistantMessage(
+        const chatMsgResult: ChatAndMessageResult = await createChatAndAssistantMessage(
           helper, uniqueId('msg'), 'original'
         );
+        const messageId: string = chatMsgResult.messageId;
         const service: MessageSwipePersistenceService = setupService(helper);
         await service.ensureSwipeState(messageId);
         const opts: CreateSwipeCandidateOptions = {
@@ -776,9 +805,10 @@ export default function messageSwipePersistenceServiceDeviceTest(): void {
     it('streaming_to_failed_syncs', 0, async () => {
       const helper: DbHelper = await makeHelper();
       try {
-        const { messageId } = await createChatAndAssistantMessage(
+        const chatMsgResult: ChatAndMessageResult = await createChatAndAssistantMessage(
           helper, uniqueId('msg'), 'original'
         );
+        const messageId: string = chatMsgResult.messageId;
         const service: MessageSwipePersistenceService = setupService(helper);
         await service.ensureSwipeState(messageId);
         const opts: CreateSwipeCandidateOptions = {
@@ -812,7 +842,8 @@ export default function messageSwipePersistenceServiceDeviceTest(): void {
       const helper: DbHelper = await makeHelper();
       try {
         const msgId: string = uniqueId('msg');
-        const { messageId } = await createChatAndAssistantMessage(helper, msgId, 'original');
+        const chatMsgResult: ChatAndMessageResult = await createChatAndAssistantMessage(helper, msgId, 'original');
+        const messageId: string = chatMsgResult.messageId;
         const service: MessageSwipePersistenceService = setupService(helper);
         await service.ensureSwipeState(messageId);
         const opts: CreateSwipeCandidateOptions = {
@@ -834,7 +865,8 @@ export default function messageSwipePersistenceServiceDeviceTest(): void {
       const helper: DbHelper = await makeHelper();
       try {
         const msgId: string = uniqueId('msg');
-        const { messageId } = await createChatAndAssistantMessage(helper, msgId, 'original');
+        const chatMsgResult: ChatAndMessageResult = await createChatAndAssistantMessage(helper, msgId, 'original');
+        const messageId: string = chatMsgResult.messageId;
         const service: MessageSwipePersistenceService = setupService(helper);
         await service.ensureSwipeState(messageId);
         const opts: CreateSwipeCandidateOptions = {
@@ -864,7 +896,8 @@ export default function messageSwipePersistenceServiceDeviceTest(): void {
       const helper: DbHelper = await makeHelper();
       try {
         const msgId: string = uniqueId('msg');
-        const { messageId } = await createChatAndAssistantMessage(helper, msgId, 'original');
+        const chatMsgResult: ChatAndMessageResult = await createChatAndAssistantMessage(helper, msgId, 'original');
+        const messageId: string = chatMsgResult.messageId;
         const service: MessageSwipePersistenceService = setupService(helper);
         await service.ensureSwipeState(messageId);
         const opts: CreateSwipeCandidateOptions = {
@@ -887,7 +920,8 @@ export default function messageSwipePersistenceServiceDeviceTest(): void {
     it('messages_row_count_not_increased', 0, async () => {
       const helper: DbHelper = await makeHelper();
       try {
-        const { messageId } = await createChatAndAssistantMessage(helper, uniqueId('msg'), 'original');
+        const chatMsgResult: ChatAndMessageResult = await createChatAndAssistantMessage(helper, uniqueId('msg'), 'original');
+        const messageId: string = chatMsgResult.messageId;
         const service: MessageSwipePersistenceService = setupService(helper);
         await service.ensureSwipeState(messageId);
         const opts: CreateSwipeCandidateOptions = {
@@ -909,9 +943,10 @@ export default function messageSwipePersistenceServiceDeviceTest(): void {
     it('max_candidates_reached', 0, async () => {
       const helper: DbHelper = await makeHelper();
       try {
-        const { messageId } = await createChatAndAssistantMessage(
+        const chatMsgResult: ChatAndMessageResult = await createChatAndAssistantMessage(
           helper, uniqueId('msg'), 'original'
         );
+        const messageId: string = chatMsgResult.messageId;
         const service: MessageSwipePersistenceService = setupService(helper);
         await service.ensureSwipeState(messageId);
         // 追加到 MAX_SWIPE_CANDIDATES - 1 个(已有 index 0,再追加 7 个)
@@ -923,7 +958,7 @@ export default function messageSwipePersistenceServiceDeviceTest(): void {
           };
           await service.appendCandidate(messageId, opts, false);
         }
-        const state: MessageSwipeState = await service.getSwipeState(messageId);
+        const state: MessageSwipeState | null = await service.getSwipeState(messageId);
         expect(state !== null).assertTrue();
         expect(state!.candidates.length).assertEqual(MAX_SWIPE_CANDIDATES);
         // 验证索引连续 0..7
@@ -939,9 +974,10 @@ export default function messageSwipePersistenceServiceDeviceTest(): void {
     it('ninth_candidate_rejected', 0, async () => {
       const helper: DbHelper = await makeHelper();
       try {
-        const { messageId } = await createChatAndAssistantMessage(
+        const chatMsgResult: ChatAndMessageResult = await createChatAndAssistantMessage(
           helper, uniqueId('msg'), 'original'
         );
+        const messageId: string = chatMsgResult.messageId;
         const service: MessageSwipePersistenceService = setupService(helper);
         await service.ensureSwipeState(messageId);
         // 填充到 MAX_SWIPE_CANDIDATES 个
@@ -983,9 +1019,10 @@ export default function messageSwipePersistenceServiceDeviceTest(): void {
     it('concurrent_ensure_no_duplicate', 0, async () => {
       const helper: DbHelper = await makeHelper();
       try {
-        const { messageId } = await createChatAndAssistantMessage(
+        const chatMsgResult: ChatAndMessageResult = await createChatAndAssistantMessage(
           helper, uniqueId('msg'), 'original'
         );
+        const messageId: string = chatMsgResult.messageId;
         const service: MessageSwipePersistenceService = setupService(helper);
         // 并发两次 ensureSwipeState
         const results: MessageSwipeState[] = await Promise.all([
@@ -1010,9 +1047,10 @@ export default function messageSwipePersistenceServiceDeviceTest(): void {
     it('concurrent_append_no_duplicate_index', 0, async () => {
       const helper: DbHelper = await makeHelper();
       try {
-        const { messageId } = await createChatAndAssistantMessage(
+        const chatMsgResult: ChatAndMessageResult = await createChatAndAssistantMessage(
           helper, uniqueId('msg'), 'original'
         );
+        const messageId: string = chatMsgResult.messageId;
         const service: MessageSwipePersistenceService = setupService(helper);
         await service.ensureSwipeState(messageId);
         // 并发追加两个候选
@@ -1038,7 +1076,7 @@ export default function messageSwipePersistenceServiceDeviceTest(): void {
         const indexes: number[] = state!.candidates.map(c => c.candidateIndex).sort();
         for (let i = 0; i < indexes.length; i++) {
           if (i > 0) {
-            expect(indexes[i]).assertNotEqual(indexes[i - 1]);
+            expect(indexes[i] !== indexes[i - 1]).assertTrue();
           }
         }
       } finally {
@@ -1051,9 +1089,11 @@ export default function messageSwipePersistenceServiceDeviceTest(): void {
     it('remove_by_chat_id_cascades', 0, async () => {
       const helper: DbHelper = await makeHelper();
       try {
-        const { chatId, messageId } = await createChatAndAssistantMessage(
+        const chatMsgResult: ChatAndMessageResult = await createChatAndAssistantMessage(
           helper, uniqueId('msg'), 'original'
         );
+        const chatId: string = chatMsgResult.chatId;
+        const messageId: string = chatMsgResult.messageId;
         const service: MessageSwipePersistenceService = setupService(helper);
         await service.ensureSwipeState(messageId);
         // 追加一个候选
@@ -1079,9 +1119,11 @@ export default function messageSwipePersistenceServiceDeviceTest(): void {
     it('remove_by_chat_id_rolls_back_on_failure', 0, async () => {
       const helper: DbHelper = await makeHelper();
       try {
-        const { chatId, messageId } = await createChatAndAssistantMessage(
+        const chatMsgResult: ChatAndMessageResult = await createChatAndAssistantMessage(
           helper, uniqueId('msg'), 'original'
         );
+        const chatId: string = chatMsgResult.chatId;
+        const messageId: string = chatMsgResult.messageId;
         const service: MessageSwipePersistenceService = setupService(helper);
         await service.ensureSwipeState(messageId);
         // 用事务包裹,在删除后回滚
@@ -1147,9 +1189,10 @@ export default function messageSwipePersistenceServiceDeviceTest(): void {
     it('input_objects_not_modified', 0, async () => {
       const helper: DbHelper = await makeHelper();
       try {
-        const { messageId } = await createChatAndAssistantMessage(
+        const chatMsgResult: ChatAndMessageResult = await createChatAndAssistantMessage(
           helper, uniqueId('msg'), 'original'
         );
+        const messageId: string = chatMsgResult.messageId;
         const service: MessageSwipePersistenceService = setupService(helper);
         // 记录原始 options
         const opts: CreateSwipeCandidateOptions = {
@@ -1180,9 +1223,10 @@ export default function messageSwipePersistenceServiceDeviceTest(): void {
       const helper: DbHelper = await makeHelper();
       try {
         const sensitiveContent: string = 'SuperSecretCandidateContent!@#$%';
-        const { messageId } = await createChatAndAssistantMessage(
+        const chatMsgResult: ChatAndMessageResult = await createChatAndAssistantMessage(
           helper, uniqueId('msg'), 'original'
         );
+        const messageId: string = chatMsgResult.messageId;
         const service: MessageSwipePersistenceService = setupService(helper);
         await service.ensureSwipeState(messageId);
         // 插入包含敏感内容的候选

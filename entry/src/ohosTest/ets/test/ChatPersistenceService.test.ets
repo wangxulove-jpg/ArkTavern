@@ -11,6 +11,7 @@ import { DbHelper } from '../../../main/ets/database/DbHelper';
 import { ChatRepository } from '../../../main/ets/repositories/ChatRepository';
 import { MessageRepository } from '../../../main/ets/repositories/MessageRepository';
 import { ChatPersistenceOperations } from '../../../main/ets/repositories/ChatPersistenceOperations';
+import { MessageSwipeRepository } from '../../../main/ets/repositories/MessageSwipeRepository';
 import { ChatPersistenceService, AppendUserAndAssistantResult } from '../../../main/ets/services/ChatPersistenceService';
 import { ChatMessage, ChatMessageStatus } from '../../../main/ets/models/ChatMessage';
 import { ChatRole } from '../../../main/ets/models/ChatRole';
@@ -18,7 +19,13 @@ import { ChatMessageSource } from '../../../main/ets/models/ChatMessageSource';
 import { Chat } from '../../../main/ets/models/Chat';
 import { PersistedChatSession } from '../../../main/ets/models/PersistedChatSession';
 import { DatabaseError } from '../../../main/ets/models/DatabaseError';
-import { TABLE_CHARACTERS, TABLE_CHATS, TABLE_MESSAGES } from '../../../main/ets/database/DatabaseConstants';
+import {
+  TABLE_CHARACTERS,
+  TABLE_CHATS,
+  TABLE_MESSAGES,
+  TABLE_MESSAGE_SWIPE_GROUPS,
+  TABLE_MESSAGE_SWIPE_CANDIDATES
+} from '../../../main/ets/database/DatabaseConstants';
 
 const REPO_TEST_DB_NAME: string = 'arktavern_repository_test.db';
 let idCounter: number = 0;
@@ -43,6 +50,8 @@ async function deleteTestDbIfExists(ctx: common.Context): Promise<void> {
     await store.executeSql('DROP TABLE IF EXISTS ' + TABLE_MESSAGES);
     await store.executeSql('DROP TABLE IF EXISTS ' + TABLE_CHATS);
     await store.executeSql('DROP TABLE IF EXISTS ' + TABLE_CHARACTERS);
+    await store.executeSql('DROP TABLE IF EXISTS ' + TABLE_MESSAGE_SWIPE_GROUPS);
+    await store.executeSql('DROP TABLE IF EXISTS ' + TABLE_MESSAGE_SWIPE_CANDIDATES);
     await store.close();
   } catch (e) {
     /* cleanup best-effort */
@@ -111,8 +120,9 @@ function makeUpdatedMessage(
 function setupService(helper: DbHelper): ChatPersistenceService {
   const chatRepo: ChatRepository = new ChatRepository(helper);
   const msgRepo: MessageRepository = new MessageRepository(helper);
+  const swipeRepo: MessageSwipeRepository = new MessageSwipeRepository(helper);
   const ops: ChatPersistenceOperations = new ChatPersistenceOperations(
-    helper, chatRepo, msgRepo
+    helper, chatRepo, msgRepo, swipeRepo
   );
   return new ChatPersistenceService(helper, chatRepo, msgRepo, ops);
 }

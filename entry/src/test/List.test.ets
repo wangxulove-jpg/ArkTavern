@@ -43,6 +43,10 @@ import messageSwipeRepositoryMapperTest from './MessageSwipeRepositoryMapper.tes
 import messageSwipePersistenceServiceTest from './MessageSwipePersistenceService.test';
 import chatViewModelSwipeTest from './ChatViewModelSwipe.test';
 import chatServiceSwipeTest from './ChatServiceSwipe.test';
+import chatServiceSwipeLateCallbackTest from './ChatServiceSwipeLateCallback.test';
+import chatServiceGenerationStateTest from './ChatServiceGenerationState.test';
+import chatGenerationPersistenceRoutingTest from './ChatGenerationPersistenceRouting.test';
+import chatRuntimeRecoveryConsistencyTest from './ChatRuntimeRecoveryConsistency.test';
 
 export default function testsuite() {
   localUnitTest();
@@ -70,6 +74,7 @@ export default function testsuite() {
   tokenCounterTest();
   chatServiceTokenTest();
   historyTrimmerTest();
+  databaseSchemaTest();
   repositoryMappersTest();
   chatSessionServiceTest();
   chatSessionViewModelTest();
@@ -89,4 +94,8 @@ export default function testsuite() {
   messageSwipePersistenceServiceTest();
   chatViewModelSwipeTest();
   chatServiceSwipeTest();
+  chatServiceSwipeLateCallbackTest();
+  chatServiceGenerationStateTest();
+  chatGenerationPersistenceRoutingTest();
+  chatRuntimeRecoveryConsistencyTest();
 }
