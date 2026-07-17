@@ -26,6 +26,7 @@ import { getSchemaStatements } from './DatabaseSchema';
 import {
   buildMigrationPath,
   createV1ToV2Migration,
+  createV2ToV3Migration,
   DatabaseMigration,
   MigrationPath
 } from './DatabaseMigration';
@@ -43,7 +44,7 @@ export class DbHelper {
 
   constructor(
     databaseName: string = DATABASE_NAME,
-    migrations: ReadonlyArray<DatabaseMigration> = [createV1ToV2Migration()]
+    migrations: ReadonlyArray<DatabaseMigration> = [createV1ToV2Migration(), createV2ToV3Migration()]
   ) {
     this.databaseName = databaseName;
     this.migrations = migrations;

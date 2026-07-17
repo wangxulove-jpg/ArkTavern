@@ -27,6 +27,9 @@ import chatSessionRepositoryDeviceTest from './ChatSessionRepository.test';
 import characterRepositoryDeviceTest from './CharacterRepository.test';
 import databaseV2MigrationTest from './DatabaseV2Migration.test';
 import lorebookRepositoryDeviceTest from './LorebookRepository.test';
+import lorebookRepositoryMigrationTest from './LorebookRepositoryMigration.test';
+import databaseV3MigrationTest from './DatabaseV3Migration.test';
+import promptPresetRepositoryTest from './PromptPresetRepository.test';
 
 export default function testsuite() {
   abilityTest();
@@ -57,4 +60,7 @@ export default function testsuite() {
   characterRepositoryDeviceTest();
   databaseV2MigrationTest();
   lorebookRepositoryDeviceTest();
+  lorebookRepositoryMigrationTest();
+  databaseV3MigrationTest();
+  promptPresetRepositoryTest();
 }

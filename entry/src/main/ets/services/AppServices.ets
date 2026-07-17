@@ -27,9 +27,11 @@ import { CharacterStore } from '../storage/CharacterStore';
 import { CharacterSelectionStore } from '../storage/CharacterSelectionStore';
 import { CharacterAssetStore } from '../storage/CharacterAssetStore';
 import { LorebookStore } from '../storage/LorebookStore';
+import { LorebookSelectionStore } from '../storage/LorebookSelectionStore';
 import { CharacterService } from './CharacterService';
 import { CharacterMigrationService } from './CharacterMigrationService';
 import { LorebookService } from './LorebookService';
+import { LorebookMigrationService } from './LorebookMigrationService';
 import { MacroReplacer } from './MacroReplacer';
 import { PromptBuilder } from './PromptBuilder';
 import { TokenCounter } from './TokenCounter';
@@ -39,6 +41,10 @@ import { ChatRepository } from '../repositories/ChatRepository';
 import { MessageRepository } from '../repositories/MessageRepository';
 import { ChatPersistenceOperations } from '../repositories/ChatPersistenceOperations';
 import { CharacterRepository } from '../repositories/CharacterRepository';
+import { LorebookRepository } from '../repositories/LorebookRepository';
+import { PromptPresetRepository } from '../repositories/PromptPresetRepository';
+import { PromptPresetSelectionStore } from '../storage/PromptPresetSelectionStore';
+import { PromptPresetService } from './PromptPresetService';
 import { ChatService } from './ChatService';
 import { ChatPersistenceService } from './ChatPersistenceService';
 import { ModelService } from './ModelService';
@@ -80,14 +86,28 @@ export class AppServices {
   private readonly chatPersistenceService: ChatPersistenceService;
   /** CharacterRepository 角色仓储(不对页面公开) */
   private readonly characterRepository: CharacterRepository;
+  /** LorebookRepository 世界书仓储(不对页面公开) */
+  private readonly lorebookRepository: LorebookRepository;
   /** CharacterSelectionStore 当前角色选择(不对页面公开) */
   private readonly characterSelectionStore: CharacterSelectionStore;
+  /** LorebookSelectionStore 当前世界书选择(不对页面公开) */
+  private readonly lorebookSelectionStore: LorebookSelectionStore;
   /** AppPreferences(不对页面公开) */
   private readonly appPreferences: AppPreferences;
   /** CharacterMigrationService(不对页面公开) */
   private readonly characterMigrationService: CharacterMigrationService;
+  /** LorebookMigrationService(不对页面公开) */
+  private readonly lorebookMigrationService: LorebookMigrationService;
   /** CharacterStore(仅用于迁移,不对页面公开) */
   private readonly characterStore: CharacterStore;
+  /** LorebookStore(仅用作迁移源,不对页面公开) */
+  private readonly lorebookStore: LorebookStore;
+  /** PromptPresetRepository(不对页面公开) */
+  private readonly promptPresetRepository: PromptPresetRepository;
+  /** PromptPresetSelectionStore(不对页面公开) */
+  private readonly promptPresetSelectionStore: PromptPresetSelectionStore;
+  /** PromptPresetService(不对页面公开,T-6.1B 接入 Chat 后暴露) */
+  private readonly promptPresetService: PromptPresetService;
 
   /**
    * 私有构造,组装全部依赖。
@@ -111,14 +131,35 @@ export class AppServices {
       this.characterSelectionStore,
       characterAssetStore
     );
+    this.lorebookSelectionStore = new LorebookSelectionStore(this.appPreferences);
     this.characterMigrationService = new CharacterMigrationService(
       this.characterStore,
       this.characterRepository,
       this.characterSelectionStore,
       this.appPreferences
     );
-    const lorebookStore: LorebookStore = new LorebookStore();
-    this.lorebookService = new LorebookService(lorebookStore);
+    // Lorebook 仅作迁移源,由 AppServices 直接管理
+    this.lorebookStore = new LorebookStore();
+    // LorebookRepository 使用同一 DbHelper
+    this.lorebookRepository = new LorebookRepository(this.dbHelper);
+    // LorebookService 使用 Repository + SelectionStore
+    this.lorebookService = new LorebookService(
+      this.lorebookRepository,
+      this.lorebookSelectionStore
+    );
+    this.lorebookMigrationService = new LorebookMigrationService(
+      this.lorebookStore,
+      this.lorebookRepository,
+      this.lorebookSelectionStore,
+      this.appPreferences
+    );
+    // PromptPreset 领域组装
+    this.promptPresetRepository = new PromptPresetRepository(this.dbHelper);
+    this.promptPresetSelectionStore = new PromptPresetSelectionStore(this.appPreferences);
+    this.promptPresetService = new PromptPresetService(
+      this.promptPresetRepository,
+      this.promptPresetSelectionStore
+    );
     const macroReplacer: MacroReplacer = new MacroReplacer();
     this.promptBuilder = new PromptBuilder(this.lorebookService, macroReplacer);
     this.tokenCounter = new TokenCounter();
@@ -162,7 +203,12 @@ export class AppServices {
       .then(async (): Promise<void> => {
         await services.characterMigrationService.migrateIfNeeded();
       })
-      .then((): Promise<void> => services.lorebookService.initialize(context))
+      .then((): Promise<void> => services.lorebookStore.initialize(context))
+      .then(async (): Promise<void> => {
+        await services.lorebookMigrationService.migrateIfNeeded();
+      })
+      .then((): Promise<void> => services.lorebookService.initialize())
+      .then((): Promise<void> => services.promptPresetService.initialize())
       .then((): void => {
         Logger.info(LOG_TAG, 'initialize ok');
       })
@@ -230,6 +276,13 @@ export class AppServices {
    */
   static getLorebookService(): LorebookService {
     return AppServices.getInstance().lorebookService;
+  }
+
+  /**
+   * 获取 PromptPresetService 实例(T-6.1B 接入 Chat 后使用)。
+   */
+  static getPromptPresetService(): PromptPresetService {
+    return AppServices.getInstance().promptPresetService;
   }
 
   /**

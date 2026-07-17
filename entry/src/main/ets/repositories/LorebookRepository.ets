@@ -44,6 +44,14 @@ import {
 
 const LOG_TAG: string = 'LorebookRepository';
 
+export interface LorebookImportResult {
+  readonly insertedLorebookCount: number;
+  readonly insertedEntryCount: number;
+  readonly skippedExistingLorebookCount: number;
+  readonly totalLorebookCount: number;
+  readonly totalEntryCount: number;
+}
+
 export class LorebookRepository {
   private readonly dbHelper: DbHelper;
 
@@ -502,5 +510,89 @@ export class LorebookRepository {
     } finally {
       rs.close();
     }
+  }
+
+  async insertManyIfMissing(
+    lorebooks: Lorebook[]
+  ): Promise<LorebookImportResult> {
+    if (lorebooks.length === 0) {
+      return {
+        insertedLorebookCount: 0,
+        insertedEntryCount: 0,
+        skippedExistingLorebookCount: 0,
+        totalLorebookCount: 0,
+        totalEntryCount: 0
+      };
+    }
+
+    // 预校验全部 Lorebook 和 Entry
+    for (let i = 0; i < lorebooks.length; i++) {
+      validateLorebook(lorebooks[i]);
+      for (let j = 0; j < lorebooks[i].entries.length; j++) {
+        validateLorebookEntry(lorebooks[i].entries[j]);
+      }
+    }
+
+    // 检查 legacy 输入内是否有重复 Lorebook ID
+    const legacyIds: Set<string> = new Set();
+    for (let i = 0; i < lorebooks.length; i++) {
+      if (legacyIds.has(lorebooks[i].id)) {
+        throw DatabaseError.invalidData('duplicate lorebook id in input');
+      }
+      legacyIds.add(lorebooks[i].id);
+    }
+
+    // 检查 legacy 输入内是否有重复 Entry ID
+    const allEntryIds: Set<string> = new Set();
+    for (let i = 0; i < lorebooks.length; i++) {
+      for (let j = 0; j < lorebooks[i].entries.length; j++) {
+        const eid: string = lorebooks[i].entries[j].id;
+        if (allEntryIds.has(eid)) {
+          throw DatabaseError.invalidData('duplicate entry id in input');
+        }
+        allEntryIds.add(eid);
+      }
+    }
+
+    const store: relationalStore.RdbStore = this.dbHelper.getStore();
+    let insertedLorebookCount: number = 0;
+    let insertedEntryCount: number = 0;
+    let skippedExistingLorebookCount: number = 0;
+
+    await this.dbHelper.runInTransaction(
+      async (txStore: relationalStore.RdbStore): Promise<void> => {
+        // 查询已存在的 Lorebook
+        const existingIds: Set<string> = new Set();
+        for (let i = 0; i < lorebooks.length; i++) {
+          const exists: boolean = await this.existsWithStore(
+            txStore,
+            lorebooks[i].id
+          );
+          if (exists) {
+            existingIds.add(lorebooks[i].id);
+            skippedExistingLorebookCount++;
+          }
+        }
+
+        // 对缺失的 Lorebook 插入完整聚合
+        for (let i = 0; i < lorebooks.length; i++) {
+          const lb: Lorebook = lorebooks[i];
+          if (existingIds.has(lb.id)) {
+            continue;
+          }
+          await this.insertWithStore(txStore, lb);
+          insertedLorebookCount++;
+          insertedEntryCount += lb.entries.length;
+        }
+      }
+    );
+
+    return {
+      insertedLorebookCount: insertedLorebookCount,
+      insertedEntryCount: insertedEntryCount,
+      skippedExistingLorebookCount: skippedExistingLorebookCount,
+      totalLorebookCount: lorebooks.length,
+      totalEntryCount: allEntryIds.size
+    };
   }
 }

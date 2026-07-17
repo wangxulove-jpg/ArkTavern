@@ -6,7 +6,7 @@
  */
 
 export const DATABASE_NAME: string = 'arktavern.db';
-export const DATABASE_VERSION: number = 2;
+export const DATABASE_VERSION: number = 3;
 
 export const TABLE_CHARACTERS: string = 'characters';
 export const TABLE_CHATS: string = 'chats';
@@ -88,3 +88,19 @@ export const INDEX_LOREBOOKS_UPDATED_AT: string = 'idx_lorebooks_updated_at';
 export const INDEX_LOREBOOKS_ENABLED: string = 'idx_lorebooks_enabled';
 export const INDEX_LOREBOOK_ENTRIES_LOREBOOK_ID: string = 'idx_lorebook_entries_lorebook_id';
 export const INDEX_LOREBOOK_ENTRIES_LOREBOOK_PRIORITY: string = 'idx_lorebook_entries_lorebook_priority';
+
+// ===== v3: Prompt Presets =====
+export const TABLE_PROMPT_PRESETS: string = 'prompt_presets';
+export const COLUMN_PRESET_ID: string = 'id';
+export const COLUMN_PRESET_NAME: string = 'name';
+export const COLUMN_PRESET_DESCRIPTION: string = 'description';
+export const COLUMN_PRESET_SYSTEM_PROMPT: string = 'system_prompt';
+export const COLUMN_PRESET_TEMPERATURE: string = 'temperature';
+export const COLUMN_PRESET_TOP_P: string = 'top_p';
+export const COLUMN_PRESET_MAX_OUTPUT_TOKENS: string = 'max_output_tokens';
+export const COLUMN_PRESET_CONTEXT_WINDOW: string = 'context_window';
+export const COLUMN_PRESET_CREATED_AT: string = 'created_at';
+export const COLUMN_PRESET_UPDATED_AT: string = 'updated_at';
+
+// ===== v3: Prompt Preset Indexes =====
+export const INDEX_PROMPT_PRESETS_UPDATED_AT: string = 'idx_prompt_presets_updated_at';

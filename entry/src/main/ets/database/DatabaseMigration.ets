@@ -14,7 +14,7 @@
  */
 
 import { relationalStore } from '@kit.ArkData';
-import { V1_TO_V2_STATEMENTS } from './DatabaseSchema';
+import { V1_TO_V2_STATEMENTS, V2_TO_V3_STATEMENTS } from './DatabaseSchema';
 
 export interface DatabaseMigration {
   readonly fromVersion: number;
@@ -109,6 +109,29 @@ class V1ToV2Migration implements DatabaseMigration {
   async migrate(store: relationalStore.RdbStore): Promise<void> {
     for (let i = 0; i < V1_TO_V2_STATEMENTS.length; i++) {
       await store.executeSql(V1_TO_V2_STATEMENTS[i]);
+    }
+  }
+}
+
+/**
+ * 创建 v2→v3 数据库迁移。
+ *
+ * 事务中执行:
+ * 1. 创建 prompt_presets 表
+ * 2. 创建相关索引
+ * 3. 任一失败全部回滚,不影响旧数据
+ */
+export function createV2ToV3Migration(): DatabaseMigration {
+  return new V2ToV3Migration();
+}
+
+class V2ToV3Migration implements DatabaseMigration {
+  readonly fromVersion: number = 2;
+  readonly toVersion: number = 3;
+
+  async migrate(store: relationalStore.RdbStore): Promise<void> {
+    for (let i = 0; i < V2_TO_V3_STATEMENTS.length; i++) {
+      await store.executeSql(V2_TO_V3_STATEMENTS[i]);
     }
   }
 }
