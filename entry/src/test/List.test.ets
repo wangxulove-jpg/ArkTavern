@@ -29,6 +29,7 @@ import chatSessionServiceTest from './ChatSessionService.test';
 import chatSessionViewModelTest from './ChatSessionViewModel.test';
 import characterMigrationServiceTest from './CharacterMigrationService.test';
 import characterServiceRdbTest from './CharacterServiceRdb.test';
+import lorebookRepositoryMapperTest from './LorebookRepositoryMapper.test';
 
 export default function testsuite() {
   localUnitTest();
@@ -61,4 +62,5 @@ export default function testsuite() {
   chatSessionViewModelTest();
   characterMigrationServiceTest();
   characterServiceRdbTest();
+  lorebookRepositoryMapperTest();
 }

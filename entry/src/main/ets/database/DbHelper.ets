@@ -25,6 +25,7 @@ import {
 import { getSchemaStatements } from './DatabaseSchema';
 import {
   buildMigrationPath,
+  createV1ToV2Migration,
   DatabaseMigration,
   MigrationPath
 } from './DatabaseMigration';
@@ -42,7 +43,7 @@ export class DbHelper {
 
   constructor(
     databaseName: string = DATABASE_NAME,
-    migrations: ReadonlyArray<DatabaseMigration> = []
+    migrations: ReadonlyArray<DatabaseMigration> = [createV1ToV2Migration()]
   ) {
     this.databaseName = databaseName;
     this.migrations = migrations;
@@ -175,7 +176,7 @@ export class DbHelper {
   }
 
   private async createFreshSchema(store: relationalStore.RdbStore): Promise<void> {
-    const statements: string[] = getSchemaStatements(1);
+    const statements: string[] = getSchemaStatements(DATABASE_VERSION);
     try {
       for (let i = 0; i < statements.length; i++) {
         await store.executeSql(statements[i]);
@@ -186,7 +187,7 @@ export class DbHelper {
   }
 
   private async ensureSchemaExists(store: relationalStore.RdbStore): Promise<void> {
-    const statements: string[] = getSchemaStatements(1);
+    const statements: string[] = getSchemaStatements(DATABASE_VERSION);
     try {
       for (let i = 0; i < statements.length; i++) {
         await store.executeSql(statements[i]);
@@ -230,6 +231,7 @@ export class DbHelper {
         );
       }
     }
+    await this.writeUserVersion(store, toVersion);
   }
 
   private async readUserVersion(store: relationalStore.RdbStore): Promise<number> {

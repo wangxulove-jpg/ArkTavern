@@ -25,6 +25,8 @@ import chatServicePersistenceDeviceTest from './ChatServicePersistence.test';
 import messageRepositoryPersistenceExtensionsDeviceTest from './MessageRepositoryPersistenceExtensions.test';
 import chatSessionRepositoryDeviceTest from './ChatSessionRepository.test';
 import characterRepositoryDeviceTest from './CharacterRepository.test';
+import databaseV2MigrationTest from './DatabaseV2Migration.test';
+import lorebookRepositoryDeviceTest from './LorebookRepository.test';
 
 export default function testsuite() {
   abilityTest();
@@ -53,4 +55,6 @@ export default function testsuite() {
   messageRepositoryPersistenceExtensionsDeviceTest();
   chatSessionRepositoryDeviceTest();
   characterRepositoryDeviceTest();
+  databaseV2MigrationTest();
+  lorebookRepositoryDeviceTest();
 }

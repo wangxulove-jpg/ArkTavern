@@ -6,7 +6,7 @@
  */
 
 export const DATABASE_NAME: string = 'arktavern.db';
-export const DATABASE_VERSION: number = 1;
+export const DATABASE_VERSION: number = 2;
 
 export const TABLE_CHARACTERS: string = 'characters';
 export const TABLE_CHATS: string = 'chats';
@@ -57,3 +57,34 @@ export const SOURCE_CHARACTER_FIRST_MESSAGE: string = 'characterFirstMessage';
 export const SOURCE_LOREBOOK_BEFORE: string = 'lorebookBefore';
 export const SOURCE_LOREBOOK_AFTER: string = 'lorebookAfter';
 export const SOURCE_EXTERNAL_SYSTEM: string = 'externalSystem';
+
+// ===== v2: Lorebooks =====
+export const TABLE_LOREBOOKS: string = 'lorebooks';
+export const COLUMN_LOREBOOK_ID: string = 'id';
+export const COLUMN_LOREBOOK_NAME: string = 'name';
+export const COLUMN_LOREBOOK_DESCRIPTION: string = 'description';
+export const COLUMN_LOREBOOK_ENABLED: string = 'enabled';
+export const COLUMN_LOREBOOK_CREATED_AT: string = 'created_at';
+export const COLUMN_LOREBOOK_UPDATED_AT: string = 'updated_at';
+
+// ===== v2: Lorebook Entries =====
+export const TABLE_LOREBOOK_ENTRIES: string = 'lorebook_entries';
+export const COLUMN_ENTRY_ID: string = 'id';
+export const COLUMN_ENTRY_LOREBOOK_ID: string = 'lorebook_id';
+export const COLUMN_ENTRY_NAME: string = 'name';
+export const COLUMN_ENTRY_KEYS_JSON: string = 'keys_json';
+export const COLUMN_ENTRY_SECONDARY_KEYS_JSON: string = 'secondary_keys_json';
+export const COLUMN_ENTRY_CONTENT: string = 'content';
+export const COLUMN_ENTRY_ENABLED: string = 'enabled';
+export const COLUMN_ENTRY_CONSTANT: string = 'constant';
+export const COLUMN_ENTRY_SELECTIVE: string = 'selective';
+export const COLUMN_ENTRY_POSITION: string = 'position';
+export const COLUMN_ENTRY_PRIORITY: string = 'priority';
+export const COLUMN_ENTRY_CREATED_AT: string = 'created_at';
+export const COLUMN_ENTRY_UPDATED_AT: string = 'updated_at';
+
+// ===== v2: Lorebook Indexes =====
+export const INDEX_LOREBOOKS_UPDATED_AT: string = 'idx_lorebooks_updated_at';
+export const INDEX_LOREBOOKS_ENABLED: string = 'idx_lorebooks_enabled';
+export const INDEX_LOREBOOK_ENTRIES_LOREBOOK_ID: string = 'idx_lorebook_entries_lorebook_id';
+export const INDEX_LOREBOOK_ENTRIES_LOREBOOK_PRIORITY: string = 'idx_lorebook_entries_lorebook_priority';

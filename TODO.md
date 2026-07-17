@@ -2151,3 +2151,53 @@ hilog 关键日志确认持久化流程完整跑通:
 > - CRUD + JSON/PNG 导入: 代码逻辑已验证(Mock 测试覆盖),UI 层面需手动操作(模拟器 UI 自动化限制)
 
 > 编译: `entry@default` BUILD SUCCESSFUL, `entry@ohosTest` BUILD SUCCESSFUL
+
+### T-4.7A Database v2 + LorebookRepository MVP (2026-07-17)
+
+> 概述:
+> - Database version 已升级为 2
+> - lorebooks / lorebook_entries 表和索引已建立
+> - v1→v2 无损迁移已实现(事务+writeUserVersion)
+> - LorebookRepository 聚合 CRUD 已实现(事务+差量同步)
+> - LorebookRepositoryMapper 行映射已实现(keys JSON/Position 显式解析)
+> - 生产 LorebookService 尚未切换(仍使用 Preferences)
+> - Preferences 世界书尚未迁移
+> - 不持久化动态字段(matchedEntryIds/PromptSegment/Token 统计)
+
+> 新增文件:
+> - `entry/src/main/ets/repositories/LorebookRepository.ets`
+> - `entry/src/main/ets/repositories/LorebookRepositoryMapper.ets`
+> - `entry/src/test/LorebookRepositoryMapper.test.ets` (20 项纯逻辑测试)
+> - `entry/src/ohosTest/ets/test/DatabaseV2Migration.test.ets` (20 项设备测试)
+> - `entry/src/ohosTest/ets/test/LorebookRepository.test.ets` (50 项设备测试)
+
+> 修改文件:
+> - `entry/src/main/ets/database/DatabaseConstants.ets` (DATABASE_VERSION=2, 新增表/列/索引常量)
+> - `entry/src/main/ets/database/DatabaseSchema.ets` (v2 CREATE + INDEX + V1_TO_V2 + CURRENT_SCHEMA)
+> - `entry/src/main/ets/database/DatabaseMigration.ets` (V1ToV2Migration 类)
+> - `entry/src/main/ets/database/DbHelper.ets` (runMigrations 后 writeUserVersion)
+> - `entry/src/test/List.test.ets` (注册 LorebookRepositoryMapper 测试)
+> - `entry/src/ohosTest/ets/test/List.test.ets` (注册 DatabaseV2Migration + LorebookRepository 测试)
+
+> 编译:
+> - `entry@default` BUILD SUCCESSFUL
+> - `entry@ohosTest` BUILD SUCCESSFUL
+
+> 实机升级验证(模拟器 nova 13 Pro_23):
+> - 首次升级: `migration 1->2 success` → `initialize success version=2`
+> - 重启幂等: `initialize success version=2`(无 migration 日志),旧数据保留
+> - 世界书功能: 仍从 Preferences 读取,无回归
+> - 无日志泄漏: hilog 中无 Lorebook 名称/描述/Entry 正文/keys/SQL
+
+> 测试编译状态: 全部通过
+> 测试实际运行状态: 待 IDE 中运行(设备测试需 DevEco Studio IDE 执行)
+
+- [x] DATABASE_VERSION = 2
+- [x] lorebooks / lorebook_entries Schema 已建立
+- [x] v1→v2 无损迁移已实现
+- [x] LorebookRepository 已实现
+- [x] 生产 LorebookService 尚未切换
+- [x] Preferences 世界书尚未迁移
+- [x] 测试编译状态: entry@default + entry@ohosTest BUILD SUCCESSFUL
+- [ ] 测试实际运行状态: 待 IDE 中执行
+- [x] 升级安装验证: 模拟器升级+重启通过

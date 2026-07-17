@@ -14,6 +14,7 @@
  */
 
 import { relationalStore } from '@kit.ArkData';
+import { V1_TO_V2_STATEMENTS } from './DatabaseSchema';
 
 export interface DatabaseMigration {
   readonly fromVersion: number;
@@ -86,4 +87,28 @@ export function isMigrationRegistryValid(
     seen.add(key);
   }
   return true;
+}
+
+/**
+ * 创建 v1→v2 数据库迁移。
+ *
+ * 事务中执行:
+ * 1. 创建 lorebooks 表
+ * 2. 创建 lorebook_entries 表
+ * 3. 创建新索引
+ * 4. 任一失败全部回滚,不影响旧数据
+ */
+export function createV1ToV2Migration(): DatabaseMigration {
+  return new V1ToV2Migration();
+}
+
+class V1ToV2Migration implements DatabaseMigration {
+  readonly fromVersion: number = 1;
+  readonly toVersion: number = 2;
+
+  async migrate(store: relationalStore.RdbStore): Promise<void> {
+    for (let i = 0; i < V1_TO_V2_STATEMENTS.length; i++) {
+      await store.executeSql(V1_TO_V2_STATEMENTS[i]);
+    }
+  }
 }
