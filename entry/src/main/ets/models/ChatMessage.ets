@@ -11,6 +11,7 @@
  */
 
 import { ChatRole } from './ChatRole';
+import { ChatMessageSource } from './ChatMessageSource';
 
 /**
  * Assistant 消息状态。
@@ -46,6 +47,14 @@ export interface ChatMessage {
   readonly errorMessage?: string;
   /** Assistant 消息状态 */
   readonly status?: ChatMessageStatus;
+  /**
+   * 消息来源(可选,内部辅助标记)。
+   * - PromptBuilder 输出的临时消息会标注 source
+   * - ChatService.messages 中的持久化消息无此字段(默认 Conversation)
+   * - HistoryTrimmer 据此判断哪些消息可裁剪
+   * - 不会写入网络请求 JSON(Provider 不识别)
+   */
+  readonly source?: ChatMessageSource;
 }
 
 /**

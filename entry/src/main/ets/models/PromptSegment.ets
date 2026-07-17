@@ -9,6 +9,7 @@
  */
 
 import { ChatRole } from './ChatRole';
+import { ChatMessageSource } from './ChatMessageSource';
 
 /**
  * 提示词段位置枚举。
@@ -32,6 +33,8 @@ export interface PromptSegment {
   readonly content: string;
   /** 优先级,数值越大越靠前。同位置内按 priority 降序排列 */
   readonly priority: number;
+  /** 消息来源标签(用于 HistoryTrimmer 识别可裁剪与受保护消息) */
+  readonly source: ChatMessageSource;
 }
 
 /**
@@ -42,14 +45,16 @@ export function createPromptSegment(
   position: PromptSegmentPosition,
   role: ChatRole,
   content: string,
-  priority: number = 0
+  priority: number = 0,
+  source: ChatMessageSource = ChatMessageSource.Conversation
 ): PromptSegment {
   return {
     id: id,
     position: position,
     role: role,
     content: content,
-    priority: priority
+    priority: priority,
+    source: source
   };
 }
 

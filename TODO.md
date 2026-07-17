@@ -814,6 +814,62 @@ Date: 2026-07-15
   - 未实现:HistoryTrimmer / 自动截断 / Summary / tiktoken / 精确 tokenizer / UI Token 显示 / Preset
   - 已知限制:设备测试需在 DevEco Studio IDE 中运行;超预算行为依赖单元测试覆盖(不通过实机修改正式配置制造错误)
 
+### T-2.8 HistoryTrimmer MVP：聊天历史裁剪
+
+- 依赖:T-2.5、T-2.6、T-2.7
+- 优先级:P2
+- 修改范围:`models/HistoryTrimResult.ets`(新建)、`models/ChatMessageSource.ets`(新建)、`services/HistoryTrimmer.ets`(新建)、`models/ChatMessage.ets`、`models/PromptSegment.ets`、`services/PromptBuilder.ets`、`services/ChatService.ets`、`services/AppServices.ets`、测试
+- 内容:
+  - HistoryTrimmer 独立无状态服务,依赖注入 TokenCounter,不访问 ArkUI / Provider / ChatService
+  - ChatMessageSource 枚举:Conversation / CharacterPrompt / CharacterFirstMessage / LorebookBefore / LorebookAfter / ExternalSystem
+  - ChatMessage 与 PromptSegment 增加可选 `source` 字段(内部辅助标记,不写入网络请求 JSON,不持久化)
+  - PromptBuilder 输出消息按类别附加 source 标签
+  - HistoryTrimResult 纯数据模型:originalTokenCount / finalTokenCount / removedMessageCount / removedMessageIds / exceedsBudgetBeforeTrim / exceedsBudgetAfterTrim
+  - 裁剪算法:从旧到新按 User+紧邻 Assistant 完整轮次删除;孤立消息作单条;每轮删除后重估 Token;达到预算即停
+  - 受保护:System 消息 / Character Prompt / firstMessage / 世界书 Before&After / 当前最后一条 User / protectedMessageIds 显式标记
+  - 极端超预算:保留所有受保护消息,不截断正文,不抛异常,exceedsBudgetAfterTrim=true,记录安全 warn
+  - ChatService 接入顺序:PromptBuilder.build() → TokenCounter.calculateBudget() → [若超预算] HistoryTrimmer.trim() → 重算预算 → streamCurrentChat()
+  - ChatService 不修改 `messages` 数组,只裁剪临时请求消息;页面历史记录保持完整
+  - AppServices 私有 historyTrimmer 字段,createChatService 注入,不对页面公开,无 getHistoryTrimmer()
+  - 正常未裁剪时不输出额外日志;实际发生裁剪时输出 `history trim: ...` 数字统计;严禁记录正文/ID/Key/请求 JSON
+- 验收标准:
+  - [x] HistoryTrimmer 是独立无状态服务
+  - [x] 不超预算时不删除消息
+  - [x] 超预算时从最旧历史轮次开始裁剪
+  - [x] System / 世界书 / Character Prompt / firstMessage / 当前 User 全部受保护
+  - [x] 不修改消息正文
+  - [x] 不修改 ChatService.messages
+  - [x] 页面历史记录保持完整
+  - [x] 最终发送使用裁剪后的临时消息
+  - [x] 裁剪后重新计算 TokenBudget
+  - [x] 极端情况下仍超预算时不崩溃、不误删保护内容
+  - [x] 正常发送和重新生成均支持裁剪
+  - [x] ChatPage 不感知 HistoryTrimmer
+  - [x] 无正文日志泄漏
+  - [x] entry@default + entry@ohosTest BUILD SUCCESSFUL
+  - [x] 现有角色 / 世界书 / 宏替换 / 流式回复无回归
+- 完成情况(2026-07-17):
+  - [x] HistoryTrimResult.ets:纯数据模型 + createHistoryTrimResult 工厂
+  - [x] ChatMessageSource.ets:6 个枚举值(内部辅助标记,不写网络 JSON,不持久化)
+  - [x] ChatMessage.ets:增加可选 `source?: ChatMessageSource` 字段
+  - [x] PromptSegment.ets:增加 `source: ChatMessageSource` 字段,createPromptSegment 增加可选 source 参数
+  - [x] PromptBuilder.ets:build() 中按消息类别附加 source 标签(worldbook→LorebookBefore/LorebookAfter / character system→CharacterPrompt / 第一条 Assistant→CharacterFirstMessage / 其他 System→ExternalSystem / User 与其他 Assistant→Conversation)
+  - [x] HistoryTrimmer.ets:独立无状态服务;buildTrimUnits() 优先按 User+紧邻 Assistant 完整轮次,孤立消息作单条;countTokensSafe() 捕获 TokenCounter 异常并 fallback 到 estimateMessagesTokens;终止条件:达到预算 / 删无可删 / MAX_TRIM_ITERATIONS=256
+  - [x] ChatService.ets:构造注入 HistoryTrimmer;新增 getLastHistoryTrimResult();updateRequestPlan() 统一处理(首次预算→裁剪→重算预算);sendMessage 与 regenerate 都走 updateRequestPlan;doStream 中用裁剪后消息调 streamCurrentChat;异常时回退到未裁剪请求继续发送
+  - [x] AppServices.ets:createChatService 注入 historyTrimmer(私有字段,不对外暴露,无 getHistoryTrimmer())
+  - [x] HistoryTrimmer.test.ets:35 个本地单元测试(覆盖任务规范场景 1-35)
+  - [x] ChatServiceToken.test.ets:追加 7 个 ChatService 历史裁剪集成测试(覆盖任务规范场景 36-50,共 17 个)
+  - [x] MCP 增量编译 entry@default BUILD SUCCESSFUL in 19 s 429 ms
+  - [x] MCP 增量编译 entry@ohosTest BUILD SUCCESSFUL in 17 s 822 ms
+  - [x] 模拟器冒烟:nova 13 Pro_23 普通聊天回归通过;发送 T28-Regression 消息收到流式回复,重新生成替换为新回复,firstMessage 不重复
+  - [x] hilog 实测:`token estimate: messages=5 inputTokens=58 availableTokens=31744 remainingTokens=31686 exceedsBudget=false`,两条请求均出现
+  - [x] `history trim` 日志:0 命中(预算充足,未触发裁剪;裁剪正确性由 35 个单元测试证明)
+  - [x] hilog 内容泄漏扫描:Alice 1(仅 home page 标题)/ {{char}} 0 / {{user}} 0 / sk- 0 / T28-Regression 0 / Authorization 0 / Bearer 0
+  - [x] 无 App died / FATAL / crash 日志
+  - [x] 全部组件(Character / Lorebook / MacroReplacer / PromptBuilder / TokenCounter / OpenAIProvider / HttpStreamTransport)无回归
+  - 未实现:Summary / 单条消息字符截断 / 自动禁用世界书 / RAG / 长期记忆 / 消息优先级评分 / tiktoken / 模型专属 tokenizer / UI Token 条 / "上下文已裁剪"提示 / Preset / Swipe
+  - 已知限制:设备测试需在 DevEco Studio IDE 中运行;超预算裁剪行为由单元测试覆盖(不通过实机修改正式配置制造极端错误)
+
 ---
 
 ## Phase 3:角色卡导入

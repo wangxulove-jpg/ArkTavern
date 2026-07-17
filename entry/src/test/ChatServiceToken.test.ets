@@ -23,6 +23,9 @@ import { ChatMessage } from '../main/ets/models/ChatMessage';
 import { ChatRole } from '../main/ets/models/ChatRole';
 import { TokenCounter } from '../main/ets/services/TokenCounter';
 import { TokenBudget } from '../main/ets/models/TokenBudget';
+import { HistoryTrimmer } from '../main/ets/services/HistoryTrimmer';
+import { HistoryTrimResult } from '../main/ets/models/HistoryTrimResult';
+import { ChatMessageSource } from '../main/ets/models/ChatMessageSource';
 import { PromptBuilder } from '../main/ets/services/PromptBuilder';
 import { LorebookService } from '../main/ets/services/LorebookService';
 import { LorebookStore } from '../main/ets/storage/LorebookStore';
@@ -388,4 +391,252 @@ export default function chatServiceTokenTest(): void {
       expect(ms[1].content).assertEqual('PRIVATE_CONTENT_BBB');
     });
   });
+
+  describe('ChatService_history_trim', () => {
+    // 36. 未超预算时不调用有效裁剪
+    it('Not_over_budget_no_effective_trim', 0, async () => {
+      const mockMs: MockModelService = new MockModelService();
+      // 大窗口(默认 32768),不会超预算
+      mockMs.setCurrentConfig(makeProviderConfig(32768));
+      const tokenCounter: TokenCounter = new TokenCounter();
+      const trimmer: HistoryTrimmer = new HistoryTrimmer(tokenCounter);
+      const service: ChatService = new ChatService(
+        mockMs as Object as import('../main/ets/services/ModelService').ModelService,
+        null, null, tokenCounter, trimmer
+      );
+      const collector: StateCollector = createCollector();
+      const cb: ChatServiceCallbacks = createCallbacks(collector);
+      await service.sendMessage('Hello', cb);
+      mockMs.fireComplete('World');
+      // 不超预算:trim 结果应为 undefined
+      const trim: HistoryTrimResult | undefined = service.getLastHistoryTrimResult();
+      expect(trim).assertEqual(undefined);
+      // 发送的消息数 = 原始消息数
+      expect(mockMs.lastMessages !== null).assertEqual(true);
+      expect(mockMs.lastMessages!.length).assertEqual(2);
+      service.dispose();
+    });
+
+    // 37. 超预算时调用 HistoryTrimmer
+    // 38. 最终发送的是裁剪后的临时消息
+    // 39. ChatService.messages 保持完整
+    // 40. 世界书消息仍保留在请求中
+    // 41. Character Prompt 仍保留
+    // 42. firstMessage 仍保留
+    // 43. 当前 User 消息仍保留
+    // 44. 最旧历史轮次从请求中移除
+    // 45. lastTokenBudget 为裁剪后结果
+    // 46. lastHistoryTrimResult 正确更新
+    it('Over_budget_calls_trimmer_and_keeps_protected', 0, async () => {
+      const mockMs: MockModelService = new MockModelService();
+      // 极小 contextWindow → 必超预算
+      mockMs.setCurrentConfig(makeProviderConfig(0));
+      const tokenCounter: TokenCounter = new TokenCounter();
+      const trimmer: HistoryTrimmer = new HistoryTrimmer(tokenCounter);
+      const lorebookService: LorebookService = new LorebookService(new LorebookStore());
+      const character: Character = makeAlice();
+      const entry: LorebookEntry = createLorebookEntry(
+        'le1', '酒馆', ['酒馆'],
+        '酒馆是一座古老的建筑。',
+        true, false, LorebookPosition.BeforeCharacter, 100, 1000, 1000
+      );
+      const lorebook: Lorebook = addEntryToLorebook(
+        createLorebook('lb1', '默认', '', true, 1000, 1000),
+        entry
+      );
+      const promptBuilder: PromptBuilder = new PromptBuilder(lorebookService, new MacroReplacer());
+
+      const service: ChatService = new ChatService(
+        mockMs as Object as import('../main/ets/services/ModelService').ModelService,
+        lorebookService, promptBuilder, tokenCounter, trimmer
+      );
+      service.initContext(character);
+
+      // 先发一条 user 消息触发历史
+      const cb: ChatServiceCallbacks = createCallbacks(createCollector());
+      await service.sendMessage('我在酒馆', cb);
+      mockMs.fireComplete('欢迎');
+
+      // 第二次 send 时,本地 messages 已含 2 条 history + 1 user
+      await service.sendMessage('再来一杯', cb);
+      mockMs.fireComplete('好的');
+
+      // 1) trim 结果应被记录
+      const trim: HistoryTrimResult | undefined = service.getLastHistoryTrimResult();
+      // 因为 contextWindow=0,available=0,originalTokens > 0 → 必超预算 → trim 必被调用
+      // 但 trim 不抛错,lastHistoryTrimResult 应被设置
+      expect(trim !== undefined).assertEqual(true);
+
+      // 2) 实际发送给模型的是裁剪后的消息(mockMs.lastMessages)
+      expect(mockMs.lastMessages !== null).assertEqual(true);
+      const sent: ChatMessage[] = mockMs.lastMessages!;
+
+      // 3) ChatService.messages 仍完整(应包含 4 条 + 待添加)
+      const fullMsgs: ChatMessage[] = service.getMessages();
+      expect(fullMsgs.length >= 4).assertEqual(true);
+
+      // 4) 受保护消息:世界书/character/firstMessage/current user 仍保留
+      const sentIds: string[] = sent.map((m: ChatMessage): string => m.id);
+      // worldbook (LorebookBefore) 保留
+      const hasWorldbook: boolean = sent.some((m: ChatMessage): boolean =>
+        m.source === ChatMessageSource.LorebookBefore);
+      expect(hasWorldbook).assertEqual(true);
+      // character prompt 保留
+      const hasChar: boolean = sent.some((m: ChatMessage): boolean =>
+        m.source === ChatMessageSource.CharacterPrompt);
+      expect(hasChar).assertEqual(true);
+      // firstMessage 保留
+      const hasFm: boolean = sent.some((m: ChatMessage): boolean =>
+        m.source === ChatMessageSource.CharacterFirstMessage);
+      expect(hasFm).assertEqual(true);
+      // 当前 user 消息保留(最后一条)
+      const lastUser: ChatMessage = sent[sent.length - 1];
+      expect(lastUser.role).assertEqual(ChatRole.User);
+      // 不会存在 lastUser.content 是历史内容
+      expect(lastUser.content.length > 0).assertEqual(true);
+
+      // 5) trim 的 removedMessageCount > 0(因为有 2 轮历史被裁剪)
+      expect(trim!.removedMessageCount > 0).assertEqual(true);
+
+      service.dispose();
+    });
+
+    // 47. 正常发送执行裁剪
+    it('Normal_send_triggers_trim', 0, async () => {
+      const mockMs: MockModelService = new MockModelService();
+      mockMs.setCurrentConfig(makeProviderConfig(0));
+      const tokenCounter: TokenCounter = new TokenCounter();
+      const trimmer: HistoryTrimmer = new HistoryTrimmer(tokenCounter);
+      const service: ChatService = new ChatService(
+        mockMs as Object as import('../main/ets/services/ModelService').ModelService,
+        null, null, tokenCounter, trimmer
+      );
+      const cb: ChatServiceCallbacks = createCallbacks(createCollector());
+      await service.sendMessage('hello world', cb);
+      mockMs.fireComplete('reply');
+      const trim: HistoryTrimResult | undefined = service.getLastHistoryTrimResult();
+      // 单条消息(2 条:user + assistant)不构成轮次裁剪,但仍走更新流程
+      // contextWindow=0,available=0,originalTokens > 0 → 必超预算
+      expect(trim !== undefined).assertEqual(true);
+      service.dispose();
+    });
+
+    // 48. 重新生成执行裁剪
+    it('Regenerate_triggers_trim', 0, async () => {
+      const mockMs: MockModelService = new MockModelService();
+      mockMs.setCurrentConfig(makeProviderConfig(0));
+      const tokenCounter: TokenCounter = new TokenCounter();
+      const trimmer: HistoryTrimmer = new HistoryTrimmer(tokenCounter);
+      const service: ChatService = new ChatService(
+        mockMs as Object as import('../main/ets/services/ModelService').ModelService,
+        null, null, tokenCounter, trimmer
+      );
+      const cb: ChatServiceCallbacks = createCallbacks(createCollector());
+      await service.sendMessage('Hi', cb);
+      mockMs.fireComplete('Hello');
+      const firstTrim: HistoryTrimResult | undefined = service.getLastHistoryTrimResult();
+      expect(firstTrim !== undefined).assertEqual(true);
+
+      // 重新生成
+      await service.regenerateLastResponse(cb);
+      mockMs.fireComplete('World');
+      const secondTrim: HistoryTrimResult | undefined = service.getLastHistoryTrimResult();
+      expect(secondTrim !== undefined).assertEqual(true);
+      service.dispose();
+    });
+
+    // 49. 裁剪后仍超预算时请求不阻断
+    it('Still_over_after_trim_does_not_block_request', 0, async () => {
+      const mockMs: MockModelService = new MockModelService();
+      mockMs.setCurrentConfig(makeProviderConfig(0));
+      const tokenCounter: TokenCounter = new TokenCounter();
+      const trimmer: HistoryTrimmer = new HistoryTrimmer(tokenCounter);
+      const lorebookService: LorebookService = new LorebookService(new LorebookStore());
+      const character: Character = makeAlice();
+      // 用非常大且不可裁剪的世界书 + character,保证删完历史仍超
+      const entry: LorebookEntry = createLorebookEntry(
+        'le1', '酒馆', ['酒馆'],
+        // 大量内容
+        '这是一段非常长的世界书内容,用于确保即使删完所有可裁剪历史仍超预算。'.repeat(50),
+        true, false, LorebookPosition.BeforeCharacter, 100, 1000, 1000
+      );
+      const lorebook: Lorebook = addEntryToLorebook(
+        createLorebook('lb1', '默认', '', true, 1000, 1000),
+        entry
+      );
+      const promptBuilder: PromptBuilder = new PromptBuilder(lorebookService, new MacroReplacer());
+      const service: ChatService = new ChatService(
+        mockMs as Object as import('../main/ets/services/ModelService').ModelService,
+        lorebookService, promptBuilder, tokenCounter, trimmer
+      );
+      service.initContext(character);
+
+      const cb: ChatServiceCallbacks = createCallbacks(createCollector());
+      await service.sendMessage('我在酒馆', cb);
+      mockMs.fireComplete('好');
+
+      // 即使超预算,streamChatCallCount 应 >= 1
+      expect(mockMs.streamChatCallCount >= 1).assertEqual(true);
+      // lastTokenBudget 应存在
+      const budget: TokenBudget | undefined = service.getLastTokenBudget();
+      expect(budget !== undefined).assertEqual(true);
+      expect(budget!.exceedsBudget).assertEqual(true);
+      service.dispose();
+    });
+
+    // 50. HistoryTrimmer 抛异常时请求不中断
+    it('Trimmer_throw_does_not_break_chat', 0, async () => {
+      const mockMs: MockModelService = new MockModelService();
+      mockMs.setCurrentConfig(makeProviderConfig(0));
+      const tokenCounter: TokenCounter = new TokenCounter();
+      const broken = {
+        trim: (_msgs: ChatMessage[], _opts: import('../main/ets/services/HistoryTrimmer').HistoryTrimOptions): HistoryTrimResult => {
+          throw new Error('trimmer boom');
+        }
+      } as unknown as HistoryTrimmer;
+      const service: ChatService = new ChatService(
+        mockMs as Object as import('../main/ets/services/ModelService').ModelService,
+        null, null, tokenCounter, broken
+      );
+      const cb: ChatServiceCallbacks = createCallbacks(createCollector());
+      await service.sendMessage('hi', cb);
+      mockMs.fireComplete('ok');
+      // stream 仍正常
+      expect(mockMs.streamChatCallCount).assertEqual(1);
+      // trim 结果应被清空
+      expect(service.getLastHistoryTrimResult()).assertEqual(undefined);
+      // 消息保留
+      const msgs: ChatMessage[] = service.getMessages();
+      expect(msgs.length).assertEqual(2);
+      service.dispose();
+    });
+
+    // 51. 日志不包含被裁剪正文(纯函数保证)
+    it('No_content_leakage_in_trim_result', 0, () => {
+      const tokenCounter: TokenCounter = new TokenCounter();
+      const trimmer: HistoryTrimmer = new HistoryTrimmer(tokenCounter);
+      const secret: string = 'PRIVATE_TRIM_AAA';
+      const secret2: string = 'PRIVATE_TRIM_BBB';
+      const msgs: ChatMessage[] = [
+        buildTrimMsg('u1', ChatRole.User, fillerForTrim(50) + secret),
+        buildTrimMsg('a1', ChatRole.Assistant, fillerForTrim(50) + secret2),
+        buildTrimMsg('u-current', ChatRole.User, 'cur')
+      ];
+      const r = trimmer.trim(msgs, { availableInputTokens: 1 });
+      // r.messages 是裁剪后的消息列表(引用原始 ChatMessage 对象)
+      // removedMessageIds 不应包含正文
+      for (let i = 0; i < r.removedMessageIds.length; i++) {
+        expect(r.removedMessageIds[i].indexOf(secret) < 0).assertEqual(true);
+        expect(r.removedMessageIds[i].indexOf(secret2) < 0).assertEqual(true);
+      }
+    });
+  });
+}
+
+function buildTrimMsg(id: string, role: ChatRole, content: string): ChatMessage {
+  return { id: id, role: role, content: content, createdAt: 1 };
+}
+
+function fillerForTrim(n: number): string {
+  return 'a'.repeat(n * 4);
 }

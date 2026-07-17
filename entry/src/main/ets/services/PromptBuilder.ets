@@ -23,6 +23,7 @@ import { Character, buildCharacterSystemContent } from '../models/Character';
 import { Lorebook, LorebookEntry, LorebookPosition } from '../models/Lorebook';
 import { ChatMessage, createChatMessage } from '../models/ChatMessage';
 import { ChatRole } from '../models/ChatRole';
+import { ChatMessageSource } from '../models/ChatMessageSource';
 import { MacroContext } from '../models/MacroContext';
 import {
   PromptSegment,
@@ -96,15 +97,20 @@ export class PromptBuilder {
       for (let i = 0; i < loreEntries.length; i++) {
         const entry: LorebookEntry = loreEntries[i];
         matchedIds.push(entry.id);
-        const position: PromptSegmentPosition = entry.position === LorebookPosition.BeforeCharacter
+        const isBefore: boolean = entry.position === LorebookPosition.BeforeCharacter;
+        const position: PromptSegmentPosition = isBefore
           ? PromptSegmentPosition.BeforeCharacter
           : PromptSegmentPosition.AfterCharacter;
+        const source: ChatMessageSource = isBefore
+          ? ChatMessageSource.LorebookBefore
+          : ChatMessageSource.LorebookAfter;
         const seg: PromptSegment = createPromptSegment(
           'lorebook-' + entry.id,
           position,
           ChatRole.System,
           entry.content,
-          entry.priority
+          entry.priority,
+          source
         );
         segments.push(seg);
       }
@@ -119,7 +125,8 @@ export class PromptBuilder {
           PromptSegmentPosition.Character,
           ChatRole.System,
           systemContent,
-          0
+          0,
+          ChatMessageSource.CharacterPrompt
         );
         segments.push(charSeg);
       }
@@ -128,14 +135,24 @@ export class PromptBuilder {
     // 3. Conversation:保留输入中的所有消息(包括合法 System 消息)
     // Character System Prompt 已由 Step 2 动态生成,不再从输入中取
     // 世界书 System 消息已由 Step 1 动态生成
+    // firstMessage 识别:输入 messages 中第一条 Assistant 消息视为 firstMessage
+    let firstAssistantSeen: boolean = false;
     for (let i = 0; i < context.messages.length; i++) {
       const msg: ChatMessage = context.messages[i];
+      let source: ChatMessageSource = ChatMessageSource.Conversation;
+      if (msg.role === ChatRole.System) {
+        source = ChatMessageSource.ExternalSystem;
+      } else if (msg.role === ChatRole.Assistant && !firstAssistantSeen) {
+        source = ChatMessageSource.CharacterFirstMessage;
+        firstAssistantSeen = true;
+      }
       const convSeg: PromptSegment = createPromptSegment(
         msg.id,
         PromptSegmentPosition.Conversation,
         msg.role,
         msg.content,
-        0
+        0,
+        source
       );
       segments.push(convSeg);
     }
@@ -158,7 +175,14 @@ export class PromptBuilder {
         content,
         now
       );
-      resultMessages.push(msg);
+      // 携带 source 标签(内部辅助标记,不会写入网络请求 JSON)
+      resultMessages.push({
+        id: msg.id,
+        role: msg.role,
+        content: msg.content,
+        createdAt: msg.createdAt,
+        source: seg.source
+      });
     }
 
     Logger.info(LOG_TAG, 'build: segments=' + sorted.length + ' lorebook=' + matchedIds.length

@@ -27,6 +27,7 @@ import { ModelService } from './ModelService';
 import { LorebookService } from './LorebookService';
 import { PromptBuilder, PromptBuildContext, PromptBuildResult } from './PromptBuilder';
 import { TokenCounter } from './TokenCounter';
+import { HistoryTrimmer } from './HistoryTrimmer';
 import { ChatMessage, ChatMessageStatus, createChatMessage } from '../models/ChatMessage';
 import { ChatRequestOptions } from '../models/ChatRequest';
 import { ChatRole } from '../models/ChatRole';
@@ -44,6 +45,7 @@ import { Lorebook } from '../models/Lorebook';
 import { MacroContext, createMacroContext } from '../models/MacroContext';
 import { ProviderConfig } from '../models/ProviderConfig';
 import { TokenBudget, DEFAULT_CONTEXT_WINDOW, DEFAULT_RESERVED_OUTPUT_TOKENS } from '../models/TokenBudget';
+import { HistoryTrimResult } from '../models/HistoryTrimResult';
 import { generateUuid } from '../utils/Uuid';
 import { Logger } from '../utils/Logger';
 
@@ -102,23 +104,28 @@ export class ChatService {
   private readonly lorebookService: LorebookService | null;
   private readonly promptBuilder: PromptBuilder | null;
   private readonly tokenCounter: TokenCounter | null;
+  private readonly historyTrimmer: HistoryTrimmer | null;
   /** 当前角色(用于 PromptBuilder 构建) */
   private character: Character | null = null;
   /** 最近一次使用的回调(用于 stopGeneration/clearConversation 通知状态) */
   private lastCallbacks: ChatServiceCallbacks | null = null;
   /** 最近一次 Prompt 构建后的 Token 预算(只读,用于页面查询) */
   private lastTokenBudget: TokenBudget | undefined = undefined;
+  /** 最近一次历史裁剪结果(只读) */
+  private lastHistoryTrimResult: HistoryTrimResult | undefined = undefined;
 
   constructor(
     modelService: ModelService,
     lorebookService: LorebookService | null = null,
     promptBuilder: PromptBuilder | null = null,
-    tokenCounter: TokenCounter | null = null
+    tokenCounter: TokenCounter | null = null,
+    historyTrimmer: HistoryTrimmer | null = null
   ) {
     this.modelService = modelService;
     this.lorebookService = lorebookService;
     this.promptBuilder = promptBuilder;
     this.tokenCounter = tokenCounter;
+    this.historyTrimmer = historyTrimmer;
   }
 
   /**
@@ -330,6 +337,16 @@ export class ChatService {
   }
 
   /**
+   * 获取最近一次历史裁剪结果(只读)。
+   * 页面暂时不使用。
+   *
+   * @returns HistoryTrimResult 或 undefined(未执行或裁剪失败)
+   */
+  getLastHistoryTrimResult(): HistoryTrimResult | undefined {
+    return this.lastHistoryTrimResult;
+  }
+
+  /**
    * 释放资源,停止当前请求。dispose 后不可复用。
    */
   dispose(): void {
@@ -346,6 +363,7 @@ export class ChatService {
     this.currentAssistantId = null;
     this.lastCallbacks = null;
     this.lastTokenBudget = undefined;
+    this.lastHistoryTrimResult = undefined;
     this.state = ChatState.Idle;
     Logger.info(LOG_TAG, 'dispose');
   }
@@ -421,11 +439,14 @@ export class ChatService {
       return;
     }
 
-    // 计算 Token 预算(失败不阻塞请求,只清空结果)
-    await this.updateTokenBudget(requestMessages);
+    // 计算 Token 预算 → 超预算则裁剪 → 重算预算
+    await this.updateRequestPlan(requestMessages);
 
     try {
-      this.currentHandle = this.modelService.streamCurrentChat(requestMessages, DEFAULT_OPTIONS, streamCallbacks);
+      const planMessages: ChatMessage[] = this.lastHistoryTrimResult !== undefined
+        ? this.lastHistoryTrimResult.messages
+        : requestMessages;
+      this.currentHandle = this.modelService.streamCurrentChat(planMessages, DEFAULT_OPTIONS, streamCallbacks);
       this.setState(ChatState.Streaming, callbacks);
     } catch (e) {
       this.clearStartTimer();
@@ -481,14 +502,19 @@ export class ChatService {
   }
 
   /**
-   * 更新最近一次 Token 预算结果。
-   * 失败不抛出,仅清空预算并记录安全日志。
+   * 统一更新请求计划:计算 Token 预算,若超预算则裁剪,再重算预算。
+   * 失败不抛出,仅清空结果并记录安全日志。
+   *
    * 记录中只输出 messages 数、Token 数与超预算标志,不记录任何消息内容。
    */
-  private async updateTokenBudget(messages: ChatMessage[]): Promise<void> {
+  private async updateRequestPlan(requestMessages: ChatMessage[]): Promise<void> {
     if (this.tokenCounter === null) {
+      // 无 TokenCounter:跳过,使用原始请求消息
+      this.lastTokenBudget = undefined;
+      this.lastHistoryTrimResult = undefined;
       return;
     }
+
     let contextWindow: number = DEFAULT_CONTEXT_WINDOW;
     let reserved: number = DEFAULT_RESERVED_OUTPUT_TOKENS;
     try {
@@ -501,27 +527,104 @@ export class ChatService {
           reserved = config.maxTokens;
         }
       }
-      const budget: TokenBudget = this.tokenCounter.calculateBudget(messages, contextWindow, reserved);
-      this.lastTokenBudget = budget;
-      if (budget.exceedsBudget) {
-        Logger.warn(LOG_TAG,
-          'token budget exceeded: messages=' + messages.length.toString()
-            + ' inputTokens=' + budget.estimatedInputTokens.toString()
-            + ' availableTokens=' + budget.availableInputTokens.toString()
-            + ' remainingTokens=' + budget.remainingInputTokens.toString()
-            + ' exceedsBudget=true');
-      } else {
-        Logger.info(LOG_TAG,
-          'token estimate: messages=' + messages.length.toString()
-            + ' inputTokens=' + budget.estimatedInputTokens.toString()
-            + ' availableTokens=' + budget.availableInputTokens.toString()
-            + ' remainingTokens=' + budget.remainingInputTokens.toString()
-            + ' exceedsBudget=false');
-      }
     } catch (e) {
-      this.lastTokenBudget = undefined;
-      Logger.warn(LOG_TAG, 'token budget update failed: ' + (e instanceof Error ? e.message : String(e)));
+      // 配置获取失败:使用默认值继续
+      Logger.warn(LOG_TAG, 'getCurrentConfig failed: ' + (e instanceof Error ? e.message : String(e)));
     }
+
+    let available: number = contextWindow > reserved ? contextWindow - reserved : 0;
+    if (available < 0) {
+      available = 0;
+    }
+
+    // 1) 首次预算估算(原始 Prompt)
+    let currentMessages: ChatMessage[] = requestMessages;
+    let originalTokens: number = 0;
+    try {
+      originalTokens = this.tokenCounter.estimateMessages(currentMessages);
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'token estimate failed: ' + (e instanceof Error ? e.message : String(e)));
+      this.lastTokenBudget = undefined;
+      this.lastHistoryTrimResult = undefined;
+      return;
+    }
+    const exceedsBefore: boolean = originalTokens > available;
+
+    // 2) 必要时调用 HistoryTrimmer
+    if (exceedsBefore && this.historyTrimmer !== null) {
+      let trimResult: HistoryTrimResult | undefined = undefined;
+      try {
+        trimResult = this.historyTrimmer.trim(currentMessages, { availableInputTokens: available });
+      } catch (e) {
+        Logger.warn(LOG_TAG, 'history trim failed: ' + (e instanceof Error ? e.message : String(e)));
+        this.lastHistoryTrimResult = undefined;
+        this.lastTokenBudget = this.makeBudget(originalTokens, contextWindow, reserved, available);
+        return;
+      }
+      this.lastHistoryTrimResult = trimResult;
+      currentMessages = trimResult.messages;
+      // 输出安全裁剪统计
+      Logger.info(LOG_TAG,
+        'history trim: beforeMessages=' + requestMessages.length.toString()
+          + ' afterMessages=' + currentMessages.length.toString()
+          + ' removed=' + trimResult.removedMessageCount.toString()
+          + ' beforeTokens=' + trimResult.originalTokenCount.toString()
+          + ' afterTokens=' + trimResult.finalTokenCount.toString()
+          + ' availableTokens=' + available.toString()
+          + ' exceedsAfter=' + (trimResult.exceedsBudgetAfterTrim ? 'true' : 'false'));
+
+      // 3) 重算 TokenBudget
+      let finalTokens: number = trimResult.finalTokenCount;
+      try {
+        finalTokens = this.tokenCounter.estimateMessages(currentMessages);
+      } catch (e) {
+        // 异常时使用 trimResult 的值
+        Logger.warn(LOG_TAG, 'token re-estimate failed: ' + (e instanceof Error ? e.message : String(e)));
+      }
+      this.lastTokenBudget = this.makeBudget(finalTokens, contextWindow, reserved, available);
+
+      if (this.lastTokenBudget.exceedsBudget) {
+        Logger.warn(LOG_TAG,
+          'token budget exceeded after trim: inputTokens=' + finalTokens.toString()
+            + ' availableTokens=' + available.toString());
+      }
+    } else {
+      // 不超预算或无 HistoryTrimmer:不裁剪
+      this.lastHistoryTrimResult = undefined;
+      this.lastTokenBudget = this.makeBudget(originalTokens, contextWindow, reserved, available);
+      this.logNormalEstimate(requestMessages.length, originalTokens, available);
+    }
+  }
+
+  private logNormalEstimate(messages: number, inputTokens: number, available: number): void {
+    if (inputTokens > available) {
+      Logger.warn(LOG_TAG,
+        'token budget exceeded: messages=' + messages.toString()
+          + ' inputTokens=' + inputTokens.toString()
+          + ' availableTokens=' + available.toString()
+          + ' remainingTokens=' + (available - inputTokens).toString()
+          + ' exceedsBudget=true');
+    } else {
+      Logger.info(LOG_TAG,
+        'token estimate: messages=' + messages.toString()
+          + ' inputTokens=' + inputTokens.toString()
+          + ' availableTokens=' + available.toString()
+          + ' remainingTokens=' + (available - inputTokens).toString()
+          + ' exceedsBudget=false');
+    }
+  }
+
+  private makeBudget(inputTokens: number, contextWindow: number, reserved: number, available: number): TokenBudget {
+    const remaining: number = available - inputTokens;
+    const exceeds: boolean = inputTokens > available;
+    return {
+      contextWindow: contextWindow,
+      reservedOutputTokens: reserved,
+      availableInputTokens: available,
+      estimatedInputTokens: inputTokens,
+      remainingInputTokens: remaining,
+      exceedsBudget: exceeds
+    };
   }
 
   /**

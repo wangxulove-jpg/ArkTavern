@@ -22,6 +22,7 @@ import macroReplacerTest from './MacroReplacer.test';
 import promptBuilderTest from './PromptBuilder.test';
 import tokenCounterTest from './TokenCounter.test';
 import chatServiceTokenTest from './ChatServiceToken.test';
+import historyTrimmerTest from './HistoryTrimmer.test';
 
 export default function testsuite() {
   localUnitTest();
@@ -48,4 +49,5 @@ export default function testsuite() {
   promptBuilderTest();
   tokenCounterTest();
   chatServiceTokenTest();
+  historyTrimmerTest();
 }
