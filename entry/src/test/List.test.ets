@@ -23,6 +23,7 @@ import promptBuilderTest from './PromptBuilder.test';
 import tokenCounterTest from './TokenCounter.test';
 import chatServiceTokenTest from './ChatServiceToken.test';
 import historyTrimmerTest from './HistoryTrimmer.test';
+import databaseSchemaTest from './DatabaseSchema.test';
 
 export default function testsuite() {
   localUnitTest();

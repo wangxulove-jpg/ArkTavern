@@ -10,3 +10,12 @@
 /.clang-tidy
 **/.test
 /.appanalyzer
+
+# MCP uitest 临时产物(UI 树 dump / 截图)
+.simple_dump_arktavern_*.txt
+.full_dump_arktavern_*.json
+.tmp/
+.tmp_ui_dump/
+/screenshot/
+/tools/uitest/
+/tools/uitest_dump/

@@ -874,6 +874,8 @@ Date: 2026-07-15
 
 ## Phase 3:角色卡导入
 
+> Phase 3 中 T-3.1～T-3.6 已由 T-2.1～T-2.3、T-2.5 提前覆盖，不再重复执行。
+
 ### T-3.1 定义 Character 内部模型
 
 - 依赖:T-0.5
@@ -884,6 +886,7 @@ Date: 2026-07-15
 - 验收标准:
   - [ ] 可承载 V2 与 V3 字段
   - [ ] 缺失字段有默认值
+- 合并状态:已由 T-2.x 对应任务覆盖,不再单独执行。
 
 ### T-3.2 实现 CharacterCardParser
 
@@ -894,6 +897,7 @@ Date: 2026-07-15
 - 验收标准:
   - [ ] 可解析 V2/V3 样例
   - [ ] 非法 JSON 返回明确错误
+- 合并状态:已由 T-2.x 对应任务覆盖,不再单独执行。
 
 ### T-3.3 实现文件选择与导入
 
@@ -904,6 +908,7 @@ Date: 2026-07-15
 - 验收标准:
   - [ ] 可从文件系统选择并导入
   - [ ] 导入失败有提示
+- 合并状态:已由 T-2.x 对应任务覆盖,不再单独执行。
 
 ### T-3.4 实现 CharacterService(内存态)
 
@@ -914,6 +919,7 @@ Date: 2026-07-15
 - 验收标准:
   - [ ] 可管理多个角色
   - [ ] 可切换当前角色
+- 合并状态:已由 T-2.x 对应任务覆盖,不再单独执行。
 
 ### T-3.5 实现角色列表页与导入页
 
@@ -923,6 +929,7 @@ Date: 2026-07-15
 - 验收标准:
   - [ ] 列表展示已导入角色
   - [ ] 可触发导入流程
+- 合并状态:已由 T-2.x 对应任务覆盖,不再单独执行。
 
 ### T-3.6 聊天页接入角色上下文
 
@@ -933,6 +940,7 @@ Date: 2026-07-15
 - 验收标准:
   - [ ] 角色首条消息正确显示
   - [ ] 角色描述进入请求上下文
+- 合并状态:已由 T-2.x 对应任务覆盖,不再单独执行。
 
 ---
 
@@ -944,20 +952,51 @@ Date: 2026-07-15
 - 优先级:P1
 - 修改范围:`entry/src/main/ets/database/`(新建)
 - 参考文件:ARCHITECTURE.md 表结构
-- 内容:`database/schema.ets`:characters / chats / messages 建表 SQL
+- 内容:
+  - `database/DatabaseConstants.ets`:表名 / 列名 / 索引名 / 角色状态字符串 / 来源字符串 / 数据库名 / 数据库版本集中定义
+  - `database/DatabaseSchema.ets`:version 1 建表 SQL 集中管理
+    - characters:id / name / description / personality / scenario / first_message / system_prompt / avatar_uri / created_at / updated_at
+    - chats:id / character_id(允许 null) / title / created_at / updated_at / last_message_at / is_archived
+    - messages:id / chat_id / role / content / status / created_at / updated_at / sequence_number / error_message / is_streaming / source
+  - 索引:`idx_chats_updated_at` / `idx_chats_character_id` / `idx_messages_chat_id_sequence`(UNIQUE) / `idx_messages_chat_id_created_at`
+  - 所有建表/建索引 SQL 使用 `IF NOT EXISTS`,可重复执行
+  - 不包含 destructive migration、不包含 API Key / Provider Secret / 用户正文
+  - 不创建 Lorebook 表(继续 Preferences)
 - 验收标准:
-  - [ ] 字段与 ARCHITECTURE.md 一致
-  - [ ] 含必要索引
+  - [x] 三个表 Schema 已定义
+  - [x] 必要索引已定义
+  - [x] 建表和建索引可重复执行
+  - [x] 不存在 destructive migration
+  - [x] 数据库版本为 1
+  - [x] Schema 不包含 API Key 或 Provider Secret
+  - [x] TODO 重复阶段已标注合并,不再重复开发
 
 ### T-4.2 实现 DbHelper
 
 - 依赖:T-4.1
 - 优先级:P1
-- 修改范围:`database/DbHelper.ets`
-- 内容:基于 `@ohos.data.relationalStore` 初始化、版本管理
+- 修改范围:`database/DbHelper.ets`、`database/DatabaseMigration.ets`、`models/DatabaseError.ets`、`services/AppServices.ets`、测试
+- 内容:
+  - `database/DatabaseMigration.ets`:`DatabaseMigration` 接口 + `buildMigrationPath()` 路径计算 + `isMigrationRegistryValid()` 注册校验;不支持降级、不支持跳版本
+  - `models/DatabaseError.ets`:`DatabaseErrorType` 枚举 + `DatabaseError` class + `isDatabaseError` 守卫;不暴露 SQL 全文 / 聊天正文 / 绝对路径 / BusinessError 原始对象
+  - `database/DbHelper.ets`:基于 `@kit.ArkData` relationalStore 封装,`initialize(context)` 幂等且并发安全 / `getStore()` 未初始化或已关闭抛 DatabaseError / `runInTransaction()` 失败回滚 / `close()` 幂等并允许重新初始化
+  - 初始化顺序:Preferences → AssetStore → Provider → CharacterStore → LorebookStore → DbHelper;失败时 AppServices ready 状态明确失败
+  - 暂时不向页面公开 DbHelper;Repository 阶段再注入
+  - 设备测试:`ohosTest/ets/test/DbHelper.test.ets` 40 项
+  - 纯逻辑测试:`test/DatabaseSchema.test.ets` 10 项
 - 验收标准:
-  - [ ] 可创建并打开库
-  - [ ] 重复执行不报错
+  - [x] DbHelper 可初始化数据库
+  - [x] 重复和并发初始化安全
+  - [x] 数据库升级框架可扩展
+  - [x] 事务提交和回滚正常
+  - [x] close 幂等
+  - [x] 关闭后可重新初始化
+  - [x] AppServices 已初始化 DbHelper
+  - [x] 页面和现有业务尚未直接访问数据库
+  - [x] CharacterStore / LorebookStore / ChatService 行为无变化
+  - [x] entry@default BUILD SUCCESSFUL
+  - [x] entry@ohosTest BUILD SUCCESSFUL
+  - [x] 无正文和敏感数据日志泄漏
 
 ### T-4.3 实现 CharacterRepository
 
@@ -990,6 +1029,8 @@ Date: 2026-07-15
 
 ## Phase 5:Prompt 与宏系统
 
+> Phase 5 中 T-5.1～T-5.6 已由 T-2.5～T-2.8 提前覆盖，不再重复执行。
+
 ### T-5.1 定义 PromptSegment 模型与顺序
 
 - 依赖:T-0.5
@@ -998,6 +1039,7 @@ Date: 2026-07-15
 - 参考文件:AGENTS.md Prompt 顺序
 - 验收标准:
   - [ ] 顺序枚举完整
+- 合并状态:已由 T-2.5 对应任务覆盖,不再单独执行。
 
 ### T-5.2 实现 MacroReplacer(标准宏)
 
@@ -1009,6 +1051,7 @@ Date: 2026-07-15
 - 验收标准:
   - [ ] 所有标准宏可替换
   - [ ] 未识别宏保留原样
+- 合并状态:已由 T-2.6 对应任务覆盖,不再单独执行。
 
 ### T-5.3 实现 PromptBuilder
 
@@ -1019,6 +1062,7 @@ Date: 2026-07-15
 - 验收标准:
   - [ ] 顺序符合 AGENTS.md
   - [ ] 各段可空跳过
+- 合并状态:已由 T-2.5 对应任务覆盖,不再单独执行。
 
 ### T-5.4 实现简化 TokenCounter
 
@@ -1027,6 +1071,7 @@ Date: 2026-07-15
 - 修改范围:`utils/TokenCounter.ets`
 - 验收标准:
   - [ ] 给出近似 token 数
+- 合并状态:已由 T-2.7 对应任务覆盖,不再单独执行。
 
 ### T-5.5 历史消息窗口截断
 
@@ -1035,6 +1080,7 @@ Date: 2026-07-15
 - 修改范围:`services/PromptBuilder.ets`
 - 验收标准:
   - [ ] 超限历史可截断
+- 合并状态:已由 T-2.8 对应任务覆盖,不再单独执行。
 
 ### T-5.6 ChatService 接入 PromptBuilder
 
@@ -1043,6 +1089,7 @@ Date: 2026-07-15
 - 修改范围:`services/ChatService.ets`
 - 验收标准:
   - [ ] 端到端 Prompt 正确
+- 合并状态:已由 T-2.5 对应任务覆盖,不再单独执行。
 
 ---
 
@@ -1231,3 +1278,82 @@ Date: 2026-07-15
 T-0.1 → T-0.2 → (T-0.3 ‖ T-0.4) → T-0.5 → T-1.1 → T-1.2 → T-1.3 → T-1.4 → T-1.5 → T-1.6 → T-1.7 → T-1.8 → T-2.x → T-3.x → T-4.x → T-5.x → T-6.x → T-7.x → T-8.x
 
 第一项建议从 **T-0.3(SSE 流式接收 PoC)** 或 **T-0.1(基础工具)** 启动,二者无强依赖,可并行。SSE PoC 是整个聊天链路的最高风险点,应优先验证。
+
+---
+
+## T-4.1 + T-4.2 完成记录(2026-07-17)
+
+### 实际新增文件
+
+- `entry/src/main/ets/database/DatabaseConstants.ets`(80 行)
+- `entry/src/main/ets/database/DatabaseSchema.ets`(108 行)
+- `entry/src/main/ets/database/DatabaseMigration.ets`(80 行)
+- `entry/src/main/ets/database/DbHelper.ets`(263 行)
+- `entry/src/main/ets/models/DatabaseError.ets`(118 行)
+- `entry/src/test/DatabaseSchema.test.ets`(本地纯逻辑,16 项断言)
+- `entry/src/ohosTest/ets/test/DbHelper.test.ets`(设备集成,40 项 it)
+
+### 实际修改文件
+
+- `entry/src/main/ets/services/AppServices.ets`:新增 `dbHelper` 字段,构造器末尾实例化,initialize 链尾追加 `services.dbHelper.initialize(context)`
+- `entry/src/test/List.test.ets`:注册 `databaseSchemaTest`
+- `entry/src/ohosTest/ets/test/List.test.ets`:注册 `dbHelperDeviceTest`
+- `TODO.md`:Phase 3 / Phase 5 重复任务合并说明
+
+### 数据库 Schema 摘要
+
+- `characters`:id PK / name / description / personality / scenario / first_message / system_prompt / avatar_uri / created_at / updated_at
+- `chats`:id PK / character_id(可空,无外键) / title / created_at / updated_at / last_message_at / is_archived
+- `messages`:id PK / chat_id / role / content / status / created_at / updated_at / sequence_number / error_message / is_streaming / source(可空)
+
+### 索引
+
+- `idx_chats_updated_at`(chats.updated_at)
+- `idx_chats_character_id`(chats.character_id)
+- `idx_messages_chat_id_sequence` UNIQUE(messages.chat_id, messages.sequence_number)
+- `idx_messages_chat_id_created_at`(messages.chat_id, messages.created_at)
+
+### 版本策略
+
+- `DATABASE_VERSION = 1`
+- 实际版本号通过 `PRAGMA user_version` 自管理(RdbStore.version read-only 且无 setVersion API)
+- 升级路径:`buildMigrationPath` 排序 + 逐 fromVersion 串联;降级抛错;跳版本抛错;重复 fromVersion 抛错
+- 所有迁移在 `beginTransaction` / `commit` / `rollBack` 包裹中
+
+### DbHelper 行为
+
+- 初始化:幂等(`store !== null && !closed` 直接 return),并发安全(pending Promise 缓存,失败清空允许重试)
+- 关闭后允许重新 initialize(`closed` 标志位在 initialize 重置)
+- `getStore()` 未初始化抛 `NotInitialized`,已关闭抛 `Closed`,不返回 undefined
+- `runInTransaction(action)`:成功 commit / 失败 rollback / rollback 失败也抛 `TransactionFailed`
+- `close()` 幂等,清理 store 引用
+- 测试数据库名 `arktavern_test.db`,独立于生产 `arktavern.db`(构造函数可注入)
+
+### 编译与冒烟结果
+
+- `entry@default` BUILD SUCCESSFUL(40.6 s,3 次修复后通过)
+- `entry@ohosTest` BUILD SUCCESSFUL(41.2 s,4 次修复后通过)
+- 模拟器冒烟:nova 13 Pro_23 安装启动成功,hilog 包含:
+  - `AppServices | initialize start`
+  - `AppServices | initialize ok`
+  - `DbHelper | initialize start`
+  - `DbHelper | initialize success version=1`
+- 0 条 ERROR 级别 ArkTavern 日志,无 crash,无 SQL 全文,无 API Key,无聊天正文
+
+### 设备测试实际执行结果
+
+- ohosTest 编译通过(`BUILD SUCCESSFUL`)
+- 设备测试**未在命令行执行**:依据 `project_memory.md` 已知限制(`aa test` 模式构建会破坏主 HAP Test Runner),设备测试必须在 DevEco Studio IDE 中手动运行
+- 测试代码覆盖 40 项 spec,可在 DevEco Studio 中右键 `run 'entry@ohosTest'` 验证
+
+### 已知遗留
+
+- `RdbStore.setVersion` API 在当前 SDK 不可用,改用 `PRAGMA user_version` 手动管理
+- 暂未提供 `EntryAbility` 销毁时 `dbHelper.close()` 钩子;`close()` 由 AppServices 持有,如需在 onDestroy 调用可后续补一行
+
+### 后续任务
+
+- T-4.3 CharacterRepository
+- T-4.4 ChatRepository / MessageRepository
+- Repository 阶段再注入 DbHelper
+

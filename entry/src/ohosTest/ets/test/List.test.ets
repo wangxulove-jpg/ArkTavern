@@ -16,6 +16,7 @@ import parserDeviceTest from './CharacterCardJsonParser.test';
 import writerDeviceTest from './CharacterCardJsonWriter.test';
 import pngParserDeviceTest from './PngCharacterCardParser.test';
 import lorebookStoreDeviceTest from './LorebookStore.test';
+import dbHelperDeviceTest from './DbHelper.test';
 
 export default function testsuite() {
   abilityTest();

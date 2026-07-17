@@ -32,6 +32,7 @@ import { MacroReplacer } from './MacroReplacer';
 import { PromptBuilder } from './PromptBuilder';
 import { TokenCounter } from './TokenCounter';
 import { HistoryTrimmer } from './HistoryTrimmer';
+import { DbHelper } from '../database/DbHelper';
 import { ChatService } from './ChatService';
 import { ModelService } from './ModelService';
 import { DefaultProviderFactory } from './ProviderFactory';
@@ -60,6 +61,8 @@ export class AppServices {
   private readonly tokenCounter: TokenCounter;
   /** HistoryTrimmer 历史裁剪服务(不对页面公开) */
   private readonly historyTrimmer: HistoryTrimmer;
+  /** DbHelper 数据库底座(不对页面公开) */
+  private readonly dbHelper: DbHelper;
 
   /**
    * 私有构造,组装全部依赖。
@@ -81,6 +84,7 @@ export class AppServices {
     this.promptBuilder = new PromptBuilder(this.lorebookService, macroReplacer);
     this.tokenCounter = new TokenCounter();
     this.historyTrimmer = new HistoryTrimmer(this.tokenCounter);
+    this.dbHelper = new DbHelper();
   }
 
   /**
@@ -101,6 +105,7 @@ export class AppServices {
     AppServices.readyPromise = services.modelService.initialize(context)
       .then((): Promise<void> => services.characterService.initialize(context))
       .then((): Promise<void> => services.lorebookService.initialize(context))
+      .then((): Promise<void> => services.dbHelper.initialize(context))
       .then((): void => {
         Logger.info(LOG_TAG, 'initialize ok');
       })
