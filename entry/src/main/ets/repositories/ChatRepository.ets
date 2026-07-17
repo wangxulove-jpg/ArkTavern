@@ -299,6 +299,51 @@ export class ChatRepository {
     }
   }
 
+  /**
+   * 仅更新 Chat 的 updatedAt(不修改 lastMessageAt)。
+   * 用于 Swipe 切换候选等不改变对话内容的操作。
+   */
+  async updateChatTimestamp(
+    id: string,
+    updatedAt: number
+  ): Promise<void> {
+    if (!isValidTimestamp(updatedAt)) {
+      throw DatabaseError.invalidData('updatedAt invalid');
+    }
+    const store: relationalStore.RdbStore = this.dbHelper.getStore();
+    await this.updateChatTimestampWithStore(store, id, updatedAt);
+  }
+
+  /**
+   * 在给定 store 上仅更新 Chat 的 updatedAt。
+   * 用于事务组合,避免嵌套事务。
+   */
+  async updateChatTimestampWithStore(
+    store: relationalStore.RdbStore,
+    id: string,
+    updatedAt: number
+  ): Promise<void> {
+    if (!isValidTimestamp(updatedAt)) {
+      throw DatabaseError.invalidData('updatedAt invalid');
+    }
+    const bucket: relationalStore.ValuesBucket = {};
+    bucket[COLUMN_UPDATED_AT] = updatedAt;
+
+    const predicates: relationalStore.RdbPredicates =
+      new relationalStore.RdbPredicates(TABLE_CHATS);
+    predicates.equalTo(COLUMN_ID, id);
+
+    let affected: number;
+    try {
+      affected = await store.update(bucket, predicates);
+    } catch (err) {
+      throw DatabaseError.queryFailed(`chat.updateChatTimestamp: ${extractCauseMessage(err)}`);
+    }
+    if (affected === 0) {
+      throw DatabaseError.notFound('chat.updateChatTimestamp');
+    }
+  }
+
   async count(): Promise<number> {
     const store: relationalStore.RdbStore = this.dbHelper.getStore();
     const rs: relationalStore.ResultSet = await store.querySql(

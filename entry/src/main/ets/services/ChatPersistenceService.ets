@@ -484,6 +484,20 @@ export class ChatPersistenceService {
     await this.chatRepository.updateLastMessageAt(chatId, timestamp, timestamp);
   }
 
+  /**
+   * 仅更新 Chat 的 updatedAt(不修改 lastMessageAt)。
+   * 用于 Swipe 切换候选等不改变对话内容的操作。
+   *
+   * @param chatId 会话 id
+   * @param timestamp 时间戳(毫秒)
+   */
+  async updateChatTimestamp(
+    chatId: string,
+    timestamp: number
+  ): Promise<void> {
+    await this.chatRepository.updateChatTimestamp(chatId, timestamp);
+  }
+
   // ===== 内部方法 =====
 
   /**

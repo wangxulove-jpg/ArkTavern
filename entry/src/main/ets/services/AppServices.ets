@@ -39,12 +39,14 @@ import { HistoryTrimmer } from './HistoryTrimmer';
 import { DbHelper } from '../database/DbHelper';
 import { ChatRepository } from '../repositories/ChatRepository';
 import { MessageRepository } from '../repositories/MessageRepository';
+import { MessageSwipeRepository } from '../repositories/MessageSwipeRepository';
 import { ChatPersistenceOperations } from '../repositories/ChatPersistenceOperations';
 import { CharacterRepository } from '../repositories/CharacterRepository';
 import { LorebookRepository } from '../repositories/LorebookRepository';
 import { PromptPresetRepository } from '../repositories/PromptPresetRepository';
 import { PromptPresetSelectionStore } from '../storage/PromptPresetSelectionStore';
 import { PromptPresetService } from './PromptPresetService';
+import { MessageSwipePersistenceService } from './MessageSwipePersistenceService';
 import { ChatService } from './ChatService';
 import { ChatPersistenceService } from './ChatPersistenceService';
 import { ModelService } from './ModelService';
@@ -86,6 +88,10 @@ export class AppServices {
   private readonly chatPersistenceOperations: ChatPersistenceOperations;
   /** ChatPersistenceService 聊天持久化协调服务(不对页面公开) */
   private readonly chatPersistenceService: ChatPersistenceService;
+  /** MessageSwipeRepository 消息候选仓储(不对页面公开) */
+  private readonly messageSwipeRepository: MessageSwipeRepository;
+  /** MessageSwipePersistenceService 消息候选持久化服务(不对页面公开) */
+  private readonly messageSwipePersistenceService: MessageSwipePersistenceService;
   /** CharacterRepository 角色仓储(不对页面公开) */
   private readonly characterRepository: CharacterRepository;
   /** LorebookRepository 世界书仓储(不对页面公开) */
@@ -169,16 +175,23 @@ export class AppServices {
     // 持久化层组合:全部 Repository 共享同一 DbHelper 实例
     this.chatRepository = new ChatRepository(this.dbHelper);
     this.messageRepository = new MessageRepository(this.dbHelper);
+    this.messageSwipeRepository = new MessageSwipeRepository(this.dbHelper);
     this.chatPersistenceOperations = new ChatPersistenceOperations(
       this.dbHelper,
       this.chatRepository,
-      this.messageRepository
+      this.messageRepository,
+      this.messageSwipeRepository
     );
     this.chatPersistenceService = new ChatPersistenceService(
       this.dbHelper,
       this.chatRepository,
       this.messageRepository,
       this.chatPersistenceOperations
+    );
+    this.messageSwipePersistenceService = new MessageSwipePersistenceService(
+      this.dbHelper,
+      this.messageRepository,
+      this.messageSwipeRepository
     );
   }
 
@@ -308,7 +321,8 @@ export class AppServices {
       services.tokenCounter,
       services.historyTrimmer,
       services.chatPersistenceService,
-      services.promptPresetService
+      services.promptPresetService,
+      services.messageSwipePersistenceService
     );
   }
 

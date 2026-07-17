@@ -16,6 +16,9 @@ import { ChatViewModel } from '../viewmodels/ChatViewModel';
 import { ChatService } from '../services/ChatService';
 import { ChatMessage, ChatMessageStatus } from '../models/ChatMessage';
 import { ChatRole } from '../models/ChatRole';
+import { ChatMessageSource } from '../models/ChatMessageSource';
+import { MessageSwipeSummary, MAX_SWIPE_CANDIDATES } from '../models/MessageSwipe';
+import { MessageSwipeControls } from '../components/MessageSwipeControls';
 import { promptAction } from '@kit.ArkUI';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { AppServices } from '../services/AppServices';
@@ -191,7 +194,37 @@ export struct ChatPage {
                 // (ArkUI ForEach 的 diff 基于 key,key 相同会 skip mark dirty)
                 ForEach(this.messages, (msg: ChatMessage, _index: number) => {
                   if (msg.role !== ChatRole.System) {
-                    this.messageBubble(msg);
+                    Column() {
+                      this.messageBubble(msg);
+                      if (msg.role === ChatRole.Assistant &&
+                        msg.source !== ChatMessageSource.CharacterFirstMessage &&
+                        this.viewModel !== null) {
+                        MessageSwipeControls({
+                          activeCandidateIndex: this.viewModel!.getSwipeSummary(msg.id) !== undefined
+                            ? this.viewModel!.getSwipeSummary(msg.id)!.activeCandidateIndex : 0,
+                          candidateCount: this.viewModel!.getSwipeSummary(msg.id) !== undefined
+                            ? this.viewModel!.getSwipeSummary(msg.id)!.candidateCount : 1,
+                          isGenerating: this.viewModel!.isGenerating,
+                          isOperable: this.viewModel!.canOperateSwipe(msg.id),
+                          isMaxReached: this.viewModel!.getSwipeSummary(msg.id) !== undefined
+                            ? this.viewModel!.getSwipeSummary(msg.id)!.candidateCount >= MAX_SWIPE_CANDIDATES
+                            : false,
+                          onPrevious: (): void => {
+                            this.viewModel!.swipePrevious(msg.id);
+                          },
+                          onNext: (): void => {
+                            this.viewModel!.swipeNext(msg.id);
+                          },
+                          onRegenerate: (): void => {
+                            this.viewModel!.regenerateAsNewCandidate();
+                          },
+                          onStop: (): void => {
+                            this.viewModel!.stop();
+                          }
+                        })
+                      }
+                    }
+                    .width('100%')
                   }
                 }, (msg: ChatMessage) => msg.id + '_' + (msg.updatedAt ?? 0) + '_'
                   + (msg.status ?? '') + '_' + msg.content.length + '_'

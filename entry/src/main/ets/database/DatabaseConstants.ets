@@ -6,7 +6,7 @@
  */
 
 export const DATABASE_NAME: string = 'arktavern.db';
-export const DATABASE_VERSION: number = 3;
+export const DATABASE_VERSION: number = 4;
 
 export const TABLE_CHARACTERS: string = 'characters';
 export const TABLE_CHATS: string = 'chats';
@@ -104,3 +104,16 @@ export const COLUMN_PRESET_UPDATED_AT: string = 'updated_at';
 
 // ===== v3: Prompt Preset Indexes =====
 export const INDEX_PROMPT_PRESETS_UPDATED_AT: string = 'idx_prompt_presets_updated_at';
+
+// ===== v4: Swipe =====
+export const TABLE_MESSAGE_SWIPE_GROUPS: string = 'message_swipe_groups';
+export const TABLE_MESSAGE_SWIPE_CANDIDATES: string = 'message_swipe_candidates';
+
+export const COLUMN_SWIPE_ASSISTANT_MESSAGE_ID: string = 'assistant_message_id';
+export const COLUMN_SWIPE_ACTIVE_CANDIDATE_INDEX: string = 'active_candidate_index';
+export const COLUMN_SWIPE_CANDIDATE_ID: string = 'id';
+export const COLUMN_SWIPE_CANDIDATE_INDEX: string = 'candidate_index';
+
+export const INDEX_SWIPE_GROUPS_CHAT_ID: string = 'idx_swipe_groups_chat_id';
+export const INDEX_SWIPE_CANDIDATES_MESSAGE_ID: string = 'idx_swipe_candidates_message_id';
+export const INDEX_SWIPE_CANDIDATES_MESSAGE_INDEX: string = 'idx_swipe_candidates_message_index';

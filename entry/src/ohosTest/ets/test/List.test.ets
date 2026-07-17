@@ -29,7 +29,11 @@ import databaseV2MigrationTest from './DatabaseV2Migration.test';
 import lorebookRepositoryDeviceTest from './LorebookRepository.test';
 import lorebookRepositoryMigrationTest from './LorebookRepositoryMigration.test';
 import databaseV3MigrationTest from './DatabaseV3Migration.test';
+import databaseV4MigrationTest from './DatabaseV4Migration.test';
 import promptPresetRepositoryTest from './PromptPresetRepository.test';
+import messageSwipeRepositoryTest from './MessageSwipeRepository.test';
+import messageSwipePersistenceServiceDeviceTest from './MessageSwipePersistenceServiceDevice.test';
+import messageSwipeRuntimeRecoveryTest from './MessageSwipeRuntimeRecovery.test';
 
 export default function testsuite() {
   abilityTest();
@@ -62,5 +66,9 @@ export default function testsuite() {
   lorebookRepositoryDeviceTest();
   lorebookRepositoryMigrationTest();
   databaseV3MigrationTest();
+  databaseV4MigrationTest();
   promptPresetRepositoryTest();
+  messageSwipeRepositoryTest();
+  messageSwipePersistenceServiceDeviceTest();
+  messageSwipeRuntimeRecoveryTest();
 }

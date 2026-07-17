@@ -14,7 +14,7 @@
  */
 
 import { relationalStore } from '@kit.ArkData';
-import { V1_TO_V2_STATEMENTS, V2_TO_V3_STATEMENTS } from './DatabaseSchema';
+import { V1_TO_V2_STATEMENTS, V2_TO_V3_STATEMENTS, V3_TO_V4_STATEMENTS } from './DatabaseSchema';
 
 export interface DatabaseMigration {
   readonly fromVersion: number;
@@ -132,6 +132,32 @@ class V2ToV3Migration implements DatabaseMigration {
   async migrate(store: relationalStore.RdbStore): Promise<void> {
     for (let i = 0; i < V2_TO_V3_STATEMENTS.length; i++) {
       await store.executeSql(V2_TO_V3_STATEMENTS[i]);
+    }
+  }
+}
+
+/**
+ * 创建 v3→v4 数据库迁移。
+ *
+ * 事务中执行:
+ * 1. 创建 message_swipe_groups 表
+ * 2. 创建 message_swipe_candidates 表
+ * 3. 创建 Swipe 索引
+ * 4. 任一失败全部回滚,不影响旧数据
+ * 5. 不修改现有表结构
+ * 6. 不为旧消息批量创建 Swipe 数据
+ */
+export function createV3ToV4Migration(): DatabaseMigration {
+  return new V3ToV4Migration();
+}
+
+class V3ToV4Migration implements DatabaseMigration {
+  readonly fromVersion: number = 3;
+  readonly toVersion: number = 4;
+
+  async migrate(store: relationalStore.RdbStore): Promise<void> {
+    for (let i = 0; i < V3_TO_V4_STATEMENTS.length; i++) {
+      await store.executeSql(V3_TO_V4_STATEMENTS[i]);
     }
   }
 }

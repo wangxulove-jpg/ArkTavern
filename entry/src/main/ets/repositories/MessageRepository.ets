@@ -645,4 +645,32 @@ export class MessageRepository {
       );
     }
   }
+
+  /**
+   * 查询指定消息的 chatId。
+   * 用于 Swipe ensureSwipeState 时获取消息所属 Chat。
+   * 消息不存在返回 null。
+   */
+  async getChatIdByMessageId(messageId: string): Promise<string | null> {
+    if (messageId === '') {
+      throw DatabaseError.invalidData('messageId empty');
+    }
+    const store: relationalStore.RdbStore = this.dbHelper.getStore();
+    const predicates: relationalStore.RdbPredicates =
+      new relationalStore.RdbPredicates(TABLE_MESSAGES);
+    predicates.equalTo(COLUMN_ID, messageId);
+    const rs: relationalStore.ResultSet = await store.query(predicates);
+    try {
+      if (!rs.goToFirstRow()) {
+        return null;
+      }
+      const ci: number = rs.getColumnIndex(COLUMN_CHAT_ID);
+      if (ci >= 0) {
+        return rs.getString(ci);
+      }
+      return null;
+    } finally {
+      rs.close();
+    }
+  }
 }

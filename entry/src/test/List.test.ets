@@ -39,6 +39,10 @@ import promptBuilderPresetTest from './PromptBuilderPreset.test';
 import chatServicePromptPresetTest from './ChatServicePromptPreset.test';
 import promptPresetEditNavigationTest from './PromptPresetEditNavigation.test';
 import promptPresetEditViewModelTest from './PromptPresetEditViewModel.test';
+import messageSwipeRepositoryMapperTest from './MessageSwipeRepositoryMapper.test';
+import messageSwipePersistenceServiceTest from './MessageSwipePersistenceService.test';
+import chatViewModelSwipeTest from './ChatViewModelSwipe.test';
+import chatServiceSwipeTest from './ChatServiceSwipe.test';
 
 export default function testsuite() {
   localUnitTest();
@@ -81,4 +85,8 @@ export default function testsuite() {
   chatServicePromptPresetTest();
   promptPresetEditNavigationTest();
   promptPresetEditViewModelTest();
+  messageSwipeRepositoryMapperTest();
+  messageSwipePersistenceServiceTest();
+  chatViewModelSwipeTest();
+  chatServiceSwipeTest();
 }

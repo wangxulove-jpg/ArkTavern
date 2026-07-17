@@ -27,6 +27,7 @@ import { CharacterService } from '../services/CharacterService';
 import { PromptPresetService } from '../services/PromptPresetService';
 import { PromptPreset } from '../models/PromptPreset';
 import { Logger } from '../utils/Logger';
+import { MessageSwipeSummary } from '../models/MessageSwipe';
 
 const LOG_TAG: string = 'ChatViewModel';
 
@@ -54,6 +55,12 @@ export class ChatViewModel {
   isSessionReady: boolean = false;
   /** 会话初始化失败错误信息(空表示无错误) */
   initError: string = '';
+  /** Swipe 摘要列表 */
+  swipeSummaries: MessageSwipeSummary[] = [];
+  /** Swipe 操作进行中 */
+  isSwipeOperating: boolean = false;
+  /** Swipe 操作错误信息(空表示无错误) */
+  swipeError: string = '';
 
   // ===== T-4.5 会话列表状态 =====
   /** 当前上下文的会话列表 */
@@ -275,6 +282,100 @@ export class ChatViewModel {
 
   updateInput(value: string): void {
     this.inputText = value;
+  }
+
+  // ===== Swipe 方法 =====
+
+  /**
+   * 获取指定消息的 Swipe 摘要。
+   * 返回 undefined 表示该消息无可操作 Swipe 或不存在。
+   */
+  getSwipeSummary(messageId: string): MessageSwipeSummary | undefined {
+    return this.chatService.getSwipeSummary(messageId);
+  }
+
+  /**
+   * 判断指定 Assistant 消息是否可操作 Swipe。
+   * 生成中、Swipe 操作中、会话未就绪时均不可操作。
+   */
+  canOperateSwipe(messageId: string): boolean {
+    return !this.isGenerating && !this.isSwipeOperating && this.isSessionReady
+      && this.chatService.canOperateSwipe(messageId);
+  }
+
+  /**
+   * 切换到前一个候选回复。
+   * 成功切换后同步 messages 与 swipeSummaries。
+   */
+  async swipePrevious(messageId: string): Promise<void> {
+    if (this.disposed || this.isGenerating || this.isSwipeOperating) {
+      return;
+    }
+    this.isSwipeOperating = true;
+    this.swipeError = '';
+    try {
+      await this.chatService.activatePreviousCandidate(messageId);
+      this.swipeSummaries = this.chatService.getSwipeSummaries();
+      this.messages = [...this.chatService.getMessages()];
+      if (this.onMessagesUpdate !== undefined) {
+        this.onMessagesUpdate([...this.messages]);
+      }
+    } catch (e) {
+      this.swipeError = this.toUserError(String(e));
+      Logger.error(LOG_TAG, 'swipePrevious failed: ' + String(e));
+    } finally {
+      this.isSwipeOperating = false;
+    }
+  }
+
+  /**
+   * 切换到后一个候选回复。
+   * 成功切换后同步 messages 与 swipeSummaries。
+   */
+  async swipeNext(messageId: string): Promise<void> {
+    if (this.disposed || this.isGenerating || this.isSwipeOperating) {
+      return;
+    }
+    this.isSwipeOperating = true;
+    this.swipeError = '';
+    try {
+      await this.chatService.activateNextCandidate(messageId);
+      this.swipeSummaries = this.chatService.getSwipeSummaries();
+      this.messages = [...this.chatService.getMessages()];
+      if (this.onMessagesUpdate !== undefined) {
+        this.onMessagesUpdate([...this.messages]);
+      }
+    } catch (e) {
+      this.swipeError = this.toUserError(String(e));
+      Logger.error(LOG_TAG, 'swipeNext failed: ' + String(e));
+    } finally {
+      this.isSwipeOperating = false;
+    }
+  }
+
+  /**
+   * 将当前最后一条回复作为新候选重新生成。
+   * 使用 ChatService 内部 callbacks 同步状态变化。
+   */
+  async regenerateAsNewCandidate(): Promise<void> {
+    if (this.disposed || this.isGenerating || !this.canRegenerate || !this.isSessionReady) {
+      return;
+    }
+    Logger.info(LOG_TAG, 'regenerateAsNewCandidate');
+    this.errorMessage = '';
+    this.statusMessage = '';
+    this.isGenerating = true;
+    this.canRegenerate = false;
+    this.userScrolledUp = false;
+
+    try {
+      await this.chatService.generateAlternativeCandidate();
+    } catch (e) {
+      this.isGenerating = false;
+      this.errorMessage = this.toUserError(String(e));
+      this.statusMessage = '';
+      Logger.error(LOG_TAG, 'regenerateAsNewCandidate failed: ' + String(e));
+    }
   }
 
   // ===== T-4.5 会话列表方法 =====
@@ -531,6 +632,7 @@ export class ChatViewModel {
         }
         // 始终创建新引用,确保 ArkUI @Observed 检测到变化
         this.messages = [...messages];
+        this.swipeSummaries = this.chatService.getSwipeSummaries();
         this.canRegenerate = this.chatService.canRegenerate();
         // 同步到 ChatPage 的独立 @State 变量,确保 ForEach 响应式刷新
         // (ArkUI 中 @State 持有 @Observed 对象时,ForEach 对内部数组属性
@@ -569,16 +671,19 @@ export class ChatViewModel {
         this.isGenerating = false;
         this.statusMessage = '';
         this.canRegenerate = this.chatService.canRegenerate();
+        this.swipeSummaries = this.chatService.getSwipeSummaries();
         break;
       case ChatState.Cancelled:
         this.isGenerating = false;
         this.statusMessage = '已停止';
         this.canRegenerate = this.chatService.canRegenerate();
+        this.swipeSummaries = this.chatService.getSwipeSummaries();
         break;
       case ChatState.Failed:
         this.isGenerating = false;
         this.statusMessage = '';
         this.canRegenerate = this.chatService.canRegenerate();
+        this.swipeSummaries = this.chatService.getSwipeSummaries();
         break;
       default:
         break;
