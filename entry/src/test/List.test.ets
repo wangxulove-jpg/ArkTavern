@@ -34,6 +34,11 @@ import lorebookMigrationServiceTest from './LorebookMigrationService.test';
 import lorebookServiceRdbTest from './LorebookServiceRdb.test';
 import promptPresetRepositoryMapperTest from './PromptPresetRepositoryMapper.test';
 import promptPresetServiceTest from './PromptPresetService.test';
+import promptPresetRuntimeResolverTest from './PromptPresetRuntimeResolver.test';
+import promptBuilderPresetTest from './PromptBuilderPreset.test';
+import chatServicePromptPresetTest from './ChatServicePromptPreset.test';
+import promptPresetEditNavigationTest from './PromptPresetEditNavigation.test';
+import promptPresetEditViewModelTest from './PromptPresetEditViewModel.test';
 
 export default function testsuite() {
   localUnitTest();
@@ -71,4 +76,9 @@ export default function testsuite() {
   lorebookServiceRdbTest();
   promptPresetRepositoryMapperTest();
   promptPresetServiceTest();
+  promptPresetRuntimeResolverTest();
+  promptBuilderPresetTest();
+  chatServicePromptPresetTest();
+  promptPresetEditNavigationTest();
+  promptPresetEditViewModelTest();
 }

@@ -49,6 +49,8 @@ import { ChatService } from './ChatService';
 import { ChatPersistenceService } from './ChatPersistenceService';
 import { ModelService } from './ModelService';
 import { DefaultProviderFactory } from './ProviderFactory';
+import { PromptPresetListViewModel } from '../viewmodels/PromptPresetListViewModel';
+import { PromptPresetEditViewModel } from '../viewmodels/PromptPresetEditViewModel';
 import { Logger } from '../utils/Logger';
 
 const LOG_TAG: string = 'AppServices';
@@ -305,7 +307,25 @@ export class AppServices {
       services.promptBuilder,
       services.tokenCounter,
       services.historyTrimmer,
-      services.chatPersistenceService
+      services.chatPersistenceService,
+      services.promptPresetService
     );
+  }
+
+  /**
+   * 创建 PromptPresetListViewModel 实例。
+   */
+  static createPromptPresetListViewModel(): PromptPresetListViewModel {
+    const services: AppServices = AppServices.getInstance();
+    return new PromptPresetListViewModel(services.promptPresetService);
+  }
+
+  /**
+   * 创建 PromptPresetEditViewModel 实例。
+   * @param presetId 编辑已有 Preset 时传入 ID,新建时传入 undefined
+   */
+  static createPromptPresetEditViewModel(presetId?: string): PromptPresetEditViewModel {
+    const services: AppServices = AppServices.getInstance();
+    return new PromptPresetEditViewModel(services.promptPresetService);
   }
 }

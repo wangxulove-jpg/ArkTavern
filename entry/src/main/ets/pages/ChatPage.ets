@@ -67,8 +67,9 @@ export struct ChatPage {
     // 避免复用已 disposed 的单例导致 sendMessage 静默失败
     const modelService = AppServices.getModelService();
     const characterService = AppServices.getCharacterService();
+    const promptPresetService = AppServices.getPromptPresetService();
     const chatService = AppServices.createChatService();
-    const vm: ChatViewModel = new ChatViewModel(chatService, modelService, characterService);
+    const vm: ChatViewModel = new ChatViewModel(chatService, modelService, characterService, promptPresetService);
     // 通过回调将 ViewModel 的 messages 同步到独立 @State 变量
     // 这是确保 ForEach 响应式刷新的关键
     vm.onMessagesUpdate = (msgs: ChatMessage[]): void => {
@@ -142,6 +143,27 @@ export struct ChatPage {
           }
           .width('100%')
           .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+
+          // 预设状态
+          Row() {
+            Text('预设：' + (this.viewModel!.currentPresetName.length > 0
+              ? this.viewModel!.currentPresetName
+              : '未启用'))
+              .fontSize(12)
+              .fontColor(this.viewModel!.currentPresetName.length > 0
+                ? '#007AFF'
+                : '#999999')
+              .onClick(() => {
+                const navInfo = this.queryNavigationInfo();
+                if (navInfo !== undefined) {
+                  navInfo.pathStack.pushPathByName('PromptPresetListPage', undefined, () => {
+                    this.viewModel!.refreshCurrentPresetName();
+                  });
+                }
+              })
+          }
+          .width('100%')
+          .padding({ left: 16, right: 16, bottom: 4 })
 
         if (this.viewModel!.errorMessage.length > 0) {
           Text(this.viewModel!.errorMessage)

@@ -2,6 +2,8 @@
   "src": [
     "pages/Index",
     "pages/ChatPage",
-    "pages/CharacterListPage"
+    "pages/CharacterListPage",
+    "pages/PromptPresetListPage",
+    "pages/PromptPresetEditPage"
   ]
 }

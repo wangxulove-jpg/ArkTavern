@@ -45,6 +45,10 @@
       "value": "模型设置"
     },
     {
+      "name": "home_prompt_preset",
+      "value": "提示词预设"
+    },
+    {
       "name": "home_app_settings",
       "value": "应用设置"
     },

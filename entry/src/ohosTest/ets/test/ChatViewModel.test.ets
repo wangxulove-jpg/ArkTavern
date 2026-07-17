@@ -32,6 +32,8 @@ import { Character } from '../../../main/ets/models/Character';
 import { CharacterService } from '../../../main/ets/services/CharacterService';
 import { ProviderConfig } from '../../../main/ets/models/ProviderConfig';
 import { ProviderType } from '../../../main/ets/models/ProviderType';
+import { PromptPresetService } from '../../../main/ets/services/PromptPresetService';
+import { PromptPreset } from '../../../main/ets/models/PromptPreset';
 
 // ===== Mock ChatService =====
 
@@ -251,22 +253,38 @@ interface ViewModelFixture {
   mockChatService: MockChatService;
   mockModelService: MockModelService;
   mockCharacterService: MockCharacterService;
+  mockPromptPresetService: MockPromptPresetService;
   viewModel: ChatViewModel;
+}
+
+// ===== Mock PromptPresetService =====
+
+class MockPromptPresetService {
+  async getCurrentPreset(): Promise<PromptPreset | null> {
+    return null;
+  }
+
+  async getCurrentPresetId(): Promise<string | null> {
+    return null;
+  }
 }
 
 function createViewModel(): ViewModelFixture {
   const mockChatService: MockChatService = new MockChatService();
   const mockModelService: MockModelService = new MockModelService();
   const mockCharacterService: MockCharacterService = new MockCharacterService();
+  const mockPromptPresetService: MockPromptPresetService = new MockPromptPresetService();
   const viewModel: ChatViewModel = new ChatViewModel(
     mockChatService as Object as ChatService,
     mockModelService as Object as import('../../../main/ets/services/ModelService').ModelService,
-    mockCharacterService as Object as CharacterService
+    mockCharacterService as Object as CharacterService,
+    mockPromptPresetService as Object as PromptPresetService
   );
   const fixture: ViewModelFixture = {
     mockChatService: mockChatService,
     mockModelService: mockModelService,
     mockCharacterService: mockCharacterService,
+    mockPromptPresetService: mockPromptPresetService,
     viewModel: viewModel
   };
   return fixture;

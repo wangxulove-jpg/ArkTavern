@@ -19,6 +19,8 @@ import { CharacterListPage } from './CharacterListPage';
 import { LorebookPage } from './LorebookPage';
 import { ModelSettingsPage } from './ModelSettingsPage';
 import { AppSettingsPage } from './AppSettingsPage';
+import { PromptPresetListPage } from './PromptPresetListPage';
+import { PromptPresetEditPage } from './PromptPresetEditPage';
 import { RealSsePocPage } from './RealSsePocPage';
 import { AppServices } from '../services/AppServices';
 import { ProviderConfig } from '../models/ProviderConfig';
@@ -79,6 +81,10 @@ struct Index {
       ModelSettingsPage()
     } else if (name === 'AppSettingsPage') {
       AppSettingsPage()
+    } else if (name === 'PromptPresetListPage') {
+      PromptPresetListPage()
+    } else if (name === 'PromptPresetEditPage') {
+      PromptPresetEditPage()
     } else if (name === 'RealSsePocPage') {
       RealSsePocPage()
     }
@@ -164,6 +170,10 @@ struct Index {
             GridItem() {
               this.entryButton($r('app.string.home_model_settings'), 'ModelSettingsPage')
             }
+
+            GridItem() {
+              this.entryButton($r('app.string.home_prompt_preset'), 'PromptPresetListPage')
+            }
           }
           .columnsTemplate('1fr 1fr')
           .rowsGap(12)
@@ -171,7 +181,7 @@ struct Index {
           .width('100%')
           .padding({ left: 16, right: 16 })
           .margin({ top: 16 })
-          .height(124)
+          .height(192)
 
           // ===== 模型连接状态卡片 =====
           Row() {

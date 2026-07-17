@@ -24,6 +24,8 @@ import { Chat } from '../models/Chat';
 import { ProviderConfig } from '../models/ProviderConfig';
 import { Character } from '../models/Character';
 import { CharacterService } from '../services/CharacterService';
+import { PromptPresetService } from '../services/PromptPresetService';
+import { PromptPreset } from '../models/PromptPreset';
 import { Logger } from '../utils/Logger';
 
 const LOG_TAG: string = 'ChatViewModel';
@@ -38,6 +40,8 @@ export class ChatViewModel {
   currentModelName: string = '';
   /** 当前角色名称(无角色时为空) */
   characterName: string = '';
+  /** 当前预设名称(无预设时为空) */
+  currentPresetName: string = '';
   hasCurrentModel: boolean = false;
   canRegenerate: boolean = false;
   /** 用户是否主动上滑(用于控制自动滚动) */
@@ -70,6 +74,7 @@ export class ChatViewModel {
   private chatService: ChatService;
   private modelService: ModelService;
   private characterService: CharacterService;
+  private promptPresetService: PromptPresetService;
   private disposed: boolean = false;
 
   /**
@@ -81,10 +86,16 @@ export class ChatViewModel {
    */
   onMessagesUpdate?: (messages: ChatMessage[]) => void;
 
-  constructor(chatService: ChatService, modelService: ModelService, characterService: CharacterService) {
+  constructor(
+    chatService: ChatService,
+    modelService: ModelService,
+    characterService: CharacterService,
+    promptPresetService: PromptPresetService
+  ) {
     this.chatService = chatService;
     this.modelService = modelService;
     this.characterService = characterService;
+    this.promptPresetService = promptPresetService;
   }
 
   get canSend(): boolean {
@@ -158,6 +169,9 @@ export class ChatViewModel {
     } catch (e) {
       Logger.warn(LOG_TAG, 'load character failed: ' + String(e));
     }
+
+    // 2.5. 加载当前预设名称
+    await this.refreshCurrentPresetName();
 
     // 3. 异步初始化会话(从数据库恢复或创建新会话)
     try {
@@ -282,6 +296,20 @@ export class ChatViewModel {
   closeSessionList(): void {
     this.showSessionList = false;
     // 关闭面板时不清除 sessionError,避免关闭瞬间闪错误提示
+  }
+
+  /** 刷新当前预设名称。页面恢复时调用。 */
+  async refreshCurrentPresetName(): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
+    try {
+      const preset: PromptPreset | null = await this.promptPresetService.getCurrentPreset();
+      this.currentPresetName = preset !== null ? preset.name : '';
+    } catch (e) {
+      this.currentPresetName = '';
+      Logger.warn(LOG_TAG, 'refresh preset name failed: ' + String(e));
+    }
   }
 
   /** 刷新会话列表 */

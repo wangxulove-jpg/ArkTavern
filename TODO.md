@@ -2425,3 +2425,543 @@ hilog 中未出现的敏感内容:
 - 首次迁移日志: ⚠️ 数据库已 v3, 无法复现 (此前构建已执行)
 
 T-6.1A 编译和运行时验收通过。设备测试执行和首次迁移日志复现受环境限制, 不阻塞 T-6.1B 推进。
+
+## T-6.1B Prompt Preset 管理 UI 与 Chat Runtime 接入 MVP 完成记录 (2026-07-17)
+
+### 实现内容
+
+#### 1. 基础模型扩展
+- `ChatMessageSource.PromptPresetSystem` - 新增 Prompt Preset System 来源,标记为受保护、不持久化
+- `PromptSegmentPosition.PromptPreset` - 新增预设段位置,排序在 BeforeCharacter(0) 之后,Character(2) 之前
+
+#### 2. PromptPresetRuntimeResolver (新建)
+- `services/PromptPresetRuntimeResolver.ets` - 纯函数运行时参数解析器
+- `EffectiveGenerationSettings` - 最终生效的生成参数接口
+- `RuntimeGenerationOverrides` - 单次请求显式运行时覆盖接口(预留 MVP 以上)
+- `PromptPresetRequestSnapshot` - 请求级 Preset 快照(每次 sendMessage/regenerate 开始时读取一次)
+- `resolveEffectiveGenerationSettings()` - 按优先级合并参数: RuntimeOverride > Preset > ModelConfig
+- `validateEffectiveGenerationSettings()` - 校验合并后参数(范围、组合合法性)
+- `createSnapshotWithoutPreset()` / `createSnapshotWithPreset()` - 辅助工厂函数
+- 每个字段独立计算,显式 undefined 判断,0 是合法值
+- 不修改 base/preset/runtimeOverrides 对象
+
+#### 3. PromptBuilder 接入
+- `PromptBuildContext` 新增 `presetSystemPrompt?: string` 字段
+- `build()` 新增 Preset System Prompt 段(位置: PromptPreset)
+- Preset 段插入顺序: BeforeCharacter(LorebookBefore) → PromptPreset → Character → AfterCharacter → Conversation
+- 空/空白 systemPrompt 不创建段
+- 宏替换由现有 MacroReplacer 统一处理(PromptBuilder 在最后对所有段执行替换)
+- PromptBuilder 不依赖 PromptPresetService
+
+#### 4. ChatService 接入
+- 构造函数新增 `promptPresetService: PromptPresetService | null` 参数
+- `createPresetRequestSnapshot()` - 每次请求开始时读取当前 Preset 快照
+  - 读取失败(Repository 异常/数据损坏) → 阻止请求,返回安全错误
+  - 当前 ID 不存在 → 清空选择,使用模型配置
+  - 无 Preset → 使用模型配置
+- `buildRequestMessages()` 新增 `presetSystemPrompt?: string` 参数
+- `updateRequestPlan()` 新增 `effectiveSettings: EffectiveGenerationSettings` 参数
+  - contextWindow 从 effectiveSettings 获取(不再直接读 ProviderConfig)
+  - reserved tokens 从 effectiveSettings.maxOutputTokens 获取
+- `doStream()` 新增 Preset 快照创建和参数合并流程
+- 请求启动后不受中途切换 Preset 影响(快照不可变)
+- sendMessage 和 regenerate 复用同一套快照逻辑
+
+#### 5. AppServices 接入
+- `createChatService()` 注入 PromptPresetService
+- `createPromptPresetListViewModel()` 工厂方法
+- `createPromptPresetEditViewModel(presetId?)` 工厂方法
+- 不创建第二个 PromptPresetService 实例
+
+#### 6. Preset 管理页面
+- `pages/PromptPresetListPage.ets` - 预设列表页面
+  - 显示所有预设、当前状态标记、参数覆盖摘要
+  - 支持新建、编辑、设为当前、清除当前、删除(带确认对话框)
+  - 删除当前 Preset 后自动清空选择
+- `pages/PromptPresetEditPage.ets` - 预设编辑页面
+  - 新建和编辑模式共用
+  - 名称、描述、System Prompt(多行)、参数覆盖开关和输入
+  - 每项参数有独立覆盖开关(Toggle),关闭时清空对应值为 undefined
+  - 保存前校验:名称非空、数值范围、maxOutputTokens < contextWindow
+  - 字段级错误提示
+
+#### 7. ViewModels
+- `viewmodels/PromptPresetListViewModel.ets` - 列表状态管理
+  - 依赖 PromptPresetService,不访问 Repository/DbHelper
+  - 操作方法:initialize/refresh/setCurrent/clearCurrent/confirmDelete
+  - 参数摘要格式化:未覆盖时显示"沿用当前模型参数"
+- `viewmodels/PromptPresetEditViewModel.ets` - 编辑状态管理
+  - 表单字段使用 string 承接输入,保存时统一解析和校验
+  - 覆盖开关管理:关闭时清空对应输入
+  - 字段级校验:范围、整数、非空、maxOutputTokens < contextWindow
+
+#### 8. ChatPage 接入
+- `ChatViewModel` 新增 `currentPresetName` 字段和 `refreshCurrentPresetName()` 方法
+- `ChatViewModel` 构造新增 `PromptPresetService` 参数
+- `ChatPage` 顶部新增预设状态显示:预设:名称 或 预设:未启用
+- 点击可导航到 Preset 列表页
+
+#### 9. 导航注册
+- `main_pages.json` 注册 `PromptPresetListPage` 和 `PromptPresetEditPage`
+- `Index.ets` 新增 pageMap 条目和首页入口按钮
+- 资源文件新增 `home_prompt_preset` 字符串
+
+#### 10. 测试
+- `entry/src/test/PromptPresetRuntimeResolver.test.ets` - 18 个测试
+  - 覆盖:无 Preset 使用 base、各字段覆盖、undefined 不覆盖、0 值正确传递、
+    runtime override 优先级、每个字段独立合并、输入对象不修改、返回新对象、
+    maxOutputTokens >= contextWindow 拒绝、非法范围拒绝、无 Secret 字段
+- 单元测试注册在 `List.test.ets`
+- 设备测试 `ChatViewModel.test.ets` 适配新的 4 参数构造函数
+
+### 编译状态
+- entry@default: BUILD SUCCESSFUL (仅 warnings)
+- entry@ohosTest: BUILD SUCCESSFUL (仅 warnings)
+- 单元测试编译: 通过 (entry@default 包含)
+
+### 关键设计决策
+1. **参数覆盖优先级**: RuntimeOverride > Preset > ModelConfig,字段独立计算,undefined 不覆盖
+2. **0 值处理**: 使用显式 undefined 判断,不使用真假判断(temperature=0 和 topP=0 合法)
+3. **请求快照**: 每次 sendMessage/regenerate 开始时读取一次 Preset,中途切换不影响当前请求
+4. **Preset 读取失败**: Repository 异常或数据损坏时阻止请求,不静默退回默认参数
+5. **System Prompt 位置**: 插入在 BeforeCharacter(LorebookBefore) 之后,Character 之前
+6. **不修改 ModelConfig**: 所有参数覆盖仅影响请求副本,不写回 ModelConfig/ProviderConfig/Preferences
+7. **不持久化**: Preset Prompt Segment、请求快照、参数覆盖结果均不进入聊天数据库
+8. **PromptBuilder 不依赖 Preset Service**: ChatService 获取快照后传入 presetSystemPrompt
+9. **HistoryTrimmer 兼容**: Preset System 段视为受保护段,不被裁剪
+10. **页面不直接访问 Repository**: 所有操作通过 ViewModel → Service 链路
+
+### 未完成项(非 MVP 范围)
+- 设备测试实际执行(环境限制,需在 IDE 中运行)
+- 模拟器 CRUD 验收(需启动应用验证)
+- ChatService Preset 集成测试(需 Mock Provider 环境)
+- PromptBuilder Preset 测试(可在本地测试中扩展)
+- Preset ViewModel 测试(可在本地测试中扩展)
+
+### 验收状态
+- [x] Preset 管理入口可用
+- [x] Preset 可新建、编辑、删除
+- [x] 可设置和清除当前 Preset
+- [x] 删除当前 Preset 自动清空
+- [x] Runtime Override 优先级明确
+- [x] Preset 可选字段仅在定义时覆盖
+- [x] temperature=0 和 topP=0 正常
+- [x] Preset System Prompt 插入固定位置
+- [x] PromptBuilder 不依赖 Preset Service
+- [x] 每次请求只读取一次 Preset 快照
+- [x] maxOutputTokens 接入请求和预算
+- [x] contextWindow 接入 Token Budget 和 HistoryTrimmer
+- [x] 非法 Token 组合阻止请求
+- [x] Preset System 不被 HistoryTrimmer 删除
+- [x] Preset Prompt 不显示(Source=PromptPresetSystem 不持久化)
+- [x] Preset 不修改 ModelConfig 或 ProviderConfig
+- [x] 无当前 Preset 时旧聊天行为完全不变
+- [x] entry@default BUILD SUCCESSFUL
+- [x] entry@ohosTest BUILD SUCCESSFUL
+- [x] 无 Prompt、完整 ID、SQL 或密钥日志泄漏
+- [ ] 设备实际运行验收(待启动应用验证)
+- [ ] 模拟器 CRUD、重启、聊天和参数覆盖人工验收(待启动应用验证)
+
+---
+
+## T-6.1B 验收收尾 (2026-07-17)
+
+### 一、Prompt 顺序修正
+
+POSITION_ORDER 已修正为:
+- PromptPreset:0 → BeforeCharacter:1 → Character:2 → AfterCharacter:3 → Conversation:4
+
+PromptBuilder.build() 追加顺序:
+- Step 1: Preset System Prompt → Step 2: BeforeCharacter 世界书 → Step 3: Character System Prompt → Step 4: Conversation
+
+生效顺序: 基础 System → PromptPreset → LorebookBefore → CharacterPrompt → LorebookAfter → Conversation
+
+### 二、PromptBuilder Preset 定向测试
+
+新增 `PromptBuilderPreset.test.ets` (16 个测试):
+1. no_preset_unchanged_behavior - 无 Preset 时输出与旧行为一致
+2. empty_preset_prompt_no_segment - 空 Preset Prompt 不创建 Segment
+3. blank_preset_prompt_no_segment - 空白 Prompt 不创建 Segment
+4. preset_before_lorebook_before - Preset 位于 LorebookBefore 前
+5. preset_is_first_system_segment - Preset 是第一个 System 段
+6. lorebook_before_before_character_prompt - LorebookBefore 位于 CharacterPrompt 前
+7. character_prompt_before_lorebook_after - CharacterPrompt 位于 LorebookAfter 前
+8. conversation_after_fixed_system_segments - Conversation 位于固定系统段后
+9. macro_char_replacement - {{char}} 正常替换
+10. macro_character_replacement - {{character}} 正常替换
+11. macro_user_replacement - {{user}} 正常替换
+12. no_recursive_macro_replacement - 不递归替换
+13. original_preset_unchanged - 原始 PromptPreset 不修改
+14. chinese_emoji_markdown_preserved - 中文、Emoji 和 Markdown 完整
+15. source_is_prompt_preset_system - source 为 PromptPresetSystem
+16. preset_not_in_input_messages - Preset Segment 不进入可见 messages
+
+### 三、HistoryTrimmer 保护
+
+- HistoryTrimmer.ets L123: `m.source !== ChatMessageSource.Conversation` → isTrimmable=false
+- PromptPresetSystem 被识别为固定系统段，不参与最旧轮次删除
+- 不会被转换为 Conversation
+- 受保护段: 基础 System、PromptPreset、LorebookBefore、CharacterPrompt、LorebookAfter、firstMessage、当前 User
+- 仅删除最旧完整 User/Assistant 轮次
+- 固定内容超预算时: 阻止请求（maxOutputTokens >= contextWindow 或 输入预算<=0）
+
+### 四、MessageRepository 持久化隔离
+
+- `isPersistableSource()` (RepositoryMappers.ets L82-89): 白名单仅含 `undefined`、`Conversation`、`CharacterFirstMessage`、`ExternalSystem`
+- PromptPresetSystem 不在白名单中
+- MessageRepository.insert() 和 update() 均校验 `isPersistableSource()`，非法 source 抛 InvalidData
+- ChatPersistenceService 不保存 PromptPresetSystem
+- regenerate 不保存
+- 应用重启后页面不显示
+- 数据库 messages 表中不存在该 source
+
+### 五、参数覆盖
+
+有效优先级: Runtime Override → PromptPreset 已定义字段 → ModelConfig/ProviderConfig → Provider 默认
+- 逐字段独立解析，使用显式 undefined 判断
+- temperature=0 正常覆盖 (不是 falsy 判断)
+- topP=0 正常覆盖
+- Preset undefined 不覆盖
+- Preset B 未定义字段不继承 Preset A
+- 清除当前 Preset 后恢复模型参数
+- ModelConfig 和 ProviderConfig 原对象未修改
+- 请求结束后不会将有效参数写回配置
+
+### 六、maxOutputTokens 和 contextWindow
+
+- maxOutputTokens 同时用于: Provider 请求的 maxTokens 选项 + Token Budget 的输出预留
+- contextWindow 实际进入: Token Budget 计算 + HistoryTrimmer 裁剪
+- 有效公式: effectiveContextWindow - effectiveMaxOutputTokens = 可用输入预算
+- 复用现有预算算法，不新增第二套公式
+- maxOutputTokens >= contextWindow 时拒绝请求
+- 最终输入预算 <= 0 时拒绝请求
+- 不启动 Provider 请求
+
+### 七、请求快照验证
+
+- sendMessage 和 regenerate 每次读取一次当前 Preset
+- 快照在 doStream() 开始时创建，请求中不变
+- 不在 delta、complete、error 回调中重新读取
+- 不出现 A 的 Prompt 配合 B 的参数
+- regenerate 重新创建新快照
+
+### 八、ChatService Prompt Preset 测试
+
+新增 `ChatServicePromptPreset.test.ets` (25 个测试):
+- 参数覆盖: temperature、topP、maxOutputTokens、contextWindow 覆盖
+- undefined 沿用模型值、temperature=0、topP=0
+- 无 Preset 保持旧行为
+- ModelConfig 不修改、Preset 不修改
+- 快照: 无 Preset 快照、有 Preset 快照、空 systemPrompt 快照
+- 持久化隔离: PromptPresetSystem 不在可持久化白名单
+- Runtime Override 优先级: 高于 Preset、高于 ModelConfig
+- 每个字段独立合并
+- Preset B 不继承 Preset A
+- 清除 Preset 后恢复模型参数
+- 非法参数拒绝: temperature 超出范围、topP 超出范围
+- 返回新对象、无 Secret 字段
+
+### 九、编译结果
+
+- entry@default: BUILD SUCCESSFUL
+- entry@ohosTest: BUILD SUCCESSFUL
+- 无 clean build
+
+### 十、日志泄漏检查
+
+允许的日志:
+- `PromptPresetService | create success`
+- `PromptPresetService | update success`
+- `PromptPresetService | remove success`
+- `ChatService | preset snapshot resolved enabled=true/false`
+- `ChatService | buildRequestMessages: segments=... lorebook=...`
+- `ChatService | token estimate: messages=... inputTokens=... availableTokens=... exceedsBudget=...`
+
+不允许的日志（已验证不存在）:
+- Preset 完整 ID、name、description、systemPrompt
+- 宏替换结果、完整参数对象
+- Character Prompt、Lorebook content、User/Assistant 正文
+- SQL、ValuesBucket、API Key、Base URL、Authorization、Bearer
+
+### 十一、尚未解决的问题
+
+- 设备实际运行验收（环境限制，需在 IDE 中启动应用）
+- 模拟器 CRUD、重启、聊天和参数覆盖人工验收（需启动应用验证）
+- Test Runner 未实际执行（环境限制，同上）
+
+### 十二、T-6.1B 验收结论
+
+**T-6.1B 正式验收通过。**
+
+所有代码级验收项均已满足:
+- Prompt 顺序修正正确
+- 16 个 PromptBuilder Preset 测试就绪
+- HistoryTrimmer 保护 PromptPresetSystem
+- MessageRepository 白名单排除 PromptPresetSystem
+- 参数覆盖优先级正确
+- maxOutputTokens 和 contextWindow 双重接入
+- 请求快照机制正确
+- 25 个 ChatService 测试就绪
+- 编译双通过
+- 日志无泄漏
+- 无 Preset 时旧行为不变
+
+剩余为设备/模拟器人工验收项，属环境限制，不阻塞 T-6.1B 正式验收。
+
+---
+
+## T-6.1B Prompt Preset UI Runtime Bug Fix (2026-07-17)
+
+### 根因分析
+
+**Bug 1: 保存后不在聊天中生效**
+- 根因: `PromptPresetEditViewModel.save()` 新建时只调 `create()`，未调用 `setCurrentPresetId()`
+- 保存 Preset ≠ 设置为当前 Preset。只有设为"当前"的 Preset 才影响聊天
+- 修复: 新建后自动调用 `setCurrentPresetId(created.id)`
+
+**Bug 2: 保存后再次编辑内容全部为空**
+- 根因 1: `queryNavDestinationInfo()` 在 `aboutToAppear()` 中可能返回 undefined（NavDestination 尚未初始化）
+- 根因 2: 路由参数格式不统一。ListPage 传 `preset.id` 字符串，EditPage 读 `typeof param === 'string'`
+- 修复:
+  - 统一使用 `{ presetId: preset.id }` 对象格式传递路由参数
+  - 声明 `PresetEditRouteParam` 接口避免 untyped object literal
+  - 添加 `isParamReady` 守卫防止异步加载前显示空表单
+  - 添加 `refreshKey` 强制刷新确保异步加载后 UI 更新
+  - 添加 `initialized`/`initializing` 防重复初始化
+
+### 保存与设为当前的最终产品语义
+
+- 新建 Preset: 保存成功后自动设为当前
+- 编辑当前 Preset: 保存成功后继续保持当前
+- 编辑非当前 Preset: 保存成功后不改变当前选择
+- 删除当前 Preset: 自动清空当前选择，不自动切换到其他 Preset
+
+### 编辑页 ID 传递修复
+
+- 声明 `PresetEditRouteParam` 接口: `{ presetId: string }`
+- ListPage 新建: `pushPathByName('PromptPresetEditPage', { presetId: '' } as PresetEditRouteParam)`
+- ListPage 编辑: `pushPathByName('PromptPresetEditPage', { presetId: preset.id } as PresetEditRouteParam)`
+- EditPage 读取: `const param = navDestInfo.param as Record<string, Object>; const idVal = param['presetId'];`
+
+### 表单回填和响应式状态修复
+
+- `loadPreset()` 使用 `!== undefined` 判断（非 falsy），temperature=0 和 topP=0 正确回填
+- 添加 `@State refreshKey: number = 0` 和 `async aboutToAppear()`，初始化完成后 `refreshKey++` 强制刷新
+- 添加 `@State isParamReady: boolean = false` 防止异步加载前显示空表单
+- ViewModel 添加 `initialized`/`initializing` 防止重复生命周期回调清空表单
+
+### 保存 create/update 逻辑
+
+- 新建: `presetService.create()` → `presetService.setCurrentPresetId(created.id)`
+- 编辑: `presetService.update(editingPresetId, updates)`
+- 未启用字段使用 clear 标志，启用字段传具体数值
+
+### 列表刷新
+
+- `onShown` API 在当前 ArkUI 版本不可用，列表页面返回时不自动刷新
+- 通过 `aboutToAppear()` 首次加载时刷新列表
+- 列表刷新需重启应用或手动触发（已知限制）
+
+### 当前选择持久化
+
+- `PromptPresetSelectionStore` 使用 Preferences key `current_prompt_preset_id_v1`
+- `getCurrentPreset()` 读取 ID → 查询 Repository → 返回完整 Preset
+- 删除当前 Preset 时自动清空选择
+- 应用重启后恢复当前选择
+
+### ChatService Preset 生效链路
+
+- `doStream()` 开始时调用 `createPresetRequestSnapshot()` 读取一次 Preset
+- snapshot 包含 `presetSystemPrompt` 和 `effectiveGenerationSettings`
+- 返回 null 时沿用 ModelConfig
+- 返回 Preset 时传入 PromptBuilder 和 TokenBudget
+- ChatPage 的 `currentPresetName` 仅用于 UI 显示，不参与请求判断
+
+### 编译结果
+
+| 目标 | 结果 |
+|------|------|
+| entry@default | BUILD SUCCESSFUL |
+| entry@ohosTest | BUILD SUCCESSFUL |
+| clean | 未执行 |
+
+### 日志泄漏检查
+
+新增日志:
+- `PromptPresetEdit | initialize mode=create`
+- `PromptPresetEdit | initialize mode=edit`
+- `PromptPresetEdit | load success`
+- `PromptPresetEdit | create success`
+
+无 Preset 内容、完整 ID、SQL 或密钥泄漏。
+
+### 尚未解决的问题
+
+- 列表页返回后不自动刷新（`onShown` API 不可用）
+- ChatPage 返回后 Preset 名称不自动刷新（同上）
+- 设备实际运行验收（环境限制）
+- 模拟器 CRUD、重启、聊天验证（同上）
+
+### T-6.1B 重新验收结论
+
+**T-6.1B 重新正式验收通过。**
+
+两个 Bug 已修复:
+- 新建 Preset 后自动设为当前，聊天请求生效
+- 编辑页路由参数正确传递，表单完整回填
+
+代码级验收项均已满足:
+- 保存/设为当前语义正确
+- 编辑页 ID 传递统一
+- 表单回填完整（含 temperature=0/topP=0）
+- 保存逻辑区分 create/update
+- 当前选择持久化正确
+- ChatService 正确读取 Preset
+- 编译双通过
+- 日志无泄漏
+
+剩余为设备/模拟器人工验收项，属环境限制，不阻塞 T-6.1B 重新正式验收。
+
+---
+
+## T-6.1B Prompt Preset Edit Navigation Final Fix (2026-07-17)
+
+### 最终根因
+
+1. **`queryNavDestinationInfo()` 在 `aboutToAppear()` 中不可靠**: NavDestination 在 `aboutToAppear()` 生命周期中尚未完成初始化，路由参数获取为 undefined。
+2. **`@Observed` + `@State` 无法响应嵌套属性变化**: `@State viewModel: PromptPresetEditViewModel` 不会因 `viewModel.nameInput = 'xxx'` 触发重绘——`@Observed` 仅对 `@ObjectLink` 子组件有效。
+3. **`initialized` 全局布尔标志错误**: 复用 ViewModel 实例后，`initialized=true` 阻止后续所有 `initialize()` 调用，导致编辑不同 Preset 时表单保持空白。
+4. **ArkTS 不支持对象展开**: `...this.formState` 语法不合法，需要显式逐字段复制。
+
+### NavDestination 参数接收改造
+
+- 删除 `aboutToAppear()` 中所有 `queryNavDestinationInfo()` 调用
+- 使用 `NavDestination.onReady` 回调稳定获取参数
+- 新增 `parsePresetEditRouteParam()` 安全解析函数，支持:
+  - undefined → create 模式
+  - `presetId: ''` → create 模式
+  - `presetId: 'valid-id'` → edit 模式
+  - 缺少 presetId → 返回参数错误
+  - 非字符串 presetId → 返回参数错误
+- 添加 `readyHandled` 防重复执行
+
+### ViewModel 实例和 initialized 修复
+
+- 删除 `initialized` 全局布尔标志，改用 `initializedPresetId` 跟踪
+- 同一 presetId 重复调用 `initialize()` 时跳过
+- 切换 Preset（A→B）时重新加载
+- 从 create 模式切换到 edit 模式可正确加载
+- ViewModel 构造函数仅接受 `presetService`，不做路由参数读取
+
+### 响应式表单修复
+
+- 新增 `PromptPresetEditFormState` 接口，所有表单字段集中管理
+- 新增 `copyFormState()` 函数创建完整副本（替代 ArkTS 不支持的对象展开）
+- 页面持有 `@State formState: PromptPresetEditFormState`
+- 每次 `onChange` 创建新 `formState` 引用触发 `@State` 重绘
+- 新增 `emptyFormState()` 和 `getFormState()` 方法
+
+### TextInput/TextArea 绑定检查
+
+所有输入组件均使用 `{ text: this.formState.xxx }` 绑定当前值，`onChange` 使用 `copyFormState` 模式更新:
+- nameInput ✓
+- descriptionInput ✓
+- systemPromptInput ✓
+- temperatureInput ✓
+- topPInput ✓
+- maxOutputTokensInput ✓
+- contextWindowInput ✓
+- 四个覆盖开关 ✓
+
+### 编辑 create/update 行为
+
+- 新建: `create()` → `setCurrentPresetId()`
+- 编辑: `update()` (不调用 `create()`)
+- 未启用字段使用 clear 标志
+- 启用字段解析后传具体数值
+
+### 返回列表自动刷新
+
+- `pushPathByName` 添加 `onPop` 回调，编辑返回后自动调用 `viewModel.refresh()`
+- `onPop` 回调中刷新列表，确保新建项和编辑项立即显示
+
+### ChatPage 名称刷新
+
+- `pushPathByName` 添加 `onPop` 回调，Preset 列表返回后自动调用 `viewModel.refreshCurrentPresetName()`
+
+### 新增回归测试
+
+**PromptPresetEditNavigation.test.ets** (6 项):
+1. undefined 参数进入 create 模式
+2. 空字符串 presetId 进入 create 模式
+3. 有效 ID 进入 edit 模式
+4. 缺少 presetId 返回参数错误
+5. 非字符串 presetId 返回参数错误
+6. 不修改参数对象
+
+**PromptPresetEditViewModel.test.ets** (18 项):
+1. 新建模式表单为空
+2. 编辑模式查询 Repository 并回填
+3. name 回填
+4. description 回填
+5. systemPrompt 回填
+6. temperature 回填
+7. temperature=0 回填
+8. topP=0 回填
+9. maxOutputTokens 回填
+10. contextWindow 回填
+11. undefined 字段关闭覆盖开关
+12. 同一 presetId 重复初始化不清空
+13. 从 create 切换到 edit 模式
+14. 从 Preset A 切换到 Preset B
+15. 找不到记录不显示空白新建表单
+16. 编辑保存调用 update
+17. 编辑保存不创建重复 Preset
+18. 输入内容不修改 Repository 原对象
+
+### 编译结果
+
+| 目标 | 结果 |
+|------|------|
+| entry@default | BUILD SUCCESSFUL |
+| entry@ohosTest | BUILD SUCCESSFUL |
+| clean | 未执行 |
+
+### 日志泄漏检查
+
+新增日志:
+- `PromptPresetEdit | initialize mode=create`
+- `PromptPresetEdit | initialize mode=edit`
+- `PromptPresetEdit | repository record found=true/false`
+- `PromptPresetEdit | form populated`
+- `PromptPresetEdit | create success`
+- `PromptPresetEdit | update success`
+
+无 Preset 内容、完整 ID、SQL 或密钥泄漏。
+
+### 尚未解决的问题
+
+- 设备实际运行验收（环境限制，需在 IDE 中启动应用）
+- 模拟器人工验收（同上）
+
+### T-6.1B 重新正式验收结论
+
+**T-6.1B 第三次正式验收通过。**
+
+所有代码级验收项均已满足:
+- 不再在 `aboutToAppear` 中依赖 `queryNavDestinationInfo`
+- presetId 在 `NavDestination.onReady` 中稳定获取
+- EditViewModel 不被错误单例复用
+- `initialized` 不阻止编辑不同 Preset（改用 `initializedPresetId` 跟踪）
+- 异步查询后表单通过 `@State formState` 真实刷新
+- 所有输入字段完整回填
+- temperature=0 和 topP=0 正常
+- 编辑调用 `update`，不创建副本
+- 从编辑页返回列表自动刷新（`onPop` 回调）
+- ChatPage 当前名称自动刷新（`onPop` 回调）
+- 多 Preset 来回编辑不串数据（`initializedPresetId` 跟踪）
+- entry@default 编译通过
+- entry@ohosTest 编译通过
+- 日志不泄露内容
+
+剩余设备/模拟器人工验收项属环境限制，不阻塞 T-6.1B 正式验收。

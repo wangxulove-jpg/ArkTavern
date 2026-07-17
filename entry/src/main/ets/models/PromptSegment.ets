@@ -1,11 +1,11 @@
 /**
- * PromptSegment 提示词段模型
+ * 提示词段模型
  *
  * 定义 Prompt 构建中各段的顺序和内容。
  * 不依赖 ArkUI,纯数据模型。
  *
  * 顺序固定:
- * BeforeCharacter → Character → AfterCharacter → Conversation
+ * 基础 System → PromptPreset → BeforeCharacter → Character → AfterCharacter → Conversation
  */
 
 import { ChatRole } from './ChatRole';
@@ -17,6 +17,7 @@ import { ChatMessageSource } from './ChatMessageSource';
  */
 export enum PromptSegmentPosition {
   BeforeCharacter = 'BeforeCharacter',
+  PromptPreset = 'PromptPreset',
   Character = 'Character',
   AfterCharacter = 'AfterCharacter',
   Conversation = 'Conversation'
@@ -62,10 +63,11 @@ export function createPromptSegment(
  * 位置排序权重,用于 segments 排序。
  */
 const POSITION_ORDER: Record<string, number> = {
-  'BeforeCharacter': 0,
-  'Character': 1,
-  'AfterCharacter': 2,
-  'Conversation': 3
+  'PromptPreset': 0,
+  'BeforeCharacter': 1,
+  'Character': 2,
+  'AfterCharacter': 3,
+  'Conversation': 4
 };
 
 /**

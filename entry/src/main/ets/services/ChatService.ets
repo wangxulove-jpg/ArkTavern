@@ -29,6 +29,7 @@ import { PromptBuilder, PromptBuildContext, PromptBuildResult } from './PromptBu
 import { TokenCounter } from './TokenCounter';
 import { HistoryTrimmer } from './HistoryTrimmer';
 import { ChatPersistenceService } from './ChatPersistenceService';
+import { PromptPresetService } from './PromptPresetService';
 import { ChatMessage, ChatMessageStatus, createChatMessage } from '../models/ChatMessage';
 import { ChatMessageSource } from '../models/ChatMessageSource';
 import { ChatRequestOptions } from '../models/ChatRequest';
@@ -50,6 +51,14 @@ import { TokenBudget, DEFAULT_CONTEXT_WINDOW, DEFAULT_RESERVED_OUTPUT_TOKENS } f
 import { HistoryTrimResult } from '../models/HistoryTrimResult';
 import { PersistedChatSession } from '../models/PersistedChatSession';
 import { Chat } from '../models/Chat';
+import {
+  PromptPresetRequestSnapshot,
+  EffectiveGenerationSettings,
+  resolveEffectiveGenerationSettings,
+  createSnapshotWithoutPreset,
+  createSnapshotWithPreset
+} from './PromptPresetRuntimeResolver';
+import { PromptPreset } from '../models/PromptPreset';
 import { generateUuid } from '../utils/Uuid';
 import { Logger } from '../utils/Logger';
 
@@ -116,6 +125,7 @@ export class ChatService {
   private readonly tokenCounter: TokenCounter | null;
   private readonly historyTrimmer: HistoryTrimmer | null;
   private readonly persistenceService: ChatPersistenceService | null;
+  private readonly promptPresetService: PromptPresetService | null;
   /** 当前角色(用于 PromptBuilder 构建) */
   private character: Character | null = null;
   /** 最近一次使用的回调(用于 stopGeneration/clearConversation 通知状态) */
@@ -149,7 +159,8 @@ export class ChatService {
     promptBuilder: PromptBuilder | null = null,
     tokenCounter: TokenCounter | null = null,
     historyTrimmer: HistoryTrimmer | null = null,
-    persistenceService: ChatPersistenceService | null = null
+    persistenceService: ChatPersistenceService | null = null,
+    promptPresetService: PromptPresetService | null = null
   ) {
     this.modelService = modelService;
     this.lorebookService = lorebookService;
@@ -157,6 +168,7 @@ export class ChatService {
     this.tokenCounter = tokenCounter;
     this.historyTrimmer = historyTrimmer;
     this.persistenceService = persistenceService;
+    this.promptPresetService = promptPresetService;
   }
 
   /**
@@ -869,10 +881,25 @@ export class ChatService {
     // 启动超时保护
     this.startStartTimer(assistantId, callbacks);
 
+    // 创建请求级 Preset 快照(每次请求开始时读取一次)
+    let snapshot: PromptPresetRequestSnapshot;
+    try {
+      snapshot = await this.createPresetRequestSnapshot();
+    } catch (e) {
+      this.clearStartTimer();
+      this.finalizeAssistant(assistantId, '', ChatMessageStatus.Failed,
+        e instanceof Error ? e.message : String(e), callbacks);
+      this.currentAssistantId = null;
+      this.persistFinalAssistant(assistantId);
+      this.setState(ChatState.Failed, callbacks);
+      callbacks.onError(e instanceof Error ? e.message : String(e));
+      return;
+    }
+
     // 构建请求消息(通过 PromptBuilder 统一构建)
     let requestMessages: ChatMessage[];
     try {
-      requestMessages = await this.buildRequestMessages();
+      requestMessages = await this.buildRequestMessages(snapshot.presetSystemPrompt);
     } catch (e) {
       this.clearStartTimer();
       this.finalizeAssistant(assistantId, '', ChatMessageStatus.Failed, String(e), callbacks);
@@ -884,13 +911,29 @@ export class ChatService {
     }
 
     // 计算 Token 预算 → 超预算则裁剪 → 重算预算
-    await this.updateRequestPlan(requestMessages);
+    await this.updateRequestPlan(requestMessages, snapshot.generationSettings);
+
+    // 构建生效的请求选项(Preset 覆盖模型配置)
+    const effectiveOptions: ChatRequestOptions = {
+      temperature: snapshot.generationSettings.temperature !== undefined
+        ? snapshot.generationSettings.temperature
+        : DEFAULT_OPTIONS.temperature,
+      topP: snapshot.generationSettings.topP !== undefined
+        ? snapshot.generationSettings.topP
+        : DEFAULT_OPTIONS.topP,
+      maxTokens: snapshot.generationSettings.maxOutputTokens !== undefined
+        ? snapshot.generationSettings.maxOutputTokens
+        : DEFAULT_OPTIONS.maxTokens,
+      stream: true
+    };
 
     try {
       const planMessages: ChatMessage[] = this.lastHistoryTrimResult !== undefined
         ? this.lastHistoryTrimResult.messages
         : requestMessages;
-      this.currentHandle = this.modelService.streamCurrentChat(planMessages, DEFAULT_OPTIONS, streamCallbacks);
+      this.currentHandle = this.modelService.streamCurrentChat(
+        planMessages, effectiveOptions, streamCallbacks
+      );
       this.setState(ChatState.Streaming, callbacks);
     } catch (e) {
       this.clearStartTimer();
@@ -903,13 +946,93 @@ export class ChatService {
   }
 
   /**
+   * 创建请求级 Preset 快照。
+   *
+   * 每次 sendMessage/regenerate 开始时调用一次。
+   * 读取当前 Preset,与模型配置合并为 EffectiveGenerationSettings。
+   *
+   * 读取失败规则:
+   * - 当前 ID 不存在:清空选择,返回 null(使用模型配置)
+   * - Repository 读取异常:抛出错误,阻止请求
+   * - Preset 数据损坏:抛出错误,阻止请求
+   *
+   * @returns 请求快照
+   * @throws Error 无法读取当前预设或数据损坏
+   */
+  private async createPresetRequestSnapshot(): Promise<PromptPresetRequestSnapshot> {
+    // 1. 获取模型配置作为基准
+    let baseTemperature: number | undefined = undefined;
+    let baseTopP: number | undefined = undefined;
+    let baseMaxOutputTokens: number | undefined = undefined;
+    let baseContextWindow: number | undefined = undefined;
+    try {
+      const config: ProviderConfig | null = await this.modelService.getCurrentConfig();
+      if (config !== null) {
+        baseTemperature = config.temperature;
+        baseTopP = config.topP;
+        baseMaxOutputTokens = config.maxTokens;
+        baseContextWindow = config.contextWindow;
+      }
+    } catch (e) {
+      // 配置获取失败:使用空 base,后续由 DEFAULT_OPTIONS 兜底
+      Logger.warn(LOG_TAG, 'createPresetRequestSnapshot getCurrentConfig failed: '
+        + (e instanceof Error ? e.message : String(e)));
+    }
+    const base: EffectiveGenerationSettings = {
+      temperature: baseTemperature,
+      topP: baseTopP,
+      maxOutputTokens: baseMaxOutputTokens,
+      contextWindow: baseContextWindow
+    };
+
+    // 2. 获取当前 Preset
+    if (this.promptPresetService === null) {
+      Logger.info(LOG_TAG, 'preset snapshot resolved enabled=false');
+      return createSnapshotWithoutPreset(
+        resolveEffectiveGenerationSettings(base)
+      );
+    }
+
+    let preset: PromptPreset | null = null;
+    try {
+      preset = await this.promptPresetService.getCurrentPreset();
+    } catch (e) {
+      // Repository 读取失败:阻止请求
+      throw new Error('无法读取当前提示词预设，请重试');
+    }
+
+    if (preset === null) {
+      Logger.info(LOG_TAG, 'preset snapshot resolved enabled=false');
+      return createSnapshotWithoutPreset(
+        resolveEffectiveGenerationSettings(base)
+      );
+    }
+
+    // 3. 合并参数
+    let settings: EffectiveGenerationSettings;
+    try {
+      settings = resolveEffectiveGenerationSettings(base, preset);
+    } catch (e) {
+      // 数据损坏:阻止请求
+      throw new Error('无法读取当前提示词预设，请重试');
+    }
+
+    Logger.info(LOG_TAG, 'preset snapshot resolved enabled=true');
+    return createSnapshotWithPreset(preset, settings);
+  }
+
+  /**
    * 构建请求消息列表(通过 PromptBuilder 统一构建)。
    *
    * 角色、世界书和聊天历史由 PromptBuilder 按固定顺序组装。
    * 世界书内容不会写入 this.messages。
    * 无 PromptBuilder 或无角色时,返回原始消息列表(跳过 System 消息)。
+   *
+   * @param presetSystemPrompt Preset 附加 System Prompt(可选,已宏替换)
    */
-  private async buildRequestMessages(): Promise<ChatMessage[]> {
+  private async buildRequestMessages(
+    presetSystemPrompt?: string
+  ): Promise<ChatMessage[]> {
     if (this.promptBuilder === null) {
       // 无 PromptBuilder:跳过 System 消息,保留 User/Assistant
       const filtered: ChatMessage[] = [];
@@ -937,7 +1060,8 @@ export class ChatService {
       character: this.character !== null ? this.character : undefined,
       lorebook: lorebook,
       messages: this.messages,
-      macroContext: macroContext
+      macroContext: macroContext,
+      presetSystemPrompt: presetSystemPrompt
     };
 
     const result: PromptBuildResult = this.promptBuilder.build(context);
@@ -951,8 +1075,14 @@ export class ChatService {
    * 失败不抛出,仅清空结果并记录安全日志。
    *
    * 记录中只输出 messages 数、Token 数与超预算标志,不记录任何消息内容。
+   *
+   * @param requestMessages PromptBuilder 输出的请求消息
+   * @param effectiveSettings 生效的生成参数(含 contextWindow 和 maxOutputTokens)
    */
-  private async updateRequestPlan(requestMessages: ChatMessage[]): Promise<void> {
+  private async updateRequestPlan(
+    requestMessages: ChatMessage[],
+    effectiveSettings: EffectiveGenerationSettings
+  ): Promise<void> {
     if (this.tokenCounter === null) {
       // 无 TokenCounter:跳过,使用原始请求消息
       this.lastTokenBudget = undefined;
@@ -962,19 +1092,16 @@ export class ChatService {
 
     let contextWindow: number = DEFAULT_CONTEXT_WINDOW;
     let reserved: number = DEFAULT_RESERVED_OUTPUT_TOKENS;
-    try {
-      const config: ProviderConfig | null = await this.modelService.getCurrentConfig();
-      if (config !== null) {
-        if (config.contextWindow !== undefined) {
-          contextWindow = config.contextWindow;
-        }
-        if (config.maxTokens > 0) {
-          reserved = config.maxTokens;
-        }
-      }
-    } catch (e) {
-      // 配置获取失败:使用默认值继续
-      Logger.warn(LOG_TAG, 'getCurrentConfig failed: ' + (e instanceof Error ? e.message : String(e)));
+
+    // 从 effectiveSettings 获取 contextWindow
+    if (effectiveSettings.contextWindow !== undefined) {
+      contextWindow = effectiveSettings.contextWindow;
+    }
+
+    // 从 effectiveSettings 获取 maxOutputTokens(预留输出)
+    if (effectiveSettings.maxOutputTokens !== undefined &&
+      effectiveSettings.maxOutputTokens > 0) {
+      reserved = effectiveSettings.maxOutputTokens;
     }
 
     let available: number = contextWindow > reserved ? contextWindow - reserved : 0;

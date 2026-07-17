@@ -13,10 +13,7 @@
  * - 不访问页面或网络层
  *
  * 固定消息顺序:
- * 1. BeforeCharacter 世界书(System)
- * 2. Character System Prompt(System)
- * 3. AfterCharacter 世界书(System)
- * 4. firstMessage 和聊天历史(Assistant/User)
+ * 基础 System → PromptPreset → LorebookBefore → CharacterPrompt → LorebookAfter → Conversation
  */
 
 import { Character, buildCharacterSystemContent } from '../models/Character';
@@ -50,6 +47,8 @@ export interface PromptBuildContext {
   messages: ChatMessage[];
   /** 宏替换上下文(可选,提供时对最终消息执行宏替换) */
   macroContext?: MacroContext;
+  /** Preset 附加 System Prompt(可选,已宏替换后的内容) */
+  presetSystemPrompt?: string;
 }
 
 /**
@@ -77,7 +76,7 @@ export class PromptBuilder {
   /**
    * 构建最终请求消息。
    *
-   * 顺序:BeforeCharacter → Character System Prompt → AfterCharacter → 聊天历史
+   * 顺序:基础 System → PromptPreset → LorebookBefore → CharacterPrompt → LorebookAfter → Conversation
    * 世界书内容作为 System 消息发送,不进入 ChatService 可见消息。
    * 不修改传入的 messages 数组。
    *
@@ -89,7 +88,22 @@ export class PromptBuilder {
     const matchedIds: string[] = [];
     const now: number = Date.now();
 
-    // 1. BeforeCharacter 世界书
+    // 1. Preset System Prompt(附加,不替换)
+    // 位于基础 System 之后,LorebookBefore 之前
+    if (context.presetSystemPrompt !== undefined &&
+      context.presetSystemPrompt.trim().length > 0) {
+      const presetSeg: PromptSegment = createPromptSegment(
+        'preset-system',
+        PromptSegmentPosition.PromptPreset,
+        ChatRole.System,
+        context.presetSystemPrompt,
+        0,
+        ChatMessageSource.PromptPresetSystem
+      );
+      segments.push(presetSeg);
+    }
+
+    // 2. BeforeCharacter 世界书(LorebookBefore)
     if (context.lorebook !== undefined && context.lorebook !== null && context.lorebook.enabled) {
       const loreEntries: LorebookEntry[] = this.lorebookService.matchEntriesForLorebook(
         context.lorebook, context.messages
@@ -116,7 +130,7 @@ export class PromptBuilder {
       }
     }
 
-    // 2. Character System Prompt
+    // 3. Character System Prompt
     if (context.character !== undefined && context.character !== null) {
       const systemContent: string = buildCharacterSystemContent(context.character);
       if (systemContent.length > 0) {
@@ -132,9 +146,9 @@ export class PromptBuilder {
       }
     }
 
-    // 3. Conversation:保留输入中的所有消息(包括合法 System 消息)
-    // Character System Prompt 已由 Step 2 动态生成,不再从输入中取
-    // 世界书 System 消息已由 Step 1 动态生成
+    // 4. Conversation:保留输入中的所有消息(包括合法 System 消息)
+    // Character System Prompt 已由 Step 3 动态生成,不再从输入中取
+    // 世界书 System 消息已由 Step 2 动态生成
     // firstMessage 识别:输入 messages 中第一条 Assistant 消息视为 firstMessage
     let firstAssistantSeen: boolean = false;
     for (let i = 0; i < context.messages.length; i++) {

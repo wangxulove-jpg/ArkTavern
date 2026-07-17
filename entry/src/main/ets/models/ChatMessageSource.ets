@@ -22,5 +22,7 @@ export enum ChatMessageSource {
   /** AfterCharacter 世界书 System(受保护) */
   LorebookAfter = 'lorebookAfter',
   /** 外部注入的合法 System 消息(受保护) */
-  ExternalSystem = 'externalSystem'
+  ExternalSystem = 'externalSystem',
+  /** Prompt Preset System Prompt(受保护,不持久化) */
+  PromptPresetSystem = 'promptPresetSystem'
 }
