@@ -30,6 +30,7 @@ import { CharacterService } from './CharacterService';
 import { LorebookService } from './LorebookService';
 import { MacroReplacer } from './MacroReplacer';
 import { PromptBuilder } from './PromptBuilder';
+import { TokenCounter } from './TokenCounter';
 import { ChatService } from './ChatService';
 import { ModelService } from './ModelService';
 import { DefaultProviderFactory } from './ProviderFactory';
@@ -54,6 +55,8 @@ export class AppServices {
   readonly lorebookService: LorebookService;
   /** PromptBuilder 提示词构建器 */
   readonly promptBuilder: PromptBuilder;
+  /** TokenCounter 上下文 Token 估算服务(不对页面公开) */
+  private readonly tokenCounter: TokenCounter;
 
   /**
    * 私有构造,组装全部依赖。
@@ -73,6 +76,7 @@ export class AppServices {
     this.lorebookService = new LorebookService(lorebookStore);
     const macroReplacer: MacroReplacer = new MacroReplacer();
     this.promptBuilder = new PromptBuilder(this.lorebookService, macroReplacer);
+    this.tokenCounter = new TokenCounter();
   }
 
   /**
@@ -165,7 +169,7 @@ export class AppServices {
   /**
    * 创建新的 ChatService 实例。
    * 每次 ChatPage 进入时调用,保证生命周期独立。
-   * 内部完成 ModelService、LorebookService、PromptBuilder 的依赖注入。
+   * 内部完成 ModelService、LorebookService、PromptBuilder、TokenCounter 的依赖注入。
    *
    * @returns 新创建的 ChatService 实例
    */
@@ -174,7 +178,8 @@ export class AppServices {
     return new ChatService(
       services.modelService,
       services.lorebookService,
-      services.promptBuilder
+      services.promptBuilder,
+      services.tokenCounter
     );
   }
 }

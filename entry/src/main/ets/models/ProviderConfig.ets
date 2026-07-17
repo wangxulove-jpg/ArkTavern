@@ -45,6 +45,9 @@ export const STREAM_DEFAULT: boolean = true;
 /** enabled 默认值 */
 export const ENABLED_DEFAULT: boolean = true;
 
+/** 默认上下文窗口大小(未显式配置时使用) */
+export const CONTEXT_WINDOW_DEFAULT: number = 32768;
+
 // ===== 校验函数 =====
 
 /**
@@ -134,6 +137,8 @@ export class ProviderConfig {
   readonly topP: number;
   /** 最大生成 token 数 */
   readonly maxTokens: number;
+  /** 上下文窗口大小(可选)。未提供时使用 CONTEXT_WINDOW_DEFAULT(32768)。 */
+  readonly contextWindow?: number;
   /** 是否流式请求 */
   readonly stream: boolean;
   /** 是否启用 */
@@ -155,7 +160,8 @@ export class ProviderConfig {
     stream: boolean,
     enabled: boolean,
     createdAt: number,
-    updatedAt: number
+    updatedAt: number,
+    contextWindow?: number
   ) {
     this.id = id;
     this.name = name;
@@ -165,6 +171,7 @@ export class ProviderConfig {
     this.temperature = temperature;
     this.topP = topP;
     this.maxTokens = maxTokens;
+    this.contextWindow = contextWindow;
     this.stream = stream;
     this.enabled = enabled;
     this.createdAt = createdAt;
@@ -226,7 +233,8 @@ export class ProviderConfig {
     topP?: number,
     maxTokens?: number,
     stream?: boolean,
-    enabled?: boolean
+    enabled?: boolean,
+    contextWindow?: number
   ): ProviderConfig {
     return new ProviderConfig(
       this.id,
@@ -240,7 +248,8 @@ export class ProviderConfig {
       stream !== undefined ? stream : this.stream,
       enabled !== undefined ? enabled : this.enabled,
       this.createdAt,
-      Date.now()
+      Date.now(),
+      contextWindow !== undefined ? contextWindow : this.contextWindow
     );
   }
 }

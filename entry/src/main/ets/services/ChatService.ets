@@ -26,6 +26,7 @@
 import { ModelService } from './ModelService';
 import { LorebookService } from './LorebookService';
 import { PromptBuilder, PromptBuildContext, PromptBuildResult } from './PromptBuilder';
+import { TokenCounter } from './TokenCounter';
 import { ChatMessage, ChatMessageStatus, createChatMessage } from '../models/ChatMessage';
 import { ChatRequestOptions } from '../models/ChatRequest';
 import { ChatRole } from '../models/ChatRole';
@@ -41,6 +42,8 @@ import { NetworkError } from '../models/NetworkError';
 import { Character } from '../models/Character';
 import { Lorebook } from '../models/Lorebook';
 import { MacroContext, createMacroContext } from '../models/MacroContext';
+import { ProviderConfig } from '../models/ProviderConfig';
+import { TokenBudget, DEFAULT_CONTEXT_WINDOW, DEFAULT_RESERVED_OUTPUT_TOKENS } from '../models/TokenBudget';
 import { generateUuid } from '../utils/Uuid';
 import { Logger } from '../utils/Logger';
 
@@ -98,19 +101,24 @@ export class ChatService {
   private readonly modelService: ModelService;
   private readonly lorebookService: LorebookService | null;
   private readonly promptBuilder: PromptBuilder | null;
+  private readonly tokenCounter: TokenCounter | null;
   /** 当前角色(用于 PromptBuilder 构建) */
   private character: Character | null = null;
   /** 最近一次使用的回调(用于 stopGeneration/clearConversation 通知状态) */
   private lastCallbacks: ChatServiceCallbacks | null = null;
+  /** 最近一次 Prompt 构建后的 Token 预算(只读,用于页面查询) */
+  private lastTokenBudget: TokenBudget | undefined = undefined;
 
   constructor(
     modelService: ModelService,
     lorebookService: LorebookService | null = null,
-    promptBuilder: PromptBuilder | null = null
+    promptBuilder: PromptBuilder | null = null,
+    tokenCounter: TokenCounter | null = null
   ) {
     this.modelService = modelService;
     this.lorebookService = lorebookService;
     this.promptBuilder = promptBuilder;
+    this.tokenCounter = tokenCounter;
   }
 
   /**
@@ -312,6 +320,16 @@ export class ChatService {
   }
 
   /**
+   * 获取最近一次 Prompt 构建的 Token 预算结果。
+   * 仅在执行过 sendMessage/regenerateLastResponse 后才有值。
+   *
+   * @returns TokenBudget 或 undefined(未执行或 Token 统计失败)
+   */
+  getLastTokenBudget(): TokenBudget | undefined {
+    return this.lastTokenBudget;
+  }
+
+  /**
    * 释放资源,停止当前请求。dispose 后不可复用。
    */
   dispose(): void {
@@ -327,6 +345,7 @@ export class ChatService {
     this.messages = [];
     this.currentAssistantId = null;
     this.lastCallbacks = null;
+    this.lastTokenBudget = undefined;
     this.state = ChatState.Idle;
     Logger.info(LOG_TAG, 'dispose');
   }
@@ -390,7 +409,20 @@ export class ChatService {
     this.startStartTimer(assistantId, callbacks);
 
     // 构建请求消息(通过 PromptBuilder 统一构建)
-    const requestMessages: ChatMessage[] = await this.buildRequestMessages();
+    let requestMessages: ChatMessage[];
+    try {
+      requestMessages = await this.buildRequestMessages();
+    } catch (e) {
+      this.clearStartTimer();
+      this.finalizeAssistant(assistantId, '', ChatMessageStatus.Failed, String(e), callbacks);
+      this.currentAssistantId = null;
+      this.setState(ChatState.Failed, callbacks);
+      callbacks.onError(String(e));
+      return;
+    }
+
+    // 计算 Token 预算(失败不阻塞请求,只清空结果)
+    await this.updateTokenBudget(requestMessages);
 
     try {
       this.currentHandle = this.modelService.streamCurrentChat(requestMessages, DEFAULT_OPTIONS, streamCallbacks);
@@ -446,6 +478,50 @@ export class ChatService {
     Logger.info(LOG_TAG, 'buildRequestMessages: segments=' + result.messages.length.toString()
       + ' lorebook=' + result.matchedLorebookEntryIds.length.toString());
     return result.messages;
+  }
+
+  /**
+   * 更新最近一次 Token 预算结果。
+   * 失败不抛出,仅清空预算并记录安全日志。
+   * 记录中只输出 messages 数、Token 数与超预算标志,不记录任何消息内容。
+   */
+  private async updateTokenBudget(messages: ChatMessage[]): Promise<void> {
+    if (this.tokenCounter === null) {
+      return;
+    }
+    let contextWindow: number = DEFAULT_CONTEXT_WINDOW;
+    let reserved: number = DEFAULT_RESERVED_OUTPUT_TOKENS;
+    try {
+      const config: ProviderConfig | null = await this.modelService.getCurrentConfig();
+      if (config !== null) {
+        if (config.contextWindow !== undefined) {
+          contextWindow = config.contextWindow;
+        }
+        if (config.maxTokens > 0) {
+          reserved = config.maxTokens;
+        }
+      }
+      const budget: TokenBudget = this.tokenCounter.calculateBudget(messages, contextWindow, reserved);
+      this.lastTokenBudget = budget;
+      if (budget.exceedsBudget) {
+        Logger.warn(LOG_TAG,
+          'token budget exceeded: messages=' + messages.length.toString()
+            + ' inputTokens=' + budget.estimatedInputTokens.toString()
+            + ' availableTokens=' + budget.availableInputTokens.toString()
+            + ' remainingTokens=' + budget.remainingInputTokens.toString()
+            + ' exceedsBudget=true');
+      } else {
+        Logger.info(LOG_TAG,
+          'token estimate: messages=' + messages.length.toString()
+            + ' inputTokens=' + budget.estimatedInputTokens.toString()
+            + ' availableTokens=' + budget.availableInputTokens.toString()
+            + ' remainingTokens=' + budget.remainingInputTokens.toString()
+            + ' exceedsBudget=false');
+      }
+    } catch (e) {
+      this.lastTokenBudget = undefined;
+      Logger.warn(LOG_TAG, 'token budget update failed: ' + (e instanceof Error ? e.message : String(e)));
+    }
   }
 
   /**

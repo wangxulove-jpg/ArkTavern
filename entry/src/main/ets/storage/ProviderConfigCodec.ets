@@ -44,6 +44,8 @@ export interface ProviderConfigItemV1 {
   readonly enabled: boolean;
   readonly createdAt: number;
   readonly updatedAt: number;
+  /** 上下文窗口大小(可选,缺省时回退为默认值) */
+  readonly contextWindow?: number;
 }
 
 /** 完整 JSON 结构(V1) */
@@ -150,7 +152,7 @@ export function containsSensitiveFields(obj: Record<string, Object>): boolean {
 
 /** 将单个 ProviderConfig 编码为 V1 JSON 项(显式列出字段,确保不含敏感字段) */
 export function encodeConfigItem(config: ProviderConfig): ProviderConfigItemV1 {
-  return {
+  const item: ProviderConfigItemV1 = {
     id: config.id,
     name: config.name,
     type: config.type,
@@ -164,6 +166,25 @@ export function encodeConfigItem(config: ProviderConfig): ProviderConfigItemV1 {
     createdAt: config.createdAt,
     updatedAt: config.updatedAt
   };
+  if (config.contextWindow !== undefined) {
+    const out: ProviderConfigItemV1 = {
+      id: item.id,
+      name: item.name,
+      type: item.type,
+      baseUrl: item.baseUrl,
+      modelName: item.modelName,
+      temperature: item.temperature,
+      topP: item.topP,
+      maxTokens: item.maxTokens,
+      stream: item.stream,
+      enabled: item.enabled,
+      createdAt: item.createdAt,
+      updatedAt: item.updatedAt,
+      contextWindow: config.contextWindow
+    };
+    return out;
+  }
+  return item;
 }
 
 /** 将 ProviderConfig 列表编码为 JSON 字符串(编码前执行敏感字段防御检查) */
@@ -337,7 +358,8 @@ export function itemToConfig(item: ProviderConfigItemV1): ProviderConfig {
     item.stream,
     item.enabled,
     item.createdAt,
-    item.updatedAt
+    item.updatedAt,
+    item.contextWindow
   );
 }
 

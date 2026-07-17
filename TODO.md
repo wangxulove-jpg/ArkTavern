@@ -730,6 +730,90 @@ Date: 2026-07-15
   - 未实现:宏替换、TokenCounter、历史截断、Preset、正则世界书、递归扫描
   - 已知限制:本地单元测试无法通过 hvigorw 运行(SDK component missing),需在 IDE 中运行;设备测试同样受限
 
+### T-2.6 MacroReplacer MVP：基础宏替换
+
+- 依赖:T-2.5
+- 优先级:P2
+- 修改范围:`models/MacroContext.ets`(新建)、`services/MacroReplacer.ets`(新建)、`services/PromptBuilder.ets`、`services/ChatService.ets`、`services/AppServices.ets`、测试
+- 内容:
+  - 纯数据模型 MacroContext(characterName/userName),不依赖 ArkUI
+  - MacroReplacer 支持 {{char}} / {{character}} / {{user}} 三个基础宏,大小写不敏感
+  - 未识别宏保持原样,空字符串/无上下文时原样保留
+  - 不递归替换,相同输入结果一致
+  - PromptBuilder 通过构造注入 MacroReplacer,仅在最终 ChatMessage[] 生成时执行替换
+  - ChatService 构造 MacroContext 传入 PromptBuilder,userName 默认 `User`
+  - AppServices 唯一创建并注入,不暴露 getMacroReplacer()
+  - 页面不感知,ChatService 不写正则
+- 验收标准:
+  - [x] MacroReplacer 是独立服务
+  - [x] PromptBuilder 通过注入使用 MacroReplacer
+  - [x] 页面和 ChatService 不包含宏正则逻辑
+  - [x] 三个基础宏替换正确
+  - [x] 未识别宏保持原样
+  - [x] 无上下文时不错误替换为空字符串
+  - [x] 不递归替换
+  - [x] 原始 Character / 世界书 / 消息对象未修改
+  - [x] firstMessage 不重复
+  - [x] Prompt 顺序不变
+  - [x] entry@default + entry@ohosTest BUILD SUCCESSFUL
+  - [x] 无正文和 API Key 日志泄漏
+- 完成情况(2026-07-17):
+  - [x] MacroContext.ets:interface(characterName / userName) + createMacroContext 工厂
+  - [x] MacroReplacer.ets:RegExp `/\{\{(char|character|user)\}\}/gi` 一次性匹配,大小写不敏感
+  - [x] PromptBuilder.ets:构造注入 MacroReplacer,build() 在 seg→message 转换循环中应用替换,生成新 ChatMessage 对象
+  - [x] ChatService.ets:新增 DEFAULT_USER_NAME 常量,buildRequestMessages 构造 MacroContext 传入
+  - [x] AppServices.ets:createChatService 注入 tokenCounter + MacroReplacer(通过 PromptBuilder)
+  - [x] MacroReplacer.test.ets:15 个本地单元测试(覆盖 3 个宏 / 大小写 / 多宏 / 未识别 / 空文本 / 空上下文 / 非递归 / 原始不变)
+  - [x] PromptBuilder.test.ets:扩展 13 个宏观集成测试(覆盖 System / worldbook / firstMessage / user / assistant 替换 + 原对象不变)
+  - [x] MCP 增量编译 entry@default + entry@ohosTest BUILD SUCCESSFUL
+  - [x] 模拟器冒烟通过:Alice 角色 + firstMessage `你好,{{user}},我是{{char}}。` + 世界书 `{{char}} 正站在酒馆中。` + 用户消息 `{{char}} 你好`,页面 firstMessage 显示 1 次,世界书未泄漏为气泡,无崩溃,重新生成可用
+  - [x] hilog 仅 `MacroReplacer | replace: count=N` 数字日志,无 `{{char}}` / `Alice` / `酒馆` 泄漏
+  - 未实现:{{time}} / {{date}} / {{lastMessage}} / {{random}} / 条件宏 / 嵌套宏 / 参数宏 / 正则世界书 / Character Book / TokenCounter
+  - 已知限制:设备测试需在 DevEco Studio IDE 中运行;userName 暂为固定 `User`,未提供用户名设置页面
+
+### T-2.7 TokenCounter MVP：上下文 Token 估算
+
+- 依赖:T-2.5、T-2.6
+- 优先级:P2
+- 修改范围:`models/TokenBudget.ets`(新建)、`services/TokenCounter.ets`(新建)、`services/ChatService.ets`、`services/AppServices.ets`、`models/ProviderConfig.ets`、`storage/ProviderConfigCodec.ets`、测试
+- 内容:
+  - TokenBudget 纯数据模型(contextWindow / reservedOutputTokens / availableInputTokens / estimatedInputTokens / remainingInputTokens / exceedsBudget),不依赖 ArkUI
+  - 默认值常量集中管理:CONTEXT_WINDOW_DEFAULT=32768 / DEFAULT_RESERVED_OUTPUT_TOKENS=2048
+  - TokenCounter 估算:CJK 每字符 1 Token / ASCII 拉丁词 ceil(N/4) / ASCII 标点每标点 1 Token / 空白每空白 1 Token / 其他 code point 每 code point 1 Token(Emoji 代理对正确处理)
+  - 消息固定开销 4 Token / Prompt 结尾开销 2 Token
+  - ProviderConfig 新增可选 contextWindow 字段(向后兼容,旧数据自动 fallback)
+  - ChatService 构造注入 TokenCounter,在 buildRequestMessages 后调用 updateTokenBudget,提供 getLastTokenBudget() 只读接口
+  - 超预算只检测不截断,TokenCounter 抛错不阻塞聊天
+  - AppServices 唯一创建并注入,不暴露 getTokenCounter()
+- 验收标准:
+  - [x] TokenCounter 是独立、无状态服务
+  - [x] 中文、英文、标点和 Emoji 均有合理确定性估算
+  - [x] TokenBudget 字段含义明确
+  - [x] 最终 Prompt 中所有消息均参与统计
+  - [x] Character、世界书、宏替换和聊天历史均被包含
+  - [x] 不修改任何原始消息
+  - [x] 超预算只检测,不截断
+  - [x] ChatPage 不感知 TokenCounter
+  - [x] 不新增第三方依赖
+  - [x] 日志不泄露正文
+  - [x] entry@default + entry@ohosTest BUILD SUCCESSFUL
+  - [x] 现有聊天与重新生成无回归
+- 完成情况(2026-07-17):
+  - [x] TokenBudget.ets:纯数据模型 + createTokenBudget 工厂(异常值归一化) + DEFAULT_* 常量
+  - [x] TokenCounter.ets:estimateTextTokens / estimateMessageTokens / estimateMessagesTokens 纯函数 + TokenCounter class 委托;所有常量集中定义,UTF-16 代理对安全
+  - [x] ProviderConfig.ets:新增 contextWindow?: number + CONTEXT_WINDOW_DEFAULT=32768;withUpdates 保留新字段;构造器增加可选参数
+  - [x] ProviderConfigCodec.ets:ProviderConfigItemV1 增加 contextWindow(可选,旧数据缺省不影响反序列化,schemaVersion 保持 1)
+  - [x] ChatService.ets:构造注入 TokenCounter;新增 getLastTokenBudget() / 私有 updateTokenBudget();doStream 中 buildRequestMessages 之后调用;异常时 lastTokenBudget=undefined + 安全 warn 日志
+  - [x] AppServices.ets:createChatService 注入 tokenCounter(私有字段,不对外暴露)
+  - [x] TokenCounter.test.ets:30 个本地单元测试(覆盖 30 个任务要求的场景)
+  - [x] ChatServiceToken.test.ets:10 个 ChatService Token 集成测试(覆盖 31-40 项)
+  - [x] MockChatServiceDeps.ets:本地测试用 MockModelService 支撑
+  - [x] MCP 增量编译 entry@default + entry@ohosTest BUILD SUCCESSFUL
+  - [x] 模拟器冒烟:hilog 实测 `token estimate: messages=5 inputTokens=68 availableTokens=31744 remainingTokens=31676 exceedsBudget=false`,重新生成再次输出
+  - [x] hilog 扫描:`Alice` / `{{char}}` / `sk-` / `酒馆` / 完整请求 JSON 全部 0 命中
+  - 未实现:HistoryTrimmer / 自动截断 / Summary / tiktoken / 精确 tokenizer / UI Token 显示 / Preset
+  - 已知限制:设备测试需在 DevEco Studio IDE 中运行;超预算行为依赖单元测试覆盖(不通过实机修改正式配置制造错误)
+
 ---
 
 ## Phase 3:角色卡导入
