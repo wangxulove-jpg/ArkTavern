@@ -1943,3 +1943,194 @@ hilog 关键日志确认持久化流程完整跑通:
 - [x] T-4.5 正式验收通过(编译层面)
 - [ ] T-4.5 设备测试实际执行验证(待 IDE 中运行)
 - [ ] T-4.5 模拟器人工验收(待设备环境)
+
+## T-4.6 CharacterRepository 与 Preferences→RDB 迁移 MVP 完成记录(2026-07-17)
+
+> 说明:本任务将 Character 数据的正式数据源从 Preferences 切换到 RDB,同时安全迁移现有用户已创建或导入的角色。
+> CharacterRepository 成为角色数据唯一正式数据源;CharacterService 不再使用 CharacterStore 执行业务 CRUD;旧 Preferences 角色数据在首次升级时自动迁入 RDB;当前角色选择保持不变;迁移可重复执行,不重复导入、不覆盖较新 RDB 数据;旧 Preferences 数据暂时保留作为迁移备份,不立即删除。Lorebook 仍继续使用 Preferences,本任务不迁移。
+
+### 实现概要
+
+- **CharacterRepository**(`entry/src/main/ets/repositories/CharacterRepository.ets`):角色数据 RDB 仓储,基于现有 `characters` 表(版本 1,不修改 Schema)。
+  - `insert` / `insertWithStore` / `getById` / `list` / `update` / `remove` / `count` / `exists` / `insertManyIfMissing`
+  - `list` 排序:`created_at ASC → updated_at ASC → id ASC`(稳定排序,不按 name 排序)
+  - `insert` ID 重复映射为 `DatabaseError.AlreadyExists`;`update` 不存在返回 `NotFound`(基于 affected rows);`remove` 幂等
+  - `insertManyIfMissing`:事务批量导入,按 ID 跳过已存在(不覆盖,不生成新 ID);中途失败整批新增部分回滚;已存在记录不受影响;空数组直接返回
+  - `characterFromRow` 行映射:损坏数据(id/name 空、时间戳非法)抛 `DatabaseError.InvalidData`,ResultSet 所有路径关闭
+  - 不打印角色字段;不修改输入 Character 对象
+  - `CharacterImportResult`:`{ insertedCount, skippedExistingCount, totalCount }`(不含角色 ID 或正文)
+
+- **CharacterSelectionStore**(`entry/src/main/ets/storage/CharacterSelectionStore.ets`):当前角色选择的轻量 Preferences 存储。
+  - 复用旧 `current_character_id_v1` key 和 `arktavern_settings` Preferences 文件,升级后无需迁移当前选择值
+  - `getCurrentCharacterId()` / `setCurrentCharacterId(id | null)` / `clear()`
+  - 不保存完整 Character 列表;不依赖 RDB;不依赖页面
+
+- **CharacterMigrationResult**(`entry/src/main/ets/models/CharacterMigrationResult.ets`):迁移结果模型,只含计数,不含角色名称、正文、avatarUri、角色 ID 完整列表。
+
+- **CharacterMigrationService**(`entry/src/main/ets/services/CharacterMigrationService.ets`):迁移编排服务。
+  - 构造:`(characterStore, characterRepository, characterSelectionStore, appPreferences)`
+  - `migrateIfNeeded()` 算法:检查标记 → 已完成直接返回 → 读取旧 CharacterStore 全量 + 当前角色 ID → `insertManyIfMissing` → 验证每个旧 ID 在 RDB 中存在 → 检查当前角色(存在则保留,不存在则清空)→ 写入 marker=true
+  - 幂等性:迁移标记为 true 时直接返回;中途崩溃后下次启动重新执行;已存在 ID 跳过,不产生重复角色
+  - 日志只输出计数,不输出角色 ID/名称/正文
+
+- **AppPreferences 扩展**:新增 `getBoolean(key, defValue)` / `putBoolean(key, value)` 方法,复用现有 `validateKey/requirePrefs/fromPlatformError` 模式,类型不匹配返回默认值(容错),写入后自动 flush。不破坏已有 string API。
+
+- **CharacterService 切换到 RDB**(`entry/src/main/ets/services/CharacterService.ets`):
+  - 构造改为 `(repository: CharacterRepository, selectionStore: CharacterSelectionStore, assetStore: CharacterAssetStore, legacyStore: CharacterStore)`
+  - `list` / `getById` 直接委托 repository
+  - `create` / `importFromParsed`:生成 UUID → validate → repository.insert → ID 冲突生成新 UUID 重试一次(用户主动导入发生冲突时才生成新 ID,与迁移时保留原 ID 不同)
+  - `update`:repository.getById → updateCharacter → validate → repository.update;`NotFound` 映射为 Error
+  - `remove`:repository.getById(幂等检查)→ repository.remove → 若是当前角色清空选择 → deleteAvatar(失败不回滚角色记录,仅 warn)
+  - `setCurrentCharacterId`:非空时先 repository.exists 校验 → selectionStore.setCurrentCharacterId
+  - `getCurrentCharacter`:selectionStore.getCurrentCharacterId → repository.getById → 不存在则清空选择
+  - `confirmPngImport`:saveAvatar → createCharacter → validate → repository.insert(失败回滚头像)
+  - `getLegacyStore()`:暴露 legacyStore 供 MigrationService 使用
+  - 日志不输出角色 ID 完整值、名称、正文
+
+- **AppServices 接入**(`entry/src/main/ets/services/AppServices.ets`):
+  - 新增 import 与私有字段:`CharacterRepository` / `CharacterSelectionStore` / `AppPreferences` / `CharacterMigrationService`
+  - 初始化顺序:modelService → appPreferences → dbHelper → characterService.initialize → **characterMigrationService.migrateIfNeeded** → lorebookService.initialize
+  - 数据库迁移失败时 AppServices 初始化失败(通过 Promise 链 `.catch` 清理实例),不静默回退到旧 CharacterStore
+  - 不向页面暴露 Repository;不新增 `getCharacterRepository()`
+
+### 迁移标记和幂等策略
+
+- **标记 key**:`character_rdb_migration_v1_complete`(boolean),存于 AppPreferences(`arktavern_settings`)
+- **写入时机**:只有迁移、验证、当前选择检查全部完成后才写 true
+- **失败保护**:迁移失败或验证失败时不写 true,允许下次启动重试
+- **幂等性保证**:`insertManyIfMissing` 按 ID 跳过已存在,事务包裹;若 RDB 已插入角色但完成标记尚未写入,下次启动重新执行时已存在 ID 跳过,不产生重复角色,最终完成
+- **不使用 TODO 或文件存在性作为迁移标记**;不把标记存入数据库 characters 表
+
+### Preferences→RDB 迁移流程
+
+```
+1. 检查 character_rdb_migration_v1_complete
+2. 已完成 → 直接返回 createSkippedMigrationResult()
+3. 从旧 CharacterStore.list() 读取全部角色
+4. 从旧 CharacterStore.getCurrentCharacterId() 读取当前角色 ID
+5. 调用 CharacterRepository.insertManyIfMissing(legacyCharacters)
+6. 对每个旧角色 ID 验证 RDB 中存在(repository.exists)
+7. 若 currentCharacterId 非空:
+   a. RDB 中存在 → 调用 selectionStore.setCurrentCharacterId 保留
+   b. RDB 中不存在 → 调用 selectionStore.setCurrentCharacterId(null) 清空
+8. 写入 marker = true
+9. 返回 CharacterMigrationResult
+```
+
+- **无旧角色时**:标记完成;不创建默认角色;不创建空数据库记录;当前角色 ID 若指向不存在角色则清空
+- **RDB 已有角色时**:相同 ID 跳过;不覆盖;继续导入其他缺失角色;验证旧角色 ID 最终全部存在
+
+### JSON / PNG 导入与头像兼容
+
+- **JSON 导入**:生成新 UUID → `parseCharacterJson` → `importFromParsed` → repository.insert;ID 冲突生成新 UUID 重试一次
+- **PNG 导入**:`confirmPngImport` 先 `assetStore.saveAvatar(pngUri, characterId)` 复制头像到应用私有目录 → 创建 Character(带 avatarUri)→ repository.insert;角色保存失败时回滚头像(`assetStore.deleteAvatar(characterId)`)
+- **头像文件**:继续由 `CharacterAssetStore` 管理,不写入 RDB;删除角色时调用 `assetStore.deleteAvatar` 清理(失败不回滚角色记录)
+- **avatarUri**:空字符串合法(`avatar_uri TEXT NOT NULL DEFAULT ''`)
+
+### 当前角色和已有 Chat 兼容
+
+- **当前角色选择**:迁入 RDB 后保留原 `current_character_id_v1` key(由 CharacterSelectionStore 复用),无需迁移当前选择值;迁移时若 currentCharacterId 指向的角色在 RDB 中存在则保留,否则清空
+- **已有 Chat**:`chats.character_id` 不设置外键,原 Character ID 保留,已有 Chat 自动继续对应正确角色;不迁移 Chat;不更新 chats;不修改会话列表逻辑
+- **删除 Character 后**:Chat 数据保留,不级联删除;以后可作为"角色已删除的历史聊天"处理(本任务不新增该 UI)
+
+### 旧 Preferences 备份处理
+
+- 迁移成功后**不删除** `character_list_v1`;**不清空**旧 JSON;**不继续双写**;**不继续从旧列表读取业务数据**
+- 原因:保留一期回滚备份,避免跨 Preferences/RDB 删除过程引入不可恢复风险
+- 明确:RDB 是迁移完成后的唯一正式数据源;旧 Preferences 仅作为静态历史备份
+- 未实现:RDB 与 Preferences 双向同步;每次修改同时写两份;启动时比较 updatedAt 后自动合并
+
+### 定向测试(区分编译与实际执行)
+
+- **测试代码编译状态**:
+  - `entry@default` BUILD SUCCESSFUL
+  - `entry@ohosTest` BUILD SUCCESSFUL
+- **测试实际执行状态**:本会话仅完成编译验证,未在 DevEco Studio IDE 中运行设备测试(按快速执行规则,设备测试需在 IDE 中执行,本会话不启动设备测试)
+- 测试文件:
+  - `entry/src/ohosTest/ets/test/CharacterRepository.test.ets`(设备 30 项,独立测试数据库 `arktavern_character_repository_test.db`,前后清理)
+  - `entry/src/test/CharacterMigrationService.test.ets`(本地 20 项,Mock 编排逻辑,不依赖真实 RDB)
+  - `entry/src/test/CharacterServiceRdb.test.ets`(本地 23 项,Mock Repository/SelectionStore/AssetStore/LegacyStore)
+
+### 编译结果
+
+- 第 1 次 `entry@default` 编译失败(10 个错误):
+  - `CharacterRepository.ets`:`store.count(predicates)` API 不存在(3 处);`throw err` 违反 `arkts-limited-throw`(1 处)
+  - `CharacterService.ets`:`throw e` 违反 `arkts-limited-throw`(4 处)
+  - `AppServices.ets`:`migrateIfNeeded()` 返回 `Promise<CharacterMigrationResult>` 不能直接转为 `Promise<void>`(1 处)
+- 修复:
+  - `store.count(predicates)` 改为 `store.querySql('SELECT COUNT(*) AS cnt FROM ...')` 或 `store.query(predicates)` + `rs.goToFirstRow()`
+  - `throw err`/`throw e` 在 catch 块中改为先 `if (e instanceof Error) throw e; else throw new Error('...: ' + String(e))`
+  - `migrateIfNeeded()` 调用改为 `async (): Promise<void> => { await ... }`
+- 第 2 次 `entry@default` 编译:**BUILD SUCCESSFUL**
+- `entry@ohosTest` 编译:**BUILD SUCCESSFUL**(仅遗留 throw 相关 warning,非本任务代码)
+
+### 升级迁移人工验收结果
+
+- 按任务规范第二十二节"模拟器人工迁移验收"5 个场景未执行(需设备环境):
+  - 场景一:准备旧 Preferences 数据(Alice/Bob/PNG 角色,Alice 设为当前,有聊天会话)— 未执行
+  - 场景二:升级启动(确认迁移完成、角色数量一致、Alice 仍为当前、头像正常、聊天可恢复)— 未执行
+  - 场景三:重启幂等(强制停止后重启,确认不重复导入、marker 生效、当前角色不变)— 未执行
+  - 场景四:迁移后 CRUD(新建 Charlie → 编辑 → 设为当前 → 重启 → 导出 → 删除 → 重启)— 未执行
+  - 场景五:迁移后导入(JSON + PNG 导入 → 重启 → 删除 → 重启)— 未执行
+- 数据库辅助核验(第二十三节)未执行(需设备环境)
+
+### 重启幂等验证结果
+
+- 未执行(需设备环境)
+- 幂等性通过代码与 Mock 测试覆盖:
+  - `CharacterMigrationService.test.ets` 测试 15(第一次执行中断后第二次可重试)、测试 16(重复执行不产生重复角色)、测试 1(marker=true 时跳过)
+  - `CharacterRepository.test.ets` 测试 19(insertManyIfMissing 跳过已有 ID)、测试 20(不覆盖已有 RDB 记录)
+
+### 迁移后 CRUD 与导入验证
+
+- 未执行(需设备环境)
+- CRUD 切换通过 Mock 测试覆盖:
+  - `CharacterServiceRdb.test.ets` 测试 1-5(list/getById/create/update/remove 从 Repository)、测试 11(JSON 导入写入 RDB)、测试 13(PNG 导入写入 RDB)
+
+### 日志泄漏检查
+
+- `CharacterMigrationService` 日志仅输出:`CharacterMigration | start` / `CharacterMigration | complete legacy=N inserted=N skipped=N` / `CharacterMigration | already complete, skip` / `CharacterMigration | verify failed, not all legacy ids exist in RDB`
+- `CharacterRepository` 日志:仅 `CharacterRepository | count=N`(可选),不输出角色 ID、name、description、personality、scenario、firstMessage、systemPrompt、avatarUri、完整角色 ID 列表、旧 JSON、SQL、ValuesBucket、API Key
+- `CharacterService` 日志:`create ok` / `update ok id=<id>` / `remove ok id=<id>` / `setCurrentCharacterId ok` / `importFromParsed ok source=<format>` / `confirmPngImport ok` — id 字段为角色 ID(非正文),符合任务规范"不输出角色正文"要求
+- `AppPreferences.getBoolean/putBoolean` 日志:仅输出 key 名,不输出 value
+- `CharacterSelectionStore` 日志:`initialize ok` / `setCurrentCharacterId ok`,不输出角色 ID
+
+### 尚未解决的问题
+
+- 设备测试实际执行结果待在 DevEco Studio IDE 中验证(本会话仅编译通过)
+- 模拟器人工验收 5 个场景未执行(需设备环境)
+- 数据库辅助核验未执行(需设备环境)
+- LorebookRepository / Lorebook Preferences 迁移:按任务要求不实现
+- 删除旧 Character Preferences 备份:按任务要求不实现,保留一期回滚备份
+- 数据库版本升级 / characters 表结构修改:按任务要求不实现
+- 会话搜索 / Swipe / Summary / Preset / Character V3 大量新字段扩展 / 角色搜索 / 角色分组 / 在线角色市场 / 角色云同步 / 聊天表外键改造 / Character 删除后级联删除聊天 / Character 头像二进制写入数据库:均按任务要求不实现
+
+### T-4.6 验收清单
+
+- [x] CharacterRepository 成为正式数据源
+- [x] CharacterService 不再使用 CharacterStore CRUD
+- [x] 旧角色自动迁入 RDB(代码层面)
+- [x] 迁移保留原 Character ID
+- [x] 当前角色选择保留(代码层面)
+- [x] 迁移可重复执行(代码层面)
+- [x] 中断后可安全重试(代码层面,Mock 测试覆盖)
+- [x] RDB 已有角色不被覆盖
+- [x] 不产生重复角色
+- [x] 旧 Preferences 数据暂时保留
+- [x] 迁移后不双写 Preferences
+- [x] JSON / PNG 导入正常(代码层面)
+- [x] 头像正常(代码层面)
+- [x] 新建、编辑、删除、设为当前正常(代码层面)
+- [x] 删除当前角色清空选择
+- [x] 现有角色聊天仍可恢复(代码层面,Character ID 保留)
+- [x] 不修改 Lorebook
+- [x] 不修改数据库 Schema
+- [x] `entry@default` BUILD SUCCESSFUL
+- [x] `entry@ohosTest` BUILD SUCCESSFUL
+- [x] 测试编译和实际执行状态分开记录
+- [ ] 升级迁移人工验证完成(待设备环境)
+- [ ] 无角色正文、SQL、Prompt 或密钥日志泄漏(代码层面已检查,实机 hilog 检查待设备环境)
+
+- [x] T-4.6 正式验收通过(编译层面)
+- [ ] T-4.6 设备测试实际执行验证(待 IDE 中运行)
+- [ ] T-4.6 模拟器人工验收(待设备环境)

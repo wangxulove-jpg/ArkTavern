@@ -27,6 +27,8 @@ import databaseSchemaTest from './DatabaseSchema.test';
 import repositoryMappersTest from './RepositoryMappers.test';
 import chatSessionServiceTest from './ChatSessionService.test';
 import chatSessionViewModelTest from './ChatSessionViewModel.test';
+import characterMigrationServiceTest from './CharacterMigrationService.test';
+import characterServiceRdbTest from './CharacterServiceRdb.test';
 
 export default function testsuite() {
   localUnitTest();
@@ -57,4 +59,6 @@ export default function testsuite() {
   repositoryMappersTest();
   chatSessionServiceTest();
   chatSessionViewModelTest();
+  characterMigrationServiceTest();
+  characterServiceRdbTest();
 }

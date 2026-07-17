@@ -24,9 +24,11 @@ import { ProviderConfigStore } from '../storage/ProviderConfigStore';
 import { AssetStoreKeyStore } from '../storage/AssetStoreKeyStore';
 import { ProviderKeyStore } from '../storage/ProviderKeyStore';
 import { CharacterStore } from '../storage/CharacterStore';
+import { CharacterSelectionStore } from '../storage/CharacterSelectionStore';
 import { CharacterAssetStore } from '../storage/CharacterAssetStore';
 import { LorebookStore } from '../storage/LorebookStore';
 import { CharacterService } from './CharacterService';
+import { CharacterMigrationService } from './CharacterMigrationService';
 import { LorebookService } from './LorebookService';
 import { MacroReplacer } from './MacroReplacer';
 import { PromptBuilder } from './PromptBuilder';
@@ -36,6 +38,7 @@ import { DbHelper } from '../database/DbHelper';
 import { ChatRepository } from '../repositories/ChatRepository';
 import { MessageRepository } from '../repositories/MessageRepository';
 import { ChatPersistenceOperations } from '../repositories/ChatPersistenceOperations';
+import { CharacterRepository } from '../repositories/CharacterRepository';
 import { ChatService } from './ChatService';
 import { ChatPersistenceService } from './ChatPersistenceService';
 import { ModelService } from './ModelService';
@@ -75,28 +78,50 @@ export class AppServices {
   private readonly chatPersistenceOperations: ChatPersistenceOperations;
   /** ChatPersistenceService 聊天持久化协调服务(不对页面公开) */
   private readonly chatPersistenceService: ChatPersistenceService;
+  /** CharacterRepository 角色仓储(不对页面公开) */
+  private readonly characterRepository: CharacterRepository;
+  /** CharacterSelectionStore 当前角色选择(不对页面公开) */
+  private readonly characterSelectionStore: CharacterSelectionStore;
+  /** AppPreferences(不对页面公开) */
+  private readonly appPreferences: AppPreferences;
+  /** CharacterMigrationService(不对页面公开) */
+  private readonly characterMigrationService: CharacterMigrationService;
 
   /**
    * 私有构造,组装全部依赖。
    * 不保存 Context,仅用于初始化 Preferences。
    */
   private constructor() {
-    const prefs: AppPreferences = new AppPreferences();
-    const configStore: ProviderConfigStore = new ProviderConfigStore(prefs);
+    this.appPreferences = new AppPreferences();
+    const configStore: ProviderConfigStore = new ProviderConfigStore(this.appPreferences);
     const assetKeyStore: AssetStoreKeyStore = new AssetStoreKeyStore();
     const providerKeyStore: ProviderKeyStore = new ProviderKeyStore(assetKeyStore);
     const factory: DefaultProviderFactory = new DefaultProviderFactory(providerKeyStore);
     this.modelService = new ModelService(configStore, providerKeyStore, factory);
     const characterStore: CharacterStore = new CharacterStore();
     const characterAssetStore: CharacterAssetStore = new CharacterAssetStore();
-    this.characterService = new CharacterService(characterStore, characterAssetStore);
+    this.characterSelectionStore = new CharacterSelectionStore();
+    this.dbHelper = new DbHelper();
+    // CharacterRepository 使用与 Chat 相同的 DbHelper
+    this.characterRepository = new CharacterRepository(this.dbHelper);
+    this.characterService = new CharacterService(
+      this.characterRepository,
+      this.characterSelectionStore,
+      characterAssetStore,
+      characterStore
+    );
+    this.characterMigrationService = new CharacterMigrationService(
+      characterStore,
+      this.characterRepository,
+      this.characterSelectionStore,
+      this.appPreferences
+    );
     const lorebookStore: LorebookStore = new LorebookStore();
     this.lorebookService = new LorebookService(lorebookStore);
     const macroReplacer: MacroReplacer = new MacroReplacer();
     this.promptBuilder = new PromptBuilder(this.lorebookService, macroReplacer);
     this.tokenCounter = new TokenCounter();
     this.historyTrimmer = new HistoryTrimmer(this.tokenCounter);
-    this.dbHelper = new DbHelper();
     // 持久化层组合:全部 Repository 共享同一 DbHelper 实例
     this.chatRepository = new ChatRepository(this.dbHelper);
     this.messageRepository = new MessageRepository(this.dbHelper);
@@ -129,9 +154,13 @@ export class AppServices {
     const services: AppServices = new AppServices();
     AppServices.instance = services;
     AppServices.readyPromise = services.modelService.initialize(context)
-      .then((): Promise<void> => services.characterService.initialize(context))
-      .then((): Promise<void> => services.lorebookService.initialize(context))
+      .then((): Promise<void> => services.appPreferences.initialize(context))
       .then((): Promise<void> => services.dbHelper.initialize(context))
+      .then((): Promise<void> => services.characterService.initialize(context))
+      .then(async (): Promise<void> => {
+        await services.characterMigrationService.migrateIfNeeded();
+      })
+      .then((): Promise<void> => services.lorebookService.initialize(context))
       .then((): void => {
         Logger.info(LOG_TAG, 'initialize ok');
       })

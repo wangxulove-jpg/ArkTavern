@@ -1,22 +1,30 @@
 /**
  * CharacterService 角色业务服务
  *
- * 封装 CharacterStore,提供角色 CRUD 和当前角色管理。
- * 页面只通过 CharacterService 访问角色数据,不直接操作 CharacterStore。
+ * 数据源:CharacterRepository(RDB)。
+ * 当前角色 ID:CharacterSelectionStore(Preferences)。
+ * 头像:CharacterAssetStore(文件系统)。
+ *
+ * 不再通过 CharacterStore 执行业务 CRUD。
+ * CharacterStore 仅作为 Legacy Migration Source,由 CharacterMigrationService 在启动时一次性读取。
  *
  * 设计原则:
  * - 不依赖 ArkUI
  * - 不缓存 API Key
  * - 校验角色数据
- * - 不直接导出 CharacterStore 引用
+ * - 不直接操作 RdbStore
+ * - 不向页面暴露 Repository
  */
 
 import { common } from '@kit.AbilityKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
 import { Character, createCharacter, updateCharacter, validateCharacter, CharacterUpdates } from '../models/Character';
-import { CharacterStore } from '../storage/CharacterStore';
+import { CharacterRepository } from '../repositories/CharacterRepository';
+import { CharacterSelectionStore } from '../storage/CharacterSelectionStore';
 import { CharacterAssetStore } from '../storage/CharacterAssetStore';
+import { CharacterStore } from '../storage/CharacterStore';
+import { DatabaseError, DatabaseErrorType } from '../models/DatabaseError';
 import { generateUuid } from '../utils/Uuid';
 import { Logger } from '../utils/Logger';
 import { parseCharacterJson, ParseResult, ParsedCharacterCard } from '../parser/CharacterCardJsonParser';
@@ -32,20 +40,32 @@ export interface PngImportResult {
 }
 
 export class CharacterService {
-  private store: CharacterStore;
-  private assetStore: CharacterAssetStore;
+  private readonly repository: CharacterRepository;
+  private readonly selectionStore: CharacterSelectionStore;
+  private readonly assetStore: CharacterAssetStore;
+  /** 旧 Preferences 数据源,仅用于迁移期间读取(不用于业务 CRUD) */
+  private readonly legacyStore: CharacterStore;
   private initialized: boolean = false;
 
-  constructor(store: CharacterStore, assetStore: CharacterAssetStore) {
-    this.store = store;
+  constructor(
+    repository: CharacterRepository,
+    selectionStore: CharacterSelectionStore,
+    assetStore: CharacterAssetStore,
+    legacyStore: CharacterStore
+  ) {
+    this.repository = repository;
+    this.selectionStore = selectionStore;
     this.assetStore = assetStore;
+    this.legacyStore = legacyStore;
   }
 
   async initialize(context: common.Context): Promise<void> {
     if (this.initialized) {
       return;
     }
-    await this.store.initialize(context);
+    // legacyStore 用于兼容旧数据读取(迁移时由 MigrationService 调用)
+    await this.legacyStore.initialize(context);
+    await this.selectionStore.initialize(context);
     this.assetStore.initialize(context);
     this.initialized = true;
     Logger.info(LOG_TAG, 'initialize ok');
@@ -59,12 +79,12 @@ export class CharacterService {
 
   async list(): Promise<Character[]> {
     this.requireInit();
-    return await this.store.list();
+    return await this.repository.list();
   }
 
   async getById(id: string): Promise<Character | null> {
     this.requireInit();
-    return await this.store.getById(id);
+    return await this.repository.getById(id);
   }
 
   async create(
@@ -84,8 +104,34 @@ export class CharacterService {
     if (error !== null) {
       throw new Error(error);
     }
-    await this.store.save(character);
-    Logger.info(LOG_TAG, 'create ok id=' + character.id);
+    try {
+      await this.repository.insert(character);
+    } catch (e) {
+      // ID 冲突时生成新 UUID 重试一次
+      if (e instanceof DatabaseError && e.type === DatabaseErrorType.AlreadyExists) {
+        // createCharacter 不会重置 id,这里手动构造新对象
+        const retryCharacter: Character = {
+          id: 'char-' + generateUuid(),
+          name: character.name,
+          description: character.description,
+          personality: character.personality,
+          scenario: character.scenario,
+          firstMessage: character.firstMessage,
+          systemPrompt: character.systemPrompt,
+          avatarUri: character.avatarUri,
+          createdAt: character.createdAt,
+          updatedAt: character.updatedAt
+        };
+        await this.repository.insert(retryCharacter);
+        Logger.info(LOG_TAG, 'create ok (retry)');
+        return retryCharacter;
+      }
+      if (e instanceof Error) {
+        throw e;
+      }
+      throw new Error('CharacterService create failed: ' + String(e));
+    }
+    Logger.info(LOG_TAG, 'create ok');
     return character;
   }
 
@@ -94,42 +140,84 @@ export class CharacterService {
     updates: CharacterUpdates
   ): Promise<Character> {
     this.requireInit();
-    const existing: Character | null = await this.store.getById(id);
+    const existing: Character | null = await this.repository.getById(id);
     if (existing === null) {
-      throw new Error('CharacterService update: not found: ' + id);
+      throw new Error('CharacterService update: not found');
     }
     const updated: Character = updateCharacter(existing, updates);
     const error: string | null = validateCharacter(updated);
     if (error !== null) {
       throw new Error(error);
     }
-    await this.store.update(updated);
+    try {
+      await this.repository.update(updated);
+    } catch (e) {
+      if (e instanceof DatabaseError && e.type === DatabaseErrorType.NotFound) {
+        throw new Error('CharacterService update: not found');
+      }
+      if (e instanceof Error) {
+        throw e;
+      }
+      throw new Error('CharacterService update failed: ' + String(e));
+    }
     Logger.info(LOG_TAG, 'update ok id=' + id);
     return updated;
   }
 
   async remove(id: string): Promise<void> {
     this.requireInit();
-    await this.store.remove(id);
-    // 删除角色时同步删除头像
-    await this.assetStore.deleteAvatar(id);
+    const existing: Character | null = await this.repository.getById(id);
+    if (existing === null) {
+      // 幂等:不存在视为已删除
+      Logger.info(LOG_TAG, 'remove skip (not found)');
+      return;
+    }
+    // 1. 删除 RDB Character
+    await this.repository.remove(id);
+    // 2. 若是当前角色,清空选择
+    const currentId: string | null = await this.selectionStore.getCurrentCharacterId();
+    if (currentId === id) {
+      await this.selectionStore.clear();
+    }
+    // 3. 删除头像文件(失败不回滚角色记录)
+    try {
+      await this.assetStore.deleteAvatar(id);
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'remove: deleteAvatar failed, character record already deleted');
+    }
     Logger.info(LOG_TAG, 'remove ok id=' + id);
   }
 
   async setCurrentCharacterId(id: string | null): Promise<void> {
     this.requireInit();
-    await this.store.setCurrentCharacterId(id);
+    if (id !== null) {
+      const exists: boolean = await this.repository.exists(id);
+      if (!exists) {
+        throw new Error('CharacterService setCurrentCharacterId: not found');
+      }
+    }
+    await this.selectionStore.setCurrentCharacterId(id);
     Logger.info(LOG_TAG, 'setCurrentCharacterId ok');
   }
 
   async getCurrentCharacterId(): Promise<string | null> {
     this.requireInit();
-    return await this.store.getCurrentCharacterId();
+    return await this.selectionStore.getCurrentCharacterId();
   }
 
   async getCurrentCharacter(): Promise<Character | null> {
     this.requireInit();
-    return await this.store.getCurrentCharacter();
+    const id: string | null = await this.selectionStore.getCurrentCharacterId();
+    if (id === null) {
+      return null;
+    }
+    const c: Character | null = await this.repository.getById(id);
+    if (c === null) {
+      // 选择指向的角色已被删除,清空选择
+      await this.selectionStore.clear();
+      return null;
+    }
+    return c;
   }
 
   // ===== 导入导出 =====
@@ -137,9 +225,6 @@ export class CharacterService {
   /**
    * 解析角色卡 JSON(不保存)。
    * 用于导入前预览。
-
-   * @param jsonString 原始 JSON 字符串
-   * @returns ParseResult 包含解析结果
    */
   parseCharacterJson(jsonString: string): ParseResult {
     return parseCharacterJson(jsonString);
@@ -148,15 +233,11 @@ export class CharacterService {
   /**
    * 从解析后的角色卡创建并保存 Character。
    * id 冲突时生成新 UUID,不覆盖现有角色。
-   *
-   * @param parsed 解析后的角色卡
-   * @param avatarUri 可选的头像 URI(覆盖 parsed 中的 avatarUri)
-   * @returns 新创建的 Character
    */
   async importFromParsed(parsed: ParsedCharacterCard, avatarUri?: string): Promise<Character> {
     this.requireInit();
     const finalAvatarUri: string = avatarUri !== undefined ? avatarUri : parsed.avatarUri;
-    const character: Character = createCharacter(
+    let character: Character = createCharacter(
       'char-' + generateUuid(),
       parsed.name,
       parsed.description,
@@ -170,18 +251,37 @@ export class CharacterService {
     if (error !== null) {
       throw new Error(error);
     }
-    await this.store.save(character);
-    Logger.info(LOG_TAG, 'importFromParsed ok id=' + character.id + ' source=' + parsed.sourceFormat);
+    try {
+      await this.repository.insert(character);
+    } catch (e) {
+      if (e instanceof DatabaseError && e.type === DatabaseErrorType.AlreadyExists) {
+        // ID 冲突,生成新 UUID 重试
+        character = {
+          id: 'char-' + generateUuid(),
+          name: character.name,
+          description: character.description,
+          personality: character.personality,
+          scenario: character.scenario,
+          firstMessage: character.firstMessage,
+          systemPrompt: character.systemPrompt,
+          avatarUri: character.avatarUri,
+          createdAt: character.createdAt,
+          updatedAt: character.updatedAt
+        };
+        await this.repository.insert(character);
+      } else {
+        if (e instanceof Error) {
+          throw e;
+        }
+        throw new Error('CharacterService importFromParsed failed: ' + String(e));
+      }
+    }
+    Logger.info(LOG_TAG, 'importFromParsed ok source=' + parsed.sourceFormat);
     return character;
   }
 
   /**
    * 从 JSON 字符串解析并导入角色。
-   * 组合 parseCharacterJson + importFromParsed。
-   *
-   * @param jsonString 原始 JSON 字符串
-   * @returns 新创建的 Character
-   * @throws Error 解析失败或保存失败
    */
   async importFromJson(jsonString: string): Promise<Character> {
     const result: ParseResult = this.parseCharacterJson(jsonString);
@@ -193,15 +293,12 @@ export class CharacterService {
 
   /**
    * 将角色导出为 ArkTavern JSON 字符串。
-   *
-   * @param id 角色 ID
-   * @returns ArkTavern JSON 字符串
    */
   async exportToJson(id: string): Promise<string> {
     this.requireInit();
-    const character: Character | null = await this.store.getById(id);
+    const character: Character | null = await this.repository.getById(id);
     if (character === null) {
-      throw new Error('CharacterService exportToJson: not found: ' + id);
+      throw new Error('CharacterService exportToJson: not found');
     }
     return writeCharacterToJson(character);
   }
@@ -209,9 +306,6 @@ export class CharacterService {
   /**
    * 从文件 URI 读取文本内容。
    * 检查文件大小不超过 10MB。
-   *
-   * @param uri 文件 URI
-   * @returns 文件文本内容
    */
   async readFileContent(uri: string): Promise<string> {
     try {
@@ -239,9 +333,6 @@ export class CharacterService {
 
   /**
    * 将文本内容写入文件 URI。
-   *
-   * @param uri 文件 URI
-   * @param content 要写入的文本内容
    */
   async writeFileContent(uri: string, content: string): Promise<void> {
     try {
@@ -259,10 +350,6 @@ export class CharacterService {
 
   /**
    * 从文件 URI 导入角色。
-   * 读取文件 → 解析 JSON → 保存。
-   *
-   * @param uri 文件 URI
-   * @returns 新创建的 Character
    */
   async importFromFile(uri: string): Promise<Character> {
     const jsonString: string = await this.readFileContent(uri);
@@ -271,24 +358,17 @@ export class CharacterService {
 
   /**
    * 导出角色到文件 URI。
-   * 读取角色 → 序列化 → 写入文件。
-   *
-   * @param id 角色 ID
-   * @param uri 文件 URI
    */
   async exportToFile(id: string, uri: string): Promise<void> {
     const jsonString: string = await this.exportToJson(id);
     await this.writeFileContent(uri, jsonString);
-    Logger.info(LOG_TAG, 'exportToFile ok id=' + id);
+    Logger.info(LOG_TAG, 'exportToFile ok');
   }
 
   // ===== PNG 导入 =====
 
   /**
    * 从 URI 读取二进制文件内容。
-   *
-   * @param uri 文件 URI
-   * @returns ArrayBuffer
    */
   async readFileBytes(uri: string): Promise<ArrayBuffer> {
     try {
@@ -314,10 +394,6 @@ export class CharacterService {
 
   /**
    * 从 PNG 文件 URI 解析角色卡(不保存)。
-   * 用于导入前预览。
-   *
-   * @param uri PNG 文件 URI
-   * @returns { result: PngParseResult, bytes: ArrayBuffer } 解析结果和 PNG 字节数据
    */
   async importPngFromFile(uri: string): Promise<PngImportResult> {
     const bytes: ArrayBuffer = await this.readFileBytes(uri);
@@ -350,17 +426,14 @@ export class CharacterService {
 
   /**
    * 确认 PNG 导入:保存头像 + 保存角色。
-   *
-   * @param parsed 解析后的角色卡
-   * @param pngUri 原始 PNG 文件 URI
-   * @returns 新创建的 Character
+   * 头像保存失败时不创建角色;角色保存失败时回滚头像。
    */
   async confirmPngImport(parsed: ParsedCharacterCard, pngUri: string): Promise<Character> {
     this.requireInit();
     const characterId: string = 'char-' + generateUuid();
-    // 保存头像
+    // 1. 保存头像(失败则不创建角色)
     const avatarUri: string = await this.assetStore.saveAvatar(pngUri, characterId);
-    // 创建并保存角色
+    // 2. 创建并保存角色
     const character: Character = createCharacter(
       characterId,
       parsed.name,
@@ -377,8 +450,24 @@ export class CharacterService {
       await this.assetStore.deleteAvatar(characterId);
       throw new Error(error);
     }
-    await this.store.save(character);
-    Logger.info(LOG_TAG, 'confirmPngImport ok id=' + character.id);
+    try {
+      await this.repository.insert(character);
+    } catch (e) {
+      // 角色保存失败,回滚头像
+      await this.assetStore.deleteAvatar(characterId);
+      if (e instanceof Error) {
+        throw e;
+      }
+      throw new Error('CharacterService confirmPngImport failed: ' + String(e));
+    }
+    Logger.info(LOG_TAG, 'confirmPngImport ok');
     return character;
+  }
+
+  /**
+   * 获取 Legacy CharacterStore(仅供 CharacterMigrationService 使用)。
+   */
+  getLegacyStore(): CharacterStore {
+    return this.legacyStore;
   }
 }

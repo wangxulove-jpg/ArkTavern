@@ -177,6 +177,66 @@ export class AppPreferences {
   }
 
   /**
+   * 读取布尔值。
+   * 不存在时返回 defValue,不抛 NotFound。
+   *
+   * @param key 键名(非空,长度 ≤ 1024 字节)
+   * @param defValue 默认值
+   * @returns 布尔值或默认值
+   * @throws PreferencesError 当未初始化、key 非法、平台错误时
+   */
+  async getBoolean(key: string, defValue: boolean): Promise<boolean> {
+    this.validateKey(key);
+    const prefs: preferences.Preferences = this.requirePrefs();
+    Logger.info(LOG_TAG, 'getBoolean key=' + key);
+    try {
+      const value: preferences.ValueType = await prefs.get(key, defValue);
+      if (typeof value === 'boolean') {
+        Logger.info(LOG_TAG, 'getBoolean ok key=' + key);
+        return value;
+      }
+      // 类型不匹配,返回默认值(不抛错,容错处理)
+      Logger.warn(LOG_TAG, 'getBoolean type mismatch, return default key=' + key);
+      return defValue;
+    } catch (e) {
+      const err: BusinessError = e as BusinessError;
+      Logger.error(LOG_TAG, 'getBoolean failed key=' + key + ' code=' + err.code.toString());
+      throw fromPlatformError(
+        err.code,
+        err.message,
+        PreferencesErrorType.StorageUnavailable
+      );
+    }
+  }
+
+  /**
+   * 写入布尔值。
+   * 已存在的 key 会被覆盖。写入后自动 flush。
+   *
+   * @param key 键名(非空,长度 ≤ 1024 字节)
+   * @param value 布尔值
+   * @throws PreferencesError 当未初始化、key 非法、平台错误时
+   */
+  async putBoolean(key: string, value: boolean): Promise<void> {
+    this.validateKey(key);
+    const prefs: preferences.Preferences = this.requirePrefs();
+    Logger.info(LOG_TAG, 'putBoolean key=' + key);
+    try {
+      await prefs.put(key, value);
+      await prefs.flush();
+      Logger.info(LOG_TAG, 'putBoolean ok key=' + key);
+    } catch (e) {
+      const err: BusinessError = e as BusinessError;
+      Logger.error(LOG_TAG, 'putBoolean failed key=' + key + ' code=' + err.code.toString());
+      throw fromPlatformError(
+        err.code,
+        err.message,
+        PreferencesErrorType.StorageUnavailable
+      );
+    }
+  }
+
+  /**
    * 删除指定 key。
    * 幂等:不存在也返回成功。
    * 删除后自动 flush。
