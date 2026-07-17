@@ -5,15 +5,13 @@
  * 当前角色 ID:CharacterSelectionStore(Preferences)。
  * 头像:CharacterAssetStore(文件系统)。
  *
- * 不再通过 CharacterStore 执行业务 CRUD。
- * CharacterStore 仅作为 Legacy Migration Source,由 CharacterMigrationService 在启动时一次性读取。
- *
  * 设计原则:
  * - 不依赖 ArkUI
  * - 不缓存 API Key
  * - 校验角色数据
  * - 不直接操作 RdbStore
  * - 不向页面暴露 Repository
+ * - 不依赖或持有 CharacterStore(Legacy)
  */
 
 import { common } from '@kit.AbilityKit';
@@ -23,7 +21,6 @@ import { Character, createCharacter, updateCharacter, validateCharacter, Charact
 import { CharacterRepository } from '../repositories/CharacterRepository';
 import { CharacterSelectionStore } from '../storage/CharacterSelectionStore';
 import { CharacterAssetStore } from '../storage/CharacterAssetStore';
-import { CharacterStore } from '../storage/CharacterStore';
 import { DatabaseError, DatabaseErrorType } from '../models/DatabaseError';
 import { generateUuid } from '../utils/Uuid';
 import { Logger } from '../utils/Logger';
@@ -43,28 +40,22 @@ export class CharacterService {
   private readonly repository: CharacterRepository;
   private readonly selectionStore: CharacterSelectionStore;
   private readonly assetStore: CharacterAssetStore;
-  /** 旧 Preferences 数据源,仅用于迁移期间读取(不用于业务 CRUD) */
-  private readonly legacyStore: CharacterStore;
   private initialized: boolean = false;
 
   constructor(
     repository: CharacterRepository,
     selectionStore: CharacterSelectionStore,
-    assetStore: CharacterAssetStore,
-    legacyStore: CharacterStore
+    assetStore: CharacterAssetStore
   ) {
     this.repository = repository;
     this.selectionStore = selectionStore;
     this.assetStore = assetStore;
-    this.legacyStore = legacyStore;
   }
 
   async initialize(context: common.Context): Promise<void> {
     if (this.initialized) {
       return;
     }
-    // legacyStore 用于兼容旧数据读取(迁移时由 MigrationService 调用)
-    await this.legacyStore.initialize(context);
     await this.selectionStore.initialize(context);
     this.assetStore.initialize(context);
     this.initialized = true;
@@ -160,7 +151,7 @@ export class CharacterService {
       }
       throw new Error('CharacterService update failed: ' + String(e));
     }
-    Logger.info(LOG_TAG, 'update ok id=' + id);
+    Logger.info(LOG_TAG, 'update success');
     return updated;
   }
 
@@ -185,7 +176,7 @@ export class CharacterService {
     } catch (e) {
       Logger.warn(LOG_TAG, 'remove: deleteAvatar failed, character record already deleted');
     }
-    Logger.info(LOG_TAG, 'remove ok id=' + id);
+    Logger.info(LOG_TAG, 'remove success');
   }
 
   async setCurrentCharacterId(id: string | null): Promise<void> {
@@ -462,12 +453,5 @@ export class CharacterService {
     }
     Logger.info(LOG_TAG, 'confirmPngImport ok');
     return character;
-  }
-
-  /**
-   * 获取 Legacy CharacterStore(仅供 CharacterMigrationService 使用)。
-   */
-  getLegacyStore(): CharacterStore {
-    return this.legacyStore;
   }
 }

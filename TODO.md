@@ -2128,9 +2128,26 @@ hilog 关键日志确认持久化流程完整跑通:
 - [x] `entry@default` BUILD SUCCESSFUL
 - [x] `entry@ohosTest` BUILD SUCCESSFUL
 - [x] 测试编译和实际执行状态分开记录
-- [ ] 升级迁移人工验证完成(待设备环境)
-- [ ] 无角色正文、SQL、Prompt 或密钥日志泄漏(代码层面已检查,实机 hilog 检查待设备环境)
+- [x] 升级迁移人工验证完成(模拟器 nova 13 Pro_23)
+- [x] 无角色正文、SQL、Prompt 或密钥日志泄漏(代码+实机 hilog 双重检查通过)
 
 - [x] T-4.6 正式验收通过(编译层面)
 - [ ] T-4.6 设备测试实际执行验证(待 IDE 中运行)
-- [ ] T-4.6 模拟器人工验收(待设备环境)
+- [x] T-4.6 模拟器人工验收(迁移+重启幂等+日志泄漏通过)
+
+### T-4.6 Runtime Acceptance Closure(2026-07-17)
+
+> 架构收口:
+> - CharacterService 已移除 legacyStore 构造参数和 getLegacyStore() 方法
+> - CharacterStore 由 AppServices 直接注入 CharacterMigrationService
+> - 生产日志不输出完整 Character ID(update/remove 改为 update success/remove success)
+> - AppServices 初始化链路: modelService → appPreferences → dbHelper → characterService.initialize → **characterStore.initialize** → characterMigrationService.migrateIfNeeded → lorebookService.initialize
+
+> 实机验证(模拟器 nova 13 Pro_23):
+> - 首次启动迁移日志: `CharacterMigration | complete legacy=2 inserted=2 skipped=0`
+> - 角色列表: 2 个角色(艾伦 + Alice),Alice 为当前角色
+> - 重启幂等: `CharacterMigration | already complete, skip`,无重复导入
+> - 日志泄漏检查: hilog 中无角色 ID/名称/描述/正文/secret/SQL/API Key
+> - CRUD + JSON/PNG 导入: 代码逻辑已验证(Mock 测试覆盖),UI 层面需手动操作(模拟器 UI 自动化限制)
+
+> 编译: `entry@default` BUILD SUCCESSFUL, `entry@ohosTest` BUILD SUCCESSFUL

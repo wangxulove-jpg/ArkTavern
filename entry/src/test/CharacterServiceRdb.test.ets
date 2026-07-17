@@ -34,7 +34,6 @@ import { describe, it, expect } from '@ohos/hypium';
 import { Character, CharacterUpdates } from '../main/ets/models/Character';
 import { CharacterService } from '../main/ets/services/CharacterService';
 import { CharacterRepository, CharacterImportResult } from '../main/ets/repositories/CharacterRepository';
-import { CharacterStore } from '../main/ets/storage/CharacterStore';
 import { CharacterSelectionStore } from '../main/ets/storage/CharacterSelectionStore';
 import { CharacterAssetStore } from '../main/ets/storage/CharacterAssetStore';
 import { DatabaseError, DatabaseErrorType } from '../main/ets/models/DatabaseError';
@@ -216,14 +215,12 @@ class MockLegacyStore {
 function makeService(
   repo: MockCharacterRepository,
   sel: MockCharacterSelectionStore,
-  asset: MockCharacterAssetStore,
-  legacy: MockLegacyStore
+  asset: MockCharacterAssetStore
 ): CharacterService {
   return new CharacterService(
     repo as Object as CharacterRepository,
     sel as Object as CharacterSelectionStore,
-    asset as Object as CharacterAssetStore,
-    legacy as Object as CharacterStore
+    asset as Object as CharacterAssetStore
   );
 }
 
@@ -234,7 +231,7 @@ export default function characterServiceRdbTest(): void {
     it('list_from_repository', 0, async () => {
       const repo: MockCharacterRepository = new MockCharacterRepository();
       await repo.insert(makeCharacter('char-a'));
-      const service: CharacterService = makeService(repo, new MockCharacterSelectionStore(), new MockCharacterAssetStore(), new MockLegacyStore());
+      const service: CharacterService = makeService(repo, new MockCharacterSelectionStore(), new MockCharacterAssetStore());
 
       const list: Character[] = await service.list();
 
@@ -246,7 +243,7 @@ export default function characterServiceRdbTest(): void {
     it('getById_from_repository', 0, async () => {
       const repo: MockCharacterRepository = new MockCharacterRepository();
       await repo.insert(makeCharacter('char-a'));
-      const service: CharacterService = makeService(repo, new MockCharacterSelectionStore(), new MockCharacterAssetStore(), new MockLegacyStore());
+      const service: CharacterService = makeService(repo, new MockCharacterSelectionStore(), new MockCharacterAssetStore());
 
       const found: Character | null = await service.getById('char-a');
 
@@ -258,7 +255,7 @@ export default function characterServiceRdbTest(): void {
     // ===== 3. create 写入 Repository =====
     it('create_writes_repository', 0, async () => {
       const repo: MockCharacterRepository = new MockCharacterRepository();
-      const service: CharacterService = makeService(repo, new MockCharacterSelectionStore(), new MockCharacterAssetStore(), new MockLegacyStore());
+      const service: CharacterService = makeService(repo, new MockCharacterSelectionStore(), new MockCharacterAssetStore());
 
       const c: Character = await service.create('NewChar', 'desc');
 
@@ -270,7 +267,7 @@ export default function characterServiceRdbTest(): void {
     it('update_writes_repository', 0, async () => {
       const repo: MockCharacterRepository = new MockCharacterRepository();
       await repo.insert(makeCharacter('char-a', 'Old'));
-      const service: CharacterService = makeService(repo, new MockCharacterSelectionStore(), new MockCharacterAssetStore(), new MockLegacyStore());
+      const service: CharacterService = makeService(repo, new MockCharacterSelectionStore(), new MockCharacterAssetStore());
 
       const updates: CharacterUpdates = { name: 'New' };
       const updated: Character = await service.update('char-a', updates);
@@ -283,7 +280,7 @@ export default function characterServiceRdbTest(): void {
     it('remove_deletes_repository', 0, async () => {
       const repo: MockCharacterRepository = new MockCharacterRepository();
       await repo.insert(makeCharacter('char-a'));
-      const service: CharacterService = makeService(repo, new MockCharacterSelectionStore(), new MockCharacterAssetStore(), new MockLegacyStore());
+      const service: CharacterService = makeService(repo, new MockCharacterSelectionStore(), new MockCharacterAssetStore());
 
       await service.remove('char-a');
 
@@ -298,7 +295,7 @@ export default function characterServiceRdbTest(): void {
       await repo.insert(makeCharacter('char-a'));
       const sel: MockCharacterSelectionStore = new MockCharacterSelectionStore();
       sel.currentId = 'char-a';
-      const service: CharacterService = makeService(repo, sel, new MockCharacterAssetStore(), new MockLegacyStore());
+      const service: CharacterService = makeService(repo, sel, new MockCharacterAssetStore());
 
       await service.remove('char-a');
 
@@ -313,7 +310,7 @@ export default function characterServiceRdbTest(): void {
       await repo.insert(makeCharacter('char-b'));
       const sel: MockCharacterSelectionStore = new MockCharacterSelectionStore();
       sel.currentId = 'char-a';
-      const service: CharacterService = makeService(repo, sel, new MockCharacterAssetStore(), new MockLegacyStore());
+      const service: CharacterService = makeService(repo, sel, new MockCharacterAssetStore());
 
       await service.remove('char-b');
 
@@ -326,7 +323,7 @@ export default function characterServiceRdbTest(): void {
       const repo: MockCharacterRepository = new MockCharacterRepository();
       await repo.insert(makeCharacter('char-a'));
       const sel: MockCharacterSelectionStore = new MockCharacterSelectionStore();
-      const service: CharacterService = makeService(repo, sel, new MockCharacterAssetStore(), new MockLegacyStore());
+      const service: CharacterService = makeService(repo, sel, new MockCharacterAssetStore());
 
       await service.setCurrentCharacterId('char-a');
 
@@ -338,7 +335,7 @@ export default function characterServiceRdbTest(): void {
     it('setCurrentCharacterId_nonexistent_fails', 0, async () => {
       const repo: MockCharacterRepository = new MockCharacterRepository();
       const sel: MockCharacterSelectionStore = new MockCharacterSelectionStore();
-      const service: CharacterService = makeService(repo, sel, new MockCharacterAssetStore(), new MockLegacyStore());
+      const service: CharacterService = makeService(repo, sel, new MockCharacterAssetStore());
 
       let threw: boolean = false;
       try {
@@ -356,7 +353,7 @@ export default function characterServiceRdbTest(): void {
       await repo.insert(makeCharacter('char-a', 'Alice'));
       const sel: MockCharacterSelectionStore = new MockCharacterSelectionStore();
       sel.currentId = 'char-a';
-      const service: CharacterService = makeService(repo, sel, new MockCharacterAssetStore(), new MockLegacyStore());
+      const service: CharacterService = makeService(repo, sel, new MockCharacterAssetStore());
 
       const c: Character | null = await service.getCurrentCharacter();
 
@@ -367,7 +364,7 @@ export default function characterServiceRdbTest(): void {
     // ===== 11. JSON 导入写入 RDB =====
     it('importFromParsed_writes_rdb', 0, async () => {
       const repo: MockCharacterRepository = new MockCharacterRepository();
-      const service: CharacterService = makeService(repo, new MockCharacterSelectionStore(), new MockCharacterAssetStore(), new MockLegacyStore());
+      const service: CharacterService = makeService(repo, new MockCharacterSelectionStore(), new MockCharacterAssetStore());
       const parsed: ParsedCharacterCard = {
         name: 'ImportedChar',
         description: 'desc',
@@ -400,7 +397,7 @@ export default function characterServiceRdbTest(): void {
         }
         await originalInsert(c);
       };
-      const service: CharacterService = makeService(repo, new MockCharacterSelectionStore(), new MockCharacterAssetStore(), new MockLegacyStore());
+      const service: CharacterService = makeService(repo, new MockCharacterSelectionStore(), new MockCharacterAssetStore());
       const parsed: ParsedCharacterCard = {
         name: 'X',
         description: '',
@@ -421,7 +418,7 @@ export default function characterServiceRdbTest(): void {
     it('confirmPngImport_writes_rdb', 0, async () => {
       const repo: MockCharacterRepository = new MockCharacterRepository();
       const asset: MockCharacterAssetStore = new MockCharacterAssetStore();
-      const service: CharacterService = makeService(repo, new MockCharacterSelectionStore(), asset, new MockLegacyStore());
+      const service: CharacterService = makeService(repo, new MockCharacterSelectionStore(), asset);
       const parsed: ParsedCharacterCard = {
         name: 'PngChar',
         description: 'd',
@@ -445,7 +442,7 @@ export default function characterServiceRdbTest(): void {
       const repo: MockCharacterRepository = new MockCharacterRepository();
       const asset: MockCharacterAssetStore = new MockCharacterAssetStore();
       asset.shouldFailSave = true;
-      const service: CharacterService = makeService(repo, new MockCharacterSelectionStore(), asset, new MockLegacyStore());
+      const service: CharacterService = makeService(repo, new MockCharacterSelectionStore(), asset);
       const parsed: ParsedCharacterCard = {
         name: 'PngChar',
         description: 'd',
@@ -472,7 +469,7 @@ export default function characterServiceRdbTest(): void {
       const repo: MockCharacterRepository = new MockCharacterRepository();
       await repo.insert(makeCharacter('char-a'));
       const asset: MockCharacterAssetStore = new MockCharacterAssetStore();
-      const service: CharacterService = makeService(repo, new MockCharacterSelectionStore(), asset, new MockLegacyStore());
+      const service: CharacterService = makeService(repo, new MockCharacterSelectionStore(), asset);
 
       await service.remove('char-a');
 
@@ -483,7 +480,7 @@ export default function characterServiceRdbTest(): void {
     it('export_from_rdb', 0, async () => {
       const repo: MockCharacterRepository = new MockCharacterRepository();
       await repo.insert(makeCharacter('char-a', 'ExportChar'));
-      const service: CharacterService = makeService(repo, new MockCharacterSelectionStore(), new MockCharacterAssetStore(), new MockLegacyStore());
+      const service: CharacterService = makeService(repo, new MockCharacterSelectionStore(), new MockCharacterAssetStore());
 
       const json: string = await service.exportToJson('char-a');
 
@@ -495,7 +492,7 @@ export default function characterServiceRdbTest(): void {
     it('no_legacy_crud_calls', 0, async () => {
       const repo: MockCharacterRepository = new MockCharacterRepository();
       const legacy: MockLegacyStore = new MockLegacyStore();
-      const service: CharacterService = makeService(repo, new MockCharacterSelectionStore(), new MockCharacterAssetStore(), legacy);
+      const service: CharacterService = makeService(repo, new MockCharacterSelectionStore(), new MockCharacterAssetStore());
 
       await service.create('A');
       await service.list();
@@ -517,7 +514,7 @@ export default function characterServiceRdbTest(): void {
     it('create_no_legacy_write', 0, async () => {
       const repo: MockCharacterRepository = new MockCharacterRepository();
       const legacy: MockLegacyStore = new MockLegacyStore();
-      const service: CharacterService = makeService(repo, new MockCharacterSelectionStore(), new MockCharacterAssetStore(), legacy);
+      const service: CharacterService = makeService(repo, new MockCharacterSelectionStore(), new MockCharacterAssetStore());
 
       await service.create('NewChar');
 
@@ -529,7 +526,7 @@ export default function characterServiceRdbTest(): void {
       const repo: MockCharacterRepository = new MockCharacterRepository();
       await repo.insert(makeCharacter('char-a', 'Old'));
       const legacy: MockLegacyStore = new MockLegacyStore();
-      const service: CharacterService = makeService(repo, new MockCharacterSelectionStore(), new MockCharacterAssetStore(), legacy);
+      const service: CharacterService = makeService(repo, new MockCharacterSelectionStore(), new MockCharacterAssetStore());
 
       await service.update('char-a', { name: 'New' });
 
@@ -541,7 +538,7 @@ export default function characterServiceRdbTest(): void {
       const repo: MockCharacterRepository = new MockCharacterRepository();
       await repo.insert(makeCharacter('char-a'));
       const legacy: MockLegacyStore = new MockLegacyStore();
-      const service: CharacterService = makeService(repo, new MockCharacterSelectionStore(), new MockCharacterAssetStore(), legacy);
+      const service: CharacterService = makeService(repo, new MockCharacterSelectionStore(), new MockCharacterAssetStore());
 
       await service.remove('char-a');
 
@@ -555,8 +552,7 @@ export default function characterServiceRdbTest(): void {
       const service: CharacterService = makeService(
         new MockCharacterRepository(),
         new MockCharacterSelectionStore(),
-        new MockCharacterAssetStore(),
-        new MockLegacyStore()
+        new MockCharacterAssetStore()
       );
       expect(service !== null).assertTrue();
     });
@@ -564,7 +560,7 @@ export default function characterServiceRdbTest(): void {
     // ===== 22. 输入对象不修改 =====
     it('input_not_modified', 0, async () => {
       const repo: MockCharacterRepository = new MockCharacterRepository();
-      const service: CharacterService = makeService(repo, new MockCharacterSelectionStore(), new MockCharacterAssetStore(), new MockLegacyStore());
+      const service: CharacterService = makeService(repo, new MockCharacterSelectionStore(), new MockCharacterAssetStore());
       const parsed: ParsedCharacterCard = {
         name: 'Original',
         description: 'original desc',
@@ -587,7 +583,7 @@ export default function characterServiceRdbTest(): void {
       const repo: MockCharacterRepository = new MockCharacterRepository();
       const sensitive: string = 'SECRET_DESCRIPTION_xyz';
       await repo.insert(makeCharacter('char-a', 'Alice', sensitive));
-      const service: CharacterService = makeService(repo, new MockCharacterSelectionStore(), new MockCharacterAssetStore(), new MockLegacyStore());
+      const service: CharacterService = makeService(repo, new MockCharacterSelectionStore(), new MockCharacterAssetStore());
 
       // 不存在的更新应抛错,但错误信息不含正文
       let errorMsg: string = '';

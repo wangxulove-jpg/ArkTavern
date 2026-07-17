@@ -86,6 +86,8 @@ export class AppServices {
   private readonly appPreferences: AppPreferences;
   /** CharacterMigrationService(不对页面公开) */
   private readonly characterMigrationService: CharacterMigrationService;
+  /** CharacterStore(仅用于迁移,不对页面公开) */
+  private readonly characterStore: CharacterStore;
 
   /**
    * 私有构造,组装全部依赖。
@@ -98,7 +100,7 @@ export class AppServices {
     const providerKeyStore: ProviderKeyStore = new ProviderKeyStore(assetKeyStore);
     const factory: DefaultProviderFactory = new DefaultProviderFactory(providerKeyStore);
     this.modelService = new ModelService(configStore, providerKeyStore, factory);
-    const characterStore: CharacterStore = new CharacterStore();
+    this.characterStore = new CharacterStore();
     const characterAssetStore: CharacterAssetStore = new CharacterAssetStore();
     this.characterSelectionStore = new CharacterSelectionStore();
     this.dbHelper = new DbHelper();
@@ -107,11 +109,10 @@ export class AppServices {
     this.characterService = new CharacterService(
       this.characterRepository,
       this.characterSelectionStore,
-      characterAssetStore,
-      characterStore
+      characterAssetStore
     );
     this.characterMigrationService = new CharacterMigrationService(
-      characterStore,
+      this.characterStore,
       this.characterRepository,
       this.characterSelectionStore,
       this.appPreferences
@@ -157,6 +158,7 @@ export class AppServices {
       .then((): Promise<void> => services.appPreferences.initialize(context))
       .then((): Promise<void> => services.dbHelper.initialize(context))
       .then((): Promise<void> => services.characterService.initialize(context))
+      .then((): Promise<void> => services.characterStore.initialize(context))
       .then(async (): Promise<void> => {
         await services.characterMigrationService.migrateIfNeeded();
       })
