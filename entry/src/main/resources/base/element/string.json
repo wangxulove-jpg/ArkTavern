@@ -601,6 +601,34 @@
       "value": "从此处生成新回复"
     },
     {
+      "name": "chat_regenerate_assistant",
+      "value": "重新生成此回复"
+    },
+    {
+      "name": "chat_edit_user_message",
+      "value": "编辑"
+    },
+    {
+      "name": "chat_edit_message_title",
+      "value": "编辑消息"
+    },
+    {
+      "name": "chat_edit_message_placeholder",
+      "value": "输入消息内容"
+    },
+    {
+      "name": "chat_edit_message_cancel",
+      "value": "取消"
+    },
+    {
+      "name": "chat_edit_message_save_and_generate",
+      "value": "保存并生成"
+    },
+    {
+      "name": "chat_edit_message_submitting",
+      "value": "处理中"
+    },
+    {
       "name": "chat_branch_list_title",
       "value": "分支列表"
     },

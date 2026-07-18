@@ -19,6 +19,7 @@ import { ChatRole } from '../models/ChatRole';
 import { ChatMessageSource } from '../models/ChatMessageSource';
 import { MessageSwipeSummary, MAX_SWIPE_CANDIDATES } from '../models/MessageSwipe';
 import { MessageSwipeControls } from '../components/MessageSwipeControls';
+import { HistoricalMessageEditDialog } from '../components/HistoricalMessageEditDialog';
 import { promptAction } from '@kit.ArkUI';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { AppServices } from '../services/AppServices';
@@ -44,6 +45,8 @@ const RES_CHAT_FAILED: string = 'chat_failed';
 const RES_CHAT_EMPTY_RESPONSE: string = 'chat_empty_response';
 const RES_CONTINUE_FROM_HERE: string = 'chat_continue_from_here';
 const RES_GENERATE_FROM_USER: string = 'chat_generate_from_user';
+const RES_REGENERATE_ASSISTANT: string = 'chat_regenerate_assistant';
+const RES_EDIT_USER_MESSAGE: string = 'chat_edit_user_message';
 const RES_BRANCH_SWITCH_BUSY: string = 'chat_branch_switch_busy';
 const RES_BRANCH_CREATE_BUSY: string = 'chat_branch_create_busy';
 
@@ -84,6 +87,13 @@ export struct ChatPage {
   @StorageLink('branchChangeSeq') @Watch('onBranchChangeSeqChanged') branchChangeSeq: number = 0;
   private scroller: Scroller = new Scroller();
   private lastMessageCount: number = 0;
+  /**
+   * T-6.4B-3.1 历史 User 消息编辑弹窗 Controller。
+   * 在 openEditUserDialog 中按需重建(传入最新 originalContent 和回调)。
+   */
+  private editDialogController: CustomDialogController | null = null;
+  /** 当前正在编辑的 User Message ID */
+  private editingMessageId: string = '';
 
   aboutToAppear(): void {
     // 每次进入页面创建新的 ChatService(跟随页面生命周期)
@@ -553,19 +563,36 @@ export struct ChatPage {
       .width('100%')
       .justifyContent(FlexAlign.End)
 
-      // T-6.4B-2 从此处生成新回复(仅历史 User 满足条件时显示)
+      // T-6.4B-2 / T-6.4B-3.1 历史 User 操作区(满足任一条件时显示)
       if (this.viewModel !== null
-        && this.viewModel!.canGenerateFromUserMessage(msg.id)) {
+        && (this.viewModel!.canGenerateFromUserMessage(msg.id)
+          || this.viewModel!.canEditUserMessage(msg.id))) {
         Row() {
-          Button($r('app.string.' + RES_GENERATE_FROM_USER))
-            .fontSize(12)
-            .backgroundColor(Color.Transparent)
-            .fontColor('#007AFF')
-            .height(28)
-            .padding({ left: 4, right: 4 })
-            .onClick(() => {
-              this.generateFromUserMessage(msg.id);
-            })
+          // T-6.4B-3.1 编辑(使用编辑后新正文创建新 Branch)
+          if (this.viewModel!.canEditUserMessage(msg.id)) {
+            Button($r('app.string.' + RES_EDIT_USER_MESSAGE))
+              .fontSize(12)
+              .backgroundColor(Color.Transparent)
+              .fontColor('#007AFF')
+              .height(28)
+              .padding({ left: 4, right: 4 })
+              .onClick(() => {
+                this.openEditUserDialog(msg.id, msg.content);
+              })
+          }
+
+          // T-6.4B-2 从此处生成新回复(使用原 User 正文创建替代 Assistant)
+          if (this.viewModel!.canGenerateFromUserMessage(msg.id)) {
+            Button($r('app.string.' + RES_GENERATE_FROM_USER))
+              .fontSize(12)
+              .backgroundColor(Color.Transparent)
+              .fontColor('#007AFF')
+              .height(28)
+              .padding({ left: 4, right: 4 })
+              .onClick(() => {
+                this.generateFromUserMessage(msg.id);
+              })
+          }
 
           Button($r('app.string.' + RES_CHAT_COPY))
             .fontSize(12)
@@ -626,6 +653,20 @@ export struct ChatPage {
 
         if (!msg.isStreaming && msg.content.length > 0) {
           Row() {
+            // T-6.4B-3 重新生成此回复(仅历史 Assistant 满足条件时显示)
+            if (this.viewModel !== null
+              && this.viewModel!.canRegenerateAssistantMessage(msg.id)) {
+              Button($r('app.string.' + RES_REGENERATE_ASSISTANT))
+                .fontSize(12)
+                .backgroundColor(Color.Transparent)
+                .fontColor('#007AFF')
+                .height(28)
+                .padding({ left: 4, right: 4 })
+                .onClick(() => {
+                  this.regenerateAssistantMessage(msg.id);
+                })
+            }
+
             // T-6.4B-1 从此处继续(仅历史 Assistant 满足条件时显示)
             if (this.viewModel !== null
               && this.viewModel!.canContinueFromAssistant(msg.id)) {
@@ -788,6 +829,67 @@ export struct ChatPage {
       return;
     }
     this.viewModel!.generateFromUserMessage(messageId);
+  }
+
+  /**
+   * T-6.4B-3: 历史 Assistant "重新生成此回复"。
+   * 忙碌时显示提示并退出,由 ViewModel 处理具体逻辑。
+   */
+  private regenerateAssistantMessage(messageId: string): void {
+    if (this.viewModel === null) {
+      return;
+    }
+    if (this.viewModel!.busy) {
+      promptAction.showToast({
+        message: $r('app.string.' + RES_BRANCH_CREATE_BUSY),
+        duration: 1500
+      });
+      return;
+    }
+    this.viewModel!.regenerateAssistantMessage(messageId);
+  }
+
+  /**
+   * T-6.4B-3.1: 打开历史 User 消息编辑弹窗。
+   * 忙碌时显示提示并退出。
+   * 每次打开按需重建 CustomDialogController,传入最新 originalContent 和回调。
+   */
+  private openEditUserDialog(messageId: string, originalContent: string): void {
+    if (this.viewModel === null) {
+      return;
+    }
+    if (this.viewModel!.busy) {
+      promptAction.showToast({
+        message: $r('app.string.' + RES_BRANCH_CREATE_BUSY),
+        duration: 1500
+      });
+      return;
+    }
+    this.editingMessageId = messageId;
+    this.editDialogController = new CustomDialogController({
+      builder: HistoricalMessageEditDialog({
+        originalContent: originalContent,
+        isSubmitting: false,
+        onConfirm: (editedContent: string): void => {
+          this.confirmEditUserMessage(messageId, editedContent);
+        },
+        onCancel: (): void => {}
+      }),
+      autoCancel: true,
+      alignment: DialogAlignment.Center,
+      customStyle: false
+    });
+    this.editDialogController.open();
+  }
+
+  /**
+   * T-6.4B-3.1: 编辑弹窗确认回调,调用 ViewModel 执行实际操作。
+   */
+  private confirmEditUserMessage(messageId: string, editedContent: string): void {
+    if (this.viewModel === null) {
+      return;
+    }
+    this.viewModel!.editUserMessageAndGenerate(messageId, editedContent);
   }
 }
 

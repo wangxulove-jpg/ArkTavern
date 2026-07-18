@@ -66,6 +66,24 @@ import {
 const LOG_TAG: string = 'ConvBranchSvc';
 
 /**
+ * T-6.4B-3.1 编辑 User Message 创建新 Branch 的返回结果。
+ */
+export interface EditedBranchGenerationTarget {
+  /** 新创建 Branch ID */
+  newBranchId: string;
+  /** 新创建 User Message ID(编辑后内容) */
+  newUserMessageId: string;
+  /** 新创建 Streaming Assistant Message ID */
+  newAssistantMessageId: string;
+  /** fork anchor Message ID(原 User 前一条消息) */
+  anchorMessageId: string;
+  /** 被编辑的原 User Message ID(未修改) */
+  originalUserMessageId: string;
+  /** 新 Branch 摘要 */
+  newBranchSummary: ConversationBranchSummary;
+}
+
+/**
  * 判断消息是否为可建立 Swipe 的 Assistant 消息。
  * 与 MessageSwipePersistenceService 保持一致。
  */
@@ -622,6 +640,230 @@ export class ConversationBranchPersistenceService {
       updatedAt: now,
       lastMessageAt: now,
       isActive: true
+    };
+  }
+
+  // ===== Edit User and Fork(T-6.4B-3.1) =====
+
+  /**
+   * 编辑历史 User Message 并创建新 Branch(事务)。
+   *
+   * 与 forkForRegeneration 的区别:
+   * - forkForRegeneration: fork point = 原 User,继承原 User,只替换后面的 Assistant
+   * - editUserAndForkWithAssistant: fork point = 原 User 前一条消息(anchor),
+   *   不继承原 User,创建新的编辑后 User 和新 Streaming Assistant
+   *
+   * 单一事务步骤:
+   * 1. 验证 source Branch / parent Branch 属于当前 Chat
+   * 2. 验证 originalUserMessage 位于 source Branch 且 role = User
+   * 3. 验证 anchorMessage 位于 source Branch 且 position = targetPosition - 1
+   * 4. 创建新 Child Branch(parent=parentBranchId, forkMessageId=anchorMessageId)
+   * 5. 复制 source Branch 中 0..(targetPosition-1) 的 Message Links(不含原 User 和后续)
+   * 6. 复制继承范围内 messageIds 的 SwipeSelections
+   * 7. 插入新的 Completed User Message 到 messages 表
+   * 8. Link 新 User 到 targetPosition
+   * 9. 插入新的 Streaming Assistant Message 到 messages 表
+   * 10. Link 新 Assistant 到 targetPosition + 1
+   * 11. 设置新 Branch 为 Active
+   * 12. 触发 Branch 时间戳更新
+   * 13. 提交事务
+   *
+   * 事务失败:不创建半成品 Branch,不修改原 User,不改变 Active Branch。
+   *
+   * @param chatId 所属 Chat ID
+   * @param sourceBranchId 来源 Branch ID(包含原 User 的 Branch,通常是当前 Active Branch)
+   * @param parentBranchId 新 Branch 的父 Branch ID(同级时为 activeBranch.parentBranchId)
+   * @param originalUserMessageId 被编辑的原 User Message ID(不修改,只用于定位)
+   * @param anchorMessageId fork anchor Message ID(原 User 前一条消息)
+   * @param newUserMessage 编辑后的新 User Message(由调用方构造,本方法负责持久化和 link)
+   * @param newAssistantMessage 新的 Streaming Assistant Message(由调用方构造)
+   * @returns 新 Branch 摘要 + 新 User/Assistant Message ID + anchor 信息
+   */
+  async editUserAndForkWithAssistant(
+    chatId: string,
+    sourceBranchId: string,
+    parentBranchId: string,
+    originalUserMessageId: string,
+    anchorMessageId: string,
+    newUserMessage: ChatMessage,
+    newAssistantMessage: ChatMessage
+  ): Promise<EditedBranchGenerationTarget> {
+    if (chatId.length === 0) {
+      throw DatabaseError.invalidData('editUserAndFork: chatId empty');
+    }
+    if (sourceBranchId.length === 0) {
+      throw DatabaseError.invalidData('editUserAndFork: sourceBranchId empty');
+    }
+    if (parentBranchId.length === 0) {
+      throw DatabaseError.invalidData('editUserAndFork: parentBranchId empty');
+    }
+    if (originalUserMessageId.length === 0) {
+      throw DatabaseError.invalidData('editUserAndFork: originalUserMessageId empty');
+    }
+    if (anchorMessageId.length === 0) {
+      throw DatabaseError.invalidData('editUserAndFork: anchorMessageId empty');
+    }
+    if (newUserMessage.id.length === 0) {
+      throw DatabaseError.invalidData('editUserAndFork: newUserMessage id empty');
+    }
+    if (newAssistantMessage.id.length === 0) {
+      throw DatabaseError.invalidData('editUserAndFork: newAssistantMessage id empty');
+    }
+
+    // 事务外计算 maxSeq(避免快照隔离读到旧值)
+    const maxSeq: number = await this.messageRepository.getMaxSequenceNumber(chatId);
+    const userSeq: number = maxSeq + 1;
+    const assistantSeq: number = maxSeq + 2;
+
+    let result: EditedBranchGenerationTarget | null = null;
+    try {
+      await this.dbHelper.runInTransaction(
+        async (store: relationalStore.RdbStore): Promise<void> => {
+          result = await this.editUserAndForkWithStore(
+            store, chatId, sourceBranchId, parentBranchId,
+            originalUserMessageId, anchorMessageId,
+            newUserMessage, newAssistantMessage,
+            userSeq, assistantSeq
+          );
+        }
+      );
+    } catch (err) {
+      if (err instanceof DatabaseError) {
+        throw err;
+      }
+      throw DatabaseError.transactionFailed(
+        `editUserAndFork: ${(err as Error).message}`
+      );
+    }
+    return result!;
+  }
+
+  /**
+   * 在给定 store 上执行 editUserAndForkWithAssistant(事务内部方法)。
+   */
+  async editUserAndForkWithStore(
+    store: relationalStore.RdbStore,
+    chatId: string,
+    sourceBranchId: string,
+    parentBranchId: string,
+    originalUserMessageId: string,
+    anchorMessageId: string,
+    newUserMessage: ChatMessage,
+    newAssistantMessage: ChatMessage,
+    userSequenceNumber: number,
+    assistantSequenceNumber: number
+  ): Promise<EditedBranchGenerationTarget> {
+    // 1. 验证 source Branch 属于 chatId
+    const sourceBranch: ConversationBranch | null =
+      await this.branchRepository.getBranchWithStore(store, sourceBranchId);
+    if (sourceBranch === null) {
+      throw DatabaseError.notFound('editUserAndFork: sourceBranch not found');
+    }
+    if (sourceBranch.chatId !== chatId) {
+      throw DatabaseError.invalidData('editUserAndFork: sourceBranch chatId mismatch');
+    }
+    // 2. 验证 parent Branch 属于 chatId
+    const parentBranch: ConversationBranch | null =
+      await this.branchRepository.getBranchWithStore(store, parentBranchId);
+    if (parentBranch === null) {
+      throw DatabaseError.notFound('editUserAndFork: parentBranch not found');
+    }
+    if (parentBranch.chatId !== chatId) {
+      throw DatabaseError.invalidData('editUserAndFork: parentBranch chatId mismatch');
+    }
+    // 3. 验证 originalUserMessage 位于 source Branch 且 role = User
+    const targetPosition: number =
+      await this.branchRepository.getMessagePositionWithStore(
+        store, sourceBranchId, originalUserMessageId
+      );
+    if (targetPosition < 0) {
+      throw DatabaseError.notFound('editUserAndFork: originalUserMessage not in sourceBranch');
+    }
+    const originalUserMessage: ChatMessage | null =
+      await this.messageRepository.getById(originalUserMessageId);
+    if (originalUserMessage === null) {
+      throw DatabaseError.notFound('editUserAndFork: originalUserMessage not found');
+    }
+    if (originalUserMessage.role !== ChatRole.User) {
+      throw DatabaseError.invalidData('editUserAndFork: originalUserMessage must be User role');
+    }
+    // 4. 验证 anchorMessage 位于 source Branch 且 position = targetPosition - 1
+    if (targetPosition === 0) {
+      throw DatabaseError.invalidData('editUserAndFork: target User has no preceding anchor');
+    }
+    const anchorPosition: number =
+      await this.branchRepository.getMessagePositionWithStore(
+        store, sourceBranchId, anchorMessageId
+      );
+    if (anchorPosition < 0) {
+      throw DatabaseError.notFound('editUserAndFork: anchorMessage not in sourceBranch');
+    }
+    if (anchorPosition !== targetPosition - 1) {
+      throw DatabaseError.invalidData('editUserAndFork: anchorMessage must be immediately before target User');
+    }
+    // 5. 创建新 Child Branch(parent=parentBranchId, forkMessageId=anchorMessageId)
+    const newBranch: ConversationBranch =
+      await this.branchRepository.createChildBranchWithStore(
+        store, chatId, parentBranchId, anchorMessageId, ''
+      );
+    // 6. 复制 source Branch 中 0..(targetPosition-1) 的 Message Links
+    //    即 0..anchorPosition(包含 anchor,不含原 User)
+    await this.branchRepository.copyMessageLinksThroughPositionWithStore(
+      store, sourceBranchId, newBranch.id, anchorPosition
+    );
+    // 7. 复制继承范围内 messageIds 的 SwipeSelections
+    const newBranchLinks: BranchMessageLink[] =
+      await this.branchRepository.listMessageLinksWithStore(store, newBranch.id);
+    const copiedMessageIds: string[] = newBranchLinks.map(
+      (link: BranchMessageLink): string => link.messageId
+    );
+    if (copiedMessageIds.length > 0) {
+      await this.branchRepository.copySwipeSelectionsForMessageIdsWithStore(
+        store, sourceBranchId, newBranch.id, copiedMessageIds
+      );
+    }
+    // 8. 插入新的 Completed User Message 到 messages 表
+    await this.messageRepository.insertWithStore(
+      store, newUserMessage, chatId, userSequenceNumber
+    );
+    // 9. Link 新 User 到 targetPosition
+    await this.branchRepository.insertMessageLinkWithStore(
+      store, newBranch.id, newUserMessage.id, targetPosition
+    );
+    // 10. 插入新的 Streaming Assistant Message 到 messages 表
+    await this.messageRepository.insertWithStore(
+      store, newAssistantMessage, chatId, assistantSequenceNumber
+    );
+    // 11. Link 新 Assistant 到 targetPosition + 1
+    await this.branchRepository.insertMessageLinkWithStore(
+      store, newBranch.id, newAssistantMessage.id, targetPosition + 1
+    );
+    // 12. 设置新 Branch 为 Active
+    await this.branchRepository.setActiveBranchWithStore(store, chatId, newBranch.id);
+    Logger.info(LOG_TAG, 'ConversationBranch | active branch updated (edit)');
+    // 13. 触发 Branch 时间戳更新
+    const now: number = nowMillis();
+    await this.branchRepository.touchBranchWithStore(store, newBranch.id, now);
+    Logger.info(LOG_TAG, 'edit | newBranch=' + newBranch.id.substring(0, 8)
+      + ' parent=' + parentBranchId.substring(0, 8));
+    return {
+      newBranchId: newBranch.id,
+      newUserMessageId: newUserMessage.id,
+      newAssistantMessageId: newAssistantMessage.id,
+      anchorMessageId: anchorMessageId,
+      originalUserMessageId: originalUserMessageId,
+      newBranchSummary: {
+        id: newBranch.id,
+        parentBranchId: newBranch.parentBranchId,
+        forkMessageId: newBranch.forkMessageId,
+        name: newBranch.name,
+        isRoot: newBranch.isRoot,
+        messageCount: targetPosition + 2,
+        createdAt: newBranch.createdAt,
+        updatedAt: now,
+        lastMessageAt: now,
+        isActive: true
+      }
     };
   }
 
