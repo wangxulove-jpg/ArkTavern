@@ -710,6 +710,51 @@ export class ChatViewModel {
   }
 
   /**
+   * T-6.4B-2: 判断指定 User 消息是否可"从此处生成新回复"。
+   * 生成中、Swipe/Branch 操作中、会话未就绪时均不可操作。
+   */
+  canGenerateFromUserMessage(messageId: string): boolean {
+    return !this.isGenerating && !this.isSwipeOperating && !this.isBranchOperating
+      && this.isSessionReady
+      && this.chatService.canGenerateFromUserMessage(messageId);
+  }
+
+  /**
+   * T-6.4B-2: 从历史 User 消息生成新回复。
+   * 创建新 Branch(同级或子级),在新 Branch 中创建 Streaming Assistant,启动 Provider。
+   * 失败时通过 errorMessage 显示错误,不清空聊天。
+   */
+  async generateFromUserMessage(messageId: string): Promise<void> {
+    if (this.disposed || this.busy || this.isBranchOperating) {
+      return;
+    }
+    if (!this.canGenerateFromUserMessage(messageId)) {
+      return;
+    }
+    this.isBranchOperating = true;
+    this.errorMessage = '';
+    this.statusMessage = '';
+    Logger.info(LOG_TAG, 'generateFromUserMessage | ui_click');
+    try {
+      const callbacks: ChatServiceCallbacks = this.createCallbacks();
+      await this.chatService.generateFromUserMessage(messageId, callbacks);
+      // 同步状态(回调可能已更新 messages,但 branches/recordCounts 需单独同步)
+      this.messages = [...this.chatService.getMessages()];
+      this.swipeSummaries = this.chatService.getSwipeSummaries();
+      this.syncBranchState();
+      this.canRegenerate = this.chatService.canRegenerate();
+      if (this.onMessagesUpdate !== undefined) {
+        this.onMessagesUpdate([...this.messages]);
+      }
+    } catch (e) {
+      this.errorMessage = '创建分支失败,请重试';
+      Logger.error(LOG_TAG, 'generateFromUserMessage failed: ' + String(e));
+    } finally {
+      this.isBranchOperating = false;
+    }
+  }
+
+  /**
    * 切换 Active Branch 到 targetBranchId。
    * 成功后同步 messages / swipeSummaries / branches / recordCounts,关闭列表面板。
    * 失败时通过 errorMessage 显示错误,保持当前页面数据不变。

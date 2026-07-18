@@ -597,6 +597,10 @@
       "value": "从此处继续"
     },
     {
+      "name": "chat_generate_from_user",
+      "value": "从此处生成新回复"
+    },
+    {
       "name": "chat_branch_list_title",
       "value": "分支列表"
     },

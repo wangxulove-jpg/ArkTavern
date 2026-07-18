@@ -36,6 +36,12 @@ export interface BranchMapDisplayInfo {
   readonly forkMessageId?: string;
   /** fork 轮次序号(从 1 开始,Root 为 0) */
   readonly forkTurnNumber: number;
+  /**
+   * 当前 Branch 覆盖的最深轮次(= Branch 中 User 消息数)。
+   * T-6.4B-2-R1: 用于节点延伸显示,高度 = (currentMaxTurn - forkTurnNumber + 1) × LEVEL_GAP。
+   * Root 的 currentMaxTurn = Root 中 User 消息数。
+   */
+  readonly currentMaxTurn: number;
   /** fork User Message 短预览(Root 为空字符串) */
   readonly forkUserPreview: string;
   /** 分歧 Assistant Message 短预览(分支首条 Assistant,Root 为空字符串) */

@@ -43,6 +43,7 @@ const RES_CHAT_CANCELLED: string = 'chat_cancelled';
 const RES_CHAT_FAILED: string = 'chat_failed';
 const RES_CHAT_EMPTY_RESPONSE: string = 'chat_empty_response';
 const RES_CONTINUE_FROM_HERE: string = 'chat_continue_from_here';
+const RES_GENERATE_FROM_USER: string = 'chat_generate_from_user';
 const RES_BRANCH_SWITCH_BUSY: string = 'chat_branch_switch_busy';
 const RES_BRANCH_CREATE_BUSY: string = 'chat_branch_create_busy';
 
@@ -526,30 +527,62 @@ export struct ChatPage {
 
   @Builder
   userBubble(msg: ChatMessage) {
-    Row() {
-      Blank()
-        .layoutWeight(1)
-      Text(msg.content)
-        .fontSize(14)
-        .fontColor(COLOR_USER_TEXT)
-        .textAlign(TextAlign.Start)
-        .wordBreak(WordBreak.BREAK_WORD)
-        .backgroundColor(COLOR_USER_BUBBLE)
-        .borderRadius({
-          topLeft: 16,
-          topRight: 16,
-          bottomLeft: 16,
-          bottomRight: 4
-        })
-        .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+    Column() {
+      Row() {
+        Blank()
+          .layoutWeight(1)
+        Text(msg.content)
+          .fontSize(14)
+          .fontColor(COLOR_USER_TEXT)
+          .textAlign(TextAlign.Start)
+          .wordBreak(WordBreak.BREAK_WORD)
+          .backgroundColor(COLOR_USER_BUBBLE)
+          .borderRadius({
+            topLeft: 16,
+            topRight: 16,
+            bottomLeft: 16,
+            bottomRight: 4
+          })
+          .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+          .margin({ bottom: 4 })
+          .constraintSize({ maxWidth: '80%' })
+          .onClick(() => {
+            this.copyMessage(msg);
+          })
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.End)
+
+      // T-6.4B-2 从此处生成新回复(仅历史 User 满足条件时显示)
+      if (this.viewModel !== null
+        && this.viewModel!.canGenerateFromUserMessage(msg.id)) {
+        Row() {
+          Button($r('app.string.' + RES_GENERATE_FROM_USER))
+            .fontSize(12)
+            .backgroundColor(Color.Transparent)
+            .fontColor('#007AFF')
+            .height(28)
+            .padding({ left: 4, right: 4 })
+            .onClick(() => {
+              this.generateFromUserMessage(msg.id);
+            })
+
+          Button($r('app.string.' + RES_CHAT_COPY))
+            .fontSize(12)
+            .backgroundColor(Color.Transparent)
+            .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+            .height(28)
+            .padding({ left: 4, right: 4 })
+            .onClick(() => {
+              this.copyMessage(msg);
+            })
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.End)
         .margin({ bottom: 8 })
-        .constraintSize({ maxWidth: '80%' })
-        .onClick(() => {
-          this.copyMessage(msg);
-        })
+      }
     }
     .width('100%')
-    .justifyContent(FlexAlign.End)
   }
 
   @Builder
@@ -737,6 +770,24 @@ export struct ChatPage {
       return;
     }
     this.viewModel!.continueFromAssistant(messageId);
+  }
+
+  /**
+   * T-6.4B-2: 从历史 User 消息生成新回复。
+   * 忙碌时显示提示并退出,由 ViewModel 处理具体逻辑。
+   */
+  private generateFromUserMessage(messageId: string): void {
+    if (this.viewModel === null) {
+      return;
+    }
+    if (this.viewModel!.busy) {
+      promptAction.showToast({
+        message: $r('app.string.' + RES_BRANCH_CREATE_BUSY),
+        duration: 1500
+      });
+      return;
+    }
+    this.viewModel!.generateFromUserMessage(messageId);
   }
 }
 

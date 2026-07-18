@@ -108,7 +108,7 @@ export class BranchMapViewModel {
     this.branches = branches;
     this.activeBranchId = activeBranch !== undefined ? activeBranch.id : '';
     this.recordCounts = counts;
-    this.layout = computeBranchTreeLayout(branches);
+    this.layout = computeBranchTreeLayout(branches, displayInfos);
   }
 
   /**

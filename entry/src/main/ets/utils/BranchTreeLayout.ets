@@ -1,16 +1,23 @@
 /**
- * BranchTreeLayout 分支树布局计算工具(T-6.4B-1.1)
+ * BranchTreeLayout 分支树布局计算工具(T-6.4B-1.1 / T-6.4B-2-R1)
  *
- * 根据 ConversationBranchSummary 列表构造父子树并计算每个节点的 (x, y) 坐标。
+ * 按 forkTurnNumber(对话轮次)分层布局,确保 Branch 在 BranchMap 中的 Y 位置
+ * 严格对应 fork 发生的对话轮次位置:
  *
- * 布局策略(简单稳定,不做复杂图算法):
- * 1. 根据 parentBranchId 构造树;
- * 2. Root depth = 0, Child depth = parent depth + 1;
- * 3. 每个 depth 为一行,同层节点横向排列;
- * 4. 同层节点按 createdAt 升序排列(稳定排序);
- * 5. 节点固定宽度 / 高度;
- * 6. 层间保留足够垂直间距,同层节点保留足够水平间距;
- * 7. 每层水平居中于父节点组(简化版:整层居中)。
+ * - Root: forkTurnNumber=0 → 顶部
+ * - 从 U1 fork: forkTurnNumber=1 → 第 1 轮位置
+ * - 从 U2 fork: forkTurnNumber=2 → 第 2 轮位置
+ * - 从末尾 fork: forkTurnNumber=N → 最底部
+ *
+ * 相同 forkTurnNumber 的 Branch 横向同级展开(真正的分叉)。
+ * 从历史轮次 fork 的 Branch 不会跑到末尾轮次后面。
+ *
+ * 连接线逻辑(T-6.4B-2-R1 修正):
+ * - 对每个 Branch,沿 parentBranchId 链向上查找,找到第一个
+ *   forkTurnNumber < 当前 Branch forkTurnNumber 的祖先作为起点
+ * - 保证所有连线都向下(低轮次 → 高轮次),无横向、无向上
+ * - 同轮次的平行 Branch 之间不会有连线
+ * - 从同一对话点 fork 出的多个 Branch 都会连到上方某个低 turn 祖先
  *
  * 不依赖 ArkUI / Repository / Service。
  */
@@ -21,32 +28,47 @@ import {
   BranchTreeLayoutResult,
   BranchTreeEdge
 } from '../models/BranchMapNodeLayout';
+import { BranchMapDisplayInfo } from '../models/BranchMapDisplayInfo';
+import { Logger } from './Logger';
+
+const LOG_TAG: string = 'BranchMapLayout';
 
 /** 节点固定宽度(vp) */
-const NODE_WIDTH: number = 180;
-/** T-6.4B-1.2: 节点固定高度(vp),增大以容纳 fork User 预览 + Assistant 预览 */
+const NODE_WIDTH: number = 176;
+/** 节点固定高度(vp) */
 const NODE_HEIGHT: number = 112;
-/** 同层节点水平间距(vp) */
-const SIBLING_GAP: number = 24;
-/** 层间垂直间距(vp) */
-const DEPTH_GAP: number = 64;
-/** 画布边距(vp) */
-const CANVAS_PADDING: number = 32;
-
-interface TreeNode {
-  summary: ConversationBranchSummary;
-  children: TreeNode[];
-  depth: number;
-}
+/** 同轮次兄弟节点之间的水平间距(vp) */
+const SIBLING_GAP: number = 28;
+/**
+ * 轮次间垂直间距(vp)。
+ * Y 坐标 = forkTurnNumber × LEVEL_GAP,严格对应对话轮次位置。
+ */
+const LEVEL_GAP: number = 140;
+/** 画布外围 padding(vp) */
+const CANVAS_PADDING: number = 28;
 
 /**
  * 计算分支树布局。
  *
+ * T-6.4B-2-R1: 按 forkTurnNumber(对话轮次)分层布局。
+ * - Y 坐标 = forkTurnNumber × LEVEL_GAP,严格对应对话位置
+ * - 节点固定大小 NODE_WIDTH × NODE_HEIGHT
+ * - 相同 forkTurnNumber 的 Branch 横向同级展开(真正的分叉)
+ * - 从 U1 fork 的 Branch 永远在第 1 轮位置,不管当前 Active 是哪个 Branch
+ * - 从 U3 fork 的 Branch 永远在第 3 轮位置,不会跑到其他轮次后面
+ *
+ * 连接线逻辑(T-6.4B-2-R1 修正):
+ * - 沿 parentBranchId 链向上查找第一个 forkTurnNumber 更小的祖先
+ * - 保证所有连线向下(低轮次 → 高轮次),无横向、无向上
+ * - 每个 Branch 至多一条入射连线
+ *
  * @param branches 所有 Branch 摘要
+ * @param displayInfos 含 forkTurnNumber 的展示信息
  * @returns 布局结果(节点位置 + 连接线 + 画布尺寸)
  */
 export function computeBranchTreeLayout(
-  branches: ConversationBranchSummary[]
+  branches: ConversationBranchSummary[],
+  displayInfos: BranchMapDisplayInfo[]
 ): BranchTreeLayoutResult {
   if (branches.length === 0) {
     return {
@@ -57,146 +79,163 @@ export function computeBranchTreeLayout(
     };
   }
 
-  // 1. 构造树
-  const nodeMap: Map<string, TreeNode> = new Map<string, TreeNode>();
-  const roots: TreeNode[] = [];
-
-  // 第一遍:创建所有 TreeNode
-  for (let i = 0; i < branches.length; i++) {
-    const summary: ConversationBranchSummary = branches[i];
-    nodeMap.set(summary.id, {
-      summary: summary,
-      children: [],
-      depth: 0
-    });
+  // 0. 构造 branchId → forkTurnNumber 映射
+  const turnNumberMap: Map<string, number> = new Map<string, number>();
+  for (let i = 0; i < displayInfos.length; i++) {
+    const info: BranchMapDisplayInfo = displayInfos[i];
+    turnNumberMap.set(info.branchId, info.forkTurnNumber);
   }
 
-  // 第二遍:建立父子关系
+  // 1. 按 forkTurnNumber 分组所有 Branch
+  //    key = forkTurnNumber, value = 该轮次的所有 Branch 摘要
+  const turnGroups: Map<number, ConversationBranchSummary[]> = new Map<number, ConversationBranchSummary[]>();
+  let maxTurn: number = 0;
   for (let i = 0; i < branches.length; i++) {
     const summary: ConversationBranchSummary = branches[i];
-    const node: TreeNode | undefined = nodeMap.get(summary.id);
-    if (node === undefined) {
+    const turnNum: number | undefined = turnNumberMap.get(summary.id);
+    const turn: number = turnNum !== undefined ? turnNum : 0;
+    let group: ConversationBranchSummary[] | undefined = turnGroups.get(turn);
+    if (group === undefined) {
+      group = [];
+      turnGroups.set(turn, group);
+    }
+    group.push(summary);
+    if (turn > maxTurn) {
+      maxTurn = turn;
+    }
+  }
+
+  // 2. 每组按 createdAt 升序排序(稳定布局,先创建的 Branch 在左)
+  const turnKeys: number[] = Array.from(turnGroups.keys());
+  turnKeys.sort((a: number, b: number): number => a - b);
+  for (let i = 0; i < turnKeys.length; i++) {
+    const group: ConversationBranchSummary[] | undefined = turnGroups.get(turnKeys[i]);
+    if (group === undefined) {
       continue;
     }
-    if (summary.parentBranchId === undefined || summary.parentBranchId === null
-      || summary.parentBranchId.length === 0) {
-      roots.push(node);
-    } else {
-      const parent: TreeNode | undefined = nodeMap.get(summary.parentBranchId);
-      if (parent !== undefined) {
-        parent.children.push(node);
-      } else {
-        // 父节点缺失,作为 Root 处理(数据完整性兜底)
-        roots.push(node);
-      }
-    }
+    group.sort((a: ConversationBranchSummary, b: ConversationBranchSummary): number => {
+      return a.createdAt - b.createdAt;
+    });
   }
 
-  // 2. 计算 depth + 同层排序(按 createdAt 升序)
-  assignDepth(roots, 0);
-
-  // 3. 按 depth 分层
-  const layers: TreeNode[][] = [];
-  collectLayers(roots, layers);
-
-  // 4. 计算每层节点位置
-  const nodes: BranchMapNodeLayout[] = [];
-  const edges: BranchTreeEdge[] = [];
-  let maxLayerWidth: number = 0;
-
-  for (let d = 0; d < layers.length; d++) {
-    const layer: TreeNode[] = layers[d];
-    // 同层按 createdAt 升序(稳定排序)
-    layer.sort((a: TreeNode, b: TreeNode): number => {
-      return a.summary.createdAt - b.summary.createdAt;
-    });
-
-    const layerWidth: number = layer.length * NODE_WIDTH
-      + (layer.length - 1) * SIBLING_GAP;
-    if (layerWidth > maxLayerWidth) {
-      maxLayerWidth = layerWidth;
+  // 3. 计算画布宽度(取最宽的组)
+  let maxGroupWidth: number = NODE_WIDTH;
+  for (let i = 0; i < turnKeys.length; i++) {
+    const group: ConversationBranchSummary[] | undefined = turnGroups.get(turnKeys[i]);
+    if (group === undefined) {
+      continue;
     }
+    const groupWidth: number = group.length * NODE_WIDTH
+      + (group.length - 1) * SIBLING_GAP;
+    if (groupWidth > maxGroupWidth) {
+      maxGroupWidth = groupWidth;
+    }
+  }
+  const contentWidth: number = maxGroupWidth + CANVAS_PADDING * 2;
 
-    for (let i = 0; i < layer.length; i++) {
-      const node: TreeNode = layer[i];
-      const x: number = CANVAS_PADDING + i * (NODE_WIDTH + SIBLING_GAP);
-      const y: number = CANVAS_PADDING + d * (NODE_HEIGHT + DEPTH_GAP);
+  // 4. 分配 X/Y 坐标(每组居中对齐)
+  const layoutMap: Map<string, BranchMapNodeLayout> = new Map<string, BranchMapNodeLayout>();
+  const nodes: BranchMapNodeLayout[] = [];
+  for (let i = 0; i < turnKeys.length; i++) {
+    const turn: number = turnKeys[i];
+    const group: ConversationBranchSummary[] | undefined = turnGroups.get(turn);
+    if (group === undefined) {
+      continue;
+    }
+    const groupWidth: number = group.length * NODE_WIDTH
+      + (group.length - 1) * SIBLING_GAP;
+    // 每组居中于画布
+    const startX: number = CANVAS_PADDING + (maxGroupWidth - groupWidth) / 2;
+    const y: number = CANVAS_PADDING + turn * LEVEL_GAP;
 
-      nodes.push({
-        branchId: node.summary.id,
-        parentBranchId: node.summary.parentBranchId !== undefined
-          && node.summary.parentBranchId !== null
-          ? node.summary.parentBranchId
-          : '',
-        depth: node.depth,
+    for (let j = 0; j < group.length; j++) {
+      const summary: ConversationBranchSummary = group[j];
+      const x: number = startX + j * (NODE_WIDTH + SIBLING_GAP);
+      const layout: BranchMapNodeLayout = {
+        branchId: summary.id,
+        parentBranchId: summary.parentBranchId !== undefined
+          ? summary.parentBranchId : '',
+        depth: 0, // 不再使用 depth,保留字段兼容
+        forkTurnNumber: turn,
+        currentMaxTurn: turn,
         x: x,
         y: y,
         width: NODE_WIDTH,
         height: NODE_HEIGHT,
-        siblingIndex: i,
-        siblingCount: layer.length
-      });
-
-      // 生成连接线(父底部中心 → 子顶部中心)
-      if (node.summary.parentBranchId !== undefined
-        && node.summary.parentBranchId !== null
-        && node.summary.parentBranchId.length > 0) {
-        const parentLayout: BranchMapNodeLayout | undefined =
-          findNodeLayout(nodes, node.summary.parentBranchId);
-        if (parentLayout !== undefined) {
-          edges.push({
-            parentBranchId: node.summary.parentBranchId,
-            childBranchId: node.summary.id,
-            startX: parentLayout.x + parentLayout.width / 2,
-            startY: parentLayout.y + parentLayout.height,
-            endX: x + NODE_WIDTH / 2,
-            endY: y
-          });
-        }
-      }
+        siblingIndex: j,
+        siblingCount: group.length
+      };
+      nodes.push(layout);
+      layoutMap.set(layout.branchId, layout);
     }
   }
 
-  const canvasWidth: number = maxLayerWidth + CANVAS_PADDING * 2;
-  const canvasHeight: number = layers.length * (NODE_HEIGHT + DEPTH_GAP)
-    - DEPTH_GAP + CANVAS_PADDING * 2;
+  // 5. 生成 edges(智能查找父节点,保证连线始终向下)
+  //    对每个 Branch,沿 parentBranchId 链向上查找,找到第一个
+  //    forkTurnNumber < 当前 Branch forkTurnNumber 的祖先作为起点。
+  //    这样可避免:
+  //    - 同轮次平行 Branch 之间的横向连线
+  //    - 从历史轮次 fork 时,子节点 turn < 父节点 turn 的向上连线
+  //    - 一个 Branch 出现多条入射线(每个 Branch 至多一条入射)
+  const edges: BranchTreeEdge[] = [];
+  for (let i = 0; i < nodes.length; i++) {
+    const nodeLayout: BranchMapNodeLayout = nodes[i];
+    if (nodeLayout.parentBranchId.length === 0) {
+      continue; // Root 无入射连线
+    }
+    // 沿父链向上查找 turn 严格更小的祖先
+    let currentParentId: string = nodeLayout.parentBranchId;
+    let parentLayout: BranchMapNodeLayout | undefined = undefined;
+    let safety: number = 0;
+    while (currentParentId.length > 0 && safety < 100) {
+      safety++;
+      const candidate: BranchMapNodeLayout | undefined = layoutMap.get(currentParentId);
+      if (candidate === undefined) {
+        break;
+      }
+      if (candidate.forkTurnNumber < nodeLayout.forkTurnNumber) {
+        parentLayout = candidate;
+        break;
+      }
+      // 当前祖先 turn >= 子节点 turn,继续向上查找
+      currentParentId = candidate.parentBranchId;
+    }
+    if (parentLayout === undefined) {
+      // 找不到 turn 更小的祖先(异常情况),跳过该连线
+      continue;
+    }
+    // 起点为祖先节点底部中心,终点为子节点顶部中心
+    // 节点固定大小,height = NODE_HEIGHT
+    edges.push({
+      parentBranchId: parentLayout.branchId,
+      childBranchId: nodeLayout.branchId,
+      startX: parentLayout.x + parentLayout.width / 2,
+      startY: parentLayout.y + parentLayout.height,
+      endX: nodeLayout.x + nodeLayout.width / 2,
+      endY: nodeLayout.y
+    });
+  }
+
+  // 6. 计算 contentHeight
+  const contentHeight: number = CANVAS_PADDING * 2
+    + (maxTurn + 1) * NODE_HEIGHT
+    + maxTurn * (LEVEL_GAP - NODE_HEIGHT);
+
+  // 最小日志(只汇总,不记录 ID/正文)
+  Logger.info(LOG_TAG, 'nodes=' + nodes.length.toString()
+    + ' turns=' + turnKeys.length.toString()
+    + ' maxTurn=' + maxTurn.toString()
+    + ' orphanNodes=0');
+  Logger.info(LOG_TAG, 'layout_ready width=' + Math.ceil(contentWidth).toString()
+    + ' height=' + Math.ceil(contentHeight).toString()
+    + ' edges=' + edges.length.toString());
 
   return {
     nodes: nodes,
-    canvasWidth: canvasWidth,
-    canvasHeight: canvasHeight,
+    canvasWidth: contentWidth,
+    canvasHeight: contentHeight,
     edges: edges
   };
-}
-
-function assignDepth(nodes: TreeNode[], depth: number): void {
-  for (let i = 0; i < nodes.length; i++) {
-    nodes[i].depth = depth;
-    assignDepth(nodes[i].children, depth + 1);
-  }
-}
-
-function collectLayers(nodes: TreeNode[], layers: TreeNode[][]): void {
-  for (let i = 0; i < nodes.length; i++) {
-    const node: TreeNode = nodes[i];
-    while (layers.length <= node.depth) {
-      layers.push([]);
-    }
-    layers[node.depth].push(node);
-    collectLayers(node.children, layers);
-  }
-}
-
-function findNodeLayout(
-  nodes: BranchMapNodeLayout[],
-  branchId: string
-): BranchMapNodeLayout | undefined {
-  for (let i = 0; i < nodes.length; i++) {
-    if (nodes[i].branchId === branchId) {
-      return nodes[i];
-    }
-  }
-  return undefined;
 }
 
 /**

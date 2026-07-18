@@ -671,7 +671,36 @@ export class ChatService {
       parentBranchId = activeBranch.id;
     }
 
-    // 4. 创建新的 Streaming Assistant Message
+    await this.forkAndStreamFromUser(
+      chatId, activeBranch.id, parentBranchId, forkUserMessageId, callbacks
+    );
+  }
+
+  /**
+   * T-6.4B-1.2 / T-6.4B-2 公共:从指定 User Message fork 新 Branch 并启动流式生成。
+   *
+   * 调用方负责:
+   * - 校验 disposed / isBusy / persistenceService / branchPersistenceService
+   * - 解析 forkUserMessageId(从 lastAssistant 前找,或直接传入历史 User 消息 ID)
+   * - 解析 parentBranchId(同级 vs 子级,基于 activeBranch.forkMessageId)
+   *
+   * 本方法负责:
+   * 1. 创建新 Streaming Assistant Message
+   * 2. 调用 forkForRegeneration 在单一事务中创建 Branch + 复制 Links + 插入 Assistant
+   * 3. 重载 messages / swipeSummaries / branchState
+   * 4. 建立 BranchRegeneration ActiveGenerationContext
+   * 5. 调用 doStream 启动 Provider
+   *
+   * 事务失败:不启动 Provider,不切换 Active Branch,通过 callbacks.onError 报错。
+   */
+  private async forkAndStreamFromUser(
+    chatId: string,
+    sourceBranchId: string,
+    parentBranchId: string,
+    forkUserMessageId: string,
+    callbacks: ChatServiceCallbacks
+  ): Promise<void> {
+    // 1. 创建新的 Streaming Assistant Message
     this.generationOperationId++;
     const operationId: number = this.generationOperationId;
     const newAssistantId: string = 'msg-' + generateUuid();
@@ -685,13 +714,13 @@ export class ChatService {
       source: ChatMessageSource.Conversation
     };
 
-    // 5. 占用 Branch 操作互斥锁(保护事务 + reload 期间不被并发)
+    // 2. 占用 Branch 操作互斥锁(保护事务 + reload 期间不被并发)
     this.branchOperationInProgress = true;
     let newBranchSummary: ConversationBranchSummary;
     try {
-      newBranchSummary = await this.branchPersistenceService.forkForRegeneration(
+      newBranchSummary = await this.branchPersistenceService!.forkForRegeneration(
         chatId,
-        activeBranch.id,
+        sourceBranchId,
         parentBranchId,
         forkUserMessageId,
         newAssistantMessage
@@ -699,13 +728,13 @@ export class ChatService {
       Logger.info(LOG_TAG, 'ConversationBranch | regeneration branch created');
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
-      Logger.error(LOG_TAG, 'regenerateAsBranch forkForRegeneration failed: ' + msg);
+      Logger.error(LOG_TAG, 'forkAndStreamFromUser forkForRegeneration failed: ' + msg);
       this.branchOperationInProgress = false;
       callbacks.onError('创建分支失败,请重试');
       return;
     }
 
-    // 6. 事务成功,重载内存状态(新 Branch 已成为 Active)
+    // 3. 事务成功,重载内存状态(新 Branch 已成为 Active)
     try {
       await this.reloadCurrentSession();
       if (this.swipePersistenceService !== null) {
@@ -716,11 +745,11 @@ export class ChatService {
       await this.refreshBranchState();
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
-      Logger.error(LOG_TAG, 'regenerateAsBranch reload failed: ' + msg);
+      Logger.error(LOG_TAG, 'forkAndStreamFromUser reload failed: ' + msg);
       // Branch 已创建,继续执行生成,UI 状态可能与 DB 不一致但可恢复
     }
 
-    // 7. 建立 BranchRegeneration 活动上下文
+    // 4. 建立 BranchRegeneration 活动上下文
     this.activeGeneration = {
       operationId: operationId,
       kind: ChatGenerationKind.BranchRegeneration,
@@ -730,19 +759,19 @@ export class ChatService {
       forkMessageId: forkUserMessageId
     };
 
-    // 8. 设置当前 Assistant ID 和持久化追踪
+    // 5. 设置当前 Assistant ID 和持久化追踪
     this.currentAssistantId = newAssistantId;
     this.lastPersistedContentLength = 0;
     this.pendingPersistAssistantId = newAssistantId;
 
-    // 9. 释放 Branch 操作锁(后续通过 isBusy / activeGeneration 互斥)
+    // 6. 释放 Branch 操作锁(后续通过 isBusy / activeGeneration 互斥)
     this.branchOperationInProgress = false;
 
-    // 10. 进入 Sending 状态,通知 UI
+    // 7. 进入 Sending 状态,通知 UI
     this.setState(ChatState.Sending, callbacks);
     this.emitMessages(callbacks);
 
-    // 11. 启动 Provider
+    // 8. 启动 Provider
     Logger.info(LOG_TAG, 'Regenerate | provider_started (branch mode)');
     this.doStream(newAssistantId, callbacks, this.activeGeneration);
   }
@@ -2749,6 +2778,122 @@ export class ChatService {
     } finally {
       this.branchOperationInProgress = false;
     }
+  }
+
+  /**
+   * T-6.4B-2: 判断指定 User 消息是否可"从此处生成新回复"创建 Branch。
+   *
+   * 条件:
+   * - 未处于忙碌状态
+   * - branchPersistenceService 可用
+   * - role = User
+   * - status = Completed(或 undefined,兼容旧数据)
+   * - 不是当前正在生成的消息(currentAssistantId 只可能是 Assistant,User 永远不匹配)
+   * - 位于当前 messages 列表中(即位于当前 Active Branch)
+   * - 该 User 消息之后存在 Assistant 回复或后续消息(即不是最新一条尚未生成回复的 User)
+   *   通过 indexOf(msg) < messages.length - 1 判断
+   */
+  canGenerateFromUserMessage(messageId: string): boolean {
+    if (this.isBusy()) {
+      return false;
+    }
+    if (this.branchPersistenceService === null) {
+      return false;
+    }
+    if (messageId.length === 0) {
+      return false;
+    }
+    const msg: ChatMessage | undefined = this.findMessageById(messageId);
+    if (msg === undefined) {
+      return false;
+    }
+    if (msg.role !== ChatRole.User) {
+      return false;
+    }
+    if (msg.status !== undefined && msg.status !== ChatMessageStatus.Completed) {
+      return false;
+    }
+    // 必须有后续消息(后面存在 Assistant 回复或后续历史)
+    // 最新一条尚未生成 Assistant 的 User 消息不显示该操作
+    const idx: number = this.messages.indexOf(msg);
+    if (idx < 0 || idx >= this.messages.length - 1) {
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * T-6.4B-2: 从历史 User 消息生成新回复(创建新 Branch 并自动启动 Provider)。
+   *
+   * 流程:
+   * 1. 校验:未忙碌、branchPersistenceService 可用、会话已初始化、消息可生成
+   * 2. 获取当前 Active Branch
+   * 3. 判断同级或子级 parentBranchId(复用 T-6.4B-1.2 规则)
+   * 4. 调用 forkAndStreamFromUser 创建 Branch + Streaming Assistant + 启动 Provider
+   *
+   * 事务失败:不启动 Provider,不切换 Active Branch,通过 callbacks.onError 报错。
+   */
+  async generateFromUserMessage(
+    userMessageId: string,
+    callbacks: ChatServiceCallbacks
+  ): Promise<void> {
+    if (this.disposed) {
+      throw new Error('ChatService disposed');
+    }
+    if (this.isBusy()) {
+      Logger.warn(LOG_TAG, 'generateFromUserMessage rejected: busy');
+      callbacks.onError('操作进行中,请稍候');
+      return;
+    }
+    if (this.branchPersistenceService === null) {
+      callbacks.onError('分支服务不可用');
+      return;
+    }
+    if (this.persistenceService === null) {
+      callbacks.onError('持久化服务不可用');
+      return;
+    }
+    if (this.currentChatId === undefined) {
+      callbacks.onError('会话未初始化');
+      return;
+    }
+    if (!this.canGenerateFromUserMessage(userMessageId)) {
+      Logger.warn(LOG_TAG, 'generateFromUserMessage rejected: invalid message');
+      callbacks.onError('该消息无法生成新回复');
+      return;
+    }
+
+    const chatId: string = this.currentChatId;
+    this.lastCallbacks = callbacks;
+
+    // 1. 获取当前 Active Branch(完整 ConversationBranch,含 forkMessageId / parentBranchId)
+    const activeBranch: ConversationBranch | null =
+      await this.branchPersistenceService.getActiveBranch(chatId);
+    if (activeBranch === null) {
+      callbacks.onError('当前会话无活动分支');
+      return;
+    }
+    if (activeBranch.id.length === 0) {
+      callbacks.onError('活动分支无效');
+      return;
+    }
+
+    // 2. 判断同级或子级(复用 T-6.4B-1.2 规则)
+    //    同级条件:当前 Active Branch 非 Root 且 forkMessageId 等于本次 userMessageId
+    let parentBranchId: string;
+    if (!activeBranch.isRoot
+      && activeBranch.forkMessageId !== undefined
+      && activeBranch.forkMessageId === userMessageId) {
+      parentBranchId = activeBranch.parentBranchId !== undefined
+        ? activeBranch.parentBranchId : activeBranch.id;
+    } else {
+      parentBranchId = activeBranch.id;
+    }
+
+    Logger.info(LOG_TAG, 'generateFromUserMessage | start');
+    await this.forkAndStreamFromUser(
+      chatId, activeBranch.id, parentBranchId, userMessageId, callbacks
+    );
   }
 
   /**

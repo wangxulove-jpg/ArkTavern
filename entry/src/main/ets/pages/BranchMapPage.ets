@@ -40,7 +40,7 @@ const COLOR_TEXT_SECONDARY: string = '#888888';
 const COLOR_DIVIDER: string = '#E0E0E0';
 const COLOR_BUTTON_PRIMARY: string = '#5B7CFA';
 const COLOR_BUTTON_DISABLED: string = '#CCCCCC';
-const COLOR_EDGE: string = '#B0B0B0';
+const COLOR_EDGE: string = '#7A7A7A';
 const COLOR_ERROR: string = '#FF3B30';
 
 const RES_BRANCH_MAP_TITLE: string = 'branch_map_title';
@@ -310,22 +310,25 @@ export struct BranchMapPage {
 
   private drawConnections(layout: BranchTreeLayoutResult): void {
     const ctx: CanvasRenderingContext2D = this.canvasContext;
-    const scale: number = vp2px(1);
-    ctx.scale(scale, scale);
+    // T-6.4B-2-R1: 不调用 ctx.scale(vp2px(1), vp2px(1))。
+    // ArkUI Canvas 的 width/height 以 vp 设置时,绘制坐标也使用 vp,
+    // 额外 scale 会导致坐标被双重缩放,线条绘制到画布外不可见。
+    // 清空画布(切换分支/重绘时避免残留)
+    ctx.clearRect(0, 0, layout.canvasWidth, layout.canvasHeight);
     ctx.strokeStyle = COLOR_EDGE;
     ctx.lineWidth = 1.5;
     ctx.setLineDash([6, 4]);
 
+    // T-6.4B-2-R1: 使用简单折线(父底部中心 → 垂直到中间 Y → 水平到子 X → 垂直到子顶部)
+    // 比贝塞尔曲线更可靠,坐标计算简单,不会因控制点错误导致线段消失。
     for (let i = 0; i < layout.edges.length; i++) {
       const edge: BranchTreeEdge = layout.edges[i];
+      const midY: number = (edge.startY + edge.endY) / 2;
       ctx.beginPath();
       ctx.moveTo(edge.startX, edge.startY);
-      const midY: number = (edge.startY + edge.endY) / 2;
-      ctx.bezierCurveTo(
-        edge.startX, midY,
-        edge.endX, midY,
-        edge.endX, edge.endY
-      );
+      ctx.lineTo(edge.startX, midY);
+      ctx.lineTo(edge.endX, midY);
+      ctx.lineTo(edge.endX, edge.endY);
       ctx.stroke();
     }
   }
@@ -354,6 +357,7 @@ export struct BranchMapPage {
       parentBranchId: undefined,
       forkMessageId: undefined,
       forkTurnNumber: 0,
+      currentMaxTurn: 0,
       forkUserPreview: '',
       firstDivergentAssistantPreview: '',
       messageCount: 0,

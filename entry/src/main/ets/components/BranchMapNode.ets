@@ -211,6 +211,7 @@ function createEmptyDisplayInfo(): BranchMapDisplayInfo {
     parentBranchId: undefined,
     forkMessageId: undefined,
     forkTurnNumber: 0,
+    currentMaxTurn: 0,
     forkUserPreview: '',
     firstDivergentAssistantPreview: '',
     messageCount: 0,

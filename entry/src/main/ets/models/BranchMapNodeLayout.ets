@@ -19,8 +19,20 @@ export interface BranchMapNodeLayout {
   branchId: string;
   /** 父 Branch ID(Root 为空字符串) */
   parentBranchId: string;
-  /** 层级深度(Root = 0) */
+  /** 层级深度(Root = 0,按 Branch 父子关系) */
   depth: number;
+  /**
+   * fork 轮次序号(Root = 0,从 1 开始)。
+   * T-6.4B-2-R1: Y 坐标依据 forkTurnNumber 而非 depth,
+   * 确保中间分支和末尾分支在 Y 轴上与对话位置一一对应。
+   */
+  forkTurnNumber: number;
+  /**
+   * 当前 Branch 覆盖的最深轮次(= Branch 中 User 消息数)。
+   * T-6.4B-2-R1: 节点延伸显示,高度 = (currentMaxTurn - forkTurnNumber + 1) × LEVEL_GAP。
+   * 这样分支节点会从 fork 点延伸到当前最深轮次,反映分支的完整覆盖范围。
+   */
+  currentMaxTurn: number;
   /** 节点左上角 x 坐标 */
   x: number;
   /** 节点左上角 y 坐标 */

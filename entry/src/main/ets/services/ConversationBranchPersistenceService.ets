@@ -724,6 +724,7 @@ export class ConversationBranchPersistenceService {
         parentBranchId: summary.parentBranchId,
         forkMessageId: summary.forkMessageId,
         forkTurnNumber: forkTurnNumber,
+        currentMaxTurn: forkTurnNumber,
         forkUserPreview: forkUserPreview,
         firstDivergentAssistantPreview: firstDivergentAssistantPreview,
         messageCount: summary.messageCount,
