@@ -91,6 +91,62 @@
     {
       "name": "chat_divider",
       "value": "#3A3A3A"
+    },
+    {
+      "name": "app_bg",
+      "value": "#121212"
+    },
+    {
+      "name": "app_surface_1",
+      "value": "#1E1E1E"
+    },
+    {
+      "name": "app_surface_2",
+      "value": "#2A2A2A"
+    },
+    {
+      "name": "app_accent_surface",
+      "value": "#2A3552"
+    },
+    {
+      "name": "app_text_primary",
+      "value": "#F0F0F0"
+    },
+    {
+      "name": "app_text_secondary",
+      "value": "#B0B0B0"
+    },
+    {
+      "name": "app_text_tertiary",
+      "value": "#808080"
+    },
+    {
+      "name": "app_accent",
+      "value": "#7B9BFF"
+    },
+    {
+      "name": "app_accent_pressed",
+      "value": "#9BB0FF"
+    },
+    {
+      "name": "app_on_accent",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "app_danger",
+      "value": "#EF5350"
+    },
+    {
+      "name": "app_divider",
+      "value": "#333333"
+    },
+    {
+      "name": "app_dev_surface",
+      "value": "#2A2200"
+    },
+    {
+      "name": "app_dev_text",
+      "value": "#FFCC66"
     }
   ]
 }

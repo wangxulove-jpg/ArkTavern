@@ -73,6 +73,38 @@
       "value": "尚未配置模型"
     },
     {
+      "name": "home_start_chat_desc",
+      "value": "选择角色,开启沉浸对话"
+    },
+    {
+      "name": "home_section_more",
+      "value": "更多入口"
+    },
+    {
+      "name": "home_initializing",
+      "value": "正在加载…"
+    },
+    {
+      "name": "home_init_failed",
+      "value": "加载失败,请重启应用"
+    },
+    {
+      "name": "home_model_ready_badge",
+      "value": "模型已就绪"
+    },
+    {
+      "name": "home_model_not_ready_badge",
+      "value": "未配置模型"
+    },
+    {
+      "name": "home_tap_to_config",
+      "value": "点击配置"
+    },
+    {
+      "name": "home_start_chat_hint",
+      "value": "开始"
+    },
+    {
       "name": "home_version",
       "value": "Development Preview · v0.1"
     },
@@ -671,6 +703,158 @@
     {
       "name": "branch_map_empty",
       "value": "暂无分支"
+    },
+    {
+      "name": "tab_characters",
+      "value": "角色卡"
+    },
+    {
+      "name": "tab_characters_subtitle",
+      "value": "Characters"
+    },
+    {
+      "name": "tab_characters_desc",
+      "value": "管理你的角色卡,点击角色进入详情"
+    },
+    {
+      "name": "tab_characters_current_label",
+      "value": "当前角色"
+    },
+    {
+      "name": "tab_characters_no_current",
+      "value": "未选定当前角色,点击进入角色列表选择"
+    },
+    {
+      "name": "tab_characters_new",
+      "value": "新建角色"
+    },
+    {
+      "name": "tab_characters_import",
+      "value": "导入角色卡"
+    },
+    {
+      "name": "tab_characters_empty",
+      "value": "暂无角色"
+    },
+    {
+      "name": "tab_characters_empty_desc",
+      "value": "点击新建或导入你的第一个角色卡"
+    },
+    {
+      "name": "tab_characters_load_failed",
+      "value": "加载角色列表失败"
+    },
+    {
+      "name": "tab_sessions",
+      "value": "对话记录"
+    },
+    {
+      "name": "tab_sessions_subtitle",
+      "value": "Sessions"
+    },
+    {
+      "name": "tab_sessions_desc",
+      "value": "查看你的聊天历史,点击会话进入聊天"
+    },
+    {
+      "name": "tab_sessions_empty",
+      "value": "暂无会话"
+    },
+    {
+      "name": "tab_sessions_empty_desc",
+      "value": "点击下方按钮开始新对话"
+    },
+    {
+      "name": "tab_sessions_load_failed",
+      "value": "加载会话列表失败"
+    },
+    {
+      "name": "tab_sessions_current_badge",
+      "value": "当前"
+    },
+    {
+      "name": "tab_sessions_new_chat",
+      "value": "开始新对话"
+    },
+    {
+      "name": "tab_market",
+      "value": "市场"
+    },
+    {
+      "name": "tab_market_subtitle",
+      "value": "Market"
+    },
+    {
+      "name": "tab_market_placeholder_title",
+      "value": "市场即将上线"
+    },
+    {
+      "name": "tab_market_placeholder_desc",
+      "value": "后续将接入角色卡市场,敬请期待"
+    },
+    {
+      "name": "tab_settings",
+      "value": "设置"
+    },
+    {
+      "name": "tab_settings_subtitle",
+      "value": "Settings"
+    },
+    {
+      "name": "tab_settings_desc",
+      "value": "配置 AI 与应用"
+    },
+    {
+      "name": "tab_settings_section_ai",
+      "value": "AI 与对话"
+    },
+    {
+      "name": "tab_settings_section_app",
+      "value": "应用"
+    },
+    {
+      "name": "tab_settings_section_dev",
+      "value": "开发"
+    },
+    {
+      "name": "tab_settings_model",
+      "value": "模型设置"
+    },
+    {
+      "name": "tab_settings_model_desc",
+      "value": "配置 AI 提供商和模型参数"
+    },
+    {
+      "name": "tab_settings_lorebook",
+      "value": "世界书"
+    },
+    {
+      "name": "tab_settings_lorebook_desc",
+      "value": "管理世界书与条目"
+    },
+    {
+      "name": "tab_settings_preset",
+      "value": "提示词预设"
+    },
+    {
+      "name": "tab_settings_preset_desc",
+      "value": "管理 Prompt 预设"
+    },
+    {
+      "name": "tab_settings_app_settings",
+      "value": "应用设置"
+    },
+    {
+      "name": "tab_settings_app_settings_desc",
+      "value": "主题、语言等应用级配置"
+    },
+    {
+      "name": "tab_settings_dev_tools",
+      "value": "开发工具"
+    },
+    {
+      "name": "tab_settings_dev_tools_desc",
+      "value": "调试与测试入口"
     }
   ]
 }

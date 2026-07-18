@@ -108,7 +108,16 @@ export struct ChatPage {
       this.messages = msgs;
     };
     this.viewModel = vm;
-    vm.initialize();
+    // UI-1: 从 ChatSessionRootView 通过 AppStorage 传入的待切换 chatId。
+    // 读后立即清除,避免下次进入时残留。
+    const pendingChatId: string = AppStorage.get<string>('pendingChatId') ?? '';
+    if (pendingChatId.length > 0) {
+      AppStorage.set<string>('pendingChatId', '');
+      vm.initialize().then((): Promise<void> => vm.selectSession(pendingChatId))
+        .catch((): void => {});
+    } else {
+      vm.initialize();
+    }
   }
 
   aboutToDisappear(): void {

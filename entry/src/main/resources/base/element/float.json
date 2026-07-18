@@ -31,6 +31,70 @@
     {
       "name": "nav_body_font_size",
       "value": "15fp"
+    },
+    {
+      "name": "app_spacing_4",
+      "value": "4vp"
+    },
+    {
+      "name": "app_spacing_8",
+      "value": "8vp"
+    },
+    {
+      "name": "app_spacing_12",
+      "value": "12vp"
+    },
+    {
+      "name": "app_spacing_16",
+      "value": "16vp"
+    },
+    {
+      "name": "app_spacing_20",
+      "value": "20vp"
+    },
+    {
+      "name": "app_spacing_24",
+      "value": "24vp"
+    },
+    {
+      "name": "app_spacing_32",
+      "value": "32vp"
+    },
+    {
+      "name": "app_spacing_48",
+      "value": "48vp"
+    },
+    {
+      "name": "app_radius_sm",
+      "value": "8vp"
+    },
+    {
+      "name": "app_radius_md",
+      "value": "12vp"
+    },
+    {
+      "name": "app_radius_lg",
+      "value": "16vp"
+    },
+    {
+      "name": "app_font_title",
+      "value": "26fp"
+    },
+    {
+      "name": "app_font_subtitle",
+      "value": "16fp"
+    },
+    {
+      "name": "app_font_body",
+      "value": "15fp"
+    },
+    {
+      "name": "app_font_caption",
+      "value": "12fp"
+    },
+    {
+      "name": "app_touch_target",
+      "value": "48vp"
     }
   ]
 }
