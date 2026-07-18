@@ -34,6 +34,10 @@ import promptPresetRepositoryTest from './PromptPresetRepository.test';
 import messageSwipeRepositoryTest from './MessageSwipeRepository.test';
 import messageSwipePersistenceServiceDeviceTest from './MessageSwipePersistenceServiceDevice.test';
 import messageSwipeRuntimeRecoveryTest from './MessageSwipeRuntimeRecovery.test';
+import databaseV5MigrationTest from './DatabaseV5Migration.test';
+import conversationBranchRepositoryTest from './ConversationBranchRepository.test';
+import conversationBranchPersistenceServiceDeviceTest from './ConversationBranchPersistenceServiceDevice.test';
+import chatServiceHistoryPreservationTest from './ChatServiceHistoryPreservation.test';
 
 export default function testsuite() {
   abilityTest();
@@ -71,4 +75,8 @@ export default function testsuite() {
   messageSwipeRepositoryTest();
   messageSwipePersistenceServiceDeviceTest();
   messageSwipeRuntimeRecoveryTest();
+  databaseV5MigrationTest();
+  conversationBranchRepositoryTest();
+  conversationBranchPersistenceServiceDeviceTest();
+  chatServiceHistoryPreservationTest();
 }

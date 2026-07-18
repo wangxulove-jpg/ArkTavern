@@ -5,21 +5,27 @@
  * - 提供 Chat 与 Message 的联合事务操作
  * - removeChatWithMessages: 在一个事务中同时删除 Chat 及其所有 Message
  * - 删除 Chat 时同步清理 Swipe 数据(Group + Candidates)
+ * - 删除 Chat 时同步清理 Branch 数据(T-6.4A)
  *
  * 不负责:
- * - 单表 CRUD(见 ChatRepository / MessageRepository / MessageSwipeRepository)
+ * - 单表 CRUD(见 ChatRepository / MessageRepository / MessageSwipeRepository / ConversationBranchRepository)
  * - 业务逻辑
  *
  * 规则:
  * - 使用 DbHelper.runInTransaction 保证原子性
  * - 任一步失败全部回滚
- * - 删除顺序:
- *   1. Swipe Candidates(通过 MessageSwipeRepository)
- *   2. Swipe Groups
- *   3. Messages
- *   4. Chat
+ * - 删除顺序(T-6.4A):
+ *   1. conversation_branch_swipe_selections(通过 BranchPersistenceService)
+ *   2. conversation_branch_messages
+ *   3. chat_branch_state
+ *   4. conversation_branches
+ *   5. message_swipe_candidates(通过 MessageSwipeRepository)
+ *   6. message_swipe_groups
+ *   7. messages
+ *   8. chats
  * - 删除不存在 Chat 时保持幂等(不抛错)
  * - 通过 WithStore 内部方法操作,避免嵌套事务
+ * - branchPersistenceService 为可选参数,为 null 时跳过 Branch 清理(向后兼容旧测试)
  */
 
 import { relationalStore } from '@kit.ArkData';
@@ -27,6 +33,7 @@ import { DbHelper } from '../database/DbHelper';
 import { ChatRepository } from './ChatRepository';
 import { MessageRepository } from './MessageRepository';
 import { MessageSwipeRepository } from './MessageSwipeRepository';
+import { ConversationBranchPersistenceService } from '../services/ConversationBranchPersistenceService';
 import { DatabaseError } from '../models/DatabaseError';
 import { extractCauseMessage } from './RepositoryMappers';
 
@@ -35,27 +42,36 @@ export class ChatPersistenceOperations {
   private readonly chatRepository: ChatRepository;
   private readonly messageRepository: MessageRepository;
   private readonly swipeRepository: MessageSwipeRepository;
+  private readonly branchPersistenceService: ConversationBranchPersistenceService | null;
 
   constructor(
     dbHelper: DbHelper,
     chatRepository: ChatRepository,
     messageRepository: MessageRepository,
-    swipeRepository: MessageSwipeRepository
+    swipeRepository: MessageSwipeRepository,
+    branchPersistenceService: ConversationBranchPersistenceService | null = null
   ) {
     this.dbHelper = dbHelper;
     this.chatRepository = chatRepository;
     this.messageRepository = messageRepository;
     this.swipeRepository = swipeRepository;
+    this.branchPersistenceService = branchPersistenceService;
   }
 
   /**
-   * 在一个事务中:
-   * 1. 删除指定 Chat 的 Swipe 数据(Group + Candidates)
-   * 2. 删除指定 Chat 的所有 Message
-   * 3. 删除 Chat 本身
+   * 在一个事务中按 T-6.4A 顺序删除:
+   * 1. conversation_branch_swipe_selections
+   * 2. conversation_branch_messages
+   * 3. chat_branch_state
+   * 4. conversation_branches
+   * 5. message_swipe_candidates
+   * 6. message_swipe_groups
+   * 7. messages
+   * 8. chats
    *
    * 任一步失败全部回滚。
    * 删除不存在 Chat 时保持幂等(不抛错)。
+   * branchPersistenceService 为 null 时跳过 Branch 清理(步骤 1-4)。
    */
   async removeChatWithMessages(chatId: string): Promise<void> {
     if (chatId === '') {
@@ -64,11 +80,15 @@ export class ChatPersistenceOperations {
     try {
       await this.dbHelper.runInTransaction(
         async (store: relationalStore.RdbStore): Promise<void> => {
-          // 先删 Swipe 数据(幂等,不存在返回 0)
+          // 1-4. 删除 Branch 相关数据(幂等)
+          if (this.branchPersistenceService !== null) {
+            await this.branchPersistenceService.removeByChatIdWithStore(store, chatId);
+          }
+          // 5-6. 删除 Swipe 数据(幂等,不存在返回 0)
           await this.swipeRepository.removeByChatIdWithStore(store, chatId);
-          // 再删消息(幂等,不存在返回 0)
+          // 7. 删除消息(幂等,不存在返回 0)
           await this.messageRepository.removeByChatIdWithStore(store, chatId);
-          // 最后删 Chat(幂等,不存在不抛错)
+          // 8. 删除 Chat(幂等,不存在不抛错)
           await this.chatRepository.removeWithStore(store, chatId);
         }
       );

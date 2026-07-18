@@ -44,9 +44,11 @@ import { ChatPersistenceOperations } from '../repositories/ChatPersistenceOperat
 import { CharacterRepository } from '../repositories/CharacterRepository';
 import { LorebookRepository } from '../repositories/LorebookRepository';
 import { PromptPresetRepository } from '../repositories/PromptPresetRepository';
+import { ConversationBranchRepository } from '../repositories/ConversationBranchRepository';
 import { PromptPresetSelectionStore } from '../storage/PromptPresetSelectionStore';
 import { PromptPresetService } from './PromptPresetService';
 import { MessageSwipePersistenceService } from './MessageSwipePersistenceService';
+import { ConversationBranchPersistenceService } from './ConversationBranchPersistenceService';
 import { ChatService } from './ChatService';
 import { ChatPersistenceService } from './ChatPersistenceService';
 import { ModelService } from './ModelService';
@@ -116,6 +118,10 @@ export class AppServices {
   private readonly promptPresetSelectionStore: PromptPresetSelectionStore;
   /** PromptPresetService(不对页面公开,T-6.1B 接入 Chat 后暴露) */
   private readonly promptPresetService: PromptPresetService;
+  /** ConversationBranchRepository 对话分支仓储(不对页面公开,T-6.4A) */
+  private readonly conversationBranchRepository: ConversationBranchRepository;
+  /** ConversationBranchPersistenceService 对话分支持久化服务(不对页面公开,T-6.4A) */
+  private readonly conversationBranchPersistenceService: ConversationBranchPersistenceService;
 
   /**
    * 私有构造,组装全部依赖。
@@ -176,22 +182,33 @@ export class AppServices {
     this.chatRepository = new ChatRepository(this.dbHelper);
     this.messageRepository = new MessageRepository(this.dbHelper);
     this.messageSwipeRepository = new MessageSwipeRepository(this.dbHelper);
+    // T-6.4A: ConversationBranch 服务(单例,共享同一 DbHelper)
+    this.conversationBranchRepository = new ConversationBranchRepository(this.dbHelper);
+    this.conversationBranchPersistenceService = new ConversationBranchPersistenceService(
+      this.dbHelper,
+      this.conversationBranchRepository,
+      this.messageRepository,
+      this.messageSwipeRepository
+    );
     this.chatPersistenceOperations = new ChatPersistenceOperations(
       this.dbHelper,
       this.chatRepository,
       this.messageRepository,
-      this.messageSwipeRepository
+      this.messageSwipeRepository,
+      this.conversationBranchPersistenceService
     );
     this.chatPersistenceService = new ChatPersistenceService(
       this.dbHelper,
       this.chatRepository,
       this.messageRepository,
-      this.chatPersistenceOperations
+      this.chatPersistenceOperations,
+      this.conversationBranchPersistenceService
     );
     this.messageSwipePersistenceService = new MessageSwipePersistenceService(
       this.dbHelper,
       this.messageRepository,
-      this.messageSwipeRepository
+      this.messageSwipeRepository,
+      this.conversationBranchPersistenceService
     );
   }
 
@@ -322,7 +339,8 @@ export class AppServices {
       services.historyTrimmer,
       services.chatPersistenceService,
       services.promptPresetService,
-      services.messageSwipePersistenceService
+      services.messageSwipePersistenceService,
+      services.conversationBranchPersistenceService
     );
   }
 

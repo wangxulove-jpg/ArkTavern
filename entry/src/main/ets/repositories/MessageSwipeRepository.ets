@@ -359,13 +359,16 @@ export class MessageSwipeRepository {
 
   /**
    * 按 chatId 列出所有 Group。
+   * 排序字段使用 assistant_message_id(该表主键)。
+   * 注意:message_swipe_groups 表无 candidate_index 列,该列仅存在于
+   * message_swipe_candidates 表,不能用 candidate_index 排序。
    */
   async listGroupsByChatId(chatId: string): Promise<MessageSwipeGroup[]> {
     const store: relationalStore.RdbStore = this.dbHelper.getStore();
     const predicates: relationalStore.RdbPredicates =
       new relationalStore.RdbPredicates(TABLE_MESSAGE_SWIPE_GROUPS);
     predicates.equalTo(COLUMN_CHAT_ID, chatId);
-    predicates.orderByAsc(COLUMN_SWIPE_CANDIDATE_INDEX);
+    predicates.orderByAsc(COLUMN_SWIPE_ASSISTANT_MESSAGE_ID);
     const rs: relationalStore.ResultSet = await store.query(predicates);
     try {
       const groups: MessageSwipeGroup[] = [];

@@ -6,7 +6,7 @@
  */
 
 export const DATABASE_NAME: string = 'arktavern.db';
-export const DATABASE_VERSION: number = 4;
+export const DATABASE_VERSION: number = 5;
 
 export const TABLE_CHARACTERS: string = 'characters';
 export const TABLE_CHATS: string = 'chats';
@@ -117,3 +117,22 @@ export const COLUMN_SWIPE_CANDIDATE_INDEX: string = 'candidate_index';
 export const INDEX_SWIPE_GROUPS_CHAT_ID: string = 'idx_swipe_groups_chat_id';
 export const INDEX_SWIPE_CANDIDATES_MESSAGE_ID: string = 'idx_swipe_candidates_message_id';
 export const INDEX_SWIPE_CANDIDATES_MESSAGE_INDEX: string = 'idx_swipe_candidates_message_index';
+
+// ===== v5: Conversation Branches =====
+export const TABLE_CONVERSATION_BRANCHES: string = 'conversation_branches';
+export const TABLE_CHAT_BRANCH_STATE: string = 'chat_branch_state';
+export const TABLE_CONVERSATION_BRANCH_MESSAGES: string = 'conversation_branch_messages';
+export const TABLE_CONVERSATION_BRANCH_SWIPE_SELECTIONS: string = 'conversation_branch_swipe_selections';
+
+export const COLUMN_BRANCH_ID: string = 'branch_id';
+export const COLUMN_PARENT_BRANCH_ID: string = 'parent_branch_id';
+export const COLUMN_FORK_MESSAGE_ID: string = 'fork_message_id';
+export const COLUMN_IS_ROOT: string = 'is_root';
+export const COLUMN_ACTIVE_BRANCH_ID: string = 'active_branch_id';
+export const COLUMN_POSITION: string = 'position';
+export const COLUMN_CANDIDATE_INDEX: string = 'candidate_index';
+
+export const INDEX_CONVERSATION_BRANCHES_CHAT_ID: string = 'idx_conversation_branches_chat_id';
+export const INDEX_CONVERSATION_BRANCHES_PARENT_ID: string = 'idx_conversation_branches_parent_id';
+export const INDEX_BRANCH_MESSAGES_MESSAGE_ID: string = 'idx_branch_messages_message_id';
+export const INDEX_BRANCH_SWIPE_SELECTIONS_MESSAGE_ID: string = 'idx_branch_swipe_selections_message_id';

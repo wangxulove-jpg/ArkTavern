@@ -29,6 +29,7 @@ import {
   MessagePageOptions
 } from '../repositories/MessageRepository';
 import { ChatPersistenceOperations } from '../repositories/ChatPersistenceOperations';
+import { ConversationBranchPersistenceService } from './ConversationBranchPersistenceService';
 import { Chat, createChat } from '../models/Chat';
 import { ChatMessage } from '../models/ChatMessage';
 import { PersistedChatSession } from '../models/PersistedChatSession';
@@ -56,23 +57,27 @@ export interface AppendUserAndAssistantResult {
 /**
  * 聊天会话持久化服务。
  * 通过构造函数注入 DbHelper 和各 Repository,自身无页面状态。
+ * branchPersistenceService 为可选参数,为 null 时跳过 Branch 操作(向后兼容旧测试)。
  */
 export class ChatPersistenceService {
   private readonly dbHelper: DbHelper;
   private readonly chatRepository: ChatRepository;
   private readonly messageRepository: MessageRepository;
   private readonly chatPersistenceOperations: ChatPersistenceOperations;
+  private readonly branchPersistenceService: ConversationBranchPersistenceService | null;
 
   constructor(
     dbHelper: DbHelper,
     chatRepository: ChatRepository,
     messageRepository: MessageRepository,
-    chatPersistenceOperations: ChatPersistenceOperations
+    chatPersistenceOperations: ChatPersistenceOperations,
+    branchPersistenceService: ConversationBranchPersistenceService | null = null
   ) {
     this.dbHelper = dbHelper;
     this.chatRepository = chatRepository;
     this.messageRepository = messageRepository;
     this.chatPersistenceOperations = chatPersistenceOperations;
+    this.branchPersistenceService = branchPersistenceService;
   }
 
   // ===== 会话级操作 =====
@@ -106,6 +111,7 @@ export class ChatPersistenceService {
    * - title 默认为"新对话"
    * - createdAt / updatedAt / lastMessageAt 使用当前时间
    * - 返回空 messages
+   * - T-6.4A: 同一事务中创建 Root Branch + chat_branch_state
    *
    * @param characterId 角色 id(可选)
    * @param title 会话标题(可选,默认"新对话")
@@ -123,7 +129,25 @@ export class ChatPersistenceService {
       characterId: characterId,
       title: resolvedTitle
     });
-    await this.chatRepository.insert(chat);
+    if (this.branchPersistenceService !== null) {
+      try {
+        await this.dbHelper.runInTransaction(
+          async (store: relationalStore.RdbStore): Promise<void> => {
+            await this.chatRepository.insertWithStore(store, chat);
+            await this.branchPersistenceService!.ensureRootBranchWithStore(store, chat.id);
+          },
+          'session_create'
+        );
+      } catch (err) {
+        if (err instanceof Error) {
+          Logger.error(LOG_TAG, 'createSession failed: ' + err.message);
+          throw err;
+        }
+        throw new Error(String(err));
+      }
+    } else {
+      await this.chatRepository.insert(chat);
+    }
     Logger.info(LOG_TAG, 'createSession id=' + chat.id.substring(0, 8));
     return {
       chat: chat,
@@ -137,6 +161,7 @@ export class ChatPersistenceService {
    * 用于角色首次进入聊天时注入开场白。
    * - firstMessage 的 sequenceNumber = 1
    * - Chat 和 firstMessage 在同一事务中创建
+   * - T-6.4A: 同一事务中创建 Root Branch + state + BranchMessageLink(firstMessage, pos=0)
    * - 失败全部回滚
    *
    * @param characterId 角色 id(可选)
@@ -159,7 +184,25 @@ export class ChatPersistenceService {
     });
 
     if (firstMessage === undefined) {
-      await this.chatRepository.insert(chat);
+      if (this.branchPersistenceService !== null) {
+        try {
+          await this.dbHelper.runInTransaction(
+            async (store: relationalStore.RdbStore): Promise<void> => {
+              await this.chatRepository.insertWithStore(store, chat);
+              await this.branchPersistenceService!.ensureRootBranchWithStore(store, chat.id);
+            },
+            'session_create'
+          );
+        } catch (err) {
+          if (err instanceof Error) {
+            Logger.error(LOG_TAG, 'createSession empty failed: ' + err.message);
+            throw err;
+          }
+          throw new Error(String(err));
+        }
+      } else {
+        await this.chatRepository.insert(chat);
+      }
       Logger.info(LOG_TAG, 'createSession empty id=' + chat.id.substring(0, 8));
       return {
         chat: chat,
@@ -179,7 +222,15 @@ export class ChatPersistenceService {
           await this.chatRepository.updateLastMessageAtWithStore(
             store, chat.id, now, now
           );
-        }
+          // T-6.4A-R1: 原子创建 Root Branch + state + Link(firstMessage, pos=0)
+          // 避免快照隔离导致 getActiveBranch 读不到刚创建的 state
+          if (this.branchPersistenceService !== null) {
+            await this.branchPersistenceService!.ensureRootBranchAndAppendFirstMessageWithStore(
+              store, chat.id, firstMessage.id
+            );
+          }
+        },
+        'session_create_with_first_message'
       );
     } catch (err) {
       if (err instanceof Error) {
@@ -288,6 +339,7 @@ export class ChatPersistenceService {
    * 追加单条消息。
    * - 自动计算 next sequenceNumber = max(sequence_number) + 1
    * - 持久化成功后更新 Chat 活跃时间
+   * - T-6.4A: 同一事务中将 Message 加入 Active Branch
    * - 返回分配的 sequenceNumber
    *
    * @param chatId 会话 id
@@ -300,8 +352,30 @@ export class ChatPersistenceService {
   ): Promise<number> {
     const maxSeq: number = await this.messageRepository.getMaxSequenceNumber(chatId);
     const nextSeq: number = maxSeq + 1;
-    await this.messageRepository.insert(message, chatId, nextSeq);
-    await this.updateChatActivity(chatId, nowMillis());
+    const now: number = nowMillis();
+    if (this.branchPersistenceService !== null) {
+      try {
+        await this.dbHelper.runInTransaction(
+          async (store: relationalStore.RdbStore): Promise<void> => {
+            await this.messageRepository.insertWithStore(store, message, chatId, nextSeq);
+            await this.chatRepository.updateLastMessageAtWithStore(store, chatId, now, now);
+            await this.branchPersistenceService!.appendMessageToActiveBranchWithStore(
+              store, chatId, message.id
+            );
+          },
+          'message_append'
+        );
+      } catch (err) {
+        if (err instanceof Error) {
+          Logger.error(LOG_TAG, 'appendMessage failed: ' + err.message);
+          throw err;
+        }
+        throw new Error(String(err));
+      }
+    } else {
+      await this.messageRepository.insert(message, chatId, nextSeq);
+      await this.updateChatActivity(chatId, now);
+    }
     Logger.info(LOG_TAG, 'appendMessage seq=' + nextSeq.toString());
     return nextSeq;
   }
@@ -311,6 +385,7 @@ export class ChatPersistenceService {
    * - User sequence = maxSeq + 1
    * - Assistant sequence = maxSeq + 2
    * - 两条消息在同一事务中创建
+   * - T-6.4A: 同一事务中将两条消息加入 Active Branch
    * - 失败全部回滚
    *
    * @param chatId 会话 id
@@ -340,7 +415,15 @@ export class ChatPersistenceService {
           await this.chatRepository.updateLastMessageAtWithStore(
             store, chatId, now, now
           );
-        }
+          // T-6.4A-R1: 原子追加 User + Assistant 到 Active Branch
+          // 必须一次性追加,避免 RDB 快照隔离导致 position 冲突
+          if (this.branchPersistenceService !== null) {
+            await this.branchPersistenceService!.appendMessagePairToActiveBranchWithStore(
+              store, chatId, userMessage.id, assistantMessage.id
+            );
+          }
+        },
+        'message_pair_append'
       );
     } catch (err) {
       if (err instanceof Error) {
@@ -424,6 +507,9 @@ export class ChatPersistenceService {
    * - User 消息保留
    * - firstMessage 和更早历史保留
    * - 删除和创建在同一事务中,失败全部回滚
+   * - T-6.4A: 同一事务中将新 Assistant 加入 Active Branch
+   *   (旧 Assistant 的 BranchMessageLink 因 Message 被删成为孤儿,
+   *    loadActiveBranchMessages 会跳过缺失的 Message,不影响显示)
    *
    * @param chatId 会话 id
    * @param userMessageId 用户消息 id
@@ -455,7 +541,14 @@ export class ChatPersistenceService {
           await this.chatRepository.updateLastMessageAtWithStore(
             store, chatId, now, now
           );
-        }
+          // T-6.4A: 将新 Assistant 加入 Active Branch
+          if (this.branchPersistenceService !== null) {
+            await this.branchPersistenceService!.appendMessageToActiveBranchWithStore(
+              store, chatId, assistantMessage.id
+            );
+          }
+        },
+        'message_replace_after_user'
       );
     } catch (err) {
       if (err instanceof Error) {
@@ -503,29 +596,46 @@ export class ChatPersistenceService {
   /**
    * 加载会话内部实现:
    * 1. 规范化中断的 Streaming 消息
-   * 2. 加载全部消息(按 sequence 升序)
-   * 3. 提取 ChatMessage[] 返回
+   * 2. T-6.4A: 优先通过 Active Branch 加载消息路径(按 position ASC)
+   *    - branchPersistenceService 存在时使用 Branch Link + SwipeSelection 投影
+   *    - 否则回退到 MessageRepository.listRecordsByChat(按 sequence 升序)
+   * 3. maxSequenceNumber 始终从 messages 表查询(全局最大值,不受 Branch 投影影响)
    */
   private async loadSessionInternal(chat: Chat): Promise<PersistedChatSession> {
     const normalizedCount: number =
       await this.messageRepository.normalizeInterruptedMessages(chat.id);
     if (normalizedCount > 0) {
-      Logger.info(LOG_TAG, 'interrupted normalized count=' + normalizedCount.toString());
+      Logger.info(LOG_TAG, 'SessionReload | stage=normalize result=cancelled count=' + normalizedCount.toString());
+    } else {
+      Logger.info(LOG_TAG, 'SessionReload | stage=normalize result=unchanged');
     }
-    const options: MessagePageOptions = {
-      limit: LOAD_MESSAGES_LIMIT,
-      offset: 0,
-      ascending: true
-    };
-    const records: StoredChatMessage[] =
-      await this.messageRepository.listRecordsByChat(chat.id, options);
-    const messages: ChatMessage[] = records.map(
-      (rec: StoredChatMessage): ChatMessage => rec.message
-    );
-    // records 按 sequence 升序,最后一条即 max(空列表为 0)
-    const maxSeq: number = records.length > 0
-      ? records[records.length - 1].sequenceNumber
-      : 0;
+
+    let messages: ChatMessage[];
+    let maxSeq: number;
+
+    if (this.branchPersistenceService !== null) {
+      // T-6.4A: 通过 Active Branch 加载消息路径(只读,不开启写事务)
+      messages = await this.branchPersistenceService.loadActiveBranchMessages(chat.id);
+      maxSeq = await this.messageRepository.getMaxSequenceNumber(chat.id);
+      Logger.info(LOG_TAG, 'SessionReload | stage=active_branch_loaded count=' + messages.length.toString());
+    } else {
+      // 回退:直接从 messages 表加载(无 Branch 支持)
+      const options: MessagePageOptions = {
+        limit: LOAD_MESSAGES_LIMIT,
+        offset: 0,
+        ascending: true
+      };
+      const records: StoredChatMessage[] =
+        await this.messageRepository.listRecordsByChat(chat.id, options);
+      messages = records.map(
+        (rec: StoredChatMessage): ChatMessage => rec.message
+      );
+      maxSeq = records.length > 0
+        ? records[records.length - 1].sequenceNumber
+        : 0;
+      Logger.info(LOG_TAG, 'SessionReload | stage=direct_load count=' + messages.length.toString());
+    }
+
     Logger.info(LOG_TAG, 'session loaded messages=' + messages.length.toString()
       + ' maxSeq=' + maxSeq.toString());
     return {

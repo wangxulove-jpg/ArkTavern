@@ -14,7 +14,34 @@
  */
 
 import { relationalStore } from '@kit.ArkData';
-import { V1_TO_V2_STATEMENTS, V2_TO_V3_STATEMENTS, V3_TO_V4_STATEMENTS } from './DatabaseSchema';
+import { V1_TO_V2_STATEMENTS, V2_TO_V3_STATEMENTS, V3_TO_V4_STATEMENTS, V4_TO_V5_DDL_STATEMENTS } from './DatabaseSchema';
+import {
+  TABLE_CHATS,
+  TABLE_MESSAGES,
+  TABLE_MESSAGE_SWIPE_GROUPS,
+  TABLE_CONVERSATION_BRANCHES,
+  TABLE_CHAT_BRANCH_STATE,
+  TABLE_CONVERSATION_BRANCH_MESSAGES,
+  TABLE_CONVERSATION_BRANCH_SWIPE_SELECTIONS,
+  COLUMN_ID,
+  COLUMN_CHAT_ID,
+  COLUMN_SEQUENCE_NUMBER,
+  COLUMN_CREATED_AT,
+  COLUMN_UPDATED_AT,
+  COLUMN_LAST_MESSAGE_AT,
+  COLUMN_NAME,
+  COLUMN_PARENT_BRANCH_ID,
+  COLUMN_FORK_MESSAGE_ID,
+  COLUMN_IS_ROOT,
+  COLUMN_ACTIVE_BRANCH_ID,
+  COLUMN_BRANCH_ID,
+  COLUMN_POSITION,
+  COLUMN_SWIPE_ASSISTANT_MESSAGE_ID,
+  COLUMN_CANDIDATE_INDEX,
+  COLUMN_SWIPE_ACTIVE_CANDIDATE_INDEX
+} from './DatabaseConstants';
+import { generateUuid } from '../utils/Uuid';
+import { nowMillis } from '../utils/Time';
 
 export interface DatabaseMigration {
   readonly fromVersion: number;
@@ -160,4 +187,153 @@ class V3ToV4Migration implements DatabaseMigration {
       await store.executeSql(V3_TO_V4_STATEMENTS[i]);
     }
   }
+}
+
+/**
+ * 创建 v4→v5 数据库迁移。
+ *
+ * 事务中执行:
+ * 1. 创建 conversation_branches / chat_branch_state /
+ *    conversation_branch_messages / conversation_branch_swipe_selections 表
+ * 2. 创建相关索引
+ * 3. 为每个现有 Chat 创建 Root Branch
+ * 4. 为每个 Chat 的全部 Message 创建 BranchMessage Link(按 sequence ASC)
+ * 5. 为已有 Swipe Group 创建 Root Branch 的 SwipeSelection
+ * 6. 创建 chat_branch_state 指向 Root Branch
+ * 7. 任一失败全部回滚,不影响旧数据
+ * 8. 不修改 Message / Candidate / Group 数据
+ */
+export function createV4ToV5Migration(): DatabaseMigration {
+  return new V4ToV5Migration();
+}
+
+class V4ToV5Migration implements DatabaseMigration {
+  readonly fromVersion: number = 4;
+  readonly toVersion: number = 5;
+
+  async migrate(store: relationalStore.RdbStore): Promise<void> {
+    // 1. 执行 DDL(建表 + 建索引)
+    for (let i = 0; i < V4_TO_V5_DDL_STATEMENTS.length; i++) {
+      await store.executeSql(V4_TO_V5_DDL_STATEMENTS[i]);
+    }
+
+    // 2. 为每个现有 Chat 创建 Root Branch + Message Links + SwipeSelections + BranchState
+    const chatIds: string[] = await this.listAllChatIds(store);
+    for (let i = 0; i < chatIds.length; i++) {
+      await this.createRootBranchForChat(store, chatIds[i]);
+    }
+  }
+
+  private async listAllChatIds(store: relationalStore.RdbStore): Promise<string[]> {
+    const predicates: relationalStore.RdbPredicates =
+      new relationalStore.RdbPredicates(TABLE_CHATS);
+    predicates.orderByAsc(COLUMN_ID);
+    const rs: relationalStore.ResultSet = await store.query(predicates);
+    const ids: string[] = [];
+    try {
+      while (rs.goToNextRow()) {
+        const col: number = rs.getColumnIndex(COLUMN_ID);
+        if (col >= 0) {
+          ids.push(rs.getString(col));
+        }
+      }
+    } finally {
+      rs.close();
+    }
+    return ids;
+  }
+
+  private async createRootBranchForChat(
+    store: relationalStore.RdbStore,
+    chatId: string
+  ): Promise<void> {
+    const now: number = nowMillis();
+    const branchId: string = generateUuid();
+
+    // 插入 Root Branch
+    const branchBucket: relationalStore.ValuesBucket = {};
+    branchBucket[COLUMN_ID] = branchId;
+    branchBucket[COLUMN_CHAT_ID] = chatId;
+    branchBucket[COLUMN_PARENT_BRANCH_ID] = null;
+    branchBucket[COLUMN_FORK_MESSAGE_ID] = null;
+    branchBucket[COLUMN_NAME] = '';
+    branchBucket[COLUMN_IS_ROOT] = 1;
+    branchBucket[COLUMN_CREATED_AT] = now;
+    branchBucket[COLUMN_UPDATED_AT] = now;
+    branchBucket[COLUMN_LAST_MESSAGE_AT] = now;
+    await store.insert(TABLE_CONVERSATION_BRANCHES, branchBucket);
+
+    // 查询该 Chat 的全部 messages,按 sequence ASC, createdAt ASC, id ASC 排序
+    const msgPredicates: relationalStore.RdbPredicates =
+      new relationalStore.RdbPredicates(TABLE_MESSAGES);
+    msgPredicates.equalTo(COLUMN_CHAT_ID, chatId);
+    msgPredicates.orderByAsc(COLUMN_SEQUENCE_NUMBER);
+    msgPredicates.orderByAsc(COLUMN_CREATED_AT);
+    msgPredicates.orderByAsc(COLUMN_ID);
+    const msgRs: relationalStore.ResultSet = await store.query(msgPredicates);
+    const messageIds: string[] = [];
+    try {
+      while (msgRs.goToNextRow()) {
+        const col: number = msgRs.getColumnIndex(COLUMN_ID);
+        if (col >= 0) {
+          messageIds.push(msgRs.getString(col));
+        }
+      }
+    } finally {
+      msgRs.close();
+    }
+
+    // 为每条 Message 创建 BranchMessage Link
+    for (let i = 0; i < messageIds.length; i++) {
+      const linkBucket: relationalStore.ValuesBucket = {};
+      linkBucket[COLUMN_BRANCH_ID] = branchId;
+      linkBucket[COLUMN_ID] = messageIds[i];
+      linkBucket[COLUMN_POSITION] = i;
+      linkBucket[COLUMN_CREATED_AT] = now;
+      await store.insert(TABLE_CONVERSATION_BRANCH_MESSAGES, linkBucket);
+    }
+
+    // 查询该 Chat 的已有 Swipe Groups,迁移为 Root Branch 的 SwipeSelection
+    const swipePredicates: relationalStore.RdbPredicates =
+      new relationalStore.RdbPredicates(TABLE_MESSAGE_SWIPE_GROUPS);
+    swipePredicates.equalTo(COLUMN_CHAT_ID, chatId);
+    const swipeRs: relationalStore.ResultSet = await store.query(swipePredicates);
+    const swipeEntries: BranchSwipeMigrationEntry[] = [];
+    try {
+      while (swipeRs.goToNextRow()) {
+        const msgIdCol: number = swipeRs.getColumnIndex(COLUMN_SWIPE_ASSISTANT_MESSAGE_ID);
+        const activeIdxCol: number = swipeRs.getColumnIndex(COLUMN_SWIPE_ACTIVE_CANDIDATE_INDEX);
+        if (msgIdCol >= 0 && activeIdxCol >= 0) {
+          swipeEntries.push({
+            assistantMessageId: swipeRs.getString(msgIdCol),
+            activeCandidateIndex: swipeRs.getLong(activeIdxCol)
+          });
+        }
+      }
+    } finally {
+      swipeRs.close();
+    }
+
+    for (let i = 0; i < swipeEntries.length; i++) {
+      const entry: BranchSwipeMigrationEntry = swipeEntries[i];
+      const selBucket: relationalStore.ValuesBucket = {};
+      selBucket[COLUMN_BRANCH_ID] = branchId;
+      selBucket[COLUMN_SWIPE_ASSISTANT_MESSAGE_ID] = entry.assistantMessageId;
+      selBucket[COLUMN_CANDIDATE_INDEX] = entry.activeCandidateIndex;
+      selBucket[COLUMN_UPDATED_AT] = now;
+      await store.insert(TABLE_CONVERSATION_BRANCH_SWIPE_SELECTIONS, selBucket);
+    }
+
+    // 创建 chat_branch_state 指向 Root Branch
+    const stateBucket: relationalStore.ValuesBucket = {};
+    stateBucket[COLUMN_CHAT_ID] = chatId;
+    stateBucket[COLUMN_ACTIVE_BRANCH_ID] = branchId;
+    stateBucket[COLUMN_UPDATED_AT] = now;
+    await store.insert(TABLE_CHAT_BRANCH_STATE, stateBucket);
+  }
+}
+
+interface BranchSwipeMigrationEntry {
+  readonly assistantMessageId: string;
+  readonly activeCandidateIndex: number;
 }

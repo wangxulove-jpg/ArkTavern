@@ -38,9 +38,11 @@ import { HistoryTrimmer } from './HistoryTrimmer';
 import { ChatPersistenceService } from './ChatPersistenceService';
 import { PromptPresetService } from './PromptPresetService';
 import { MessageSwipePersistenceService } from './MessageSwipePersistenceService';
+import { ConversationBranchPersistenceService } from './ConversationBranchPersistenceService';
 import {
   MessageSwipeSummary,
   MessageSwipeCandidateUpdates,
+  MessageSwipeState,
   MAX_SWIPE_CANDIDATES
 } from '../models/MessageSwipe';
 import { ChatMessage, ChatMessageStatus, createChatMessage } from '../models/ChatMessage';
@@ -194,9 +196,14 @@ export class ChatService {
   private lastPersistedContentLength: number = 0;
   /** 待持久化的 Assistant id */
   private pendingPersistAssistantId: string | null = null;
+  /** T-6.4A-R6: 当前在飞的 Swipe Candidate 持久化 Promise(delta 或 final),
+   * 用于串行化 updateCandidate 调用,防止嵌套事务 */
+  private pendingSwipePersistPromise: Promise<void> | null = null;
 
   /** MessageSwipePersistenceService 消息候选持久化服务 */
   private readonly swipePersistenceService: MessageSwipePersistenceService | null;
+  /** ConversationBranchPersistenceService 对话分支持久化服务(T-6.4A,用于活动 Branch 加载) */
+  private readonly branchPersistenceService: ConversationBranchPersistenceService | null;
   /** 当前会话的 Swipe 摘要列表 */
   private swipeSummaries: MessageSwipeSummary[] = [];
   /** 当前生成操作标识(用于阻止迟到回调),每次启动/停止递增 */
@@ -221,7 +228,8 @@ export class ChatService {
     historyTrimmer: HistoryTrimmer | null = null,
     persistenceService: ChatPersistenceService | null = null,
     promptPresetService: PromptPresetService | null = null,
-    swipePersistenceService: MessageSwipePersistenceService | null = null
+    swipePersistenceService: MessageSwipePersistenceService | null = null,
+    branchPersistenceService: ConversationBranchPersistenceService | null = null
   ) {
     this.modelService = modelService;
     this.lorebookService = lorebookService;
@@ -231,6 +239,7 @@ export class ChatService {
     this.persistenceService = persistenceService;
     this.promptPresetService = promptPresetService;
     this.swipePersistenceService = swipePersistenceService;
+    this.branchPersistenceService = branchPersistenceService;
   }
 
   /**
@@ -361,9 +370,14 @@ export class ChatService {
 
       this.contextInitialized = true;
     } catch (e) {
+      // 保留原始错误类型(如 DatabaseError),不重复包装用户文案前缀
+      // ViewModel 负责显示一次用户可读文案
       const msg: string = e instanceof Error ? e.message : String(e);
       Logger.error(LOG_TAG, 'initializeSession failed: ' + msg);
-      throw new Error('会话初始化失败: ' + msg);
+      if (e instanceof Error) {
+        throw e;
+      }
+      throw new Error(msg);
     }
   }
 
@@ -565,24 +579,33 @@ export class ChatService {
     }
     if (this.state === ChatState.Sending || this.state === ChatState.Streaming) {
       const ctx: ActiveGenerationContext | null = this.activeGeneration;
-      // flush 任何 pending delta 持久化(路由仍依赖 activeGeneration)
-      this.flushPersistence();
+      const kind: string = ctx !== null ? ctx.kind : 'unknown';
+      // 不调用 flushPersistence() — persistFinalAssistant 已包含完整最终状态,
+      // 避免与 persistFinalAssistant 嵌套事务冲突(T-6.4A-R3)
       // 将当前 Assistant 消息标记为已取消(创建新对象和新数组)
       this.markAssistant(this.currentAssistantId, ChatMessageStatus.Cancelled, undefined, undefined);
       this.emitMessages(this.lastCallbacks);
-      // 持久化最终 Cancelled 状态(路由仍依赖 activeGeneration)
-      this.persistFinalAssistant(this.currentAssistantId);
-      Logger.info(LOG_TAG, 'generation finalized status=cancelled');
-      // Swipe 候选处理:更新摘要生成标志
-      if (ctx !== null && ctx.kind === ChatGenerationKind.SwipeCandidate) {
-        this.updateSwipeSummaryGeneratingFlag(false);
-      }
-      // 更新 Chat 活跃时间(完成一次新生成)
-      this.persistChatActivity();
-      // 持久化后才清理活动上下文
-      this.clearActiveGeneration(expectedOperationId);
-      this.currentAssistantId = null;
-      this.setState(ChatState.Cancelled, this.lastCallbacks);
+      Logger.info(LOG_TAG, 'GenerationFinal | kind=' + kind + ' stage=callback_stop');
+      // 持久化最终 Cancelled 状态,完成后才清理上下文
+      this.persistFinalAssistant(this.currentAssistantId).then((): void => {
+        Logger.info(LOG_TAG, 'GenerationFinal | kind=' + kind + ' stage=message_cancelled_persisted');
+        Logger.info(LOG_TAG, 'generation finalized status=cancelled');
+        // Swipe 候选处理:更新摘要生成标志
+        if (ctx !== null && ctx.kind === ChatGenerationKind.SwipeCandidate) {
+          this.updateSwipeSummaryGeneratingFlag(false);
+        }
+        // 更新 Chat 活跃时间(完成一次新生成)
+        this.persistChatActivity();
+        // 持久化后才清理活动上下文
+        this.clearActiveGeneration(expectedOperationId);
+        Logger.info(LOG_TAG, 'GenerationFinal | kind=' + kind + ' stage=context_cleared');
+        this.currentAssistantId = null;
+        this.setState(ChatState.Cancelled, this.lastCallbacks);
+      }).catch((_e: Object): void => {
+        this.clearActiveGeneration(expectedOperationId);
+        this.currentAssistantId = null;
+        this.setState(ChatState.Cancelled, this.lastCallbacks);
+      });
     }
   }
 
@@ -891,6 +914,8 @@ export class ChatService {
     if (this.disposed) {
       return;
     }
+    const hadActiveGeneration: boolean = this.activeGeneration !== null;
+    const wasGenerating: boolean = this.isGenerating();
     this.disposed = true;
     this.clearStartTimer();
     this.clearPersistenceTimer();
@@ -908,6 +933,13 @@ export class ChatService {
     this.activeGeneration = null;
     this.swipeSummaries = [];
     this.state = ChatState.Idle;
+    if (wasGenerating) {
+      Logger.info(LOG_TAG, 'SessionCleanup | action=cancel reason=active_streaming');
+    } else if (hadActiveGeneration) {
+      Logger.info(LOG_TAG, 'SessionCleanup | action=skip reason=already_completed');
+    } else {
+      Logger.info(LOG_TAG, 'SessionCleanup | action=skip reason=no_active_generation');
+    }
     Logger.info(LOG_TAG, 'dispose');
   }
 
@@ -962,8 +994,12 @@ export class ChatService {
     if (current.operationId !== expectedOperationId) {
       return;
     }
+    if (current.kind === ChatGenerationKind.SwipeCandidate) {
+      Logger.info(LOG_TAG, 'Regenerate | state_cleared');
+    }
     this.clearPersistenceTimer();
     this.pendingPersistAssistantId = null;
+    this.pendingSwipePersistPromise = null;
     this.activeGeneration = null;
   }
 
@@ -988,26 +1024,34 @@ export class ChatService {
         Logger.warn(LOG_TAG, 'start failure ignored: stale context');
         return;
       }
-      // flush 任何 pending delta
-      this.flushPersistence();
+      // 不调用 flushPersistence() — persistFinalAssistant 已包含完整最终状态,
+      // 避免与 persistFinalAssistant 嵌套事务冲突(T-6.4A-R3)
       // 标记 Assistant 为 Failed(同时更新内存消息和 Swipe 候选,路由基于 activeGeneration.kind)
       this.finalizeAssistant(
         assistantId, '', ChatMessageStatus.Failed, errorMessage, callbacks
       );
       this.currentAssistantId = null;
-      // 持久化最终 Failed 状态
-      this.persistFinalAssistant(assistantId);
-      Logger.info(LOG_TAG, 'generation finalized status=failed');
-      // Swipe:更新摘要生成标志
-      if (context.kind === ChatGenerationKind.SwipeCandidate) {
-        this.updateSwipeSummaryGeneratingFlag(false);
-      }
-      // 更新 Chat 活跃时间
-      this.persistChatActivity();
-      // 清理活动上下文(仅当仍是本次 operationId)
-      this.clearActiveGeneration(operationId);
-      this.setState(ChatState.Failed, callbacks);
-      callbacks.onError(errorMessage);
+      Logger.info(LOG_TAG, 'GenerationFinal | kind=' + context.kind + ' stage=callback_start_failure');
+      // 持久化最终 Failed 状态,完成后才清理上下文
+      this.persistFinalAssistant(assistantId).then((): void => {
+        Logger.info(LOG_TAG, 'GenerationFinal | kind=' + context.kind + ' stage=message_failed_persisted');
+        Logger.info(LOG_TAG, 'generation finalized status=failed');
+        // Swipe:更新摘要生成标志
+        if (context.kind === ChatGenerationKind.SwipeCandidate) {
+          this.updateSwipeSummaryGeneratingFlag(false);
+        }
+        // 更新 Chat 活跃时间
+        this.persistChatActivity();
+        // 清理活动上下文(仅当仍是本次 operationId)
+        this.clearActiveGeneration(operationId);
+        Logger.info(LOG_TAG, 'GenerationFinal | kind=' + context.kind + ' stage=context_cleared');
+        this.setState(ChatState.Failed, callbacks);
+        callbacks.onError(errorMessage);
+      }).catch((_e: Object): void => {
+        this.clearActiveGeneration(operationId);
+        this.setState(ChatState.Failed, callbacks);
+        callbacks.onError(errorMessage);
+      });
     };
 
     const streamCallbacks: ChatStreamCallbacks = {
@@ -1027,6 +1071,9 @@ export class ChatService {
           Logger.warn(LOG_TAG, 'stale callback ignored type=delta');
           return;
         }
+        if (context.kind === ChatGenerationKind.SwipeCandidate) {
+          Logger.info(LOG_TAG, 'Regenerate | delta');
+        }
         this.appendDelta(assistantId, delta.content, callbacks);
         // 节流持久化 delta(路由基于 activeGeneration.kind)
         this.schedulePersistenceFlush(assistantId);
@@ -1043,33 +1090,57 @@ export class ChatService {
           Logger.warn(LOG_TAG, 'stale callback ignored type=complete');
           return;
         }
-        // flush 任何 pending delta 持久化
-        this.flushPersistence();
+        // 不调用 flushPersistence() — persistFinalAssistant 已包含完整最终状态,
+        // 避免与 persistFinalAssistant 嵌套事务冲突(T-6.4A-R3)
         const finalStatus: ChatMessageStatus = this.finalizeAssistant(
           assistantId, result.content, ChatMessageStatus.Completed, undefined, callbacks
         );
         this.currentAssistantId = null;
-        // 持久化最终状态(路由基于 activeGeneration.kind)
-        this.persistFinalAssistant(assistantId);
-        Logger.info(LOG_TAG, 'generation finalized status=completed');
-        // Swipe:更新摘要生成标志
-        if (context.kind === ChatGenerationKind.SwipeCandidate) {
-          this.updateSwipeSummaryGeneratingFlag(false);
-        }
-        // 更新 Chat 活跃时间(完成一次新生成)
-        this.persistChatActivity();
-        // 清理活动上下文(必须最终状态持久化后才清理)
-        this.clearActiveGeneration(operationId);
-        // 空回复时 finalizeAssistant 返回 Failed,state 也应为 Failed
-        if (finalStatus === ChatMessageStatus.Failed) {
-          this.setState(ChatState.Failed, callbacks);
-          callbacks.onError('模型返回了空回复,请重试');
-        } else {
-          this.setState(ChatState.Completed, callbacks);
-        }
-        // 更新 lastAssistantMessageId
-        this.updateLastAssistantMessageId();
-        Logger.info(LOG_TAG, 'stream completed deltaCount=' + result.deltaCount);
+        Logger.info(LOG_TAG, 'GenerationFinal | kind=' + context.kind + ' stage=callback_complete');
+        // 持久化最终状态,完成后才清理上下文(防止 Completed 被 normalize 误转为 Cancelled)
+        this.persistFinalAssistant(assistantId).then((): void => {
+          Logger.info(LOG_TAG, 'GenerationFinal | kind=' + context.kind + ' stage=message_completed_persisted');
+          Logger.info(LOG_TAG, 'generation finalized status=completed');
+          // Swipe:更新摘要生成标志
+          if (context.kind === ChatGenerationKind.SwipeCandidate) {
+            Logger.info(LOG_TAG, 'Regenerate | completed');
+            Logger.info(LOG_TAG, 'SwipeRuntime | stage=final_persist_complete');
+            this.updateSwipeSummaryGeneratingFlag(false);
+          }
+          // 更新 Chat 活跃时间(完成一次新生成)
+          this.persistChatActivity();
+          // 清理活动上下文(最终状态持久化完成后才清理)
+          this.clearActiveGeneration(operationId);
+          if (context.kind === ChatGenerationKind.SwipeCandidate) {
+            Logger.info(LOG_TAG, 'SwipeRuntime | stage=generation_cleared');
+          }
+          Logger.info(LOG_TAG, 'GenerationFinal | kind=' + context.kind + ' stage=context_cleared');
+          // 更新 lastAssistantMessageId(setState 前更新,确保 onStateChanged 读到正确值)
+          this.updateLastAssistantMessageId();
+          // 空回复时 finalizeAssistant 返回 Failed,state 也应为 Failed
+          if (finalStatus === ChatMessageStatus.Failed) {
+            this.setState(ChatState.Failed, callbacks);
+            callbacks.onError('模型返回了空回复,请重试');
+          } else {
+            this.setState(ChatState.Completed, callbacks);
+          }
+          Logger.info(LOG_TAG, 'stream completed deltaCount=' + result.deltaCount);
+        }).catch((_e: Object): void => {
+          // 持久化失败时仍清理上下文,避免状态卡死
+          this.clearActiveGeneration(operationId);
+          this.updateLastAssistantMessageId();
+          if (context.kind === ChatGenerationKind.SwipeCandidate) {
+            // Swipe 持久化失败:DB Candidate 仍为 Streaming,重载后变为 Cancelled
+            Logger.warn(LOG_TAG, 'SwipeRuntime | stage=final_persist_failed');
+            this.setState(ChatState.Failed, callbacks);
+            callbacks.onError('候选回复持久化失败,请重试');
+          } else if (finalStatus === ChatMessageStatus.Failed) {
+            this.setState(ChatState.Failed, callbacks);
+            callbacks.onError('模型返回了空回复,请重试');
+          } else {
+            this.setState(ChatState.Completed, callbacks);
+          }
+        });
       },
       onError: (error: NetworkError): void => {
         this.clearStartTimer();
@@ -1084,26 +1155,35 @@ export class ChatService {
           Logger.warn(LOG_TAG, 'stale callback ignored type=error');
           return;
         }
-        // flush 任何 pending delta 持久化
-        this.flushPersistence();
+        // 不调用 flushPersistence() — persistFinalAssistant 已包含完整最终状态,
+        // 避免与 persistFinalAssistant 嵌套事务冲突(T-6.4A-R3)
         this.finalizeAssistant(
           assistantId, '', ChatMessageStatus.Failed, error.message, callbacks
         );
         this.currentAssistantId = null;
-        // 持久化最终 Failed 状态(路由基于 activeGeneration.kind)
-        this.persistFinalAssistant(assistantId);
-        Logger.info(LOG_TAG, 'generation finalized status=failed');
-        // Swipe:更新摘要生成标志
-        if (context.kind === ChatGenerationKind.SwipeCandidate) {
-          this.updateSwipeSummaryGeneratingFlag(false);
-        }
-        // 更新 Chat 活跃时间
-        this.persistChatActivity();
-        // 清理活动上下文
-        this.clearActiveGeneration(operationId);
-        this.setState(ChatState.Failed, callbacks);
-        callbacks.onError(error.message);
-        Logger.info(LOG_TAG, 'stream failed: ' + error.message);
+        Logger.info(LOG_TAG, 'GenerationFinal | kind=' + context.kind + ' stage=callback_error');
+        // 持久化最终 Failed 状态,完成后才清理上下文
+        this.persistFinalAssistant(assistantId).then((): void => {
+          Logger.info(LOG_TAG, 'GenerationFinal | kind=' + context.kind + ' stage=message_failed_persisted');
+          Logger.info(LOG_TAG, 'generation finalized status=failed');
+          // Swipe:更新摘要生成标志
+          if (context.kind === ChatGenerationKind.SwipeCandidate) {
+            Logger.info(LOG_TAG, 'Regenerate | failed');
+            this.updateSwipeSummaryGeneratingFlag(false);
+          }
+          // 更新 Chat 活跃时间
+          this.persistChatActivity();
+          // 清理活动上下文
+          this.clearActiveGeneration(operationId);
+          Logger.info(LOG_TAG, 'GenerationFinal | kind=' + context.kind + ' stage=context_cleared');
+          this.setState(ChatState.Failed, callbacks);
+          callbacks.onError(error.message);
+          Logger.info(LOG_TAG, 'stream failed: ' + error.message);
+        }).catch((_e: Object): void => {
+          this.clearActiveGeneration(operationId);
+          this.setState(ChatState.Failed, callbacks);
+          callbacks.onError(error.message);
+        });
       }
     };
 
@@ -1477,19 +1557,27 @@ export class ChatService {
         assistantId, '', ChatMessageStatus.Failed, '请求启动超时,请重试', callbacks
       );
       this.currentAssistantId = null;
-      // 持久化最终 Failed 状态
-      this.persistFinalAssistant(assistantId);
-      Logger.info(LOG_TAG, 'generation finalized status=failed');
-      // Swipe:更新摘要生成标志
-      if (context.kind === ChatGenerationKind.SwipeCandidate) {
-        this.updateSwipeSummaryGeneratingFlag(false);
-      }
-      // 更新 Chat 活跃时间
-      this.persistChatActivity();
-      // 清理活动上下文
-      this.clearActiveGeneration(context.operationId);
-      this.setState(ChatState.Failed, callbacks);
-      callbacks.onError('请求启动超时,请重试');
+      Logger.info(LOG_TAG, 'GenerationFinal | kind=' + context.kind + ' stage=callback_start_timeout');
+      // 持久化最终 Failed 状态,完成后才清理上下文
+      this.persistFinalAssistant(assistantId).then((): void => {
+        Logger.info(LOG_TAG, 'GenerationFinal | kind=' + context.kind + ' stage=message_failed_persisted');
+        Logger.info(LOG_TAG, 'generation finalized status=failed');
+        // Swipe:更新摘要生成标志
+        if (context.kind === ChatGenerationKind.SwipeCandidate) {
+          this.updateSwipeSummaryGeneratingFlag(false);
+        }
+        // 更新 Chat 活跃时间
+        this.persistChatActivity();
+        // 清理活动上下文
+        this.clearActiveGeneration(context.operationId);
+        Logger.info(LOG_TAG, 'GenerationFinal | kind=' + context.kind + ' stage=context_cleared');
+        this.setState(ChatState.Failed, callbacks);
+        callbacks.onError('请求启动超时,请重试');
+      }).catch((_e: Object): void => {
+        this.clearActiveGeneration(context.operationId);
+        this.setState(ChatState.Failed, callbacks);
+        callbacks.onError('请求启动超时,请重试');
+      });
     }, START_TIMEOUT_MS);
   }
 
@@ -1501,6 +1589,9 @@ export class ChatService {
   }
 
   private setState(state: ChatState, callbacks: ChatServiceCallbacks | null): void {
+    if (this.disposed) {
+      return;
+    }
     if (this.state === state) {
       return;
     }
@@ -1696,14 +1787,23 @@ export class ChatService {
         status: ChatMessageStatus.Streaming,
         isStreaming: true
       };
-      this.swipePersistenceService.updateCandidate(
+      // T-6.4A-R6: 串行化 delta persist,防止与 final persist 嵌套事务
+      const deltaP: Promise<void> = this.swipePersistenceService.updateCandidate(
         ctx.assistantMessageId,
         ctx.swipeCandidateIndex,
         updates
-      ).catch((e: Object): void => {
+      ).then((): void => {
+        // delta persist ok
+      }).catch((e: Object): void => {
         Logger.warn(LOG_TAG, 'swipe delta persist failed: '
           + (e instanceof Error ? e.message : String(e)));
       });
+      // 链接到 pendingSwipePersistPromise 尾部,确保串行
+      if (this.pendingSwipePersistPromise !== null) {
+        this.pendingSwipePersistPromise = this.pendingSwipePersistPromise.then((): Promise<void> => deltaP);
+      } else {
+        this.pendingSwipePersistPromise = deltaP;
+      }
       Logger.info(LOG_TAG, 'persistence route kind=swipe');
     } else if (this.persistenceService !== null) {
       // 正常持久化
@@ -1742,27 +1842,35 @@ export class ChatService {
    *
    * 注意:调用方必须在 persist 完成后才调用 clearActiveGeneration。
    */
-  private persistFinalAssistant(assistantId: string | null): void {
+  private persistFinalAssistant(assistantId: string | null): Promise<void> {
     if (assistantId === null) {
-      return;
+      return Promise.resolve();
     }
     if (this.currentChatId === undefined) {
-      return;
+      return Promise.resolve();
     }
     const msg: ChatMessage | undefined = this.findMessageById(assistantId);
     if (msg === undefined) {
-      return;
+      return Promise.resolve();
     }
     this.lastPersistedContentLength = msg.content.length;
     this.pendingPersistAssistantId = null;
 
-    // 异步写入,1 次重试
-    this.persistWithRetry(msg, 1);
+    // T-6.4A-R6: 停止后续 persistence timer,防止 delta flush 与 final persist 并发
+    this.clearPersistenceTimer();
+    // 异步写入,1 次重试,返回 Promise 供调用方等待
+    // Swipe 路径:先等待在飞的 delta persist 完成,再开始唯一 final 事务
+    const pending: Promise<void> | null = this.pendingSwipePersistPromise;
+    if (pending !== null) {
+      this.pendingSwipePersistPromise = null;
+      return pending.then((): Promise<void> => this.persistWithRetry(msg, 1));
+    }
+    return this.persistWithRetry(msg, 1);
   }
 
-  private persistWithRetry(msg: ChatMessage, retriesLeft: number): void {
+  private persistWithRetry(msg: ChatMessage, retriesLeft: number): Promise<void> {
     if (this.currentChatId === undefined) {
-      return;
+      return Promise.resolve();
     }
     const chatId: string = this.currentChatId;
     const ctx: ActiveGenerationContext | null = this.activeGeneration;
@@ -1779,37 +1887,39 @@ export class ChatService {
         errorMessage: msg.errorMessage !== undefined ? msg.errorMessage : undefined,
         isStreaming: msg.isStreaming ?? false
       };
-      this.swipePersistenceService.updateCandidate(
+      Logger.info(LOG_TAG, 'persistence route kind=swipe');
+      return this.swipePersistenceService.updateCandidate(
         ctx.assistantMessageId,
         ctx.swipeCandidateIndex,
         updates
       ).then((): void => {
         Logger.info(LOG_TAG, 'swipe final persist ok');
-      }).catch((e: Object): void => {
+      }).catch((e: Object): Promise<void> => {
         const msg2: string = e instanceof Error ? e.message : String(e);
         if (retriesLeft > 0) {
           Logger.warn(LOG_TAG, 'swipe final persist retry: ' + msg2);
-          this.persistWithRetry(msg, retriesLeft - 1);
-        } else {
-          Logger.warn(LOG_TAG, 'swipe final persist failed: ' + msg2);
+          return this.persistWithRetry(msg, retriesLeft - 1);
         }
+        Logger.warn(LOG_TAG, 'swipe final persist failed: ' + msg2);
+        Logger.info(LOG_TAG, 'SwipeRuntime | stage=final_persist_failed');
+        return Promise.reject(new Error('swipe final persist failed'));
       });
-      Logger.info(LOG_TAG, 'persistence route kind=swipe');
     } else if (this.persistenceService !== null) {
       // 正常持久化
-      this.persistenceService.updateMessage(chatId, msg).then((): void => {
+      Logger.info(LOG_TAG, 'persistence route kind=normal');
+      return this.persistenceService.updateMessage(chatId, msg).then((): void => {
         Logger.info(LOG_TAG, 'final persist ok');
-      }).catch((e: Object): void => {
+      }).catch((e: Object): Promise<void> => {
         const msg2: string = e instanceof Error ? e.message : String(e);
         if (retriesLeft > 0) {
           Logger.warn(LOG_TAG, 'final persist retry: ' + msg2);
-          this.persistWithRetry(msg, retriesLeft - 1);
-        } else {
-          Logger.warn(LOG_TAG, 'final persist failed: ' + msg2);
+          return this.persistWithRetry(msg, retriesLeft - 1);
         }
+        Logger.warn(LOG_TAG, 'final persist failed: ' + msg2);
+        return Promise.resolve();
       });
-      Logger.info(LOG_TAG, 'persistence route kind=normal');
     }
+    return Promise.resolve();
   }
 
   /**
@@ -1936,6 +2046,7 @@ export class ChatService {
       // 仅更新 updatedAt,不修改 lastMessageAt
       this.persistChatTimestamp();
       this.emitMessages(this.lastCallbacks);
+      Logger.info(LOG_TAG, 'SwipeRuntime | stage=candidate_activated');
     } finally {
       this.swipeOperationInProgress = false;
     }
@@ -1976,6 +2087,7 @@ export class ChatService {
       // 仅更新 updatedAt,不修改 lastMessageAt
       this.persistChatTimestamp();
       this.emitMessages(this.lastCallbacks);
+      Logger.info(LOG_TAG, 'SwipeRuntime | stage=candidate_activated');
     } finally {
       this.swipeOperationInProgress = false;
     }
@@ -1995,26 +2107,26 @@ export class ChatService {
     if (this.disposed) {
       throw new Error('ChatService disposed');
     }
+    Logger.info(LOG_TAG, 'Regenerate | service_enter');
     if (this.isBusy()) {
-      Logger.warn(LOG_TAG, 'generateAlternativeCandidate rejected: busy state=' + this.state
-        + ' swipeOp=' + this.swipeOperationInProgress.toString()
-        + ' sessionOp=' + this.sessionOperationInProgress.toString());
+      Logger.warn(LOG_TAG, 'Regenerate | eligibility_denied | busy');
       return;
     }
     if (this.lastAssistantMessageId.length === 0) {
-      Logger.warn(LOG_TAG, 'generateAlternativeCandidate: no assistant message');
+      Logger.warn(LOG_TAG, 'Regenerate | eligibility_denied | missing_assistant_message');
       return;
     }
     if (this.swipePersistenceService === null) {
-      Logger.warn(LOG_TAG, 'generateAlternativeCandidate: swipePersistenceService unavailable');
+      Logger.warn(LOG_TAG, 'Regenerate | eligibility_denied | missing_swipe_state');
       return;
     }
     if (this.lastCallbacks === null) {
-      Logger.warn(LOG_TAG, 'generateAlternativeCandidate: no callbacks');
+      Logger.warn(LOG_TAG, 'Regenerate | eligibility_denied | missing_callbacks');
       return;
     }
+    Logger.info(LOG_TAG, 'Regenerate | eligibility_allowed');
 
-    Logger.info(LOG_TAG, 'generation start kind=swipe');
+    Logger.info(LOG_TAG, 'Regenerate | operation_context_created');
     this.generationOperationId++;
     // 占用 swipe 操作互斥锁(保护 appendCandidate + reloadCurrentSession 期间不被并发)
     this.swipeOperationInProgress = true;
@@ -2029,7 +2141,7 @@ export class ChatService {
     if (summary !== undefined) {
       nextIndex = summary.candidateCount;
       if (nextIndex >= MAX_SWIPE_CANDIDATES) {
-        Logger.warn(LOG_TAG, 'generateAlternativeCandidate: max candidates reached');
+        Logger.warn(LOG_TAG, 'Regenerate | eligibility_denied | candidate_limit');
         this.swipeOperationInProgress = false;
         this.lastCallbacks.onError('该回复已达到候选数量上限');
         return;
@@ -2037,6 +2149,10 @@ export class ChatService {
     }
 
     // 创建新候选(Streaming)并激活
+    // T-6.4A-R6: 必须使用 appendCandidate 实际返回的 newIndex,
+    // 不能使用 nextIndex(当 summary===undefined 时 nextIndex=0,
+    // 但 ensureSwipeState 会先创建 Candidate 0,appendCandidate 实际创建 Candidate 1)
+    let actualNewIndex: number = nextIndex;
     try {
       await this.swipePersistenceService.appendCandidate(
         assistantMessageId,
@@ -2047,23 +2163,38 @@ export class ChatService {
         },
         true // activate
       );
+      // T-6.4A-R6: appendCandidate 返回的 candidates 可能是事务内旧快照,
+      // 不包含刚插入的 Candidate。事务已提交,重新查询获取最新数据。
+      const freshState: MessageSwipeState | null =
+        await this.swipePersistenceService.getSwipeState(assistantMessageId);
+      if (freshState !== null) {
+        let maxIdx: number = 0;
+        for (let i = 0; i < freshState.candidates.length; i++) {
+          if (freshState.candidates[i].candidateIndex > maxIdx) {
+            maxIdx = freshState.candidates[i].candidateIndex;
+          }
+        }
+        actualNewIndex = maxIdx;
+      }
+      Logger.info(LOG_TAG, 'Regenerate | candidate_created');
+      Logger.info(LOG_TAG, 'SwipeRuntime | stage=candidate_created');
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
-      Logger.error(LOG_TAG, 'appendCandidate failed: ' + msg);
+      Logger.error(LOG_TAG, 'Regenerate | failed | appendCandidate: ' + msg);
       this.swipeOperationInProgress = false;
       this.lastCallbacks.onError('创建候选回复失败: ' + msg);
       return;
     }
 
-    // 更新 swipeSummaries
+    // 更新 swipeSummaries(使用 actualNewIndex)
     if (summary !== undefined) {
       this.swipeSummaries = this.swipeSummaries.map(
         (s: MessageSwipeSummary): MessageSwipeSummary => {
           if (s.assistantMessageId === assistantMessageId) {
             return {
               assistantMessageId: s.assistantMessageId,
-              activeCandidateIndex: nextIndex,
-              candidateCount: nextIndex + 1,
+              activeCandidateIndex: actualNewIndex,
+              candidateCount: actualNewIndex + 1,
               isGeneratingCandidate: true
             };
           }
@@ -2073,11 +2204,12 @@ export class ChatService {
     } else {
       this.swipeSummaries.push({
         assistantMessageId: assistantMessageId,
-        activeCandidateIndex: nextIndex,
-        candidateCount: nextIndex + 1,
+        activeCandidateIndex: actualNewIndex,
+        candidateCount: actualNewIndex + 1,
         isGeneratingCandidate: true
       });
     }
+    Logger.info(LOG_TAG, 'SwipeRuntime | stage=summary_refreshed count=' + (actualNewIndex + 1));
 
     // 建立 SwipeCandidate 活动上下文(替代旧 ActiveSwipeGeneration)
     this.activeGeneration = {
@@ -2085,15 +2217,20 @@ export class ChatService {
       kind: ChatGenerationKind.SwipeCandidate,
       chatId: chatId,
       assistantMessageId: assistantMessageId,
-      swipeCandidateIndex: nextIndex
+      swipeCandidateIndex: actualNewIndex
     };
 
     // 候选创建 + summary 更新完成,释放 swipe 操作锁;
     // 后续生成期间通过 activeGeneration 与 isBusy()(state=Sending/Streaming)互斥
     this.swipeOperationInProgress = false;
 
-    // 重新加载 messages(候选已物化)
-    await this.reloadCurrentSession();
+    // T-6.4A: 不再调用 reloadCurrentSession()。
+    // 原因:reloadCurrentSession → loadSessionInternal → normalizeInterruptedMessages
+    // 会把刚物化的 Streaming 候选改为 Cancelled,导致 DB 与内存状态不一致,
+    // 重新进入页面时目标 Assistant 显示为空内容(旧历史"消失"Bug 根因)。
+    // 正确做法:直接在完整内存历史中替换目标 Assistant 为 Streaming + 空 content,
+    // 保留所有其他消息不变。
+    this.replaceAssistantMessageInFullHistory(assistantMessageId);
 
     // 更新状态
     this.currentAssistantId = assistantMessageId;
@@ -2103,6 +2240,8 @@ export class ChatService {
     // 启动流式请求(携带 SwipeCandidate 上下文)
     this.lastPersistedContentLength = 0;
     this.pendingPersistAssistantId = assistantMessageId;
+    Logger.info(LOG_TAG, 'Regenerate | provider_started');
+    Logger.info(LOG_TAG, 'SwipeRuntime | stage=provider_started');
     this.doStream(assistantMessageId, this.lastCallbacks, this.activeGeneration);
   }
 
@@ -2157,6 +2296,43 @@ export class ChatService {
     if (session !== null) {
       this.messages = session.messages.slice();
       this.currentSequenceNumber = session.maxSequenceNumber;
+    }
+  }
+
+  /**
+   * T-6.4A: 在完整页面历史中按 Message ID 查找目标 Assistant,
+   * 只替换该消息为 Streaming + 空 content(用于重新生成候选),
+   * 保留所有其他消息的 ID、内容、顺序、sequenceNumber 不变。
+   *
+   * 要求:
+   * 1. 在完整页面历史中按 Message ID 查找;
+   * 2. 只替换一项;
+   * 3. 保留其他所有项;
+   * 4. 返回新数组引用;
+   * 5. 找不到时抛安全错误;
+   * 6. 不使用请求裁剪后的数组更新 UI。
+   */
+  private replaceAssistantMessageInFullHistory(assistantMessageId: string): void {
+    let found: boolean = false;
+    this.messages = this.messages.map((msg: ChatMessage): ChatMessage => {
+      if (msg.id === assistantMessageId) {
+        found = true;
+        return {
+          id: msg.id,
+          role: msg.role,
+          content: '',
+          createdAt: msg.createdAt,
+          updatedAt: Date.now(),
+          isStreaming: true,
+          errorMessage: undefined,
+          status: ChatMessageStatus.Streaming,
+          source: msg.source
+        };
+      }
+      return msg;
+    });
+    if (!found) {
+      throw new Error('replaceAssistantMessageInFullHistory: target assistant not found');
     }
   }
 }

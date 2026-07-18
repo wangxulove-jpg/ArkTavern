@@ -22,6 +22,7 @@ import { relationalStore } from '@kit.ArkData';
 import { DbHelper } from '../database/DbHelper';
 import { MessageRepository } from '../repositories/MessageRepository';
 import { MessageSwipeRepository } from '../repositories/MessageSwipeRepository';
+import { ConversationBranchPersistenceService } from './ConversationBranchPersistenceService';
 import {
   MessageSwipeGroup,
   MessageSwipeCandidate,
@@ -73,15 +74,18 @@ export class MessageSwipePersistenceService {
   private readonly dbHelper: DbHelper;
   private readonly messageRepository: MessageRepository;
   private readonly swipeRepository: MessageSwipeRepository;
+  private readonly branchPersistenceService: ConversationBranchPersistenceService | null;
 
   constructor(
     dbHelper: DbHelper,
     messageRepository: MessageRepository,
-    swipeRepository: MessageSwipeRepository
+    swipeRepository: MessageSwipeRepository,
+    branchPersistenceService: ConversationBranchPersistenceService | null = null
   ) {
     this.dbHelper = dbHelper;
     this.messageRepository = messageRepository;
     this.swipeRepository = swipeRepository;
+    this.branchPersistenceService = branchPersistenceService;
   }
 
   /**
@@ -174,6 +178,13 @@ export class MessageSwipePersistenceService {
           await this.swipeRepository.insertGroupWithStore(store, group);
           await this.swipeRepository.insertCandidateWithStore(store, candidate0);
 
+          // T-6.4A: 同步 BranchSwipeSelection(candidateIndex=0)到当前活动 Branch
+          if (this.branchPersistenceService !== null) {
+            await this.branchPersistenceService!.updateActiveBranchSwipeSelectionWithStore(
+              store, chatId, assistantMessageId, 0
+            );
+          }
+
           Logger.info(LOG_TAG, 'state created');
           result = { group: group, candidates: [candidate0] };
         }
@@ -235,6 +246,10 @@ export class MessageSwipePersistenceService {
 
           await this.swipeRepository.insertCandidateWithStore(store, candidate);
 
+          // 读取当前 Group(用于获取 chatId 以同步 BranchSwipeSelection)
+          const currentGroup: MessageSwipeGroup | null =
+            await this.swipeRepository.getGroupWithStore(store, assistantMessageId);
+
           if (activate) {
             // 更新 Group
             await this.swipeRepository.updateGroupActiveIndexWithStore(
@@ -245,6 +260,13 @@ export class MessageSwipePersistenceService {
             await this.materializeCandidateToMessageWithStore(
               store, assistantMessageId, candidate, now
             );
+
+            // T-6.4A: 同步 BranchSwipeSelection(newIndex)到当前活动 Branch
+            if (this.branchPersistenceService !== null && currentGroup !== null) {
+              await this.branchPersistenceService!.updateActiveBranchSwipeSelectionWithStore(
+                store, currentGroup.chatId, assistantMessageId, newIndex
+              );
+            }
           }
 
           const group: MessageSwipeGroup =
@@ -371,6 +393,13 @@ export class MessageSwipePersistenceService {
           await this.materializeCandidateToMessageWithStore(
             store, assistantMessageId, candidate, now
           );
+
+          // T-6.4A: 同步 BranchSwipeSelection(candidateIndex)到当前活动 Branch
+          if (this.branchPersistenceService !== null) {
+            await this.branchPersistenceService!.updateActiveBranchSwipeSelectionWithStore(
+              store, group.chatId, assistantMessageId, candidateIndex
+            );
+          }
 
           const updatedGroup: MessageSwipeGroup =
             (await this.swipeRepository.getGroupWithStore(store, assistantMessageId))!;

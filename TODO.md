@@ -3320,3 +3320,405 @@ Character → Lorebook → PromptPreset → PromptBuilder → Token Budget
 **T-6.3A 验收通过。**
 
 未推进 Summary。
+
+---
+
+## T-6.4A Conversation Branch Domain + Database v5 + History Preservation 完成记录 (2026-07-17)
+
+### 一、实现目标
+
+为"从任意历史位置重新开始对话"建立可靠的数据底座,并立即修复 Swipe 后旧聊天记录消失的问题。本阶段完成数据底座与 Bug 修复,**不**完成 Branch UI、历史 regenerate UI、Summary、Database v6。
+
+### 二、Swipe 后旧历史消失 Bug 根因与修复
+
+#### Bug 根因
+
+旧版 `ChatService` 在 Swipe 重新生成最新 Assistant 回复后,会调用 `reloadCurrentSession()` → `loadSessionInternal()` → `normalizeInterruptedMessages()`,后者将所有 Streaming 消息改为 Cancelled 并重新加载消息列表,导致页面数组被替换为裁剪后的版本(仅剩最后两条消息),前 9 条历史消息从页面消失。
+
+#### 修复方案
+
+新增 `replaceAssistantMessageInFullHistory(assistantMessageId)` 方法:
+- 在完整页面历史中按 Message ID 查找
+- 只替换目标 Assistant 一项的 `content`/`status`/`errorMessage`/`isStreaming`/`updatedAt`
+- 保留其他所有消息的 `id`、`content`、`sequenceNumber`、顺序不变
+- 返回新数组引用
+- 不使用请求裁剪后的数组更新 UI
+- 找不到时返回安全错误
+
+#### 历史完整保留结果
+
+```
+重新生成前 messages 数量 = N
+重新生成后 messages 数量 = N
+```
+
+前 N-1 条消息的 ID、内容、顺序、sequenceNumber 全部保持不变。
+
+### 三、Database v5 Schema 升级
+
+#### DATABASE_VERSION 升级
+
+- 旧值:`DATABASE_VERSION = 4`
+- 新值:`DATABASE_VERSION = 5`
+
+#### 新增四张 Branch 表
+
+1. **`conversation_branches`** — Branch 实体
+   - `id`(PK)、`chat_id`、`parent_branch_id`、`fork_message_id`、`name`、`is_root`、`created_at`、`updated_at`、`last_message_at`
+   - Root Branch:`parent_branch_id=NULL`、`fork_message_id=NULL`、`is_root=1`
+   - Child Branch:`parent_branch_id` 指向来源 Branch、`fork_message_id` 表示分叉点
+
+2. **`chat_branch_state`** — 每个 Chat 的当前活动 Branch
+   - `chat_id`(PK)、`active_branch_id`、`updated_at`
+   - 一个 Chat 只有一个活动 Branch
+
+3. **`conversation_branch_messages`** — Branch 与 Message 的关联
+   - `branch_id`、`message_id`、`position`、`created_at`
+   - `PRIMARY KEY(branch_id, position)`、`UNIQUE(branch_id, message_id)`
+   - 同一 Message 可被多个 Branch 共享,不复制正文
+
+4. **`conversation_branch_swipe_selections`** — 每个 Branch 独立的 Swipe Candidate 选择
+   - `branch_id`、`assistant_message_id`、`candidate_index`、`updated_at`
+   - `PRIMARY KEY(branch_id, assistant_message_id)`
+   - 同一 Assistant 在不同 Branch 可选不同 Candidate
+
+#### 新增索引
+
+- `idx_conversation_branches_chat_id` ON `conversation_branches(chat_id)`
+- `idx_conversation_branches_parent_id` ON `conversation_branches(parent_branch_id)`
+- `idx_branch_messages_message_id` ON `conversation_branch_messages(message_id)`
+- `idx_branch_swipe_selections_message_id` ON `conversation_branch_swipe_selections(assistant_message_id)`
+
+所有建表和索引使用 `IF NOT EXISTS`。不修改原有 8 张业务表。
+
+### 四、v4 → v5 迁移策略
+
+#### V4ToV5Migration
+
+迁移在单一事务中执行,对每个现有 Chat:
+1. 创建 Root Branch
+2. 创建 `chat_branch_state`
+3. 查询该 Chat 全部 messages,按 `sequenceNumber ASC, createdAt ASC, id ASC` 排序
+4. 为每条 Message 创建 BranchMessage Link
+5. 对已有 Swipe Group 读取 `active_candidate_index`,创建 Root Branch 的 SwipeSelection
+6. 验证 Root Branch Message 数量等于原 Chat Message 数量
+7. 验证 active Candidate 存在
+8. 全部成功后更新 `user_version=5`
+
+#### 迁移约束
+
+- 不修改任何 Message / Candidate / Group
+- 不修改 Character / Lorebook / Preset
+- 空 Chat 也必须创建 Root Branch
+- 迁移失败整体回滚,`user_version` 保持 4,下次启动允许重试
+- 不得仅建表而不给旧 Chat 创建 Root Branch
+
+### 五、新增领域模型
+
+新增 `entry/src/main/ets/models/ConversationBranch.ets`:
+
+- `ConversationBranch` — Branch 实体
+- `BranchMessageLink` — Branch 与 Message 的关联
+- `BranchSwipeSelection` — Branch 的 Candidate 选择
+- `ConversationBranchSummary` — Branch 摘要(含 messageCount、isActive)
+- `ConversationRecordCounts` — 统计接口
+- 工厂函数:`createRootBranch`、`createChildBranch`、`createBranchMessageLink`、`createBranchSwipeSelection`、`touchBranch`
+
+约束:不依赖 ArkUI / RDB / ChatService,使用 UUID,position 和 candidateIndex 非负,时间字段合法。
+
+### 六、ConversationBranchRepository
+
+新增 `entry/src/main/ets/repositories/ConversationBranchRepository.ets` 与对应 Mapper:
+
+- 公开方法:`getBranch` / `getRootBranch` / `getActiveBranch` / `listBranches` / `listMessageLinks` / `listMessageIds` / `getSwipeSelection` / `listSwipeSelections` / `getRecordCounts`
+- WithStore 方法(供 Service 在事务中组合调用):`createRootBranchWithStore` / `createChildBranchWithStore` / `setActiveBranchWithStore` / `insertMessageLinkWithStore` / `copyMessageLinksThroughPositionWithStore` / `upsertSwipeSelectionWithStore` / `copySwipeSelectionsForMessageIdsWithStore` / `removeByChatIdWithStore`
+- 不暴露通用 SQL 执行方法
+- ResultSet 所有路径 finally close
+- 不记录正文
+
+### 七、ConversationBranchPersistenceService
+
+新增 `entry/src/main/ets/services/ConversationBranchPersistenceService.ets`:
+
+构造依赖:`DbHelper`、`ConversationBranchRepository`、`MessageRepository`、`MessageSwipeRepository`
+
+公开方法:
+- `ensureRootBranch(chatId)` — 幂等创建 Root Branch
+- `getActiveBranch(chatId)`
+- `loadActiveBranchMessages(chatId)` — 按 position ASC 加载,投影当前 Branch 的 Candidate 选择
+- `getRecordCounts(chatId)`
+- `listBranches(chatId)`
+- `forkAtMessage(chatId, sourceBranchId, messageId, selectedCandidateIndex?)` — 创建 Child Branch
+- `appendMessageToActiveBranch(chatId, messageId)`
+- `updateActiveBranchSwipeSelection(chatId, assistantMessageId, candidateIndex)`
+
+本阶段不向页面直接暴露 Repository。
+
+### 八、forkAtMessage 语义
+
+创建新 Branch 必须在一个事务中:
+1. 验证 sourceBranch 属于 chatId
+2. 验证 messageId 在 sourceBranch 路径内
+3. 获取目标 Message 的 position
+4. 创建 Child Branch
+5. 复制 sourceBranch 中 position 0 到目标 position 的全部 Message Links
+6. 复制这些 Message 对应的 SwipeSelections
+7. 如传入 `selectedCandidateIndex`:验证目标为 Assistant Conversation、Candidate 存在,覆盖新 Branch 对该 Assistant 的选择
+8. 将新 Branch 设置为 Active
+9. 提交
+
+创建后:
+- 新 Branch 的消息路径截至目标 Message
+- 原 Branch 后续 Message 仍完整存在
+- 原 Branch active Candidate 选择不变
+- 不复制 Message / Candidate 实体
+- 不删除任何数据
+
+### 九、Branch Message Links 与 Swipe Selections
+
+#### Branch Message Links
+
+- 表示一个 Branch 的完整有序 Message 路径
+- Message 实体仍保存在 `messages` 表
+- 同一 Message 可被多个 Branch 共享
+- 创建 Child Branch 时只复制 Link,不复制 Message
+- position 从 0 连续增长
+- 当前 Branch 的消息按 position ASC 加载
+
+#### Branch Swipe Selections
+
+- 同一 Assistant Message 在不同 Branch 中可以选择不同 Candidate
+- Branch A 可选 Candidate 0,Branch B 可选 Candidate 2,互不覆盖
+- Candidate 正文仍保存在 `message_swipe_candidates`
+- 没有 Swipe Group 的 Assistant 隐式使用 Candidate 0
+- 不为普通 Assistant 强制创建 Swipe 数据
+
+### 十、新消息自动加入 Active Branch
+
+修改 `ChatPersistenceOperations` 与 `ChatPersistenceService`,插入新的 User / Assistant Message 时必须在同一事务中:
+1. 插入 Message
+2. 查询当前 Active Branch
+3. 获取该 Branch 最大 position
+4. 插入新的 BranchMessage Link
+5. 更新 Branch.`updatedAt` / `lastMessageAt`
+6. 提交
+
+适用范围:User 消息、普通 Assistant 回复、新会话 firstMessage。`CharacterFirstMessage` 是否计入聊天记录数量保持现有 UI 语义。
+
+### 十一、Swipe 选择同步到 Branch
+
+修改 `MessageSwipePersistenceService`,以下操作必须同步更新 `conversation_branch_swipe_selections`:
+- `ensureSwipeState` 创建 Candidate 0
+- `appendCandidate(activate=true)`
+- `activateCandidate`
+- active Candidate 恢复
+- 中断恢复不改变 index,但保持 selection 存在
+
+不再只更新 `message_swipe_groups.active_candidate_index` 而丢失 Branch 选择。
+
+### 十二、Chat 删除清理顺序
+
+删除 Chat 的事务顺序调整为:
+1. `conversation_branch_swipe_selections`
+2. `conversation_branch_messages`
+3. `chat_branch_state`
+4. `conversation_branches`
+5. `message_swipe_candidates`
+6. `message_swipe_groups`
+7. `messages`
+8. `chats`
+
+任一步失败全部回滚,不留下 Branch / Message Link / Branch Selection / Swipe Candidate 孤儿。
+
+### 十三、记录数量统计
+
+`ConversationRecordCounts` 区分:
+- `currentBranchMessageCount` — 当前 Branch 实际显示的消息数
+- `totalUniqueMessageCount` — 该 Chat 在所有 Branch 中保存的唯一 Message 数
+- `totalSwipeCandidateCount` — 该 Chat 中保存的 Candidate 总数
+- `totalBranchCount` — 该 Chat 的 Branch 总数
+
+T-6.4B 页面建议显示:`当前分支 12 条 · 全部消息 23 条 · 3 个分支`(本阶段未接入 UI)。
+
+### 十四、ChatService 历史保留接入
+
+本阶段只做最低兼容:
+- 当前活动 Branch 为 Root 时,普通发送和 Swipe 行为保持
+- 新 Message 正确加入 Root Branch
+- regenerate 后完整历史不消失
+- ChatService 不开放历史 Branch UI
+- ChatService 不允许用户切换 Branch
+- ChatService 不允许历史 regenerate
+
+ChatService 构造函数新增可选参数 `branchPersistenceService: ConversationBranchPersistenceService | null = null`,为 T-6.4B 的活动 Branch 加载预留接口。
+
+### 十五、AppServices 接入
+
+新增单例:
+- `ConversationBranchRepository`
+- `ConversationBranchPersistenceService`
+
+装配:
+- 使用同一个 `DbHelper`
+- `ChatPersistenceOperations` 注入 `branchPersistenceService`
+- `MessageSwipePersistenceService` 注入 `branchPersistenceService`
+- `ChatPersistenceService` 注入 `branchPersistenceService`
+- `ChatService` 通过 `createChatService` 注入 `branchPersistenceService`
+- 页面不直接访问 Repository
+- 不创建多个 Branch Service 实例
+
+### 十六、新增测试文件
+
+1. **`DatabaseV5Migration.test.ets`**(~1085 行)— 25 个测试用例
+   - DATABASE_VERSION=5、新安装完整 v5、四张 Branch 表存在、Branch 索引存在
+   - v4→v5 成功、每个旧 Chat 创建 Root Branch、空 Chat 创建 Root Branch
+   - Root Branch Message Links 数量正确、Message 顺序正确
+   - chat_branch_state 指向 Root、已有 Swipe activeIndex 迁移为 BranchSelection
+   - Candidate 不复制、Message 不复制
+   - 旧七/八张业务表数据保留、Character/Lorebook/Preset 保持
+   - user_version=5、重启不重复迁移、失败回滚到 4、失败不留下部分 Branch
+   - 高版本拒绝、降级拒绝、Branch 表不含正文、不含 API Key/Prompt/Secret
+
+2. **`ConversationBranchRepository.test.ets`**(~675 行)— 26 个测试用例
+   - 创建 Root、每 Chat 仅一个 Root、创建 Child
+   - parentBranchId/forkMessageId 正确、设置 Active、获取 Active
+   - 插入 Message Link、position 排序、position 唯一、Message Link 唯一
+   - 同一 Message 可被不同 Branch 共享
+   - SwipeSelection 插入/更新/校验
+   - listBranches、messageCount、totalBranchCount、totalUniqueMessageCount、totalSwipeCandidateCount
+   - removeByChatId、ResultSet 全路径关闭
+   - 错误不含正文、不影响 Character/Lorebook/Preset
+
+3. **`ConversationBranchPersistenceServiceDevice.test.ets`**(~1151 行)— 29 个测试用例
+   - ensureRootBranch 幂等、新 Chat Root 创建、Active Branch 查询
+   - append Message 到 Active Branch、position 自动连续
+   - fork User Message、fork Assistant Message、复制前缀 Links、不复制后续 Links
+   - 原 Branch 保留全部 Links、不复制 Message 实体
+   - 复制 SwipeSelections、指定 Candidate 覆盖选择、不存在 Candidate 拒绝
+   - Message 不属于来源 Branch 拒绝、不同 Chat Branch 拒绝
+   - Child 自动成为 Active、Root 保持存在
+   - loadActiveBranchMessages 顺序正确、Branch Candidate 投影正确、原 Branch Candidate 选择不变
+   - currentBranchMessageCount/totalUniqueMessageCount/totalBranchCount 正确
+   - Chat 删除清理、并发创建 Root 不重复、事务失败全部回滚
+   - 输入对象不修改、日志不含正文
+
+4. **`ChatServiceHistoryPreservation.test.ets`** — 16 个测试用例(T-6.4A 阻断项)
+   - 10 条历史重新生成后仍为 10 条
+   - 前 9 条 Message ID 不变、content 不变、sequenceNumber 不变
+   - 只替换目标 Assistant
+   - request history 排除目标 Assistant、不写回 UI
+   - HistoryTrimmer 结果不写回 UI
+   - Swipe delta/complete/stop/error 不缩短页面数组
+   - 左右切换不缩短页面数组
+   - 会话重载恢复完整消息
+   - messages 数据库行数不变、BranchMessage Links 数量不变
+
+测试已注册到 `List.test.ets`(4 个 import + 4 个函数调用)。
+
+### 十七、测试编译和实际执行状态
+
+| 项 | 结果 |
+|----|------|
+| entry@default BUILD SUCCESSFUL | ✅ |
+| entry@ohosTest BUILD SUCCESSFUL | ✅ |
+| Test Runner 实际执行 | ⚠️ 未执行(AI Agent 无法操作 DevEco Studio GUI) |
+| ArkTS WARN "Function may throw exceptions" | ⚠️ 提示性警告,非错误 |
+
+entry@ohosTest 编译过程中修复了 9 个 ArkTS 语法错误(对象字面量类型 `Promise<{ chatId; messageIds }>` 1 处 + 未类型化对象字面量 1 处 + 解构声明 `const { ... } = await ...` 6 处),通过引入 `interface SetupResult` + 显式字段访问替代解构的方式修复。
+
+### 十八、模拟器升级结果
+
+未执行。受 Test Runner 阻塞,模拟器人工验收不在当前 Agent 可执行范围。
+
+### 十九、日志规范
+
+允许的日志:
+- `ConversationBranch | root created`
+- `ConversationBranch | child created`
+- `ConversationBranch | active branch updated`
+- `ConversationBranch | message linked`
+- `ConversationBranch | swipe selection updated`
+- `ConversationBranch | counts loaded`
+- `ChatService | full history preserved count=N`
+
+禁止泄漏(已确认未泄漏):
+- Branch 完整 ID / Message 完整 ID / Candidate 完整 ID / chatId
+- User/Assistant 正文 / Candidate content / Prompt / Preset name / Lorebook content
+- SQL / ValuesBucket / API Key / Authorization / Bearer
+
+### 二十、UI 尚未接入
+
+本阶段未推进:
+- 历史消息上的"从此处继续"按钮
+- Branch 列表和切换 UI
+- 对话树可视化
+- 历史 Assistant 直接重新生成 UI
+- Branch 删除 / 重命名 / 合并
+- Summary
+- Database v6
+
+### 二十一、历史 regenerate 尚未接入
+
+本阶段只提供 `forkAtMessage` 数据接口,不修改历史消息 UI。T-6.4B 将执行:
+```
+forkAtMessage(目标 Assistant)
+→ 在新 Branch 中为该 Assistant 追加 Candidate
+→ 激活新 Candidate
+→ 保留原 Branch 全部后续对话
+```
+
+### 二十二、T-6.4A 验收状态
+
+| 验收项 | 状态 |
+|------|------|
+| Swipe 后完整旧历史不再消失 | ✅(代码层) |
+| 页面消息数量保持不变 | ✅(代码层) |
+| Database version=5 | ✅(代码层) |
+| 每个 Chat 有且仅有一个 Root Branch | ✅(代码层) |
+| 旧 Message 全部链接到 Root | ✅(代码层) |
+| 旧 Swipe 选择迁移到 Root | ✅(代码层) |
+| 新 Message 自动链接 Active Branch | ✅(代码层) |
+| Child Branch 复制路径而不复制 Message | ✅(代码层) |
+| 原 Branch 后续消息完整保留 | ✅(代码层) |
+| 同一 Assistant 在不同 Branch 可选择不同 Candidate | ✅(代码层) |
+| forkAtMessage 可从任意 Branch Message 创建 Child | ✅(代码层) |
+| 当前 Branch 消息加载顺序正确 | ✅(代码层) |
+| 记录数量统计正确 | ✅(代码层) |
+| Chat 删除无 Branch 孤儿 | ✅(代码层) |
+| 当前聊天行为无回归 | ❌(运行时回归) |
+| entry@default BUILD SUCCESSFUL | ✅ |
+| entry@ohosTest BUILD SUCCESSFUL | ✅ |
+| 日志无正文、完整 ID、Prompt、SQL 或密钥泄漏 | ✅ |
+| Test Runner 实际执行 | ❌ 未执行 |
+| 模拟器人工验收 | ❌ 运行阻断 |
+
+**T-6.4A 生产代码与测试代码编译通过;**
+**Test Runner 已执行:70 核心测试 run, 67 pass, 3 failure(详见下方 R1 记录);**
+**T-6.4A 当前状态:T-6.4A-R3 修复中,未验收通过。**
+**R1 已修复,R2 代码层已完成,R3 修复中(Completed 回复退出重进后错误显示"已停止")。**
+
+T-6.4A-R1 已修复会话初始化、新建会话和普通发送事务:
+- HarmonyOS RDB 快照隔离导致事务内 position 冲突(appendMessagePairToActiveBranchWithStore 原子方法修复)
+- Root Branch 创建 + firstMessage 链接快照隔离(ensureRootBranchAndAppendFirstMessageWithStore 修复)
+- message_swipe_groups.candidate_index 列不存在(listGroupsByChatId 排序字段修复)
+- 重新生成实机无响应(regenerateAsNewCandidate 不传 callbacks,lastCallbacks===null 静默返回)
+- 定向测试仍有 3 个失败:ConversationBranchRepository 2 个(only_one_root_per_chat, total_swipe_candidate_count), ChatServiceHistoryPreservation 1 个(swipe_left_right_does_not_shorten_page_array)
+- 两个目标测试类运行数为 0:ConversationBranchPersistenceServiceDeviceTest, ChatPersistenceServiceTest
+- 当前状态:继续修复重新生成问题,未最终验收。
+
+T-6.4A-R2 Regenerate No-Response Recovery 已完成(代码层):
+- 根因:regenerateAsNewCandidate()→generateAlternativeCandidate() 不传 callbacks,lastCallbacks===null 静默返回
+- 修复:regenerateAsNewCandidate() 改为调用 regenerate() 复用 createCallbacks+regenerateLastResponse 链路
+- 增加阶段诊断日志:ui_click→viewmodel_enter→service_enter→eligibility_allowed/denied→candidate_created→provider_started→delta→completed→failed→state_cleared
+- 重新生成点击链已恢复,可连续重新生成,完整聊天历史保留
+- 人工验收尚未通过
+
+T-6.4A-R3 Completed Reply Reloaded as Cancelled 修复中:
+- 现象:正常完成的普通 Assistant 和 Swipe Candidate 在退出重进后错误显示"已停止"
+- 根因:persistFinalAssistant 为 fire-and-forget(async,不 await),onComplete 在 DB 写入完成前就调用了 clearActiveGeneration
+- 用户退出时 DB 仍保留初始占位符的 status=Streaming,reload 时 normalizeInterruptedMessages 将 Streaming 转为 Cancelled
+- 修复:persistWithRetry 返回 Promise,persistFinalAssistant 返回 Promise,onComplete/onError/stopGeneration 链式等待 persist 完成后再清理上下文
+- 增加诊断日志:GenerationFinal | SessionCleanup | SessionReload
+- 当前状态:代码修复中,等待编译和测试
+
+未推进 Summary。T-6.4B 未启动。

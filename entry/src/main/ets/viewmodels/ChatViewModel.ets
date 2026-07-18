@@ -205,8 +205,9 @@ export class ChatViewModel {
       Logger.info(LOG_TAG, 'session ready chatId=' + this.chatService.getCurrentChatId()
         + ' messages=' + this.messages.length.toString());
     } catch (e) {
+      // 只显示一次用户可读文案,不拼接底层错误信息(可能含敏感数据)
       const msg: string = e instanceof Error ? e.message : String(e);
-      this.initError = '会话初始化失败: ' + msg;
+      this.initError = '会话初始化失败,请重试';
       Logger.error(LOG_TAG, 'initializeSession failed: ' + msg);
     } finally {
       this.isInitializing = false;
@@ -247,10 +248,23 @@ export class ChatViewModel {
   }
 
   async regenerate(): Promise<void> {
-    if (this.disposed || this.busy || !this.canRegenerate || !this.isSessionReady) {
+    if (this.disposed) {
       return;
     }
-    Logger.info(LOG_TAG, 'regenerate');
+    if (this.busy) {
+      Logger.warn(LOG_TAG, 'Regenerate | eligibility_denied | busy');
+      return;
+    }
+    if (!this.canRegenerate) {
+      Logger.warn(LOG_TAG, 'Regenerate | eligibility_denied | cannot_regenerate');
+      return;
+    }
+    if (!this.isSessionReady) {
+      Logger.warn(LOG_TAG, 'Regenerate | eligibility_denied | session_not_ready');
+      return;
+    }
+    Logger.info(LOG_TAG, 'Regenerate | viewmodel_enter');
+    Logger.info(LOG_TAG, 'SwipeRuntime | stage=regenerate_enter');
     this.errorMessage = '';
     this.statusMessage = '';
     this.isGenerating = true;
@@ -368,24 +382,8 @@ export class ChatViewModel {
    * 使用 ChatService 内部 callbacks 同步状态变化。
    */
   async regenerateAsNewCandidate(): Promise<void> {
-    if (this.disposed || this.busy || !this.canRegenerate || !this.isSessionReady) {
-      return;
-    }
-    Logger.info(LOG_TAG, 'regenerateAsNewCandidate');
-    this.errorMessage = '';
-    this.statusMessage = '';
-    this.isGenerating = true;
-    this.canRegenerate = false;
-    this.userScrolledUp = false;
-
-    try {
-      await this.chatService.generateAlternativeCandidate();
-    } catch (e) {
-      this.isGenerating = false;
-      this.errorMessage = this.toUserError(String(e));
-      this.statusMessage = '';
-      Logger.error(LOG_TAG, 'regenerateAsNewCandidate failed: ' + String(e));
-    }
+    Logger.info(LOG_TAG, 'Regenerate | ui_click');
+    await this.regenerate();
   }
 
   // ===== T-4.5 会话列表方法 =====

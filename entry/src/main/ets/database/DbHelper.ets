@@ -28,12 +28,37 @@ import {
   createV1ToV2Migration,
   createV2ToV3Migration,
   createV3ToV4Migration,
+  createV4ToV5Migration,
   DatabaseMigration,
   MigrationPath
 } from './DatabaseMigration';
 import { DatabaseError, DatabaseErrorType } from '../models/DatabaseError';
 
 const LOG_TAG: string = 'DbHelper';
+
+/**
+ * 事务阶段诊断标识。
+ * 用于 runInTransaction 在 begin/commit/rollback 时输出安全日志,
+ * 不携带 chatId / messageId / SQL / 正文等敏感信息。
+ */
+export type TransactionOperation =
+  | 'session_create'
+  | 'session_create_with_first_message'
+  | 'message_append'
+  | 'message_pair_append'
+  | 'message_replace_after_user'
+  | 'session_delete'
+  | 'swipe_ensure_state'
+  | 'swipe_normalize_candidate'
+  | 'swipe_materialize_candidate'
+  | 'swipe_update_active'
+  | 'branch_fork'
+  | 'branch_ensure_root'
+  | 'branch_append_message'
+  | 'branch_update_swipe_selection'
+  | 'v5_migration'
+  | 'v5_integrity_repair'
+  | 'unknown';
 
 export class DbHelper {
   private readonly databaseName: string;
@@ -42,13 +67,36 @@ export class DbHelper {
   private store: relationalStore.RdbStore | null = null;
   private initializing: Promise<relationalStore.RdbStore> | null = null;
   private closed: boolean = false;
+  /**
+   * 当前事务深度。用于检测嵌套事务。
+   * HarmonyOS RDB 不支持可靠的事务嵌套,生产路径必须保持 depth=0 时才能 begin。
+   * - runInTransaction begin 时 +1
+   * - commit/rollback 后 -1
+   * - 若 begin 时 depth > 0,抛 NestedTransaction 错误
+   */
+  private transactionDepth: number = 0;
 
   constructor(
     databaseName: string = DATABASE_NAME,
-    migrations: ReadonlyArray<DatabaseMigration> = [createV1ToV2Migration(), createV2ToV3Migration(), createV3ToV4Migration()]
+    migrations: ReadonlyArray<DatabaseMigration> = [createV1ToV2Migration(), createV2ToV3Migration(), createV3ToV4Migration(), createV4ToV5Migration()]
   ) {
     this.databaseName = databaseName;
     this.migrations = migrations;
+  }
+
+  /**
+   * 当前事务深度(主要用于测试断言)。
+   * 生产代码不应依赖此值进行逻辑分支。
+   */
+  getTransactionDepth(): number {
+    return this.transactionDepth;
+  }
+
+  /**
+   * 是否正处于事务中(用于测试断言嵌套事务防护)。
+   */
+  isInTransaction(): boolean {
+    return this.transactionDepth > 0;
   }
 
   isInitialized(): boolean {
@@ -104,25 +152,59 @@ export class DbHelper {
     return await this.readUserVersion(store);
   }
 
+  /**
+   * 在事务中执行 action。
+   *
+   * 事务所有权规则:
+   * - 最外层 PersistenceService 是唯一事务所有者
+   * - Repository 和 WithStore 方法不得调用此方法
+   * - 若检测到嵌套事务(depth > 0),抛 NestedTransaction 错误
+   *
+   * 诊断规则:
+   * - 在 begin/commit/rollback 时输出安全日志(仅 operation 标识)
+   * - 不记录 chatId / messageId / SQL / 正文 / BusinessError 原始 message
+   *
+   * @param action 事务内执行的操作(接收同一 store)
+   * @param operation 安全操作标识(用于日志,默认 'unknown')
+   */
   async runInTransaction(
-    action: (store: relationalStore.RdbStore) => Promise<void>
+    action: (store: relationalStore.RdbStore) => Promise<void>,
+    operation: TransactionOperation = 'unknown'
   ): Promise<void> {
     const store: relationalStore.RdbStore = this.getStore();
+    if (this.transactionDepth > 0) {
+      // 嵌套事务防护:HarmonyOS RDB 不支持可靠嵌套,直接拒绝
+      Logger.error(LOG_TAG, `nested transaction rejected operation=${operation}`);
+      throw DatabaseError.transactionFailed(
+        `nested transaction not allowed operation=${operation}`
+      );
+    }
+    this.transactionDepth = 1;
+    Logger.info(LOG_TAG, `transaction begin operation=${operation}`);
     try {
       store.beginTransaction();
       await action(store);
       store.commit();
+      Logger.info(LOG_TAG, `transaction commit operation=${operation}`);
     } catch (err) {
+      const cause: string = this.extractCauseMessage(err);
+      Logger.error(LOG_TAG, `transaction rollback operation=${operation} cause=${cause}`);
       try {
         store.rollBack();
       } catch (rollbackErr) {
         const rollbackCause: string = this.extractCauseMessage(rollbackErr);
-        Logger.error(LOG_TAG, `rollback failed cause=${rollbackCause}`);
+        Logger.error(LOG_TAG, `rollback failed operation=${operation} cause=${rollbackCause}`);
         throw DatabaseError.transactionFailed(
-          `rollback failed: ${this.extractCauseMessage(err)}`
+          `rollback failed operation=${operation}`
         );
       }
-      throw DatabaseError.transactionFailed(this.extractCauseMessage(err));
+      // 保留原始 DatabaseError 类型信息,不无脑包装为 transactionFailed
+      if (err instanceof DatabaseError) {
+        throw err;
+      }
+      throw DatabaseError.transactionFailed(`operation=${operation}`);
+    } finally {
+      this.transactionDepth = 0;
     }
   }
 
