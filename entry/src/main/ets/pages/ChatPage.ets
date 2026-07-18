@@ -24,7 +24,6 @@ import { promptAction } from '@kit.ArkUI';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { AppServices } from '../services/AppServices';
 import { ChatSessionListPanel } from '../components/ChatSessionListPanel';
-import { BranchListPanel } from '../components/BranchListPanel';
 import { Logger } from '../utils/Logger';
 
 // ===== 资源引用 =====
@@ -127,12 +126,7 @@ export struct ChatPage {
         this.viewModel!.cancelDeleteSession();
         return true;
       }
-      // Branch 列表面板次优先关闭
-      if (this.viewModel!.showBranchList) {
-        this.viewModel!.closeBranchList();
-        return true;
-      }
-      // 会话列表面板再次优先关闭
+      // 会话列表面板次优先关闭
       if (this.viewModel!.showSessionList) {
         this.viewModel!.closeSessionList();
         return true;
@@ -417,11 +411,6 @@ export struct ChatPage {
       // T-4.5 会话列表面板覆盖层(全屏覆盖在主内容之上)
       if (this.viewModel !== null && this.viewModel!.showSessionList) {
         ChatSessionListPanel({ viewModel: this.viewModel! })
-      }
-
-      // T-6.4B-1 Branch 列表面板覆盖层
-      if (this.viewModel !== null && this.viewModel!.showBranchList) {
-        BranchListPanel({ viewModel: this.viewModel! })
       }
     }
     }

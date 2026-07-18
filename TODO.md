@@ -4013,4 +4013,152 @@ entry@default clean build BUILD SUCCESSFUL in 49s 305ms。
 
 不修改 Database Version/Migration/Branch Schema/MessageSwipe Schema;不修改 Provider/PromptBuilder/Lorebook/PromptPreset/Character/网络层;不迁移旧 Candidate 数据;不顺便拆分 ChatPage;不清理 BranchListPanel;不做公共组件重构;不使用 any;不使用 as unknown as;不添加第三方依赖;页面不直接访问 Repository;Service 不依赖 ArkUI;ResultSet 所有路径关闭;所有跨表写入使用事务;Provider 只在事务提交成功后启动。
 
+## T-6.4B-2 Historical User Fork and Auto Reply 完成记录 (2026-07-18)
+
+### 一、目标
+
+历史 User 消息新增"从此处生成新回复"入口。保留原 User 内容,在其后创建新 Branch,自动生成替代 Assistant。原 Branch 完整保留。
+
+### 二、实现要点
+
+- ChatService 新增 `canGenerateFromUserMessage` / `generateFromUserMessage`:fork point = 目标 User(保留原 User),新 Branch 继承 Root..User 路径,创建 Streaming Assistant,启动 Provider。
+- 同级/子级判定与 T-6.4B-1.2 一致(`activeBranch.forkMessageId === userMessageId` → 同级)。
+- ChatViewModel / ChatPage 接入"从此处生成新回复"按钮,`canGenerateFromUserMessage` 满足时显示。
+
+### 三、验收
+
+已通过人工测试:历史 User 生成新回复 → 新 Branch 出现 → 原 Branch 不变 → BranchMap 显示同级节点。
+
+## T-6.4B-2-R1 Branch Map Tree Layout and Connector Rendering 完成记录 (2026-07-18)
+
+### 一、目标
+
+修正 BranchMap 树形布局:同一 fork point 的替代版本为同级;不同轮次为下一层;父子连接线可见;节点不重叠;支持水平和垂直滚动;当前 Branch 高亮;节点显示分歧处预览。
+
+### 二、实现要点
+
+- `utils/BranchTreeLayout.ets` 按 parentBranchId 构造树,depth 分层,同层按 createdAt 排序。
+- `BranchMapNode.ets` 显示 fork User 预览 + 分歧 Assistant 预览。
+- `BranchMapPage.ets` 嵌套 Scroll 实现双向滚动,Canvas 绘制贝塞尔连接线。
+- 编辑后的 Branch 显示编辑后的 User 内容。
+
+### 三、验收
+
+已通过人工测试:树结构正确、连接线可见、节点不重叠、双向滚动、Active 高亮、预览区分路线。
+
+## T-6.4B-3 Historical Assistant Regeneration Branch 完成记录 (2026-07-18)
+
+### 一、目标
+
+历史 Assistant 新增"重新生成此回复"入口。fork point = 目标 Assistant 前面的 User,新 Branch 不保留目标 Assistant 和后续历史,自动生成替代 Assistant。
+
+### 二、实现要点
+
+- ChatService 新增 `canRegenerateAssistantMessage` / `regenerateAssistantMessage`:向前查找最近 User 作为 fork point,调用 `forkAndStreamFromUser` 创建 Branch + Streaming Assistant + 启动 Provider。
+- 与"从此处继续"区别:fork point 是 User(不是 Assistant),新 Branch 不保留目标 Assistant。
+- ChatPage Assistant 气泡操作区新增"重新生成此回复"按钮。
+
+### 三、验收
+
+已通过人工测试:历史 Assistant 重新生成 → 新 Branch 不含原 Assistant → 原 Branch 完整保留。
+
+## T-6.4B-3.1 Historical User Edit and Regenerate Branch 完成记录 (2026-07-18)
+
+### 一、目标
+
+历史 User 新增"编辑"入口。打开编辑弹窗,确认后创建新 User Message 和新 Branch(fork point = 原 User 前一条 anchor),不修改原 User,自动生成 Assistant。
+
+### 二、实现要点
+
+- `ConversationBranchPersistenceService` 新增 `EditedBranchGenerationTarget` 接口和 `editUserAndForkWithAssistant` 原子事务:验证 → 创建 Child Branch(forkMessageId=anchorMessageId) → 复制 Root..anchor Links → 复制 SwipeSelections → 插入新 User → 插入新 Streaming Assistant → setActiveBranch → 提交。
+- ChatService 新增 `canEditUserMessage` / `editUserMessageAndGenerate`:定位 User,找 anchor = messages[userIndex-1],判断同级/子级,创建新 User(Completed) + 新 Assistant(Streaming),调用事务,重载会话,启动 Provider。
+- `HistoricalMessageEditDialog.ets` CustomDialog:TextArea 预填原文,取消/保存并生成按钮。
+- ChatPage 接入编辑按钮和 CustomDialogController。
+
+### 三、验收
+
+已通过人工测试:编辑 User → 新 Branch 含编辑后 User + 新 Assistant → 原 User 不变 → BranchMap 显示编辑后内容。
+
+## T-6.4B-Closeout Branch Workflow Cleanup and Acceptance 完成记录 (2026-07-18)
+
+### 一、目标
+
+T-6.4B 收尾:统一消息操作语义、统一最新回复入口、旧 Swipe 数据兼容、BranchMap 收尾、删除临时诊断日志、清理无效 UI 和资源、状态互斥检查、文档收尾。
+
+### 二、统一消息操作语义
+
+- Assistant 气泡操作区:重新生成此回复 · 从此处继续 · 复制
+- User 气泡操作区:编辑 · 从此处生成新回复 · 复制
+- 各入口调用不同方法,无误用:
+  - 重新生成此回复 → `regenerateAssistantMessage(messageId)`
+  - 从此处继续 → `continueFromAssistant(messageId)`
+  - 编辑 → `editUserMessageAndGenerate(messageId, content)`
+  - 从此处生成新回复 → `generateFromUserMessage(messageId)`
+  - MessageSwipeControls 重新生成 → `regenerateAsNewCandidate()` → `regenerateLastResponse()` → `regenerateAsBranch()`(Branch 语义,不调用 appendCandidate)
+
+### 三、新 Branch 与旧 Swipe 兼容规则
+
+- `MessageSwipeControls` 新增 `hasSwipeGroup` 判定:`candidateCount > 1` 才显示左右切换与计数。
+- `candidateCount <= 1`(新 Branch 默认)时:可操作 → 只显示"重新生成/停止"按钮;不可操作 → 组件高度降为 0,不显示无意义的 `1 / 1`。
+- 旧 Candidate Group(`candidateCount > 1`)仍可左右切换,切换不调用 Provider,不删除数据,不迁移,不修改数据库版本。
+
+### 四、BranchMap 收尾
+
+- 树形布局已正确:Root 顶层、同级同层、不同轮次下一层、父子连接线可见、节点不重叠、双向滚动、Active 高亮、节点显示分歧预览、编辑后 Branch 显示编辑后 User。
+- 本轮未重新设计布局算法,仅修显示一致性。
+
+### 五、删除临时诊断日志
+
+- 删除 `Regenerate | delta`(ChatService delta 级高频日志)。
+- 修复 `ChatViewModel` `session ready chatId=` 日志:完整 chatId 改为前 8 字符掩码。
+- 保留低频日志:`ConversationBranch | regeneration/child/edit branch created`、`branch switched`、`BranchMap | loaded count=N`、`SessionReload |`、`stale callback ignored`、`nested transaction rejected`、`transaction rollback`、`final persistence failed` 等。
+- 日志不含:消息正文、编辑前后正文、Prompt、完整 Message/Branch/chatId/Candidate ID、SQL、ValuesBucket、API Key、Authorization、Base URL。
+
+### 六、清理无效 UI
+
+- 删除 `components/BranchListPanel.ets`(`openBranchList()` 从未被调用,`showBranchList` 恒为 false)。
+- 移除 `ChatPage.ets` 中 BranchListPanel import、渲染块、onBackPress 中 showBranchList 分支。
+- 保留 `ChatViewModel` 中 `showBranchList`/`openBranchList`/`closeBranchList` 为无害 dead code(不重构公共接口)。
+
+### 七、状态互斥检查
+
+- `busy = isGenerating || isSwipeOperating || isBranchOperating` 统一互斥。
+- 所有 Branch 操作入口在 `busy` 时显示 Toast 拒绝,不静默无反应。
+- 生成或 Branch 操作进行中:不创建半成品 Branch,不启动两个 Provider 请求。
+- 未重构完整状态机。
+
+### 八、T-6.4B 最终语义(已验收)
+
+1. 每个替代回复对应独立 Conversation Branch;
+2. 相同 fork point 的替代版本形成同级 Branch;
+3. 编辑 User 不原地修改共享 Message,而是创建新 Message 和 Branch;
+4. 原 Branch 永远保留;
+5. BranchMap 展示真实父子树;
+6. 旧 Swipe Candidate 只用于兼容历史数据;
+7. 新重新生成流程不再创建 Candidate。
+
+### 九、已完成的任务
+
+- T-6.4B-1 ✓
+- T-6.4B-1.1 ✓
+- T-6.4B-1.2 ✓
+- T-6.4B-2 ✓
+- T-6.4B-2-R1 ✓
+- T-6.4B-3 ✓
+- T-6.4B-3.1 ✓
+- T-6.4B-Closeout ✓(本轮)
+
+### 十、修改文件
+
+- `entry/src/main/ets/components/MessageSwipeControls.ets`(隐藏无意义 `1/1`)
+- `entry/src/main/ets/pages/ChatPage.ets`(移除 BranchListPanel 引用)
+- `entry/src/main/ets/services/ChatService.ets`(删除 delta 级 Regenerate 日志)
+- `entry/src/main/ets/viewmodels/ChatViewModel.ets`(chatId 掩码)
+- 删除 `entry/src/main/ets/components/BranchListPanel.ets`
+- `TODO.md`、`project_memory.md`
+
+### 十一、未推进
+
+Summary、Branch 删除/重命名/合并、Database v6、Candidate 数据迁移、ChatPage 拆分、公共组件重构。
+
 

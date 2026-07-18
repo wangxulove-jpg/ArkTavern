@@ -221,7 +221,11 @@ export class ChatViewModel {
       this.canRegenerate = this.chatService.canRegenerate();
       // T-6.4B-1: 同步 Branch 状态(branches / activeBranchId / recordCounts)
       await this.refreshBranchState();
-      Logger.info(LOG_TAG, 'session ready chatId=' + this.chatService.getCurrentChatId()
+      // T-6.4B-Closeout: 日志不记录完整 chatId(仅前 8 字符)
+      const readyChatId: string | undefined = this.chatService.getCurrentChatId();
+      const maskedChatId: string = readyChatId !== undefined && readyChatId.length > 0
+        ? readyChatId.substring(0, 8) : 'unknown';
+      Logger.info(LOG_TAG, 'session ready chatId=' + maskedChatId
         + ' messages=' + this.messages.length.toString());
     } catch (e) {
       // 只显示一次用户可读文案,不拼接底层错误信息(可能含敏感数据)

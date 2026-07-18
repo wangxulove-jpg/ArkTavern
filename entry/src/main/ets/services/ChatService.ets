@@ -1315,9 +1315,7 @@ export class ChatService {
           Logger.warn(LOG_TAG, 'stale callback ignored type=delta');
           return;
         }
-        if (context.kind === ChatGenerationKind.SwipeCandidate) {
-          Logger.info(LOG_TAG, 'Regenerate | delta');
-        }
+        // T-6.4B-Closeout: 移除 delta 级 Regenerate 高频日志
         this.appendDelta(assistantId, delta.content, callbacks);
         // 节流持久化 delta(路由基于 activeGeneration.kind)
         this.schedulePersistenceFlush(assistantId);
