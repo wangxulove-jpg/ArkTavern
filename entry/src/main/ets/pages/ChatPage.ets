@@ -23,6 +23,8 @@ import { promptAction } from '@kit.ArkUI';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { AppServices } from '../services/AppServices';
 import { ChatSessionListPanel } from '../components/ChatSessionListPanel';
+import { BranchListPanel } from '../components/BranchListPanel';
+import { Logger } from '../utils/Logger';
 
 // ===== 资源引用 =====
 const RES_NAV_CHAT_TITLE: string = 'nav_chat_title';
@@ -40,6 +42,11 @@ const RES_CHAT_SCROLL_BOTTOM: string = 'chat_scroll_to_bottom';
 const RES_CHAT_CANCELLED: string = 'chat_cancelled';
 const RES_CHAT_FAILED: string = 'chat_failed';
 const RES_CHAT_EMPTY_RESPONSE: string = 'chat_empty_response';
+const RES_CONTINUE_FROM_HERE: string = 'chat_continue_from_here';
+const RES_BRANCH_SWITCH_BUSY: string = 'chat_branch_switch_busy';
+const RES_BRANCH_CREATE_BUSY: string = 'chat_branch_create_busy';
+
+const LOG_TAG: string = 'ChatPage';
 
 // ===== 颜色 =====
 const COLOR_USER_BUBBLE: string = '#5B7CFA';
@@ -62,6 +69,18 @@ export struct ChatPage {
    * 确保 ForEach 能检测到数据源引用变化并重新渲染。
    */
   @State messages: ChatMessage[] = [];
+  /**
+   * T-6.4B-1.2 跨页面 Branch 切换通知。
+   *
+   * BranchMapPage 切换 Active Branch 成功后,通过 AppStorage.set('branchChangeSeq', Date.now())
+   * 递增此序列号。ChatPage 通过 @StorageLink + @Watch 响应变化,触发 reloadAfterBranchChange。
+   *
+   * 采用此方案的原因:NavDestination 的 .onShown() 用户回调实测不被 ArkUI 调用
+   * (系统 onShown 生命周期日志触发,但注册的 .onShown(() => {...}) 回调不执行),
+   * pushPathByName 的 onPop 回调也不可靠触发。@StorageLink 是 ArkUI 响应式状态,
+   * 跨页面同步可靠。
+   */
+  @StorageLink('branchChangeSeq') @Watch('onBranchChangeSeqChanged') branchChangeSeq: number = 0;
   private scroller: Scroller = new Scroller();
   private lastMessageCount: number = 0;
 
@@ -97,7 +116,12 @@ export struct ChatPage {
         this.viewModel!.cancelDeleteSession();
         return true;
       }
-      // 会话列表面板次优先关闭
+      // Branch 列表面板次优先关闭
+      if (this.viewModel!.showBranchList) {
+        this.viewModel!.closeBranchList();
+        return true;
+      }
+      // 会话列表面板再次优先关闭
       if (this.viewModel!.showSessionList) {
         this.viewModel!.closeSessionList();
         return true;
@@ -167,6 +191,38 @@ export struct ChatPage {
           }
           .width('100%')
           .padding({ left: 16, right: 16, bottom: 4 })
+
+          // T-6.4B-1.1 Branch 状态入口(点击导航到 BranchMapPage)
+          if (this.viewModel!.isSessionReady
+            && this.viewModel!.getBranchStatusText().length > 0) {
+            Row() {
+              Text(this.viewModel!.getBranchStatusText())
+                .fontSize(12)
+                .fontColor('#007AFF')
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .layoutWeight(1)
+
+              Text('查看')
+                .fontSize(12)
+                .fontColor(this.viewModel!.busy
+                  ? '#999999'
+                  : '#007AFF')
+                .margin({ left: 8 })
+            }
+            .width('100%')
+            .padding({ left: 16, right: 16, bottom: 4 })
+            .onClick(() => {
+              if (this.viewModel!.busy) {
+                promptAction.showToast({
+                  message: $r('app.string.' + RES_BRANCH_SWITCH_BUSY),
+                  duration: 1500
+                });
+                return;
+              }
+              this.navigateToBranchMap();
+            })
+          }
 
         if (this.viewModel!.errorMessage.length > 0) {
           Text(this.viewModel!.errorMessage)
@@ -351,12 +407,34 @@ export struct ChatPage {
       if (this.viewModel !== null && this.viewModel!.showSessionList) {
         ChatSessionListPanel({ viewModel: this.viewModel! })
       }
+
+      // T-6.4B-1 Branch 列表面板覆盖层
+      if (this.viewModel !== null && this.viewModel!.showBranchList) {
+        BranchListPanel({ viewModel: this.viewModel! })
+      }
     }
     }
     .title(this.viewModel!.characterName.length > 0
       ? this.viewModel!.characterName
       : $r('app.string.' + RES_NAV_CHAT_TITLE))
     .hideTitleBar(false)
+  }
+
+  /**
+   * T-6.4B-1.2: BranchMapPage 切换 Active Branch 后触发。
+   *
+   * 通过 @StorageLink('branchChangeSeq') + @Watch 响应跨页面状态变化,
+   * 重新从数据库加载当前会话消息、SwipeSummary、Branch 状态。
+   */
+  onBranchChangeSeqChanged(): void {
+    if (this.viewModel === null || this.viewModel!.isDisposed) {
+      return;
+    }
+    if (!this.viewModel!.isSessionReady) {
+      return;
+    }
+    Logger.info(LOG_TAG, 'onBranchChangeSeqChanged | seq=' + this.branchChangeSeq.toString());
+    this.viewModel!.reloadAfterBranchChange();
   }
 
   // ===== 加载/错误状态 =====
@@ -515,6 +593,20 @@ export struct ChatPage {
 
         if (!msg.isStreaming && msg.content.length > 0) {
           Row() {
+            // T-6.4B-1 从此处继续(仅历史 Assistant 满足条件时显示)
+            if (this.viewModel !== null
+              && this.viewModel!.canContinueFromAssistant(msg.id)) {
+              Button($r('app.string.' + RES_CONTINUE_FROM_HERE))
+                .fontSize(12)
+                .backgroundColor(Color.Transparent)
+                .fontColor('#007AFF')
+                .height(28)
+                .padding({ left: 4, right: 4 })
+                .onClick(() => {
+                  this.continueFromAssistant(msg.id);
+                })
+            }
+
             Button($r('app.string.' + RES_CHAT_COPY))
               .fontSize(12)
               .backgroundColor(Color.Transparent)
@@ -597,6 +689,54 @@ export struct ChatPage {
       // ignore
     }
     return null;
+  }
+
+  // ===== T-6.4B-1 Branch 操作 =====
+
+  /**
+   * T-6.4B-1.1: 导航到 BranchMapPage。
+   * 传入当前 chatId,返回时通过 onPop 回调重新加载消息和 Branch 状态。
+   */
+  private navigateToBranchMap(): void {
+    if (this.viewModel === null) {
+      return;
+    }
+    const chatId: string | undefined = this.viewModel!.getCurrentChatId();
+    if (chatId === undefined || chatId.length === 0) {
+      return;
+    }
+    const navInfo = this.queryNavigationInfo();
+    if (navInfo === undefined) {
+      return;
+    }
+    navInfo.pathStack.pushPathByName(
+      'BranchMapPage',
+      { chatId: chatId },
+      async (): Promise<void> => {
+        // 从 BranchMapPage 返回后重新加载会话
+        if (this.viewModel !== null && !this.viewModel!.isDisposed) {
+          await this.viewModel!.reloadAfterBranchChange();
+        }
+      }
+    );
+  }
+
+  /**
+   * 从历史 Assistant 创建 Child Branch。
+   * 忙碌时显示提示并退出,由 ViewModel 处理具体逻辑。
+   */
+  private continueFromAssistant(messageId: string): void {
+    if (this.viewModel === null) {
+      return;
+    }
+    if (this.viewModel!.busy) {
+      promptAction.showToast({
+        message: $r('app.string.' + RES_BRANCH_CREATE_BUSY),
+        duration: 1500
+      });
+      return;
+    }
+    this.viewModel!.continueFromAssistant(messageId);
   }
 }
 

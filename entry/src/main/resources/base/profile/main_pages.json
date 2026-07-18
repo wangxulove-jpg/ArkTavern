@@ -4,6 +4,7 @@
     "pages/ChatPage",
     "pages/CharacterListPage",
     "pages/PromptPresetListPage",
-    "pages/PromptPresetEditPage"
+    "pages/PromptPresetEditPage",
+    "pages/BranchMapPage"
   ]
 }

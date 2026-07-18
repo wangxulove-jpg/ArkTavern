@@ -47,6 +47,21 @@ import { MessageSwipeCandidate } from '../models/MessageSwipe';
 import { DatabaseError } from '../models/DatabaseError';
 import { nowMillis } from '../utils/Time';
 import { Logger } from '../utils/Logger';
+import {
+  TABLE_MESSAGES,
+  COLUMN_CONTENT,
+  COLUMN_STATUS,
+  COLUMN_ERROR_MESSAGE,
+  COLUMN_IS_STREAMING,
+  COLUMN_UPDATED_AT
+} from '../database/DatabaseConstants';
+import { extractCauseMessage } from '../repositories/RepositoryMappers';
+import { isConstraintViolation } from '../repositories/RepositoryMappers';
+import {
+  BranchMapDisplayInfo,
+  buildUserPreview,
+  buildAssistantPreview
+} from '../models/BranchMapDisplayInfo';
 
 const LOG_TAG: string = 'ConvBranchSvc';
 
@@ -230,6 +245,9 @@ export class ConversationBranchPersistenceService {
     const links: BranchMessageLink[] =
       await this.branchRepository.listMessageLinksWithStore(store, activeBranch.id);
     if (links.length === 0) {
+      Logger.info(LOG_TAG, 'loadActiveBranchMessages | branch=' + activeBranch.id.substring(0, 8)
+        + ' isRoot=' + activeBranch.isRoot.toString()
+        + ' links=0');
       return [];
     }
     // 加载该 Branch 的 SwipeSelections
@@ -264,7 +282,9 @@ export class ConversationBranchPersistenceService {
       // 普通 Message 或无 Selection 的 Assistant:直接使用 Message
       result.push(message);
     }
-    Logger.info(LOG_TAG, 'active branch messages loaded count=' + result.length.toString());
+    Logger.info(LOG_TAG, 'loadActiveBranchMessages | branch=' + activeBranch.id.substring(0, 8)
+      + ' isRoot=' + activeBranch.isRoot.toString()
+      + ' count=' + result.length.toString());
     return result;
   }
 
@@ -417,6 +437,447 @@ export class ConversationBranchPersistenceService {
     await this.branchRepository.touchBranchWithStore(store, childBranch.id, now);
     Logger.info(LOG_TAG, 'child created');
     return childBranch;
+  }
+
+  // ===== Fork for Regeneration(T-6.4B-1.2) =====
+
+  /**
+   * 为"重新生成"创建新的 Conversation Branch(事务)。
+   *
+   * 与 forkAtMessage 的区别:
+   * - forkAtMessage 用于"从此处继续",复制 0..forkPosition 的全部 links(包括 fork 位置的 Assistant)
+   * - forkForRegeneration 用于"重新生成",只复制 0..forkUserPosition 的 links(不包括需要被替换的旧 Assistant)
+   *   然后创建新的 Streaming Assistant Message 并 link 到新 Branch
+   *
+   * 同级 Branch 判断由调用方决定 parentBranchId:
+   * - 相同 forkMessage 的再次重新生成 → parentBranchId = 当前 Branch.parentBranchId(同级)
+   * - 不同位置的新路线 → parentBranchId = 当前 Active Branch(下一层 Child)
+   *
+   * 事务步骤:
+   * 1. 验证 source Branch、parent Branch 和 fork Message 属于当前 Chat
+   * 2. 验证 fork Message 位于 source Branch
+   * 3. 验证 fork Message 为 User 角色
+   * 4. 创建新的 Child Branch(parent=parentBranchId, forkMessageId=forkUserMessageId)
+   * 5. 复制 source Branch 中 0..forkUserPosition 的 Message Links(不复制旧 Assistant)
+   * 6. 复制这些 messageIds 的 SwipeSelections
+   * 7. 插入新的 Streaming Assistant Message 到 messages 表
+   * 8. 将新 Assistant Message Link 到新 Branch(position = forkUserPosition + 1)
+   * 9. 更新 chat_branch_state.active_branch_id 为新 Branch
+   * 10. 触发 Branch 时间戳更新
+   * 11. 提交事务
+   *
+   * 事务失败时:
+   * - 不创建半成品 Branch
+   * - 不修改当前 Active Branch
+   * - 不写入新 Assistant Message
+   *
+   * @param chatId 所属 Chat ID
+   * @param sourceBranchId 来源 Branch ID(包含 fork User Message 的 Branch,通常是当前 Active Branch)
+   * @param parentBranchId 新 Branch 的父 Branch ID(同级时为 sourceBranch.parentBranchId)
+   * @param forkUserMessageId Fork 点 User Message ID
+   * @param newAssistantMessage 新创建的 Streaming Assistant Message(由调用方构造,本方法负责持久化和 link)
+   * @returns 新创建 Branch 的摘要(含 messageCount 和 isActive)
+   */
+  async forkForRegeneration(
+    chatId: string,
+    sourceBranchId: string,
+    parentBranchId: string,
+    forkUserMessageId: string,
+    newAssistantMessage: ChatMessage
+  ): Promise<ConversationBranchSummary> {
+    if (chatId.length === 0) {
+      throw DatabaseError.invalidData('forkForRegeneration: chatId empty');
+    }
+    if (sourceBranchId.length === 0) {
+      throw DatabaseError.invalidData('forkForRegeneration: sourceBranchId empty');
+    }
+    if (parentBranchId.length === 0) {
+      throw DatabaseError.invalidData('forkForRegeneration: parentBranchId empty');
+    }
+    if (forkUserMessageId.length === 0) {
+      throw DatabaseError.invalidData('forkForRegeneration: forkUserMessageId empty');
+    }
+    if (newAssistantMessage.id.length === 0) {
+      throw DatabaseError.invalidData('forkForRegeneration: newAssistantMessage id empty');
+    }
+
+    // 事务外计算 maxSeq(避免快照隔离读到旧值)
+    const maxSeq: number = await this.messageRepository.getMaxSequenceNumber(chatId);
+    const assistantSeq: number = maxSeq + 1;
+
+    let result: ConversationBranchSummary | null = null;
+    try {
+      await this.dbHelper.runInTransaction(
+        async (store: relationalStore.RdbStore): Promise<void> => {
+          result = await this.forkForRegenerationWithStore(
+            store, chatId, sourceBranchId, parentBranchId,
+            forkUserMessageId, newAssistantMessage, assistantSeq
+          );
+        }
+      );
+    } catch (err) {
+      if (err instanceof DatabaseError) {
+        throw err;
+      }
+      throw DatabaseError.transactionFailed(
+        `forkForRegeneration: ${(err as Error).message}`
+      );
+    }
+    return result!;
+  }
+
+  /**
+   * 在给定 store 上执行 forkForRegeneration(事务内部方法)。
+   */
+  async forkForRegenerationWithStore(
+    store: relationalStore.RdbStore,
+    chatId: string,
+    sourceBranchId: string,
+    parentBranchId: string,
+    forkUserMessageId: string,
+    newAssistantMessage: ChatMessage,
+    assistantSequenceNumber: number
+  ): Promise<ConversationBranchSummary> {
+    // 1. 验证 source Branch 属于 chatId
+    const sourceBranch: ConversationBranch | null =
+      await this.branchRepository.getBranchWithStore(store, sourceBranchId);
+    if (sourceBranch === null) {
+      throw DatabaseError.notFound('forkForRegeneration: sourceBranch not found');
+    }
+    if (sourceBranch.chatId !== chatId) {
+      throw DatabaseError.invalidData('forkForRegeneration: sourceBranch chatId mismatch');
+    }
+    // 2. 验证 parent Branch 属于 chatId
+    const parentBranch: ConversationBranch | null =
+      await this.branchRepository.getBranchWithStore(store, parentBranchId);
+    if (parentBranch === null) {
+      throw DatabaseError.notFound('forkForRegeneration: parentBranch not found');
+    }
+    if (parentBranch.chatId !== chatId) {
+      throw DatabaseError.invalidData('forkForRegeneration: parentBranch chatId mismatch');
+    }
+    // 3. 验证 fork Message 位于 source Branch
+    const forkUserPosition: number =
+      await this.branchRepository.getMessagePositionWithStore(store, sourceBranchId, forkUserMessageId);
+    if (forkUserPosition < 0) {
+      throw DatabaseError.notFound('forkForRegeneration: forkUserMessage not in sourceBranch');
+    }
+    // 4. 验证 fork Message 为 User 角色
+    const forkMessage: ChatMessage | null =
+      await this.messageRepository.getById(forkUserMessageId);
+    if (forkMessage === null) {
+      throw DatabaseError.notFound('forkForRegeneration: forkUserMessage not found');
+    }
+    if (forkMessage.role !== ChatRole.User) {
+      throw DatabaseError.invalidData('forkForRegeneration: forkMessage must be User role');
+    }
+    // 5. 创建新的 Child Branch(parent=parentBranchId, forkMessageId=forkUserMessageId)
+    const newBranch: ConversationBranch =
+      await this.branchRepository.createChildBranchWithStore(
+        store, chatId, parentBranchId, forkUserMessageId, ''
+      );
+    // 6. 复制 source Branch 中 0..forkUserPosition 的 Message Links(不复制旧 Assistant)
+    await this.branchRepository.copyMessageLinksThroughPositionWithStore(
+      store, sourceBranchId, newBranch.id, forkUserPosition
+    );
+    // 7. 复制这些 messageIds 的 SwipeSelections(从 sourceBranch 到 newBranch)
+    const newBranchLinks: BranchMessageLink[] =
+      await this.branchRepository.listMessageLinksWithStore(store, newBranch.id);
+    const copiedMessageIds: string[] = newBranchLinks.map(
+      (link: BranchMessageLink): string => link.messageId
+    );
+    if (copiedMessageIds.length > 0) {
+      await this.branchRepository.copySwipeSelectionsForMessageIdsWithStore(
+        store, sourceBranchId, newBranch.id, copiedMessageIds
+      );
+    }
+    // 8. 插入新的 Streaming Assistant Message 到 messages 表
+    await this.messageRepository.insertWithStore(
+      store, newAssistantMessage, chatId, assistantSequenceNumber
+    );
+    // 9. 将新 Assistant Message Link 到新 Branch(position = forkUserPosition + 1)
+    const newAssistantPosition: number = forkUserPosition + 1;
+    await this.branchRepository.insertMessageLinkWithStore(
+      store, newBranch.id, newAssistantMessage.id, newAssistantPosition
+    );
+    // 10. 更新 chat_branch_state.active_branch_id 为新 Branch
+    await this.branchRepository.setActiveBranchWithStore(store, chatId, newBranch.id);
+    Logger.info(LOG_TAG, 'ConversationBranch | active branch updated');
+    // 11. 触发 Branch 时间戳更新
+    const now: number = nowMillis();
+    await this.branchRepository.touchBranchWithStore(store, newBranch.id, now);
+    Logger.info(LOG_TAG, 'regeneration | newBranch=' + newBranch.id.substring(0, 8)
+      + ' parent=' + parentBranchId.substring(0, 8));
+    // 返回新 Branch 摘要(包含 messageCount 和 isActive)
+    const messageCount: number =
+      await this.branchRepository.countMessagesWithStore(store, newBranch.id);
+    return {
+      id: newBranch.id,
+      parentBranchId: newBranch.parentBranchId,
+      forkMessageId: newBranch.forkMessageId,
+      name: newBranch.name,
+      isRoot: newBranch.isRoot,
+      messageCount: messageCount,
+      createdAt: newBranch.createdAt,
+      updatedAt: now,
+      lastMessageAt: now,
+      isActive: true
+    };
+  }
+
+  // ===== BranchMap Display Info(T-6.4B-1.2) =====
+
+  /**
+   * 加载指定 Chat 的全部 BranchMapDisplayInfo。
+   *
+   * 为每个 Branch 派生:
+   * - fork User Message 短预览(非 Root)
+   * - 分歧 Assistant Message 短预览
+   * - fork 轮次序号
+   *
+   * 派生策略:
+   * - Root:forkUserPreview 为空;firstDivergentAssistantPreview 为 Branch 中第一条 Assistant 消息
+   * - 非 Root:forkUserPreview 为 fork User 消息内容;firstDivergentAssistantPreview 为 fork 位置之后的第一条 Assistant 消息
+   * - forkTurnNumber = fork 位置及之前的 User 消息数(从 1 开始)
+   *
+   * 不修改 Schema。
+   * 不存储完整正文(预览已截断)。
+   * 不记录正文 / ID 到日志。
+   *
+   * @param chatId 所属 Chat ID
+   * @returns BranchMapDisplayInfo 列表(按 createdAt 升序)
+   */
+  async loadBranchMapDisplayInfos(chatId: string): Promise<BranchMapDisplayInfo[]> {
+    if (chatId.length === 0) {
+      throw DatabaseError.invalidData('loadBranchMapDisplayInfos: chatId empty');
+    }
+    const summaries: ConversationBranchSummary[] =
+      await this.branchRepository.listBranches(chatId);
+    if (summaries.length === 0) {
+      return [];
+    }
+    const store: relationalStore.RdbStore = this.dbHelper.getStore();
+    const result: BranchMapDisplayInfo[] = [];
+    for (let i = 0; i < summaries.length; i++) {
+      const summary: ConversationBranchSummary = summaries[i];
+      const links: BranchMessageLink[] =
+        await this.branchRepository.listMessageLinksWithStore(store, summary.id);
+      let forkUserPreview: string = '';
+      let firstDivergentAssistantPreview: string = '';
+      let forkTurnNumber: number = 0;
+      if (summary.isRoot) {
+        // Root: 找到 Branch 中第一条 Assistant 消息
+        for (let j = 0; j < links.length; j++) {
+          const msg: ChatMessage | null =
+            await this.messageRepository.getById(links[j].messageId);
+          if (msg !== null && msg.role === ChatRole.Assistant) {
+            firstDivergentAssistantPreview = buildAssistantPreview(msg.content);
+            break;
+          }
+        }
+      } else {
+        // 非 Root: 找到 fork User 消息和 fork 之后的第一条 Assistant
+        const forkMessageId: string | undefined = summary.forkMessageId;
+        if (forkMessageId !== undefined && forkMessageId.length > 0) {
+          const forkMsg: ChatMessage | null =
+            await this.messageRepository.getById(forkMessageId);
+          if (forkMsg !== null) {
+            forkUserPreview = buildUserPreview(forkMsg.content);
+          }
+          // 找到 fork 在当前 Branch 中的 position
+          const forkPosition: number =
+            await this.branchRepository.getMessagePositionWithStore(
+              store, summary.id, forkMessageId
+            );
+          if (forkPosition >= 0) {
+            // 找 fork 之后的第一条 Assistant
+            for (let j = 0; j < links.length; j++) {
+              if (links[j].position <= forkPosition) {
+                continue;
+              }
+              const msg: ChatMessage | null =
+                await this.messageRepository.getById(links[j].messageId);
+              if (msg !== null && msg.role === ChatRole.Assistant) {
+                firstDivergentAssistantPreview = buildAssistantPreview(msg.content);
+                break;
+              }
+            }
+            // 计算 forkTurnNumber = fork 位置及之前的 User 消息数
+            let turnCount: number = 0;
+            for (let j = 0; j < links.length; j++) {
+              if (links[j].position > forkPosition) {
+                break;
+              }
+              const msg: ChatMessage | null =
+                await this.messageRepository.getById(links[j].messageId);
+              if (msg !== null && msg.role === ChatRole.User) {
+                turnCount++;
+              }
+            }
+            forkTurnNumber = turnCount;
+          }
+        }
+      }
+      result.push({
+        summary: summary,
+        branchId: summary.id,
+        parentBranchId: summary.parentBranchId,
+        forkMessageId: summary.forkMessageId,
+        forkTurnNumber: forkTurnNumber,
+        forkUserPreview: forkUserPreview,
+        firstDivergentAssistantPreview: firstDivergentAssistantPreview,
+        messageCount: summary.messageCount,
+        isRoot: summary.isRoot,
+        isActive: summary.isActive,
+        createdAt: summary.createdAt
+      });
+    }
+    Logger.info(LOG_TAG, 'BranchMap | loaded count=' + result.length.toString());
+    return result;
+  }
+
+  // ===== 切换 Active Branch(T-6.4B-1) =====
+
+  /**
+   * 切换当前活动 Branch 到 targetBranchId(事务)。
+   *
+   * 流程:
+   * 1. 验证 targetBranch 属于 chatId
+   * 2. 将 chat_branch_state.active_branch_id 更新为 targetBranch
+   * 3. 读取目标 Branch 的全部 SwipeSelections
+   * 4. 对每条 Selection:
+   *    - 读取对应 Candidate
+   *    - 物化 Candidate 内容到 messages 表(覆盖 content/status/errorMessage/isStreaming/updatedAt)
+   *    - 同步 message_swipe_groups.active_candidate_index
+   * 5. 不修改其他 Branch 的 SwipeSelections
+   * 6. 提交
+   *
+   * 物化失败(Candidate 缺失)时跳过该 Assistant,不中断整体切换。
+   * 不复制 Message / Candidate 实体。
+   * 不删除任何数据。
+   *
+   * @param chatId 所属 Chat ID
+   * @param targetBranchId 目标 Branch ID
+   */
+  async switchActiveBranch(
+    chatId: string,
+    targetBranchId: string
+  ): Promise<void> {
+    if (chatId.length === 0) {
+      throw DatabaseError.invalidData('switchActiveBranch: chatId empty');
+    }
+    if (targetBranchId.length === 0) {
+      throw DatabaseError.invalidData('switchActiveBranch: targetBranchId empty');
+    }
+    try {
+      await this.dbHelper.runInTransaction(
+        async (store: relationalStore.RdbStore): Promise<void> => {
+          await this.switchActiveBranchWithStore(store, chatId, targetBranchId);
+        }
+      );
+    } catch (err) {
+      if (err instanceof DatabaseError) {
+        throw err;
+      }
+      throw DatabaseError.transactionFailed(
+        `switchActiveBranch: ${(err as Error).message}`
+      );
+    }
+  }
+
+  /**
+   * 在给定 store 上切换 Active Branch(事务内部方法)。
+   */
+  async switchActiveBranchWithStore(
+    store: relationalStore.RdbStore,
+    chatId: string,
+    targetBranchId: string
+  ): Promise<void> {
+    // 1. 验证 targetBranch 属于 chatId
+    const targetBranch: ConversationBranch | null =
+      await this.branchRepository.getBranchWithStore(store, targetBranchId);
+    if (targetBranch === null) {
+      throw DatabaseError.notFound('switchActiveBranch: target branch not found');
+    }
+    if (targetBranch.chatId !== chatId) {
+      throw DatabaseError.invalidData('switchActiveBranch: branch chatId mismatch');
+    }
+    // 2. 更新 chat_branch_state
+    await this.branchRepository.setActiveBranchWithStore(store, chatId, targetBranchId);
+    // 3. 读取目标 Branch 的 SwipeSelections
+    const selections: BranchSwipeSelection[] =
+      await this.branchRepository.listSwipeSelectionsWithStore(store, targetBranchId);
+    // 4. 对每条 Selection 物化 Candidate 到 messages 并同步 group active index
+    const now: number = nowMillis();
+    for (let i = 0; i < selections.length; i++) {
+      const sel: BranchSwipeSelection = selections[i];
+      const candidate: MessageSwipeCandidate | null =
+        await this.swipeRepository.getCandidateWithStore(
+          store, sel.assistantMessageId, sel.candidateIndex
+        );
+      if (candidate === null) {
+        // Candidate 缺失(可能被删除),跳过该 Assistant
+        Logger.warn(LOG_TAG, 'switchActiveBranch: candidate missing, skip');
+        continue;
+      }
+      // 物化到 messages 表
+      await this.materializeCandidateToMessageWithStore(
+        store, sel.assistantMessageId, candidate, now
+      );
+      // 同步 message_swipe_groups.active_candidate_index
+      try {
+        await this.swipeRepository.updateGroupActiveIndexWithStore(
+          store, sel.assistantMessageId, sel.candidateIndex, now
+        );
+      } catch (e) {
+        // Group 可能不存在(消息已删除),跳过
+        Logger.warn(LOG_TAG, 'switchActiveBranch: group missing, skip');
+      }
+    }
+    Logger.info(LOG_TAG, 'switchActiveBranch | target=' + targetBranchId.substring(0, 8)
+      + ' selections=' + selections.length.toString());
+  }
+
+  /**
+   * 将 Candidate 内容物化到 messages 表的 Assistant 消息行(事务内部方法)。
+   *
+   * 与 MessageSwipePersistenceService.materializeCandidateToMessageWithStore 等价,
+   * 但本服务独立实现,避免跨服务依赖。
+   *
+   * 只替换: content, status, errorMessage, isStreaming, updatedAt
+   * 不修改: id, chatId, role, source, sequenceNumber, createdAt
+   */
+  private async materializeCandidateToMessageWithStore(
+    store: relationalStore.RdbStore,
+    assistantMessageId: string,
+    candidate: MessageSwipeCandidate,
+    now: number
+  ): Promise<void> {
+    const updateBucket: relationalStore.ValuesBucket = {};
+    updateBucket[COLUMN_CONTENT] = candidate.content;
+    updateBucket[COLUMN_STATUS] = candidate.status;
+    updateBucket[COLUMN_ERROR_MESSAGE] = candidate.errorMessage !== undefined ? candidate.errorMessage : null;
+    updateBucket[COLUMN_IS_STREAMING] = candidate.isStreaming ? 1 : 0;
+    updateBucket[COLUMN_UPDATED_AT] = now;
+
+    const predicates: relationalStore.RdbPredicates =
+      new relationalStore.RdbPredicates(TABLE_MESSAGES);
+    predicates.equalTo('id', assistantMessageId);
+
+    try {
+      const affected: number = await store.update(updateBucket, predicates);
+      if (affected === 0) {
+        // Message 可能已被删除,跳过
+        Logger.warn(LOG_TAG, 'materialize: message not found, skip');
+      }
+    } catch (err) {
+      if (isConstraintViolation(err)) {
+        throw DatabaseError.constraintFailed('materialize');
+      }
+      throw DatabaseError.queryFailed(
+        `materialize: ${extractCauseMessage(err)}`
+      );
+    }
   }
 
   // ===== 新消息加入 Active Branch =====

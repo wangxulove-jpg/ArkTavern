@@ -21,6 +21,7 @@ import { ModelSettingsPage } from './ModelSettingsPage';
 import { AppSettingsPage } from './AppSettingsPage';
 import { PromptPresetListPage } from './PromptPresetListPage';
 import { PromptPresetEditPage } from './PromptPresetEditPage';
+import { BranchMapPage } from './BranchMapPage';
 import { RealSsePocPage } from './RealSsePocPage';
 import { AppServices } from '../services/AppServices';
 import { ProviderConfig } from '../models/ProviderConfig';
@@ -85,6 +86,8 @@ struct Index {
       PromptPresetListPage()
     } else if (name === 'PromptPresetEditPage') {
       PromptPresetEditPage()
+    } else if (name === 'BranchMapPage') {
+      BranchMapPage()
     } else if (name === 'RealSsePocPage') {
       RealSsePocPage()
     }

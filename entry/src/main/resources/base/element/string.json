@@ -591,6 +591,54 @@
     {
       "name": "lorebook_entry_delete_confirm",
       "value": "确定删除条目\"%s\"吗?"
+    },
+    {
+      "name": "chat_continue_from_here",
+      "value": "从此处继续"
+    },
+    {
+      "name": "chat_branch_list_title",
+      "value": "分支列表"
+    },
+    {
+      "name": "chat_branch_root_name",
+      "value": "主分支"
+    },
+    {
+      "name": "chat_branch_child_name",
+      "value": "分支"
+    },
+    {
+      "name": "chat_branch_message_count",
+      "value": "%d 条消息"
+    },
+    {
+      "name": "chat_branch_current_badge",
+      "value": "当前"
+    },
+    {
+      "name": "chat_branch_switch_busy",
+      "value": "生成中或操作中,无法切换分支"
+    },
+    {
+      "name": "chat_branch_create_busy",
+      "value": "生成中或操作中,无法创建分支"
+    },
+    {
+      "name": "branch_map_title",
+      "value": "分支地图"
+    },
+    {
+      "name": "branch_map_switch_button",
+      "value": "切换到此分支"
+    },
+    {
+      "name": "branch_map_back",
+      "value": "返回"
+    },
+    {
+      "name": "branch_map_empty",
+      "value": "暂无分支"
     }
   ]
 }

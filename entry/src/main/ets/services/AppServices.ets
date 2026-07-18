@@ -318,6 +318,14 @@ export class AppServices {
   }
 
   /**
+   * 获取 ConversationBranchPersistenceService 实例(T-6.4B-1.1)。
+   * 用于 BranchMapPage 加载 Branch 列表和切换 Active Branch,无需创建完整 ChatService。
+   */
+  static getBranchPersistenceService(): ConversationBranchPersistenceService {
+    return AppServices.getInstance().conversationBranchPersistenceService;
+  }
+
+  /**
    * 创建新的 ChatService 实例。
    * 每次 ChatPage 进入时调用,保证生命周期独立。
    * 内部完成 ModelService、LorebookService、PromptBuilder、TokenCounter、HistoryTrimmer、

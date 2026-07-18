@@ -3737,3 +3737,280 @@ T-6.4A-R4 Swipe Candidate 索引错位 + 最终持久化并发冲突(已通过�
 - T-6.4A-Closeout 收尾(2026-07-18):删除本轮为定位问题引入的高频诊断日志(SwipeTrace、StatusTrace、reload_raw/reload_candidate/reload_projected、final_write_*_readback、activate_*_readback、generation_context_ready 详细字段、generation_cleared、summary_refreshed、provider_started);保留 SwipeRuntime stage=regenerate_enter/candidate_created/final_persist_complete/final_persist_failed/candidate_activated、transaction failed/rollback/nested transaction rejected、generation stale callback ignored、SessionReload 汇总结果等低频日志;日志不含正文/Prompt/完整 ID/chatId/Candidate ID/API Key/Authorization/Base URL/SQL/ValuesBucket
 
 未推进 Summary。T-6.4B 未启动。
+
+## T-6.4B-1 Historical Assistant Continue and Branch Switch UI 完成记录 (2026-07-18)
+
+### 一、范围
+
+建立第一个可用的 Branch UI 闭环:历史 Assistant → 从此处继续 → 创建 Child Branch → Child 自动成为 Active → 页面立即显示截断后的 Child 路径 → 用户可继续发送消息 → 可通过分支列表切回 Root → Root 原有后续历史完整恢复。
+
+本轮不实现:从 User 消息继续;历史 Assistant 直接重新生成;创建 Branch 后自动调用 Provider;Branch 删除/重命名/合并;对话树可视化;Summary;Database v6。
+
+### 二、修改文件
+
+1. `services/ConversationBranchPersistenceService.ets` — 新增 `switchActiveBranch(chatId, targetBranchId)` 接口
+2. `services/ChatService.ets` — 新增 Branch 状态字段、`continueFromAssistant` / `switchBranch` / `refreshBranchState` 方法,`isBusy()` 增加 branchOperationInProgress 互斥
+3. `viewmodels/ChatViewModel.ets` — 新增 `branches` / `activeBranchId` / `recordCounts` / `isBranchOperating` / `showBranchList` 状态和对应方法
+4. `pages/ChatPage.ets` — 顶部新增 Branch 状态入口,Assistant 气泡新增"从此处继续"按钮,接入 BranchListPanel 覆盖层,`onBackPress` 处理 showBranchList
+5. `components/BranchListPanel.ets` — 新建 Branch 列表面板组件(全屏覆盖层,显示分支名称/消息数/当前活动标识)
+6. `resources/base/element/string.json` — 新增 9 条 Branch 相关字符串资源
+7. `TODO.md` / `project_memory.md` — 追加本任务记录
+
+### 三、关键流程
+
+**从历史 Assistant 创建 Child Branch:**
+1. 用户点击 Assistant 气泡"从此处继续"按钮
+2. ChatPage 调用 `viewModel.continueFromAssistant(messageId)`
+3. ChatService 获取当前 Active Branch 和该 Assistant 的 SwipeSummary.activeCandidateIndex
+4. 调用 `branchPersistenceService.forkAtMessage(chatId, activeBranchId, messageId, selectedCandidateIndex)`
+5. Child Branch 自动成为 Active,保留来源 Branch 当前显示的 Candidate
+6. 重新加载 messages / swipeSummaries / branches / recordCounts
+7. 页面立即显示截止该 Assistant 的消息路径,用户可继续发送消息
+
+**Branch 切换时物化 Candidate:**
+`switchActiveBranch(chatId, targetBranchId)` 在单一事务中:
+1. 验证 targetBranch 属于 chatId
+2. 更新 `chat_branch_state.active_branch_id` 为 targetBranch
+3. 读取目标 Branch 的 SwipeSelections
+4. 对每个 Selection 读取对应 Candidate,将 content/status/errorMessage/isStreaming 物化到 messages 表
+5. 同步 `message_swipe_groups.active_candidate_index`
+6. 不修改其他 Branch 的 SwipeSelections
+7. 提交事务
+
+**数量 UI 数据来源:**
+顶部 Branch 状态入口显示 `当前分支 N 条 · 全部消息 M 条 · B 个分支`,数据来自 `ConversationRecordCounts`(currentBranchMessageCount / totalUniqueMessageCount / totalBranchCount),不通过页面 messages.length 冒充全部消息数。
+
+### 四、Candidate 语义
+
+从历史 Assistant 创建 Child 时,保留该 Assistant 在来源 Branch 当前显示的 Candidate:
+- Root Branch:Assistant A 当前选择 Candidate 2
+- 点击"从此处继续"后,Child Branch:Assistant A 仍显示 Candidate 2
+- Root Branch 的选择保持不变
+- 后续在 Child 中切换该 Assistant Candidate,只修改 Child 的 BranchSwipeSelection,不覆盖 Root
+
+### 五、编译与部署
+
+- entry@default 增量编译:BUILD SUCCESSFUL in 38s
+- HAP 路径:`D:\DevEco_studio\ArkTavern\entry\build\default\outputs\default\entry-default-signed.hap`
+- 覆盖部署:`hdc install -r` 成功,保留原应用数据
+- 启动验证:`aa start` 成功,进程正常运行(PID 7030),hilog 无 FATAL/crash
+
+### 六、人工 UI 验收
+
+未执行,等待用户测试。验收项:
+1. 在历史 Assistant 上点击"从此处继续"
+2. 页面立即截断到该 Assistant,顶部分支数从 1 变为 2
+3. 在 Child Branch 发送新消息并正常回复
+4. 打开 Branch 列表,切换回 Root,原有后续消息完整恢复
+5. 切换回 Child,新发送的内容完整保留
+6. 两个 Branch 的 Candidate 选择互不覆盖
+7. 退出聊天再进入,当前 Active Branch 正确恢复
+
+### 七、未解决问题
+
+- ChatPage.ets 当前 637 行,略超 600 行准则(原 601 行),后续 T-6.4B-2/B-3 视情况拆分
+- BranchListPanel 与 ChatSessionListPanel 模式相似,后续可考虑提取公共覆盖层基础结构
+- 未实现从 User 消息继续、历史 Assistant 重新生成、Branch 删除/重命名/合并、对话树可视化
+
+## T-6.4B-1.1 Interactive Branch Map Page 完成记录 (2026-07-18)
+
+### 一、范围
+
+将 Branch 展示和切换界面从平铺式 BranchListPanel 改为独立的可点击分支树页面 BranchMapPage。Root 位于顶部,Child Branch 按层级向下排列,父子节点使用虚线贝塞尔曲线连接,当前 Active Branch 使用强调色边框 + 右上角圆点高亮。
+
+本轮不实现:Branch 删除/重命名/合并/拖拽/自由编辑,手势缩放,对话消息节点级树,Candidate 树,Summary,T-6.4B-2,T-6.4B-3。
+
+### 二、新增文件
+
+1. `models/BranchMapNodeLayout.ets` — 纯 UI 布局模型(BranchMapNodeLayout / BranchTreeLayoutResult / BranchTreeEdge)
+2. `utils/BranchTreeLayout.ets` — 树布局计算工具(根据 parentBranchId 构造树,depth 分层,同层按 createdAt 排序,固定节点宽高 160×88vp,间距 24/64vp)
+3. `viewmodels/BranchMapViewModel.ets` — 独立 ViewModel,通过 ConversationBranchPersistenceService 加载 Branch 数据和切换 Active Branch
+4. `components/BranchMapNode.ets` — 节点组件(Active/Selected/Normal 三态,右上角圆点,消息数显示)
+5. `pages/BranchMapPage.ets` — 独立页面(嵌套 Scroll 实现双向滚动,Canvas 绘制贝塞尔连接线,底部"切换到此分支"按钮)
+
+### 三、修改文件
+
+1. `services/AppServices.ets` — 新增 `getBranchPersistenceService()` 静态方法
+2. `services/ChatService.ets` — 新增 `reloadAfterExternalBranchChange(callbacks)` 公开方法,从 DB 重新加载消息/SwipeSummary/Branch 状态
+3. `viewmodels/ChatViewModel.ets` — 新增 `getCurrentChatId()` / `isDisposed` getter / `reloadAfterBranchChange()` 方法
+4. `pages/ChatPage.ets` — 顶部 Branch 入口改为导航到 BranchMapPage(传入 chatId,onPop 回调触发 reloadAfterBranchChange)
+5. `pages/Index.ets` — pageMap 新增 BranchMapPage 映射
+6. `resources/base/profile/main_pages.json` — 注册 BranchMapPage
+7. `resources/base/element/string.json` — 新增 4 条字符串(branch_map_title / branch_map_switch_button / branch_map_back / branch_map_empty)
+
+### 四、树布局方式
+
+根据 parentBranchId 构造父子树 → Root depth=0,Child depth=parent+1 → 每个 depth 为一行 → 同层按 createdAt 升序排列 → 节点固定 160×88vp,水平间距 24vp,垂直间距 64vp → 画布边距 32vp → 画布尺寸取最宽层宽度 + 边距。
+
+### 五、连接线绘制方式
+
+使用 Canvas + CanvasRenderingContext2D 绘制虚线贝塞尔曲线:`setLineDash([6,4])` + `bezierCurveTo(startX, midY, endX, midY, endX, endY)` 生成 S 形曲线。Canvas 通过 `scale(vp2px(1), vp2px(1))` 适配像素密度,坐标使用 vp。
+
+### 六、节点选中和 Branch 切换流程
+
+进入页面 → BranchMapViewModel.initialize(chatId) 加载 branches/activeBranchId/recordCounts → computeBranchTreeLayout 计算布局 → 默认选中 Active Branch → 滚动到 Active 节点。
+点击节点 → selectBranch 更新 selectedBranchId(不立即切换) → 底部显示选中信息 → "切换到此分支"按钮可点击。
+点击"切换到此分支" → switchToSelected → branchPersistenceService.switchActiveBranch(单一事务物化 Candidate) → reload 重算布局 → 选中跟随 Active。
+返回 ChatPage → onPop 回调 → viewModel.reloadAfterBranchChange → ChatService.reloadAfterExternalBranchChange → 从 DB 重新加载消息/SwipeSummary/Branch 状态 → 通知 UI。
+
+### 七、是否修改 Branch 数据结构
+
+未修改。ConversationBranchSummary 已包含 parentBranchId / id / name / isRoot / messageCount / isActive / createdAt,满足布局需求。
+
+### 八、编译结果
+
+entry@default 增量编译 BUILD SUCCESSFUL in 24s,仅 deprecated 警告(showToast / vp2px / @Entry export,均为现有模式)。
+
+### 九、HAP 路径
+
+`D:\DevEco_studio\ArkTavern\entry\build\default\outputs\default\entry-default-signed.hap`
+
+### 十、覆盖部署和数据保留结果
+
+`hdc install -r` 成功,保留原应用数据;`aa start` 启动成功,PID 27683 正常运行;hilog 无 FATAL/crash。
+
+### 十一、人工 UI 验收
+
+未执行,等待用户测试。
+
+### 十二、未解决问题
+
+- BranchListPanel.ets 暂时保留但不再作为主入口(后续确认 BranchMapPage 稳定后单独清理)
+- ChatPage.ets 当前约 660 行,略超 600 行准则
+- vp2px 有 deprecated 警告,后续可替换为 px2vp/vp2px 新 API
+- 未实现 Branch 删除/重命名/合并、对话树可视化缩放、消息节点级树
+
+## T-6.4B-1.2 Regenerate Creates Conversation Branch 完成记录 (2026-07-18)
+
+### 一、范围
+
+将"重新生成"语义从创建 MessageSwipeCandidate 改为创建真正的 Conversation Branch。每次重新生成 → 新建同级或子级 Branch → 原 Assistant 保留在原 Branch → 新 Assistant 生成在新 Branch → BranchMap 立即出现新节点 → 节点显示 fork User 预览与 Assistant 回复预览 → 用户可从地图直接识别并切换路线。
+
+本轮不实现:T-6.4B-2 从 User 消息继续、T-6.4B-3 历史 Assistant 重新生成、Branch 删除/重命名/合并、Summary、Database v6、Candidate 数据迁移。
+
+### 二、重新生成旧流程 vs 新流程
+
+旧流程:点击"重新生成" → 在同一 Assistant Message 下 appendCandidate → BranchMap 无法展示每次重新生成 → 节点只有"主分支 / 分支 / N 条消息"。
+
+新流程:点击"重新生成" → 找到目标 Assistant 前一条 User 消息作为 fork point → 创建新 Conversation Branch → 新 Branch 继承 Root 到 fork User 的路径(不继承旧 Assistant) → 新 Branch 设为 Active → 在新 Branch 中创建新的 Streaming Assistant Message → 启动 Provider → 流式只写入新 Assistant → 完成后持久化为 Completed → 原 Branch / 原 Assistant / 原 Candidate 数据保持不变。
+
+### 三、fork User Message 确定
+
+在 ChatService.regenerateAsBranch 中:从 messages 数组定位目标 Assistant(index),从该 index 向前查找最近的 role=User 消息作为 forkMessage。未找到则报错拒绝。forkMessageId 用于:(1) forkForRegeneration 复制 Root..forkMessage 的 BranchMessage Links;(2) 同级 Branch 判定;(3) BranchMap 节点显示的 fork User 预览。
+
+### 四、同级 Branch 判定
+
+获取当前 Active Branch(完整 ConversationBranch,含 forkMessageId/parentBranchId)。判定逻辑:`if (!activeBranch.isRoot && activeBranch.forkMessageId === forkUserMessageId)` → 新 Branch 的 parent = activeBranch.parentBranchId(同级);否则 → parent = activeBranch.id(子级)。即"相同 forkMessage 的替代回复 → 同级;后续不同位置产生的新路线 → 下一层 Child"。
+
+### 五、原子服务方法
+
+新增 `ConversationBranchPersistenceService.forkForRegeneration(chatId, sourceBranchId, parentBranchId, forkUserMessageId, newAssistantMessage)`,在单一事务中:验证 source/parent/fork 归属 chatId 且 fork 位于 source → 创建新 Branch(parentBranchId/forkMessageId) → 复制 Root..forkUser 的 BranchMessage Links(不复制旧 Assistant) → 复制对应 SwipeSelections → 插入新 Streaming Assistant Message → Link 到新 Branch → setActiveBranchWithStore → 提交。事务失败不创建半成品 Branch、不启动 Provider、不修改当前 Active Branch。Provider 只在事务提交成功后启动。
+
+### 六、新 Branch 中 Assistant 创建和持久化
+
+新 Assistant Message 在事务内由 ChatService 创建(generateUuid,role=Assistant,source=Conversation,status=Streaming,isStreaming=true,content=''),通过 forkForRegeneration 的 newAssistantMessage 参数传入并 Link 到新 Branch。流式 delta 通过默认 persistenceService.updateMessage 路径写入(新 Assistant 已在 messages 表中,updateMessage 直接更新 content/status/isStreaming/errorMessage)。完成时 onCompleted 设置 status=Completed、isStreaming=false、errorMessage='';停止时 onCancelled 设置 Cancelled;失败时 onFailed 设置 Failed。不修改原 Branch 的 Assistant、不修改旧 MessageSwipeCandidate、不创建额外 Candidate。
+
+### 七、ChatGenerationKind.BranchRegeneration
+
+新增枚举值 ChatGenerationKind.BranchRegeneration。ActiveGenerationContext 增加 branchId 和 forkMessageId 字段(可选)。所有 delta/complete/error/stop 回调验证 operationId/branchId/assistantMessageId,匹配才处理,否则忽略。doStream 对 BranchRegeneration 与 SwipeCandidate 同样处理:excludeId = assistantId(将新空 Assistant 排除出请求历史,防止空 content 进入上下文)。
+
+### 八、旧 Swipe 数据兼容
+
+未删除 message_swipe_groups / message_swipe_candidates / conversation_branch_swipe_selections,未修改 Schema/Migration/Database Version。旧会话中已存在 Candidate 的消息仍可通过 MessageSwipeControls 查看切换。从本轮起新重新生成的 Assistant 默认只有一个物理 Message,不显示 Candidate 左右箭头(candidateCount=1 时不渲染箭头)。不迁移旧 Candidate。
+
+### 九、BranchMap 节点显示预览
+
+新增 `models/BranchMapDisplayInfo.ets`,包含 branchId/parentBranchId/forkMessageId/forkTurnNumber/forkUserPreview/firstDivergentAssistantPreview/messageCount/isRoot/isActive/createdAt/summary。预览规则:去换行、合并多余空格、User 预览最多 16 字符、Assistant 预览最多 36 字符,超出省略号。BranchMapNode 改为显示:Branch 类型(主分支 / 第 N 轮分支 / 分支)、"你:" + forkUserPreview(非 Root 时)、"艾伦:" + firstDivergentAssistantPreview(为空时显示"正在生成…")、消息数 + "· 当前"徽章(Active 时)。forkTurnNumber 按 createdAt 升序在同父兄弟中计算。
+
+### 十、修改文件
+
+1. `models/BranchMapDisplayInfo.ets` — 新增(BranchMapDisplayInfo 接口、buildPreview/buildUserPreview/buildAssistantPreview 函数、createEmptyDisplayInfo 占位)
+2. `services/ConversationBranchPersistenceService.ets` — 新增 `forkForRegeneration` / `forkForRegenerationWithStore`,新增 `loadBranchMapDisplayInfos` 派生方法(查询 Branch + Message + SwipeSelection 计算预览),新增 active branch updated 日志
+3. `services/ChatService.ets` — 新增 `regenerateAsBranch` 方法(找 forkMessage / 判同级 / 创建 Streaming Assistant / 调 forkForRegeneration / 建立 BranchRegeneration Context / doStream),更新 doStream 的 excludeId 逻辑
+4. `viewmodels/ChatViewModel.ets` — updateStateFromChatState 在 Sending/Completed/Cancelled/Failed 各状态追加 syncBranchState 调用,确保 UI 立即反映 Branch 数量变化;regenerate() 顶层改为调用 regenerateAsBranch
+5. `viewmodels/BranchMapViewModel.ets` — 改为加载 BranchMapDisplayInfo 而非 ConversationBranchSummary,新增 displayInfos 字段、getDisplayInfo/getSelectedForkUserPreview/getSelectedAssistantPreview/getSelectedDisplayName 方法,getSelectedDisplayName 按 forkTurnNumber 显示"第 N 轮分支"
+6. `components/BranchMapNode.ets` — 改为接收 displayInfo: BranchMapDisplayInfo,渲染 fork User 预览 + Assistant 预览 + 类型标签 + 消息数 + Active 徽章
+7. `pages/BranchMapPage.ets` — 改为使用 BranchMapDisplayInfo,nodeWrapper 传 displayInfo,bottomBar 显示 fork/Assistant 预览,findDisplayInfo 替代 findBranch
+8. `utils/BranchTreeLayout.ets` — NODE_WIDTH 160→180、NODE_HEIGHT 88→112(容纳预览内容)
+
+### 十一、编译结果
+
+entry@default clean build BUILD SUCCESSFUL in 46s 100ms(因增量缓存陈旧改用 clean)。仅 deprecated 警告(showToast / vp2px / @Entry export,均为现有模式,来自无关 PanoVR2 项目警告不影响 ArkTavern)。
+
+### 十二、HAP 路径
+
+`D:\DevEco_studio\ArkTavern\entry\build\default\outputs\default\entry-default-signed.hap`
+
+### 十三、覆盖部署和数据保留结果
+
+`hdc install -r` 成功,保留原应用数据;`aa start -a EntryAbility -b com.example.arktavern -m entry` 启动成功,PID 26878 正常运行约 52 秒未崩溃;hilog 无新增 ArkTavern FATAL/crash(故障日志为昨日 2026-07-17 的 OpenHarmonyTestRunner 模块缺失环境问题,与本次代码无关,按 AGENTS.md 已知错误视为环境限制)。
+
+### 十四、人工 UI 验收
+
+未执行,等待用户测试(20 项:新建会话→发 User→等 Assistant 完成→点重新生成→Branch 数 1→2→新回复生成→再次重新生成→Branch 数 2→3→打开 BranchMap→两次重新生成同级节点→节点显示不同 Assistant 预览→可识别路线→切主分支显原回复→切分支 1 显第一次→切分支 2 显第二次→分支 1 继续发消息→对下条回复重新生成→新节点在分支 1 下一层→其他分支不覆盖→退出重进树结构和当前分支正确→已完成回复不变"已停止")。
+
+### 十五、未解决问题
+
+- BranchMap 节点预览中"艾伦:"为硬编码角色名,后续可从 Character 取 displayName
+- ChatPage.ets 约 660 行略超 600 行准则
+- BranchListPanel.ets 保留未清理(按约束本轮不顺带清理)
+- 未实现 Branch 删除/重命名/合并、Summary、Database v6、Candidate 数据迁移
+
+### 十六、未推进
+
+T-6.4B-2 从 User 消息继续、T-6.4B-3 历史 Assistant 重新生成、Summary 均未开始。
+
+## T-6.4B-1.2 修复:BranchMapPage 切换分支后 ChatPage 不刷新 (2026-07-18)
+
+### 一、问题
+
+在 BranchMapPage 点击"切换到此分支"后,按返回键回到 ChatPage,聊天内容仍显示原分支消息,需退出聊天页重新进入才刷新。
+
+### 二、根因
+
+HarmonyOS 5 NavPathStack 的两个跨页面通信机制实测不可靠:
+1. `pushPathByName` 的 onPop 回调:`pop()` / `pop(true)` 均不触发
+2. NavDestination 的 `.onShown()` 链式回调:系统生命周期日志显示 onShown 触发,但注册的 `.onShown(() => {...})` 用户回调不执行
+
+日志证据:`ChatPage lifecycle change to onShown state` 系统日志触发,但 `ChatPage | onShown | enter` Logger.info 无输出,且 `refreshBranchState` 内部的 `ConversationBranch | counts loaded` 日志也不触发,确认回调整体未执行。
+
+### 三、修复方案:AppStorage + @StorageLink + @Watch
+
+改用 ArkUI 响应式全局状态,完全绕过 NavDestination 生命周期回调:
+
+1. `pages/ChatPage.ets` — 新增 `@StorageLink('branchChangeSeq') @Watch('onBranchChangeSeqChanged') branchChangeSeq: number = 0`,新增 `onBranchChangeSeqChanged` 方法调用 `viewModel.reloadAfterBranchChange()`。删除无效的 `.onShown()` 回调和 `lastShownActiveBranchId` 字段。
+2. `pages/BranchMapPage.ets` — `handleSwitch` 在 `switchToSelected` 成功且 activeBranchId 真正变化后,调用 `AppStorage.set('branchChangeSeq', Date.now())` 递增序列号,触发 @Watch。
+
+### 四、验证日志
+
+```
+switchActiveBranch | target=0721fc99              ← BranchMapPage 切换
+onBranchChangeSeqChanged | seq=1784371281612      ← ChatPage 收到通知
+reloadAfterExternalBranchChange | messages=3      ← reload 完成
+loadActiveBranchMessages | branch=0721fc99 count=3 ← 加载新分支消息
+```
+
+反向切换同样工作,消息内容确实不同(len=50 vs len=56),确认分支数据正确隔离。
+
+### 五、诊断日志清理
+
+修复过程中添加的详细诊断日志已精简:
+- `ConversationBranchPersistenceService.loadActiveBranchMessages` 删除 `diagParts` 每条消息的 role/id/len 记录,只保留 branch + count 汇总
+- `ConversationBranchPersistenceService.regeneration` 删除 forkUser/newAssistant/forkPos 细节,只保留 newBranch + parent
+- `ChatService.reloadAfterExternalBranchChange` 删除 firstId/lastId,只保留 messages 数量
+- `ChatPage.onBranchChangeSeqChanged` 删除 vmNullOrDisposed/sessionNotReady 跳过日志,只保留成功触发的一条
+- 保留 `switchActiveBranch | target=XXX`(关键运维日志)
+
+### 六、编译结果
+
+entry@default clean build BUILD SUCCESSFUL in 49s 305ms。
+
+### 七、HAP 路径
+
+`D:\DevEco_studio\ArkTavern\entry\build\default\outputs\default\entry-default-signed.hap`
+
+### 十七、实现约束
+
+不修改 Database Version/Migration/Branch Schema/MessageSwipe Schema;不修改 Provider/PromptBuilder/Lorebook/PromptPreset/Character/网络层;不迁移旧 Candidate 数据;不顺便拆分 ChatPage;不清理 BranchListPanel;不做公共组件重构;不使用 any;不使用 as unknown as;不添加第三方依赖;页面不直接访问 Repository;Service 不依赖 ArkUI;ResultSet 所有路径关闭;所有跨表写入使用事务;Provider 只在事务提交成功后启动。
+
+

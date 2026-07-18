@@ -28,6 +28,10 @@ import { PromptPresetService } from '../services/PromptPresetService';
 import { PromptPreset } from '../models/PromptPreset';
 import { Logger } from '../utils/Logger';
 import { MessageSwipeSummary } from '../models/MessageSwipe';
+import {
+  ConversationBranchSummary,
+  ConversationRecordCounts
+} from '../models/ConversationBranch';
 
 const LOG_TAG: string = 'ChatViewModel';
 
@@ -78,6 +82,18 @@ export class ChatViewModel {
   /** 是否显示删除会话确认对话框 */
   showDeleteSessionConfirm: boolean = false;
 
+  // ===== T-6.4B-1 Branch 状态 =====
+  /** 当前会话的 Branch 摘要列表 */
+  branches: ConversationBranchSummary[] = [];
+  /** 当前活动 Branch ID */
+  activeBranchId: string = '';
+  /** Branch 记录数量统计 */
+  recordCounts: ConversationRecordCounts | undefined = undefined;
+  /** Branch 操作进行中(创建 Child / 切换) */
+  isBranchOperating: boolean = false;
+  /** 是否显示 Branch 列表面板 */
+  showBranchList: boolean = false;
+
   private chatService: ChatService;
   private modelService: ModelService;
   private characterService: CharacterService;
@@ -116,12 +132,13 @@ export class ChatViewModel {
 
   /**
    * T-6.3: 统一忙碌状态。
-   * busy = isGenerating || isSwipeOperating
+   * busy = isGenerating || isSwipeOperating || isBranchOperating
    * 会话操作(isSessionOperating)单独保护 createNewSession/selectSession/confirmDeleteSession。
-   * 忙碌时禁用:Send / Regenerate / 左右 Swipe / Chat 删除 / Chat 切换 / 新建 Chat
+   * T-6.4B-1: 增加 isBranchOperating 互斥。
+   * 忙碌时禁用:Send / Regenerate / 左右 Swipe / Branch 切换 / Chat 删除 / Chat 切换 / 新建 Chat
    */
   get busy(): boolean {
-    return this.isGenerating || this.isSwipeOperating;
+    return this.isGenerating || this.isSwipeOperating || this.isBranchOperating;
   }
 
   /**
@@ -202,6 +219,8 @@ export class ChatViewModel {
       }
       this.isSessionReady = true;
       this.canRegenerate = this.chatService.canRegenerate();
+      // T-6.4B-1: 同步 Branch 状态(branches / activeBranchId / recordCounts)
+      await this.refreshBranchState();
       Logger.info(LOG_TAG, 'session ready chatId=' + this.chatService.getCurrentChatId()
         + ' messages=' + this.messages.length.toString());
     } catch (e) {
@@ -451,6 +470,7 @@ export class ChatViewModel {
         this.onMessagesUpdate([...this.messages]);
       }
       this.canRegenerate = this.chatService.canRegenerate();
+      this.syncBranchState();
       this.errorMessage = '';
       this.statusMessage = '';
       await this.refreshSessions();
@@ -483,6 +503,7 @@ export class ChatViewModel {
         this.onMessagesUpdate([...this.messages]);
       }
       this.canRegenerate = this.chatService.canRegenerate();
+      this.syncBranchState();
       this.errorMessage = '';
       this.statusMessage = '';
       this.showSessionList = false;
@@ -534,6 +555,7 @@ export class ChatViewModel {
         this.onMessagesUpdate([...this.messages]);
       }
       this.canRegenerate = this.chatService.canRegenerate();
+      this.syncBranchState();
       this.errorMessage = '';
       this.statusMessage = '';
       this.pendingDeleteChatId = '';
@@ -620,6 +642,180 @@ export class ChatViewModel {
       || message.status === ChatMessageStatus.Failed;
   }
 
+  // ===== T-6.4B-1 Branch 方法 =====
+
+  /**
+   * 从 ChatService 同步 Branch 状态到 ViewModel。
+   * 在会话操作和 Branch 操作后调用。
+   */
+  private syncBranchState(): void {
+    this.branches = this.chatService.getBranches();
+    this.activeBranchId = this.chatService.getActiveBranchId();
+    this.recordCounts = this.chatService.getRecordCounts();
+  }
+
+  /**
+   * 刷新 Branch 状态(调用 ChatService.refreshBranchState 后同步)。
+   */
+  async refreshBranchState(): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
+    await this.chatService.refreshBranchState();
+    this.syncBranchState();
+  }
+
+  /**
+   * 判断指定 Assistant 消息是否可"从此处继续"创建 Child Branch。
+   * 生成中、Swipe 操作中、Branch 操作中、会话未就绪时均不可操作。
+   */
+  canContinueFromAssistant(messageId: string): boolean {
+    return !this.isGenerating && !this.isSwipeOperating && !this.isBranchOperating
+      && this.isSessionReady
+      && this.chatService.canContinueFromAssistant(messageId);
+  }
+
+  /**
+   * 从历史 Assistant 创建 Child Branch(从此处继续)。
+   * 成功后同步 messages / swipeSummaries / branches / recordCounts。
+   * 失败时通过 errorMessage 显示错误,不清空聊天。
+   */
+  async continueFromAssistant(messageId: string): Promise<void> {
+    if (this.disposed || this.busy || this.isBranchOperating) {
+      return;
+    }
+    if (!this.canContinueFromAssistant(messageId)) {
+      return;
+    }
+    this.isBranchOperating = true;
+    this.errorMessage = '';
+    this.statusMessage = '';
+    try {
+      const callbacks: ChatServiceCallbacks = this.createCallbacks();
+      await this.chatService.continueFromAssistant(messageId, callbacks);
+      // 同步状态(回调可能已更新 messages,但 branches/recordCounts 需单独同步)
+      this.messages = [...this.chatService.getMessages()];
+      this.swipeSummaries = this.chatService.getSwipeSummaries();
+      this.syncBranchState();
+      this.canRegenerate = this.chatService.canRegenerate();
+      if (this.onMessagesUpdate !== undefined) {
+        this.onMessagesUpdate([...this.messages]);
+      }
+    } catch (e) {
+      this.errorMessage = '创建分支失败,请重试';
+      Logger.error(LOG_TAG, 'continueFromAssistant failed: ' + String(e));
+    } finally {
+      this.isBranchOperating = false;
+    }
+  }
+
+  /**
+   * 切换 Active Branch 到 targetBranchId。
+   * 成功后同步 messages / swipeSummaries / branches / recordCounts,关闭列表面板。
+   * 失败时通过 errorMessage 显示错误,保持当前页面数据不变。
+   */
+  async switchBranch(branchId: string): Promise<void> {
+    if (this.disposed || this.busy || this.isBranchOperating) {
+      return;
+    }
+    if (branchId.length === 0) {
+      return;
+    }
+    if (branchId === this.activeBranchId) {
+      this.showBranchList = false;
+      return;
+    }
+    this.isBranchOperating = true;
+    this.errorMessage = '';
+    this.statusMessage = '';
+    try {
+      const callbacks: ChatServiceCallbacks = this.createCallbacks();
+      await this.chatService.switchBranch(branchId, callbacks);
+      this.messages = [...this.chatService.getMessages()];
+      this.swipeSummaries = this.chatService.getSwipeSummaries();
+      this.syncBranchState();
+      this.canRegenerate = this.chatService.canRegenerate();
+      this.showBranchList = false;
+      if (this.onMessagesUpdate !== undefined) {
+        this.onMessagesUpdate([...this.messages]);
+      }
+    } catch (e) {
+      this.errorMessage = '切换分支失败,请重试';
+      Logger.error(LOG_TAG, 'switchBranch failed: ' + String(e));
+    } finally {
+      this.isBranchOperating = false;
+    }
+  }
+
+  /** 打开 Branch 列表面板 */
+  openBranchList(): void {
+    if (this.disposed) {
+      return;
+    }
+    this.showBranchList = true;
+  }
+
+  /** 关闭 Branch 列表面板 */
+  closeBranchList(): void {
+    this.showBranchList = false;
+  }
+
+  /** 获取 Branch 显示名称(Root 显示"主分支",Child 显示"分支") */
+  getBranchDisplayName(branch: ConversationBranchSummary): string {
+    return branch.isRoot ? '主分支' : '分支';
+  }
+
+  /** 获取 Branch 副标题(消息数 + 活动标识) */
+  getBranchSubtitle(branch: ConversationBranchSummary): string {
+    return branch.messageCount.toString() + ' 条消息'
+      + (branch.isActive ? ' · 当前' : '');
+  }
+
+  /** 获取顶部 Branch 状态摘要文本 */
+  getBranchStatusText(): string {
+    if (this.recordCounts === undefined) {
+      return '';
+    }
+    const current: number = this.recordCounts.currentBranchMessageCount;
+    const total: number = this.recordCounts.totalUniqueMessageCount;
+    const branches: number = this.recordCounts.totalBranchCount;
+    return '当前分支 ' + current.toString() + ' 条 · 全部消息 ' + total.toString()
+      + ' 条 · ' + branches.toString() + ' 个分支';
+  }
+
+  /**
+   * T-6.4B-1.1: 获取当前会话 ID(供 BranchMapPage 导航使用)。
+   */
+  getCurrentChatId(): string | undefined {
+    return this.chatService.getCurrentChatId();
+  }
+
+  /** T-6.4B-1.1: 是否已 dispose(供 onPop 回调安全检查) */
+  get isDisposed(): boolean {
+    return this.disposed;
+  }
+
+  /**
+   * T-6.4B-1.1: 外部 Branch 切换后重新加载当前会话。
+   *
+   * 从 BranchMapPage 返回后调用,重新从数据库加载消息、SwipeSummary、Branch 状态。
+   * 不执行 switchActiveBranch(已由 BranchMapPage 完成)。
+   */
+  async reloadAfterBranchChange(): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
+    const callbacks: ChatServiceCallbacks = this.createCallbacks();
+    await this.chatService.reloadAfterExternalBranchChange(callbacks);
+    this.messages = [...this.chatService.getMessages()];
+    this.swipeSummaries = this.chatService.getSwipeSummaries();
+    this.syncBranchState();
+    this.canRegenerate = this.chatService.canRegenerate();
+    if (this.onMessagesUpdate !== undefined) {
+      this.onMessagesUpdate([...this.messages]);
+    }
+  }
+
   dispose(): void {
     this.disposed = true;
     this.chatService.dispose();
@@ -670,6 +866,9 @@ export class ChatViewModel {
       case ChatState.Sending:
         this.isGenerating = true;
         this.statusMessage = '发送中…';
+        // T-6.4B-1.2: 重新生成创建新 Branch 后立即同步 Branch 状态,
+        // 确保 UI 显示正确的分支数
+        this.syncBranchState();
         break;
       case ChatState.Streaming:
         this.isGenerating = true;
@@ -680,18 +879,22 @@ export class ChatViewModel {
         this.statusMessage = '';
         this.canRegenerate = this.chatService.canRegenerate();
         this.swipeSummaries = this.chatService.getSwipeSummaries();
+        // T-6.4B-1.2: 生成完成后同步 Branch 状态(新 Branch 已持久化)
+        this.syncBranchState();
         break;
       case ChatState.Cancelled:
         this.isGenerating = false;
         this.statusMessage = '已停止';
         this.canRegenerate = this.chatService.canRegenerate();
         this.swipeSummaries = this.chatService.getSwipeSummaries();
+        this.syncBranchState();
         break;
       case ChatState.Failed:
         this.isGenerating = false;
         this.statusMessage = '';
         this.canRegenerate = this.chatService.canRegenerate();
         this.swipeSummaries = this.chatService.getSwipeSummaries();
+        this.syncBranchState();
         break;
       default:
         break;
