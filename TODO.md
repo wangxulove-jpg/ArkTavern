@@ -3685,17 +3685,16 @@ forkAtMessage(目标 Assistant)
 | 当前 Branch 消息加载顺序正确 | ✅(代码层) |
 | 记录数量统计正确 | ✅(代码层) |
 | Chat 删除无 Branch 孤儿 | ✅(代码层) |
-| 当前聊天行为无回归 | ❌(运行时回归) |
+| 当前聊天行为无回归 | ✅(R4 验收通过) |
 | entry@default BUILD SUCCESSFUL | ✅ |
 | entry@ohosTest BUILD SUCCESSFUL | ✅ |
 | 日志无正文、完整 ID、Prompt、SQL 或密钥泄漏 | ✅ |
 | Test Runner 实际执行 | ❌ 未执行 |
-| 模拟器人工验收 | ❌ 运行阻断 |
+| 模拟器人工验收 | ✅ T-6.4A-R4 用户人工确认 |
 
 **T-6.4A 生产代码与测试代码编译通过;**
-**Test Runner 已执行:70 核心测试 run, 67 pass, 3 failure(详见下方 R1 记录);**
-**T-6.4A 当前状态:T-6.4A-R3 修复中,未验收通过。**
-**R1 已修复,R2 代码层已完成,R3 修复中(Completed 回复退出重进后错误显示"已停止")。**
+**T-6.4A 当前状态:T-6.4A-R4 已通过用户人工验收,T-6.4A 收尾完成。**
+**R1/R2/R3 已修复,R4 已修复并通过用户人工验收。**
 
 T-6.4A-R1 已修复会话初始化、新建会话和普通发送事务:
 - HarmonyOS RDB 快照隔离导致事务内 position 冲突(appendMessagePairToActiveBranchWithStore 原子方法修复)
@@ -3719,6 +3718,22 @@ T-6.4A-R3 Completed Reply Reloaded as Cancelled 修复中:
 - 用户退出时 DB 仍保留初始占位符的 status=Streaming,reload 时 normalizeInterruptedMessages 将 Streaming 转为 Cancelled
 - 修复:persistWithRetry 返回 Promise,persistFinalAssistant 返回 Promise,onComplete/onError/stopGeneration 链式等待 persist 完成后再清理上下文
 - 增加诊断日志:GenerationFinal | SessionCleanup | SessionReload
-- 当前状态:代码修复中,等待编译和测试
+- 当前状态:已合入 R4 修复
+
+T-6.4A-R4 Swipe Candidate 索引错位 + 最终持久化并发冲突(已通过用户人工验收,2026-07-18):
+- 根因一:delta 持久化(updateCandidate)与 final 持久化(persistFinalAssistant→updateCandidate)并发执行,引发 RDB 嵌套事务冲突
+- 根因二:persistWithRetry 最终失败时返回 Promise.resolve(),错误被静默吞掉,调用方误认为成功,导致 Candidate 状态停在 Streaming,重进后 normalizeInterruptedCandidates 转为 Cancelled
+- 根因三:appendCandidate 在事务内执行 listCandidatesWithStore(HarmonyOS RDB 事务内 store.query 返回事务开始前的快照),返回的 candidates 不含刚插入的 Candidate,activeCandidateIndex 也是旧值,导致 ChatService 使用了错误的 candidateIndex(delta 持久化、BranchSwipeSelection、激活逻辑全部错位)
+- 修复一:新增 pendingSwipePersistPromise 字段,flushPersistence 的 Swipe 路径将每次 updateCandidate 链入此 Promise,persistFinalAssistant 在调用 persistWithRetry 前先 await pendingSwipePersistPromise,确保 delta/final 串行化,杜绝嵌套事务
+- 修复二:persistWithRetry 最终失败(retries 用尽)改为 return Promise.reject(),由 onComplete 链路捕获并标记 Failed,不再静默吞掉
+- 修复三:generateAlternativeCandidate 在 appendCandidate 返回后(事务已提交)重新调用 getSwipeState,从 candidates 数组取最大 candidateIndex 作为 actualNewIndex,赋值给 ActiveGenerationContext.swipeCandidateIndex,后续 delta/final/激活全部使用真实索引
+- clearActiveGeneration 同步清理 pendingSwipePersistPromise=null,防止跨会话残留
+- 用户人工验收结果:
+  · 新建会话后首次重新生成 → 可正常回到 Candidate 0 ✅
+  · 多次连续重新生成 → 候选索引正确递增 ✅
+  · 左右切换 Candidate → 内容与索引一致 ✅
+  · 退出重进 → 所有候选状态正常显示,无"已停止"误显示 ✅
+  · 完整旧历史保留,无消息消失 ✅
+- T-6.4A-Closeout 收尾(2026-07-18):删除本轮为定位问题引入的高频诊断日志(SwipeTrace、StatusTrace、reload_raw/reload_candidate/reload_projected、final_write_*_readback、activate_*_readback、generation_context_ready 详细字段、generation_cleared、summary_refreshed、provider_started);保留 SwipeRuntime stage=regenerate_enter/candidate_created/final_persist_complete/final_persist_failed/candidate_activated、transaction failed/rollback/nested transaction rejected、generation stale callback ignored、SessionReload 汇总结果等低频日志;日志不含正文/Prompt/完整 ID/chatId/Candidate ID/API Key/Authorization/Base URL/SQL/ValuesBucket
 
 未推进 Summary。T-6.4B 未启动。

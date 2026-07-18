@@ -1111,9 +1111,6 @@ export class ChatService {
           this.persistChatActivity();
           // 清理活动上下文(最终状态持久化完成后才清理)
           this.clearActiveGeneration(operationId);
-          if (context.kind === ChatGenerationKind.SwipeCandidate) {
-            Logger.info(LOG_TAG, 'SwipeRuntime | stage=generation_cleared');
-          }
           Logger.info(LOG_TAG, 'GenerationFinal | kind=' + context.kind + ' stage=context_cleared');
           // 更新 lastAssistantMessageId(setState 前更新,确保 onStateChanged 读到正确值)
           this.updateLastAssistantMessageId();
@@ -2209,7 +2206,6 @@ export class ChatService {
         isGeneratingCandidate: true
       });
     }
-    Logger.info(LOG_TAG, 'SwipeRuntime | stage=summary_refreshed count=' + (actualNewIndex + 1));
 
     // 建立 SwipeCandidate 活动上下文(替代旧 ActiveSwipeGeneration)
     this.activeGeneration = {
@@ -2241,7 +2237,6 @@ export class ChatService {
     this.lastPersistedContentLength = 0;
     this.pendingPersistAssistantId = assistantMessageId;
     Logger.info(LOG_TAG, 'Regenerate | provider_started');
-    Logger.info(LOG_TAG, 'SwipeRuntime | stage=provider_started');
     this.doStream(assistantMessageId, this.lastCallbacks, this.activeGeneration);
   }
 
