@@ -25,6 +25,7 @@ import { ChatPage } from './ChatPage';
 import { CharacterListPage } from './CharacterListPage';
 import { LorebookPage } from './LorebookPage';
 import { ModelSettingsPage } from './ModelSettingsPage';
+import { ModelConfigEditPage } from './ModelConfigEditPage';
 import { AppSettingsPage } from './AppSettingsPage';
 import { PromptPresetListPage } from './PromptPresetListPage';
 import { PromptPresetEditPage } from './PromptPresetEditPage';
@@ -69,6 +70,8 @@ export struct AppShell {
       LorebookPage()
     } else if (name === 'ModelSettingsPage') {
       ModelSettingsPage()
+    } else if (name === 'ModelConfigEditPage') {
+      ModelConfigEditPage()
     } else if (name === 'AppSettingsPage') {
       AppSettingsPage()
     } else if (name === 'PromptPresetListPage') {

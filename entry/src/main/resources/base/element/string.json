@@ -254,7 +254,7 @@
     },
     {
       "name": "model_settings_model",
-      "value": "模型名称"
+      "value": "模型"
     },
     {
       "name": "model_settings_api_key",
@@ -293,6 +293,10 @@
       "value": "保存"
     },
     {
+      "name": "model_settings_saving",
+      "value": "保存中…"
+    },
+    {
       "name": "model_settings_test",
       "value": "测试连接"
     },
@@ -307,6 +311,138 @@
     {
       "name": "model_settings_delete_confirm",
       "value": "确定删除该配置吗?API Key 也将一并清除。"
+    },
+    {
+      "name": "model_settings_current_config_title",
+      "value": "当前配置"
+    },
+    {
+      "name": "model_settings_config_enabled",
+      "value": "已启用"
+    },
+    {
+      "name": "model_settings_config_disabled",
+      "value": "已停用"
+    },
+    {
+      "name": "model_settings_api_key_status_configured",
+      "value": "已配置"
+    },
+    {
+      "name": "model_settings_api_key_status_not_configured",
+      "value": "未配置"
+    },
+    {
+      "name": "model_settings_provider",
+      "value": "API 服务商"
+    },
+    {
+      "name": "model_settings_provider_sheet_title",
+      "value": "选择服务商"
+    },
+    {
+      "name": "model_settings_model_sheet_title",
+      "value": "选择模型"
+    },
+    {
+      "name": "model_settings_connection",
+      "value": "连接"
+    },
+    {
+      "name": "model_settings_parameters",
+      "value": "参数"
+    },
+    {
+      "name": "model_settings_base_url_summary",
+      "value": "Base URL"
+    },
+    {
+      "name": "model_settings_base_url_auto",
+      "value": "自动配置"
+    },
+    {
+      "name": "model_settings_testing",
+      "value": "测试中…"
+    },
+    {
+      "name": "model_settings_test_success_prefix",
+      "value": "连接成功"
+    },
+    {
+      "name": "model_settings_test_failed_prefix",
+      "value": "连接失败"
+    },
+    {
+      "name": "model_settings_new_title",
+      "value": "新建模型配置"
+    },
+    {
+      "name": "model_settings_edit_title",
+      "value": "编辑模型配置"
+    },
+    {
+      "name": "model_settings_name_required",
+      "value": "请输入配置名称"
+    },
+    {
+      "name": "model_settings_api_key_required",
+      "value": "请输入 API Key"
+    },
+    {
+      "name": "model_settings_param_hint",
+      "value": "这些参数仅影响使用此配置创建的请求。"
+    },
+    {
+      "name": "model_settings_temperature_range",
+      "value": "范围: 0 ~ 2"
+    },
+    {
+      "name": "model_settings_top_p_range",
+      "value": "范围: 0 ~ 1"
+    },
+    {
+      "name": "model_settings_max_tokens_desc",
+      "value": "单次回复最大 token 数"
+    },
+    {
+      "name": "model_settings_stream_desc",
+      "value": "以 SSE 方式逐字接收回复"
+    },
+    {
+      "name": "model_settings_enabled_desc",
+      "value": "启用后可在聊天中使用"
+    },
+    {
+      "name": "model_settings_empty_title",
+      "value": "尚无模型配置"
+    },
+    {
+      "name": "model_settings_empty_desc",
+      "value": "点击下方按钮创建第一个模型配置"
+    },
+    {
+      "name": "model_settings_add_config",
+      "value": "新建配置"
+    },
+    {
+      "name": "model_settings_show_key",
+      "value": "显示"
+    },
+    {
+      "name": "model_settings_hide_key",
+      "value": "隐藏"
+    },
+    {
+      "name": "model_settings_name_too_long",
+      "value": "配置名称过长"
+    },
+    {
+      "name": "model_settings_select_provider_hint",
+      "value": "请选择"
+    },
+    {
+      "name": "model_settings_select_model_hint",
+      "value": "请选择"
     },
     {
       "name": "nav_character_list_title",

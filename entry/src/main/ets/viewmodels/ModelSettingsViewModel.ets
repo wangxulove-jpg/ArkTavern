@@ -98,6 +98,22 @@ export class ModelSettingsViewModel {
   /** API Key 显隐切换(页面自行掩码,非系统 Password) */
   showApiKey: boolean = false;
 
+  // ===== 当前配置摘要卡状态 =====
+  /** 当前配置的 API Key 是否已配置(用于主页摘要卡) */
+  currentConfigKeyConfigured: boolean = false;
+
+  // ===== UI-2 编辑页状态 =====
+  /** 编辑页当前 Tab:0=连接,1=参数 */
+  activeEditTab: number = 0;
+  /** 服务商选择 Sheet 是否打开 */
+  providerSheetOpen: boolean = false;
+  /** 模型选择 Sheet 是否打开 */
+  modelSheetOpen: boolean = false;
+
+  // ===== 字段级错误(供编辑页显示) =====
+  nameError: string = '';
+  apiKeyError: string = '';
+
   private modelService: ModelService;
 
   constructor(modelService: ModelService) {
@@ -114,6 +130,9 @@ export class ModelSettingsViewModel {
       this.configs = await this.modelService.listConfigs();
       const current: ProviderConfig | null = await this.modelService.getCurrentConfig();
       this.currentConfigId = current !== null ? current.id : null;
+      this.currentConfigKeyConfigured = current !== null
+        ? await this.modelService.hasApiKey(current.id)
+        : false;
       if (this.configs.length > 0) {
         await this.selectConfig(this.configs[0].id);
       } else {
@@ -132,6 +151,7 @@ export class ModelSettingsViewModel {
     this.apiKey = '';
     this.errorMessage = '';
     this.statusMessage = '';
+    this.clearFieldErrors();
     try {
       const config: ProviderConfig | null = await this.modelService.getConfig(id);
       if (config === null) {
@@ -225,6 +245,9 @@ export class ModelSettingsViewModel {
       this.configs = await this.modelService.listConfigs();
       const current: ProviderConfig | null = await this.modelService.getCurrentConfig();
       this.currentConfigId = current !== null ? current.id : null;
+      this.currentConfigKeyConfigured = current !== null
+        ? await this.modelService.hasApiKey(current.id)
+        : false;
       if (this.configs.length > 0) {
         await this.selectConfig(this.configs[0].id);
       } else {
@@ -256,6 +279,7 @@ export class ModelSettingsViewModel {
     try {
       await this.modelService.setCurrentConfig(this.selectedConfigId);
       this.currentConfigId = this.selectedConfigId;
+      this.currentConfigKeyConfigured = await this.modelService.hasApiKey(this.selectedConfigId);
       this.statusMessage = '已设为当前配置';
     } catch (e) {
       this.errorMessage = this.toUserMessage(e, '设置当前配置失败');
@@ -299,6 +323,76 @@ export class ModelSettingsViewModel {
   clearApiKeyInput(): void {
     this.apiKey = '';
     this.showApiKey = false;
+  }
+
+  // ===== UI-2 编辑页交互方法 =====
+
+  /** 切换编辑页 Tab */
+  setActiveEditTab(index: number): void {
+    if (index >= 0 && index <= 1) {
+      this.activeEditTab = index;
+    }
+  }
+
+  /** 打开服务商选择 Sheet */
+  openProviderSheet(): void {
+    this.providerSheetOpen = true;
+  }
+
+  /** 关闭服务商选择 Sheet(不修改选择) */
+  closeProviderSheet(): void {
+    this.providerSheetOpen = false;
+  }
+
+  /** 在 Sheet 中选择 Provider */
+  selectProviderFromSheet(type: ProviderType): void {
+    this.providerSheetOpen = false;
+    this.onProviderTypeChange(type);
+  }
+
+  /** 打开模型选择 Sheet */
+  openModelSheet(): void {
+    if (this.activePreset === null) {
+      return;
+    }
+    this.modelSheetOpen = true;
+  }
+
+  /** 关闭模型选择 Sheet(不修改选择) */
+  closeModelSheet(): void {
+    this.modelSheetOpen = false;
+  }
+
+  /** 在 Sheet 中选择模型 */
+  selectModelFromSheet(index: number): void {
+    this.modelSheetOpen = false;
+    this.onModelSelect(index);
+  }
+
+  /** 清空字段级错误 */
+  clearFieldErrors(): void {
+    this.nameError = '';
+    this.apiKeyError = '';
+  }
+
+  /**
+   * 检查表单是否有效,不设置全局错误信息,但可填充字段级错误。
+   * 返回 true 表示可以保存/测试。
+   */
+  checkFormValid(): boolean {
+    this.clearFieldErrors();
+    if (this.name.trim().length === 0) {
+      this.nameError = '请输入配置名称';
+      return false;
+    }
+    if (!this.isSupportedType(this.providerType)) {
+      return false;
+    }
+    if (this.selectedConfigId === null && this.apiKey.trim().length === 0) {
+      this.apiKeyError = '请输入 API Key';
+      return false;
+    }
+    return true;
   }
 
   dispose(): void {
@@ -412,6 +506,7 @@ export class ModelSettingsViewModel {
     this.apiKey = '';
     this.showApiKey = false;
     this.statusMessage = '配置保存成功';
+    this.currentConfigKeyConfigured = await this.modelService.hasApiKey(id);
     Logger.info(LOG_TAG, 'saveNew ok id=' + id);
   }
 
@@ -427,6 +522,9 @@ export class ModelSettingsViewModel {
     this.apiKey = '';
     this.showApiKey = false;
     this.statusMessage = '配置保存成功';
+    if (this.currentConfigId === (this.selectedConfigId as string)) {
+      this.currentConfigKeyConfigured = await this.modelService.hasApiKey(this.selectedConfigId as string);
+    }
     Logger.info(LOG_TAG, 'saveUpdate ok id=' + config.id);
   }
 
