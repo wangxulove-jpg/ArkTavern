@@ -32,9 +32,11 @@ import { ChatMessageBubble } from '../components/ChatMessageBubble';
 import { ChatMessageActionSheet, MessageAction } from '../components/ChatMessageActionSheet';
 import { ChatMoreMenuSheet } from '../components/ChatMoreMenuSheet';
 import { CharacterImageView } from '../components/CharacterImageView';
-import { promptAction } from '@kit.ArkUI';
+import { promptAction, window } from '@kit.ArkUI';
 import { pasteboard } from '@kit.BasicServicesKit';
+import { common } from '@kit.AbilityKit';
 import { KeyCode } from '@kit.InputKit';
+import { inputMethod } from '@kit.IMEKit';
 import { AppServices } from '../services/AppServices';
 import { ChatSessionListPanel } from '../components/ChatSessionListPanel';
 import { Character } from '../models/Character';
@@ -64,6 +66,10 @@ export struct ChatPage {
   private lastMessageCount: number = 0;
   private editDialogController: CustomDialogController | null = null;
   private editingMessageId: string = '';
+  /** 键盘高度变化监听句柄 */
+  private keyboardHeightChangeHandler: ((height: number) => void) | null = null;
+  /** 主窗口实例(用于注销监听) */
+  private mainWindow: window.Window | null = null;
 
   aboutToAppear(): void {
     const modelService = AppServices.getModelService();
@@ -100,9 +106,11 @@ export struct ChatPage {
       // 从当前角色加载头像
       this.loadCurrentCharacterAvatar();
     }
+    this.registerKeyboardListener();
   }
 
   aboutToDisappear(): void {
+    this.unregisterKeyboardListener();
     if (this.viewModel !== null) {
       this.viewModel!.dispose();
       this.viewModel = null;
@@ -230,6 +238,14 @@ export struct ChatPage {
         }
         .layoutWeight(1)
         .width('100%')
+        .onClick(() => {
+          // 点击消息列表空白区域收起软键盘
+          try {
+            inputMethod.getController().stopInputSession();
+          } catch (_e) {
+            // 输入法未显示或已隐藏,忽略
+          }
+        })
 
         // 底部输入区
         this.inputArea()
@@ -293,7 +309,7 @@ export struct ChatPage {
       .width('100%')
       .height('100%')
       .backgroundColor($r('app.color.app_bg'))
-      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
     }
     .title('')
     .hideTitleBar(true)
@@ -821,6 +837,52 @@ export struct ChatPage {
     if (newCount > this.lastMessageCount) {
       this.lastMessageCount = newCount;
       this.scroller.scrollEdge(Edge.Bottom);
+    }
+  }
+
+  /**
+   * 注册键盘高度变化监听。
+   *
+   * RESIZE 模式下,键盘弹起会压缩页面高度,但 Scroll 的滚动位置不会自动更新,
+   * 导致最后一条消息被压缩后的输入区遮挡。这里在键盘弹起时主动滚动到底部。
+   */
+  private registerKeyboardListener(): void {
+    try {
+      const ctx: common.Context = getContext(this) as common.Context;
+      window.getLastWindow(ctx)
+        .then((win: window.Window): void => {
+          this.mainWindow = win;
+          this.keyboardHeightChangeHandler = (height: number): void => {
+            if (height > 0 && this.viewModel !== null && !this.viewModel!.userScrolledUp) {
+              // 键盘弹起,延迟一帧确保布局已更新,再滚动到底部
+              setTimeout((): void => {
+                try {
+                  this.scroller.scrollEdge(Edge.Bottom);
+                } catch (_e) {
+                  // 忽略滚动异常
+                }
+              }, 80);
+            }
+          };
+          win.on('keyboardHeightChange', this.keyboardHeightChangeHandler);
+        })
+        .catch((e: Error): void => {
+          Logger.warn(LOG_TAG, 'getLastWindow failed: ' + e.message);
+        });
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'registerKeyboardListener failed: ' + (e as Error).message);
+    }
+  }
+
+  private unregisterKeyboardListener(): void {
+    if (this.mainWindow !== null && this.keyboardHeightChangeHandler !== null) {
+      try {
+        this.mainWindow.off('keyboardHeightChange', this.keyboardHeightChangeHandler);
+      } catch (_e) {
+        // 忽略注销异常
+      }
+      this.mainWindow = null;
+      this.keyboardHeightChangeHandler = null;
     }
   }
 
