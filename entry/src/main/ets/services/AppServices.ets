@@ -55,6 +55,7 @@ import { ModelService } from './ModelService';
 import { DefaultProviderFactory } from './ProviderFactory';
 import { PromptPresetListViewModel } from '../viewmodels/PromptPresetListViewModel';
 import { PromptPresetEditViewModel } from '../viewmodels/PromptPresetEditViewModel';
+import { ChatSessionListViewModel } from '../viewmodels/ChatSessionListViewModel';
 import { Logger } from '../utils/Logger';
 
 const LOG_TAG: string = 'AppServices';
@@ -323,6 +324,26 @@ export class AppServices {
    */
   static getBranchPersistenceService(): ConversationBranchPersistenceService {
     return AppServices.getInstance().conversationBranchPersistenceService;
+  }
+
+  /**
+   * 获取 ChatPersistenceService 实例。
+   * 用于"对话记录"Tab 等不需要完整 ChatService 的场景(只查询会话列表 / 重命名)。
+   */
+  static getChatPersistenceService(): ChatPersistenceService {
+    return AppServices.getInstance().chatPersistenceService;
+  }
+
+  /**
+   * 创建 ChatSessionListViewModel 实例。
+   * 用于"对话记录"Tab 展示全部会话 + 角色信息 + 最后消息摘要 + 重命名。
+   */
+  static createChatSessionListViewModel(): ChatSessionListViewModel {
+    const services: AppServices = AppServices.getInstance();
+    return new ChatSessionListViewModel(
+      services.chatPersistenceService,
+      services.characterService
+    );
   }
 
   /**

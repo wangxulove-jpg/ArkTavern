@@ -185,8 +185,8 @@ export struct CharacterRootView {
         .height(48)
         .padding({ left: 16, right: 16 })
         .onClick(() => {
-          // 导航到现有 CharacterListPage,在那里使用完整的导入流程
-          this.pathStack.pushPath({ name: 'CharacterListPage' });
+          // 导航到 AddCharacterPage(新建角色 / 文件导入二选一)
+          this.pathStack.pushPath({ name: 'AddCharacterPage' });
         })
     }
     .width('100%')
@@ -349,8 +349,8 @@ export struct CharacterRootView {
           description: $r('app.string.character_home_empty_desc')
         })
 
-        // 主要操作:导入角色卡(导航到现有导入流程)
-        Button($r('app.string.tab_characters_import'))
+        // 统一入口:进入"添加角色"页面(新建角色 / 文件导入二选一)
+        Button($r('app.string.character_import'))
           .fontSize($r('app.float.app_font_body'))
           .backgroundColor($r('app.color.app_accent'))
           .fontColor($r('app.color.app_on_accent'))
@@ -359,18 +359,7 @@ export struct CharacterRootView {
           .width('60%')
           .margin({ top: $r('app.float.app_spacing_24') })
           .onClick(() => {
-            this.pathStack.pushPath({ name: 'CharacterListPage' });
-          })
-
-        // 次要操作:新建角色(进入全屏 CharacterEditPage 新建模式,不传 characterId)
-        Button($r('app.string.character_new'))
-          .fontSize($r('app.float.app_font_body'))
-          .backgroundColor(Color.Transparent)
-          .fontColor($r('app.color.app_text_secondary'))
-          .height(48)
-          .margin({ top: $r('app.float.app_spacing_8') })
-          .onClick(() => {
-            this.pathStack.pushPath({ name: 'CharacterEditPage' });
+            this.pathStack.pushPath({ name: 'AddCharacterPage' });
           })
       }
       .width('100%')

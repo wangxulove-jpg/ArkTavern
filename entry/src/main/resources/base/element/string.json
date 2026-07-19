@@ -577,6 +577,46 @@
       "value": "取消"
     },
     {
+      "name": "add_character_title",
+      "value": "添加角色"
+    },
+    {
+      "name": "add_character_tab_new",
+      "value": "新建角色"
+    },
+    {
+      "name": "add_character_tab_import",
+      "value": "文件导入"
+    },
+    {
+      "name": "add_character_new_title",
+      "value": "新建角色"
+    },
+    {
+      "name": "add_character_new_desc",
+      "value": "从空白开始创建一个全新的角色卡"
+    },
+    {
+      "name": "add_character_start_new",
+      "value": "开始新建"
+    },
+    {
+      "name": "add_character_import_icon",
+      "value": "📁"
+    },
+    {
+      "name": "add_character_import_title",
+      "value": "选择角色卡文件"
+    },
+    {
+      "name": "add_character_import_desc",
+      "value": "点击此处从文件导入角色卡"
+    },
+    {
+      "name": "add_character_import_formats",
+      "value": "支持 PNG / JSON 格式(SillyTavern Character Card V2 / V3)"
+    },
+    {
       "name": "character_import_source_format",
       "value": "来源格式: %s"
     },
@@ -1063,6 +1103,26 @@
     {
       "name": "tab_sessions_new_chat",
       "value": "开始新对话"
+    },
+    {
+      "name": "session_action_rename",
+      "value": "重命名"
+    },
+    {
+      "name": "session_rename_title",
+      "value": "重命名会话"
+    },
+    {
+      "name": "session_rename_placeholder",
+      "value": "请输入新的会话名称"
+    },
+    {
+      "name": "session_rename_cancel",
+      "value": "取消"
+    },
+    {
+      "name": "session_rename_confirm",
+      "value": "保存"
     },
     {
       "name": "tab_market",

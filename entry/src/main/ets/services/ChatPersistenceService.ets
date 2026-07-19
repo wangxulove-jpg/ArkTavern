@@ -30,7 +30,7 @@ import {
 } from '../repositories/MessageRepository';
 import { ChatPersistenceOperations } from '../repositories/ChatPersistenceOperations';
 import { ConversationBranchPersistenceService } from './ConversationBranchPersistenceService';
-import { Chat, createChat } from '../models/Chat';
+import { Chat, createChat, updateChat } from '../models/Chat';
 import { ChatMessage } from '../models/ChatMessage';
 import { PersistedChatSession } from '../models/PersistedChatSession';
 import { generateUuid } from '../utils/Uuid';
@@ -304,6 +304,93 @@ export class ChatPersistenceService {
     );
     Logger.info(LOG_TAG, 'listSessionsForContext count=' + chats.length.toString());
     return chats;
+  }
+
+  /**
+   * 列出所有未归档会话(不限角色上下文)。
+   * 用于"对话记录"Tab 展示全部会话。
+   *
+   * - 不按 character_id 过滤(普通助手会话 + 角色会话都返回)
+   * - 始终排除 archived
+   * - 排序:last_message_at DESC → updated_at DESC → id ASC
+   * - 默认最多 50 条
+   * - 不查询消息正文
+   *
+   * @param limit 上限(可选,默认 50)
+   * @returns 会话列表(可能为空)
+   */
+  async listAllSessions(limit?: number): Promise<Chat[]> {
+    const effectiveLimit: number = limit !== undefined && limit > 0 ? limit : 50;
+    const chats: Chat[] = await this.chatRepository.list({
+      includeArchived: false,
+      limit: effectiveLimit,
+      offset: 0
+    });
+    Logger.info(LOG_TAG, 'listAllSessions count=' + chats.length.toString());
+    return chats;
+  }
+
+  /**
+   * 获取会话最后一条消息的预览文本(用于列表展示)。
+   *
+   * - 按 sequence_number DESC 取第一条
+   * - 不返回完整内容,只取前 100 字符
+   * - 无消息返回空字符串
+   * - 不区分 Branch(展示物理最后一条,UI 用途)
+   *
+   * @param chatId 会话 id
+   * @returns 消息预览文本(可能为空字符串)
+   */
+  async getLatestMessagePreview(chatId: string): Promise<string> {
+    try {
+      const messages: ChatMessage[] = await this.messageRepository.listByChat(
+        chatId, { limit: 1, offset: 0, ascending: false }
+      );
+      if (messages.length === 0) {
+        return '';
+      }
+      const content: string = messages[0].content;
+      // 截取前 100 字符作为预览(避免长消息占用过多内存)
+      const MAX_PREVIEW: number = 100;
+      return content.length > MAX_PREVIEW
+        ? content.substring(0, MAX_PREVIEW)
+        : content;
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'getLatestMessagePreview failed: ' + String(e));
+      return '';
+    }
+  }
+
+  /**
+   * 重命名会话(仅修改 title,不动 character / messages / branch)。
+   *
+   * - 空标题拒绝(抛错)
+   * - 不存在抛错
+   * - 自动更新 updatedAt
+   * - 不修改 lastMessageAt(重命名不算活动)
+   *
+   * @param chatId 会话 id
+   * @param newTitle 新标题(trim 后非空)
+   * @returns 更新后的 Chat
+   * @throws Error 会话不存在 / 标题为空
+   */
+  async renameSession(chatId: string, newTitle: string): Promise<Chat> {
+    const trimmed: string = newTitle.trim();
+    if (trimmed.length === 0) {
+      throw new Error('会话名称不能为空');
+    }
+    const existing: Chat | null = await this.chatRepository.getById(chatId);
+    if (existing === null) {
+      throw new Error('会话不存在或已删除');
+    }
+    if (existing.title === trimmed) {
+      // 标题未变化,直接返回(避免无意义写入)
+      return existing;
+    }
+    const updated: Chat = updateChat(existing, { title: trimmed });
+    await this.chatRepository.update(updated);
+    Logger.info(LOG_TAG, 'renameSession ok');
+    return updated;
   }
 
   /**

@@ -1,129 +1,97 @@
 /**
- * ChatPage 聊天页面
+ * ChatPage 聊天页面(沉浸式原生 UI 重构)
  *
- * 正式聊天页面,支持流式发送、停止、重新生成、复制消息、自动滚动。
- * 本次只做基础文本聊天,不做 Markdown 渲染。
+ * 设计目标:
+ * - 顶部栏:返回 + 角色名 + 更多按钮(模型/预设/分支状态收敛到更多菜单)
+ * - 消息列表:左右气泡 + Assistant 头像 + 流式光标 + 失败重试
+ * - 长按消息:打开底部操作菜单(复制/编辑/重生成/继续/切分支)
+ * - 底部输入区:多行 TextArea + 发送/停止按钮(无清空、无独立重生成)
+ * - 空会话:角色头像 + 名称 + 开场白
+ * - 颜色全部用 $r('app.color.*') 资源,自动适配深色模式
+ * - 键盘避让:expandInput + safeArea
  *
- * 要求:
- * - 页面只通过 ChatViewModel 访问业务能力
- * - 不直接调用 OpenAIProvider/ProviderKeyStore/ProviderConfigStore
- * - 所有 @Builder 方法不传参数,直接访问 this.viewModel
- * - 深色模式可读,长回复不溢出
- * - 不显示 API Key、Base URL 或底层日志
+ * 复用 ChatViewModel 所有接口,不修改业务逻辑。
  */
 
 import { ChatViewModel } from '../viewmodels/ChatViewModel';
-import { ChatService } from '../services/ChatService';
 import { ChatMessage, ChatMessageStatus } from '../models/ChatMessage';
 import { ChatRole } from '../models/ChatRole';
 import { ChatMessageSource } from '../models/ChatMessageSource';
 import { MessageSwipeSummary, MAX_SWIPE_CANDIDATES } from '../models/MessageSwipe';
 import { MessageSwipeControls } from '../components/MessageSwipeControls';
 import { HistoricalMessageEditDialog } from '../components/HistoricalMessageEditDialog';
+import { ChatMessageBubble } from '../components/ChatMessageBubble';
+import { ChatMessageActionSheet, MessageAction } from '../components/ChatMessageActionSheet';
+import { ChatMoreMenuSheet } from '../components/ChatMoreMenuSheet';
+import { CharacterImageView } from '../components/CharacterImageView';
 import { promptAction } from '@kit.ArkUI';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { AppServices } from '../services/AppServices';
 import { ChatSessionListPanel } from '../components/ChatSessionListPanel';
+import { Character } from '../models/Character';
 import { Logger } from '../utils/Logger';
 
-// ===== 资源引用 =====
-const RES_NAV_CHAT_TITLE: string = 'nav_chat_title';
-const RES_CHAT_EMPTY: string = 'nav_chat_empty';
-const RES_CHAT_NO_MODEL: string = 'chat_no_model';
-const RES_CHAT_GO_SETTINGS: string = 'chat_go_settings';
-const RES_CHAT_INPUT_PLACEHOLDER: string = 'chat_input_placeholder';
-const RES_CHAT_SEND: string = 'chat_send';
-const RES_CHAT_STOP: string = 'chat_stop';
-const RES_CHAT_CLEAR: string = 'chat_clear';
-const RES_CHAT_REGENERATE: string = 'chat_regenerate';
-const RES_CHAT_COPY: string = 'chat_copy';
-const RES_CHAT_COPY_SUCCESS: string = 'chat_copy_success';
-const RES_CHAT_SCROLL_BOTTOM: string = 'chat_scroll_to_bottom';
-const RES_CHAT_CANCELLED: string = 'chat_cancelled';
-const RES_CHAT_FAILED: string = 'chat_failed';
-const RES_CHAT_EMPTY_RESPONSE: string = 'chat_empty_response';
-const RES_CONTINUE_FROM_HERE: string = 'chat_continue_from_here';
-const RES_GENERATE_FROM_USER: string = 'chat_generate_from_user';
-const RES_REGENERATE_ASSISTANT: string = 'chat_regenerate_assistant';
-const RES_EDIT_USER_MESSAGE: string = 'chat_edit_user_message';
-const RES_BRANCH_SWITCH_BUSY: string = 'chat_branch_switch_busy';
-const RES_BRANCH_CREATE_BUSY: string = 'chat_branch_create_busy';
-
 const LOG_TAG: string = 'ChatPage';
-
-// ===== 颜色 =====
-const COLOR_USER_BUBBLE: string = '#5B7CFA';
-const COLOR_USER_TEXT: string = '#FFFFFF';
-const COLOR_ASSISTANT_BUBBLE: string = '#F2F2F2';
-const COLOR_DIVIDER: string = '#E0E0E0';
-const COLOR_STATUS_ERROR: string = '#E74C3C';
-const COLOR_STATUS_WARN: string = '#F39C12';
 
 @Entry
 @Component
 export struct ChatPage {
   @State viewModel: ChatViewModel | null = null;
-  /**
-   * 独立 @State 消息列表。
-   *
-   * ArkUI 中 @State 持有 @Observed 对象时,ForEach 对内部数组属性变化的
-   * 响应式刷新不完整(实测日志:ForEachNode skip mark dirty)。
-   * 通过 onMessagesUpdate 回调将 messages 同步到独立 @State 变量,
-   * 确保 ForEach 能检测到数据源引用变化并重新渲染。
-   */
+  /** 独立 @State 消息列表(确保 ForEach 响应式刷新) */
   @State messages: ChatMessage[] = [];
-  /**
-   * T-6.4B-1.2 跨页面 Branch 切换通知。
-   *
-   * BranchMapPage 切换 Active Branch 成功后,通过 AppStorage.set('branchChangeSeq', Date.now())
-   * 递增此序列号。ChatPage 通过 @StorageLink + @Watch 响应变化,触发 reloadAfterBranchChange。
-   *
-   * 采用此方案的原因:NavDestination 的 .onShown() 用户回调实测不被 ArkUI 调用
-   * (系统 onShown 生命周期日志触发,但注册的 .onShown(() => {...}) 回调不执行),
-   * pushPathByName 的 onPop 回调也不可靠触发。@StorageLink 是 ArkUI 响应式状态,
-   * 跨页面同步可靠。
-   */
+  /** 当前角色对象(用于头像) */
+  @State character: Character | null = null;
+  /** 是否显示更多菜单 */
+  @State showMoreMenu: boolean = false;
+  /** 是否显示消息操作菜单 */
+  @State showActionSheet: boolean = false;
+  /** 消息操作菜单目标消息 */
+  @State actionSheetMsg: ChatMessage | null = null;
+  /** 是否显示清空确认 */
+  @State showClearConfirm: boolean = false;
+  /** 清空确认输入文本 */
+  @State clearConfirmInput: string = '';
+
   @StorageLink('branchChangeSeq') @Watch('onBranchChangeSeqChanged') branchChangeSeq: number = 0;
   private scroller: Scroller = new Scroller();
   private lastMessageCount: number = 0;
-  /**
-   * T-6.4B-3.1 历史 User 消息编辑弹窗 Controller。
-   * 在 openEditUserDialog 中按需重建(传入最新 originalContent 和回调)。
-   */
   private editDialogController: CustomDialogController | null = null;
-  /** 当前正在编辑的 User Message ID */
   private editingMessageId: string = '';
 
   aboutToAppear(): void {
-    // 每次进入页面创建新的 ChatService(跟随页面生命周期)
-    // 避免复用已 disposed 的单例导致 sendMessage 静默失败
     const modelService = AppServices.getModelService();
     const characterService = AppServices.getCharacterService();
     const promptPresetService = AppServices.getPromptPresetService();
     const chatService = AppServices.createChatService();
-    const vm: ChatViewModel = new ChatViewModel(chatService, modelService, characterService, promptPresetService);
-    // 通过回调将 ViewModel 的 messages 同步到独立 @State 变量
-    // 这是确保 ForEach 响应式刷新的关键
+    const vm: ChatViewModel = new ChatViewModel(
+      chatService, modelService, characterService, promptPresetService
+    );
     vm.onMessagesUpdate = (msgs: ChatMessage[]): void => {
       this.messages = msgs;
     };
     this.viewModel = vm;
-    // UI-1: 从 ChatSessionRootView 通过 AppStorage 传入的待切换 chatId。
-    // 读后立即清除,避免下次进入时残留。
+
     const pendingChatId: string = AppStorage.get<string>('pendingChatId') ?? '';
-    // UI-3B: 从角色卡 Tab 通过 AppStorage 传入的"为指定角色创建新对话" characterId。
-    // 不修改全局当前角色,仅用该 ID 加载 Character 后初始化会话。
-    // 读后立即清除,避免下次进入时残留。
     const pendingCharacterId: string = AppStorage.get<string>('pendingCharacterId') ?? '';
     if (pendingChatId.length > 0) {
       AppStorage.set<string>('pendingChatId', '');
-      vm.initialize().then((): Promise<void> => vm.selectSession(pendingChatId))
-        .catch((): void => {});
+      if (pendingCharacterId.length > 0) {
+        AppStorage.set<string>('pendingCharacterId', '');
+        this.loadCharacterAvatar(pendingCharacterId);
+        vm.initialize(pendingCharacterId).then((): Promise<void> => vm.selectSession(pendingChatId))
+          .catch((): void => {});
+      } else {
+        vm.initialize().then((): Promise<void> => vm.selectSession(pendingChatId))
+          .catch((): void => {});
+      }
     } else if (pendingCharacterId.length > 0) {
       AppStorage.set<string>('pendingCharacterId', '');
+      this.loadCharacterAvatar(pendingCharacterId);
       vm.initialize(pendingCharacterId).catch((): void => {});
     } else {
       vm.initialize();
+      // 从当前角色加载头像
+      this.loadCurrentCharacterAvatar();
     }
   }
 
@@ -133,16 +101,29 @@ export struct ChatPage {
       this.viewModel = null;
     }
     this.messages = [];
+    const v: number = AppStorage.get<number>('chatListVersion') ?? 0;
+    AppStorage.setOrCreate<number>('chatListVersion', v + 1);
   }
 
   onBackPress(): boolean {
+    if (this.showActionSheet) {
+      this.showActionSheet = false;
+      this.actionSheetMsg = null;
+      return true;
+    }
+    if (this.showMoreMenu) {
+      this.showMoreMenu = false;
+      return true;
+    }
+    if (this.showClearConfirm) {
+      this.showClearConfirm = false;
+      return true;
+    }
     if (this.viewModel !== null) {
-      // 删除确认对话框优先关闭
       if (this.viewModel!.showDeleteSessionConfirm) {
         this.viewModel!.cancelDeleteSession();
         return true;
       }
-      // 会话列表面板次优先关闭
       if (this.viewModel!.showSessionList) {
         this.viewModel!.closeSessionList();
         return true;
@@ -153,193 +134,54 @@ export struct ChatPage {
 
   build() {
     NavDestination() {
-      Stack() {
-        Column() {
-          // 顶部状态区
-          Row() {
-            Text(this.viewModel!.characterName.length > 0
-              ? this.viewModel!.characterName + ' · ' + this.viewModel!.currentModelName
-              : this.viewModel!.currentModelName)
-              .fontSize(14)
-              .fontColor($r('sys.color.ohos_id_color_text_secondary'))
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-              .layoutWeight(1)
+      Column() {
+        this.topBar()
 
-            if (this.viewModel!.statusMessage.length > 0) {
-              Text(this.viewModel!.statusMessage)
-                .fontSize(13)
-                .fontColor(this.viewModel!.isGenerating
-                  ? $r('sys.color.ohos_id_color_text_primary')
-                  : COLOR_STATUS_WARN)
-                .margin({ left: 8 })
-            }
-
-            // T-4.5 会话列表入口
-            Button('会话')
-              .fontSize(13)
-              .backgroundColor($r('sys.color.ohos_id_color_button_normal'))
-              .fontColor($r('sys.color.ohos_id_color_text_primary'))
-              .borderRadius(16)
-              .height(32)
-              .padding({ left: 12, right: 12 })
-              .margin({ left: 8 })
-              .enabled(this.viewModel!.isSessionReady)
-              .onClick(() => {
-                this.viewModel!.openSessionList();
-              })
-          }
-          .width('100%')
-          .padding({ left: 16, right: 16, top: 8, bottom: 8 })
-
-          // 预设状态
-          Row() {
-            Text('预设：' + (this.viewModel!.currentPresetName.length > 0
-              ? this.viewModel!.currentPresetName
-              : '未启用'))
-              .fontSize(12)
-              .fontColor(this.viewModel!.currentPresetName.length > 0
-                ? '#007AFF'
-                : '#999999')
-              .onClick(() => {
-                const navInfo = this.queryNavigationInfo();
-                if (navInfo !== undefined) {
-                  navInfo.pathStack.pushPathByName('PromptPresetListPage', undefined, () => {
-                    this.viewModel!.refreshCurrentPresetName();
-                  });
-                }
-              })
-          }
-          .width('100%')
-          .padding({ left: 16, right: 16, bottom: 4 })
-
-          // T-6.4B-1.1 Branch 状态入口(点击导航到 BranchMapPage)
-          if (this.viewModel!.isSessionReady
-            && this.viewModel!.getBranchStatusText().length > 0) {
-            Row() {
-              Text(this.viewModel!.getBranchStatusText())
-                .fontSize(12)
-                .fontColor('#007AFF')
-                .maxLines(1)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-                .layoutWeight(1)
-
-              Text('查看')
-                .fontSize(12)
-                .fontColor(this.viewModel!.busy
-                  ? '#999999'
-                  : '#007AFF')
-                .margin({ left: 8 })
-            }
-            .width('100%')
-            .padding({ left: 16, right: 16, bottom: 4 })
-            .onClick(() => {
-              if (this.viewModel!.busy) {
-                promptAction.showToast({
-                  message: $r('app.string.' + RES_BRANCH_SWITCH_BUSY),
-                  duration: 1500
-                });
-                return;
-              }
-              this.navigateToBranchMap();
-            })
-          }
-
-        if (this.viewModel!.errorMessage.length > 0) {
+        // 错误提示条
+        if (this.viewModel !== null && this.viewModel!.errorMessage.length > 0) {
           Text(this.viewModel!.errorMessage)
-            .fontSize(13)
-            .fontColor(COLOR_STATUS_ERROR)
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_danger'))
             .width('100%')
-            .padding({ left: 16, right: 16, bottom: 4 })
+            .padding({ left: 16, right: 16, top: 4, bottom: 4 })
+            .backgroundColor($r('app.color.app_surface_2'))
         }
 
-        // 消息列表区(含浮动回到底部按钮)
-        Stack({ alignContent: Alignment.Bottom }) {
-          Scroll(this.scroller) {
-            Column() {
-              if (this.messages.length === 0) {
-                if (this.viewModel!.isInitializing) {
-                  this.loadingState();
-                } else if (this.viewModel!.initError.length > 0) {
-                  this.initErrorState();
-                } else {
-                  this.emptyState();
-                }
-              } else {
-                // key 包含 id + updatedAt + status + contentLength + isStreaming
-                // 强制 ForEach 在消息内容/状态变化时重新渲染
-                // (ArkUI ForEach 的 diff 基于 key,key 相同会 skip mark dirty)
-                ForEach(this.messages, (msg: ChatMessage, _index: number) => {
-                  if (msg.role !== ChatRole.System) {
-                    Column() {
-                      this.messageBubble(msg);
-                      if (msg.role === ChatRole.Assistant &&
-                        msg.source !== ChatMessageSource.CharacterFirstMessage &&
-                        this.viewModel !== null) {
-                        MessageSwipeControls({
-                          activeCandidateIndex: this.viewModel!.getSwipeSummary(msg.id) !== undefined
-                            ? this.viewModel!.getSwipeSummary(msg.id)!.activeCandidateIndex : 0,
-                          candidateCount: this.viewModel!.getSwipeSummary(msg.id) !== undefined
-                            ? this.viewModel!.getSwipeSummary(msg.id)!.candidateCount : 1,
-                          isGenerating: this.viewModel!.isGenerating,
-                          isOperable: this.viewModel!.canOperateSwipe(msg.id),
-                          isMaxReached: this.viewModel!.getSwipeSummary(msg.id) !== undefined
-                            ? this.viewModel!.getSwipeSummary(msg.id)!.candidateCount >= MAX_SWIPE_CANDIDATES
-                            : false,
-                          onPrevious: (): void => {
-                            this.viewModel!.swipePrevious(msg.id);
-                          },
-                          onNext: (): void => {
-                            this.viewModel!.swipeNext(msg.id);
-                          },
-                          onRegenerate: (): void => {
-                            this.viewModel!.regenerateAsNewCandidate();
-                          },
-                          onStop: (): void => {
-                            this.viewModel!.stop();
-                          }
-                        })
-                      }
-                    }
-                    .width('100%')
-                  }
-                }, (msg: ChatMessage) => msg.id + '_' + (msg.updatedAt ?? 0) + '_'
-                  + (msg.status ?? '') + '_' + msg.content.length + '_'
-                  + (msg.isStreaming === true ? '1' : '0'));
-              }
-              Blank().height(12);
-            }
+        // 状态条(生成中/已停止 - 轻量提示)
+        if (this.viewModel !== null && this.viewModel!.statusMessage.length > 0) {
+          Text(this.viewModel!.statusMessage)
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_tertiary'))
             .width('100%')
-            .padding({ left: 12, right: 12, top: 8, bottom: 8 })
-            .onAreaChange(() => {
-              this.autoScrollToBottom();
-            })
+            .textAlign(TextAlign.Center)
+            .padding({ top: 2, bottom: 2 })
+        }
+
+        // 消息列表区
+        Stack({ alignContent: Alignment.Bottom }) {
+          if (this.isInitialLoading()) {
+            this.loadingView()
+          } else if (this.hasInitError()) {
+            this.initErrorView()
+          } else if (this.messages.length === 0) {
+            this.emptyStateView()
+          } else {
+            this.messageList()
           }
-          .scrollable(ScrollDirection.Vertical)
-          .scrollBar(BarState.Auto)
-          .edgeEffect(EdgeEffect.Spring)
-          .width('100%')
-          .height('100%')
-          .onScrollEdge((side: Edge) => {
-            if (side === Edge.Bottom) {
-              this.viewModel!.userScrolledUp = false;
-            }
-          })
-          .onScrollEnd(() => {
-            const isAtBottom: boolean = this.scroller.isAtEnd();
-            if (isAtBottom) {
-              this.viewModel!.userScrolledUp = false;
-            }
-          })
 
           // 回到底部浮动按钮
-          if (this.viewModel!.userScrolledUp && this.messages.length > 0) {
-            Button($r('app.string.' + RES_CHAT_SCROLL_BOTTOM))
-              .fontSize(12)
-              .backgroundColor($r('sys.color.ohos_id_color_button_normal'))
-              .borderRadius(20)
-              .padding({ left: 16, right: 16, top: 6, bottom: 6 })
+          if (this.viewModel !== null
+            && this.viewModel!.userScrolledUp
+            && this.messages.length > 0) {
+            Button('↓')
+              .fontSize(20)
+              .backgroundColor($r('app.color.app_surface_1'))
+              .fontColor($r('app.color.app_text_primary'))
+              .borderRadius(22)
+              .width(44)
+              .height(44)
               .margin({ bottom: 12 })
+              .shadow({ radius: 8, color: 'rgba(0,0,0,0.15)' })
               .onClick(() => {
                 this.scroller.scrollEdge(Edge.Bottom);
                 this.viewModel!.userScrolledUp = false;
@@ -349,123 +191,300 @@ export struct ChatPage {
         .layoutWeight(1)
         .width('100%')
 
-        Divider()
-          .color(COLOR_DIVIDER)
-          .width('100%')
-          .height(1)
-
         // 底部输入区
-        Row() {
-          Button($r('app.string.' + RES_CHAT_CLEAR))
-            .fontSize(13)
-            .backgroundColor(Color.Transparent)
-            .fontColor($r('sys.color.ohos_id_color_text_secondary'))
-            .height(36)
-            .padding({ left: 8, right: 8 })
-            .onClick(() => {
-              this.viewModel!.clear();
-            })
+        this.inputArea()
 
-          TextArea({
-            placeholder: $r('app.string.' + RES_CHAT_INPUT_PLACEHOLDER),
-            text: this.viewModel!.inputText
-          })
-            .fontSize(14)
-            .maxLines(4)
-            .backgroundColor(Color.Transparent)
-            .layoutWeight(1)
-            .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-            .onChange((value: string) => {
-              this.viewModel!.updateInput(value);
-            })
-
-          if (this.viewModel!.canRegenerate && !this.viewModel!.isGenerating) {
-            Button($r('app.string.' + RES_CHAT_REGENERATE))
-              .fontSize(13)
-              .backgroundColor($r('sys.color.ohos_id_color_button_normal'))
-              .borderRadius(16)
-              .height(36)
-              .padding({ left: 8, right: 8 })
-              .onClick(() => {
-                this.viewModel!.regenerate();
-              })
-          }
-
-          if (this.viewModel!.canStop) {
-            Button($r('app.string.' + RES_CHAT_STOP))
-              .fontSize(13)
-              .backgroundColor(COLOR_STATUS_ERROR)
-              .borderRadius(16)
-              .height(36)
-              .padding({ left: 12, right: 12 })
-              .onClick(() => {
-                this.viewModel!.stop();
-              })
-          } else {
-            Button($r('app.string.' + RES_CHAT_SEND))
-              .fontSize(13)
-              .backgroundColor(this.viewModel!.canSend
-                ? $r('sys.color.ohos_id_color_emphasize')
-                : $r('sys.color.ohos_id_color_button_normal'))
-              .borderRadius(16)
-              .height(36)
-              .padding({ left: 12, right: 12 })
-              .onClick(() => {
-                this.viewModel!.send();
-              })
-          }
+        // 会话列表面板(覆盖层)
+        if (this.viewModel !== null && this.viewModel!.showSessionList) {
+          ChatSessionListPanel({ viewModel: this.viewModel! })
         }
-        .width('100%')
-        .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-        .backgroundColor($r('sys.color.ohos_id_color_sub_background'))
-        .alignItems(VerticalAlign.Center)
+
+        // 更多菜单
+        if (this.showMoreMenu && this.viewModel !== null) {
+          ChatMoreMenuSheet({
+            visible: true,
+            characterName: this.viewModel!.characterName,
+            modelName: this.viewModel!.currentModelName,
+            presetName: this.viewModel!.currentPresetName,
+            hasModel: this.viewModel!.hasCurrentModel,
+            branchStatusText: this.viewModel!.getBranchStatusText(),
+            canRegenerate: this.viewModel!.canRegenerate,
+            isGenerating: this.viewModel!.isGenerating,
+            busy: this.viewModel!.busy,
+            onClose: (): void => { this.showMoreMenu = false; },
+            onGoModelSettings: (): void => { this.goToModelSettings(); },
+            onGoPresetList: (): void => { this.goToPresetList(); },
+            onGoBranchMap: (): void => { this.navigateToBranchMap(); },
+            onOpenSessionList: (): void => {
+              this.viewModel!.openSessionList();
+            },
+            onRegenerate: (): void => { this.viewModel!.regenerate(); },
+            onClearChat: (): void => {
+              this.showClearConfirm = true;
+            }
+          })
+        }
+
+        // 消息操作菜单
+        if (this.showActionSheet && this.actionSheetMsg !== null && this.viewModel !== null) {
+          ChatMessageActionSheet({
+            visible: true,
+            msg: this.actionSheetMsg,
+            canEdit: this.viewModel!.canEditUserMessage(this.actionSheetMsg!.id),
+            canGenerateFromUser: this.viewModel!.canGenerateFromUserMessage(this.actionSheetMsg!.id),
+            canRegenerate: this.viewModel!.canRegenerateAssistantMessage(this.actionSheetMsg!.id),
+            canContinue: this.viewModel!.canContinueFromAssistant(this.actionSheetMsg!.id),
+            candidateCount: this.getCandidateCount(this.actionSheetMsg!.id),
+            onClose: (): void => {
+              this.showActionSheet = false;
+              this.actionSheetMsg = null;
+            },
+            onAction: (action: MessageAction): void => {
+              this.handleMessageAction(action);
+            }
+          })
+        }
+
+        // 清空确认弹窗
+        if (this.showClearConfirm) {
+          this.clearConfirmDialog()
+        }
       }
       .width('100%')
       .height('100%')
-      .backgroundColor($r('sys.color.ohos_id_color_sub_background'))
-
-      // T-4.5 会话列表面板覆盖层(全屏覆盖在主内容之上)
-      if (this.viewModel !== null && this.viewModel!.showSessionList) {
-        ChatSessionListPanel({ viewModel: this.viewModel! })
-      }
+      .backgroundColor($r('app.color.app_bg'))
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     }
-    }
-    .title(this.viewModel!.characterName.length > 0
-      ? this.viewModel!.characterName
-      : $r('app.string.' + RES_NAV_CHAT_TITLE))
-    .hideTitleBar(false)
+    .title('')
+    .hideTitleBar(true)
+    .mode(NavDestinationMode.STANDARD)
   }
 
-  /**
-   * T-6.4B-1.2: BranchMapPage 切换 Active Branch 后触发。
-   *
-   * 通过 @StorageLink('branchChangeSeq') + @Watch 响应跨页面状态变化,
-   * 重新从数据库加载当前会话消息、SwipeSummary、Branch 状态。
-   */
-  onBranchChangeSeqChanged(): void {
-    if (this.viewModel === null || this.viewModel!.isDisposed) {
-      return;
-    }
-    if (!this.viewModel!.isSessionReady) {
-      return;
-    }
-    Logger.info(LOG_TAG, 'onBranchChangeSeqChanged | seq=' + this.branchChangeSeq.toString());
-    this.viewModel!.reloadAfterBranchChange();
-  }
-
-  // ===== 加载/错误状态 =====
+  // ===== 顶部栏 =====
 
   @Builder
-  loadingState() {
+  topBar() {
+    Row() {
+      Button('‹')
+        .fontSize(24)
+        .backgroundColor(Color.Transparent)
+        .fontColor($r('app.color.app_text_primary'))
+        .height(40)
+        .width(40)
+        .padding({ left: 4, right: 4 })
+        .onClick(() => {
+          this.handleBack();
+        })
+
+      Column() {
+        Text(this.viewModel !== null && this.viewModel!.characterName.length > 0
+          ? this.viewModel!.characterName
+          : '聊天')
+          .fontSize($r('app.float.app_font_subtitle'))
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.app_text_primary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .textAlign(TextAlign.Center)
+          .width('100%')
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Center)
+
+      Button('⋯')
+        .fontSize(22)
+        .backgroundColor(Color.Transparent)
+        .fontColor($r('app.color.app_text_primary'))
+        .height(40)
+        .width(40)
+        .padding({ left: 4, right: 4 })
+        .onClick(() => {
+          this.showMoreMenu = true;
+        })
+    }
+    .width('100%')
+    .height(56)
+    .padding({ left: 4, right: 4, top: 4, bottom: 4 })
+    .alignItems(VerticalAlign.Center)
+    .backgroundColor($r('app.color.app_surface_1'))
+  }
+
+  // ===== 消息列表 =====
+
+  @Builder
+  messageList() {
+    Scroll(this.scroller) {
+      Column() {
+        ForEach(this.messages, (msg: ChatMessage, _index: number) => {
+          if (msg.role !== ChatRole.System) {
+            Column() {
+              ChatMessageBubble({
+                msg: msg,
+                characterAvatarUri: this.character !== null ? this.character!.avatarUri : '',
+                characterName: this.viewModel !== null ? this.viewModel!.characterName : '',
+                showAvatar: msg.source !== ChatMessageSource.CharacterFirstMessage,
+                onLongPress: (target: ChatMessage): void => {
+                  this.actionSheetMsg = target;
+                  this.showActionSheet = true;
+                }
+              })
+
+              // 分支切换控件(仅 Assistant 非首条消息)
+              if (msg.role === ChatRole.Assistant
+                && msg.source !== ChatMessageSource.CharacterFirstMessage
+                && this.viewModel !== null) {
+                MessageSwipeControls({
+                  activeCandidateIndex: this.getSwipeActiveIndex(msg.id),
+                  candidateCount: this.getCandidateCount(msg.id),
+                  isGenerating: this.viewModel!.isGenerating,
+                  isOperable: this.viewModel!.canOperateSwipe(msg.id),
+                  isMaxReached: this.getCandidateCount(msg.id) >= MAX_SWIPE_CANDIDATES,
+                  onPrevious: (): void => {
+                    this.viewModel!.swipePrevious(msg.id);
+                  },
+                  onNext: (): void => {
+                    this.viewModel!.swipeNext(msg.id);
+                  },
+                  onRegenerate: (): void => {
+                    this.viewModel!.regenerateAsNewCandidate();
+                  },
+                  onStop: (): void => {
+                    this.viewModel!.stop();
+                  }
+                })
+              }
+
+              // 失败重试按钮
+              if (msg.status === ChatMessageStatus.Failed
+                && this.viewModel !== null
+                && this.viewModel!.canRegenerateAssistantMessage(msg.id)) {
+                Row() {
+                  Button('↻ 重试')
+                    .fontSize($r('app.float.app_font_caption'))
+                    .backgroundColor($r('app.color.app_surface_2'))
+                    .fontColor($r('app.color.app_accent'))
+                    .borderRadius(14)
+                    .height(28)
+                    .padding({ left: 12, right: 12 })
+                    .margin({ top: 4, bottom: 4 })
+                    .onClick(() => {
+                      this.regenerateAssistantMessage(msg.id);
+                    })
+                }
+                .width('100%')
+                .justifyContent(FlexAlign.Start)
+                .margin({ left: 44 })
+              }
+            }
+            .width('100%')
+          }
+        }, (msg: ChatMessage) => msg.id + '_' + (msg.updatedAt ?? 0) + '_'
+          + (msg.status ?? '') + '_' + msg.content.length + '_'
+          + (msg.isStreaming === true ? '1' : '0'))
+        Blank().height(12)
+      }
+      .width('100%')
+      .padding({ left: 12, right: 12, top: 4, bottom: 12 })
+      .onAreaChange(() => {
+        this.autoScrollToBottom();
+      })
+    }
+    .scrollable(ScrollDirection.Vertical)
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.Spring)
+    .width('100%')
+    .height('100%')
+    .onScrollEdge((side: Edge) => {
+      if (side === Edge.Bottom && this.viewModel !== null) {
+        this.viewModel!.userScrolledUp = false;
+      }
+    })
+    .onScrollEnd(() => {
+      if (this.viewModel !== null && this.scroller.isAtEnd()) {
+        this.viewModel!.userScrolledUp = false;
+      }
+    })
+  }
+
+  // ===== 空会话状态 =====
+
+  @Builder
+  emptyStateView() {
+    Column() {
+      if (this.viewModel !== null && !this.viewModel!.hasCurrentModel) {
+        Text('尚未配置模型')
+          .fontSize($r('app.float.app_font_subtitle'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .margin({ bottom: 16 })
+
+        Button('前往模型设置')
+          .fontSize($r('app.float.app_font_body'))
+          .backgroundColor($r('app.color.app_accent'))
+          .fontColor($r('app.color.app_on_accent'))
+          .borderRadius($r('app.float.app_radius_md'))
+          .height(40)
+          .padding({ left: 20, right: 20 })
+          .onClick(() => {
+            this.goToModelSettings();
+          })
+      } else if (this.character !== null) {
+        // 显示角色头像 + 名称 + 开场白
+        CharacterImageView({
+          imageUri: this.character!.avatarUri,
+          fallbackName: this.character!.name,
+          imgWidth: 80,
+          imgHeight: 80,
+          imgBorderRadius: 40,
+          displayMode: 'thumbnail',
+          objectFit: ImageFit.Cover
+        })
+        Text(this.character!.name)
+          .fontSize($r('app.float.app_font_subtitle'))
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.app_text_primary'))
+          .margin({ top: 12 })
+
+        if (this.character!.firstMessage.length > 0) {
+          Text(this.character!.firstMessage)
+            .fontSize($r('app.float.app_font_body'))
+            .fontColor($r('app.color.app_text_secondary'))
+            .textAlign(TextAlign.Center)
+            .margin({ top: 12, left: 32, right: 32 })
+            .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+            .backgroundColor($r('app.color.app_surface_1'))
+            .borderRadius($r('app.float.app_radius_md'))
+        }
+
+        Text('输入消息开始对话')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_tertiary'))
+          .margin({ top: 24 })
+      } else {
+        Text('开始聊天')
+          .fontSize($r('app.float.app_font_subtitle'))
+          .fontColor($r('app.color.app_text_secondary'))
+      }
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+    .padding({ left: 24, right: 24, top: 32, bottom: 32 })
+  }
+
+  // ===== 加载/错误视图 =====
+
+  @Builder
+  loadingView() {
     Column() {
       LoadingProgress()
-        .width(48)
-        .height(48)
-        .color($r('sys.color.ohos_id_color_text_secondary'))
-        .margin({ bottom: 12 })
+        .width(40)
+        .height(40)
+        .color($r('app.color.app_accent'))
       Text('加载会话中…')
-        .fontSize(14)
-        .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_tertiary'))
+        .margin({ top: 8 })
     }
     .width('100%')
     .height('100%')
@@ -474,15 +493,15 @@ export struct ChatPage {
   }
 
   @Builder
-  initErrorState() {
+  initErrorView() {
     Column() {
       Text('会话初始化失败')
-        .fontSize(16)
-        .fontColor(COLOR_STATUS_ERROR)
+        .fontSize($r('app.float.app_font_subtitle'))
+        .fontColor($r('app.color.app_danger'))
         .margin({ bottom: 8 })
-      Text(this.viewModel!.initError)
-        .fontSize(13)
-        .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+      Text(this.viewModel !== null ? this.viewModel!.initError : '')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_secondary'))
         .textAlign(TextAlign.Center)
         .padding({ left: 24, right: 24 })
     }
@@ -492,234 +511,164 @@ export struct ChatPage {
     .alignItems(HorizontalAlign.Center)
   }
 
-  // ===== 空状态 =====
+  // ===== 底部输入区 =====
 
   @Builder
-  emptyState() {
+  inputArea() {
     Column() {
-      if (!this.viewModel!.hasCurrentModel) {
-        Text($r('app.string.' + RES_CHAT_NO_MODEL))
-          .fontSize(16)
-          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
-          .margin({ bottom: 16 })
+      Divider().color($r('app.color.app_divider')).height(0.5)
 
-        Button($r('app.string.' + RES_CHAT_GO_SETTINGS))
-          .fontSize(14)
-          .backgroundColor($r('sys.color.ohos_id_color_emphasize'))
-          .borderRadius(20)
-          .padding({ left: 20, right: 20, top: 8, bottom: 8 })
-          .onClick(() => {
-            const pathStack: NavPathStack | null = this.getPathStack();
-            if (pathStack !== null) {
-              pathStack.pushPathByName('ModelSettingsPage', null);
+      Row() {
+        TextArea({
+          placeholder: '输入消息…',
+          text: this.viewModel !== null ? this.viewModel!.inputText : ''
+        })
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor($r('app.color.app_text_primary'))
+          .backgroundColor($r('app.color.app_surface_2'))
+          .borderRadius($r('app.float.app_radius_md'))
+          .maxLines(5)
+          .layoutWeight(1)
+          .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+          .onChange((value: string) => {
+            if (this.viewModel !== null) {
+              this.viewModel!.updateInput(value);
             }
           })
-      } else {
-        Text($r('app.string.' + RES_CHAT_EMPTY))
-          .fontSize(16)
-          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
-      }
-    }
-    .width('100%')
-    .height('100%')
-    .justifyContent(FlexAlign.Center)
-    .alignItems(HorizontalAlign.Center)
-  }
 
-  // ===== 消息气泡 =====
-
-  @Builder
-  messageBubble(msg: ChatMessage) {
-    Column() {
-      if (msg.role === ChatRole.User) {
-        this.userBubble(msg);
-      } else {
-        this.assistantBubble(msg);
-      }
-    }
-    .width('100%')
-  }
-
-  @Builder
-  userBubble(msg: ChatMessage) {
-    Column() {
-      Row() {
-        Blank()
-          .layoutWeight(1)
-        Text(msg.content)
-          .fontSize(14)
-          .fontColor(COLOR_USER_TEXT)
-          .textAlign(TextAlign.Start)
-          .wordBreak(WordBreak.BREAK_WORD)
-          .backgroundColor(COLOR_USER_BUBBLE)
-          .borderRadius({
-            topLeft: 16,
-            topRight: 16,
-            bottomLeft: 16,
-            bottomRight: 4
-          })
-          .padding({ left: 12, right: 12, top: 8, bottom: 8 })
-          .margin({ bottom: 4 })
-          .constraintSize({ maxWidth: '80%' })
-          .onClick(() => {
-            this.copyMessage(msg);
-          })
-      }
-      .width('100%')
-      .justifyContent(FlexAlign.End)
-
-      // T-6.4B-2 / T-6.4B-3.1 历史 User 操作区(满足任一条件时显示)
-      if (this.viewModel !== null
-        && (this.viewModel!.canGenerateFromUserMessage(msg.id)
-          || this.viewModel!.canEditUserMessage(msg.id))) {
-        Row() {
-          // T-6.4B-3.1 编辑(使用编辑后新正文创建新 Branch)
-          if (this.viewModel!.canEditUserMessage(msg.id)) {
-            Button($r('app.string.' + RES_EDIT_USER_MESSAGE))
-              .fontSize(12)
-              .backgroundColor(Color.Transparent)
-              .fontColor('#007AFF')
-              .height(28)
-              .padding({ left: 4, right: 4 })
-              .onClick(() => {
-                this.openEditUserDialog(msg.id, msg.content);
-              })
-          }
-
-          // T-6.4B-2 从此处生成新回复(使用原 User 正文创建替代 Assistant)
-          if (this.viewModel!.canGenerateFromUserMessage(msg.id)) {
-            Button($r('app.string.' + RES_GENERATE_FROM_USER))
-              .fontSize(12)
-              .backgroundColor(Color.Transparent)
-              .fontColor('#007AFF')
-              .height(28)
-              .padding({ left: 4, right: 4 })
-              .onClick(() => {
-                this.generateFromUserMessage(msg.id);
-              })
-          }
-
-          Button($r('app.string.' + RES_CHAT_COPY))
-            .fontSize(12)
-            .backgroundColor(Color.Transparent)
-            .fontColor($r('sys.color.ohos_id_color_text_secondary'))
-            .height(28)
-            .padding({ left: 4, right: 4 })
+        if (this.viewModel !== null && this.viewModel!.canStop) {
+          Button('■')
+            .fontSize(18)
+            .backgroundColor($r('app.color.app_danger'))
+            .fontColor($r('app.color.app_on_accent'))
+            .borderRadius(22)
+            .height(44)
+            .width(44)
+            .margin({ left: 8 })
             .onClick(() => {
-              this.copyMessage(msg);
+              this.viewModel!.stop();
+            })
+        } else {
+          Button('↑')
+            .fontSize(20)
+            .backgroundColor(this.canSend()
+              ? $r('app.color.app_accent')
+              : $r('app.color.app_surface_2'))
+            .fontColor(this.canSend()
+              ? $r('app.color.app_on_accent')
+              : $r('app.color.app_text_tertiary'))
+            .borderRadius(22)
+            .height(44)
+            .width(44)
+            .margin({ left: 8 })
+            .enabled(this.canSend())
+            .onClick(() => {
+              if (this.viewModel !== null) {
+                this.viewModel!.send();
+              }
             })
         }
-        .width('100%')
-        .justifyContent(FlexAlign.End)
-        .margin({ bottom: 8 })
       }
+      .width('100%')
+      .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+      .alignItems(VerticalAlign.Bottom)
     }
-    .width('100%')
+    .backgroundColor($r('app.color.app_surface_1'))
   }
 
+  // ===== 清空确认弹窗 =====
+
   @Builder
-  assistantBubble(msg: ChatMessage) {
-    Row() {
+  clearConfirmDialog() {
+    Stack() {
       Column() {
-        Text(msg.content.length > 0
-          ? msg.content
-          : (msg.status === ChatMessageStatus.Streaming ? ' ' : ''))
-          .fontSize(14)
-          .fontColor($r('sys.color.ohos_id_color_text_primary'))
-          .textAlign(TextAlign.Start)
-          .wordBreak(WordBreak.BREAK_WORD)
+        Column() {
+          Text('清空对话')
+            .fontSize(17)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.app_text_primary'))
+            .margin({ bottom: 8 })
 
-        if (msg.isStreaming === true && msg.content.length > 0) {
-          Text('|')
-            .fontSize(14)
-            .fontColor($r('sys.color.ohos_id_color_text_primary'))
-        }
+          Text('将删除当前会话的所有消息,此操作不可撤销。')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_secondary'))
+            .textAlign(TextAlign.Center)
+            .margin({ bottom: 16 })
 
-        if (msg.status === ChatMessageStatus.Cancelled) {
-          Text($r('app.string.' + RES_CHAT_CANCELLED))
-            .fontSize(12)
-            .fontColor(COLOR_STATUS_WARN)
-            .margin({ top: 4 })
-        }
-        if (msg.status === ChatMessageStatus.Failed) {
-          Text(msg.errorMessage !== undefined
-            ? msg.errorMessage
-            : $r('app.string.' + RES_CHAT_FAILED))
-            .fontSize(12)
-            .fontColor(COLOR_STATUS_ERROR)
-            .margin({ top: 4 })
-        }
-        if (msg.status === ChatMessageStatus.Failed && msg.content.length === 0) {
-          Text($r('app.string.' + RES_CHAT_EMPTY_RESPONSE))
-            .fontSize(12)
-            .fontColor(COLOR_STATUS_ERROR)
-            .margin({ top: 4 })
-        }
-
-        if (!msg.isStreaming && msg.content.length > 0) {
           Row() {
-            // T-6.4B-3 重新生成此回复(仅历史 Assistant 满足条件时显示)
-            if (this.viewModel !== null
-              && this.viewModel!.canRegenerateAssistantMessage(msg.id)) {
-              Button($r('app.string.' + RES_REGENERATE_ASSISTANT))
-                .fontSize(12)
-                .backgroundColor(Color.Transparent)
-                .fontColor('#007AFF')
-                .height(28)
-                .padding({ left: 4, right: 4 })
-                .onClick(() => {
-                  this.regenerateAssistantMessage(msg.id);
-                })
-            }
-
-            // T-6.4B-1 从此处继续(仅历史 Assistant 满足条件时显示)
-            if (this.viewModel !== null
-              && this.viewModel!.canContinueFromAssistant(msg.id)) {
-              Button($r('app.string.' + RES_CONTINUE_FROM_HERE))
-                .fontSize(12)
-                .backgroundColor(Color.Transparent)
-                .fontColor('#007AFF')
-                .height(28)
-                .padding({ left: 4, right: 4 })
-                .onClick(() => {
-                  this.continueFromAssistant(msg.id);
-                })
-            }
-
-            Button($r('app.string.' + RES_CHAT_COPY))
-              .fontSize(12)
+            Button('取消')
+              .fontSize(15)
               .backgroundColor(Color.Transparent)
-              .fontColor($r('sys.color.ohos_id_color_text_secondary'))
-              .height(28)
-              .padding({ left: 4, right: 4 })
+              .fontColor($r('app.color.app_text_secondary'))
+              .height(40)
+              .layoutWeight(1)
               .onClick(() => {
-                this.copyMessage(msg);
+                this.showClearConfirm = false;
+              })
+            Button('清空')
+              .fontSize(15)
+              .backgroundColor($r('app.color.app_danger'))
+              .fontColor($r('app.color.app_on_accent'))
+              .borderRadius($r('app.float.app_radius_sm'))
+              .height(40)
+              .layoutWeight(1)
+              .margin({ left: 12 })
+              .onClick(() => {
+                if (this.viewModel !== null) {
+                  this.viewModel!.clear();
+                }
+                this.showClearConfirm = false;
               })
           }
           .width('100%')
-          .justifyContent(FlexAlign.End)
-          .margin({ top: 4 })
         }
+        .width('80%')
+        .padding(20)
+        .backgroundColor($r('app.color.app_surface_1'))
+        .borderRadius($r('app.float.app_radius_lg'))
       }
-      .backgroundColor(COLOR_ASSISTANT_BUBBLE)
-      .borderRadius({
-        topLeft: 4,
-        topRight: 16,
-        bottomLeft: 16,
-        bottomRight: 16
-      })
-      .padding({ left: 12, right: 12, top: 8, bottom: 8 })
-      .constraintSize({ maxWidth: '85%' })
-      .margin({ bottom: 8 })
-      .alignItems(HorizontalAlign.Start)
-
-      Blank()
-        .layoutWeight(1)
+      .width('100%')
+      .height('100%')
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
     }
     .width('100%')
+    .height('100%')
+    .backgroundColor('rgba(0,0,0,0.5)')
+    .onClick(() => {
+      this.showClearConfirm = false;
+    })
   }
 
   // ===== 辅助方法 =====
+
+  private canSend(): boolean {
+    return this.viewModel !== null && this.viewModel!.canSend;
+  }
+
+  private isInitialLoading(): boolean {
+    return this.viewModel !== null && this.viewModel!.isInitializing;
+  }
+
+  private hasInitError(): boolean {
+    return this.viewModel !== null && this.viewModel!.initError.length > 0;
+  }
+
+  private getSwipeActiveIndex(messageId: string): number {
+    if (this.viewModel === null) {
+      return 0;
+    }
+    const s: MessageSwipeSummary | undefined = this.viewModel!.getSwipeSummary(messageId);
+    return s !== undefined ? s.activeCandidateIndex : 0;
+  }
+
+  private getCandidateCount(messageId: string): number {
+    if (this.viewModel === null) {
+      return 1;
+    }
+    const s: MessageSwipeSummary | undefined = this.viewModel!.getSwipeSummary(messageId);
+    return s !== undefined ? s.candidateCount : 1;
+  }
 
   private autoScrollToBottom(): void {
     if (this.viewModel === null) {
@@ -735,6 +684,74 @@ export struct ChatPage {
     }
   }
 
+  /** 加载角色头像(指定 characterId) */
+  private loadCharacterAvatar(characterId: string): void {
+    const characterService = AppServices.getCharacterService();
+    characterService.getById(characterId)
+      .then((c: Character | null): void => {
+        this.character = c;
+      })
+      .catch((e: Error): void => {
+        Logger.warn(LOG_TAG, 'loadCharacterAvatar failed: ' + e.message);
+      });
+  }
+
+  /** 加载当前角色头像(无 characterId 时) */
+  private loadCurrentCharacterAvatar(): void {
+    const characterService = AppServices.getCharacterService();
+    characterService.getCurrentCharacter()
+      .then((c: Character | null): void => {
+        this.character = c;
+      })
+      .catch((e: Error): void => {
+        Logger.warn(LOG_TAG, 'loadCurrentCharacterAvatar failed: ' + e.message);
+      });
+  }
+
+  private handleBack(): void {
+    const navInfo = this.queryNavigationInfo();
+    if (navInfo !== undefined) {
+      navInfo.pathStack.pop();
+    }
+  }
+
+  private goToModelSettings(): void {
+    const navInfo = this.queryNavigationInfo();
+    if (navInfo !== undefined) {
+      navInfo.pathStack.pushPathByName('ModelSettingsPage', null);
+    }
+  }
+
+  private goToPresetList(): void {
+    const navInfo = this.queryNavigationInfo();
+    if (navInfo !== undefined) {
+      navInfo.pathStack.pushPathByName('PromptPresetListPage', undefined, () => {
+        if (this.viewModel !== null) {
+          this.viewModel!.refreshCurrentPresetName();
+        }
+      });
+    }
+  }
+
+  private navigateToBranchMap(): void {
+    if (this.viewModel === null) {
+      return;
+    }
+    const chatId: string | undefined = this.viewModel!.getCurrentChatId();
+    if (chatId === undefined || chatId.length === 0) {
+      return;
+    }
+    const navInfo = this.queryNavigationInfo();
+    if (navInfo === undefined) {
+      return;
+    }
+    navInfo.pathStack.pushPathByName('BranchMapPage', { chatId: chatId }, async (): Promise<void> => {
+      if (this.viewModel !== null && !this.viewModel!.isDisposed) {
+        await this.viewModel!.reloadAfterBranchChange();
+      }
+    });
+  }
+
   private copyMessage(msg: ChatMessage): void {
     if (msg.content.length === 0 || msg.isStreaming === true) {
       return;
@@ -748,126 +765,84 @@ export struct ChatPage {
         if (err) {
           return;
         }
-        promptAction.showToast({
-          message: $r('app.string.' + RES_CHAT_COPY_SUCCESS),
-          duration: 1500
-        });
+        promptAction.showToast({ message: '已复制', duration: 1500 });
       });
     } catch (_e) {
       // 复制失败,静默处理
     }
   }
 
-  private getPathStack(): NavPathStack | null {
-    try {
-      const navInfo: NavigationInfo | undefined = this.queryNavigationInfo();
-      if (navInfo !== undefined) {
-        return navInfo.pathStack;
-      }
-    } catch (_e) {
-      // ignore
+  /** 处理消息操作菜单点击 */
+  private handleMessageAction(action: MessageAction): void {
+    if (this.actionSheetMsg === null || this.viewModel === null) {
+      return;
     }
-    return null;
+    const msg: ChatMessage = this.actionSheetMsg!;
+    switch (action) {
+      case 'copy':
+        this.copyMessage(msg);
+        break;
+      case 'edit':
+        this.openEditUserDialog(msg.id, msg.content);
+        break;
+      case 'generate_from_user':
+        this.generateFromUserMessage(msg.id);
+        break;
+      case 'regenerate_assistant':
+        this.regenerateAssistantMessage(msg.id);
+        break;
+      case 'continue_from_here':
+        this.continueFromAssistant(msg.id);
+        break;
+      case 'switch_branch':
+        // 简化:直接 swipeNext,不弹二级菜单
+        this.viewModel!.swipeNext(msg.id);
+        break;
+      default:
+        break;
+    }
+    this.actionSheetMsg = null;
   }
 
-  // ===== T-6.4B-1 Branch 操作 =====
-
-  /**
-   * T-6.4B-1.1: 导航到 BranchMapPage。
-   * 传入当前 chatId,返回时通过 onPop 回调重新加载消息和 Branch 状态。
-   */
-  private navigateToBranchMap(): void {
-    if (this.viewModel === null) {
-      return;
-    }
-    const chatId: string | undefined = this.viewModel!.getCurrentChatId();
-    if (chatId === undefined || chatId.length === 0) {
-      return;
-    }
-    const navInfo = this.queryNavigationInfo();
-    if (navInfo === undefined) {
-      return;
-    }
-    navInfo.pathStack.pushPathByName(
-      'BranchMapPage',
-      { chatId: chatId },
-      async (): Promise<void> => {
-        // 从 BranchMapPage 返回后重新加载会话
-        if (this.viewModel !== null && !this.viewModel!.isDisposed) {
-          await this.viewModel!.reloadAfterBranchChange();
-        }
-      }
-    );
-  }
-
-  /**
-   * 从历史 Assistant 创建 Child Branch。
-   * 忙碌时显示提示并退出,由 ViewModel 处理具体逻辑。
-   */
   private continueFromAssistant(messageId: string): void {
     if (this.viewModel === null) {
       return;
     }
     if (this.viewModel!.busy) {
-      promptAction.showToast({
-        message: $r('app.string.' + RES_BRANCH_CREATE_BUSY),
-        duration: 1500
-      });
+      promptAction.showToast({ message: '生成中或操作中,无法创建分支', duration: 1500 });
       return;
     }
     this.viewModel!.continueFromAssistant(messageId);
   }
 
-  /**
-   * T-6.4B-2: 从历史 User 消息生成新回复。
-   * 忙碌时显示提示并退出,由 ViewModel 处理具体逻辑。
-   */
   private generateFromUserMessage(messageId: string): void {
     if (this.viewModel === null) {
       return;
     }
     if (this.viewModel!.busy) {
-      promptAction.showToast({
-        message: $r('app.string.' + RES_BRANCH_CREATE_BUSY),
-        duration: 1500
-      });
+      promptAction.showToast({ message: '生成中或操作中,无法创建分支', duration: 1500 });
       return;
     }
     this.viewModel!.generateFromUserMessage(messageId);
   }
 
-  /**
-   * T-6.4B-3: 历史 Assistant "重新生成此回复"。
-   * 忙碌时显示提示并退出,由 ViewModel 处理具体逻辑。
-   */
   private regenerateAssistantMessage(messageId: string): void {
     if (this.viewModel === null) {
       return;
     }
     if (this.viewModel!.busy) {
-      promptAction.showToast({
-        message: $r('app.string.' + RES_BRANCH_CREATE_BUSY),
-        duration: 1500
-      });
+      promptAction.showToast({ message: '生成中或操作中,无法创建分支', duration: 1500 });
       return;
     }
     this.viewModel!.regenerateAssistantMessage(messageId);
   }
 
-  /**
-   * T-6.4B-3.1: 打开历史 User 消息编辑弹窗。
-   * 忙碌时显示提示并退出。
-   * 每次打开按需重建 CustomDialogController,传入最新 originalContent 和回调。
-   */
   private openEditUserDialog(messageId: string, originalContent: string): void {
     if (this.viewModel === null) {
       return;
     }
     if (this.viewModel!.busy) {
-      promptAction.showToast({
-        message: $r('app.string.' + RES_BRANCH_CREATE_BUSY),
-        duration: 1500
-      });
+      promptAction.showToast({ message: '生成中或操作中,无法创建分支', duration: 1500 });
       return;
     }
     this.editingMessageId = messageId;
@@ -887,14 +862,24 @@ export struct ChatPage {
     this.editDialogController.open();
   }
 
-  /**
-   * T-6.4B-3.1: 编辑弹窗确认回调,调用 ViewModel 执行实际操作。
-   */
   private confirmEditUserMessage(messageId: string, editedContent: string): void {
     if (this.viewModel === null) {
       return;
     }
     this.viewModel!.editUserMessageAndGenerate(messageId, editedContent);
   }
-}
 
+  /**
+   * BranchMapPage 切换 Active Branch 后触发。
+   */
+  onBranchChangeSeqChanged(): void {
+    if (this.viewModel === null || this.viewModel!.isDisposed) {
+      return;
+    }
+    if (!this.viewModel!.isSessionReady) {
+      return;
+    }
+    Logger.info(LOG_TAG, 'onBranchChangeSeqChanged | seq=' + this.branchChangeSeq.toString());
+    this.viewModel!.reloadAfterBranchChange();
+  }
+}

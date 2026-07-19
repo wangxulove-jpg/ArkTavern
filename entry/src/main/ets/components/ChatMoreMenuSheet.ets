@@ -1,0 +1,188 @@
+/**
+ * ChatMoreMenuSheet 聊天页顶部更多菜单(底部弹出)
+ *
+ * 把模型、预设、分支、会话等次要入口收敛到这里,
+ * 让顶部栏只保留:返回 + 角色名 + 更多按钮。
+ *
+ * 菜单项:
+ * - 模型信息(只读显示)+ 前往模型设置
+ * - 预设信息(只读显示)+ 前往预设列表
+ * - 分支状态(只读显示)+ 查看分支图
+ * - 会话列表
+ * - 重新生成(底部 canRegenerate 时)
+ * - 清空对话(危险操作,二次确认)
+ *
+ * 复用 ChatViewModel 数据,不在组件内做业务操作。
+ */
+
+@Component
+export struct ChatMoreMenuSheet {
+  /** 是否显示 */
+  visible: boolean = false;
+  /** 当前角色名 */
+  characterName: string = '';
+  /** 当前模型名 */
+  modelName: string = '';
+  /** 当前预设名(空表示未启用) */
+  presetName: string = '';
+  /** 是否有可用模型 */
+  hasModel: boolean = false;
+  /** 分支状态文本 */
+  branchStatusText: string = '';
+  /** 是否可重新生成 */
+  canRegenerate: boolean = false;
+  /** 是否生成中 */
+  isGenerating: boolean = false;
+  /** 是否忙碌 */
+  busy: boolean = false;
+  /** 关闭回调 */
+  onClose: () => void = () => {};
+  /** 前往模型设置 */
+  onGoModelSettings: () => void = () => {};
+  /** 前往预设列表 */
+  onGoPresetList: () => void = () => {};
+  /** 查看分支图 */
+  onGoBranchMap: () => void = () => {};
+  /** 打开会话列表 */
+  onOpenSessionList: () => void = () => {};
+  /** 重新生成 */
+  onRegenerate: () => void = () => {};
+  /** 清空对话 */
+  onClearChat: () => void = () => {};
+
+  build() {
+    if (this.visible) {
+      Stack() {
+        Column() {
+          Blank().layoutWeight(1)
+          Column() {
+            this.sheetContent()
+          }
+          .width('100%')
+          .backgroundColor($r('app.color.app_surface_1'))
+          .borderRadius({
+            topLeft: 16, topRight: 16,
+            bottomLeft: 0, bottomRight: 0
+          })
+          .padding({ top: 8, bottom: 24 })
+        }
+        .width('100%')
+        .height('100%')
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor('rgba(0,0,0,0.5)')
+      .onClick(() => {
+        this.onClose();
+      })
+      .transition(TransitionEffect.OPACITY)
+    }
+  }
+
+  @Builder
+  sheetContent() {
+    Column() {
+      Text('对话设置')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_tertiary'))
+        .margin({ top: 12, bottom: 8, left: 16, right: 16 })
+
+      // 模型信息
+      this.infoRow('模型', this.modelName.length > 0 ? this.modelName : '未配置', true, (): void => {
+        this.onGoModelSettings();
+      })
+
+      // 预设
+      this.infoRow('预设', this.presetName.length > 0 ? this.presetName : '未启用', true, (): void => {
+        this.onGoPresetList();
+      })
+
+      // 分支
+      if (this.branchStatusText.length > 0) {
+        this.infoRow('分支', this.branchStatusText, !this.busy, (): void => {
+          if (this.busy) {
+            return;
+          }
+          this.onGoBranchMap();
+        })
+      }
+
+      Divider().color($r('app.color.app_divider')).margin({ top: 8, bottom: 8 })
+
+      // 会话列表
+      this.menuRow('会话列表', false, false, (): void => {
+        this.onOpenSessionList();
+      })
+
+      // 重新生成
+      if (this.canRegenerate) {
+        this.menuRow('重新生成', this.isGenerating, false, (): void => {
+          if (this.isGenerating) {
+            return;
+          }
+          this.onRegenerate();
+        })
+      }
+
+      // 清空对话
+      this.menuRow('清空对话', this.busy, true, (): void => {
+        this.onClearChat();
+      })
+    }
+    .width('100%')
+  }
+
+  @Builder
+  infoRow(label: string, value: string, enabled: boolean, onClick: () => void) {
+    Row() {
+      Text(label)
+        .fontSize($r('app.float.app_font_body'))
+        .fontColor($r('app.color.app_text_secondary'))
+        .width(56)
+      Text(value)
+        .fontSize($r('app.float.app_font_body'))
+        .fontColor(enabled
+          ? $r('app.color.app_text_primary')
+          : $r('app.color.app_text_tertiary'))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .layoutWeight(1)
+      Text('›')
+        .fontSize(20)
+        .fontColor($r('app.color.app_text_tertiary'))
+    }
+    .width('100%')
+    .height(52)
+    .padding({ left: 16, right: 16 })
+    .alignItems(VerticalAlign.Center)
+    .onClick(() => {
+      if (!enabled) {
+        return;
+      }
+      onClick();
+      this.onClose();
+    })
+  }
+
+  @Builder
+  menuRow(label: string, disabled: boolean, isDestructive: boolean, onClick: () => void) {
+    Row() {
+      Text(label)
+        .fontSize($r('app.float.app_font_body'))
+        .fontColor(isDestructive
+          ? (disabled ? $r('app.color.app_text_tertiary') : $r('app.color.app_danger'))
+          : (disabled ? $r('app.color.app_text_tertiary') : $r('app.color.app_text_primary')))
+        .layoutWeight(1)
+    }
+    .width('100%')
+    .height(52)
+    .padding({ left: 16, right: 16 })
+    .alignItems(VerticalAlign.Center)
+    .onClick(() => {
+      if (disabled) {
+        return;
+      }
+      onClick();
+    })
+  }
+}

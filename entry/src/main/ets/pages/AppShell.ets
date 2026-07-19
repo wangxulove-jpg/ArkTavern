@@ -24,6 +24,7 @@ import { SymbolGlyphModifier } from '@kit.ArkUI';
 import { ChatPage } from './ChatPage';
 import { CharacterListPage } from './CharacterListPage';
 import { CharacterEditPage } from './CharacterEditPage';
+import { AddCharacterPage } from './AddCharacterPage';
 import { LorebookPage } from './LorebookPage';
 import { ModelSettingsPage } from './ModelSettingsPage';
 import { ModelConfigEditPage } from './ModelConfigEditPage';
@@ -69,6 +70,8 @@ export struct AppShell {
       CharacterListPage()
     } else if (name === 'CharacterEditPage') {
       CharacterEditPage()
+    } else if (name === 'AddCharacterPage') {
+      AddCharacterPage()
     } else if (name === 'LorebookPage') {
       LorebookPage()
     } else if (name === 'ModelSettingsPage') {

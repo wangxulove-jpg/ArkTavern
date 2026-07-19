@@ -4,6 +4,7 @@
     "pages/ChatPage",
     "pages/CharacterListPage",
     "pages/CharacterEditPage",
+    "pages/AddCharacterPage",
     "pages/PromptPresetListPage",
     "pages/PromptPresetEditPage",
     "pages/BranchMapPage"

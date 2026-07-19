@@ -1,60 +1,64 @@
 /**
- * ChatSessionRootView 对话记录 Tab 根视图(UI-1)
+ * ChatSessionRootView 对话记录 Tab 根视图
  *
- * 作为 HdsTabs 的第二个 Tab 内容,展示会话列表入口。
- *
- * 设计:
- * - 标题区:应用名 + 简短描述
- * - 会话列表(点击会话进入 ChatPage 二级页面,通过 AppStorage 传递 chatId)
- * - 空状态:无会话时引导用户开始聊天
- * - 加载 / 错误状态
- * - 底部"开始新对话"按钮
+ * 重新设计:
+ * - 顶部仅中文标题"对话记录"(无英文副标题、无冗余描述、无大块空白)
+ * - 列表项:[角色头像] 对话名称 时间 / 角色名称 / 最后消息摘要
+ * - 左滑显示重命名按钮
+ * - 重命名:原生 TextInputDialog,空名称拒绝
+ * - 角色已删除显示"未知角色",不崩溃
  *
  * 复用:
- * - ChatViewModel(只读接线,会话列表加载)
- * - AppServices.createChatService() 创建 ChatService 实例
+ * - ChatSessionListViewModel(本 Tab 专用,不创建 ChatService 副作用)
+ * - CharacterImageView
+ * - PressableCard
+ * - AppStorage 跨页面刷新信号(chatListVersion)
  *
  * 不修改:
- * - ChatService 业务逻辑
- * - 会话持久化 / Swipe / Branch 逻辑
- *
- * 限制:
- * - 当前实现显示 character_id IS NULL 的会话(普通助手上下文)
- *   原因:ChatService.listSessions() 依赖 character 上下文,
- *   而 ChatSessionRootView 不调用 vm.initialize()(避免修改数据库)。
- *   后续 Phase 可在 AppServices 中添加 listAllSessionsForUi() 改进。
+ * - 数据库 Schema / 迁移
+ * - ChatService 生成 / Provider / PromptBuilder
+ * - 其他 Tab
  */
 
-import { ChatViewModel } from '../../viewmodels/ChatViewModel';
-import { Chat } from '../../models/Chat';
+import { ChatSessionListViewModel, ChatSessionListItem, formatSessionTimestamp, UNKNOWN_CHARACTER_NAME } from '../../viewmodels/ChatSessionListViewModel';
 import { AppServices } from '../../services/AppServices';
-import { AppPageHeader } from '../../components/AppPageHeader';
 import { EmptyStateView } from '../../components/EmptyStateView';
 import { PressableCard } from '../../components/PressableCard';
+import { CharacterImageView } from '../../components/CharacterImageView';
+import { promptAction } from '@kit.ArkUI';
+import { Chat } from '../../models/Chat';
 
-/** AppStorage 中待跳转的 chatId(由 ChatSessionRootView 写入,ChatPage 读取后清除) */
+/** AppStorage 中待跳转的 chatId(由本视图写入,ChatPage 读取后清除) */
 export const PENDING_CHAT_ID_KEY: string = 'pendingChatId';
+/** AppStorage 中待应用的 characterId(配合 pendingChatId 切换到指定角色会话) */
+export const PENDING_CHARACTER_ID_KEY: string = 'pendingCharacterId';
 
 @Component
 export struct ChatSessionRootView {
   /** AppShell 传入的全局 NavPathStack,用于跳转 ChatPage */
   pathStack: NavPathStack = new NavPathStack();
-  @State viewModel: ChatViewModel | null = null;
+  @State viewModel: ChatSessionListViewModel | null = null;
   @State isInitializing: boolean = true;
   @State initError: string = '';
+  /** 重命名弹窗目标 chatId(空时不显示) */
+  @State renameTargetId: string = '';
+  /** 重命名弹窗输入值 */
+  @State renameInput: string = '';
+  /** 重命名进行中(防止重复点击) */
+  @State isRenaming: boolean = false;
+  /**
+   * 跨页面列表刷新信号。
+   * 由 ChatPage 在会话变化(发消息/新建会话/删除)后递增,触发本组件 reload。
+   * 说明:本组件作为 HdsTabs 的 TabContent 嵌入,onPageShow 不会被调用。
+   */
+  @StorageProp('chatListVersion') @Watch('onListVersionChange') chatListVersion: number = 0;
 
   async aboutToAppear(): Promise<void> {
     try {
       await AppServices.whenReady();
-      const modelService = AppServices.getModelService();
-      const characterService = AppServices.getCharacterService();
-      const promptPresetService = AppServices.getPromptPresetService();
-      const chatService = AppServices.createChatService();
-      const vm: ChatViewModel =
-        new ChatViewModel(chatService, modelService, characterService, promptPresetService);
+      const vm: ChatSessionListViewModel = AppServices.createChatSessionListViewModel();
       this.viewModel = vm;
-      // 只加载会话列表,不调用 initialize(避免创建新会话副作用)
-      await vm.refreshSessions();
+      await vm.reload();
       this.isInitializing = false;
     } catch (e) {
       this.isInitializing = false;
@@ -62,59 +66,125 @@ export struct ChatSessionRootView {
     }
   }
 
-  /** 页面恢复时刷新会话列表(从 ChatPage 返回时) */
-  onPageShow(): void {
-    if (this.viewModel !== null && AppServices.isStarted()) {
-      this.viewModel!.refreshSessions().catch((): void => {});
+  /** chatListVersion 变化时刷新列表(从 ChatPage 返回后立即重新加载最新摘要/时间) */
+  private onListVersionChange(): void {
+    if (this.isInitializing) {
+      return;
     }
+    if (this.viewModel === null || !AppServices.isStarted()) {
+      return;
+    }
+    this.viewModel!.reload().catch((): void => {});
   }
 
-  /** 点击会话项:写入 pendingChatId,push 到 ChatPage */
-  private openSession(chatId: string): void {
-    AppStorage.setOrCreate<string>(PENDING_CHAT_ID_KEY, chatId);
+  /** 点击会话项:写入 pendingChatId 和 pendingCharacterId(如有),push 到 ChatPage */
+  private openSession(item: ChatSessionListItem): void {
+    AppStorage.setOrCreate<string>(PENDING_CHAT_ID_KEY, item.chat.id);
+    // 若会话有关联角色,同时写入 characterId,让 ChatPage 在 initialize 时加载正确角色上下文
+    const charId: string | undefined = item.chat.characterId;
+    if (charId !== undefined && charId.length > 0) {
+      AppStorage.setOrCreate<string>(PENDING_CHARACTER_ID_KEY, charId);
+    } else {
+      AppStorage.set<string>(PENDING_CHARACTER_ID_KEY, '');
+    }
     this.pathStack.pushPath({ name: 'ChatPage' });
   }
 
   /** 开始新对话:清除 pendingChatId,push 到 ChatPage(让 ChatPage 创建新会话) */
   private startNewChat(): void {
     AppStorage.setOrCreate<string>(PENDING_CHAT_ID_KEY, '');
+    AppStorage.set<string>(PENDING_CHARACTER_ID_KEY, '');
     this.pathStack.pushPath({ name: 'ChatPage' });
+  }
+
+  /** 打开重命名弹窗 */
+  private openRenameDialog(item: ChatSessionListItem): void {
+    if (this.isRenaming) {
+      return;
+    }
+    this.renameTargetId = item.chat.id;
+    // 回填当前标题(空标题回填为"新对话"以便编辑)
+    this.renameInput = item.chat.title.length > 0 ? item.chat.title : '新对话';
+  }
+
+  /** 取消重命名 */
+  private cancelRename(): void {
+    if (this.isRenaming) {
+      return;
+    }
+    this.renameTargetId = '';
+    this.renameInput = '';
+  }
+
+  /** 确认重命名:校验非空,调 viewModel.renameSession */
+  private async confirmRename(): Promise<void> {
+    if (this.isRenaming || this.renameTargetId.length === 0) {
+      return;
+    }
+    const trimmed: string = this.renameInput.trim();
+    if (trimmed.length === 0) {
+      promptAction.showToast({ message: '会话名称不能为空', duration: 2000 });
+      return;
+    }
+    if (this.viewModel === null) {
+      return;
+    }
+    this.isRenaming = true;
+    try {
+      await this.viewModel.renameSession(this.renameTargetId, trimmed);
+      this.renameTargetId = '';
+      this.renameInput = '';
+      // 通知其他可能监听的页面(避免 ChatPage 复用旧 title)
+      this.bumpListVersion();
+    } catch (e) {
+      promptAction.showToast({
+        message: (e as Error).message ?? '重命名失败',
+        duration: 2000
+      });
+    } finally {
+      this.isRenaming = false;
+    }
+  }
+
+  /** 递增 chatListVersion,通知其他页面(如已存在的 ChatPage)刷新会话列表 */
+  private bumpListVersion(): void {
+    const v: number = AppStorage.get<number>('chatListVersion') ?? 0;
+    AppStorage.setOrCreate<number>('chatListVersion', v + 1);
   }
 
   build() {
     Stack() {
       Column() {
-        AppPageHeader({
-          title: $r('app.string.tab_sessions'),
-          subtitle: $r('app.string.tab_sessions_subtitle')
+        // 顶部仅保留中文标题,无副标题无描述
+        Row() {
+          Text($r('app.string.tab_sessions'))
+            .fontSize($r('app.float.app_font_title'))
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.app_text_primary'))
+        }
+        .width('100%')
+        .padding({
+          left: $r('app.float.app_spacing_20'),
+          right: $r('app.float.app_spacing_20'),
+          top: $r('app.float.app_spacing_16'),
+          bottom: $r('app.float.app_spacing_8')
         })
+        .alignItems(VerticalAlign.Center)
 
-        Text($r('app.string.tab_sessions_desc'))
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
-          .width('100%')
-          .textAlign(TextAlign.Start)
-          .padding({
-            left: $r('app.float.app_spacing_20'),
-            right: $r('app.float.app_spacing_20'),
-            bottom: $r('app.float.app_spacing_12')
-          })
-
-        // ===== 错误提示 =====
-        if (this.viewModel !== null && this.viewModel!.sessionError.length > 0) {
-          Text(this.viewModel!.sessionError)
+        // 错误提示
+        if (this.viewModel !== null && this.viewModel!.errorMessage.length > 0) {
+          Text(this.viewModel!.errorMessage)
             .fontSize($r('app.float.app_font_caption'))
             .fontColor($r('app.color.app_danger'))
             .width('100%')
             .padding({
               left: $r('app.float.app_spacing_20'),
               right: $r('app.float.app_spacing_20'),
-              top: $r('app.float.app_spacing_4'),
               bottom: $r('app.float.app_spacing_4')
             })
         }
 
-        // ===== 主内容区 =====
+        // 主内容区
         if (this.isInitializing) {
           this.loadingView()
         } else if (this.initError.length > 0) {
@@ -123,11 +193,16 @@ export struct ChatSessionRootView {
           this.sessionListArea()
         }
 
-        // ===== 底部"开始新对话"按钮 =====
+        // 底部"开始新对话"按钮
         this.bottomNewChatButton()
       }
       .width('100%')
       .height('100%')
+
+      // 重命名弹窗
+      if (this.renameTargetId.length > 0) {
+        this.renameDialog()
+      }
     }
     .width('100%')
     .height('100%')
@@ -148,82 +223,156 @@ export struct ChatSessionRootView {
       .layoutWeight(1)
       .justifyContent(FlexAlign.Center)
     } else {
-      Scroll() {
-        Column() {
-          ForEach(this.viewModel!.sessions, (chat: Chat) => {
-            this.sessionCard(chat)
-          }, (chat: Chat) => chat.id)
-        }
-        .width('100%')
-        .padding({
-          left: $r('app.float.app_spacing_16'),
-          right: $r('app.float.app_spacing_16'),
-          top: $r('app.float.app_spacing_8'),
-          bottom: $r('app.float.app_spacing_24')
-        })
+      List() {
+        ForEach(this.viewModel!.sessions, (item: ChatSessionListItem) => {
+          ListItem() {
+            this.sessionCard(item)
+          }
+          .margin({ bottom: $r('app.float.app_spacing_12') })
+          .swipeAction({
+            end: {
+              builder: (): void => {
+                this.swipeActionButtons(item)
+              }
+            }
+          })
+        }, (item: ChatSessionListItem) => item.chat.id)
       }
-      .scrollable(ScrollDirection.Vertical)
+      .width('100%')
+      .layoutWeight(1)
       .scrollBar(BarState.Off)
       .edgeEffect(EdgeEffect.Spring)
-      .layoutWeight(1)
-      .width('100%')
+      .padding({
+        left: $r('app.float.app_spacing_16'),
+        right: $r('app.float.app_spacing_16'),
+        top: $r('app.float.app_spacing_8'),
+        bottom: 100
+      })
     }
+  }
+
+  /** 左滑操作按钮(重命名) */
+  @Builder
+  swipeActionButtons(item: ChatSessionListItem) {
+    Row() {
+      Button($r('app.string.session_action_rename'))
+        .fontSize(14)
+        .fontColor(Color.White)
+        .backgroundColor($r('app.color.app_accent'))
+        .height('100%')
+        .padding({ left: 20, right: 20 })
+        .onClick(() => {
+          this.openRenameDialog(item);
+        })
+    }
+    .height('100%')
   }
 
   /** 单个会话卡片 */
   @Builder
-  sessionCard(chat: Chat) {
+  sessionCard(item: ChatSessionListItem) {
     PressableCard({
       onPress: () => {
-        this.openSession(chat.id);
-      }
+        this.openSession(item);
+      },
+      surfaceColor: $r('app.color.app_surface_1')
     }) {
       Row() {
-        Column() {
-          Text(this.getSessionTitle(chat))
-            .fontSize($r('app.float.app_font_body'))
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.app_text_primary'))
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .width('100%')
-            .textAlign(TextAlign.Start)
+        // 左侧角色头像(48x48 圆形缩略图)
+        CharacterImageView({
+          imageUri: item.character !== null ? item.character.avatarUri : '',
+          fallbackName: this.getCharacterFallbackName(item),
+          imgWidth: 48,
+          imgHeight: 48,
+          imgBorderRadius: 24,
+          displayMode: 'thumbnail',
+          objectFit: ImageFit.Cover
+        })
 
-          Text(this.getSessionSubtitle(chat))
+        // 中间文本区
+        Column() {
+          // 第一行:对话名称 + 时间
+          Row() {
+            Text(this.getSessionTitle(item))
+              .fontSize($r('app.float.app_font_body'))
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.app_text_primary'))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .layoutWeight(1)
+
+            Text(formatSessionTimestamp(item.displayTimestamp))
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_text_tertiary'))
+              .margin({ left: 8 })
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Center)
+
+          // 第二行:角色名称
+          Text(this.getCharacterName(item))
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(item.isCharacterDeleted
+              ? $r('app.color.app_text_tertiary')
+              : $r('app.color.app_text_secondary'))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .margin({ top: 2 })
             .width('100%')
             .textAlign(TextAlign.Start)
+
+          // 第三行:最后消息摘要(空时不占高度)
+          if (item.lastMessagePreview.length > 0) {
+            Text(item.lastMessagePreview)
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_text_tertiary'))
+              .maxLines(2)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .margin({ top: 4 })
+              .width('100%')
+              .textAlign(TextAlign.Start)
+          }
         }
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Start)
-
-        if (this.viewModel !== null && this.viewModel!.isCurrentSession(chat.id)) {
-          Text($r('app.string.tab_sessions_current_badge'))
-            .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_accent'))
-            .border({ width: 1, color: $r('app.color.app_accent') })
-            .borderRadius($r('app.float.app_radius_sm'))
-            .padding({ left: 8, right: 8, top: 2, bottom: 2 })
-        }
-
-        Text('›')
-          .fontSize(20)
-          .fontColor($r('app.color.app_text_tertiary'))
-          .margin({ left: 8 })
+        .margin({ left: 12 })
       }
       .width('100%')
       .padding({
-        left: $r('app.float.app_spacing_16'),
-        right: $r('app.float.app_spacing_16'),
+        left: $r('app.float.app_spacing_12'),
+        right: $r('app.float.app_spacing_12'),
         top: $r('app.float.app_spacing_12'),
         bottom: $r('app.float.app_spacing_12')
       })
       .alignItems(VerticalAlign.Center)
     }
+  }
+
+  /** 获取会话标题(空 title 显示"新对话") */
+  private getSessionTitle(item: ChatSessionListItem): string {
+    return item.chat.title.length > 0 ? item.chat.title : '新对话';
+  }
+
+  /** 获取角色显示名(已删除显示"未知角色",普通助手显示"普通助手") */
+  private getCharacterName(item: ChatSessionListItem): string {
+    if (item.isCharacterDeleted) {
+      return UNKNOWN_CHARACTER_NAME;
+    }
+    if (item.character !== null) {
+      return item.character.name;
+    }
+    return '普通助手';
+  }
+
+  /** 获取头像占位首字(已删除显示"?",有角色用角色名首字,无角色用"助") */
+  private getCharacterFallbackName(item: ChatSessionListItem): string {
+    if (item.isCharacterDeleted) {
+      return '?';
+    }
+    if (item.character !== null && item.character.name.length > 0) {
+      return item.character.name.charAt(0);
+    }
+    return '助';
   }
 
   /** 底部"开始新对话"按钮 */
@@ -250,18 +399,69 @@ export struct ChatSessionRootView {
     })
   }
 
-  private getSessionTitle(chat: Chat): string {
-    if (this.viewModel === null) {
-      return chat.title;
-    }
-    return this.viewModel!.getSessionTitle(chat);
-  }
+  /** 重命名弹窗(原生 Stack 遮罩 + 输入框) */
+  @Builder
+  renameDialog() {
+    Stack() {
+      Column() {
+        Column() {
+          Text($r('app.string.session_rename_title'))
+            .fontSize(17)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.app_text_primary'))
+            .margin({ bottom: 12 })
 
-  private getSessionSubtitle(chat: Chat): string {
-    if (this.viewModel === null) {
-      return '';
+          TextInput({ placeholder: $r('app.string.session_rename_placeholder'), text: this.renameInput })
+            .fontSize(15)
+            .fontColor($r('app.color.app_text_primary'))
+            .backgroundColor($r('app.color.app_surface_2'))
+            .borderRadius($r('app.float.app_radius_sm'))
+            .height(44)
+            .padding({ left: 12, right: 12 })
+            .onChange((value: string) => {
+              this.renameInput = value;
+            })
+
+          Row() {
+            Button($r('app.string.session_rename_cancel'))
+              .fontSize(15)
+              .backgroundColor(Color.Transparent)
+              .fontColor($r('app.color.app_text_secondary'))
+              .layoutWeight(1)
+              .height(40)
+              .enabled(!this.isRenaming)
+              .onClick(() => {
+                this.cancelRename();
+              })
+            Button($r('app.string.session_rename_confirm'))
+              .fontSize(15)
+              .backgroundColor($r('app.color.app_accent'))
+              .fontColor($r('app.color.app_on_accent'))
+              .borderRadius($r('app.float.app_radius_sm'))
+              .layoutWeight(1)
+              .height(40)
+              .margin({ left: 12 })
+              .enabled(!this.isRenaming)
+              .onClick(() => {
+                this.confirmRename();
+              })
+          }
+          .width('100%')
+          .margin({ top: 20 })
+        }
+        .width('80%')
+        .padding(20)
+        .backgroundColor($r('app.color.app_surface_1'))
+        .borderRadius($r('app.float.app_radius_lg'))
+      }
+      .width('100%')
+      .height('100%')
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
     }
-    return this.viewModel!.getSessionSubtitle(chat);
+    .width('100%')
+    .height('100%')
+    .backgroundColor('rgba(0,0,0,0.5)')
   }
 
   @Builder
