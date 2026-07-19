@@ -172,8 +172,9 @@ export class ChatViewModel {
    * - 页面显示错误但不崩溃
    *
    * @param characterId 可选角色 ID。传入时按该 ID 加载角色;不传时用全局当前角色
+   * @param forceNew 可选,true 时强制创建新会话(不恢复最近会话),用于"新建对话"入口
    */
-  async initialize(characterId?: string): Promise<void> {
+  async initialize(characterId?: string, forceNew: boolean = false): Promise<void> {
     if (this.disposed) {
       return;
     }
@@ -221,7 +222,8 @@ export class ChatViewModel {
     // 3. 异步初始化会话(从数据库恢复或创建新会话)
     try {
       await this.chatService.initializeSession(
-        character !== null ? character : undefined
+        character !== null ? character : undefined,
+        forceNew
       );
       // 4. 同步 messages 到 ViewModel(创建新数组引用)
       this.messages = [...this.chatService.getMessages()];

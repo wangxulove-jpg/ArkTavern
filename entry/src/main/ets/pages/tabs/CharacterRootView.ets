@@ -48,6 +48,8 @@ export struct CharacterRootView {
    * 因此 onPageShow 不会被调用;改用 AppStorage 计数器 + @Watch 监听二级页面变化。
    */
   @StorageProp('characterListVersion') @Watch('onListVersionChange') characterListVersion: number = 0;
+  /** 顶部状态栏避让高度(由 EntryAbility 写入 AppStorage) */
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
 
   async aboutToAppear(): Promise<void> {
     try {
@@ -162,6 +164,7 @@ export struct CharacterRootView {
     .width('100%')
     .height('100%')
     .backgroundColor($r('app.color.app_bg'))
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP])
   }
 
   // ===== 标题栏 =====
@@ -190,9 +193,12 @@ export struct CharacterRootView {
         })
     }
     .width('100%')
-    .height(56)
-    .padding({ left: 20, right: 20 })
+    // 顶部 padding = 状态栏高度 + 原始间距(避开状态栏,按钮不被遮挡)
+    // 不设 height,让 padding + 内容自适应撑开
+    .padding({ left: 20, right: 20, top: this.statusBarHeight + 4, bottom: 4 })
     .alignItems(VerticalAlign.Center)
+    // 加 backgroundColor,避免 Row 区域与下方 Column 背景出现视觉拼接
+    .backgroundColor($r('app.color.app_bg'))
   }
 
   // ===== 角色列表(支持左滑) =====

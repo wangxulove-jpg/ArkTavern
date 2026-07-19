@@ -24,6 +24,10 @@ export struct CharacterEditPage {
   @State errorMessage: string = '';
   @State activeTab: number = TAB_CHARACTER;
   @State showDiscardDialog: boolean = false;
+  /** 顶部状态栏避让高度(由 EntryAbility 写入 AppStorage) */
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
+  /** 底部导航栏/手势条避让高度 */
+  @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
 
   private viewModel: CharacterEditViewModel = new CharacterEditViewModel(
     AppServices.getCharacterService()
@@ -77,6 +81,7 @@ export struct CharacterEditPage {
       .width('100%')
       .height('100%')
       .backgroundColor($r('app.color.app_bg'))
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     }
     .title('')
     .hideTitleBar(true)
@@ -153,8 +158,7 @@ export struct CharacterEditPage {
         })
     }
     .width('100%')
-    .height(56)
-    .padding({ left: 8, right: 12, top: 4, bottom: 4 })
+    .padding({ left: 8, right: 12, top: this.statusBarHeight + 4, bottom: 4 })
     .alignItems(VerticalAlign.Center)
     .backgroundColor($r('app.color.app_surface_1'))
   }

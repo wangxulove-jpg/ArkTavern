@@ -42,6 +42,10 @@ export struct AddCharacterPage {
   @State activeTab: number = TAB_NEW;
   @State viewModel: CharacterListViewModel | null = null;
   @State isInitializing: boolean = true;
+  /** 顶部状态栏避让高度(由 EntryAbility 写入 AppStorage) */
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
+  /** 底部导航栏/手势条避让高度 */
+  @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
 
   async aboutToAppear(): Promise<void> {
     try {
@@ -202,6 +206,7 @@ export struct AddCharacterPage {
       .width('100%')
       .height('100%')
       .backgroundColor($r('app.color.app_bg'))
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     }
     .title('')
     .hideTitleBar(true)
@@ -241,8 +246,7 @@ export struct AddCharacterPage {
         .enabled(false)
     }
     .width('100%')
-    .height(56)
-    .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+    .padding({ left: 8, right: 8, top: this.statusBarHeight + 4, bottom: 4 })
     .alignItems(VerticalAlign.Center)
     .backgroundColor($r('app.color.app_surface_1'))
 

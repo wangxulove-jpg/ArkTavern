@@ -36,6 +36,8 @@ export struct CharacterListPage {
   @State formScenario: string = '';
   @State formFirstMessage: string = '';
   @State formSystemPrompt: string = '';
+  /** 底部导航栏/手势条避让高度(由 EntryAbility 写入 AppStorage) */
+  @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
 
   async aboutToAppear(): Promise<void> {
     const charService = AppServices.getCharacterService();
@@ -103,7 +105,7 @@ export struct CharacterListPage {
           .fontColor(Color.White)
           .borderRadius(24)
           .padding({ left: 20, right: 20, top: 10, bottom: 10 })
-          .position({ right: 16, bottom: 16 })
+          .position({ right: 16, bottom: this.navigationBarHeight + 16 })
           .onClick(() => {
             this.viewModel!.showNewDialog();
             this.syncFormFromViewModel();

@@ -1,9 +1,10 @@
 /**
  * ChatSessionRootView 对话记录 Tab 根视图
  *
- * 重新设计:
- * - 顶部仅中文标题"对话记录"(无英文副标题、无冗余描述、无大块空白)
- * - 列表项:[角色头像] 对话名称 时间 / 角色名称 / 最后消息摘要
+ * UI-SESSIONS-01 视觉重构(设计依据:sessions_list.md / SESSIONS_LIST_005.md):
+ * - 顶栏:居中标题"聊天"(H2 18fp Medium)
+ * - 会话卡:[头像] [名称 时间] / [预览单行截断](两行结构)
+ * - 标题显示策略:优先 chat.title → 角色名 → "新对话"
  * - 左滑显示重命名按钮
  * - 重命名:原生 TextInputDialog,空名称拒绝
  * - 角色已删除显示"未知角色",不崩溃
@@ -40,6 +41,12 @@ export struct ChatSessionRootView {
   @State viewModel: ChatSessionListViewModel | null = null;
   @State isInitializing: boolean = true;
   @State initError: string = '';
+  /**
+   * 组件本地会话列表(@State 直接装饰数组,赋值新数组即触发 ForEach 重渲染)。
+   * 说明:@State 装饰 `ViewModel | null` 联合类型时,对 @Observed 实例属性的观察不可靠,
+   * 因此显式维护本地 sessions 数组,在每次 reload / renameSession 后同步。
+   */
+  @State sessions: ChatSessionListItem[] = [];
   /** 重命名弹窗目标 chatId(空时不显示) */
   @State renameTargetId: string = '';
   /** 重命名弹窗输入值 */
@@ -52,6 +59,8 @@ export struct ChatSessionRootView {
    * 说明:本组件作为 HdsTabs 的 TabContent 嵌入,onPageShow 不会被调用。
    */
   @StorageProp('chatListVersion') @Watch('onListVersionChange') chatListVersion: number = 0;
+  /** 顶部状态栏避让高度(由 EntryAbility 写入 AppStorage) */
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
 
   async aboutToAppear(): Promise<void> {
     try {
@@ -59,6 +68,7 @@ export struct ChatSessionRootView {
       const vm: ChatSessionListViewModel = AppServices.createChatSessionListViewModel();
       this.viewModel = vm;
       await vm.reload();
+      this.sessions = vm.sessions;
       this.isInitializing = false;
     } catch (e) {
       this.isInitializing = false;
@@ -74,7 +84,18 @@ export struct ChatSessionRootView {
     if (this.viewModel === null || !AppServices.isStarted()) {
       return;
     }
-    this.viewModel!.reload().catch((): void => {});
+    this.viewModel!.reload()
+      .then((): void => {
+        this.sessions = this.viewModel!.sessions;
+      })
+      .catch((): void => {});
+  }
+
+  /** 同步 viewModel.sessions 到本地 @State sessions(触发 ForEach 重渲染) */
+  private syncSessions(): void {
+    if (this.viewModel !== null) {
+      this.sessions = this.viewModel!.sessions;
+    }
   }
 
   /** 点击会话项:写入 pendingChatId 和 pendingCharacterId(如有),push 到 ChatPage */
@@ -87,13 +108,6 @@ export struct ChatSessionRootView {
     } else {
       AppStorage.set<string>(PENDING_CHARACTER_ID_KEY, '');
     }
-    this.pathStack.pushPath({ name: 'ChatPage' });
-  }
-
-  /** 开始新对话:清除 pendingChatId,push 到 ChatPage(让 ChatPage 创建新会话) */
-  private startNewChat(): void {
-    AppStorage.setOrCreate<string>(PENDING_CHAT_ID_KEY, '');
-    AppStorage.set<string>(PENDING_CHARACTER_ID_KEY, '');
     this.pathStack.pushPath({ name: 'ChatPage' });
   }
 
@@ -134,6 +148,8 @@ export struct ChatSessionRootView {
       await this.viewModel.renameSession(this.renameTargetId, trimmed);
       this.renameTargetId = '';
       this.renameInput = '';
+      // 显式同步到本地 @State sessions,触发 ForEach 重渲染
+      this.syncSessions();
       // 通知其他可能监听的页面(避免 ChatPage 复用旧 title)
       this.bumpListVersion();
     } catch (e) {
@@ -155,10 +171,11 @@ export struct ChatSessionRootView {
   build() {
     Stack() {
       Column() {
-        // 顶部仅保留中文标题,无副标题无描述
+        // 顶栏:居中标题"聊天"(H2 18fp Medium)
+        // 关键:Column 自身加 backgroundColor,让 expandSafeArea(TOP) 延伸的状态栏区域也被填充
         Row() {
-          Text($r('app.string.tab_sessions'))
-            .fontSize($r('app.float.app_font_title'))
+          Text('聊天')
+            .fontSize(18)
             .fontWeight(FontWeight.Medium)
             .fontColor($r('app.color.app_text_primary'))
         }
@@ -166,10 +183,13 @@ export struct ChatSessionRootView {
         .padding({
           left: $r('app.float.app_spacing_20'),
           right: $r('app.float.app_spacing_20'),
-          top: $r('app.float.app_spacing_16'),
+          // 顶部 padding = 状态栏高度 + 原始间距 16(避开状态栏)
+          top: this.statusBarHeight + 16,
           bottom: $r('app.float.app_spacing_8')
         })
+        .justifyContent(FlexAlign.Center)
         .alignItems(VerticalAlign.Center)
+        .backgroundColor($r('app.color.app_bg'))
 
         // 错误提示
         if (this.viewModel !== null && this.viewModel!.errorMessage.length > 0) {
@@ -192,12 +212,12 @@ export struct ChatSessionRootView {
         } else {
           this.sessionListArea()
         }
-
-        // 底部"开始新对话"按钮
-        this.bottomNewChatButton()
       }
       .width('100%')
       .height('100%')
+      .backgroundColor($r('app.color.app_bg'))
+      // 关键:让 Column 自身延伸到状态栏区域,覆盖 HdsTabs 可能的默认背景
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP])
 
       // 重命名弹窗
       if (this.renameTargetId.length > 0) {
@@ -207,12 +227,13 @@ export struct ChatSessionRootView {
     .width('100%')
     .height('100%')
     .backgroundColor($r('app.color.app_bg'))
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP])
   }
 
   /** 会话列表区:加载/空/列表 */
   @Builder
   sessionListArea() {
-    if (this.viewModel === null || this.viewModel!.sessions.length === 0) {
+    if (this.sessions.length === 0) {
       Column() {
         EmptyStateView({
           title: $r('app.string.tab_sessions_empty'),
@@ -224,7 +245,7 @@ export struct ChatSessionRootView {
       .justifyContent(FlexAlign.Center)
     } else {
       List() {
-        ForEach(this.viewModel!.sessions, (item: ChatSessionListItem) => {
+        ForEach(this.sessions, (item: ChatSessionListItem) => {
           ListItem() {
             this.sessionCard(item)
           }
@@ -236,7 +257,7 @@ export struct ChatSessionRootView {
               }
             }
           })
-        }, (item: ChatSessionListItem) => item.chat.id)
+        }, (item: ChatSessionListItem) => item.chat.id + '|' + item.chat.title)
       }
       .width('100%')
       .layoutWeight(1)
@@ -246,7 +267,8 @@ export struct ChatSessionRootView {
         left: $r('app.float.app_spacing_16'),
         right: $r('app.float.app_spacing_16'),
         top: $r('app.float.app_spacing_8'),
-        bottom: 100
+        // 留给悬浮 Tab 栏(barBottomMargin=24 + Tab 高度约 56 = 80)
+        bottom: 80
       })
     }
   }
@@ -289,7 +311,7 @@ export struct ChatSessionRootView {
           objectFit: ImageFit.Cover
         })
 
-        // 中间文本区
+        // 中间文本区(两行结构:名称+时间 / 预览)
         Column() {
           // 第一行:对话名称 + 时间
           Row() {
@@ -309,24 +331,12 @@ export struct ChatSessionRootView {
           .width('100%')
           .alignItems(VerticalAlign.Center)
 
-          // 第二行:角色名称
-          Text(this.getCharacterName(item))
-            .fontSize($r('app.float.app_font_caption'))
-            .fontColor(item.isCharacterDeleted
-              ? $r('app.color.app_text_tertiary')
-              : $r('app.color.app_text_secondary'))
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .margin({ top: 2 })
-            .width('100%')
-            .textAlign(TextAlign.Start)
-
-          // 第三行:最后消息摘要(空时不占高度)
+          // 第二行:最后消息摘要(单行截断,空时不占高度)
           if (item.lastMessagePreview.length > 0) {
             Text(item.lastMessagePreview)
               .fontSize($r('app.float.app_font_caption'))
               .fontColor($r('app.color.app_text_tertiary'))
-              .maxLines(2)
+              .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .margin({ top: 4 })
               .width('100%')
@@ -348,20 +358,21 @@ export struct ChatSessionRootView {
     }
   }
 
-  /** 获取会话标题(空 title 显示"新对话") */
+  /**
+   * 获取会话标题(规范:名称=角色名;支持重命名优先)。
+   * 优先级:chat.title → 角色名 → "未知角色"(已删除) → "新对话"
+   */
   private getSessionTitle(item: ChatSessionListItem): string {
-    return item.chat.title.length > 0 ? item.chat.title : '新对话';
-  }
-
-  /** 获取角色显示名(已删除显示"未知角色",普通助手显示"普通助手") */
-  private getCharacterName(item: ChatSessionListItem): string {
+    if (item.chat.title.length > 0) {
+      return item.chat.title;
+    }
     if (item.isCharacterDeleted) {
       return UNKNOWN_CHARACTER_NAME;
     }
-    if (item.character !== null) {
+    if (item.character !== null && item.character.name.length > 0) {
       return item.character.name;
     }
-    return '普通助手';
+    return '新对话';
   }
 
   /** 获取头像占位首字(已删除显示"?",有角色用角色名首字,无角色用"助") */
@@ -375,29 +386,7 @@ export struct ChatSessionRootView {
     return '助';
   }
 
-  /** 底部"开始新对话"按钮 */
-  @Builder
-  bottomNewChatButton() {
-    Row() {
-      Button($r('app.string.tab_sessions_new_chat'))
-        .fontSize($r('app.float.app_font_body'))
-        .backgroundColor($r('app.color.app_accent'))
-        .fontColor($r('app.color.app_on_accent'))
-        .borderRadius($r('app.float.app_radius_md'))
-        .height(44)
-        .width('100%')
-        .onClick(() => {
-          this.startNewChat();
-        })
-    }
-    .width('100%')
-    .padding({
-      left: $r('app.float.app_spacing_16'),
-      right: $r('app.float.app_spacing_16'),
-      top: $r('app.float.app_spacing_8'),
-      bottom: $r('app.float.app_spacing_24')
-    })
-  }
+  /** 底部"开始新对话"按钮已移除(规范未要求;新建对话入口统一由角色卡 Tab 提供) */
 
   /** 重命名弹窗(原生 Stack 遮罩 + 输入框) */
   @Builder

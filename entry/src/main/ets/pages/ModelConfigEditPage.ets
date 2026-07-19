@@ -36,6 +36,8 @@ const MAX_NAME_LENGTH: number = 32;
 @Component
 export struct ModelConfigEditPage {
   @State viewModel: ModelSettingsViewModel | null = null;
+  /** 底部导航栏/手势条避让高度(由 EntryAbility 写入 AppStorage) */
+  @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
 
   aboutToAppear(): void {
     this.viewModel = AppStorage.get<ModelSettingsViewModel>('ModelSettingsViewModel') ?? null;
@@ -490,7 +492,7 @@ export struct ModelConfigEditPage {
           })
       }
       .width('100%')
-      .padding({ left: 16, right: 16, top: 12, bottom: 24 })
+      .padding({ left: 16, right: 16, top: 12, bottom: this.navigationBarHeight + 24 })
       .backgroundColor($r('app.color.page_background'))
     }
   }

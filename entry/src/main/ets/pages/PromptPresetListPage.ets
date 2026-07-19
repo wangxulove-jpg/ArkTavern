@@ -19,6 +19,10 @@ interface PresetEditRouteParam {
 export struct PromptPresetListPage {
   @State viewModel: PromptPresetListViewModel = AppServices.createPromptPresetListViewModel();
   @State refreshKey: number = 0;
+  /** 顶部状态栏避让高度(由 EntryAbility 写入 AppStorage) */
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
+  /** 底部导航栏/手势条避让高度 */
+  @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
 
   aboutToAppear(): void {
     this.viewModel.initialize();
@@ -59,7 +63,7 @@ export struct PromptPresetListPage {
             })
         }
         .width('100%')
-        .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+        .padding({ left: 12, right: 12, top: this.statusBarHeight + 8, bottom: 8 })
         .alignItems(VerticalAlign.Center)
 
         // 当前状态
@@ -154,6 +158,7 @@ export struct PromptPresetListPage {
       .width('100%')
       .height('100%')
       .backgroundColor('#FFFFFF')
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     }
     .title('')
     .hideTitleBar(true)

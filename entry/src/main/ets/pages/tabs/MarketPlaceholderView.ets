@@ -61,9 +61,12 @@ export struct MarketPlaceholderView {
       }
       .width('100%')
       .height('100%')
+      .backgroundColor($r('app.color.app_bg'))
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP])
     }
     .width('100%')
     .height('100%')
     .backgroundColor($r('app.color.app_bg'))
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP])
   }
 }

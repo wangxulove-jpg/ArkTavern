@@ -62,6 +62,10 @@ export struct ChatPage {
   @State showClearConfirm: boolean = false;
 
   @StorageLink('branchChangeSeq') @Watch('onBranchChangeSeqChanged') branchChangeSeq: number = 0;
+  /** 顶部状态栏避让高度(由 EntryAbility 写入 AppStorage) */
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
+  /** 底部导航栏/手势条避让高度 */
+  @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
   private scroller: Scroller = new Scroller();
   private lastMessageCount: number = 0;
   private editDialogController: CustomDialogController | null = null;
@@ -100,7 +104,8 @@ export struct ChatPage {
     } else if (pendingCharacterId.length > 0) {
       AppStorage.set<string>('pendingCharacterId', '');
       this.loadCharacterAvatar(pendingCharacterId);
-      vm.initialize(pendingCharacterId).catch((): void => {});
+      // 角色卡"新建对话"入口:forceNew=true 跳过 openLatestSession,直接创建新会话
+      vm.initialize(pendingCharacterId, true).catch((): void => {});
     } else {
       vm.initialize();
       // 从当前角色加载头像
@@ -309,7 +314,7 @@ export struct ChatPage {
       .width('100%')
       .height('100%')
       .backgroundColor($r('app.color.app_bg'))
-      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     }
     .title('')
     .hideTitleBar(true)
@@ -388,8 +393,9 @@ export struct ChatPage {
       })
     }
     .width('100%')
-    .height(56)
-    .padding({ left: 4, right: 4, top: 4, bottom: 4 })
+    // 顶部 padding = 状态栏高度 + 原始间距 4(避开状态栏,按钮不被遮挡)
+    // 不设 height,让 padding + 按钮高度自适应撑开,避免内容溢出
+    .padding({ left: 4, right: 4, top: this.statusBarHeight + 4, bottom: 4 })
     .alignItems(VerticalAlign.Center)
     .backgroundColor($r('app.color.app_surface_1'))
   }
@@ -710,7 +716,7 @@ export struct ChatPage {
         }
       }
       .width('100%')
-      .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+      .padding({ left: 12, right: 12, top: 8, bottom: this.navigationBarHeight + 8 })
       .alignItems(VerticalAlign.Bottom)
     }
     .backgroundColor($r('app.color.app_surface_1'))

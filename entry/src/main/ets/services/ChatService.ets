@@ -322,7 +322,7 @@ export class ChatService {
    *
    * @param character 当前角色(可选)
    */
-  async initializeSession(character?: Character): Promise<void> {
+  async initializeSession(character?: Character, forceNew: boolean = false): Promise<void> {
     if (this.disposed) {
       throw new Error('ChatService disposed, cannot initialize session');
     }
@@ -333,7 +333,7 @@ export class ChatService {
       await this.initializingPromise;
       return;
     }
-    const promise: Promise<void> = this.doInitializeSession(character);
+    const promise: Promise<void> = this.doInitializeSession(character, forceNew);
     this.initializingPromise = promise;
     try {
       await promise;
@@ -342,7 +342,7 @@ export class ChatService {
     }
   }
 
-  private async doInitializeSession(character?: Character): Promise<void> {
+  private async doInitializeSession(character?: Character, forceNew: boolean = false): Promise<void> {
     this.character = character !== undefined ? character : null;
 
     // 无持久化服务:回退到同步 initContext
@@ -354,8 +354,11 @@ export class ChatService {
     const characterId: string | undefined =
       this.character !== null ? this.character.id : undefined;
     try {
-      const session: PersistedChatSession | null =
-        await this.persistenceService.openLatestSession(characterId);
+      // forceNew=true:跳过 openLatestSession,直接创建新会话(角色卡"新建对话"入口)
+      let session: PersistedChatSession | null = null;
+      if (!forceNew) {
+        session = await this.persistenceService.openLatestSession(characterId);
+      }
 
       if (session !== null) {
         // 恢复已有会话
@@ -406,6 +409,7 @@ export class ChatService {
 
   /**
    * 创建新会话并注入 firstMessage(如果有角色且 firstMessage 非空)。
+   * 默认 title 使用角色名(无角色时为"新对话",由 persistenceService 兜底)。
    */
   private async createNewSession(characterId?: string): Promise<void> {
     if (this.persistenceService === null) {
@@ -414,6 +418,11 @@ export class ChatService {
 
     const hasFirstMessage: boolean =
       this.character !== null && this.character.firstMessage.length > 0;
+    // 默认 title 优先用角色名(规范:名称=角色名),无角色时传 undefined 由 persistence 兜底为"新对话"
+    const defaultTitle: string | undefined =
+      this.character !== null && this.character.name.length > 0
+        ? this.character.name
+        : undefined;
 
     if (hasFirstMessage && this.character !== null) {
       const firstMsg: ChatMessage = {
@@ -427,14 +436,14 @@ export class ChatService {
       };
       const session: PersistedChatSession =
         await this.persistenceService.createSessionWithFirstMessage(
-          characterId, undefined, firstMsg
+          characterId, defaultTitle, firstMsg
         );
       this.currentChatId = session.chat.id;
       this.messages = [firstMsg];
       this.currentSequenceNumber = 1;
     } else {
       const session: PersistedChatSession =
-        await this.persistenceService.createSession(characterId);
+        await this.persistenceService.createSession(characterId, defaultTitle);
       this.currentChatId = session.chat.id;
       this.messages = [];
       this.currentSequenceNumber = 0;

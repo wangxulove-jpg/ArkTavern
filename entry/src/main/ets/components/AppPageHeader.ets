@@ -22,6 +22,8 @@ export struct AppPageHeader {
   title: ResourceStr = '';
   /** 副标题(必填,通常为英文名或分类) */
   subtitle: ResourceStr = '';
+  /** 顶部状态栏避让高度(由 AppStorage 注入,默认 0 表示不避让) */
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
 
   build(): void {
     Column() {
@@ -48,8 +50,12 @@ export struct AppPageHeader {
     .padding({
       left: $r('app.float.app_spacing_20'),
       right: $r('app.float.app_spacing_20'),
-      top: $r('app.float.app_spacing_24'),
+      // 顶部 padding = 状态栏高度 + 原始间距 24
+      top: this.statusBarHeight + 24,
       bottom: $r('app.float.app_spacing_12')
     })
+    // 关键:加 backgroundColor,确保 expandSafeArea 状态栏区域被填充,
+    // 同时作为固定顶栏时不透出下方滚动内容
+    .backgroundColor($r('app.color.app_bg'))
   }
 }

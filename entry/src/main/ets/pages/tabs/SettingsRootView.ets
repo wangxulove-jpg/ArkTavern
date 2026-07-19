@@ -21,88 +21,95 @@ export struct SettingsRootView {
 
   build() {
     Stack() {
-      Scroll() {
-        Column() {
-          // ===== 顶部标题区 =====
-          AppPageHeader({
-            title: $r('app.string.tab_settings'),
-            subtitle: $r('app.string.tab_settings_subtitle')
-          })
-
-          Text($r('app.string.tab_settings_desc'))
-            .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_tertiary'))
-            .width('100%')
-            .textAlign(TextAlign.Start)
-            .padding({
-              left: $r('app.float.app_spacing_20'),
-              right: $r('app.float.app_spacing_20'),
-              bottom: $r('app.float.app_spacing_12')
-            })
-
-          // ===== AI 与对话 =====
-          this.sectionHeader($r('app.string.tab_settings_section_ai'))
-
-          this.entryCard(
-            $r('app.string.tab_settings_model'),
-            $r('app.string.tab_settings_model_desc'),
-            () => {
-              this.pathStack.pushPath({ name: 'ModelSettingsPage' });
-            }
-          )
-
-          this.entryCard(
-            $r('app.string.tab_settings_lorebook'),
-            $r('app.string.tab_settings_lorebook_desc'),
-            () => {
-              this.pathStack.pushPath({ name: 'LorebookPage' });
-            }
-          )
-
-          this.entryCard(
-            $r('app.string.tab_settings_preset'),
-            $r('app.string.tab_settings_preset_desc'),
-            () => {
-              this.pathStack.pushPath({ name: 'PromptPresetListPage' });
-            }
-          )
-
-          // ===== 应用 =====
-          this.sectionHeader($r('app.string.tab_settings_section_app'))
-
-          this.entryCard(
-            $r('app.string.tab_settings_app_settings'),
-            $r('app.string.tab_settings_app_settings_desc'),
-            () => {
-              this.pathStack.pushPath({ name: 'AppSettingsPage' });
-            }
-          )
-
-          // ===== 开发工具(最底部,低优先级) =====
-          this.sectionHeader($r('app.string.tab_settings_section_dev'))
-
-          this.entryCard(
-            $r('app.string.tab_settings_dev_tools'),
-            $r('app.string.tab_settings_dev_tools_desc'),
-            () => {
-              this.pathStack.pushPath({ name: 'RealSsePocPage' });
-            }
-          )
-        }
-        .width('100%')
-        .padding({
-          bottom: $r('app.float.app_spacing_24')
+      Column() {
+        // ===== 顶部标题区(固定,不随下方滚动) =====
+        AppPageHeader({
+          title: $r('app.string.tab_settings'),
+          subtitle: $r('app.string.tab_settings_subtitle')
         })
+
+        // ===== 可滚动内容区 =====
+        Scroll() {
+          Column() {
+            Text($r('app.string.tab_settings_desc'))
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_text_tertiary'))
+              .width('100%')
+              .textAlign(TextAlign.Start)
+              .padding({
+                left: $r('app.float.app_spacing_20'),
+                right: $r('app.float.app_spacing_20'),
+                bottom: $r('app.float.app_spacing_12')
+              })
+
+            // ===== AI 与对话 =====
+            this.sectionHeader($r('app.string.tab_settings_section_ai'))
+
+            this.entryCard(
+              $r('app.string.tab_settings_model'),
+              $r('app.string.tab_settings_model_desc'),
+              () => {
+                this.pathStack.pushPath({ name: 'ModelSettingsPage' });
+              }
+            )
+
+            this.entryCard(
+              $r('app.string.tab_settings_lorebook'),
+              $r('app.string.tab_settings_lorebook_desc'),
+              () => {
+                this.pathStack.pushPath({ name: 'LorebookPage' });
+              }
+            )
+
+            this.entryCard(
+              $r('app.string.tab_settings_preset'),
+              $r('app.string.tab_settings_preset_desc'),
+              () => {
+                this.pathStack.pushPath({ name: 'PromptPresetListPage' });
+              }
+            )
+
+            // ===== 应用 =====
+            this.sectionHeader($r('app.string.tab_settings_section_app'))
+
+            this.entryCard(
+              $r('app.string.tab_settings_app_settings'),
+              $r('app.string.tab_settings_app_settings_desc'),
+              () => {
+                this.pathStack.pushPath({ name: 'AppSettingsPage' });
+              }
+            )
+
+            // ===== 开发工具(最底部,低优先级) =====
+            this.sectionHeader($r('app.string.tab_settings_section_dev'))
+
+            this.entryCard(
+              $r('app.string.tab_settings_dev_tools'),
+              $r('app.string.tab_settings_dev_tools_desc'),
+              () => {
+                this.pathStack.pushPath({ name: 'RealSsePocPage' });
+              }
+            )
+          }
+          .width('100%')
+          .padding({
+            bottom: $r('app.float.app_spacing_24')
+          })
+        }
+        .scrollable(ScrollDirection.Vertical)
+        .scrollBar(BarState.Off)
+        .edgeEffect(EdgeEffect.Spring)
+        .layoutWeight(1)
+        .width('100%')
       }
-      .scrollable(ScrollDirection.Vertical)
-      .scrollBar(BarState.Off)
-      .edgeEffect(EdgeEffect.Spring)
       .width('100%')
       .height('100%')
+      .backgroundColor($r('app.color.app_bg'))
     }
     .width('100%')
     .height('100%')
     .backgroundColor($r('app.color.app_bg'))
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP])
   }
 
   /** 分组标题 */

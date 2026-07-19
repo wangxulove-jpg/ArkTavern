@@ -60,6 +60,10 @@ export struct BranchMapPage {
   );
   @State readyHandled: boolean = false;
   @State errorText: string = '';
+  /** 顶部状态栏避让高度(由 EntryAbility 写入 AppStorage) */
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
+  /** 底部导航栏/手势条避让高度 */
+  @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
 
   private verticalScroller: Scroller = new Scroller();
   private horizontalScroller: Scroller = new Scroller();
@@ -101,6 +105,7 @@ export struct BranchMapPage {
       .width('100%')
       .height('100%')
       .backgroundColor(COLOR_PAGE_BG)
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     }
     .title('')
     .hideTitleBar(true)
@@ -135,8 +140,7 @@ export struct BranchMapPage {
         .width(44)
     }
     .width('100%')
-    .height(52)
-    .padding({ left: 12, right: 12 })
+    .padding({ left: 12, right: 12, top: this.statusBarHeight, bottom: 0 })
     .backgroundColor(COLOR_TITLE_BAR_BG)
     .alignItems(VerticalAlign.Center)
   }
@@ -276,7 +280,7 @@ export struct BranchMapPage {
           })
       }
       .width('100%')
-      .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+      .padding({ left: 16, right: 16, top: 12, bottom: this.navigationBarHeight + 12 })
       .backgroundColor(COLOR_TITLE_BAR_BG)
       .alignItems(VerticalAlign.Center)
     }
