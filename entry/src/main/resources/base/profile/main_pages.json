@@ -5,6 +5,10 @@
     "pages/CharacterListPage",
     "pages/CharacterEditPage",
     "pages/AddCharacterPage",
+    "pages/LorebookPage",
+    "pages/ModelSettingsPage",
+    "pages/ModelConfigEditPage",
+    "pages/AppSettingsPage",
     "pages/PromptPresetListPage",
     "pages/PromptPresetEditPage",
     "pages/BranchMapPage"

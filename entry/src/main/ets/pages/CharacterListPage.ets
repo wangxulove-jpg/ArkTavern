@@ -22,12 +22,12 @@ import { ParsedCharacterCard } from '../parser/CharacterCardJsonParser';
 import { sanitizeFileName } from '../parser/CharacterCardJsonWriter';
 import { AppServices } from '../services/AppServices';
 import { picker } from '@kit.CoreFileKit';
-import { promptAction } from '@kit.ArkUI';
+import { promptAction, router } from '@kit.ArkUI';
 import { image } from '@kit.ImageKit';
 
 @Entry
 @Component
-export struct CharacterListPage {
+struct CharacterListPage {
   @State viewModel: CharacterListViewModel | null = null;
   /** 表单字段(使用 @State + $$ 双向绑定,兼容 MCP inputText) */
   @State formName: string = '';
@@ -36,6 +36,8 @@ export struct CharacterListPage {
   @State formScenario: string = '';
   @State formFirstMessage: string = '';
   @State formSystemPrompt: string = '';
+  /** 顶部状态栏避让高度(由 EntryAbility 写入 AppStorage) */
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   /** 底部导航栏/手势条避让高度(由 EntryAbility 写入 AppStorage) */
   @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
 
@@ -47,25 +49,41 @@ export struct CharacterListPage {
   }
 
   build() {
-    NavDestination() {
-      Stack() {
-        Column() {
-          // 顶部操作栏
-          Row() {
-            Blank()
-            Button($r('app.string.character_import'))
-              .fontSize(13)
-              .backgroundColor($r('sys.color.ohos_id_color_emphasize'))
-              .fontColor(Color.White)
-              .borderRadius(16)
-              .height(32)
-              .padding({ left: 12, right: 12 })
-              .onClick(() => {
-                this.openImportPicker();
-              })
-          }
-          .width('100%')
-          .padding({ left: 16, right: 16, top: 12, bottom: 4 })
+    Stack() {
+      Column() {
+        // 顶部标题栏:返回 + 标题 + 导入
+        Row() {
+          SymbolGlyph($r('sys.symbol.chevron_left'))
+            .fontSize(24)
+            .fontColor([$r('sys.color.ohos_id_color_text_primary')])
+            .padding(8)
+            .onClick(() => {
+              router.back();
+            })
+
+          Text($r('app.string.nav_character_list_title'))
+            .fontSize($r('app.float.nav_title_font_size'))
+            .fontColor($r('sys.color.ohos_id_color_text_primary'))
+            .fontWeight(FontWeight.Medium)
+            .layoutWeight(1)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .padding({ left: 8, right: 8 })
+
+          Button($r('app.string.character_import'))
+            .fontSize(13)
+            .backgroundColor($r('sys.color.ohos_id_color_emphasize'))
+            .fontColor(Color.White)
+            .borderRadius(16)
+            .height(32)
+            .padding({ left: 12, right: 12 })
+            .onClick(() => {
+              this.openImportPicker();
+            })
+        }
+        .width('100%')
+        .padding({ left: 8, right: 8, top: this.statusBarHeight + 12, bottom: 4 })
+        .alignItems(VerticalAlign.Center)
 
           // 导入错误提示
           if (this.viewModel!.importError.length > 0) {
@@ -129,9 +147,8 @@ export struct CharacterListPage {
       .width('100%')
       .height('100%')
       .backgroundColor($r('sys.color.ohos_id_color_sub_background'))
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     }
-    .title($r('app.string.nav_character_list_title'))
-  }
 
   // ===== 空状态 =====
 

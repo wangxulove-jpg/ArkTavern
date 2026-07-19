@@ -16,6 +16,7 @@ import { LorebookViewModel } from '../viewmodels/LorebookViewModel';
 import { LorebookService } from '../services/LorebookService';
 import { Lorebook, LorebookEntry } from '../models/Lorebook';
 import { AppServices } from '../services/AppServices';
+import { router } from '@kit.ArkUI';
 
 const COLOR_CURRENT: string = '#5B7CFA';
 const COLOR_DISABLED: string = '#999999';
@@ -25,11 +26,12 @@ const COLOR_ENTRY_BG: string = '#F5F5F5';
 
 @Entry
 @Component
-export struct LorebookPage {
+struct LorebookPage {
   @State viewModel: LorebookViewModel | null = null;
   @State lorebooks: Lorebook[] = [];
   @State currentLorebookId: string | null = null;
-  pathStack: NavPathStack = new NavPathStack();
+  /** 顶部状态栏避让高度(由 EntryAbility 写入 AppStorage) */
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
 
   aboutToAppear(): void {
     const service: LorebookService = AppServices.getLorebookService();
@@ -43,80 +45,100 @@ export struct LorebookPage {
   }
 
   build() {
-    NavDestination() {
-      Stack() {
-        Column() {
-          // 错误提示
-          if (this.viewModel !== null && this.viewModel.errorMessage.length > 0) {
-            Text(this.viewModel.errorMessage)
-              .fontSize(13)
-              .fontColor(COLOR_ERROR)
-              .width('100%')
-              .padding({ left: 16, right: 16, top: 8, bottom: 4 })
-          }
+    Stack() {
+      Column() {
+        // 顶部标题栏:返回 + 标题
+        Row() {
+          SymbolGlyph($r('sys.symbol.chevron_left'))
+            .fontSize(24)
+            .fontColor([$r('sys.color.ohos_id_color_text_primary')])
+            .padding(8)
+            .onClick(() => {
+              router.back();
+            })
 
-          // 内容区
-          if (this.lorebooks.length === 0) {
-            this.emptyState();
-          } else {
-            Scroll() {
-              Column() {
-                ForEach(this.lorebooks, (lb: Lorebook) => {
-                  this.lorebookCard(lb);
-                }, (lb: Lorebook) => lb.id + '_' + lb.updatedAt);
-                Blank().height(80);
-              }
-              .width('100%')
-            }
-            .scrollable(ScrollDirection.Vertical)
-            .scrollBar(BarState.Auto)
-            .edgeEffect(EdgeEffect.Spring)
-            .width('100%')
-            .height('100%')
-          }
+          Text($r('app.string.nav_lorebook_title'))
+            .fontSize($r('app.float.nav_title_font_size'))
+            .fontColor($r('sys.color.ohos_id_color_text_primary'))
+            .fontWeight(FontWeight.Medium)
+            .layoutWeight(1)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .padding({ left: 8, right: 40 })
         }
         .width('100%')
-        .height('100%')
+        .padding({ top: this.statusBarHeight + 12, left: 12, right: 12, bottom: 12 })
+        .alignItems(VerticalAlign.Center)
 
-        // FAB
-        if (this.viewModel !== null) {
-          Button($r('app.string.lorebook_new'))
-            .fontSize(14)
-            .backgroundColor($r('sys.color.ohos_id_color_emphasize'))
-            .borderRadius(24)
-            .padding({ left: 20, right: 20, top: 10, bottom: 10 })
-            .position({ x: '80%', y: '90%' })
-            .onClick(() => {
-              this.viewModel!.showNewLorebookDialog();
-            })
+        // 错误提示
+        if (this.viewModel !== null && this.viewModel.errorMessage.length > 0) {
+          Text(this.viewModel.errorMessage)
+            .fontSize(13)
+            .fontColor(COLOR_ERROR)
+            .width('100%')
+            .padding({ left: 16, right: 16, top: 8, bottom: 4 })
         }
 
-        // 世界书编辑对话框
-        if (this.viewModel !== null && this.viewModel.showLorebookDialog) {
-          this.lorebookDialog();
-        }
-
-        // 条目编辑对话框
-        if (this.viewModel !== null && this.viewModel.showEntryDialog) {
-          this.entryDialog();
-        }
-
-        // 删除确认(世界书)
-        if (this.viewModel !== null && this.viewModel.deleteTargetLorebook !== null) {
-          this.deleteLorebookConfirm();
-        }
-
-        // 删除确认(条目)
-        if (this.viewModel !== null && this.viewModel.deleteTargetEntry !== null) {
-          this.deleteEntryConfirm();
+        // 内容区
+        if (this.lorebooks.length === 0) {
+          this.emptyState();
+        } else {
+          Scroll() {
+            Column() {
+              ForEach(this.lorebooks, (lb: Lorebook) => {
+                this.lorebookCard(lb);
+              }, (lb: Lorebook) => lb.id + '_' + lb.updatedAt);
+              Blank().height(80);
+            }
+            .width('100%')
+          }
+          .scrollable(ScrollDirection.Vertical)
+          .scrollBar(BarState.Auto)
+          .edgeEffect(EdgeEffect.Spring)
+          .width('100%')
+          .height('100%')
         }
       }
       .width('100%')
       .height('100%')
-      .backgroundColor($r('sys.color.ohos_id_color_sub_background'))
+
+      // FAB
+      if (this.viewModel !== null) {
+        Button($r('app.string.lorebook_new'))
+          .fontSize(14)
+          .backgroundColor($r('sys.color.ohos_id_color_emphasize'))
+          .borderRadius(24)
+          .padding({ left: 20, right: 20, top: 10, bottom: 10 })
+          .position({ x: '80%', y: '90%' })
+          .onClick(() => {
+            this.viewModel!.showNewLorebookDialog();
+          })
+      }
+
+      // 世界书编辑对话框
+      if (this.viewModel !== null && this.viewModel.showLorebookDialog) {
+        this.lorebookDialog();
+      }
+
+      // 条目编辑对话框
+      if (this.viewModel !== null && this.viewModel.showEntryDialog) {
+        this.entryDialog();
+      }
+
+      // 删除确认(世界书)
+      if (this.viewModel !== null && this.viewModel.deleteTargetLorebook !== null) {
+        this.deleteLorebookConfirm();
+      }
+
+      // 删除确认(条目)
+      if (this.viewModel !== null && this.viewModel.deleteTargetEntry !== null) {
+        this.deleteEntryConfirm();
+      }
     }
-    .title($r('app.string.nav_lorebook_title'))
+    .width('100%')
+    .height('100%')
     .backgroundColor($r('sys.color.ohos_id_color_sub_background'))
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 
   // ===== 空状态 =====

@@ -15,13 +15,17 @@ import { ModelSettingsViewModel } from '../viewmodels/ModelSettingsViewModel';
 import { AppServices } from '../services/AppServices';
 import { ProviderConfig } from '../models/ProviderConfig';
 import { ProviderType } from '../models/ProviderType';
+import { router } from '@kit.ArkUI';
 
 const APP_STORAGE_VM_KEY: string = 'ModelSettingsViewModel';
 
+@Entry
 @Component
-export struct ModelSettingsPage {
+struct ModelSettingsPage {
   @State viewModel: ModelSettingsViewModel | null = null;
   @State initError: string = '';
+  /** 顶部状态栏避让高度(由 EntryAbility 写入 AppStorage) */
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
 
   async aboutToAppear(): Promise<void> {
     try {
@@ -42,15 +46,42 @@ export struct ModelSettingsPage {
   }
 
   build() {
-    NavDestination() {
-      if (this.viewModel === null) {
-        this.loadingView()
-      } else {
-        this.mainView()
+    Stack() {
+      Column() {
+        // 顶部标题栏:返回 + 标题
+        Row() {
+          SymbolGlyph($r('sys.symbol.chevron_left'))
+            .fontSize(24)
+            .fontColor([$r('app.color.page_primary_text')])
+            .padding(8)
+            .onClick(() => {
+              router.back();
+            })
+
+          Text($r('app.string.nav_model_settings_title'))
+            .fontSize($r('app.float.nav_title_font_size'))
+            .fontColor($r('app.color.page_primary_text'))
+            .fontWeight(FontWeight.Medium)
+            .layoutWeight(1)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .padding({ left: 8, right: 40 })
+        }
+        .width('100%')
+        .padding({ top: this.statusBarHeight + 12, left: 12, right: 12, bottom: 12 })
+        .alignItems(VerticalAlign.Center)
+
+        if (this.viewModel === null) {
+          this.loadingView()
+        } else {
+          this.mainView()
+        }
       }
+      .width('100%')
+      .height('100%')
+      .backgroundColor($r('app.color.page_background'))
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     }
-    .title($r('app.string.nav_model_settings_title'))
-    .backgroundColor($r('app.color.page_background'))
   }
 
   @Builder
@@ -97,7 +128,7 @@ export struct ModelSettingsPage {
           .onClick(() => {
             this.viewModel!.startCreate();
             this.viewModel!.setActiveEditTab(0);
-            this.getPathStack()?.pushPathByName('ModelConfigEditPage', null);
+            router.pushUrl({ url: 'pages/ModelConfigEditPage' });
           })
       }
       .width('100%')
@@ -253,7 +284,7 @@ export struct ModelSettingsPage {
     .onClick(() => {
       this.viewModel!.selectConfig(config.id);
       this.viewModel!.setActiveEditTab(0);
-      this.getPathStack()?.pushPathByName('ModelConfigEditPage', null);
+      router.pushUrl({ url: 'pages/ModelConfigEditPage' });
     })
   }
 
@@ -330,17 +361,5 @@ export struct ModelSettingsPage {
       default:
         return 'Unknown';
     }
-  }
-
-  private getPathStack(): NavPathStack | null {
-    try {
-      const navInfo: NavigationInfo | undefined = this.queryNavigationInfo();
-      if (navInfo !== undefined) {
-        return navInfo.pathStack;
-      }
-    } catch (_e) {
-      // ignore
-    }
-    return null;
   }
 }

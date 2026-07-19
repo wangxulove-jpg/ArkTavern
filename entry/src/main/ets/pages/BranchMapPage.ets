@@ -30,6 +30,7 @@ import { BranchMapNode } from '../components/BranchMapNode';
 import { BranchMapDisplayInfo } from '../models/BranchMapDisplayInfo';
 import { BranchMapNodeLayout, BranchTreeLayoutResult, BranchTreeEdge } from '../models/BranchMapNodeLayout';
 import { Logger } from '../utils/Logger';
+import { router } from '@kit.ArkUI';
 
 const LOG_TAG: string = 'BranchMapPage';
 
@@ -54,7 +55,7 @@ interface BranchMapRouteParam {
 
 @Entry
 @Component
-export struct BranchMapPage {
+struct BranchMapPage {
   @State viewModel: BranchMapViewModel = new BranchMapViewModel(
     AppServices.getBranchPersistenceService()
   );
@@ -70,9 +71,12 @@ export struct BranchMapPage {
   private canvasContext: CanvasRenderingContext2D =
     new CanvasRenderingContext2D(new RenderingContextSettings(true));
 
+  aboutToAppear(): void {
+    this.handleReady();
+  }
+
   build() {
-    NavDestination() {
-      Column() {
+    Column() {
         this.titleBar();
 
         if (this.viewModel.errorMessage.length > 0) {
@@ -106,12 +110,6 @@ export struct BranchMapPage {
       .height('100%')
       .backgroundColor(COLOR_PAGE_BG)
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-    }
-    .title('')
-    .hideTitleBar(true)
-    .onReady((context: Object) => {
-      this.handleReady(context);
-    })
   }
 
   @Builder
@@ -371,16 +369,14 @@ export struct BranchMapPage {
     };
   }
 
-  private handleReady(context: Object): void {
+  private handleReady(): void {
     if (this.readyHandled) {
       return;
     }
     this.readyHandled = true;
 
     try {
-      const ctx = context as Record<string, Object>;
-      const pathInfo = ctx['pathInfo'] as Record<string, Object>;
-      const param = pathInfo['param'];
+      const param = router.getParams() as Record<string, Object>;
       this.handleParam(param);
     } catch (e) {
       Logger.error(LOG_TAG, 'handleReady failed: ' + String(e));
@@ -441,11 +437,7 @@ export struct BranchMapPage {
   }
 
   private popBack(): void {
-    const navInfo = this.queryNavigationInfo();
-    if (navInfo !== undefined) {
-      // HarmonyOS 5:pop() 必须传回返回值才会触发 pushPathByName 的 onPop 回调
-      navInfo.pathStack.pop(true);
-    }
+    router.back();
   }
 
   aboutToDisappear(): void {

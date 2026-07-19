@@ -26,7 +26,7 @@ import { AppServices } from '../../services/AppServices';
 import { EmptyStateView } from '../../components/EmptyStateView';
 import { PressableCard } from '../../components/PressableCard';
 import { CharacterImageView } from '../../components/CharacterImageView';
-import { promptAction } from '@kit.ArkUI';
+import { promptAction, router } from '@kit.ArkUI';
 import { Chat } from '../../models/Chat';
 
 /** AppStorage 中待跳转的 chatId(由本视图写入,ChatPage 读取后清除) */
@@ -36,8 +36,6 @@ export const PENDING_CHARACTER_ID_KEY: string = 'pendingCharacterId';
 
 @Component
 export struct ChatSessionRootView {
-  /** AppShell 传入的全局 NavPathStack,用于跳转 ChatPage */
-  pathStack: NavPathStack = new NavPathStack();
   @State viewModel: ChatSessionListViewModel | null = null;
   @State isInitializing: boolean = true;
   @State initError: string = '';
@@ -108,7 +106,7 @@ export struct ChatSessionRootView {
     } else {
       AppStorage.set<string>(PENDING_CHARACTER_ID_KEY, '');
     }
-    this.pathStack.pushPath({ name: 'ChatPage' });
+    router.pushUrl({ url: 'pages/ChatPage' });
   }
 
   /** 打开重命名弹窗 */
@@ -171,12 +169,14 @@ export struct ChatSessionRootView {
   build() {
     Stack() {
       Column() {
-        // 顶栏:居中标题"聊天"(H2 18fp Medium)
+        // 顶栏:标题"聊天"(与其他 Tab 统一样式:Bold + 左对齐)
         Row() {
-          Text('聊天')
-            .fontSize(18)
-            .fontWeight(FontWeight.Medium)
+          Text($r('app.string.tab_sessions'))
+            .fontSize($r('app.float.app_font_title'))
+            .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.app_text_primary'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
         }
         .width('100%')
         .padding({
@@ -186,7 +186,6 @@ export struct ChatSessionRootView {
           top: this.statusBarHeight + 8,
           bottom: $r('app.float.app_spacing_8')
         })
-        .justifyContent(FlexAlign.Center)
         .alignItems(VerticalAlign.Center)
 
         // 错误提示
@@ -255,20 +254,24 @@ export struct ChatSessionRootView {
             }
           })
         }, (item: ChatSessionListItem) => item.chat.id + '|' + item.chat.title)
+
+        // 末尾空白 ListItem:让内容总高度始终超出视口,确保即使内容少也能上下滚动(spring 回弹)。
+        // 高度覆盖 HdsTabs 浮层(barBottomMargin 24 + maskHeight 64 + tabBar ≈ 56 ≈ 144vp),
+        // 让最后一项内容下方有足够空白,可滚动到 tab bar 上方查看。
+        ListItem() {
+          Column().width('100%').height(160)
+        }
       }
       .width('100%')
       .layoutWeight(1)
       .scrollBar(BarState.Off)
       .edgeEffect(EdgeEffect.Spring)
-      // margin-bottom 让 List 视口在悬浮 HdsTabs 上方结束,
-      // 防止顶部滚动位置时最后一项落入 TabBar 覆盖区(80vp=TabBar高度 + 20vp缓冲)
-      .margin({ bottom: 100 })
+      // padding 0:padding 直接在 List 上会缩小视口,padding 区域不显示内容。
       .padding({
         left: $r('app.float.app_spacing_16'),
         right: $r('app.float.app_spacing_16'),
-        top: $r('app.float.app_spacing_8'),
-        // 滚动到底部时,最后一项与 List 底部留出视觉间距
-        bottom: 80
+        top: 0,
+        bottom: 0
       })
     }
   }

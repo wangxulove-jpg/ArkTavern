@@ -9,7 +9,7 @@
 import { CharacterEditViewModel, CharacterEditFormState, emptyFormState, copyFormState, parseCharacterEditRouteParam } from '../viewmodels/CharacterEditViewModel';
 import { AppServices } from '../services/AppServices';
 import { CharacterImageView } from '../components/CharacterImageView';
-import { promptAction } from '@kit.ArkUI';
+import { promptAction, router } from '@kit.ArkUI';
 import { picker } from '@kit.CoreFileKit';
 
 const TAB_CHARACTER: number = 0;
@@ -17,7 +17,7 @@ const TAB_CONVERSATION: number = 1;
 
 @Entry
 @Component
-export struct CharacterEditPage {
+struct CharacterEditPage {
   @State formState: CharacterEditFormState = emptyFormState();
   @State isLoading: boolean = true;
   @State isSaving: boolean = false;
@@ -38,6 +38,10 @@ export struct CharacterEditPage {
     this.viewModel.dispose();
   }
 
+  aboutToAppear(): void {
+    this.handleReady();
+  }
+
   onBackPress(): boolean {
     if (this.showDiscardDialog) {
       this.showDiscardDialog = false;
@@ -51,8 +55,7 @@ export struct CharacterEditPage {
   }
 
   build() {
-    NavDestination() {
-      Column() {
+    Column() {
         this.topBar()
 
         if (this.errorMessage.length > 0) {
@@ -82,24 +85,17 @@ export struct CharacterEditPage {
       .height('100%')
       .backgroundColor($r('app.color.app_bg'))
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-    }
-    .title('')
-    .hideTitleBar(true)
-    .onReady((context: Object) => {
-      this.handleReady(context);
-    })
   }
 
-  private handleReady(context: Object): void {
+  private handleReady(): void {
     if (this.readyHandled) {
       return;
     }
     this.readyHandled = true;
 
     try {
-      const ctx = context as Record<string, Object>;
-      const pathInfo = ctx['pathInfo'] as Record<string, Object>;
-      const param = pathInfo['param'];
+      const params = router.getParams() as Record<string, Object>;
+      const param = params?.['param'];
       this.handleDestinationReady(param);
     } catch (e) {
       this.errorMessage = '页面参数错误';
@@ -593,9 +589,6 @@ export struct CharacterEditPage {
   }
 
   private popBack(): void {
-    const navInfo = this.queryNavigationInfo();
-    if (navInfo !== undefined) {
-      navInfo.pathStack.pop();
-    }
+    router.back();
   }
 }

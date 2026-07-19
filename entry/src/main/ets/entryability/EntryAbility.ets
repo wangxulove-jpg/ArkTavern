@@ -75,29 +75,19 @@ export default class EntryAbility extends UIAbility {
         hilog.error(DOMAIN, 'testTag', 'setKeyboardAvoidMode failed: %{public}s', (e as Error).message);
       }
 
-      // 沉浸式核心:loadContent 完成后窗口状态稳定,此时设置窗口透明背景 + 状态栏透明
-      // 不会再报 "This window state is abnormal"。
-      // 顺序:setWindowBackgroundColor -> setWindowSystemBarProperties
+      // 沉浸式:仅设置状态栏背景透明,让状态栏图标浮在应用背景之上。
+      // 不再设置 setWindowBackgroundColor 透明(PanoVR2 风格不需要透出壁纸),
+      // 应用根容器(Index 的 TabContent 背景层)用不透明 app_bg 填满到状态栏区域。
       const win: window.Window = windowStage.getMainWindowSync();
-      try {
-        // 窗口背景透明:让系统壁纸从窗口背景透出。
-        // 配合根容器(Index.ets 不设 backgroundColor)+ Navigation/HdsTabs/TabContent 透明
-        // 实现壁纸从状态栏区域透出。
-        win.setWindowBackgroundColor('#00000000');
-        hilog.info(DOMAIN, 'testTag', 'setWindowBackgroundColor succeeded: window transparent.');
-      } catch (e) {
-        hilog.error(DOMAIN, 'testTag', 'setWindowBackgroundColor failed: %{public}s', (e as Error).message);
-      }
-
       const isDark: boolean = this.context.config?.colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK;
       const sysBarProps: window.SystemBarProperties = {
-        statusBarColor: '#00000000',                            // 透明背景,让壁纸透出
+        statusBarColor: '#00000000',                            // 状态栏背景透明
         statusBarContentColor: isDark ? '#FFFFFF' : '#000000'   // 状态栏图标/文字颜色
       };
       win.setWindowSystemBarProperties(sysBarProps)
         .then((): void => {
           hilog.info(DOMAIN, 'testTag',
-            'immersive setup succeeded: isDark=%{public}s, contentColor=%{public}s',
+            'setWindowSystemBarProperties succeeded: isDark=%{public}s, contentColor=%{public}s',
             String(isDark), sysBarProps.statusBarContentColor!);
         })
         .catch((e: Object): void => {

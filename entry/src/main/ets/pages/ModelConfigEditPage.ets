@@ -5,7 +5,7 @@
  * 页面只通过 ModelSettingsViewModel 访问业务,不直接调用 Store/网络。
  *
  * 结构:
- * - 顶部导航栏:返回、标题(新建/编辑)、保存菜单
+ * - 顶部导航栏:返回、标题(新建/编辑)、保存按钮
  * - 一级 Tab 切换:连接 / 参数
  * - 连接区域:名称、服务商(Sheet)、API Key、模型(Sheet/输入)、Base URL、测试连接
  * - 参数区域:Temperature、Top P、Max Tokens、流式请求、启用
@@ -20,6 +20,7 @@
 import { ModelSettingsViewModel } from '../viewmodels/ModelSettingsViewModel';
 import { ProviderType } from '../models/ProviderType';
 import { ModelOption } from '../models/ProviderPreset';
+import { router } from '@kit.ArkUI';
 
 interface ProviderOption {
   readonly type: ProviderType;
@@ -33,9 +34,12 @@ const PROVIDER_OPTIONS: ProviderOption[] = [
 
 const MAX_NAME_LENGTH: number = 32;
 
+@Entry
 @Component
-export struct ModelConfigEditPage {
+struct ModelConfigEditPage {
   @State viewModel: ModelSettingsViewModel | null = null;
+  /** 顶部状态栏避让高度(由 EntryAbility 写入 AppStorage) */
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   /** 底部导航栏/手势条避让高度(由 EntryAbility 写入 AppStorage) */
   @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
 
@@ -53,6 +57,7 @@ export struct ModelConfigEditPage {
     }
     .width('100%')
     .height('100%')
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 
   @Builder
@@ -70,91 +75,95 @@ export struct ModelConfigEditPage {
 
   @Builder
   mainView() {
-    NavDestination() {
-      Column() {
-        Tabs({ barPosition: BarPosition.Start, index: this.viewModel!.activeEditTab }) {
-          TabContent() {
-            this.connectionTabContent()
-          }
-          .tabBar($r('app.string.model_settings_connection'))
+    Column() {
+      // 顶部标题栏:返回 + 标题 + 保存
+      Row() {
+        SymbolGlyph($r('sys.symbol.chevron_left'))
+          .fontSize(24)
+          .fontColor([$r('app.color.page_primary_text')])
+          .padding(8)
+          .onClick(() => {
+            router.back();
+          })
 
-          TabContent() {
-            this.parametersTabContent()
-          }
-          .tabBar($r('app.string.model_settings_parameters'))
+        Text(this.pageTitle())
+          .fontSize($r('app.float.nav_title_font_size'))
+          .fontColor($r('app.color.page_primary_text'))
+          .fontWeight(FontWeight.Medium)
+          .layoutWeight(1)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .padding({ left: 8, right: 8 })
+
+        Button({ type: ButtonType.Capsule }) {
+          Text(this.viewModel!.isSaving ? $r('app.string.model_settings_saving') : $r('app.string.model_settings_save'))
+            .fontSize($r('app.float.app_font_body'))
+            .fontColor($r('app.color.app_on_accent'))
         }
-        .vertical(false)
-        .barMode(BarMode.Fixed)
-        .barHeight(48)
-        .width('100%')
-        .layoutWeight(1)
-        .backgroundColor($r('app.color.page_background'))
-        .onChange((index: number) => {
-          this.viewModel!.setActiveEditTab(index);
+        .height(32)
+        .padding({ left: 12, right: 12 })
+        .backgroundColor($r('app.color.app_accent'))
+        .enabled(this.isFormReady() && !this.viewModel!.isSaving && !this.viewModel!.isTesting)
+        .onClick(async () => {
+          if (!this.viewModel!.checkFormValid()) {
+            return;
+          }
+          await this.viewModel!.save();
+          if (this.viewModel!.errorMessage.length === 0) {
+            router.back();
+          }
         })
-
-        this.dangerActionArea()
       }
       .width('100%')
-      .height('100%')
-      .backgroundColor($r('app.color.page_background'))
-      .bindSheet(this.viewModel!.providerSheetOpen, this.providerSheetBuilder, {
-        height: SheetSize.MEDIUM,
-        mode: SheetMode.EMBEDDED,
-        dragBar: false,
-        showClose: false,
-        backgroundColor: $r('app.color.app_surface_1'),
-        onDisappear: () => {
-          this.viewModel!.closeProviderSheet();
-        }
-      })
-      .bindSheet(this.viewModel!.modelSheetOpen, this.modelSheetBuilder, {
-        height: SheetSize.MEDIUM,
-        mode: SheetMode.EMBEDDED,
-        dragBar: false,
-        showClose: false,
-        backgroundColor: $r('app.color.app_surface_1'),
-        onDisappear: () => {
-          this.viewModel!.closeModelSheet();
-        }
-      })
-    }
-    .title(this.pageTitle())
-    .backgroundColor($r('app.color.page_background'))
-    .menus(this.navMenus)
-    .hideTitleBar(false)
-    .onBackPressed(() => {
-      const stack: NavPathStack | null = this.getPathStack();
-      if (stack !== null) {
-        stack.pop();
-        return true;
-      }
-      return false;
-    })
-  }
+      .padding({ top: this.statusBarHeight + 12, left: 12, right: 12, bottom: 12 })
+      .alignItems(VerticalAlign.Center)
 
-  @Builder
-  navMenus() {
-    Row() {
-      Button({ type: ButtonType.Capsule }) {
-        Text(this.viewModel!.isSaving ? $r('app.string.model_settings_saving') : $r('app.string.model_settings_save'))
-          .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_on_accent'))
+      Tabs({ barPosition: BarPosition.Start, index: this.viewModel!.activeEditTab }) {
+        TabContent() {
+          this.connectionTabContent()
+        }
+        .tabBar($r('app.string.model_settings_connection'))
+
+        TabContent() {
+          this.parametersTabContent()
+        }
+        .tabBar($r('app.string.model_settings_parameters'))
       }
-      .height(32)
-      .padding({ left: 12, right: 12 })
-      .backgroundColor($r('app.color.app_accent'))
-      .enabled(this.isFormReady() && !this.viewModel!.isSaving && !this.viewModel!.isTesting)
-      .onClick(async () => {
-        if (!this.viewModel!.checkFormValid()) {
-          return;
-        }
-        await this.viewModel!.save();
-        if (this.viewModel!.errorMessage.length === 0) {
-          this.getPathStack()?.pop();
-        }
+      .vertical(false)
+      .barMode(BarMode.Fixed)
+      .barHeight(48)
+      .width('100%')
+      .layoutWeight(1)
+      .backgroundColor($r('app.color.page_background'))
+      .onChange((index: number) => {
+        this.viewModel!.setActiveEditTab(index);
       })
+
+      this.dangerActionArea()
     }
+    .width('100%')
+    .height('100%')
+    .backgroundColor($r('app.color.page_background'))
+    .bindSheet(this.viewModel!.providerSheetOpen, this.providerSheetBuilder, {
+      height: SheetSize.MEDIUM,
+      mode: SheetMode.EMBEDDED,
+      dragBar: false,
+      showClose: false,
+      backgroundColor: $r('app.color.app_surface_1'),
+      onDisappear: () => {
+        this.viewModel!.closeProviderSheet();
+      }
+    })
+    .bindSheet(this.viewModel!.modelSheetOpen, this.modelSheetBuilder, {
+      height: SheetSize.MEDIUM,
+      mode: SheetMode.EMBEDDED,
+      dragBar: false,
+      showClose: false,
+      backgroundColor: $r('app.color.app_surface_1'),
+      onDisappear: () => {
+        this.viewModel!.closeModelSheet();
+      }
+    })
   }
 
   @Builder
@@ -480,7 +489,7 @@ export struct ModelConfigEditPage {
                 action: async () => {
                   await this.viewModel!.deleteSelected();
                   if (this.viewModel!.errorMessage.length === 0) {
-                    this.getPathStack()?.pop();
+                    router.back();
                   }
                 }
               },
@@ -776,18 +785,6 @@ export struct ModelConfigEditPage {
       return false;
     }
     return true;
-  }
-
-  private getPathStack(): NavPathStack | null {
-    try {
-      const navInfo: NavigationInfo | undefined = this.queryNavigationInfo();
-      if (navInfo !== undefined) {
-        return navInfo.pathStack;
-      }
-    } catch (_e) {
-      // ignore
-    }
-    return null;
   }
 }
 

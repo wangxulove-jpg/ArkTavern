@@ -8,7 +8,7 @@
 import { PromptPresetListViewModel } from '../viewmodels/PromptPresetListViewModel';
 import { AppServices } from '../services/AppServices';
 import { PromptPreset } from '../models/PromptPreset';
-import { promptAction } from '@kit.ArkUI';
+import { promptAction, router } from '@kit.ArkUI';
 
 interface PresetEditRouteParam {
   presetId: string;
@@ -16,7 +16,7 @@ interface PresetEditRouteParam {
 
 @Entry
 @Component
-export struct PromptPresetListPage {
+struct PromptPresetListPage {
   @State viewModel: PromptPresetListViewModel = AppServices.createPromptPresetListViewModel();
   @State refreshKey: number = 0;
   /** 顶部状态栏避让高度(由 EntryAbility 写入 AppStorage) */
@@ -33,135 +33,126 @@ export struct PromptPresetListPage {
   }
 
   build() {
-    NavDestination() {
-      Column() {
-        // 标题栏
-        Row() {
-          Button('返回')
-            .fontSize(14)
-            .backgroundColor(Color.Transparent)
-            .onClick(() => {
-              const navInfo = this.queryNavigationInfo();
-              if (navInfo !== undefined) {
-                navInfo.pathStack.pop();
-              }
-            })
-
-          Blank()
-
-          Text('提示词预设')
-            .fontSize(18)
-            .fontWeight(FontWeight.Medium)
-
-          Blank()
-
-          Button('清除当前')
-            .fontSize(12)
-            .backgroundColor(Color.Transparent)
-            .onClick(() => {
-              this.viewModel.clearCurrent();
-            })
-        }
-        .width('100%')
-        .padding({ left: 12, right: 12, top: this.statusBarHeight + 8, bottom: 8 })
-        .alignItems(VerticalAlign.Center)
-
-        // 当前状态
-        Row() {
-          Text(this.viewModel.currentPresetId.length > 0
-            ? '当前预设已启用'
-            : '未使用预设')
-            .fontSize(13)
-            .fontColor(this.viewModel.currentPresetId.length > 0
-              ? '#007AFF'
-              : '#999999')
-        }
-        .width('100%')
-        .padding({ left: 16, right: 16, top: 4, bottom: 4 })
-
-        // 错误提示
-        if (this.viewModel.errorMessage.length > 0) {
-          Text(this.viewModel.errorMessage)
-            .fontSize(13)
-            .fontColor('#FF3B30')
-            .padding({ left: 16, right: 16, top: 4, bottom: 4 })
-        }
-
-        Divider()
-          .height(1)
-          .color('#E0E0E0')
-
-        // 新建按钮
-        Row() {
-          Button('+ 新建预设')
-            .fontSize(14)
-            .backgroundColor('#007AFF')
-            .fontColor(Color.White)
-            .borderRadius(8)
-            .onClick(() => {
-              const navInfo = this.queryNavigationInfo();
-              if (navInfo !== undefined) {
-                navInfo.pathStack.pushPathByName('PromptPresetEditPage', { presetId: '' } as PresetEditRouteParam, () => {
-                  this.viewModel.refresh();
-                });
-              }
-            })
-        }
-        .width('100%')
-        .padding(16)
-        .justifyContent(FlexAlign.Center)
-
-        if (this.viewModel.isLoading) {
-          Column() {
-            LoadingProgress()
-              .width(40)
-              .height(40)
-            Text('加载中...')
-              .fontSize(14)
-              .fontColor('#999999')
-              .margin({ top: 12 })
-          }
-          .width('100%')
-          .layoutWeight(1)
-          .justifyContent(FlexAlign.Center)
-        } else if (this.viewModel.presets.length === 0) {
-          Column() {
-            Text('暂无预设')
-              .fontSize(16)
-              .fontColor('#999999')
-            Text('点击上方按钮创建第一个预设')
-              .fontSize(13)
-              .fontColor('#CCCCCC')
-              .margin({ top: 8 })
-          }
-          .width('100%')
-          .layoutWeight(1)
-          .justifyContent(FlexAlign.Center)
-        } else {
-          List() {
-            ForEach(this.viewModel.presets, (preset: PromptPreset, index: number) => {
-              ListItem() {
-                this.presetItem(preset)
-              }
-            }, (preset: PromptPreset) => preset.id + '_' + this.refreshKey.toString())
-          }
-          .layoutWeight(1)
-          .width('100%')
-          .divider({
-            strokeWidth: 1,
-            color: '#F0F0F0',
-            startMargin: 16,
-            endMargin: 16
+    Column() {
+      // 标题栏
+      Row() {
+        Button('返回')
+          .fontSize(14)
+          .backgroundColor(Color.Transparent)
+          .onClick(() => {
+            router.back();
           })
-        }
+
+        Blank()
+
+        Text('提示词预设')
+          .fontSize(18)
+          .fontWeight(FontWeight.Medium)
+
+        Blank()
+
+        Button('清除当前')
+          .fontSize(12)
+          .backgroundColor(Color.Transparent)
+          .onClick(() => {
+            this.viewModel.clearCurrent();
+          })
       }
       .width('100%')
-      .height('100%')
-      .backgroundColor('#FFFFFF')
-      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+      .padding({ left: 12, right: 12, top: this.statusBarHeight + 8, bottom: 8 })
+      .alignItems(VerticalAlign.Center)
+
+      // 当前状态
+      Row() {
+        Text(this.viewModel.currentPresetId.length > 0
+          ? '当前预设已启用'
+          : '未使用预设')
+          .fontSize(13)
+          .fontColor(this.viewModel.currentPresetId.length > 0
+            ? '#007AFF'
+            : '#999999')
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 4, bottom: 4 })
+
+      // 错误提示
+      if (this.viewModel.errorMessage.length > 0) {
+        Text(this.viewModel.errorMessage)
+          .fontSize(13)
+          .fontColor('#FF3B30')
+          .padding({ left: 16, right: 16, top: 4, bottom: 4 })
+      }
+
+      Divider()
+        .height(1)
+        .color('#E0E0E0')
+
+      // 新建按钮
+      Row() {
+        Button('+ 新建预设')
+          .fontSize(14)
+          .backgroundColor('#007AFF')
+          .fontColor(Color.White)
+          .borderRadius(8)
+          .onClick(() => {
+            router.pushUrl({
+              url: 'pages/PromptPresetEditPage',
+              params: { presetId: '' } as PresetEditRouteParam
+            });
+          })
+      }
+      .width('100%')
+      .padding(16)
+      .justifyContent(FlexAlign.Center)
+
+      if (this.viewModel.isLoading) {
+        Column() {
+          LoadingProgress()
+            .width(40)
+            .height(40)
+          Text('加载中...')
+            .fontSize(14)
+            .fontColor('#999999')
+            .margin({ top: 12 })
+        }
+        .width('100%')
+        .layoutWeight(1)
+        .justifyContent(FlexAlign.Center)
+      } else if (this.viewModel.presets.length === 0) {
+        Column() {
+          Text('暂无预设')
+            .fontSize(16)
+            .fontColor('#999999')
+          Text('点击上方按钮创建第一个预设')
+            .fontSize(13)
+            .fontColor('#CCCCCC')
+            .margin({ top: 8 })
+        }
+        .width('100%')
+        .layoutWeight(1)
+        .justifyContent(FlexAlign.Center)
+      } else {
+        List() {
+          ForEach(this.viewModel.presets, (preset: PromptPreset, index: number) => {
+            ListItem() {
+              this.presetItem(preset)
+            }
+          }, (preset: PromptPreset) => preset.id + '_' + this.refreshKey.toString())
+        }
+        .layoutWeight(1)
+        .width('100%')
+        .divider({
+          strokeWidth: 1,
+          color: '#F0F0F0',
+          startMargin: 16,
+          endMargin: 16
+        })
+      }
     }
-    .title('')
-    .hideTitleBar(true)
+    .width('100%')
+    .height('100%')
+    .backgroundColor('#FFFFFF')
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 
   @Builder
@@ -228,12 +219,10 @@ export struct PromptPresetListPage {
             .padding({ left: 8, right: 8 })
             .margin({ left: 6 })
             .onClick(() => {
-              const navInfo = this.queryNavigationInfo();
-              if (navInfo !== undefined) {
-                navInfo.pathStack.pushPathByName('PromptPresetEditPage', { presetId: preset.id } as PresetEditRouteParam, () => {
-                  this.viewModel.refresh();
-                });
-              }
+              router.pushUrl({
+                url: 'pages/PromptPresetEditPage',
+                params: { presetId: preset.id } as PresetEditRouteParam
+              });
             })
 
           Button('删除')

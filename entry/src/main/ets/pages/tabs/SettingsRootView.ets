@@ -7,15 +7,14 @@
  * - AI 与对话:模型设置 / 世界书 / 提示词预设
  * - 应用:应用设置
  *
- * 点击入口卡片通过 pathStack 跳转到现有二级页面,不复制业务逻辑。
+ * 点击入口卡片通过 router.pushUrl 跳转到现有二级页面,不复制业务逻辑。
  */
 
 import { PressableCard } from '../../components/PressableCard';
+import { router } from '@kit.ArkUI';
 
 @Component
 export struct SettingsRootView {
-  /** AppShell 传入的全局 NavPathStack,用于跳转二级页面 */
-  pathStack: NavPathStack = new NavPathStack();
   /** 顶部状态栏避让高度(由 EntryAbility 写入 AppStorage) */
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
 
@@ -61,7 +60,7 @@ export struct SettingsRootView {
               $r('app.string.tab_settings_model'),
               $r('app.string.tab_settings_model_desc'),
               () => {
-                this.pathStack.pushPath({ name: 'ModelSettingsPage' });
+                router.pushUrl({ url: 'pages/ModelSettingsPage' });
               }
             )
 
@@ -69,7 +68,7 @@ export struct SettingsRootView {
               $r('app.string.tab_settings_lorebook'),
               $r('app.string.tab_settings_lorebook_desc'),
               () => {
-                this.pathStack.pushPath({ name: 'LorebookPage' });
+                router.pushUrl({ url: 'pages/LorebookPage' });
               }
             )
 
@@ -77,7 +76,7 @@ export struct SettingsRootView {
               $r('app.string.tab_settings_preset'),
               $r('app.string.tab_settings_preset_desc'),
               () => {
-                this.pathStack.pushPath({ name: 'PromptPresetListPage' });
+                router.pushUrl({ url: 'pages/PromptPresetListPage' });
               }
             )
 
@@ -88,14 +87,14 @@ export struct SettingsRootView {
               $r('app.string.tab_settings_app_settings'),
               $r('app.string.tab_settings_app_settings_desc'),
               () => {
-                this.pathStack.pushPath({ name: 'AppSettingsPage' });
+                router.pushUrl({ url: 'pages/AppSettingsPage' });
               }
             )
           }
           .width('100%')
           .padding({
-            // 滚动到底部时,最后一项与 Scroll 底部留出视觉间距
-            bottom: 80
+            // 滚动到底部时,最后一项下方留足够空白可滚动到 tab bar 上方
+            bottom: 160
           })
         }
         .scrollable(ScrollDirection.Vertical)
@@ -103,9 +102,7 @@ export struct SettingsRootView {
         .edgeEffect(EdgeEffect.Spring)
         .layoutWeight(1)
         .width('100%')
-        // margin-bottom 让 Scroll 视口在悬浮 HdsTabs 上方结束,
-        // 防止内容落入 TabBar 覆盖区(80vp=TabBar高度 + 20vp缓冲)
-        .margin({ bottom: 100 })
+        // 不设 margin-bottom,让 Scroll 视口铺满整个 HdsTabs 区域
       }
       .width('100%')
       .height('100%')

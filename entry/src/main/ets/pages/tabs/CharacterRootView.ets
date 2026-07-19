@@ -24,6 +24,7 @@ import { AppServices } from '../../services/AppServices';
 import { EmptyStateView } from '../../components/EmptyStateView';
 import { PressableCard } from '../../components/PressableCard';
 import { CharacterImageView } from '../../components/CharacterImageView';
+import { router } from '@kit.ArkUI';
 
 /** 角色编辑页路由参数,携带 characterId */
 interface CharacterEditNavParam {
@@ -32,8 +33,6 @@ interface CharacterEditNavParam {
 
 @Component
 export struct CharacterRootView {
-  /** AppShell 传入的全局 NavPathStack,用于跳转二级页面 */
-  pathStack: NavPathStack = new NavPathStack();
   @State viewModel: CharacterListViewModel | null = null;
   @State isInitializing: boolean = true;
   @State initError: string = '';
@@ -81,9 +80,9 @@ export struct CharacterRootView {
   /** 点击角色卡:直接进入全屏 CharacterEditPage 编辑该角色 */
   private openCharacterDetail(characterId: string): void {
     const navParam: CharacterEditNavParam = { characterId: characterId };
-    this.pathStack.pushPath({
-      name: 'CharacterEditPage',
-      param: navParam
+    router.pushUrl({
+      url: 'pages/CharacterEditPage',
+      params: { param: navParam }
     });
   }
 
@@ -92,7 +91,7 @@ export struct CharacterRootView {
     AppStorage.setOrCreate<string>('pendingCharacterId', characterId);
     // 清除 pendingChatId 防止冲突(优先级:pendingChatId > pendingCharacterId)
     AppStorage.setOrCreate<string>('pendingChatId', '');
-    this.pathStack.pushPath({ name: 'ChatPage' });
+    router.pushUrl({ url: 'pages/ChatPage' });
   }
 
   /** 左滑"编辑":与点击角色卡相同,直接进入全屏编辑页 */
@@ -127,36 +126,42 @@ export struct CharacterRootView {
   }
 
   build() {
-    Column() {
-      // ===== 顶部标题栏 =====
-      this.headerBar()
+    Stack() {
+      Column() {
+        // ===== 顶部标题栏 =====
+        this.headerBar()
 
-      // ===== 错误提示 =====
-      if (this.viewModel !== null && this.viewModel!.errorMessage.length > 0) {
-        Text(this.viewModel!.errorMessage)
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_danger'))
-          .width('100%')
-          .padding({
-            left: $r('app.float.app_spacing_20'),
-            right: $r('app.float.app_spacing_20'),
-            top: $r('app.float.app_spacing_4'),
-            bottom: $r('app.float.app_spacing_4')
-          })
+        // ===== 错误提示 =====
+        if (this.viewModel !== null && this.viewModel!.errorMessage.length > 0) {
+          Text(this.viewModel!.errorMessage)
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_danger'))
+            .width('100%')
+            .padding({
+              left: $r('app.float.app_spacing_20'),
+              right: $r('app.float.app_spacing_20'),
+              top: $r('app.float.app_spacing_4'),
+              bottom: $r('app.float.app_spacing_4')
+            })
+        }
+
+        // ===== 主内容区 =====
+        if (this.isInitializing) {
+          this.loadingView()
+        } else if (this.initError.length > 0) {
+          this.errorView()
+        } else if (this.viewModel === null || this.viewModel!.characters.length === 0) {
+          this.emptyStateView()
+        } else {
+          this.characterList()
+        }
       }
+      .width('100%')
+      .height('100%')
+      // 背景层分离:不设 backgroundColor,让 Index 根背景透出。
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP])
 
-      // ===== 主内容区 =====
-      if (this.isInitializing) {
-        this.loadingView()
-      } else if (this.initError.length > 0) {
-        this.errorView()
-      } else if (this.viewModel === null || this.viewModel!.characters.length === 0) {
-        this.emptyStateView()
-      } else {
-        this.characterList()
-      }
-
-      // ===== 删除二次确认弹窗 =====
+      // ===== 删除二次确认弹窗(浮层,Stack alignContent 居中)=====
       if (this.deleteTarget !== null) {
         this.deleteConfirmDialog()
       }
@@ -189,13 +194,18 @@ export struct CharacterRootView {
         .padding({ left: 16, right: 16 })
         .onClick(() => {
           // 导航到 AddCharacterPage(新建角色 / 文件导入二选一)
-          this.pathStack.pushPath({ name: 'AddCharacterPage' });
+          router.pushUrl({ url: 'pages/AddCharacterPage' });
         })
     }
     .width('100%')
     // 顶部 padding = 状态栏高度 + 间距 8(避开状态栏,与其他 Tab 统一起点)
     // 不设 height,让 padding + 内容自适应撑开
-    .padding({ left: 20, right: 20, top: this.statusBarHeight + 8, bottom: 4 })
+    .padding({
+      left: $r('app.float.app_spacing_20'),
+      right: $r('app.float.app_spacing_20'),
+      top: this.statusBarHeight + 8,
+      bottom: $r('app.float.app_spacing_8')
+    })
     .alignItems(VerticalAlign.Center)
     // 背景层分离:顶栏不设 backgroundColor,透出 Index 根背景,避免色块拼接感。
   }
@@ -218,19 +228,25 @@ export struct CharacterRootView {
           }
         })
       }, (char: Character) => char.id)
+
+      // 末尾空白 ListItem:让内容总高度始终超出视口,确保即使内容少也能上下滚动(spring 回弹)。
+      // 高度覆盖 HdsTabs 浮层(barBottomMargin 24 + maskHeight 64 + tabBar ≈ 56 ≈ 144vp),
+      // 让最后一项内容下方有足够空白,可滚动到 tab bar 上方查看。
+      ListItem() {
+        Column().width('100%').height(160)
+      }
     }
     .width('100%')
     .layoutWeight(1)
     .scrollBar(BarState.Off)
     .edgeEffect(EdgeEffect.Spring)
-    // margin-bottom 让 List 视口在悬浮 HdsTabs 上方结束,
-    // 防止顶部滚动位置时最后一项落入 TabBar 覆盖区(80vp=TabBar高度 + 20vp缓冲)
-    .margin({ bottom: 100 })
+    // padding 0:padding 直接在 List 上会缩小视口,padding 区域不显示内容。
+    // 左右 padding 通过每个 ListItem 内部布局控制。
     .padding({
       left: $r('app.float.app_spacing_16'),
       right: $r('app.float.app_spacing_16'),
-      top: $r('app.float.app_spacing_8'),
-      bottom: 80
+      top: 0,
+      bottom: 0
     })
   }
 
@@ -367,7 +383,7 @@ export struct CharacterRootView {
           .width('60%')
           .margin({ top: $r('app.float.app_spacing_24') })
           .onClick(() => {
-            this.pathStack.pushPath({ name: 'AddCharacterPage' });
+            router.pushUrl({ url: 'pages/AddCharacterPage' });
           })
       }
       .width('100%')

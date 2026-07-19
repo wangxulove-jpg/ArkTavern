@@ -31,14 +31,14 @@
 import { CharacterListViewModel } from '../viewmodels/CharacterListViewModel';
 import { AppServices } from '../services/AppServices';
 import { picker } from '@kit.CoreFileKit';
-import { promptAction } from '@kit.ArkUI';
+import { promptAction, router } from '@kit.ArkUI';
 
 const TAB_NEW: number = 0;
 const TAB_IMPORT: number = 1;
 
 @Entry
 @Component
-export struct AddCharacterPage {
+struct AddCharacterPage {
   @State activeTab: number = TAB_NEW;
   @State viewModel: CharacterListViewModel | null = null;
   @State isInitializing: boolean = true;
@@ -67,18 +67,12 @@ export struct AddCharacterPage {
 
   /** 返回上一页 */
   private handleBack(): void {
-    const navInfo = this.queryNavigationInfo();
-    if (navInfo !== undefined) {
-      navInfo.pathStack.pop();
-    }
+    router.back();
   }
 
   /** 跳转到全屏 CharacterEditPage 新建角色(不传 characterId) */
   private startNewCharacter(): void {
-    const navInfo = this.queryNavigationInfo();
-    if (navInfo !== undefined) {
-      navInfo.pathStack.pushPath({ name: 'CharacterEditPage' });
-    }
+    router.pushUrl({ url: 'pages/CharacterEditPage' });
   }
 
   /** 打开系统文件选择器(PNG / JSON) */
@@ -172,8 +166,7 @@ export struct AddCharacterPage {
   }
 
   build() {
-    NavDestination() {
-      Column() {
+    Column() {
         this.topBar()
 
         // 错误提示
@@ -207,9 +200,6 @@ export struct AddCharacterPage {
       .height('100%')
       .backgroundColor($r('app.color.app_bg'))
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-    }
-    .title('')
-    .hideTitleBar(true)
   }
 
   // ===== 顶部栏 =====

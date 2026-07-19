@@ -32,7 +32,7 @@ import { ChatMessageBubble } from '../components/ChatMessageBubble';
 import { ChatMessageActionSheet, MessageAction } from '../components/ChatMessageActionSheet';
 import { ChatMoreMenuSheet } from '../components/ChatMoreMenuSheet';
 import { CharacterImageView } from '../components/CharacterImageView';
-import { promptAction, window } from '@kit.ArkUI';
+import { promptAction, router, window } from '@kit.ArkUI';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { common } from '@kit.AbilityKit';
 import { KeyCode } from '@kit.InputKit';
@@ -46,7 +46,7 @@ const LOG_TAG: string = 'ChatPage';
 
 @Entry
 @Component
-export struct ChatPage {
+struct ChatPage {
   @State viewModel: ChatViewModel | null = null;
   /** 独立 @State 消息列表(确保 ForEach 响应式刷新) */
   @State messages: ChatMessage[] = [];
@@ -74,6 +74,10 @@ export struct ChatPage {
   private keyboardHeightChangeHandler: ((height: number) => void) | null = null;
   /** 主窗口实例(用于注销监听) */
   private mainWindow: window.Window | null = null;
+  /** 跳转到 PromptPresetListPage 后返回时刷新当前 preset 名 */
+  private pendingRefreshPresetName: boolean = false;
+  /** 跳转到 BranchMapPage 后返回时重新加载消息和分支状态 */
+  private pendingReloadAfterBranchChange: boolean = false;
 
   aboutToAppear(): void {
     const modelService = AppServices.getModelService();
@@ -125,6 +129,22 @@ export struct ChatPage {
     AppStorage.setOrCreate<number>('chatListVersion', v + 1);
   }
 
+  onPageShow(): void {
+    // 处理从二级页面返回后的回调(替代原 pushPathByName 的 onPop 回调)
+    if (this.pendingRefreshPresetName) {
+      this.pendingRefreshPresetName = false;
+      if (this.viewModel !== null && !this.viewModel!.isDisposed) {
+        this.viewModel!.refreshCurrentPresetName();
+      }
+    }
+    if (this.pendingReloadAfterBranchChange) {
+      this.pendingReloadAfterBranchChange = false;
+      if (this.viewModel !== null && !this.viewModel!.isDisposed) {
+        this.viewModel!.reloadAfterBranchChange().catch((): void => {});
+      }
+    }
+  }
+
   onBackPress(): boolean {
     if (this.showActionSheet) {
       this.showActionSheet = false;
@@ -153,8 +173,7 @@ export struct ChatPage {
   }
 
   build() {
-    NavDestination() {
-      Stack() {
+    Stack() {
         // ===== 底层:消息列表 + 浮动按钮(占满全屏,从状态栏延伸到底部手势区) =====
         Stack({ alignContent: Alignment.BottomEnd }) {
           if (this.isInitialLoading()) {
@@ -314,17 +333,9 @@ export struct ChatPage {
       }
       .width('100%')
       .height('100%')
-      // 背景层分离:Stack 根容器不设 backgroundColor,让 EntryAbility 窗口透明背景透出壁纸,
-      // 顶栏/输入栏作为半透明浮层叠加在消息列表之上。
+      // PanoVR2 模式:不透明背景填满到状态栏区域
+      .backgroundColor($r('app.color.page_background'))
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-    }
-    .title('')
-    .hideTitleBar(true)
-    .mode(NavDestinationMode.STANDARD)
-    // 显式透明:NavDestination 自身有默认背景,会挡住 Navigation 透明背景与窗口透明背景。
-    // Color.Transparent 强制让 NavDestination 不绘制自身背景,
-    // 让 Stack 中的消息列表/半透明浮层直接叠在窗口透明背景之上。
-    .backgroundColor(Color.Transparent)
   }
 
   // ===== 顶部栏 =====
@@ -926,28 +937,16 @@ export struct ChatPage {
   }
 
   private handleBack(): void {
-    const navInfo = this.queryNavigationInfo();
-    if (navInfo !== undefined) {
-      navInfo.pathStack.pop();
-    }
+    router.back();
   }
 
   private goToModelSettings(): void {
-    const navInfo = this.queryNavigationInfo();
-    if (navInfo !== undefined) {
-      navInfo.pathStack.pushPathByName('ModelSettingsPage', null);
-    }
+    router.pushUrl({ url: 'pages/ModelSettingsPage' });
   }
 
   private goToPresetList(): void {
-    const navInfo = this.queryNavigationInfo();
-    if (navInfo !== undefined) {
-      navInfo.pathStack.pushPathByName('PromptPresetListPage', undefined, () => {
-        if (this.viewModel !== null) {
-          this.viewModel!.refreshCurrentPresetName();
-        }
-      });
-    }
+    this.pendingRefreshPresetName = true;
+    router.pushUrl({ url: 'pages/PromptPresetListPage' });
   }
 
   private navigateToBranchMap(): void {
@@ -958,14 +957,10 @@ export struct ChatPage {
     if (chatId === undefined || chatId.length === 0) {
       return;
     }
-    const navInfo = this.queryNavigationInfo();
-    if (navInfo === undefined) {
-      return;
-    }
-    navInfo.pathStack.pushPathByName('BranchMapPage', { chatId: chatId }, async (): Promise<void> => {
-      if (this.viewModel !== null && !this.viewModel!.isDisposed) {
-        await this.viewModel!.reloadAfterBranchChange();
-      }
+    this.pendingReloadAfterBranchChange = true;
+    router.pushUrl({
+      url: 'pages/BranchMapPage',
+      params: { chatId: chatId }
     });
   }
 
