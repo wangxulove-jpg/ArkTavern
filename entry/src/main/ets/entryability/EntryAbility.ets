@@ -44,6 +44,15 @@ export default class EntryAbility extends UIAbility {
         'SafeArea px statusBar=%{public}d navBar=%{public}d, density*1000=%{public}d, vp statusBar=%{public}d navBar=%{public}d',
         avoidArea.topRect.height, avoidArea.bottomRect.height,
         Math.round(density * 1000), statusBarHeightVp, navigationBarHeightVp);
+      // 开启窗口沉浸式布局:让窗口内容延伸到状态栏/导航栏下方,
+      // 使页面级 expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP/BOTTOM]) 生效。
+      // 不开启时窗口内容区从状态栏下方开始,组件边界不与安全区重合,expandSafeArea 失效;
+      // 同时页面 paddingTop 仍会再次避让 statusBarHeight,产生双计数大块顶部空白。
+      // 异步触发,不阻塞 loadContent。窗口透明背景 + 状态栏透明在 loadContent 回调中设置
+      // (loadContent 完成后窗口状态稳定,setWindowBackgroundColor 不会报 "window state abnormal")。
+      mainWin.setWindowLayoutFullScreen(true).catch((e: Object): void => {
+        hilog.error(DOMAIN, 'testTag', 'setWindowLayoutFullScreen failed: %{public}s', (e as Error).message);
+      });
     } catch (e) {
       hilog.error(DOMAIN, 'testTag', 'getWindowAvoidArea failed: %{public}s', (e as Error).message);
       // 兜底默认值(状态栏约 32vp,导航栏约 0vp,鸿蒙 NEXT 手势条不占空间)
@@ -57,6 +66,7 @@ export default class EntryAbility extends UIAbility {
         return;
       }
       hilog.info(DOMAIN, 'testTag', 'Succeeded in loading the content.');
+
       // 键盘避让模式设为 RESIZE:压缩页面高度,顶栏不动,输入框上移到键盘上方
       try {
         windowStage.getMainWindowSync().getUIContext()
@@ -64,6 +74,36 @@ export default class EntryAbility extends UIAbility {
       } catch (e) {
         hilog.error(DOMAIN, 'testTag', 'setKeyboardAvoidMode failed: %{public}s', (e as Error).message);
       }
+
+      // 沉浸式核心:loadContent 完成后窗口状态稳定,此时设置窗口透明背景 + 状态栏透明
+      // 不会再报 "This window state is abnormal"。
+      // 顺序:setWindowBackgroundColor -> setWindowSystemBarProperties
+      const win: window.Window = windowStage.getMainWindowSync();
+      try {
+        // 窗口背景透明:让系统壁纸从窗口背景透出。
+        // 配合根容器(Index.ets 不设 backgroundColor)+ Navigation/HdsTabs/TabContent 透明
+        // 实现壁纸从状态栏区域透出。
+        win.setWindowBackgroundColor('#00000000');
+        hilog.info(DOMAIN, 'testTag', 'setWindowBackgroundColor succeeded: window transparent.');
+      } catch (e) {
+        hilog.error(DOMAIN, 'testTag', 'setWindowBackgroundColor failed: %{public}s', (e as Error).message);
+      }
+
+      const isDark: boolean = this.context.config?.colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK;
+      const sysBarProps: window.SystemBarProperties = {
+        statusBarColor: '#00000000',                            // 透明背景,让壁纸透出
+        statusBarContentColor: isDark ? '#FFFFFF' : '#000000'   // 状态栏图标/文字颜色
+      };
+      win.setWindowSystemBarProperties(sysBarProps)
+        .then((): void => {
+          hilog.info(DOMAIN, 'testTag',
+            'immersive setup succeeded: isDark=%{public}s, contentColor=%{public}s',
+            String(isDark), sysBarProps.statusBarContentColor!);
+        })
+        .catch((e: Object): void => {
+          hilog.error(DOMAIN, 'testTag',
+            'setWindowSystemBarProperties failed: %{public}s', (e as Error).message);
+        });
     });
   }
 

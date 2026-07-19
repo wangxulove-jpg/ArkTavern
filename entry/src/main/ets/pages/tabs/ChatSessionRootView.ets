@@ -172,7 +172,6 @@ export struct ChatSessionRootView {
     Stack() {
       Column() {
         // 顶栏:居中标题"聊天"(H2 18fp Medium)
-        // 关键:Column 自身加 backgroundColor,让 expandSafeArea(TOP) 延伸的状态栏区域也被填充
         Row() {
           Text('聊天')
             .fontSize(18)
@@ -183,13 +182,12 @@ export struct ChatSessionRootView {
         .padding({
           left: $r('app.float.app_spacing_20'),
           right: $r('app.float.app_spacing_20'),
-          // 顶部 padding = 状态栏高度 + 原始间距 16(避开状态栏)
-          top: this.statusBarHeight + 16,
+          // 顶部 padding = 状态栏高度 + 间距 8(避开状态栏,与其他 Tab 统一起点)
+          top: this.statusBarHeight + 8,
           bottom: $r('app.float.app_spacing_8')
         })
         .justifyContent(FlexAlign.Center)
         .alignItems(VerticalAlign.Center)
-        .backgroundColor($r('app.color.app_bg'))
 
         // 错误提示
         if (this.viewModel !== null && this.viewModel!.errorMessage.length > 0) {
@@ -215,8 +213,7 @@ export struct ChatSessionRootView {
       }
       .width('100%')
       .height('100%')
-      .backgroundColor($r('app.color.app_bg'))
-      // 关键:让 Column 自身延伸到状态栏区域,覆盖 HdsTabs 可能的默认背景
+      // 背景层分离:不设 backgroundColor,让 Index 根背景透出。
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP])
 
       // 重命名弹窗
@@ -226,7 +223,7 @@ export struct ChatSessionRootView {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.app_bg'))
+    // 背景层分离:不设 backgroundColor,让 Index 根背景透出。
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP])
   }
 
@@ -263,11 +260,14 @@ export struct ChatSessionRootView {
       .layoutWeight(1)
       .scrollBar(BarState.Off)
       .edgeEffect(EdgeEffect.Spring)
+      // margin-bottom 让 List 视口在悬浮 HdsTabs 上方结束,
+      // 防止顶部滚动位置时最后一项落入 TabBar 覆盖区(80vp=TabBar高度 + 20vp缓冲)
+      .margin({ bottom: 100 })
       .padding({
         left: $r('app.float.app_spacing_16'),
         right: $r('app.float.app_spacing_16'),
         top: $r('app.float.app_spacing_8'),
-        // 留给悬浮 Tab 栏(barBottomMargin=24 + Tab 高度约 56 = 80)
+        // 滚动到底部时,最后一项与 List 底部留出视觉间距
         bottom: 80
       })
     }

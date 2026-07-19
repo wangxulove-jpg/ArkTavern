@@ -10,22 +10,35 @@
  * 点击入口卡片通过 pathStack 跳转到现有二级页面,不复制业务逻辑。
  */
 
-import { AppPageHeader } from '../../components/AppPageHeader';
 import { PressableCard } from '../../components/PressableCard';
 
 @Component
 export struct SettingsRootView {
   /** AppShell 传入的全局 NavPathStack,用于跳转二级页面 */
   pathStack: NavPathStack = new NavPathStack();
+  /** 顶部状态栏避让高度(由 EntryAbility 写入 AppStorage) */
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
 
   build() {
     Stack() {
       Column() {
-        // ===== 顶部标题区(固定,不随下方滚动) =====
-        AppPageHeader({
-          title: $r('app.string.tab_settings'),
-          subtitle: $r('app.string.tab_settings_subtitle')
+        // ===== 顶部标题区(与 Tab1/Tab2 一致,不设 backgroundColor 让壁纸透出) =====
+        Row() {
+          Text($r('app.string.tab_settings'))
+            .fontSize($r('app.float.app_font_title'))
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.app_text_primary'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        .width('100%')
+        .padding({
+          left: $r('app.float.app_spacing_20'),
+          right: $r('app.float.app_spacing_20'),
+          top: this.statusBarHeight + 8,
+          bottom: $r('app.float.app_spacing_8')
         })
+        .alignItems(VerticalAlign.Center)
 
         // ===== 可滚动内容区 =====
         Scroll() {
@@ -81,7 +94,8 @@ export struct SettingsRootView {
           }
           .width('100%')
           .padding({
-            bottom: $r('app.float.app_spacing_24')
+            // 滚动到底部时,最后一项与 Scroll 底部留出视觉间距
+            bottom: 80
           })
         }
         .scrollable(ScrollDirection.Vertical)
@@ -89,14 +103,18 @@ export struct SettingsRootView {
         .edgeEffect(EdgeEffect.Spring)
         .layoutWeight(1)
         .width('100%')
+        // margin-bottom 让 Scroll 视口在悬浮 HdsTabs 上方结束,
+        // 防止内容落入 TabBar 覆盖区(80vp=TabBar高度 + 20vp缓冲)
+        .margin({ bottom: 100 })
       }
       .width('100%')
       .height('100%')
-      .backgroundColor($r('app.color.app_bg'))
+      // 背景层分离:不设 backgroundColor,让 Index 根背景透出。
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP])
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.app_bg'))
+    // 背景层分离:不设 backgroundColor,让 Index 根背景透出。
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP])
   }
 

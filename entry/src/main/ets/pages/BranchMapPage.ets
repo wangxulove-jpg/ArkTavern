@@ -140,7 +140,7 @@ export struct BranchMapPage {
         .width(44)
     }
     .width('100%')
-    .padding({ left: 12, right: 12, top: this.statusBarHeight, bottom: 0 })
+    .padding({ left: 12, right: 12, top: this.statusBarHeight + 4, bottom: 0 })
     .backgroundColor(COLOR_TITLE_BAR_BG)
     .alignItems(VerticalAlign.Center)
   }

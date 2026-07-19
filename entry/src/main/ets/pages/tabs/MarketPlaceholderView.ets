@@ -4,7 +4,7 @@
  * 作为 HdsTabs 的第三个 Tab 内容,纯 UI 占位页,不发起任何网络请求。
  *
  * 设计:
- * - 标题区:应用名 + 简短描述
+ * - 顶部标题栏:标题"市场"(与 Tab1/Tab2 顶栏样式一致,不设 backgroundColor 让壁纸透出)
  * - 空状态:使用 SymbolGlyph + 系统空状态布局
  * - 文案说明市场将在后续接入
  *
@@ -16,17 +16,31 @@
  * - 修改数据库版本
  */
 
-import { AppPageHeader } from '../../components/AppPageHeader';
-
 @Component
 export struct MarketPlaceholderView {
+  /** 顶部状态栏避让高度(由 EntryAbility 写入 AppStorage) */
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
+
   build() {
     Stack() {
       Column() {
-        AppPageHeader({
-          title: $r('app.string.tab_market'),
-          subtitle: $r('app.string.tab_market_subtitle')
+        // ===== 顶部标题栏(与 Tab1/Tab2 一致,不设 backgroundColor 让壁纸透出) =====
+        Row() {
+          Text($r('app.string.tab_market'))
+            .fontSize($r('app.float.app_font_title'))
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.app_text_primary'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        .width('100%')
+        .padding({
+          left: $r('app.float.app_spacing_20'),
+          right: $r('app.float.app_spacing_20'),
+          top: this.statusBarHeight + 8,
+          bottom: $r('app.float.app_spacing_8')
         })
+        .alignItems(VerticalAlign.Center)
 
         // 占位空状态区
         Column() {
@@ -61,12 +75,12 @@ export struct MarketPlaceholderView {
       }
       .width('100%')
       .height('100%')
-      .backgroundColor($r('app.color.app_bg'))
+      // 背景层分离:不设 backgroundColor,让 Index 根背景透出。
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP])
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.app_bg'))
+    // 背景层分离:不设 backgroundColor,让 Index 根背景透出。
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP])
   }
 }

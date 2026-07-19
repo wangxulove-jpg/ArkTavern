@@ -154,35 +154,8 @@ export struct ChatPage {
 
   build() {
     NavDestination() {
-      Column() {
-        this.topBar()
-
-        // 错误提示条
-        if (this.viewModel !== null && this.viewModel!.errorMessage.length > 0) {
-          Text(this.viewModel!.errorMessage)
-            .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_danger'))
-            .width('100%')
-            .padding({
-              left: $r('app.float.app_spacing_16'),
-              right: $r('app.float.app_spacing_16'),
-              top: $r('app.float.app_spacing_4'),
-              bottom: $r('app.float.app_spacing_4')
-            })
-            .backgroundColor($r('app.color.app_surface_2'))
-        }
-
-        // 状态条(生成中/已停止 - 轻量提示)
-        if (this.viewModel !== null && this.viewModel!.statusMessage.length > 0) {
-          Text(this.viewModel!.statusMessage)
-            .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_tertiary'))
-            .width('100%')
-            .textAlign(TextAlign.Center)
-            .padding({ top: 2, bottom: 2 })
-        }
-
-        // 消息列表区 + 悬浮控件
+      Stack() {
+        // ===== 底层:消息列表 + 浮动按钮(占满全屏,从状态栏延伸到底部手势区) =====
         Stack({ alignContent: Alignment.BottomEnd }) {
           if (this.isInitialLoading()) {
             this.loadingView()
@@ -214,12 +187,15 @@ export struct ChatPage {
               this.viewModel!.userScrolledUp = false;
             })
           }
-
-          // 注:右下角的"重新生成"悬浮按钮已按需求删除
-          // 重新生成功能保留在消息长按菜单和更多菜单中
         }
-        .layoutWeight(1)
         .width('100%')
+        .height('100%')
+        // 消息列表 padding 预留顶栏和输入栏高度,让首条消息显示在顶栏下方,
+        // 滚动时消息可进入顶栏/状态栏区域(被顶栏半透明背景遮挡)。
+        .padding({
+          top: this.statusBarHeight + 56,           // 顶栏高度(statusBar + 4 + 40 + 4 + 8缓冲)
+          bottom: 80 + this.navigationBarHeight       // 输入栏高度(8 + TextArea + 16 + navBar + 16缓冲)
+        })
         .onClick(() => {
           // 点击消息列表空白区域收起软键盘
           try {
@@ -229,9 +205,57 @@ export struct ChatPage {
           }
         })
 
-        // 底部输入区
-        this.inputArea()
+        // ===== 浮层:顶栏(顶部对齐,半透明背景) =====
+        // 注意:Stack 默认 alignContent=Center,若 Column 只设 width 不设 height,
+        // 会被居中显示(顶栏/输入栏"集中在中间"的根因)。
+        // 解法:Column 占满 height + justifyContent(Start/End) 让内容在顶部/底部对齐,
+        // 同时 hitTestBehavior=Transparent 让空白区域点击穿透到下层消息列表。
+        Column() {
+          this.topBar()
 
+          // 错误提示条
+          if (this.viewModel !== null && this.viewModel!.errorMessage.length > 0) {
+            Text(this.viewModel!.errorMessage)
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_danger'))
+              .width('100%')
+              .padding({
+                left: $r('app.float.app_spacing_16'),
+                right: $r('app.float.app_spacing_16'),
+                top: $r('app.float.app_spacing_4'),
+                bottom: $r('app.float.app_spacing_4')
+              })
+              .backgroundColor($r('app.color.app_surface_2'))
+          }
+
+          // 状态条(生成中/已停止 - 轻量提示)
+          if (this.viewModel !== null && this.viewModel!.statusMessage.length > 0) {
+            Text(this.viewModel!.statusMessage)
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_text_tertiary'))
+              .width('100%')
+              .textAlign(TextAlign.Center)
+              .padding({ top: 2, bottom: 2 })
+          }
+        }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.Start)
+        // 半透明背景:让壁纸/消息列表能透出,同时保证顶栏内容可读
+        .backgroundColor('rgba(245,246,248,0.88)')
+        // 空白区域(顶栏下方)不响应点击,让事件穿透到下层消息列表(收起键盘等)
+        .hitTestBehavior(HitTestMode.Transparent)
+
+        // ===== 浮层:输入栏(底部对齐,半透明背景) =====
+        Column() {
+          this.inputArea()
+        }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.End)
+        .hitTestBehavior(HitTestMode.Transparent)
+
+        // ===== 弹窗层(覆盖在最上层) =====
         // 会话列表面板(覆盖层)
         if (this.viewModel !== null && this.viewModel!.showSessionList) {
           ChatSessionListPanel({ viewModel: this.viewModel! })
@@ -290,12 +314,17 @@ export struct ChatPage {
       }
       .width('100%')
       .height('100%')
-      .backgroundColor($r('app.color.app_bg'))
+      // 背景层分离:Stack 根容器不设 backgroundColor,让 EntryAbility 窗口透明背景透出壁纸,
+      // 顶栏/输入栏作为半透明浮层叠加在消息列表之上。
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     }
     .title('')
     .hideTitleBar(true)
     .mode(NavDestinationMode.STANDARD)
+    // 显式透明:NavDestination 自身有默认背景,会挡住 Navigation 透明背景与窗口透明背景。
+    // Color.Transparent 强制让 NavDestination 不绘制自身背景,
+    // 让 Stack 中的消息列表/半透明浮层直接叠在窗口透明背景之上。
+    .backgroundColor(Color.Transparent)
   }
 
   // ===== 顶部栏 =====
@@ -370,8 +399,7 @@ export struct ChatPage {
     // 顶部 padding = 状态栏高度 + 原始间距 4(避开状态栏,按钮不被遮挡)
     .padding({ left: 4, right: 4, top: this.statusBarHeight + 4, bottom: 4 })
     .alignItems(VerticalAlign.Center)
-    // 关键:顶栏背景与页面背景同色(app_bg),去掉白色"方框"感
-    .backgroundColor($r('app.color.app_bg'))
+    // 背景层分离:顶栏不设 backgroundColor,透出 Index 根背景,避免形成与状态栏区域的色差。
   }
 
   // ===== 消息列表 =====
@@ -461,7 +489,9 @@ export struct ChatPage {
         left: $r('app.float.app_spacing_12'),
         right: $r('app.float.app_spacing_12'),
         top: 4,
-        bottom: $r('app.float.app_spacing_12')
+        // 底部 padding 16vp:给最后一条消息留出与输入区的视觉间距
+        // (输入区作为 Column 兄弟节点位于 Stack 下方,不与此处重叠)
+        bottom: $r('app.float.app_spacing_16')
       })
       .onAreaChange(() => {
         this.autoScrollToBottom();
@@ -650,21 +680,23 @@ export struct ChatPage {
 
         if (this.viewModel !== null && this.viewModel!.canStop) {
           // 停止按钮(纯图标,背景色填充,无 Button 边框)
+          // 触控区域 48x48vp,符合 HarmonyOS 推荐最小可点击尺寸
           Stack() {
             SymbolGlyph($r('sys.symbol.xmark'))
               .fontSize(18)
               .fontColor([$r('app.color.app_on_accent')])
           }
           .backgroundColor($r('app.color.app_danger'))
-          .borderRadius(22)
-          .height(44)
-          .width(44)
+          .borderRadius(24)
+          .height(48)
+          .width(48)
           .margin({ left: 8 })
           .onClick(() => {
             this.viewModel!.stop();
           })
         } else {
           // 发送按钮(纯图标,背景色填充,无 Button 边框)
+          // 触控区域 48x48vp,符合 HarmonyOS 推荐最小可点击尺寸
           Stack() {
             SymbolGlyph($r('sys.symbol.arrow_up'))
               .fontSize(20)
@@ -677,9 +709,9 @@ export struct ChatPage {
           .backgroundColor(this.canSend()
             ? $r('app.color.app_accent')
             : $r('app.color.app_surface_2'))
-          .borderRadius(22)
-          .height(44)
-          .width(44)
+          .borderRadius(24)
+          .height(48)
+          .width(48)
           .margin({ left: 8 })
           .onClick(() => {
             if (this.canSend() && this.viewModel !== null) {
@@ -689,11 +721,14 @@ export struct ChatPage {
         }
       }
       .width('100%')
-      .padding({ left: 12, right: 12, top: 8, bottom: this.navigationBarHeight + 8 })
+      // 关键:padding bottom 预留 16vp 底部安全距离,避开系统手势区;
+      // navigationBarHeight 在鸿蒙 NEXT 通常为 0,但保留以兼容有手势条的设备。
+      .padding({ left: 12, right: 12, top: 8, bottom: this.navigationBarHeight + 16 })
       .alignItems(VerticalAlign.Bottom)
     }
-    // 关键:输入区背景与页面背景同色(app_bg),只保留输入框本身的圆角背景
-    .backgroundColor($r('app.color.app_bg'))
+    .width('100%')
+    // 半透明背景:让壁纸/消息列表能透出,同时保证输入栏内容可读
+    .backgroundColor('rgba(245,246,248,0.88)')
   }
 
   // ===== 清空确认弹窗 =====

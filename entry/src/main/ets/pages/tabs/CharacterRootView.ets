@@ -163,7 +163,7 @@ export struct CharacterRootView {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.app_bg'))
+    // 背景层分离:不设 backgroundColor,让 Index 根背景透出。
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP])
   }
 
@@ -193,12 +193,11 @@ export struct CharacterRootView {
         })
     }
     .width('100%')
-    // 顶部 padding = 状态栏高度 + 原始间距(避开状态栏,按钮不被遮挡)
+    // 顶部 padding = 状态栏高度 + 间距 8(避开状态栏,与其他 Tab 统一起点)
     // 不设 height,让 padding + 内容自适应撑开
-    .padding({ left: 20, right: 20, top: this.statusBarHeight + 4, bottom: 4 })
+    .padding({ left: 20, right: 20, top: this.statusBarHeight + 8, bottom: 4 })
     .alignItems(VerticalAlign.Center)
-    // 加 backgroundColor,避免 Row 区域与下方 Column 背景出现视觉拼接
-    .backgroundColor($r('app.color.app_bg'))
+    // 背景层分离:顶栏不设 backgroundColor,透出 Index 根背景,避免色块拼接感。
   }
 
   // ===== 角色列表(支持左滑) =====
@@ -224,11 +223,14 @@ export struct CharacterRootView {
     .layoutWeight(1)
     .scrollBar(BarState.Off)
     .edgeEffect(EdgeEffect.Spring)
+    // margin-bottom 让 List 视口在悬浮 HdsTabs 上方结束,
+    // 防止顶部滚动位置时最后一项落入 TabBar 覆盖区(80vp=TabBar高度 + 20vp缓冲)
+    .margin({ bottom: 100 })
     .padding({
       left: $r('app.float.app_spacing_16'),
       right: $r('app.float.app_spacing_16'),
       top: $r('app.float.app_spacing_8'),
-      bottom: 100
+      bottom: 80
     })
   }
 

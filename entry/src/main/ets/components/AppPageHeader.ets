@@ -50,8 +50,8 @@ export struct AppPageHeader {
     .padding({
       left: $r('app.float.app_spacing_20'),
       right: $r('app.float.app_spacing_20'),
-      // 顶部 padding = 状态栏高度 + 原始间距 24
-      top: this.statusBarHeight + 24,
+      // 顶部 padding = 状态栏高度 + 间距 12(避开状态栏,避免顶部大块空白)
+      top: this.statusBarHeight + 12,
       bottom: $r('app.float.app_spacing_12')
     })
     // 关键:加 backgroundColor,确保 expandSafeArea 状态栏区域被填充,
