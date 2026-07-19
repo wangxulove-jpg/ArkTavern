@@ -881,6 +881,38 @@
       "value": "加载角色列表失败"
     },
     {
+      "name": "character_home_empty_title",
+      "value": "还没有角色"
+    },
+    {
+      "name": "character_home_empty_desc",
+      "value": "导入一张角色卡，开始你的第一段对话"
+    },
+    {
+      "name": "character_action_new_chat",
+      "value": "新建对话"
+    },
+    {
+      "name": "character_action_edit",
+      "value": "编辑"
+    },
+    {
+      "name": "character_action_delete",
+      "value": "删除"
+    },
+    {
+      "name": "character_delete_confirm_title",
+      "value": "确认删除"
+    },
+    {
+      "name": "character_delete_confirm_cancel",
+      "value": "取消"
+    },
+    {
+      "name": "character_delete_confirm_ok",
+      "value": "删除"
+    },
+    {
       "name": "tab_sessions",
       "value": "对话记录"
     },

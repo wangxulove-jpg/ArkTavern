@@ -111,10 +111,17 @@ export struct ChatPage {
     // UI-1: 从 ChatSessionRootView 通过 AppStorage 传入的待切换 chatId。
     // 读后立即清除,避免下次进入时残留。
     const pendingChatId: string = AppStorage.get<string>('pendingChatId') ?? '';
+    // UI-3B: 从角色卡 Tab 通过 AppStorage 传入的"为指定角色创建新对话" characterId。
+    // 不修改全局当前角色,仅用该 ID 加载 Character 后初始化会话。
+    // 读后立即清除,避免下次进入时残留。
+    const pendingCharacterId: string = AppStorage.get<string>('pendingCharacterId') ?? '';
     if (pendingChatId.length > 0) {
       AppStorage.set<string>('pendingChatId', '');
       vm.initialize().then((): Promise<void> => vm.selectSession(pendingChatId))
         .catch((): void => {});
+    } else if (pendingCharacterId.length > 0) {
+      AppStorage.set<string>('pendingCharacterId', '');
+      vm.initialize(pendingCharacterId).catch((): void => {});
     } else {
       vm.initialize();
     }

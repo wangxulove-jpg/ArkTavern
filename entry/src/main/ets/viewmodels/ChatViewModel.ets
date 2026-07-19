@@ -146,9 +146,14 @@ export class ChatViewModel {
    *
    * 流程:
    * 1. 加载模型配置
-   * 2. 加载当前角色
+   * 2. 加载角色(优先用 characterId,否则用全局当前角色)
    * 3. 调用 chatService.initializeSession(character) 从数据库恢复或创建新会话
    * 4. 同步 messages 到 ViewModel
+   *
+   * characterId 用于"为指定角色创建新对话"场景(如角色卡 Tab 左滑"新建对话"):
+   * - 仅用该 ID 加载 Character 对象传给 ChatService.initializeSession
+   * - 不修改全局当前角色(CharacterSelectionStore)
+   * - 不影响其他 Tab 对全局当前角色的读取
    *
    * 初始化期间:
    * - isInitializing = true
@@ -165,8 +170,10 @@ export class ChatViewModel {
    * - isSessionReady = false
    * - initError 设置错误信息
    * - 页面显示错误但不崩溃
+   *
+   * @param characterId 可选角色 ID。传入时按该 ID 加载角色;不传时用全局当前角色
    */
-  async initialize(): Promise<void> {
+  async initialize(characterId?: string): Promise<void> {
     if (this.disposed) {
       return;
     }
@@ -193,10 +200,14 @@ export class ChatViewModel {
       Logger.error(LOG_TAG, 'initialize model config failed: ' + String(e));
     }
 
-    // 2. 加载当前角色
+    // 2. 加载角色:优先用 characterId,否则用全局当前角色
     let character: Character | null = null;
     try {
-      character = await this.characterService.getCurrentCharacter();
+      if (characterId !== undefined && characterId.length > 0) {
+        character = await this.characterService.getById(characterId);
+      } else {
+        character = await this.characterService.getCurrentCharacter();
+      }
       if (character !== null) {
         this.characterName = character.name;
       }
