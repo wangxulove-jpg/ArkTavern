@@ -32,7 +32,6 @@ import { AppSettingsPage } from './AppSettingsPage';
 import { PromptPresetListPage } from './PromptPresetListPage';
 import { PromptPresetEditPage } from './PromptPresetEditPage';
 import { BranchMapPage } from './BranchMapPage';
-import { RealSsePocPage } from './RealSsePocPage';
 import { AppServices } from '../services/AppServices';
 import { CharacterRootView } from './tabs/CharacterRootView';
 import { ChatSessionRootView } from './tabs/ChatSessionRootView';
@@ -86,8 +85,6 @@ export struct AppShell {
       PromptPresetEditPage()
     } else if (name === 'BranchMapPage') {
       BranchMapPage()
-    } else if (name === 'RealSsePocPage') {
-      RealSsePocPage()
     }
   }
 

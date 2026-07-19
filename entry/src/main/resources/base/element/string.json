@@ -53,14 +53,6 @@
       "value": "应用设置"
     },
     {
-      "name": "home_dev_tools",
-      "value": "开发工具"
-    },
-    {
-      "name": "home_dev_sse_test",
-      "value": "真实 SSE 测试"
-    },
-    {
       "name": "home_no_sessions",
       "value": "暂无会话"
     },
@@ -207,10 +199,6 @@
     {
       "name": "nav_app_settings_empty",
       "value": "应用设置功能正在开发中。"
-    },
-    {
-      "name": "common_dev_test_label",
-      "value": "[开发测试]"
     },
     {
       "name": "home_model_configured",
@@ -1161,10 +1149,6 @@
       "value": "应用"
     },
     {
-      "name": "tab_settings_section_dev",
-      "value": "开发"
-    },
-    {
       "name": "tab_settings_model",
       "value": "模型设置"
     },
@@ -1195,14 +1179,6 @@
     {
       "name": "tab_settings_app_settings_desc",
       "value": "主题、语言等应用级配置"
-    },
-    {
-      "name": "tab_settings_dev_tools",
-      "value": "开发工具"
-    },
-    {
-      "name": "tab_settings_dev_tools_desc",
-      "value": "调试与测试入口"
     }
   ]
 }

@@ -6,7 +6,6 @@
  * 分组:
  * - AI 与对话:模型设置 / 世界书 / 提示词预设
  * - 应用:应用设置
- * - 开发:开发工具(放在最底部,视觉优先级低于正式设置项)
  *
  * 点击入口卡片通过 pathStack 跳转到现有二级页面,不复制业务逻辑。
  */
@@ -77,17 +76,6 @@ export struct SettingsRootView {
               $r('app.string.tab_settings_app_settings_desc'),
               () => {
                 this.pathStack.pushPath({ name: 'AppSettingsPage' });
-              }
-            )
-
-            // ===== 开发工具(最底部,低优先级) =====
-            this.sectionHeader($r('app.string.tab_settings_section_dev'))
-
-            this.entryCard(
-              $r('app.string.tab_settings_dev_tools'),
-              $r('app.string.tab_settings_dev_tools_desc'),
-              () => {
-                this.pathStack.pushPath({ name: 'RealSsePocPage' });
               }
             )
           }

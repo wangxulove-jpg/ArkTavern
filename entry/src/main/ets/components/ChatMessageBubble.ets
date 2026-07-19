@@ -75,13 +75,14 @@ export struct ChatMessageBubble {
           .fontColor($r('app.color.chat_user_text'))
           .textAlign(TextAlign.Start)
           .wordBreak(WordBreak.BREAK_WORD)
+          .lineHeight(22)
           .constraintSize({ maxWidth: '78%' })
           .backgroundColor($r('app.color.chat_user_bubble'))
           .borderRadius({
-            topLeft: 16, topRight: 16,
-            bottomLeft: 16, bottomRight: 4
+            topLeft: 18, topRight: 18,
+            bottomLeft: 18, bottomRight: 6
           })
-          .padding({ left: 14, right: 14, top: 10, bottom: 10 })
+          .padding({ left: 14, right: 14, top: 10, bottom: 12 })
           .gesture(
             LongPressGesture()
               .onAction(() => {
@@ -128,6 +129,7 @@ export struct ChatMessageBubble {
           .fontColor($r('app.color.app_text_primary'))
           .textAlign(TextAlign.Start)
           .wordBreak(WordBreak.BREAK_WORD)
+          .lineHeight(22)
 
         // 流式光标
         if (this.msg.isStreaming === true && this.msg.content.length > 0) {
@@ -137,41 +139,48 @@ export struct ChatMessageBubble {
             .margin({ top: 2 })
         }
 
-        // 已停止状态
+        // 已停止状态(带背景小标签)
         if (this.msg.status === ChatMessageStatus.Cancelled) {
-          Text('已停止')
-            .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_tertiary'))
-            .margin({ top: 4 })
+          Row() {
+            Text('■ 已停止')
+              .fontSize(11)
+              .fontColor($r('app.color.app_text_tertiary'))
+          }
+          .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+          .backgroundColor($r('app.color.chat_status_stopped_bg'))
+          .borderRadius(8)
+          .margin({ top: 6 })
         }
 
-        // 失败状态
+        // 失败状态(带背景小标签)
         if (this.msg.status === ChatMessageStatus.Failed) {
           Row() {
-            Text('生成失败')
-              .fontSize($r('app.float.app_font_caption'))
+            Text(this.msg.content.length === 0 ? '⚠ 未收到回复,请重试' : '⚠ 生成失败')
+              .fontSize(11)
               .fontColor($r('app.color.app_danger'))
-              .layoutWeight(1)
           }
-          .width('100%')
-          .margin({ top: 4 })
-        }
-        if (this.msg.status === ChatMessageStatus.Failed && this.msg.content.length === 0) {
-          Text('未收到回复,请重试')
-            .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_danger'))
-            .margin({ top: 2 })
+          .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+          .backgroundColor($r('app.color.chat_status_failed_bg'))
+          .borderRadius(8)
+          .margin({ top: 6 })
         }
       }
       .backgroundColor($r('app.color.chat_assistant_bubble'))
       .borderRadius({
-        topLeft: 4, topRight: 16,
-        bottomLeft: 16, bottomRight: 16
+        topLeft: 6, topRight: 18,
+        bottomLeft: 18, bottomRight: 18
       })
-      .padding({ left: 14, right: 14, top: 10, bottom: 10 })
+      .padding({ left: 14, right: 14, top: 10, bottom: 12 })
       .constraintSize({ maxWidth: '78%' })
       .margin({ left: this.showAvatar ? 8 : 0 })
       .alignItems(HorizontalAlign.Start)
+      // 微阴影:让 Assistant 气泡在浅色背景上有浮起感
+      .shadow({
+        radius: 6,
+        color: $r('app.color.chat_assistant_shadow'),
+        offsetX: 0,
+        offsetY: 2
+      })
       .gesture(
         LongPressGesture()
           .onAction(() => {

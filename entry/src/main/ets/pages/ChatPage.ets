@@ -215,31 +215,8 @@ export struct ChatPage {
             })
           }
 
-          // 再试一次悬浮按钮(仅 canRegenerate && !isGenerating && 有消息)
-          if (this.showRetryFloating()) {
-            Button({ type: ButtonType.Normal, stateEffect: false }) {
-              Row() {
-                SymbolGlyph($r('sys.symbol.arrow_clockwise'))
-                  .fontSize(16)
-                  .fontColor([$r('app.color.app_text_primary')])
-                Text($r('app.string.chat_regenerate'))
-                  .fontSize($r('app.float.app_font_caption'))
-                  .fontColor($r('app.color.app_text_primary'))
-                  .margin({ left: 4 })
-              }
-            }
-            .backgroundColor($r('app.color.app_surface_1'))
-            .borderRadius($r('app.float.app_radius_lg'))
-            .border({ width: 1, color: $r('app.color.app_divider') })
-            .height(36)
-            .padding({ left: 12, right: 12 })
-            .margin({ bottom: 12, right: 12 })
-            .onClick(() => {
-              if (this.viewModel !== null) {
-                this.viewModel!.regenerate();
-              }
-            })
-          }
+          // 注:右下角的"重新生成"悬浮按钮已按需求删除
+          // 重新生成功能保留在消息长按菜单和更多菜单中
         }
         .layoutWeight(1)
         .width('100%')
@@ -326,29 +303,27 @@ export struct ChatPage {
   @Builder
   topBar() {
     Row() {
-      // 返回按钮
-      Button({ type: ButtonType.Circle, stateEffect: false }) {
+      // 返回按钮(纯图标,无背景无边框,用 Stack 居中图标)
+      Stack() {
         SymbolGlyph($r('sys.symbol.chevron_left'))
-          .fontSize(22)
+          .fontSize(24)
           .fontColor([$r('app.color.app_text_primary')])
       }
       .width(40)
       .height(40)
-      .backgroundColor(Color.Transparent)
       .onClick(() => {
         this.handleBack();
       })
 
       // 汉堡按钮(打开会话列表,仅 viewModel 就绪时显示)
       if (this.viewModel !== null) {
-        Button({ type: ButtonType.Circle, stateEffect: false }) {
+        Stack() {
           SymbolGlyph($r('sys.symbol.line_3_horizontal'))
-            .fontSize(20)
+            .fontSize(22)
             .fontColor([$r('app.color.app_text_primary')])
         }
         .width(40)
         .height(40)
-        .backgroundColor(Color.Transparent)
         .margin({ left: 4 })
         .onClick(() => {
           this.viewModel!.openSessionList();
@@ -379,25 +354,24 @@ export struct ChatPage {
         .layoutWeight(1)
         .margin({ left: 8, right: 8 })
 
-      // 更多按钮(打开 ChatMoreMenuSheet)
-      Button({ type: ButtonType.Circle, stateEffect: false }) {
+      // 更多按钮(纯图标,无背景无边框)
+      Stack() {
         SymbolGlyph($r('sys.symbol.more'))
           .fontSize(22)
           .fontColor([$r('app.color.app_text_primary')])
       }
       .width(40)
       .height(40)
-      .backgroundColor(Color.Transparent)
       .onClick(() => {
         this.showMoreMenu = true;
       })
     }
     .width('100%')
     // 顶部 padding = 状态栏高度 + 原始间距 4(避开状态栏,按钮不被遮挡)
-    // 不设 height,让 padding + 按钮高度自适应撑开,避免内容溢出
     .padding({ left: 4, right: 4, top: this.statusBarHeight + 4, bottom: 4 })
     .alignItems(VerticalAlign.Center)
-    .backgroundColor($r('app.color.app_surface_1'))
+    // 关键:顶栏背景与页面背景同色(app_bg),去掉白色"方框"感
+    .backgroundColor($r('app.color.app_bg'))
   }
 
   // ===== 消息列表 =====
@@ -625,8 +599,6 @@ export struct ChatPage {
   @Builder
   inputArea() {
     Column() {
-      Divider().color($r('app.color.app_divider')).height(0.5)
-
       Row() {
         TextArea({
           placeholder: $r('app.string.chat_input_placeholder'),
@@ -636,6 +608,8 @@ export struct ChatPage {
           .fontColor($r('app.color.app_text_primary'))
           .backgroundColor($r('app.color.app_surface_2'))
           .borderRadius($r('app.float.app_radius_md'))
+          // 关键:显式去掉 TextArea 默认边框,只保留背景圆角
+          .border({ width: 0 })
           .maxLines(5)
           .layoutWeight(1)
           .padding({ left: 12, right: 12, top: 6, bottom: 6 })
@@ -675,8 +649,8 @@ export struct ChatPage {
           })
 
         if (this.viewModel !== null && this.viewModel!.canStop) {
-          // 停止按钮
-          Button({ type: ButtonType.Circle, stateEffect: false }) {
+          // 停止按钮(纯图标,背景色填充,无 Button 边框)
+          Stack() {
             SymbolGlyph($r('sys.symbol.xmark'))
               .fontSize(18)
               .fontColor([$r('app.color.app_on_accent')])
@@ -690,8 +664,8 @@ export struct ChatPage {
             this.viewModel!.stop();
           })
         } else {
-          // 发送按钮(空内容禁用)
-          Button({ type: ButtonType.Circle, stateEffect: false }) {
+          // 发送按钮(纯图标,背景色填充,无 Button 边框)
+          Stack() {
             SymbolGlyph($r('sys.symbol.arrow_up'))
               .fontSize(20)
               .fontColor([
@@ -707,9 +681,8 @@ export struct ChatPage {
           .height(44)
           .width(44)
           .margin({ left: 8 })
-          .enabled(this.canSend())
           .onClick(() => {
-            if (this.viewModel !== null) {
+            if (this.canSend() && this.viewModel !== null) {
               this.viewModel!.send();
             }
           })
@@ -719,7 +692,8 @@ export struct ChatPage {
       .padding({ left: 12, right: 12, top: 8, bottom: this.navigationBarHeight + 8 })
       .alignItems(VerticalAlign.Bottom)
     }
-    .backgroundColor($r('app.color.app_surface_1'))
+    // 关键:输入区背景与页面背景同色(app_bg),只保留输入框本身的圆角背景
+    .backgroundColor($r('app.color.app_bg'))
   }
 
   // ===== 清空确认弹窗 =====

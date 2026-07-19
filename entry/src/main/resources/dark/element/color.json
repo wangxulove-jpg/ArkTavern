@@ -89,6 +89,18 @@
       "value": "#2A2A2A"
     },
     {
+      "name": "chat_assistant_shadow",
+      "value": "#33000000"
+    },
+    {
+      "name": "chat_status_stopped_bg",
+      "value": "#3A3A3A"
+    },
+    {
+      "name": "chat_status_failed_bg",
+      "value": "#4A2A2A"
+    },
+    {
       "name": "chat_divider",
       "value": "#3A3A3A"
     },
