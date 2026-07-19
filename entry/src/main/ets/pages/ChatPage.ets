@@ -1,16 +1,24 @@
 /**
- * ChatPage 聊天页面(沉浸式原生 UI 重构)
+ * ChatPage 聊天页面(UI-CHAT-01 视觉重构)
  *
- * 设计目标:
- * - 顶部栏:返回 + 角色名 + 更多按钮(模型/预设/分支状态收敛到更多菜单)
- * - 消息列表:左右气泡 + Assistant 头像 + 流式光标 + 失败重试
- * - 长按消息:打开底部操作菜单(复制/编辑/重生成/继续/切分支)
- * - 底部输入区:多行 TextArea + 发送/停止按钮(无清空、无独立重生成)
- * - 空会话:角色头像 + 名称 + 开场白
- * - 颜色全部用 $r('app.color.*') 资源,自动适配深色模式
- * - 键盘避让:expandInput + safeArea
+ * 设计依据:
+ * - docs/ui_reference/generated/pages/chat_page.md
+ * - docs/ui_reference/generated/screens/CHAT_PAGE_009.md
+ * - docs/ui_reference/generated/glm_context.md 1.9 / 2.x
  *
- * 复用 ChatViewModel 所有接口,不修改业务逻辑。
+ * 视觉结构:
+ * - TopNavigation:返回 + 汉堡(打开会话列表) + 头像 + 角色名 + 更多(打开 ChatMoreMenuSheet)
+ * - MessageArea:Scroll + ForEach,消息气泡由 ChatMessageBubble 渲染
+ * - OptionalFloatingControls:回到底部 + 再试一次(条件渲染)
+ * - InputArea:TextArea + 发送/停止按钮
+ * - ConditionalOverlays:会话列表 / 更多菜单 / 消息操作菜单 / 清空确认
+ *
+ * 业务约束:
+ * - 不显示无功能按钮(全屏 / 加号 / 齿轮未实现不显示)
+ * - 不显示字数统计(ChatViewModel 无 4000 字限制,不引入虚假限制)
+ * - 再试一次仅在 canRegenerate && !isGenerating && messages.length > 0 时显示
+ * - 复用 ChatViewModel 所有接口,不修改业务逻辑
+ * - 颜色全部使用 $r('app.color.*') 资源,自动适配深色模式
  */
 
 import { ChatViewModel } from '../viewmodels/ChatViewModel';
@@ -26,6 +34,7 @@ import { ChatMoreMenuSheet } from '../components/ChatMoreMenuSheet';
 import { CharacterImageView } from '../components/CharacterImageView';
 import { promptAction } from '@kit.ArkUI';
 import { pasteboard } from '@kit.BasicServicesKit';
+import { KeyCode } from '@kit.InputKit';
 import { AppServices } from '../services/AppServices';
 import { ChatSessionListPanel } from '../components/ChatSessionListPanel';
 import { Character } from '../models/Character';
@@ -49,8 +58,6 @@ export struct ChatPage {
   @State actionSheetMsg: ChatMessage | null = null;
   /** 是否显示清空确认 */
   @State showClearConfirm: boolean = false;
-  /** 清空确认输入文本 */
-  @State clearConfirmInput: string = '';
 
   @StorageLink('branchChangeSeq') @Watch('onBranchChangeSeqChanged') branchChangeSeq: number = 0;
   private scroller: Scroller = new Scroller();
@@ -143,7 +150,12 @@ export struct ChatPage {
             .fontSize($r('app.float.app_font_caption'))
             .fontColor($r('app.color.app_danger'))
             .width('100%')
-            .padding({ left: 16, right: 16, top: 4, bottom: 4 })
+            .padding({
+              left: $r('app.float.app_spacing_16'),
+              right: $r('app.float.app_spacing_16'),
+              top: $r('app.float.app_spacing_4'),
+              bottom: $r('app.float.app_spacing_4')
+            })
             .backgroundColor($r('app.color.app_surface_2'))
         }
 
@@ -157,8 +169,8 @@ export struct ChatPage {
             .padding({ top: 2, bottom: 2 })
         }
 
-        // 消息列表区
-        Stack({ alignContent: Alignment.Bottom }) {
+        // 消息列表区 + 悬浮控件
+        Stack({ alignContent: Alignment.BottomEnd }) {
           if (this.isInitialLoading()) {
             this.loadingView()
           } else if (this.hasInitError()) {
@@ -173,19 +185,47 @@ export struct ChatPage {
           if (this.viewModel !== null
             && this.viewModel!.userScrolledUp
             && this.messages.length > 0) {
-            Button('↓')
-              .fontSize(20)
-              .backgroundColor($r('app.color.app_surface_1'))
-              .fontColor($r('app.color.app_text_primary'))
-              .borderRadius(22)
-              .width(44)
-              .height(44)
-              .margin({ bottom: 12 })
-              .shadow({ radius: 8, color: 'rgba(0,0,0,0.15)' })
-              .onClick(() => {
-                this.scroller.scrollEdge(Edge.Bottom);
-                this.viewModel!.userScrolledUp = false;
-              })
+            Button({ type: ButtonType.Circle, stateEffect: false }) {
+              SymbolGlyph($r('sys.symbol.chevron_down'))
+                .fontSize(20)
+                .fontColor([$r('app.color.app_text_primary')])
+            }
+            .backgroundColor($r('app.color.app_surface_1'))
+            .borderRadius(22)
+            .width(44)
+            .height(44)
+            .margin({ bottom: 12, right: 12 })
+            .shadow({ radius: 8, color: 'rgba(0,0,0,0.15)' })
+            .onClick(() => {
+              this.scroller.scrollEdge(Edge.Bottom);
+              this.viewModel!.userScrolledUp = false;
+            })
+          }
+
+          // 再试一次悬浮按钮(仅 canRegenerate && !isGenerating && 有消息)
+          if (this.showRetryFloating()) {
+            Button({ type: ButtonType.Normal, stateEffect: false }) {
+              Row() {
+                SymbolGlyph($r('sys.symbol.arrow_clockwise'))
+                  .fontSize(16)
+                  .fontColor([$r('app.color.app_text_primary')])
+                Text($r('app.string.chat_regenerate'))
+                  .fontSize($r('app.float.app_font_caption'))
+                  .fontColor($r('app.color.app_text_primary'))
+                  .margin({ left: 4 })
+              }
+            }
+            .backgroundColor($r('app.color.app_surface_1'))
+            .borderRadius($r('app.float.app_radius_lg'))
+            .border({ width: 1, color: $r('app.color.app_divider') })
+            .height(36)
+            .padding({ left: 12, right: 12 })
+            .margin({ bottom: 12, right: 12 })
+            .onClick(() => {
+              if (this.viewModel !== null) {
+                this.viewModel!.regenerate();
+              }
+            })
           }
         }
         .layoutWeight(1)
@@ -265,42 +305,71 @@ export struct ChatPage {
   @Builder
   topBar() {
     Row() {
-      Button('‹')
-        .fontSize(24)
-        .backgroundColor(Color.Transparent)
-        .fontColor($r('app.color.app_text_primary'))
-        .height(40)
-        .width(40)
-        .padding({ left: 4, right: 4 })
-        .onClick(() => {
-          this.handleBack();
-        })
-
-      Column() {
-        Text(this.viewModel !== null && this.viewModel!.characterName.length > 0
-          ? this.viewModel!.characterName
-          : '聊天')
-          .fontSize($r('app.float.app_font_subtitle'))
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.app_text_primary'))
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .textAlign(TextAlign.Center)
-          .width('100%')
+      // 返回按钮
+      Button({ type: ButtonType.Circle, stateEffect: false }) {
+        SymbolGlyph($r('sys.symbol.chevron_left'))
+          .fontSize(22)
+          .fontColor([$r('app.color.app_text_primary')])
       }
-      .layoutWeight(1)
-      .alignItems(HorizontalAlign.Center)
+      .width(40)
+      .height(40)
+      .backgroundColor(Color.Transparent)
+      .onClick(() => {
+        this.handleBack();
+      })
 
-      Button('⋯')
-        .fontSize(22)
-        .backgroundColor(Color.Transparent)
-        .fontColor($r('app.color.app_text_primary'))
-        .height(40)
+      // 汉堡按钮(打开会话列表,仅 viewModel 就绪时显示)
+      if (this.viewModel !== null) {
+        Button({ type: ButtonType.Circle, stateEffect: false }) {
+          SymbolGlyph($r('sys.symbol.line_3_horizontal'))
+            .fontSize(20)
+            .fontColor([$r('app.color.app_text_primary')])
+        }
         .width(40)
-        .padding({ left: 4, right: 4 })
+        .height(40)
+        .backgroundColor(Color.Transparent)
+        .margin({ left: 4 })
         .onClick(() => {
-          this.showMoreMenu = true;
+          this.viewModel!.openSessionList();
         })
+      }
+
+      // 头像(32x32 圆形)
+      CharacterImageView({
+        imageUri: this.character !== null ? this.character!.avatarUri : '',
+        fallbackName: this.viewModel !== null ? this.viewModel!.characterName : '',
+        imgWidth: 32,
+        imgHeight: 32,
+        imgBorderRadius: 16,
+        displayMode: 'thumbnail',
+        objectFit: ImageFit.Cover
+      })
+        .margin({ left: 8 })
+
+      // 角色名
+      Text(this.viewModel !== null && this.viewModel!.characterName.length > 0
+        ? this.viewModel!.characterName
+        : (this.character !== null ? this.character!.name : $r('app.string.nav_chat_title')))
+        .fontSize($r('app.float.app_font_subtitle'))
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.app_text_primary'))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .layoutWeight(1)
+        .margin({ left: 8, right: 8 })
+
+      // 更多按钮(打开 ChatMoreMenuSheet)
+      Button({ type: ButtonType.Circle, stateEffect: false }) {
+        SymbolGlyph($r('sys.symbol.more'))
+          .fontSize(22)
+          .fontColor([$r('app.color.app_text_primary')])
+      }
+      .width(40)
+      .height(40)
+      .backgroundColor(Color.Transparent)
+      .onClick(() => {
+        this.showMoreMenu = true;
+      })
     }
     .width('100%')
     .height(56)
@@ -359,17 +428,25 @@ export struct ChatPage {
                 && this.viewModel !== null
                 && this.viewModel!.canRegenerateAssistantMessage(msg.id)) {
                 Row() {
-                  Button('↻ 重试')
-                    .fontSize($r('app.float.app_font_caption'))
-                    .backgroundColor($r('app.color.app_surface_2'))
-                    .fontColor($r('app.color.app_accent'))
-                    .borderRadius(14)
-                    .height(28)
-                    .padding({ left: 12, right: 12 })
-                    .margin({ top: 4, bottom: 4 })
-                    .onClick(() => {
-                      this.regenerateAssistantMessage(msg.id);
-                    })
+                  Button({ type: ButtonType.Normal, stateEffect: false }) {
+                    Row() {
+                      SymbolGlyph($r('sys.symbol.arrow_clockwise'))
+                        .fontSize(14)
+                        .fontColor([$r('app.color.app_accent')])
+                      Text($r('app.string.chat_regenerate'))
+                        .fontSize($r('app.float.app_font_caption'))
+                        .fontColor($r('app.color.app_accent'))
+                        .margin({ left: 4 })
+                    }
+                  }
+                  .backgroundColor($r('app.color.app_surface_2'))
+                  .borderRadius(14)
+                  .height(28)
+                  .padding({ left: 12, right: 12 })
+                  .margin({ top: 4, bottom: 4 })
+                  .onClick(() => {
+                    this.regenerateAssistantMessage(msg.id);
+                  })
                 }
                 .width('100%')
                 .justifyContent(FlexAlign.Start)
@@ -384,7 +461,12 @@ export struct ChatPage {
         Blank().height(12)
       }
       .width('100%')
-      .padding({ left: 12, right: 12, top: 4, bottom: 12 })
+      .padding({
+        left: $r('app.float.app_spacing_12'),
+        right: $r('app.float.app_spacing_12'),
+        top: 4,
+        bottom: $r('app.float.app_spacing_12')
+      })
       .onAreaChange(() => {
         this.autoScrollToBottom();
       })
@@ -412,12 +494,12 @@ export struct ChatPage {
   emptyStateView() {
     Column() {
       if (this.viewModel !== null && !this.viewModel!.hasCurrentModel) {
-        Text('尚未配置模型')
+        Text($r('app.string.chat_no_model'))
           .fontSize($r('app.float.app_font_subtitle'))
           .fontColor($r('app.color.app_text_secondary'))
-          .margin({ bottom: 16 })
+          .margin({ bottom: $r('app.float.app_spacing_16') })
 
-        Button('前往模型设置')
+        Button($r('app.string.chat_go_settings'))
           .fontSize($r('app.float.app_font_body'))
           .backgroundColor($r('app.color.app_accent'))
           .fontColor($r('app.color.app_on_accent'))
@@ -442,25 +524,30 @@ export struct ChatPage {
           .fontSize($r('app.float.app_font_subtitle'))
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.app_text_primary'))
-          .margin({ top: 12 })
+          .margin({ top: $r('app.float.app_spacing_12') })
 
         if (this.character!.firstMessage.length > 0) {
           Text(this.character!.firstMessage)
             .fontSize($r('app.float.app_font_body'))
             .fontColor($r('app.color.app_text_secondary'))
             .textAlign(TextAlign.Center)
-            .margin({ top: 12, left: 32, right: 32 })
-            .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+            .margin({ top: $r('app.float.app_spacing_12'), left: 32, right: 32 })
+            .padding({
+              left: $r('app.float.app_spacing_16'),
+              right: $r('app.float.app_spacing_16'),
+              top: $r('app.float.app_spacing_12'),
+              bottom: $r('app.float.app_spacing_12')
+            })
             .backgroundColor($r('app.color.app_surface_1'))
             .borderRadius($r('app.float.app_radius_md'))
         }
 
-        Text('输入消息开始对话')
+        Text($r('app.string.nav_chat_empty'))
           .fontSize($r('app.float.app_font_caption'))
           .fontColor($r('app.color.app_text_tertiary'))
-          .margin({ top: 24 })
+          .margin({ top: $r('app.float.app_spacing_24') })
       } else {
-        Text('开始聊天')
+        Text($r('app.string.nav_chat_empty'))
           .fontSize($r('app.float.app_font_subtitle'))
           .fontColor($r('app.color.app_text_secondary'))
       }
@@ -520,7 +607,7 @@ export struct ChatPage {
 
       Row() {
         TextArea({
-          placeholder: '输入消息…',
+          placeholder: $r('app.string.chat_input_placeholder'),
           text: this.viewModel !== null ? this.viewModel!.inputText : ''
         })
           .fontSize($r('app.float.app_font_body'))
@@ -530,43 +617,80 @@ export struct ChatPage {
           .maxLines(5)
           .layoutWeight(1)
           .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+          .enterKeyType(EnterKeyType.Send)
           .onChange((value: string) => {
             if (this.viewModel !== null) {
               this.viewModel!.updateInput(value);
             }
           })
+          .onSubmit((enterKey: EnterKeyType, event?: SubmitEvent) => {
+            // 软键盘回车(EnterKeyType.Send):触发发送并保持编辑态
+            if (this.canSend() && this.viewModel !== null) {
+              this.viewModel!.send();
+            }
+            event?.keepEditableState();
+          })
+          .onKeyPreIme((event: KeyEvent): boolean => {
+            // 物理键盘回车发送消息(Ctrl+Enter 仍为换行)
+            if (event.type === KeyType.Down
+              && (event.keyCode === KeyCode.KEYCODE_ENTER
+                || event.keyCode === KeyCode.KEYCODE_NUMPAD_ENTER)) {
+              let hasCtrl: boolean = false;
+              try {
+                hasCtrl = event.getModifierKeyState?.(['Ctrl']) ?? false;
+              } catch (_e) {
+                hasCtrl = false;
+              }
+              if (hasCtrl) {
+                return false;
+              }
+              if (this.canSend() && this.viewModel !== null) {
+                this.viewModel!.send();
+                return true;
+              }
+            }
+            return false;
+          })
 
         if (this.viewModel !== null && this.viewModel!.canStop) {
-          Button('■')
-            .fontSize(18)
-            .backgroundColor($r('app.color.app_danger'))
-            .fontColor($r('app.color.app_on_accent'))
-            .borderRadius(22)
-            .height(44)
-            .width(44)
-            .margin({ left: 8 })
-            .onClick(() => {
-              this.viewModel!.stop();
-            })
+          // 停止按钮
+          Button({ type: ButtonType.Circle, stateEffect: false }) {
+            SymbolGlyph($r('sys.symbol.xmark'))
+              .fontSize(18)
+              .fontColor([$r('app.color.app_on_accent')])
+          }
+          .backgroundColor($r('app.color.app_danger'))
+          .borderRadius(22)
+          .height(44)
+          .width(44)
+          .margin({ left: 8 })
+          .onClick(() => {
+            this.viewModel!.stop();
+          })
         } else {
-          Button('↑')
-            .fontSize(20)
-            .backgroundColor(this.canSend()
-              ? $r('app.color.app_accent')
-              : $r('app.color.app_surface_2'))
-            .fontColor(this.canSend()
-              ? $r('app.color.app_on_accent')
-              : $r('app.color.app_text_tertiary'))
-            .borderRadius(22)
-            .height(44)
-            .width(44)
-            .margin({ left: 8 })
-            .enabled(this.canSend())
-            .onClick(() => {
-              if (this.viewModel !== null) {
-                this.viewModel!.send();
-              }
-            })
+          // 发送按钮(空内容禁用)
+          Button({ type: ButtonType.Circle, stateEffect: false }) {
+            SymbolGlyph($r('sys.symbol.arrow_up'))
+              .fontSize(20)
+              .fontColor([
+                this.canSend()
+                  ? $r('app.color.app_on_accent')
+                  : $r('app.color.app_text_tertiary')
+              ])
+          }
+          .backgroundColor(this.canSend()
+            ? $r('app.color.app_accent')
+            : $r('app.color.app_surface_2'))
+          .borderRadius(22)
+          .height(44)
+          .width(44)
+          .margin({ left: 8 })
+          .enabled(this.canSend())
+          .onClick(() => {
+            if (this.viewModel !== null) {
+              this.viewModel!.send();
+            }
+          })
         }
       }
       .width('100%')
@@ -583,7 +707,7 @@ export struct ChatPage {
     Stack() {
       Column() {
         Column() {
-          Text('清空对话')
+          Text($r('app.string.chat_clear'))
             .fontSize(17)
             .fontWeight(FontWeight.Medium)
             .fontColor($r('app.color.app_text_primary'))
@@ -605,7 +729,7 @@ export struct ChatPage {
               .onClick(() => {
                 this.showClearConfirm = false;
               })
-            Button('清空')
+            Button($r('app.string.chat_clear'))
               .fontSize(15)
               .backgroundColor($r('app.color.app_danger'))
               .fontColor($r('app.color.app_on_accent'))
@@ -652,6 +776,22 @@ export struct ChatPage {
 
   private hasInitError(): boolean {
     return this.viewModel !== null && this.viewModel!.initError.length > 0;
+  }
+
+  /**
+   * 是否显示"再试一次"悬浮按钮:
+   * - ViewModel 就绪
+   * - 可重新生成(canRegenerate)
+   * - 当前未生成中(!isGenerating)
+   * - 当前未忙碌(!busy)
+   * - 消息列表非空
+   */
+  private showRetryFloating(): boolean {
+    return this.viewModel !== null
+      && this.viewModel!.canRegenerate
+      && !this.viewModel!.isGenerating
+      && !this.viewModel!.busy
+      && this.messages.length > 0;
   }
 
   private getSwipeActiveIndex(messageId: string): number {
@@ -765,7 +905,7 @@ export struct ChatPage {
         if (err) {
           return;
         }
-        promptAction.showToast({ message: '已复制', duration: 1500 });
+        promptAction.showToast({ message: $r('app.string.chat_copy_success'), duration: 1500 });
       });
     } catch (_e) {
       // 复制失败,静默处理
@@ -809,7 +949,7 @@ export struct ChatPage {
       return;
     }
     if (this.viewModel!.busy) {
-      promptAction.showToast({ message: '生成中或操作中,无法创建分支', duration: 1500 });
+      promptAction.showToast({ message: $r('app.string.chat_branch_create_busy'), duration: 1500 });
       return;
     }
     this.viewModel!.continueFromAssistant(messageId);
@@ -820,7 +960,7 @@ export struct ChatPage {
       return;
     }
     if (this.viewModel!.busy) {
-      promptAction.showToast({ message: '生成中或操作中,无法创建分支', duration: 1500 });
+      promptAction.showToast({ message: $r('app.string.chat_branch_create_busy'), duration: 1500 });
       return;
     }
     this.viewModel!.generateFromUserMessage(messageId);
@@ -831,7 +971,7 @@ export struct ChatPage {
       return;
     }
     if (this.viewModel!.busy) {
-      promptAction.showToast({ message: '生成中或操作中,无法创建分支', duration: 1500 });
+      promptAction.showToast({ message: $r('app.string.chat_branch_create_busy'), duration: 1500 });
       return;
     }
     this.viewModel!.regenerateAssistantMessage(messageId);
@@ -842,7 +982,7 @@ export struct ChatPage {
       return;
     }
     if (this.viewModel!.busy) {
-      promptAction.showToast({ message: '生成中或操作中,无法创建分支', duration: 1500 });
+      promptAction.showToast({ message: $r('app.string.chat_branch_create_busy'), duration: 1500 });
       return;
     }
     this.editingMessageId = messageId;

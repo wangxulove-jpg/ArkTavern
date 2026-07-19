@@ -17,18 +17,11 @@
  * - 生成中:箭头禁用,显示"停止"按钮
  * - 常规:箭头根据边界启用/禁用,显示"重新生成"按钮
  * - 已达最大候选数(8):"重新生成"按钮禁用
+ *
+ * UI-CHAT-01 颜色迁移:
+ * - 所有字面量颜色迁移到 $r('app.color.*') 资源 Token
+ * - 自动适配深色模式
  */
-
-const COLOR_ARROW_ACTIVE: string = '#333333';
-const COLOR_ARROW_DISABLED: string = '#CCCCCC';
-const COLOR_TEXT: string = '#666666';
-const COLOR_TEXT_HINT: string = '#AAAAAA';
-const COLOR_BUTTON_BG: string = '#F0F0F0';
-const COLOR_BUTTON_TEXT: string = '#333333';
-const COLOR_STOP_BG: string = '#FFE0E0';
-const COLOR_STOP_TEXT: string = '#CC3333';
-const COLOR_BUTTON_DISABLED_BG: string = '#F5F5F5';
-const COLOR_BUTTON_DISABLED_TEXT: string = '#CCCCCC';
 
 @Component
 export struct MessageSwipeControls {
@@ -80,7 +73,7 @@ export struct MessageSwipeControls {
 
           Text(this.displayText)
             .fontSize(14)
-            .fontColor(COLOR_TEXT)
+            .fontColor($r('app.color.app_text_secondary'))
             .textAlign(TextAlign.Center)
             .width(56)
 
@@ -99,7 +92,7 @@ export struct MessageSwipeControls {
         // 无 Candidate Group 时不渲染任何内容(避免无意义的 `1 / 1`)
         Text(this.displayText)
           .fontSize(13)
-          .fontColor(COLOR_TEXT_HINT)
+          .fontColor($r('app.color.app_text_tertiary'))
           .textAlign(TextAlign.Center)
       }
     }
@@ -123,7 +116,9 @@ export struct MessageSwipeControls {
     Button(label)
       .fontSize(20)
       .fontWeight(FontWeight.Bold)
-      .fontColor(disabled ? COLOR_ARROW_DISABLED : COLOR_ARROW_ACTIVE)
+      .fontColor(disabled
+        ? $r('app.color.app_text_tertiary')
+        : $r('app.color.app_text_primary'))
       .backgroundColor(Color.Transparent)
       .width(36)
       .height(36)
@@ -136,10 +131,10 @@ export struct MessageSwipeControls {
 
   @Builder
   stopButton() {
-    Button('停止')
+    Button($r('app.string.chat_stop'))
       .fontSize(13)
-      .fontColor(COLOR_STOP_TEXT)
-      .backgroundColor(COLOR_STOP_BG)
+      .fontColor($r('app.color.app_danger'))
+      .backgroundColor($r('app.color.app_surface_2'))
       .borderRadius(14)
       .height(28)
       .padding({ left: 12, right: 12 })
@@ -151,10 +146,14 @@ export struct MessageSwipeControls {
 
   @Builder
   regenerateButton() {
-    Button('重新生成')
+    Button($r('app.string.chat_regenerate'))
       .fontSize(13)
-      .fontColor(this.isMaxReached ? COLOR_BUTTON_DISABLED_TEXT : COLOR_BUTTON_TEXT)
-      .backgroundColor(this.isMaxReached ? COLOR_BUTTON_DISABLED_BG : COLOR_BUTTON_BG)
+      .fontColor(this.isMaxReached
+        ? $r('app.color.app_text_tertiary')
+        : $r('app.color.app_text_primary'))
+      .backgroundColor(this.isMaxReached
+        ? $r('app.color.app_bg')
+        : $r('app.color.app_surface_2'))
       .borderRadius(14)
       .height(28)
       .padding({ left: 12, right: 12 })

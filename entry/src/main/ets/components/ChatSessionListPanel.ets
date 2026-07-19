@@ -16,19 +16,14 @@
  * - 点击"新建对话"创建新会话
  * - 点击"删除"显示确认对话框
  * - 生成中或操作中按钮置灰
+ *
+ * UI-CHAT-01 颜色迁移:
+ * - 所有字面量颜色迁移到 $r('app.color.*') 资源 Token
+ * - 自动适配深色模式
  */
 
 import { ChatViewModel } from '../viewmodels/ChatViewModel';
 import { Chat } from '../models/Chat';
-
-const COLOR_BACKDROP: string = 'rgba(0,0,0,0.5)';
-const COLOR_PANEL_BG: string = '#FFFFFF';
-const COLOR_ITEM_BG: string = '#F7F7F7';
-const COLOR_TEXT_PRIMARY: string = '#333333';
-const COLOR_TEXT_SECONDARY: string = '#888888';
-const COLOR_CURRENT: string = '#5B7CFA';
-const COLOR_DELETE: string = '#E74C3C';
-const COLOR_DIVIDER: string = '#E0E0E0';
 
 @Component
 export struct ChatSessionListPanel {
@@ -40,7 +35,7 @@ export struct ChatSessionListPanel {
       Column()
         .width('100%')
         .height('100%')
-        .backgroundColor(COLOR_BACKDROP)
+        .backgroundColor('rgba(0,0,0,0.5)')
         .onClick(() => {
           if (!this.viewModel.showDeleteSessionConfirm) {
             this.viewModel.closeSessionList();
@@ -54,11 +49,11 @@ export struct ChatSessionListPanel {
         if (this.viewModel.sessionError.length > 0) {
           Text(this.viewModel.sessionError)
             .fontSize(12)
-            .fontColor(COLOR_DELETE)
+            .fontColor($r('app.color.app_danger'))
             .width('100%')
             .padding({ left: 16, right: 16, bottom: 8 })
         }
-        Divider().color(COLOR_DIVIDER).height(1).width('100%')
+        Divider().color($r('app.color.app_divider')).height(1).width('100%')
 
         if (this.viewModel.isLoadingSessions) {
           this.loadingState();
@@ -70,7 +65,7 @@ export struct ChatSessionListPanel {
       }
       .width('100%')
       .height('100%')
-      .backgroundColor(COLOR_PANEL_BG)
+      .backgroundColor($r('app.color.app_surface_1'))
 
       // 删除确认对话框(覆盖在面板之上)
       if (this.viewModel.showDeleteSessionConfirm) {
@@ -84,19 +79,21 @@ export struct ChatSessionListPanel {
   @Builder
   headerBar() {
     Row() {
-      Text('会话')
+      Text($r('app.string.tab_sessions'))
         .fontSize(18)
         .fontWeight(FontWeight.Bold)
-        .fontColor(COLOR_TEXT_PRIMARY)
+        .fontColor($r('app.color.app_text_primary'))
 
       Blank()
 
-      Button('新建对话')
+      Button($r('app.string.tab_sessions_new_chat'))
         .fontSize(13)
         .backgroundColor(this.viewModel.canOperateSessions
-          ? $r('sys.color.ohos_id_color_emphasize')
-          : $r('sys.color.ohos_id_color_button_normal'))
-        .fontColor('#FFFFFF')
+          ? $r('app.color.app_accent')
+          : $r('app.color.app_surface_2'))
+        .fontColor(this.viewModel.canOperateSessions
+          ? $r('app.color.app_on_accent')
+          : $r('app.color.app_text_tertiary'))
         .borderRadius(16)
         .height(36)
         .padding({ left: 12, right: 12 })
@@ -105,16 +102,18 @@ export struct ChatSessionListPanel {
           this.viewModel.createNewSession();
         })
 
-      Button('✕')
-        .fontSize(16)
-        .backgroundColor(Color.Transparent)
-        .fontColor(COLOR_TEXT_SECONDARY)
-        .width(36)
-        .height(36)
-        .margin({ left: 4 })
-        .onClick(() => {
-          this.viewModel.closeSessionList();
-        })
+      Button({ type: ButtonType.Circle, stateEffect: false }) {
+        SymbolGlyph($r('sys.symbol.xmark'))
+          .fontSize(16)
+          .fontColor([$r('app.color.app_text_secondary')])
+      }
+      .width(36)
+      .height(36)
+      .backgroundColor(Color.Transparent)
+      .margin({ left: 4 })
+      .onClick(() => {
+        this.viewModel.closeSessionList();
+      })
     }
     .width('100%')
     .padding({ left: 16, right: 16, top: 16, bottom: 12 })
@@ -126,12 +125,12 @@ export struct ChatSessionListPanel {
     Row() {
       Text('当前上下文:')
         .fontSize(12)
-        .fontColor(COLOR_TEXT_SECONDARY)
+        .fontColor($r('app.color.app_text_secondary'))
       Text(this.viewModel.characterName.length > 0
         ? this.viewModel.characterName
         : '普通聊天')
         .fontSize(12)
-        .fontColor(COLOR_TEXT_PRIMARY)
+        .fontColor($r('app.color.app_text_primary'))
         .margin({ left: 4 })
     }
     .width('100%')
@@ -144,7 +143,7 @@ export struct ChatSessionListPanel {
       LoadingProgress()
         .width(36)
         .height(36)
-        .color(COLOR_TEXT_SECONDARY)
+        .color($r('app.color.app_text_secondary'))
     }
     .width('100%')
     .height('100%')
@@ -157,13 +156,13 @@ export struct ChatSessionListPanel {
     Column() {
       Text('暂无会话')
         .fontSize(14)
-        .fontColor(COLOR_TEXT_SECONDARY)
+        .fontColor($r('app.color.app_text_secondary'))
         .margin({ bottom: 16 })
 
-      Button('新建对话')
+      Button($r('app.string.tab_sessions_new_chat'))
         .fontSize(13)
-        .backgroundColor($r('sys.color.ohos_id_color_emphasize'))
-        .fontColor('#FFFFFF')
+        .backgroundColor($r('app.color.app_accent'))
+        .fontColor($r('app.color.app_on_accent'))
         .borderRadius(20)
         .height(36)
         .padding({ left: 20, right: 20 })
@@ -202,14 +201,14 @@ export struct ChatSessionListPanel {
       Column() {
         Text(this.viewModel.getSessionTitle(chat))
           .fontSize(15)
-          .fontColor(COLOR_TEXT_PRIMARY)
+          .fontColor($r('app.color.app_text_primary'))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .width('100%')
 
         Text(this.viewModel.getSessionSubtitle(chat))
           .fontSize(12)
-          .fontColor(COLOR_TEXT_SECONDARY)
+          .fontColor($r('app.color.app_text_secondary'))
           .margin({ top: 2 })
           .width('100%')
       }
@@ -217,16 +216,16 @@ export struct ChatSessionListPanel {
       .layoutWeight(1)
 
       if (this.viewModel.isCurrentSession(chat.id)) {
-        Text('当前')
+        Text($r('app.string.chat_branch_current_badge'))
           .fontSize(12)
-          .fontColor(COLOR_CURRENT)
+          .fontColor($r('app.color.app_accent'))
           .margin({ right: 8 })
       }
 
-      Button('删除')
+      Button($r('app.string.character_action_delete'))
         .fontSize(12)
         .backgroundColor(Color.Transparent)
-        .fontColor(COLOR_DELETE)
+        .fontColor($r('app.color.app_danger'))
         .height(32)
         .padding({ left: 8, right: 8 })
         .enabled(this.viewModel.canOperateSessions)
@@ -236,7 +235,7 @@ export struct ChatSessionListPanel {
     }
     .width('100%')
     .padding({ left: 16, right: 12, top: 12, bottom: 12 })
-    .backgroundColor(COLOR_ITEM_BG)
+    .backgroundColor($r('app.color.app_surface_2'))
     .borderRadius(12)
     .margin({ top: 4, bottom: 4 })
     .alignItems(VerticalAlign.Center)
@@ -261,18 +260,18 @@ export struct ChatSessionListPanel {
       Column() {
         Text('删除该会话及其中的全部消息?')
           .fontSize(15)
-          .fontColor(COLOR_TEXT_PRIMARY)
+          .fontColor($r('app.color.app_text_primary'))
           .margin({ bottom: 8 })
         Text('此操作无法撤销。')
           .fontSize(13)
-          .fontColor(COLOR_TEXT_SECONDARY)
+          .fontColor($r('app.color.app_text_secondary'))
           .margin({ bottom: 20 })
 
         Row() {
-          Button('取消')
+          Button($r('app.string.chat_edit_message_cancel'))
             .fontSize(14)
-            .backgroundColor($r('sys.color.ohos_id_color_button_normal'))
-            .fontColor(COLOR_TEXT_PRIMARY)
+            .backgroundColor($r('app.color.app_surface_2'))
+            .fontColor($r('app.color.app_text_primary'))
             .borderRadius(20)
             .height(40)
             .layoutWeight(1)
@@ -281,10 +280,10 @@ export struct ChatSessionListPanel {
               this.viewModel.cancelDeleteSession();
             })
 
-          Button('删除')
+          Button($r('app.string.character_action_delete'))
             .fontSize(14)
-            .backgroundColor(COLOR_DELETE)
-            .fontColor('#FFFFFF')
+            .backgroundColor($r('app.color.app_danger'))
+            .fontColor($r('app.color.app_on_accent'))
             .borderRadius(20)
             .height(40)
             .layoutWeight(1)
@@ -297,7 +296,7 @@ export struct ChatSessionListPanel {
       }
       .width('80%')
       .padding(20)
-      .backgroundColor('#FFFFFF')
+      .backgroundColor($r('app.color.app_surface_1'))
       .borderRadius(16)
     }
     .width('100%')
