@@ -23,6 +23,7 @@ import { HdsTabs, HdsTabsController, hdsMaterial } from '@kit.UIDesignKit';
 import { SymbolGlyphModifier } from '@kit.ArkUI';
 import { ChatPage } from './ChatPage';
 import { CharacterListPage } from './CharacterListPage';
+import { CharacterEditPage } from './CharacterEditPage';
 import { LorebookPage } from './LorebookPage';
 import { ModelSettingsPage } from './ModelSettingsPage';
 import { ModelConfigEditPage } from './ModelConfigEditPage';
@@ -66,6 +67,8 @@ export struct AppShell {
       ChatPage()
     } else if (name === 'CharacterListPage') {
       CharacterListPage()
+    } else if (name === 'CharacterEditPage') {
+      CharacterEditPage()
     } else if (name === 'LorebookPage') {
       LorebookPage()
     } else if (name === 'ModelSettingsPage') {

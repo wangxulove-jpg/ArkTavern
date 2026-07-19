@@ -42,19 +42,6 @@ export struct CharacterListPage {
     const vm: CharacterListViewModel = new CharacterListViewModel(charService);
     this.viewModel = vm;
     await vm.load();
-    // UI-3B: 从角色卡 Tab 点击角色卡或左滑"编辑"时,通过 AppStorage 传入待查看/编辑的 characterId。
-    // 读后立即清除,避免下次进入时残留。
-    // 加载完成后自动打开该角色的编辑弹窗(作为详情视图)。
-    const pendingDetailId: string = AppStorage.get<string>('pendingCharacterDetailId') ?? '';
-    if (pendingDetailId.length > 0) {
-      AppStorage.set<string>('pendingCharacterDetailId', '');
-      const target: Character | undefined =
-        vm.characters.find((c: Character): boolean => c.id === pendingDetailId);
-      if (target !== undefined) {
-        vm.showEditDialogFor(target);
-        this.syncFormFromViewModel();
-      }
-    }
   }
 
   build() {

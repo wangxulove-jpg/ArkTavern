@@ -2,29 +2,20 @@
  * CharacterRootView 角色卡 Tab 根视图(UI-3B)
  *
  * 重新设计后的角色卡首页:
- * - 顶部标题栏:标题"角色卡" + 右上角"导入"按钮(导航到现有 CharacterListPage)
+ * - 顶部标题栏:标题"角色卡" + 右上角"导入"按钮(导航到 CharacterListPage 用导入流程)
  * - 所有角色以展开式卡片展示
  * - 每张角色卡显示图片、名称、简介
  * - 角色卡支持左滑显示三个操作:新建对话 / 编辑 / 删除
  * - 同一时间只展开一张角色卡(由 List swipeAction 默认行为保证)
- * - 点击角色卡或角色图片 -> 跳转到 CharacterListPage 并自动打开该角色编辑弹窗(作为详情)
- * - 左滑"新建对话" -> 通过 pendingCharacterId 让 ChatPage 用该角色创建新会话(不修改全局当前角色)
- * - 左滑"编辑" -> 同点击角色卡,跳转到编辑弹窗
- * - 左滑"删除" -> 弹出二次确认(含角色名),确认后复用 CharacterListViewModel.deleteCharacter
+ * - 点击角色卡或角色图片 -> 直接进入全屏 CharacterEditPage(UI-3B-2)
+ * - 左滑"新建对话" -> 通过 pendingCharacterId 让 ChatPage 用该角色创建新会话
+ * - 左滑"编辑" -> 直接进入全屏 CharacterEditPage
+ * - 左滑"删除" -> 弹出二次确认(含角色名)
  * - 底部保留现有 HdsTabs 沉浸光感导航栏
  *
- * 不复用旧版:
- * - 当前角色摘要卡 / "全部角色"分区 / 英文副标题 / "当前"标签
- *
- * 保留业务:
- * - currentCharacterId 不删除
- * - CharacterService 当前角色逻辑不修改
- * - 删除角色复用 CharacterListViewModel.deleteCharacter(底层走 CharacterService.remove)
- *
- * 分层:
- * - 只通过 CharacterListViewModel 访问业务
- * - 不直接调用 RDB / Repository / 文件解析器
- * - 不复制文件选择器/导入预览/确认弹窗
+ * 复用:
+ * - CharacterListViewModel 仅用于加载列表和删除角色
+ * - 新建/编辑角色流程已迁移到 CharacterEditPage(不再走底部弹窗)
  */
 
 import { CharacterListViewModel } from '../../viewmodels/CharacterListViewModel';
@@ -33,6 +24,11 @@ import { AppServices } from '../../services/AppServices';
 import { EmptyStateView } from '../../components/EmptyStateView';
 import { PressableCard } from '../../components/PressableCard';
 import { CharacterImageView } from '../../components/CharacterImageView';
+
+/** 角色编辑页路由参数,携带 characterId */
+interface CharacterEditNavParam {
+  characterId: string;
+}
 
 @Component
 export struct CharacterRootView {
@@ -43,6 +39,15 @@ export struct CharacterRootView {
   @State initError: string = '';
   /** 删除二次确认的目标角色(null 时确认弹窗不显示) */
   @State deleteTarget: Character | null = null;
+  /**
+   * 跨页面列表刷新信号。
+   * 由 CharacterEditPage / CharacterListPage 在角色数据变化后递增,
+   * 触发本组件 onListVersionChange 回调重新 load。
+   *
+   * 说明:本组件作为 HdsTabs 的 TabContent 嵌入,非 @Entry 也非 NavDestination,
+   * 因此 onPageShow 不会被调用;改用 AppStorage 计数器 + @Watch 监听二级页面变化。
+   */
+  @StorageProp('characterListVersion') @Watch('onListVersionChange') characterListVersion: number = 0;
 
   async aboutToAppear(): Promise<void> {
     try {
@@ -58,19 +63,26 @@ export struct CharacterRootView {
     }
   }
 
-  /** 页面恢复时刷新列表(从二级页面返回,如编辑保存后) */
-  onPageShow(): void {
-    if (this.viewModel !== null && AppServices.isStarted()) {
-      this.viewModel!.load().catch((): void => {});
+  /** characterListVersion 变化时刷新列表(从编辑页/导入页返回后自动刷新) */
+  private onListVersionChange(): void {
+    if (this.isInitializing) {
+      return;
     }
+    if (this.viewModel === null || !AppServices.isStarted()) {
+      return;
+    }
+    this.viewModel!.load().catch((): void => {});
   }
 
   // ===== 跳转 / 操作 =====
 
-  /** 点击角色卡:跳转到 CharacterListPage 并自动打开该角色的编辑弹窗(作为详情) */
+  /** 点击角色卡:直接进入全屏 CharacterEditPage 编辑该角色 */
   private openCharacterDetail(characterId: string): void {
-    AppStorage.setOrCreate<string>('pendingCharacterDetailId', characterId);
-    this.pathStack.pushPath({ name: 'CharacterListPage' });
+    const navParam: CharacterEditNavParam = { characterId: characterId };
+    this.pathStack.pushPath({
+      name: 'CharacterEditPage',
+      param: navParam
+    });
   }
 
   /** 左滑"新建对话":用该角色创建新会话并跳转 ChatPage(不修改全局当前角色) */
@@ -81,7 +93,7 @@ export struct CharacterRootView {
     this.pathStack.pushPath({ name: 'ChatPage' });
   }
 
-  /** 左滑"编辑":与点击角色卡相同,跳转到编辑弹窗 */
+  /** 左滑"编辑":与点击角色卡相同,直接进入全屏编辑页 */
   private editCharacter(characterId: string): void {
     this.openCharacterDetail(characterId);
   }
@@ -91,7 +103,7 @@ export struct CharacterRootView {
     this.deleteTarget = char;
   }
 
-  /** 确认删除:复用 ViewModel 的删除逻辑(底层走 CharacterService.remove) */
+  /** 确认删除:复用 CharacterListViewModel.deleteCharacter */
   private async confirmDelete(): Promise<void> {
     if (this.viewModel === null || this.deleteTarget === null) {
       this.deleteTarget = null;
@@ -99,7 +111,6 @@ export struct CharacterRootView {
     }
     const id: string = this.deleteTarget.id;
     this.deleteTarget = null;
-    // ViewModel 内部已记录 errorMessage,这里不重复处理
     await this.viewModel!.deleteCharacter(id);
   }
 
@@ -351,7 +362,7 @@ export struct CharacterRootView {
             this.pathStack.pushPath({ name: 'CharacterListPage' });
           })
 
-        // 次要操作:新建角色(导航到现有角色管理页面)
+        // 次要操作:新建角色(进入全屏 CharacterEditPage 新建模式,不传 characterId)
         Button($r('app.string.character_new'))
           .fontSize($r('app.float.app_font_body'))
           .backgroundColor(Color.Transparent)
@@ -359,7 +370,7 @@ export struct CharacterRootView {
           .height(48)
           .margin({ top: $r('app.float.app_spacing_8') })
           .onClick(() => {
-            this.pathStack.pushPath({ name: 'CharacterListPage' });
+            this.pathStack.pushPath({ name: 'CharacterEditPage' });
           })
       }
       .width('100%')

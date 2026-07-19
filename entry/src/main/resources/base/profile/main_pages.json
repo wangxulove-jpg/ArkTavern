@@ -3,6 +3,7 @@
     "pages/Index",
     "pages/ChatPage",
     "pages/CharacterListPage",
+    "pages/CharacterEditPage",
     "pages/PromptPresetListPage",
     "pages/PromptPresetEditPage",
     "pages/BranchMapPage"

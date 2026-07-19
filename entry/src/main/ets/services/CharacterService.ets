@@ -155,6 +155,61 @@ export class CharacterService {
     return updated;
   }
 
+  /**
+   * 更新角色头像。
+   *
+   * 流程:
+   * 1. 备份原 avatarUri
+   * 2. saveAvatar 保存新头像(生成带时间戳的新文件名,不覆盖旧文件)
+   * 3. update 数据库 avatarUri 字段
+   * 4. 数据库更新成功后,清理被替换的旧头像文件
+   * 5. 数据库更新失败时,删除新保存的头像文件回滚
+   *
+   * 失败处理:
+   * - saveAvatar 失败:不修改任何内容,旧头像保留
+   * - update 失败:删除新保存的头像文件,旧头像仍可用
+   * - deleteAvatarByUri 失败:仅记录日志,不影响主流程
+   *
+   * @param id 角色 ID
+   * @param sourceUri 源 PNG 文件 URI(由 picker 返回)
+   * @returns 更新后的 Character
+   */
+  async updateAvatar(id: string, sourceUri: string): Promise<Character> {
+    this.requireInit();
+    const existing: Character | null = await this.repository.getById(id);
+    if (existing === null) {
+      throw new Error('CharacterService updateAvatar: not found');
+    }
+    const oldAvatarUri: string = existing.avatarUri;
+    // 1. 保存新头像(生成带时间戳的新文件名)
+    const newAvatarUri: string = await this.assetStore.saveAvatar(sourceUri, id);
+    // 2. 更新数据库
+    try {
+      const updated: Character = await this.update(id, { avatarUri: newAvatarUri });
+      // 3. 数据库更新成功后,清理被替换的旧头像文件
+      if (oldAvatarUri.length > 0 && oldAvatarUri !== newAvatarUri) {
+        try {
+          await this.assetStore.deleteAvatarByUri(oldAvatarUri);
+        } catch (e) {
+          Logger.warn(LOG_TAG, 'updateAvatar: delete old avatar failed: ' + String(e));
+        }
+      }
+      Logger.info(LOG_TAG, 'updateAvatar ok');
+      return updated;
+    } catch (e) {
+      // 数据库更新失败,删除新保存的头像文件回滚,旧头像仍可用
+      try {
+        await this.assetStore.deleteAvatarByUri(newAvatarUri);
+      } catch (deleteErr) {
+        Logger.warn(LOG_TAG, 'updateAvatar: rollback new avatar failed: ' + String(deleteErr));
+      }
+      if (e instanceof Error) {
+        throw e;
+      }
+      throw new Error('CharacterService updateAvatar failed: ' + String(e));
+    }
+  }
+
   async remove(id: string): Promise<void> {
     this.requireInit();
     const existing: Character | null = await this.repository.getById(id);

@@ -913,6 +913,126 @@
       "value": "删除"
     },
     {
+      "name": "character_edit_title_new",
+      "value": "新建角色"
+    },
+    {
+      "name": "character_edit_title_edit",
+      "value": "编辑角色"
+    },
+    {
+      "name": "character_edit_tab_character",
+      "value": "角色"
+    },
+    {
+      "name": "character_edit_tab_conversation",
+      "value": "对话"
+    },
+    {
+      "name": "character_edit_save",
+      "value": "保存"
+    },
+    {
+      "name": "character_edit_back",
+      "value": "返回"
+    },
+    {
+      "name": "character_edit_image_placeholder",
+      "value": "暂无角色图片"
+    },
+    {
+      "name": "character_edit_image_edit_hint",
+      "value": "功能开发中"
+    },
+    {
+      "name": "character_edit_field_required_hint",
+      "value": "*"
+    },
+    {
+      "name": "character_edit_field_name",
+      "value": "名称"
+    },
+    {
+      "name": "character_edit_field_name_placeholder",
+      "value": "请输入角色名称"
+    },
+    {
+      "name": "character_edit_field_description",
+      "value": "描述"
+    },
+    {
+      "name": "character_edit_field_description_placeholder",
+      "value": "角色的外貌、背景等"
+    },
+    {
+      "name": "character_edit_field_description_hint",
+      "value": "用于在角色卡上展示的简要说明"
+    },
+    {
+      "name": "character_edit_field_personality",
+      "value": "性格"
+    },
+    {
+      "name": "character_edit_field_personality_placeholder",
+      "value": "角色的性格特点"
+    },
+    {
+      "name": "character_edit_field_system_prompt",
+      "value": "System Prompt"
+    },
+    {
+      "name": "character_edit_field_system_prompt_placeholder",
+      "value": "自定义系统提示词,留空则自动组合"
+    },
+    {
+      "name": "character_edit_field_system_prompt_hint",
+      "value": "用于指导 AI 扮演该角色的提示词"
+    },
+    {
+      "name": "character_edit_field_scenario",
+      "value": "场景"
+    },
+    {
+      "name": "character_edit_field_scenario_placeholder",
+      "value": "所处的世界观和场景"
+    },
+    {
+      "name": "character_edit_field_scenario_hint",
+      "value": "角色所处的世界或情境"
+    },
+    {
+      "name": "character_edit_field_first_message",
+      "value": "开场白"
+    },
+    {
+      "name": "character_edit_field_first_message_placeholder",
+      "value": "角色首次对话时的开场白"
+    },
+    {
+      "name": "character_edit_field_first_message_hint",
+      "value": "新建对话时作为首条 Assistant 消息"
+    },
+    {
+      "name": "character_edit_unsaved_title",
+      "value": "放弃修改?"
+    },
+    {
+      "name": "character_edit_unsaved_message",
+      "value": "你有未保存的修改,确定要离开吗?"
+    },
+    {
+      "name": "character_edit_unsaved_stay",
+      "value": "继续编辑"
+    },
+    {
+      "name": "character_edit_unsaved_discard",
+      "value": "放弃修改"
+    },
+    {
+      "name": "character_edit_save_failed",
+      "value": "保存失败"
+    },
+    {
       "name": "tab_sessions",
       "value": "对话记录"
     },

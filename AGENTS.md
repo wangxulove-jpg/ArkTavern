@@ -250,14 +250,6 @@ Prefer interfaces.
 
 Keep methods short.
 
-Maximum function length:
-
-100 lines
-
-Maximum file length:
-
-600 lines
-
 Never use global mutable state.
 
 Prefer dependency injection.
