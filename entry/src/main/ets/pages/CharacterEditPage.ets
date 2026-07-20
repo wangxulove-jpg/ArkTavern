@@ -231,6 +231,18 @@ struct CharacterEditPage {
           }
         )
 
+        this.textFieldRow(
+          $r('app.string.character_edit_field_user_name'),
+          $r('app.string.character_edit_field_user_name_placeholder'),
+          false,
+          this.formState.userNameInput,
+          (value: string) => {
+            const updated = copyFormState(this.formState);
+            updated.userNameInput = value;
+            this.formState = updated;
+          }
+        )
+
         this.multilineField(
           $r('app.string.character_edit_field_description'),
           $r('app.string.character_edit_field_description_placeholder'),

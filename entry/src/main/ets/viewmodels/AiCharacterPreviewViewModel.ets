@@ -416,7 +416,8 @@ export class AiCharacterPreviewViewModel {
       creator: this.creator.length === 0 ? 'AI Generated' : this.creator,
       characterVersion: this.characterVersion.length === 0 ? '1.0' : this.characterVersion,
       extensions: extensions,
-      characterBook: characterBook
+      characterBook: characterBook,
+      userName: ''
     };
   }
 

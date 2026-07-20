@@ -224,7 +224,8 @@ export function validateV2CharacterCard(
     creator: creator.length === 0 ? AI_DEFAULT_CREATOR : creator,
     characterVersion: characterVersion.length === 0 ? AI_DEFAULT_CHARACTER_VERSION : characterVersion,
     extensions: extensions,
-    characterBook: characterBook
+    characterBook: characterBook,
+    userName: ''
   };
 
   return { ok: true, card: card, errors: errors };

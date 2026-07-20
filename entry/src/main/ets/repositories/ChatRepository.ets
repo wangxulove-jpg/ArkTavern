@@ -26,7 +26,8 @@ import {
   COLUMN_UPDATED_AT,
   COLUMN_LAST_MESSAGE_AT,
   COLUMN_IS_ARCHIVED,
-  COLUMN_SORT_ORDER
+  COLUMN_SORT_ORDER,
+  COLUMN_CHAT_USER_NAME_OVERRIDE
 } from '../database/DatabaseConstants';
 import {
   intToBoolean,
@@ -65,6 +66,7 @@ function chatToBucket(chat: Chat): relationalStore.ValuesBucket {
   bucket[COLUMN_LAST_MESSAGE_AT] = chat.lastMessageAt;
   bucket[COLUMN_IS_ARCHIVED] = chat.isArchived ? 1 : 0;
   bucket[COLUMN_SORT_ORDER] = chat.sortOrder;
+  bucket[COLUMN_CHAT_USER_NAME_OVERRIDE] = chat.userNameOverride;
   return bucket;
 }
 
@@ -83,6 +85,10 @@ function chatFromRow(rs: relationalStore.ResultSet): Chat {
   const isArchived: boolean = intToBoolean(rs.getLong(isArchivedCol));
   const sortOrderCol: number = rs.getColumnIndex(COLUMN_SORT_ORDER);
   const sortOrder: number = sortOrderCol >= 0 ? rs.getLong(sortOrderCol) : 0;
+  const userNameOverrideCol: number = rs.getColumnIndex(COLUMN_CHAT_USER_NAME_OVERRIDE);
+  const userNameOverride: string = userNameOverrideCol >= 0
+    ? safeString(rs, userNameOverrideCol)
+    : '';
   return {
     id: id,
     characterId: characterId,
@@ -91,8 +97,24 @@ function chatFromRow(rs: relationalStore.ResultSet): Chat {
     updatedAt: updatedAt,
     lastMessageAt: lastMessageAt,
     isArchived: isArchived,
+    userNameOverride: userNameOverride,
     sortOrder: sortOrder
   };
+}
+
+/**
+ * 安全读取字符串列(列索引已知,值为 null 时返回空字符串)。
+ */
+function safeString(rs: relationalStore.ResultSet, col: number): string {
+  try {
+    if (rs.isColumnNull(col)) {
+      return '';
+    }
+    const value: string = rs.getString(col);
+    return value !== null && value !== undefined ? value : '';
+  } catch (e) {
+    return '';
+  }
 }
 
 export class ChatRepository {
@@ -198,6 +220,7 @@ export class ChatRepository {
     bucket[COLUMN_UPDATED_AT] = chat.updatedAt;
     bucket[COLUMN_LAST_MESSAGE_AT] = chat.lastMessageAt;
     bucket[COLUMN_IS_ARCHIVED] = chat.isArchived ? 1 : 0;
+    bucket[COLUMN_CHAT_USER_NAME_OVERRIDE] = chat.userNameOverride;
 
     const predicates: relationalStore.RdbPredicates =
       new relationalStore.RdbPredicates(TABLE_CHATS);

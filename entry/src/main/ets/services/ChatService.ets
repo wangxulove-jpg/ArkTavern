@@ -42,6 +42,7 @@ import { MessageSwipePersistenceService } from './MessageSwipePersistenceService
 import { ConversationBranchPersistenceService, EditedBranchGenerationTarget } from './ConversationBranchPersistenceService';
 import { MemoryService } from './MemoryService';
 import { ContextBudgetService } from './ContextBudgetService';
+import { AppPreferences } from '../storage/AppPreferences';
 import {
   ConversationBranch,
   ConversationBranchSummary,
@@ -93,6 +94,9 @@ const START_TIMEOUT_MS: number = 15000;
 
 /** 默认用户名(本阶段固定值,后续可扩展为用户设置) */
 const DEFAULT_USER_NAME: string = 'User';
+
+/** 全局用户称呼 Preferences key(v9 引入,存储在 AppPreferences 中的字符串) */
+export const GLOBAL_USER_NAME_KEY: string = 'global_user_name';
 
 /** delta 持久化节流间隔(毫秒) */
 const PERSISTENCE_THROTTLE_MS: number = 400;
@@ -199,6 +203,8 @@ export class ChatService {
   // ===== 持久化状态 =====
   /** 当前会话 id(未初始化时为 undefined) */
   private currentChatId: string | undefined = undefined;
+  /** 当前会话 Chat 对象(用于读取 userNameOverride 等字段) */
+  private currentChat: Chat | null = null;
   /** 当前会话的最大 sequenceNumber(空会话为 0) */
   private currentSequenceNumber: number = 0;
   /** 会话是否已初始化 */
@@ -253,6 +259,9 @@ export class ChatService {
   /** Branch 操作进行中(创建 Child / 切换),用于与生成 / Swipe / 会话操作互斥 */
   private branchOperationInProgress: boolean = false;
 
+  /** AppPreferences(用于读取全局用户称呼,v9 引入) */
+  private readonly appPreferences: AppPreferences | null;
+
   constructor(
     modelService: ModelService,
     lorebookService: LorebookService | null = null,
@@ -265,7 +274,8 @@ export class ChatService {
     branchPersistenceService: ConversationBranchPersistenceService | null = null,
     chatBackgroundService: ChatBackgroundService | null = null,
     memoryService: MemoryService | null = null,
-    contextBudgetService: ContextBudgetService | null = null
+    contextBudgetService: ContextBudgetService | null = null,
+    appPreferences: AppPreferences | null = null
   ) {
     this.modelService = modelService;
     this.lorebookService = lorebookService;
@@ -279,6 +289,7 @@ export class ChatService {
     this.chatBackgroundService = chatBackgroundService;
     this.memoryService = memoryService;
     this.contextBudgetService = contextBudgetService;
+    this.appPreferences = appPreferences;
   }
 
   /**
@@ -381,6 +392,7 @@ export class ChatService {
       if (session !== null) {
         // 恢复已有会话
         this.currentChatId = session.chat.id;
+        this.currentChat = session.chat;
         this.messages = session.messages.slice();
         this.currentSequenceNumber = session.maxSequenceNumber;
         Logger.info(LOG_TAG, 'session restored messages=' + this.messages.length.toString()
@@ -463,6 +475,7 @@ export class ChatService {
           characterId, defaultTitle, firstMsg
         );
       this.currentChatId = session.chat.id;
+      this.currentChat = session.chat;
       this.messages = [firstMsg];
       this.currentSequenceNumber = 1;
 
@@ -473,6 +486,7 @@ export class ChatService {
       const session: PersistedChatSession =
         await this.persistenceService.createSession(characterId, defaultTitle);
       this.currentChatId = session.chat.id;
+      this.currentChat = session.chat;
       this.messages = [];
       this.currentSequenceNumber = 0;
     }
@@ -536,6 +550,80 @@ export class ChatService {
    */
   getCurrentChatId(): string | undefined {
     return this.currentChatId;
+  }
+
+  /**
+   * 获取当前会话 Chat 对象(未初始化时为 null)。
+   * 用于 UI 读取对话级 userNameOverride 字段。
+   */
+  getCurrentChat(): Chat | null {
+    return this.currentChat;
+  }
+
+  /**
+   * 解析当前生效的用户称呼。
+   *
+   * 优先级(v9 引入):
+   * 1. 当前会话 userNameOverride 非空 -> 使用对话级覆盖
+   * 2. 当前角色 userName 非空 -> 使用角色专属称呼
+   * 3. AppPreferences 中 global_user_name 非空 -> 使用全局用户称呼
+   * 4. 以上均空 -> 回退到 'User'
+   *
+   * AppPreferences 不可用或读取失败时静默回退到 DEFAULT_USER_NAME。
+   *
+   * @returns 当前生效的用户称呼
+   */
+  async resolveUserName(): Promise<string> {
+    // 1. 对话级覆盖
+    if (this.currentChat !== null && this.currentChat.userNameOverride.trim().length > 0) {
+      return this.currentChat.userNameOverride.trim();
+    }
+    // 2. 角色专属称呼
+    if (this.character !== null && this.character.userName.trim().length > 0) {
+      return this.character.userName.trim();
+    }
+    // 3. 全局用户称呼
+    if (this.appPreferences !== null) {
+      try {
+        const globalName: string = await this.appPreferences.getString(GLOBAL_USER_NAME_KEY, '');
+        if (globalName.trim().length > 0) {
+          return globalName.trim();
+        }
+      } catch (e) {
+        Logger.warn(LOG_TAG, 'resolveUserName: read global failed: '
+          + (e instanceof Error ? e.message : String(e)));
+      }
+    }
+    // 4. 默认 'User'
+    return DEFAULT_USER_NAME;
+  }
+
+  /**
+   * 更新当前会话的对话级用户称呼覆盖。
+   * - 传入非空字符串:写入并 trim
+   * - 传入 null 或空字符串:清空覆盖(回退到角色或全局)
+   *
+   * 持久化通过 ChatPersistenceService.updateUserNameOverride 完成。
+   * 内存中的 currentChat 同步更新。
+   *
+   * @param override 新的覆盖值(null 或空字符串表示清空)
+   * @returns 更新后的 Chat 对象(无当前会话时返回 null)
+   * @throws Error 当无 persistenceService 或会话不存在时
+   */
+  async updateCurrentChatUserNameOverride(override: string | null): Promise<Chat | null> {
+    if (this.persistenceService === null) {
+      throw new Error('persistenceService unavailable');
+    }
+    if (this.currentChatId === undefined) {
+      throw new Error('当前无活跃会话');
+    }
+    const normalized: string = override === null ? '' : override.trim();
+    const updated: Chat = await this.persistenceService.updateUserNameOverride(
+      this.currentChatId, normalized
+    );
+    this.currentChat = updated;
+    Logger.info(LOG_TAG, 'updateUserNameOverride ok');
+    return updated;
   }
 
   /**
@@ -1210,6 +1298,7 @@ export class ChatService {
       throw new Error('目标会话不属于当前聊天上下文');
     }
     this.currentChatId = session.chat.id;
+    this.currentChat = session.chat;
     this.messages = session.messages.slice();
     this.currentSequenceNumber = session.maxSequenceNumber;
     // 加载 Swipe summaries
@@ -1778,9 +1867,11 @@ export class ChatService {
 
     // 通过 PromptBuilder.buildMacroContext 构建宏替换上下文
     // (包含 description / personality / scenario / mesExample / lastMessage / originalContent)
+    // 用户称呼优先级:对话覆盖 > 角色设置 > 全局设置 > 'User'
+    const resolvedUserName: string = await this.resolveUserName();
     const macroContext: MacroContext = this.promptBuilder.buildMacroContext(
       this.character,
-      DEFAULT_USER_NAME,
+      resolvedUserName,
       sourceMessages
     );
 
@@ -2796,6 +2887,7 @@ export class ChatService {
       await this.persistenceService.loadSession(this.currentChatId);
     if (session !== null) {
       this.messages = session.messages.slice();
+      this.currentChat = session.chat;
       this.currentSequenceNumber = session.maxSequenceNumber;
     }
   }

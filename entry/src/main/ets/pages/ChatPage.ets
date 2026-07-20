@@ -71,6 +71,14 @@ struct ChatPage {
   @State actionSheetMsg: ChatMessage | null = null;
   /** 是否显示清空确认 */
   @State showClearConfirm: boolean = false;
+  /** v9: 是否显示本对话称呼覆盖编辑对话框 */
+  @State showUserNameOverrideDialog: boolean = false;
+  /** v9: 对话称呼输入草稿(对话框中使用) */
+  @State userNameOverrideDraft: string = '';
+  /** v9: 当前生效的用户称呼(供 ChatMoreMenuSheet 展示) */
+  @State resolvedUserName: string = '';
+  /** v9: 当前对话级覆盖(供 ChatMoreMenuSheet 展示) */
+  @State currentUserNameOverride: string = '';
   /** 是否显示 Fork 模式选择弹窗 */
   @State showForkModePicker: boolean = false;
   /** Fork 操作目标消息 ID */
@@ -398,7 +406,13 @@ struct ChatPage {
             canRegenerate: this.viewModel!.canRegenerate,
             isGenerating: this.viewModel!.isGenerating,
             busy: this.viewModel!.busy,
-            onClose: (): void => { this.showMoreMenu = false; },
+            userNameOverride: this.currentUserNameOverride,
+            resolvedUserName: this.resolvedUserName,
+            onClose: (): void => {
+              this.showMoreMenu = false;
+              // 关闭菜单时刷新一次当前生效称呼(可能在其他地方被修改)
+              this.refreshUserNameDisplay();
+            },
             onGoModelSettings: (): void => { this.goToModelSettings(); },
             onGoPresetList: (): void => { this.goToPresetList(); },
             onGoBranchMap: (): void => { this.navigateToBranchMap(); },
@@ -408,6 +422,9 @@ struct ChatPage {
             onGoChatBackground: (): void => { this.navigateToChatBackgroundSettings(); },
             onGoMemory: (): void => { this.navigateToMemoryManagement(); },
             onGoContextBudget: (): void => { this.navigateToContextBudget(); },
+            onEditUserNameOverride: (): void => {
+              this.openUserNameOverrideDialog();
+            },
             onRegenerate: (): void => { this.viewModel!.regenerate(); },
             onClearChat: (): void => {
               this.showClearConfirm = true;
@@ -439,6 +456,11 @@ struct ChatPage {
         // 清空确认弹窗
         if (this.showClearConfirm) {
           this.clearConfirmDialog()
+        }
+
+        // v9: 本对话称呼覆盖编辑弹窗
+        if (this.showUserNameOverrideDialog) {
+          this.userNameOverrideDialog()
         }
 
         // Fork 模式选择弹窗
@@ -497,6 +519,8 @@ struct ChatPage {
       .width(40)
       .height(40)
       .onClick(() => {
+        // 打开菜单前刷新一次当前生效称呼(可能角色或全局设置已变化)
+        this.refreshUserNameDisplay();
         this.showMoreMenu = true;
       })
     }
@@ -940,6 +964,132 @@ struct ChatPage {
     .backgroundColor('rgba(0,0,0,0.5)')
     .onClick(() => {
       this.showClearConfirm = false;
+    })
+  }
+
+  // ===== v9: 本对话称呼覆盖对话框 =====
+
+  /**
+   * 打开本对话称呼覆盖编辑对话框。
+   * - 加载当前覆盖值到草稿
+   * - 同步刷新一次 resolvedUserName
+   */
+  private openUserNameOverrideDialog(): void {
+    if (this.viewModel === null) {
+      return;
+    }
+    this.userNameOverrideDraft = this.viewModel!.getCurrentChatUserNameOverride();
+    this.showUserNameOverrideDialog = true;
+  }
+
+  /**
+   * 保存对话级用户称呼覆盖。
+   * - 草稿 trim 后为空:清空覆盖(回退到角色或全局)
+   * - 草稿非空:写入覆盖(仅影响当前会话)
+   */
+  private async saveUserNameOverride(): Promise<void> {
+    if (this.viewModel === null) {
+      this.showUserNameOverrideDialog = false;
+      return;
+    }
+    try {
+      const trimmed: string = this.userNameOverrideDraft.trim();
+      await this.viewModel!.updateUserNameOverride(trimmed.length > 0 ? trimmed : null);
+      await this.refreshUserNameDisplay();
+    } catch (e) {
+      // 失败时只关闭对话框,不阻塞后续操作
+    }
+    this.showUserNameOverrideDialog = false;
+  }
+
+  /**
+   * 刷新当前生效用户称呼 + 对话覆盖的显示状态。
+   * 在打开菜单、关闭菜单、保存覆盖后调用。
+   */
+  private async refreshUserNameDisplay(): Promise<void> {
+    if (this.viewModel === null) {
+      return;
+    }
+    try {
+      this.resolvedUserName = await this.viewModel!.getResolvedUserName();
+      this.currentUserNameOverride = this.viewModel!.getCurrentChatUserNameOverride();
+    } catch (e) {
+      // 读取失败时保留空值,不影响主流程
+    }
+  }
+
+  @Builder
+  userNameOverrideDialog() {
+    Stack() {
+      Column() {
+        Column() {
+          Text($r('app.string.chat_user_name_override_menu_title'))
+            .fontSize(17)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.app_text_primary'))
+            .margin({ bottom: 8 })
+
+          Text($r('app.string.chat_user_name_override_hint'))
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_secondary'))
+            .textAlign(TextAlign.Center)
+            .margin({ bottom: 16 })
+
+          TextInput({
+            placeholder: $r('app.string.chat_user_name_override_placeholder'),
+            text: this.userNameOverrideDraft
+          })
+            .fontSize($r('app.float.app_font_body'))
+            .fontColor($r('app.color.app_text_primary'))
+            .backgroundColor($r('app.color.app_surface_2'))
+            .borderRadius($r('app.float.app_radius_md'))
+            .height(48)
+            .padding({ left: 16, right: 16 })
+            .width('100%')
+            .onChange((value: string) => {
+              this.userNameOverrideDraft = value;
+            })
+
+          Row() {
+            Button('取消')
+              .fontSize(15)
+              .backgroundColor(Color.Transparent)
+              .fontColor($r('app.color.app_text_secondary'))
+              .height(40)
+              .layoutWeight(1)
+              .onClick(() => {
+                this.showUserNameOverrideDialog = false;
+              })
+            Button($r('app.string.character_edit_save'))
+              .fontSize(15)
+              .backgroundColor($r('app.color.app_accent'))
+              .fontColor($r('app.color.app_on_accent'))
+              .borderRadius($r('app.float.app_radius_sm'))
+              .height(40)
+              .layoutWeight(1)
+              .margin({ left: 12 })
+              .onClick(() => {
+                this.saveUserNameOverride();
+              })
+          }
+          .width('100%')
+          .margin({ top: 16 })
+        }
+        .width('80%')
+        .padding(20)
+        .backgroundColor($r('app.color.app_surface_1'))
+        .borderRadius($r('app.float.app_radius_lg'))
+      }
+      .width('100%')
+      .height('100%')
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor('rgba(0,0,0,0.5)')
+    .onClick(() => {
+      this.showUserNameOverrideDialog = false;
     })
   }
 

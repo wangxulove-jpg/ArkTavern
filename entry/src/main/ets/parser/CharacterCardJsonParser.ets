@@ -93,6 +93,13 @@ export interface ParsedCharacterCard {
   extensions: Record<string, Object>;
   /** 角色专属世界书(可能为 null) */
   characterBook: ParsedCharacterBook | null;
+  /**
+   * 角色对用户的称呼(v9 引入)。
+   * 仅从 ArkTavern 扩展 extensions.arktavern.user_name_override 读取,
+   * 不主动读取 V2 spec 的 data.user_name(避免覆盖用户已有角色卡数据)。
+   * 留空时由 ChatService 按优先级回退到全局用户称呼。
+   */
+  userName: string;
 }
 
 /** 解析结果:成功或失败 */
@@ -173,6 +180,30 @@ export function parseCharacterJson(jsonString: string): ParseResult {
 }
 
 /**
+ * 从 extensions 字段中提取 ArkTavern 自定义 user_name_override 字段。
+ *
+ * 路径:extensions.arktavern.user_name_override
+ * - extensions 不存在 / 非对象 → 空字符串
+ * - arktavern 不存在 / 非对象 → 空字符串
+ * - user_name_override 不是字符串 → 空字符串
+ *
+ * 不会读取 V2 spec 的 data.user_name,避免覆盖用户已有角色卡数据。
+ * 留空时由 ChatService 按优先级回退到全局用户称呼。
+ */
+function extractArkTavernUserName(extensions: Record<string, Object>): string {
+  const arktavern: Object | undefined = extensions['arktavern'];
+  if (typeof arktavern !== 'object' || arktavern === null || Array.isArray(arktavern)) {
+    return '';
+  }
+  const arktavernObj: Record<string, Object> = arktavern as Record<string, Object>;
+  const userName: Object | undefined = arktavernObj['user_name_override'];
+  if (typeof userName !== 'string') {
+    return '';
+  }
+  return truncateField((userName as string).trim(), MAX_FIELD_LENGTH);
+}
+
+/**
  * 解析 ArkTavern schemaVersion=1 格式(camelCase, character 包装)。
  */
 function parseArkTavernFormat(root: Record<string, Object>): ParseResult {
@@ -192,6 +223,7 @@ function parseArkTavernFormat(root: Record<string, Object>): ParseResult {
     return ParseResult.fail('角色缺少名称(name),无法导入');
   }
 
+  const extensions: Record<string, Object> = getObjectField(charObj, 'extensions');
   return ParseResult.ok({
     name: truncateField(rawName.trim(), MAX_FIELD_LENGTH),
     description: truncateField(getStringField(charObj, 'description'), MAX_FIELD_LENGTH),
@@ -208,8 +240,9 @@ function parseArkTavernFormat(root: Record<string, Object>): ParseResult {
     tags: truncateStringArray(getStringArrayField(charObj, 'tags'), MAX_TAGS),
     creator: truncateField(getStringField(charObj, 'creator'), MAX_FIELD_LENGTH),
     characterVersion: truncateField(getStringField(charObj, 'characterVersion'), MAX_FIELD_LENGTH),
-    extensions: getObjectField(charObj, 'extensions'),
-    characterBook: null
+    extensions: extensions,
+    characterBook: null,
+    userName: extractArkTavernUserName(extensions)
   });
 }
 
@@ -241,7 +274,8 @@ function parseV1FlatFormat(root: Record<string, Object>): ParseResult {
     creator: '',
     characterVersion: '',
     extensions: {},
-    characterBook: null
+    characterBook: null,
+    userName: ''
   });
 }
 
@@ -264,6 +298,9 @@ function parseCharaCardFormat(root: Record<string, Object>, spec: string): Parse
   // 解析 character_book
   const characterBook: ParsedCharacterBook | null = parseCharacterBook(dataObj['character_book']);
 
+  // 解析 extensions(可能含 arktavern.user_name_override,但不读 V2 spec 的 data.user_name)
+  const extensions: Record<string, Object> = getObjectField(dataObj, 'extensions');
+
   return ParseResult.ok({
     name: truncateField(rawName.trim(), MAX_FIELD_LENGTH),
     description: truncateField(getStringField(dataObj, 'description'), MAX_FIELD_LENGTH),
@@ -280,8 +317,9 @@ function parseCharaCardFormat(root: Record<string, Object>, spec: string): Parse
     tags: truncateStringArray(getStringArrayField(dataObj, 'tags'), MAX_TAGS),
     creator: truncateField(getStringField(dataObj, 'creator'), MAX_FIELD_LENGTH),
     characterVersion: truncateField(getStringField(dataObj, 'character_version'), MAX_FIELD_LENGTH),
-    extensions: getObjectField(dataObj, 'extensions'),
-    characterBook: characterBook
+    extensions: extensions,
+    characterBook: characterBook,
+    userName: extractArkTavernUserName(extensions)
   });
 }
 

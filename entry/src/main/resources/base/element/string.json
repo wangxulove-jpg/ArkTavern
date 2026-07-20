@@ -201,6 +201,62 @@
       "value": "应用设置功能正在开发中。"
     },
     {
+      "name": "settings_global_user_name_section",
+      "value": "全局用户称呼"
+    },
+    {
+      "name": "settings_global_user_name_label",
+      "value": "你的称呼"
+    },
+    {
+      "name": "settings_global_user_name_placeholder",
+      "value": "留空时使用 User"
+    },
+    {
+      "name": "settings_global_user_name_hint",
+      "value": "用于所有未单独设置称呼的角色。可在角色编辑页为单个角色指定不同称呼。"
+    },
+    {
+      "name": "settings_global_user_name_saved",
+      "value": "已保存"
+    },
+    {
+      "name": "settings_global_user_name_save_failed",
+      "value": "保存失败"
+    },
+    {
+      "name": "chat_user_name_override_section",
+      "value": "本对话称呼"
+    },
+    {
+      "name": "chat_user_name_override_label",
+      "value": "覆盖称呼"
+    },
+    {
+      "name": "chat_user_name_override_placeholder",
+      "value": "留空时使用角色或全局"
+    },
+    {
+      "name": "chat_user_name_override_hint",
+      "value": "只影响当前对话,不修改角色或全局设置。清空后恢复使用角色或全局值。"
+    },
+    {
+      "name": "chat_user_name_override_saved",
+      "value": "已保存"
+    },
+    {
+      "name": "chat_user_name_override_cleared",
+      "value": "已清空覆盖,恢复角色或全局值"
+    },
+    {
+      "name": "chat_user_name_override_save_failed",
+      "value": "保存失败"
+    },
+    {
+      "name": "chat_user_name_override_menu_title",
+      "value": "本对话称呼"
+    },
+    {
       "name": "home_model_configured",
       "value": "当前模型:%1$s · %2$s"
     },
@@ -1023,6 +1079,18 @@
     {
       "name": "character_edit_field_name_placeholder",
       "value": "请输入角色名称"
+    },
+    {
+      "name": "character_edit_field_user_name",
+      "value": "角色对你的称呼"
+    },
+    {
+      "name": "character_edit_field_user_name_placeholder",
+      "value": "留空时使用全局称呼"
+    },
+    {
+      "name": "character_edit_field_user_name_hint",
+      "value": "该角色调用你时使用的称呼,只影响当前角色"
     },
     {
       "name": "character_edit_field_description",

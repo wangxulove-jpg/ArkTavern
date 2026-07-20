@@ -46,7 +46,8 @@ import {
   COLUMN_CHARACTER_VERSION,
   COLUMN_EXTENSIONS_JSON,
   COLUMN_CHARACTER_BOOK_ID,
-  COLUMN_SORT_ORDER
+  COLUMN_SORT_ORDER,
+  COLUMN_USER_NAME
 } from '../database/DatabaseConstants';
 import {
   isValidTimestamp,
@@ -93,6 +94,7 @@ function characterToBucket(character: Character): relationalStore.ValuesBucket {
   bucket[COLUMN_EXTENSIONS_JSON] = JSON.stringify(character.extensions);
   bucket[COLUMN_CHARACTER_BOOK_ID] = character.characterBookId;
   bucket[COLUMN_SORT_ORDER] = character.sortOrder;
+  bucket[COLUMN_USER_NAME] = character.userName;
   return bucket;
 }
 
@@ -136,6 +138,7 @@ function characterFromRow(rs: relationalStore.ResultSet): Character {
   const extensions: Record<string, Object> = readObjectColumnSafe(rs, COLUMN_EXTENSIONS_JSON);
   const characterBookId: string = readStringColumnSafe(rs, COLUMN_CHARACTER_BOOK_ID, '');
   const sortOrder: number = readLongColumnSafe(rs, COLUMN_SORT_ORDER, 0);
+  const userName: string = readStringColumnSafe(rs, COLUMN_USER_NAME, '');
 
   return {
     id: id,
@@ -155,6 +158,7 @@ function characterFromRow(rs: relationalStore.ResultSet): Character {
     characterVersion: characterVersion,
     extensions: extensions,
     characterBookId: characterBookId,
+    userName: userName,
     sortOrder: sortOrder,
     createdAt: createdAt,
     updatedAt: updatedAt
@@ -368,6 +372,7 @@ export class CharacterRepository {
     bucket[COLUMN_EXTENSIONS_JSON] = JSON.stringify(character.extensions);
     bucket[COLUMN_CHARACTER_BOOK_ID] = character.characterBookId;
     bucket[COLUMN_SORT_ORDER] = character.sortOrder;
+    bucket[COLUMN_USER_NAME] = character.userName;
 
     const predicates: relationalStore.RdbPredicates =
       new relationalStore.RdbPredicates(TABLE_CHARACTERS);

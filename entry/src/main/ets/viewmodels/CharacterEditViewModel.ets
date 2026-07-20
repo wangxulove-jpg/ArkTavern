@@ -40,6 +40,8 @@ const LOG_TAG: string = 'CharacterEditViewModel';
 export interface CharacterEditFormState {
   /** 角色名称(必填) */
   nameInput: string;
+  /** 角色对你的称呼(留空时使用全局用户称呼) */
+  userNameInput: string;
   /** 角色描述 */
   descriptionInput: string;
   /** 角色性格 */
@@ -74,6 +76,7 @@ export interface CharacterEditFormState {
 export function emptyFormState(): CharacterEditFormState {
   return {
     nameInput: '',
+    userNameInput: '',
     descriptionInput: '',
     personalityInput: '',
     scenarioInput: '',
@@ -95,6 +98,7 @@ export function emptyFormState(): CharacterEditFormState {
 export function copyFormState(state: CharacterEditFormState): CharacterEditFormState {
   return {
     nameInput: state.nameInput,
+    userNameInput: state.userNameInput,
     descriptionInput: state.descriptionInput,
     personalityInput: state.personalityInput,
     scenarioInput: state.scenarioInput,
@@ -116,6 +120,7 @@ export function copyFormState(state: CharacterEditFormState): CharacterEditFormS
 function formStateFromCharacter(character: Character): CharacterEditFormState {
   return {
     nameInput: character.name,
+    userNameInput: character.userName,
     descriptionInput: character.description,
     personalityInput: character.personality,
     scenarioInput: character.scenario,
@@ -238,6 +243,7 @@ export class CharacterEditViewModel {
     if (this.originalCharacter === null) {
       // 新建模式:任意字段非空即为脏
       return current.nameInput.trim().length > 0
+        || current.userNameInput.trim().length > 0
         || current.descriptionInput.length > 0
         || current.personalityInput.length > 0
         || current.scenarioInput.length > 0
@@ -254,6 +260,7 @@ export class CharacterEditViewModel {
     // 编辑模式:与原始角色比较(不比较 avatarUriInput / characterBookIdInput)
     const orig: Character = this.originalCharacter;
     return current.nameInput !== orig.name
+      || current.userNameInput !== orig.userName
       || current.descriptionInput !== orig.description
       || current.personalityInput !== orig.personality
       || current.scenarioInput !== orig.scenario
@@ -321,6 +328,7 @@ export class CharacterEditViewModel {
       // 编辑模式:保留 extensions / characterBookId 不变
       const updated: Character = await this.characterService.update(this.editingCharacterId, {
         name: current.nameInput,
+        userName: current.userNameInput,
         description: current.descriptionInput,
         personality: current.personalityInput,
         scenario: current.scenarioInput,
@@ -352,6 +360,7 @@ export class CharacterEditViewModel {
     // 第二步:用 update 写入 V2 字段(单事务,失败回滚由调用方处理)
     try {
       const finalChar: Character = await this.characterService.update(created.id, {
+        userName: current.userNameInput,
         mesExample: current.mesExampleInput,
         creatorNotes: current.creatorNotesInput,
         postHistoryInstructions: current.postHistoryInstructionsInput,

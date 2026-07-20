@@ -14,7 +14,7 @@
  */
 
 import { relationalStore } from '@kit.ArkData';
-import { V1_TO_V2_STATEMENTS, V2_TO_V3_STATEMENTS, V3_TO_V4_STATEMENTS, V4_TO_V5_DDL_STATEMENTS, V5_TO_V6_STATEMENTS, V6_TO_V7_STATEMENTS, V7_TO_V8_DDL_STATEMENTS } from './DatabaseSchema';
+import { V1_TO_V2_STATEMENTS, V2_TO_V3_STATEMENTS, V3_TO_V4_STATEMENTS, V4_TO_V5_DDL_STATEMENTS, V5_TO_V6_STATEMENTS, V6_TO_V7_STATEMENTS, V7_TO_V8_DDL_STATEMENTS, V8_TO_V9_STATEMENTS } from './DatabaseSchema';
 import {
   TABLE_CHATS,
   TABLE_MESSAGES,
@@ -477,6 +477,36 @@ class V7ToV8Migration implements DatabaseMigration {
     // 旧 Chat 视为"无 Memory",后续按需触发总结
     for (let i = 0; i < V7_TO_V8_DDL_STATEMENTS.length; i++) {
       await store.executeSql(V7_TO_V8_DDL_STATEMENTS[i]);
+    }
+  }
+}
+
+/**
+ * 创建 v8→v9 数据库迁移。
+ *
+ * 事务中执行:
+ * 1. characters 表添加 user_name TEXT NOT NULL DEFAULT ''(角色对用户的称呼)
+ * 2. chats 表添加 user_name_override TEXT NOT NULL DEFAULT ''(对话级覆盖)
+ * 3. 旧角色 / 旧对话新字段使用空字符串(表示"未设置",运行时回退到全局用户称呼)
+ * 4. 任一失败全部回滚,不影响旧数据
+ * 5. 不修改 Message / Branch / Swipe / Memory 数据
+ *
+ * 设计:
+ * - 留空时由 ChatService.resolveUserName 按优先级回退:
+ *   对话覆盖 > 角色设置 > 全局设置 > 'User'
+ * - 不直接读取 V2 spec 的 data.user_name,避免覆盖用户已有角色卡数据
+ */
+export function createV8ToV9Migration(): DatabaseMigration {
+  return new V8ToV9Migration();
+}
+
+class V8ToV9Migration implements DatabaseMigration {
+  readonly fromVersion: number = 8;
+  readonly toVersion: number = 9;
+
+  async migrate(store: relationalStore.RdbStore): Promise<void> {
+    for (let i = 0; i < V8_TO_V9_STATEMENTS.length; i++) {
+      await store.executeSql(V8_TO_V9_STATEMENTS[i]);
     }
   }
 }

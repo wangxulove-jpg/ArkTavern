@@ -110,7 +110,7 @@ export class CharacterService {
     const character: Character = createCharacter(
       'char-' + generateUuid(), name, description, personality,
       scenario, firstMessage, systemPrompt,
-      '', '', '', '', [], [], '', '', {}, '',
+      '', '', '', '', [], [], '', '', {}, '', '',
       sortOrder
     );
     const error: string | null = validateCharacter(character);
@@ -338,6 +338,7 @@ export class CharacterService {
       parsed.characterVersion,
       parsed.extensions,
       characterBookId,
+      parsed.userName,
       sortOrder
     );
     const error: string | null = validateCharacter(character);
@@ -683,6 +684,7 @@ export class CharacterService {
       parsed.characterVersion,
       parsed.extensions,
       characterBookId,
+      parsed.userName,
       sortOrder
     );
     const error: string | null = validateCharacter(character);
@@ -982,6 +984,7 @@ function cloneCharacterWithNewId(character: Character, newId: string): Character
     characterVersion: character.characterVersion,
     extensions: character.extensions,
     characterBookId: character.characterBookId,
+    userName: character.userName,
     sortOrder: character.sortOrder,
     createdAt: character.createdAt,
     updatedAt: character.updatedAt

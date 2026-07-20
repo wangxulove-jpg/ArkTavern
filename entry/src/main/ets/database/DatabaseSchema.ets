@@ -124,7 +124,9 @@ import {
   COLUMN_MEMORY_INHERITED_FROM_MEMORY_ID,
   INDEX_CHAT_MEMORIES_CHAT_ID,
   INDEX_CHAT_MEMORIES_BRANCH_ID,
-  INDEX_CHAT_MEMORIES_BRANCH_END_POSITION
+  INDEX_CHAT_MEMORIES_BRANCH_END_POSITION,
+  COLUMN_USER_NAME,
+  COLUMN_CHAT_USER_NAME_OVERRIDE
 } from './DatabaseConstants';
 
 const CREATE_CHARACTERS_TABLE: string =
@@ -148,7 +150,8 @@ const CREATE_CHARACTERS_TABLE: string =
   `${COLUMN_CHARACTER_VERSION} TEXT NOT NULL DEFAULT '', ` +
   `${COLUMN_EXTENSIONS_JSON} TEXT NOT NULL DEFAULT '{}', ` +
   `${COLUMN_CHARACTER_BOOK_ID} TEXT NOT NULL DEFAULT '', ` +
-  `${COLUMN_SORT_ORDER} INTEGER NOT NULL DEFAULT 0` +
+  `${COLUMN_SORT_ORDER} INTEGER NOT NULL DEFAULT 0, ` +
+  `${COLUMN_USER_NAME} TEXT NOT NULL DEFAULT ''` +
   `)`;
 
 const CREATE_CHATS_TABLE: string =
@@ -160,7 +163,8 @@ const CREATE_CHATS_TABLE: string =
   `${COLUMN_UPDATED_AT} INTEGER NOT NULL, ` +
   `${COLUMN_LAST_MESSAGE_AT} INTEGER NOT NULL DEFAULT 0, ` +
   `${COLUMN_IS_ARCHIVED} INTEGER NOT NULL DEFAULT 0, ` +
-  `${COLUMN_SORT_ORDER} INTEGER NOT NULL DEFAULT 0` +
+  `${COLUMN_SORT_ORDER} INTEGER NOT NULL DEFAULT 0, ` +
+  `${COLUMN_CHAT_USER_NAME_OVERRIDE} TEXT NOT NULL DEFAULT ''` +
   `)`;
 
 const CREATE_MESSAGES_TABLE: string =
@@ -532,6 +536,23 @@ export const V8_SCHEMA_STATEMENTS: string[] = [
   ...V7_TO_V8_DDL_STATEMENTS
 ];
 
+// ===== v9: 角色用户称呼 + 对话级覆盖 =====
+const ALTER_CHARACTERS_ADD_USER_NAME: string =
+  `ALTER TABLE ${TABLE_CHARACTERS} ADD COLUMN ${COLUMN_USER_NAME} TEXT NOT NULL DEFAULT ''`;
+const ALTER_CHATS_ADD_USER_NAME_OVERRIDE: string =
+  `ALTER TABLE ${TABLE_CHATS} ADD COLUMN ${COLUMN_CHAT_USER_NAME_OVERRIDE} TEXT NOT NULL DEFAULT ''`;
+
+/** v8→v9 迁移 SQL(添加 user_name / user_name_override 字段,旧数据使用空字符串默认值) */
+export const V8_TO_V9_STATEMENTS: string[] = [
+  ALTER_CHARACTERS_ADD_USER_NAME,
+  ALTER_CHATS_ADD_USER_NAME_OVERRIDE
+];
+
+/** v9 完整 Schema(新安装使用,CREATE_CHARACTERS_TABLE 已包含 user_name,CREATE_CHATS_TABLE 已包含 user_name_override) */
+export const V9_SCHEMA_STATEMENTS: string[] = [
+  ...V8_SCHEMA_STATEMENTS
+];
+
 export function getSchemaStatements(version: number): string[] {
   if (version === 1) {
     return [...VERSION_1_STATEMENTS];
@@ -556,6 +577,9 @@ export function getSchemaStatements(version: number): string[] {
   }
   if (version === 8) {
     return [...V8_SCHEMA_STATEMENTS];
+  }
+  if (version === 9) {
+    return [...V9_SCHEMA_STATEMENTS];
   }
   return [];
 }

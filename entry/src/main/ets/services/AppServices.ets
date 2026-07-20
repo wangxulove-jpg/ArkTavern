@@ -508,6 +508,14 @@ export class AppServices {
   }
 
   /**
+   * 获取 AppPreferences 实例(v9 引入)。
+   * 用于 AppSettingsPage 等页面读写全局用户称呼等通用 KV 配置。
+   */
+  static getAppPreferences(): AppPreferences {
+    return AppServices.getInstance().appPreferences;
+  }
+
+  /**
    * 创建 ChatSessionListViewModel 实例。
    * 用于"对话记录"Tab 展示全部会话 + 角色信息 + 最后消息摘要 + 重命名。
    */
@@ -545,7 +553,8 @@ export class AppServices {
       services.conversationBranchPersistenceService,
       services.chatBackgroundService,
       services.memoryService,
-      services.contextBudgetService
+      services.contextBudgetService,
+      services.appPreferences
     );
   }
 

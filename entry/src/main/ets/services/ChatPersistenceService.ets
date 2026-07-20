@@ -398,6 +398,33 @@ export class ChatPersistenceService {
   }
 
   /**
+   * 更新会话的对话级用户称呼覆盖(v9 引入)。
+   * - 传入空字符串等同于清空覆盖(回退到角色或全局)
+   * - 持久化到 chat.user_name_override 列
+   * - 不修改角色或全局设置
+   *
+   * @param chatId 会话 id
+   * @param override 新的覆盖值(空字符串表示清空)
+   * @returns 更新后的 Chat
+   * @throws Error 会话不存在
+   */
+  async updateUserNameOverride(chatId: string, override: string): Promise<Chat> {
+    const existing: Chat | null = await this.chatRepository.getById(chatId);
+    if (existing === null) {
+      throw new Error('会话不存在或已删除');
+    }
+    const trimmed: string = override.trim();
+    if (existing.userNameOverride === trimmed) {
+      // 值未变化,直接返回(避免无意义写入)
+      return existing;
+    }
+    const updated: Chat = updateChat(existing, { userNameOverride: trimmed });
+    await this.chatRepository.update(updated);
+    Logger.info(LOG_TAG, 'updateUserNameOverride ok');
+    return updated;
+  }
+
+  /**
    * 创建新会话(不删除旧会话)。
    * 用于 T-4.5 多会话新建。
    *

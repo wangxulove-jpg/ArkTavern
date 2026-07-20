@@ -51,10 +51,17 @@ export struct ChatMoreMenuSheet {
   onGoMemory: () => void = () => {};
   /** 前往上下文管理 */
   onGoContextBudget: () => void = () => {};
+  /** v9: 打开本对话称呼覆盖编辑(回调决定具体 UI 形式) */
+  onEditUserNameOverride: () => void = () => {};
   /** 重新生成 */
   onRegenerate: () => void = () => {};
   /** 清空对话 */
   onClearChat: () => void = () => {};
+
+  /** v9: 当前对话级用户称呼覆盖(空表示跟随角色或全局) */
+  @Prop userNameOverride: string = '';
+  /** v9: 当前生效的用户称呼(用于在菜单展示) */
+  @Prop resolvedUserName: string = '';
 
   build() {
     if (this.visible) {
@@ -143,6 +150,19 @@ export struct ChatMoreMenuSheet {
         }
         this.onGoContextBudget();
       })
+
+      // 本对话称呼(v9:对话级用户称呼覆盖)
+      this.infoRow(
+        '本对话称呼',
+        this.resolvedUserName.length > 0 ? this.resolvedUserName : 'User',
+        !this.busy,
+        (): void => {
+          if (this.busy) {
+            return;
+          }
+          this.onEditUserNameOverride();
+        }
+      )
 
       // 重新生成
       if (this.canRegenerate) {

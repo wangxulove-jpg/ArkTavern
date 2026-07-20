@@ -957,6 +957,36 @@ export class ChatViewModel {
   }
 
   /**
+   * v9: 获取当前会话的对话级用户称呼覆盖(空字符串表示无覆盖)。
+   * UI 在设置面板显示当前覆盖值,空字符串表示"跟随角色或全局"。
+   */
+  getCurrentChatUserNameOverride(): string {
+    const chat: Chat | null = this.chatService.getCurrentChat();
+    return chat !== null ? chat.userNameOverride : '';
+  }
+
+  /**
+   * v9: 解析当前生效的用户称呼。
+   * 优先级:对话覆盖 > 角色设置 > 全局设置 > 'User'。
+   * UI 顶部可显示此值。
+   */
+  async getResolvedUserName(): Promise<string> {
+    return await this.chatService.resolveUserName();
+  }
+
+  /**
+   * v9: 更新当前会话的对话级用户称呼覆盖。
+   * - 非空字符串:写入覆盖(仅影响当前会话)
+   * - null 或空字符串:清空覆盖(回退到角色或全局)
+   *
+   * @param override 新的覆盖值(null 或空字符串表示清空)
+   * @throws Error 当无活跃会话或更新失败时
+   */
+  async updateUserNameOverride(override: string | null): Promise<void> {
+    await this.chatService.updateCurrentChatUserNameOverride(override);
+  }
+
+  /**
    * v8.1: 获取最近一次构建的请求消息(用于 UI 上下文占用估算)。
    * 反映实际发送给模型的消息(裁剪后)。
    */

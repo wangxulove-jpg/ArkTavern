@@ -17,6 +17,12 @@ export interface Chat {
   readonly updatedAt: number;
   readonly lastMessageAt: number;
   readonly isArchived: boolean;
+  /**
+   * 对话级用户称呼覆盖(可选,v9 引入)。
+   * 留空时按角色 userName 或全局用户称呼回退;
+   * 非空时仅影响本对话的 {{user}} 替换,不修改角色或全局设置。
+   */
+  readonly userNameOverride: string;
   /** 自定义排序权重(越小越靠前,v7 引入) */
   readonly sortOrder: number;
 }
@@ -26,6 +32,7 @@ export interface CreateChatOptions {
   readonly characterId?: string;
   readonly title?: string;
   readonly createdAt?: number;
+  readonly userNameOverride?: string;
   readonly sortOrder?: number;
 }
 
@@ -35,6 +42,7 @@ export interface ChatUpdates {
   readonly updatedAt?: number;
   readonly lastMessageAt?: number;
   readonly isArchived?: boolean;
+  readonly userNameOverride?: string | null;
   readonly sortOrder?: number;
 }
 
@@ -55,6 +63,10 @@ export function createChat(options?: CreateChatOptions): Chat {
     options !== undefined && options.createdAt !== undefined
       ? options.createdAt
       : now;
+  const userNameOverride: string =
+    options !== undefined && options.userNameOverride !== undefined
+      ? options.userNameOverride
+      : '';
   const sortOrder: number =
     options !== undefined && options.sortOrder !== undefined
       ? options.sortOrder
@@ -67,6 +79,7 @@ export function createChat(options?: CreateChatOptions): Chat {
     updatedAt: now,
     lastMessageAt: 0,
     isArchived: false,
+    userNameOverride: userNameOverride,
     sortOrder: sortOrder
   };
 }
@@ -84,6 +97,11 @@ export function updateChat(chat: Chat, updates: ChatUpdates): Chat {
     updates.lastMessageAt !== undefined ? updates.lastMessageAt : chat.lastMessageAt;
   const isArchived: boolean =
     updates.isArchived !== undefined ? updates.isArchived : chat.isArchived;
+  // userNameOverride 支持 null(清空覆盖)与 undefined(不变)两种语义
+  const userNameOverride: string =
+    updates.userNameOverride !== undefined
+      ? (updates.userNameOverride === null ? '' : updates.userNameOverride)
+      : chat.userNameOverride;
   const sortOrder: number =
     updates.sortOrder !== undefined ? updates.sortOrder : chat.sortOrder;
   return {
@@ -94,6 +112,7 @@ export function updateChat(chat: Chat, updates: ChatUpdates): Chat {
     updatedAt: updatedAt,
     lastMessageAt: lastMessageAt,
     isArchived: isArchived,
+    userNameOverride: userNameOverride,
     sortOrder: sortOrder
   };
 }

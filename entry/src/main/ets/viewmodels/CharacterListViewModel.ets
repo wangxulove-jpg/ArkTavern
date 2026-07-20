@@ -278,7 +278,8 @@ export class CharacterListViewModel {
         characterVersion: jsonResult.card.characterVersion,
         extensions: jsonResult.card.extensions,
         characterBook: jsonResult.card.characterBook,
-        sourceFormat: pngResult.sourceFormat
+        sourceFormat: pngResult.sourceFormat,
+        userName: jsonResult.card.userName
       };
       this.previewPngUri = uri;
       this.isPngImport = true;

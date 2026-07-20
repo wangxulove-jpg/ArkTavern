@@ -109,12 +109,48 @@ export function writeCharacterToJson(character: Character): string {
 }
 
 /**
+ * 为导出构建 extensions 字段:
+ * - 浅拷贝原 extensions(不修改原对象)
+ * - 若 character.userName 非空,写入 extensions.arktavern.user_name_override
+ * - 若 character.userName 为空,移除 extensions.arktavern.user_name_override(若有)
+ *
+ * 不写入 V2/V3 标准字段 data.user_name,遵守需求 10:
+ * "导出标准 Tavern Card V2/PNG 时,不把本地称呼写入标准字段;如需保留,写入 extensions.arktavern.user_name_override"。
+ */
+function buildExportExtensions(character: Character): Record<string, Object> {
+  const result: Record<string, Object> = {};
+  const sourceKeys: string[] = Object.keys(character.extensions);
+  for (let i = 0; i < sourceKeys.length; i++) {
+    const key: string = sourceKeys[i];
+    result[key] = character.extensions[key];
+  }
+  if (character.userName.trim().length > 0) {
+    const existingArkTavern: Object | undefined = result['arktavern'];
+    const arktavern: Record<string, Object> = {};
+    if (typeof existingArkTavern === 'object' && existingArkTavern !== null
+      && !Array.isArray(existingArkTavern)) {
+      const source: Record<string, Object> = existingArkTavern as Record<string, Object>;
+      const keys: string[] = Object.keys(source);
+      for (let i = 0; i < keys.length; i++) {
+        arktavern[keys[i]] = source[keys[i]];
+      }
+    }
+    arktavern['user_name_override'] = character.userName;
+    result['arktavern'] = arktavern;
+  }
+  return result;
+}
+
+/**
  * 将 Character 序列化为 SillyTavern V2 chara_card JSON 字符串。
  * 保留所有 V2 字段和未知 extensions,导入后导出不丢字段。
  *
  * 不包含 avatarUri / characterBookId / createdAt / updatedAt
  * (V2 规范未定义这些字段,avatarUri 来自 PNG 文件,
  *  characterBookId 是内部关联 ID)。
+ *
+ * 本地 user_name 不写入 V2 标准字段 data.user_name,仅写入
+ * extensions.arktavern.user_name_override(遵守需求 10)。
  *
  * @param character 角色数据
  * @returns 格式化 JSON 字符串(spec=chara_card_v2)
@@ -134,7 +170,7 @@ export function writeCharacterToV2Json(character: Character): string {
     tags: character.tags,
     creator: character.creator,
     character_version: character.characterVersion,
-    extensions: character.extensions
+    extensions: buildExportExtensions(character)
   };
   const card: CharaCardV2 = {
     spec: 'chara_card_v2',
@@ -166,7 +202,7 @@ export function writeCharacterToV3Json(character: Character): string {
     tags: character.tags,
     creator: character.creator,
     character_version: character.characterVersion,
-    extensions: character.extensions
+    extensions: buildExportExtensions(character)
   };
   const card: CharaCardV2 = {
     spec: 'chara_card_v3',
