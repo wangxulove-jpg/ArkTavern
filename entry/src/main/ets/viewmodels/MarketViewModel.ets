@@ -50,6 +50,8 @@ export class MarketViewModel {
   sort: MarketSort = MarketSort.Recommended;
   hideNsfw: boolean = true;
   hideImported: boolean = false;
+  /** 仅显示中文角色(本地过滤:标签含中文、或名称/简介中文字符占比>=30%) */
+  chineseOnly: boolean = false;
   tag: string = '';
   creator: string = '';
   providerId: string = 'chub';
@@ -85,6 +87,9 @@ export class MarketViewModel {
   private debounceTimerId: number = -1;
   /** 当前已加载的页码 */
   private currentPage: number = 0;
+  /** 翻译任务 generationId,在 refresh/loadMore/筛选切换时递增,
+   *  旧翻译回调到达时若 genId 不匹配则丢弃,避免写入陈旧结果 */
+  private translationGenerationId: number = 0;
 
   constructor(service: MarketService, translationService: MarketTranslationService | null = null) {
     this.marketService = service;
@@ -108,6 +113,7 @@ export class MarketViewModel {
    */
   dispose(): void {
     this.operationId++; // 让所有进行中的请求结果作废
+    this.translationGenerationId++; // 让所有进行中的翻译回调作废
     this.cancelDebounce();
     if (this.translationService !== null) {
       this.translationService.cancelAll();
@@ -118,11 +124,16 @@ export class MarketViewModel {
 
   /**
    * 刷新第一页(重置分页)。
-   * 取消所有进行中的请求。
+   * 取消所有进行中的请求与翻译任务。
    */
   async refresh(): Promise<void> {
     this.operationId++;
+    this.translationGenerationId++;
     const opId: number = this.operationId;
+    // 取消待执行的翻译任务(已发出的请求无法中止,但结果会被 MarketTranslationService 内部 opId 丢弃)
+    if (this.translationService !== null) {
+      this.translationService.cancelAll();
+    }
     this.refreshing = true;
     this.errorMessage = '';
     this.currentPage = 0;
@@ -141,15 +152,19 @@ export class MarketViewModel {
       if (opId !== this.operationId) {
         return;
       }
-      // 应用 hideImported 过滤
-      let finalItems: MarketCharacter[] = result.items;
-      if (this.hideImported) {
-        finalItems = this.filterImported(result.items, newMap);
-      }
+      // 应用本地过滤(仅中文 + 隐藏已导入)
+      let finalItems: MarketCharacter[] = this.applyLocalFilters(result.items, newMap);
       this.importedMap = newMap;
       this.items = finalItems;
       this.currentPage = result.page;
       this.hasMore = result.nextPage >= 0;
+      // 仅中文筛选开启时,可能本地过滤后不足一页,需要补足
+      if (this.chineseOnly && this.hasMore && finalItems.length < DEFAULT_MARKET_PAGE_SIZE) {
+        await this.fillMoreToReach(opId, DEFAULT_MARKET_PAGE_SIZE);
+        if (opId !== this.operationId) {
+          return;
+        }
+      }
       // 翻译触发
       this.maybeTranslateVisible();
     } catch (e) {
@@ -168,15 +183,147 @@ export class MarketViewModel {
   /**
    * 加载下一页。
    * 防止重复加载、刷新中、无更多数据时直接返回。
+   * chineseOnly 开启时,本地过滤后不足一页会循环拉取后续页,直到达到目标数量或无更多。
    */
   async loadMore(): Promise<void> {
     if (this.loadingMore || this.refreshing || !this.hasMore) {
       return;
     }
     this.loadingMore = true;
+    this.translationGenerationId++;
     const opId: number = this.operationId;
+    const genId: number = this.translationGenerationId;
     try {
-      const nextPage: number = this.currentPage + 1;
+      const targetBatchSize: number = DEFAULT_MARKET_PAGE_SIZE;
+      const accumulated: MarketCharacter[] = [];
+      const accumulatedImportedMap: Map<string, string> = new Map<string, string>();
+      let lastPage: number = this.currentPage;
+      let stillHasMore: boolean = true;
+
+      // 循环拉取直到满足目标数量或远程无更多数据
+      while (accumulated.length < targetBatchSize && stillHasMore) {
+        if (opId !== this.operationId) {
+          return;
+        }
+        const nextPage: number = lastPage + 1;
+        const query: MarketQuery = this.buildQuery(nextPage);
+        const result: MarketPageResult = await this.marketService.searchCharacters(query);
+        if (opId !== this.operationId) {
+          return;
+        }
+        // 跨页去重(包括已加载 items 与本批已累积)
+        const seen: Set<string> = new Set<string>();
+        for (let i = 0; i < this.items.length; i++) {
+          seen.add(marketCharacterKey(this.items[i]));
+        }
+        for (let i = 0; i < accumulated.length; i++) {
+          seen.add(marketCharacterKey(accumulated[i]));
+        }
+        const dedupedNewItems: MarketCharacter[] = [];
+        for (let i = 0; i < result.items.length; i++) {
+          const item: MarketCharacter = result.items[i];
+          const key: string = marketCharacterKey(item);
+          if (!seen.has(key)) {
+            dedupedNewItems.push(item);
+            seen.add(key);
+          }
+        }
+
+        // 检查已导入状态(仅新条目)
+        const newMap: Map<string, string> = await this.marketService.checkImportedBatch(dedupedNewItems);
+        if (opId !== this.operationId) {
+          return;
+        }
+        // 合并到本批 importedMap
+        newMap.forEach((value: string, key: string) => {
+          accumulatedImportedMap.set(key, value);
+        });
+
+        // 应用本地过滤(仅中文 + 隐藏已导入)
+        const filtered: MarketCharacter[] = this.applyLocalFilters(dedupedNewItems, accumulatedImportedMap);
+        for (let i = 0; i < filtered.length; i++) {
+          accumulated.push(filtered[i]);
+        }
+
+        lastPage = result.page;
+        stillHasMore = result.nextPage >= 0;
+
+        // 防止死循环:本次远程返回空数据时停止
+        if (result.items.length === 0) {
+          stillHasMore = false;
+          break;
+        }
+        // 非 chineseOnly 模式下一次请求即可
+        if (!this.chineseOnly) {
+          break;
+        }
+      }
+
+      if (opId !== this.operationId) {
+        return;
+      }
+
+      // 合并到主 importedMap
+      const mergedMap: Map<string, string> = new Map<string, string>();
+      this.importedMap.forEach((value: string, key: string) => {
+        mergedMap.set(key, value);
+      });
+      accumulatedImportedMap.forEach((value: string, key: string) => {
+        mergedMap.set(key, value);
+      });
+
+      // 合并 items(去重保险)
+      if (accumulated.length > 0) {
+        const existingKeys: Set<string> = new Set<string>();
+        for (let i = 0; i < this.items.length; i++) {
+          existingKeys.add(marketCharacterKey(this.items[i]));
+        }
+        const mergedItems: MarketCharacter[] = [];
+        for (let i = 0; i < this.items.length; i++) {
+          mergedItems.push(this.items[i]);
+        }
+        for (let i = 0; i < accumulated.length; i++) {
+          const key: string = marketCharacterKey(accumulated[i]);
+          if (!existingKeys.has(key)) {
+            mergedItems.push(accumulated[i]);
+            existingKeys.add(key);
+          }
+        }
+        this.items = mergedItems;
+      }
+      this.importedMap = mergedMap;
+      this.currentPage = lastPage;
+      this.hasMore = stillHasMore;
+      // 翻译触发(新加载的条目)
+      if (genId === this.translationGenerationId) {
+        this.maybeTranslateVisible();
+      }
+    } catch (e) {
+      if (opId !== this.operationId) {
+        return;
+      }
+      this.errorMessage = this.formatError(e);
+      Logger.error(LOG_TAG, 'loadMore failed: ' + String(e));
+    } finally {
+      if (opId === this.operationId) {
+        this.loadingMore = false;
+      }
+    }
+  }
+
+  /**
+   * 在 refresh 后补足本地过滤后的目标数量。
+   * 循环调用 searchCharacters 拉取后续页,直到达到 targetCount 或无更多。
+   * 仅用于 chineseOnly 模式下本地过滤后不足一页的情况。
+   */
+  private async fillMoreToReach(opId: number, targetCount: number): Promise<void> {
+    let lastPage: number = this.currentPage;
+    let stillHasMore: boolean = this.hasMore;
+    while (this.items.length < targetCount && stillHasMore) {
+      if (opId !== this.operationId) {
+        return;
+      }
+      const nextPage: number = lastPage + 1;
       const query: MarketQuery = this.buildQuery(nextPage);
       const result: MarketPageResult = await this.marketService.searchCharacters(query);
       if (opId !== this.operationId) {
@@ -196,12 +343,11 @@ export class MarketViewModel {
           seen.add(key);
         }
       }
-      // 检查已导入状态(仅检查新条目)
       const newMap: Map<string, string> = await this.marketService.checkImportedBatch(dedupedNewItems);
       if (opId !== this.operationId) {
         return;
       }
-      // 合并 importedMap
+      // 合并到主 importedMap
       const mergedMap: Map<string, string> = new Map<string, string>();
       this.importedMap.forEach((value: string, key: string) => {
         mergedMap.set(key, value);
@@ -209,38 +355,28 @@ export class MarketViewModel {
       newMap.forEach((value: string, key: string) => {
         mergedMap.set(key, value);
       });
-      // 应用 hideImported 过滤
-      let finalNewItems: MarketCharacter[] = dedupedNewItems;
-      if (this.hideImported) {
-        finalNewItems = this.filterImported(dedupedNewItems, mergedMap);
-      }
-      // 合并 items
-      if (finalNewItems.length > 0) {
+      this.importedMap = mergedMap;
+
+      const filtered: MarketCharacter[] = this.applyLocalFilters(dedupedNewItems, mergedMap);
+      if (filtered.length > 0) {
         const mergedItems: MarketCharacter[] = [];
         for (let i = 0; i < this.items.length; i++) {
           mergedItems.push(this.items[i]);
         }
-        for (let i = 0; i < finalNewItems.length; i++) {
-          mergedItems.push(finalNewItems[i]);
+        for (let i = 0; i < filtered.length; i++) {
+          mergedItems.push(filtered[i]);
         }
         this.items = mergedItems;
       }
-      this.importedMap = mergedMap;
-      this.currentPage = result.page;
-      this.hasMore = result.nextPage >= 0;
-      // 翻译触发(新加载的条目)
-      this.maybeTranslateVisible();
-    } catch (e) {
-      if (opId !== this.operationId) {
-        return;
-      }
-      this.errorMessage = this.formatError(e);
-      Logger.error(LOG_TAG, 'loadMore failed: ' + String(e));
-    } finally {
-      if (opId === this.operationId) {
-        this.loadingMore = false;
+      lastPage = result.page;
+      stillHasMore = result.nextPage >= 0;
+      if (result.items.length === 0) {
+        stillHasMore = false;
+        break;
       }
     }
+    this.currentPage = lastPage;
+    this.hasMore = stillHasMore;
   }
 
   // ===== 搜索 =====
@@ -366,6 +502,24 @@ export class MarketViewModel {
   }
 
   /**
+   * 设置"仅中文角色"开关。
+   * 启用后本地过滤:标签含中文、或名称/简介中文字符占比>=30%。
+   * 不足一页时 loadMore 会循环拉取后续页。
+   */
+  async setChineseOnly(value: boolean): Promise<void> {
+    if (this.chineseOnly === value) {
+      return;
+    }
+    this.chineseOnly = value;
+    try {
+      await this.marketService.setChineseOnly(value);
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'setChineseOnly save failed: ' + String(e));
+    }
+    await this.refresh();
+  }
+
+  /**
    * 设置标签筛选(空字符串表示清除标签筛选)。
    */
   async setTag(value: string): Promise<void> {
@@ -454,7 +608,8 @@ export class MarketViewModel {
       // 开启:对当前可见 items 发起翻译
       this.maybeTranslateVisible();
     } else {
-      // 关闭:清空内存翻译(避免显示陈旧翻译)
+      // 关闭:递增 generationId + 清空内存翻译(避免旧回调写入陈旧结果)
+      this.translationGenerationId++;
       this.translations = new Map<string, MarketTranslationResult>();
       if (this.translationService !== null) {
         this.translationService.cancelAll();
@@ -479,6 +634,7 @@ export class MarketViewModel {
    * 对当前可见 items 发起批量翻译(若翻译开关已开启)。
    * 内部使用 MarketTranslationService 的防抖 + 批量机制。
    * 页面离开后由 dispose() 取消所有待执行任务。
+   * 过期结果通过 translationGenerationId 在 onTranslationResult 中丢弃。
    */
   private maybeTranslateVisible(): void {
     if (!this.translateEnabled) {
@@ -490,6 +646,8 @@ export class MarketViewModel {
     if (this.items.length === 0) {
       return;
     }
+    // 当前 generationId,回调时用于检测是否过期
+    const genId: number = this.translationGenerationId;
     // 过滤掉已缓存的(只翻译未缓存的)
     const pending: MarketCharacter[] = [];
     for (let i = 0; i < this.items.length; i++) {
@@ -501,15 +659,35 @@ export class MarketViewModel {
       return;
     }
     this.translationService.translateItems(pending, (remoteId: string, t: MarketTranslationResult): void => {
-      this.onTranslationResult(remoteId, t);
+      this.onTranslationResult(remoteId, t, genId);
     });
   }
 
   /**
    * 单条翻译完成回调。
    * 写入内存 Map,触发 UI 重渲染。
+   * 通过 translationGenerationId 检测过期结果,避免写入已切换掉的列表。
    */
-  private onTranslationResult(remoteId: string, translation: MarketTranslationResult): void {
+  private onTranslationResult(remoteId: string, translation: MarketTranslationResult, genId: number): void {
+    if (genId !== this.translationGenerationId) {
+      // 旧任务结果丢弃(用户已切换筛选/搜索)
+      return;
+    }
+    if (!this.translateEnabled) {
+      // 翻译已被关闭,丢弃结果
+      return;
+    }
+    // 仅在 remoteId 仍存在于当前 items 中时写入
+    let found: boolean = false;
+    for (let i = 0; i < this.items.length; i++) {
+      if (this.items[i].remoteId === remoteId) {
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      return;
+    }
     const newMap: Map<string, MarketTranslationResult> = new Map<string, MarketTranslationResult>();
     this.translations.forEach((v: MarketTranslationResult, k: string) => {
       newMap.set(k, v);
@@ -594,6 +772,8 @@ export class MarketViewModel {
       this.providerId = this.marketService.getCurrentProvider().providerId;
       this.searchInput = '';
       this.appliedSearch = '';
+      // 加载"仅中文"偏好
+      this.chineseOnly = await this.marketService.getChineseOnly();
       // 加载翻译偏好
       if (this.translationService !== null) {
         this.translateEnabled = await this.translationService.isTranslateEnabled();
@@ -663,6 +843,95 @@ export class MarketViewModel {
       }
     }
     return result;
+  }
+
+  /**
+   * 应用本地过滤(仅中文 + 隐藏已导入)。
+   * 由 refresh/loadMore 在写入 items 前调用。
+   */
+  private applyLocalFilters(
+    items: MarketCharacter[],
+    map: Map<string, string>
+  ): MarketCharacter[] {
+    let result: MarketCharacter[] = items;
+    if (this.chineseOnly) {
+      result = this.filterChineseOnly(result);
+    }
+    if (this.hideImported) {
+      result = this.filterImported(result, map);
+    }
+    return result;
+  }
+
+  /**
+   * 仅中文角色本地过滤。
+   * 判定标准(优先级):
+   * 1) 任一标签包含中文字符 → 通过
+   * 2) 名称中文字符占比 >= 30% → 通过
+   * 3) 简介中文字符占比 >= 30% → 通过
+   * 4) 否则 → 不通过(标记为未知语言,不显示)
+   */
+  private filterChineseOnly(items: MarketCharacter[]): MarketCharacter[] {
+    const result: MarketCharacter[] = [];
+    for (let i = 0; i < items.length; i++) {
+      if (this.isChineseCharacter(items[i])) {
+        result.push(items[i]);
+      }
+    }
+    return result;
+  }
+
+  /**
+   * 判断角色卡是否为中文角色。
+   */
+  private isChineseCharacter(item: MarketCharacter): boolean {
+    // 优先级 1:标签中含中文
+    for (let i = 0; i < item.tags.length; i++) {
+      if (this.containsChinese(item.tags[i])) {
+        return true;
+      }
+    }
+    // 优先级 2:名称中文字符占比 >= 30%
+    if (item.name.length > 0 && this.chineseRatio(item.name) >= 0.3) {
+      return true;
+    }
+    // 优先级 3:简介中文字符占比 >= 30%
+    if (item.summary.length > 0 && this.chineseRatio(item.summary) >= 0.3) {
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * 文本中是否包含 CJK 统一表意文字字符。
+   * Unicode 范围 0x4E00 ~ 0x9FFF。
+   */
+  private containsChinese(text: string): boolean {
+    for (let i = 0; i < text.length; i++) {
+      const code: number = text.charCodeAt(i);
+      if (code >= 0x4E00 && code <= 0x9FFF) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * 计算中文字符占文本长度的比例(0~1)。
+   * 空文本返回 0。
+   */
+  private chineseRatio(text: string): number {
+    if (text.length === 0) {
+      return 0;
+    }
+    let count: number = 0;
+    for (let i = 0; i < text.length; i++) {
+      const code: number = text.charCodeAt(i);
+      if (code >= 0x4E00 && code <= 0x9FFF) {
+        count++;
+      }
+    }
+    return count / text.length;
   }
 
   /**

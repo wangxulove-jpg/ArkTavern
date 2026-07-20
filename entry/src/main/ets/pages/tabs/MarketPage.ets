@@ -248,9 +248,10 @@ export struct MarketPage {
       .width('100%')
       .alignItems(VerticalAlign.Center)
 
-      // 第二行:NSFW + 隐藏已导入
+      // 第二行:NSFW + 仅中文 + 隐藏已导入
       Row() {
         this.nsfwChip()
+        this.chineseOnlyChip()
         this.hideImportedChip()
 
         Blank()
@@ -342,6 +343,22 @@ export struct MarketPage {
       })
   }
 
+  @Builder
+  chineseOnlyChip(): void {
+    Text($r('app.string.market_chinese_only'))
+      .fontSize($r('app.float.app_font_caption'))
+      .fontColor(this.isChineseOnly() ? $r('app.color.app_on_accent') : $r('app.color.app_text_secondary'))
+      .backgroundColor(this.isChineseOnly() ? $r('app.color.app_accent') : $r('app.color.app_surface_2'))
+      .borderRadius($r('app.float.app_radius_sm'))
+      .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+      .margin({ right: 6 })
+      .onClick(() => {
+        if (this.viewModel !== null) {
+          void this.viewModel!.setChineseOnly(!this.viewModel!.chineseOnly);
+        }
+      })
+  }
+
   /** sortChip 是否激活 */
   private isSortActive(sort: MarketSort): boolean {
     return this.viewModel !== null && this.viewModel!.sort === sort;
@@ -355,6 +372,11 @@ export struct MarketPage {
   /** 是否隐藏已导入 */
   private isHidingImported(): boolean {
     return this.viewModel !== null && this.viewModel!.hideImported;
+  }
+
+  /** 是否仅显示中文角色 */
+  private isChineseOnly(): boolean {
+    return this.viewModel !== null && this.viewModel!.chineseOnly;
   }
 
   /** 翻译开关是否已开启 */

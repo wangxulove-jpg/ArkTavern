@@ -29,6 +29,7 @@ import { Logger } from '../../utils/Logger';
 const LOG_TAG: string = 'MarketCacheStore';
 const KEY_HIDE_NSFW: string = 'market_hide_nsfw';
 const KEY_HIDE_IMPORTED: string = 'market_hide_imported';
+const KEY_CHINESE_ONLY: string = 'market_chinese_only';
 const KEY_PROVIDER_ID: string = 'market_provider_id';
 const KEY_SORT: string = 'market_sort';
 const KEY_SEARCH_HISTORY: string = 'market_search_history';
@@ -69,6 +70,22 @@ export class MarketCacheStore {
 
   async setHideImported(value: boolean): Promise<void> {
     await this.prefs.putBoolean(KEY_HIDE_IMPORTED, value);
+  }
+
+  // ===== 仅中文筛选 =====
+
+  /**
+   * 读取"仅中文角色"开关状态(默认关闭)。
+   */
+  async getChineseOnly(): Promise<boolean> {
+    return await this.prefs.getBoolean(KEY_CHINESE_ONLY, false);
+  }
+
+  /**
+   * 保存"仅中文角色"开关状态。
+   */
+  async setChineseOnly(value: boolean): Promise<void> {
+    await this.prefs.putBoolean(KEY_CHINESE_ONLY, value);
   }
 
   // ===== Provider 与排序 =====

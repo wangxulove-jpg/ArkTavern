@@ -35,6 +35,7 @@ import { promptAction, router } from '@kit.ArkUI';
 
 const TAB_NEW: number = 0;
 const TAB_IMPORT: number = 1;
+const TAB_AI: number = 2;
 
 @Entry
 @Component
@@ -73,6 +74,11 @@ struct AddCharacterPage {
   /** 跳转到全屏 CharacterEditPage 新建角色(不传 characterId) */
   private startNewCharacter(): void {
     router.pushUrl({ url: 'pages/CharacterEditPage' });
+  }
+
+  /** 跳转到 AI 制作角色卡页面 */
+  private startAiMaker(): void {
+    router.pushUrl({ url: 'pages/AiCharacterMakerPage' });
   }
 
   /** 打开系统文件选择器(PNG / JSON) */
@@ -266,10 +272,27 @@ struct AddCharacterPage {
           : Color.Transparent)
         .borderRadius($r('app.float.app_radius_sm'))
         .height(32)
-        .padding({ left: 16, right: 16 })
+        .padding({ left: 12, right: 12 })
         .textAlign(TextAlign.Center)
         .layoutWeight(1)
         .onClick(() => { this.activeTab = TAB_NEW; })
+
+      Text($r('app.string.add_character_tab_ai'))
+        .fontSize($r('app.float.app_font_body'))
+        .fontWeight(this.activeTab === TAB_AI ? FontWeight.Medium : FontWeight.Normal)
+        .fontColor(this.activeTab === TAB_AI
+          ? $r('app.color.app_on_accent')
+          : $r('app.color.app_text_secondary'))
+        .backgroundColor(this.activeTab === TAB_AI
+          ? $r('app.color.app_accent')
+          : Color.Transparent)
+        .borderRadius($r('app.float.app_radius_sm'))
+        .height(32)
+        .padding({ left: 12, right: 12 })
+        .margin({ left: 4 })
+        .textAlign(TextAlign.Center)
+        .layoutWeight(1)
+        .onClick(() => { this.activeTab = TAB_AI; })
 
       Text($r('app.string.add_character_tab_import'))
         .fontSize($r('app.float.app_font_body'))
@@ -282,7 +305,7 @@ struct AddCharacterPage {
           : Color.Transparent)
         .borderRadius($r('app.float.app_radius_sm'))
         .height(32)
-        .padding({ left: 16, right: 16 })
+        .padding({ left: 12, right: 12 })
         .margin({ left: 4 })
         .textAlign(TextAlign.Center)
         .layoutWeight(1)
@@ -299,9 +322,55 @@ struct AddCharacterPage {
   contentArea() {
     if (this.activeTab === TAB_NEW) {
       this.newCharacterTab()
+    } else if (this.activeTab === TAB_AI) {
+      this.aiCharacterTab()
     } else {
       this.importTab()
     }
+  }
+
+  // ===== AI 制作分段 =====
+
+  @Builder
+  aiCharacterTab() {
+    Column() {
+      Column() {
+        Text($r('app.string.add_character_ai_title'))
+          .fontSize($r('app.float.app_font_subtitle'))
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.app_text_primary'))
+          .textAlign(TextAlign.Center)
+
+        Text($r('app.string.add_character_ai_desc'))
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .margin({ top: 8 })
+          .textAlign(TextAlign.Center)
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Center)
+
+      Button($r('app.string.add_character_start_ai'))
+        .fontSize($r('app.float.app_font_body'))
+        .backgroundColor($r('app.color.app_accent'))
+        .fontColor($r('app.color.app_on_accent'))
+        .borderRadius($r('app.float.app_radius_md'))
+        .height(48)
+        .width('80%')
+        .margin({ top: 32 })
+        .onClick(() => {
+          this.startAiMaker();
+        })
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .padding({
+      left: $r('app.float.app_spacing_24'),
+      right: $r('app.float.app_spacing_24'),
+      top: $r('app.float.app_spacing_48'),
+      bottom: 100
+    })
+    .alignItems(HorizontalAlign.Center)
   }
 
   // ===== 新建角色分段 =====

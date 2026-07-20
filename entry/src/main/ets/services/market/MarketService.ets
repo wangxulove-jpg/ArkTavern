@@ -167,6 +167,14 @@ export class MarketService {
     await this.cache.setHideImported(value);
   }
 
+  async getChineseOnly(): Promise<boolean> {
+    return await this.cache.getChineseOnly();
+  }
+
+  async setChineseOnly(value: boolean): Promise<void> {
+    await this.cache.setChineseOnly(value);
+  }
+
   async setSort(sort: MarketSort): Promise<void> {
     await this.cache.setSort(sort);
   }

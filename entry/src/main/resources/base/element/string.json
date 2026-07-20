@@ -573,6 +573,10 @@
       "value": "新建角色"
     },
     {
+      "name": "add_character_tab_ai",
+      "value": "AI 制作"
+    },
+    {
       "name": "add_character_tab_import",
       "value": "文件导入"
     },
@@ -587,6 +591,18 @@
     {
       "name": "add_character_start_new",
       "value": "开始新建"
+    },
+    {
+      "name": "add_character_ai_title",
+      "value": "AI 制作角色卡"
+    },
+    {
+      "name": "add_character_ai_desc",
+      "value": "输入角色创意,由你已配置的 AI 模型生成标准 Tavern Card V2"
+    },
+    {
+      "name": "add_character_start_ai",
+      "value": "开始 AI 制作"
     },
     {
       "name": "add_character_import_icon",
@@ -1331,6 +1347,10 @@
     {
       "name": "market_show_imported",
       "value": "显示已导入"
+    },
+    {
+      "name": "market_chinese_only",
+      "value": "仅中文"
     },
     {
       "name": "market_translate_toggle",
