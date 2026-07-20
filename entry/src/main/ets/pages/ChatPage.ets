@@ -38,6 +38,7 @@ import { common } from '@kit.AbilityKit';
 import { KeyCode } from '@kit.InputKit';
 import { inputMethod } from '@kit.IMEKit';
 import { AppServices } from '../services/AppServices';
+import { ChatBackgroundConfig } from '../services/ChatBackgroundService';
 import { ChatSessionListPanel } from '../components/ChatSessionListPanel';
 import { Character } from '../models/Character';
 import { Logger } from '../utils/Logger';
@@ -62,6 +63,10 @@ struct ChatPage {
   @State showClearConfirm: boolean = false;
 
   @StorageLink('branchChangeSeq') @Watch('onBranchChangeSeqChanged') branchChangeSeq: number = 0;
+  /** 聊天背景配置变更通知(由 ChatBackgroundSettingsPage 通过 AppStorage.setOrCreate 触发) */
+  @StorageProp('chatBgConfigVersion') @Watch('onChatBgConfigVersionChanged') chatBgConfigVersion: number = 0;
+  /** 聊天背景配置(为 null 表示未加载) */
+  @State chatBgConfig: ChatBackgroundConfig | null = null;
   /** 顶部状态栏避让高度(由 EntryAbility 写入 AppStorage) */
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   /** 底部导航栏/手势条避让高度 */
@@ -78,6 +83,8 @@ struct ChatPage {
   private pendingRefreshPresetName: boolean = false;
   /** 跳转到 BranchMapPage 后返回时重新加载消息和分支状态 */
   private pendingReloadAfterBranchChange: boolean = false;
+  /** 已加载过背景配置的 chatId,避免 onMessagesUpdate 反复加载 */
+  private lastLoadedBgChatId: string = '';
 
   aboutToAppear(): void {
     const modelService = AppServices.getModelService();
@@ -89,6 +96,7 @@ struct ChatPage {
     );
     vm.onMessagesUpdate = (msgs: ChatMessage[]): void => {
       this.messages = msgs;
+      this.maybeLoadChatBackground();
     };
     this.viewModel = vm;
 
@@ -174,6 +182,27 @@ struct ChatPage {
 
   build() {
     Stack() {
+        // ===== 背景层(最底层,位于消息列表之下)=====
+        // 仅在配置已加载、启用、且图片存在时渲染。否则透出根 Stack 的 page_background。
+        if (this.chatBgConfig !== null
+          && this.chatBgConfig!.enabled
+          && this.chatBgConfig!.imageUri.length > 0) {
+          // 背景图(应用模糊度,模糊后图像边缘有透明像素,由 page_background 兜底)
+          Image(this.chatBgConfig!.imageUri)
+            .width('100%')
+            .height('100%')
+            .objectFit(ImageFit.Cover)
+            .blur(this.chatBgConfig!.blur)
+            .hitTestBehavior(HitTestMode.Transparent)
+
+          // 暗化遮罩(增强浅色背景图下的文字可读性)
+          Column()
+            .width('100%')
+            .height('100%')
+            .backgroundColor('rgba(0,0,0,' + (this.chatBgConfig!.dim / 100).toString() + ')')
+            .hitTestBehavior(HitTestMode.Transparent)
+        }
+
         // ===== 底层:消息列表 + 浮动按钮(占满全屏,从状态栏延伸到底部手势区) =====
         Stack({ alignContent: Alignment.BottomEnd }) {
           if (this.isInitialLoading()) {
@@ -209,12 +238,9 @@ struct ChatPage {
         }
         .width('100%')
         .height('100%')
-        // 消息列表 padding 预留顶栏和输入栏高度,让首条消息显示在顶栏下方,
-        // 滚动时消息可进入顶栏/状态栏区域(被顶栏半透明背景遮挡)。
-        .padding({
-          top: this.statusBarHeight + 56,           // 顶栏高度(statusBar + 4 + 40 + 4 + 8缓冲)
-          bottom: 80 + this.navigationBarHeight       // 输入栏高度(8 + TextArea + 16 + navBar + 16缓冲)
-        })
+        // padding 0:消息列表占满全屏,顶栏/输入栏作为浮层叠加(顶栏透明、输入栏底部带不透明背景)。
+        // 最新消息通过 autoScrollToBottom 滚动到输入栏上方可视区域。
+        .padding({ top: 0, bottom: 0 })
         .onClick(() => {
           // 点击消息列表空白区域收起软键盘
           try {
@@ -260,18 +286,22 @@ struct ChatPage {
         .width('100%')
         .height('100%')
         .justifyContent(FlexAlign.Start)
-        // 半透明背景:让壁纸/消息列表能透出,同时保证顶栏内容可读
-        .backgroundColor('rgba(245,246,248,0.88)')
-        // 空白区域(顶栏下方)不响应点击,让事件穿透到下层消息列表(收起键盘等)
+        // 顶栏 Column 透明:让下层消息列表完全可见,顶栏背景由 topBar Row 自己带
+        // hitTestBehavior=Transparent 让顶栏下方空白区域点击穿透到消息列表
         .hitTestBehavior(HitTestMode.Transparent)
 
-        // ===== 浮层:输入栏(底部对齐,半透明背景) =====
+        // ===== 浮层:输入栏(底部对齐,悬浮胶囊式) =====
+        // 外层 Column 透明,只负责把 inputArea 推到底部对齐位置;
+        // 输入栏本身由 inputArea 的 backgroundBlurStyle 提供视觉容器,不承载不透明背景。
+        // margin bottom 12vp + navigationBarHeight:避开系统手势条;
+        // margin left/right 12vp:与页面其他内容对齐。
         Column() {
           this.inputArea()
         }
         .width('100%')
         .height('100%')
         .justifyContent(FlexAlign.End)
+        .padding({ left: 12, right: 12, bottom: this.navigationBarHeight + 12 })
         .hitTestBehavior(HitTestMode.Transparent)
 
         // ===== 弹窗层(覆盖在最上层) =====
@@ -299,6 +329,7 @@ struct ChatPage {
             onOpenSessionList: (): void => {
               this.viewModel!.openSessionList();
             },
+            onGoChatBackground: (): void => { this.navigateToChatBackgroundSettings(); },
             onRegenerate: (): void => { this.viewModel!.regenerate(); },
             onClearChat: (): void => {
               this.showClearConfirm = true;
@@ -370,29 +401,8 @@ struct ChatPage {
         })
       }
 
-      // 头像(32x32 圆形)
-      CharacterImageView({
-        imageUri: this.character !== null ? this.character!.avatarUri : '',
-        fallbackName: this.viewModel !== null ? this.viewModel!.characterName : '',
-        imgWidth: 32,
-        imgHeight: 32,
-        imgBorderRadius: 16,
-        displayMode: 'thumbnail',
-        objectFit: ImageFit.Cover
-      })
-        .margin({ left: 8 })
-
-      // 角色名
-      Text(this.viewModel !== null && this.viewModel!.characterName.length > 0
-        ? this.viewModel!.characterName
-        : (this.character !== null ? this.character!.name : $r('app.string.nav_chat_title')))
-        .fontSize($r('app.float.app_font_subtitle'))
-        .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.app_text_primary'))
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .layoutWeight(1)
-        .margin({ left: 8, right: 8 })
+      // 占位:让汉堡按钮和更多按钮分布在两侧(已按用户要求移除头像和角色名)
+      Blank()
 
       // 更多按钮(纯图标,无背景无边框)
       Stack() {
@@ -493,17 +503,17 @@ struct ChatPage {
         }, (msg: ChatMessage) => msg.id + '_' + (msg.updatedAt ?? 0) + '_'
           + (msg.status ?? '') + '_' + msg.content.length + '_'
           + (msg.isStreaming === true ? '1' : '0'))
-        Blank().height(12)
-      }
-      .width('100%')
-      .padding({
-        left: $r('app.float.app_spacing_12'),
-        right: $r('app.float.app_spacing_12'),
-        top: 4,
-        // 底部 padding 16vp:给最后一条消息留出与输入区的视觉间距
-        // (输入区作为 Column 兄弟节点位于 Stack 下方,不与此处重叠)
-        bottom: $r('app.float.app_spacing_16')
-      })
+      // 底部空白占位:高度等于悬浮输入栏占用空间(输入栏 56 + bottom padding 12 + navBar 12),
+      // 让 scrollEdge(Bottom) 时最后一条消息显示在悬浮输入栏上方,不被遮挡。
+      Blank().height(80 + this.navigationBarHeight)
+    }
+    .width('100%')
+    .padding({
+      left: $r('app.float.app_spacing_12'),
+      right: $r('app.float.app_spacing_12'),
+      top: 4,
+      bottom: 0
+    })
       .onAreaChange(() => {
         this.autoScrollToBottom();
       })
@@ -639,107 +649,110 @@ struct ChatPage {
 
   @Builder
   inputArea() {
-    Column() {
-      Row() {
-        TextArea({
-          placeholder: $r('app.string.chat_input_placeholder'),
-          text: this.viewModel !== null ? this.viewModel!.inputText : ''
+    // 悬浮式输入容器:胶囊造型 + 鸿蒙原生材质模糊(Regular 厚度)
+    // 容器本身不承载不透明背景,页面背景透过模糊隐约可见。
+    // 外边距:左右 12vp(与页面其他内容对齐),底部 12vp + 手势条高度(避开系统手势条)。
+    Row() {
+      TextArea({
+        placeholder: $r('app.string.chat_input_placeholder'),
+        text: this.viewModel !== null ? this.viewModel!.inputText : ''
+      })
+        .fontSize($r('app.float.app_font_body'))
+        .fontColor($r('app.color.app_text_primary'))
+        // 背景透明:由外层 Row 的 backgroundBlurStyle 统一提供视觉容器
+        .backgroundColor(Color.Transparent)
+        .borderRadius($r('app.float.app_radius_md'))
+        .border({ width: 0 })
+        .maxLines(5)
+        .constraintSize({ minHeight: 48 })
+        .layoutWeight(1)
+        .padding({ left: 16, right: 8, top: 10, bottom: 10 })
+        .enterKeyType(EnterKeyType.Send)
+        .onChange((value: string) => {
+          if (this.viewModel !== null) {
+            this.viewModel!.updateInput(value);
+          }
         })
-          .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_primary'))
-          .backgroundColor($r('app.color.app_surface_2'))
-          .borderRadius($r('app.float.app_radius_md'))
-          // 关键:显式去掉 TextArea 默认边框,只保留背景圆角
-          .border({ width: 0 })
-          .maxLines(5)
-          .layoutWeight(1)
-          .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-          .enterKeyType(EnterKeyType.Send)
-          .onChange((value: string) => {
-            if (this.viewModel !== null) {
-              this.viewModel!.updateInput(value);
+        .onSubmit((enterKey: EnterKeyType, event?: SubmitEvent) => {
+          // 软键盘回车(EnterKeyType.Send):触发发送并保持编辑态
+          if (this.canSend() && this.viewModel !== null) {
+            this.viewModel!.send();
+          }
+          event?.keepEditableState();
+        })
+        .onKeyPreIme((event: KeyEvent): boolean => {
+          // 物理键盘回车发送消息(Ctrl+Enter 仍为换行)
+          if (event.type === KeyType.Down
+            && (event.keyCode === KeyCode.KEYCODE_ENTER
+              || event.keyCode === KeyCode.KEYCODE_NUMPAD_ENTER)) {
+            let hasCtrl: boolean = false;
+            try {
+              hasCtrl = event.getModifierKeyState?.(['Ctrl']) ?? false;
+            } catch (_e) {
+              hasCtrl = false;
             }
-          })
-          .onSubmit((enterKey: EnterKeyType, event?: SubmitEvent) => {
-            // 软键盘回车(EnterKeyType.Send):触发发送并保持编辑态
+            if (hasCtrl) {
+              return false;
+            }
             if (this.canSend() && this.viewModel !== null) {
               this.viewModel!.send();
+              return true;
             }
-            event?.keepEditableState();
-          })
-          .onKeyPreIme((event: KeyEvent): boolean => {
-            // 物理键盘回车发送消息(Ctrl+Enter 仍为换行)
-            if (event.type === KeyType.Down
-              && (event.keyCode === KeyCode.KEYCODE_ENTER
-                || event.keyCode === KeyCode.KEYCODE_NUMPAD_ENTER)) {
-              let hasCtrl: boolean = false;
-              try {
-                hasCtrl = event.getModifierKeyState?.(['Ctrl']) ?? false;
-              } catch (_e) {
-                hasCtrl = false;
-              }
-              if (hasCtrl) {
-                return false;
-              }
-              if (this.canSend() && this.viewModel !== null) {
-                this.viewModel!.send();
-                return true;
-              }
-            }
-            return false;
-          })
+          }
+          return false;
+        })
 
-        if (this.viewModel !== null && this.viewModel!.canStop) {
-          // 停止按钮(纯图标,背景色填充,无 Button 边框)
-          // 触控区域 48x48vp,符合 HarmonyOS 推荐最小可点击尺寸
-          Stack() {
-            SymbolGlyph($r('sys.symbol.xmark'))
-              .fontSize(18)
-              .fontColor([$r('app.color.app_on_accent')])
-          }
-          .backgroundColor($r('app.color.app_danger'))
-          .borderRadius(24)
-          .height(48)
-          .width(48)
-          .margin({ left: 8 })
-          .onClick(() => {
-            this.viewModel!.stop();
-          })
-        } else {
-          // 发送按钮(纯图标,背景色填充,无 Button 边框)
-          // 触控区域 48x48vp,符合 HarmonyOS 推荐最小可点击尺寸
-          Stack() {
-            SymbolGlyph($r('sys.symbol.arrow_up'))
-              .fontSize(20)
-              .fontColor([
-                this.canSend()
-                  ? $r('app.color.app_on_accent')
-                  : $r('app.color.app_text_tertiary')
-              ])
-          }
-          .backgroundColor(this.canSend()
-            ? $r('app.color.app_accent')
-            : $r('app.color.app_surface_2'))
-          .borderRadius(24)
-          .height(48)
-          .width(48)
-          .margin({ left: 8 })
-          .onClick(() => {
-            if (this.canSend() && this.viewModel !== null) {
-              this.viewModel!.send();
-            }
-          })
+      // 发送/停止按钮:圆形 48x48,与输入框同处一个胶囊容器
+      if (this.viewModel !== null && this.viewModel!.canStop) {
+        // 停止按钮:危险色填充,圆角 24(圆形)
+        Stack() {
+          SymbolGlyph($r('sys.symbol.xmark'))
+            .fontSize(20)
+            .fontColor([$r('app.color.app_on_accent')])
         }
+        .backgroundColor($r('app.color.app_danger'))
+        .borderRadius(24)
+        .height(48)
+        .width(48)
+        .margin({ right: 4 })
+        .onClick(() => {
+          this.viewModel!.stop();
+        })
+      } else {
+        // 发送按钮:可发送用强调色 + 轻量光感,不可发送弱化为透明
+        Stack() {
+          SymbolGlyph($r('sys.symbol.arrow_up'))
+            .fontSize(20)
+            .fontColor([
+              this.canSend()
+                ? $r('app.color.app_on_accent')
+                : $r('app.color.app_text_tertiary')
+            ])
+        }
+        .backgroundColor(this.canSend()
+          ? $r('app.color.app_accent')
+          : Color.Transparent)
+        .borderRadius(24)
+        .height(48)
+        .width(48)
+        .margin({ right: 4 })
+        .onClick(() => {
+          if (this.canSend() && this.viewModel !== null) {
+            this.viewModel!.send();
+          }
+        })
       }
-      .width('100%')
-      // 关键:padding bottom 预留 16vp 底部安全距离,避开系统手势区;
-      // navigationBarHeight 在鸿蒙 NEXT 通常为 0,但保留以兼容有手势条的设备。
-      .padding({ left: 12, right: 12, top: 8, bottom: this.navigationBarHeight + 16 })
-      .alignItems(VerticalAlign.Bottom)
     }
     .width('100%')
-    // 半透明背景:让壁纸/消息列表能透出,同时保证输入栏内容可读
-    .backgroundColor('rgba(245,246,248,0.88)')
+    .alignItems(VerticalAlign.Center)
+    // 胶囊造型:大圆角,轻量边框增强层次(边框色用 surface_2 自动适配深浅色)
+    .borderRadius(28)
+    .border({ width: 0.5, color: $r('app.color.app_surface_2') })
+    // 鸿蒙原生材质模糊:Regular 厚度,自动适配深浅色模式,隐约透出后方页面背景
+    .backgroundBlurStyle(BlurStyle.Regular, {
+      policy: BlurStyleActivePolicy.ALWAYS_ACTIVE
+    })
+    .padding({ left: 4, right: 0, top: 0, bottom: 0 })
   }
 
   // ===== 清空确认弹窗 =====
@@ -962,6 +975,68 @@ struct ChatPage {
       url: 'pages/BranchMapPage',
       params: { chatId: chatId }
     });
+  }
+
+  private navigateToChatBackgroundSettings(): void {
+    if (this.viewModel === null) {
+      return;
+    }
+    const chatId: string | undefined = this.viewModel!.getCurrentChatId();
+    if (chatId === undefined || chatId.length === 0) {
+      promptAction.showToast({ message: '会话未就绪', duration: 1500 });
+      return;
+    }
+    router.pushUrl({
+      url: 'pages/ChatBackgroundSettingsPage',
+      params: { chatId: chatId }
+    });
+  }
+
+  /**
+   * 会话首次就绪或切换时加载背景配置。
+   * 通过 lastLoadedBgChatId 缓存避免 onMessagesUpdate 反复加载。
+   */
+  private maybeLoadChatBackground(): void {
+    if (this.viewModel === null) {
+      return;
+    }
+    const chatId: string | undefined = this.viewModel!.getCurrentChatId();
+    if (chatId === undefined || chatId.length === 0) {
+      return;
+    }
+    if (chatId === this.lastLoadedBgChatId) {
+      return;
+    }
+    this.lastLoadedBgChatId = chatId;
+    this.loadChatBackground();
+  }
+
+  private loadChatBackground(): void {
+    if (this.viewModel === null) {
+      return;
+    }
+    const chatId: string | undefined = this.viewModel!.getCurrentChatId();
+    if (chatId === undefined || chatId.length === 0) {
+      return;
+    }
+    const service = AppServices.getChatBackgroundService();
+    if (service === null) {
+      return;
+    }
+    service.getConfig(chatId)
+      .then((cfg: ChatBackgroundConfig): void => {
+        this.chatBgConfig = cfg;
+      })
+      .catch((e: Error): void => {
+        Logger.warn(LOG_TAG, 'loadChatBackground failed: ' + e.message);
+      });
+  }
+
+  /**
+   * ChatBackgroundSettingsPage 保存配置后通过 AppStorage.setOrCreate 触发。
+   */
+  onChatBgConfigVersionChanged(): void {
+    this.loadChatBackground();
   }
 
   private copyMessage(msg: ChatMessage): void {

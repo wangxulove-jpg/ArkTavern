@@ -145,6 +145,15 @@ struct AddCharacterPage {
     this.viewModel.cancelImport();
   }
 
+  /** 返回键处理:导入预览弹窗显示时,优先取消预览;否则正常返回 */
+  onBackPressed(): boolean {
+    if (this.viewModel !== null && this.viewModel!.showImportPreview) {
+      this.cancelImport();
+      return true;
+    }
+    return false;
+  }
+
   /** 递增 characterListVersion,触发 CharacterRootView 刷新 */
   private bumpListVersion(): void {
     const v: number = AppStorage.get<number>('characterListVersion') ?? 0;
@@ -166,7 +175,8 @@ struct AddCharacterPage {
   }
 
   build() {
-    Column() {
+    Stack() {
+      Column() {
         this.topBar()
 
         // 错误提示
@@ -188,18 +198,21 @@ struct AddCharacterPage {
         } else {
           this.contentArea()
         }
-
-        // 导入预览弹窗
-        if (this.viewModel !== null
-          && this.viewModel!.showImportPreview
-          && this.viewModel!.previewCard !== null) {
-          this.importPreviewDialog()
-        }
       }
       .width('100%')
       .height('100%')
       .backgroundColor($r('app.color.app_bg'))
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+
+      // 导入预览弹窗:浮层,覆盖整个页面(包括顶栏),居中显示
+      if (this.viewModel !== null
+        && this.viewModel!.showImportPreview
+        && this.viewModel!.previewCard !== null) {
+        this.importPreviewDialog()
+      }
+    }
+    .width('100%')
+    .height('100%')
   }
 
   // ===== 顶部栏 =====
@@ -480,10 +493,7 @@ struct AddCharacterPage {
     .width('100%')
     .height('100%')
     .backgroundColor('rgba(0,0,0,0.5)')
-    .onClick(() => {
-      // 点击外部取消
-      this.cancelImport();
-    })
+    // 不设 onClick:点击外部遮罩不取消,只能通过"取消"按钮或返回键取消
   }
 
   @Builder

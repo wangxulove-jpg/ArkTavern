@@ -51,6 +51,10 @@ export struct ChatSessionRootView {
   @State renameInput: string = '';
   /** 重命名进行中(防止重复点击) */
   @State isRenaming: boolean = false;
+  /** 删除确认弹窗目标项(空时不显示) */
+  @State deleteTarget: ChatSessionListItem | null = null;
+  /** 删除进行中(防止重复点击) */
+  @State isDeleting: boolean = false;
   /**
    * 跨页面列表刷新信号。
    * 由 ChatPage 在会话变化(发消息/新建会话/删除)后递增,触发本组件 reload。
@@ -160,6 +164,51 @@ export struct ChatSessionRootView {
     }
   }
 
+  /** 打开删除确认弹窗 */
+  private promptDelete(item: ChatSessionListItem): void {
+    if (this.isDeleting) {
+      return;
+    }
+    this.deleteTarget = item;
+  }
+
+  /** 取消删除 */
+  private cancelDelete(): void {
+    if (this.isDeleting) {
+      return;
+    }
+    this.deleteTarget = null;
+  }
+
+  /** 确认删除:调 viewModel.deleteSession */
+  private async confirmDelete(): Promise<void> {
+    if (this.isDeleting || this.deleteTarget === null) {
+      this.deleteTarget = null;
+      return;
+    }
+    if (this.viewModel === null) {
+      this.deleteTarget = null;
+      return;
+    }
+    const chatId: string = this.deleteTarget.chat.id;
+    this.isDeleting = true;
+    try {
+      await this.viewModel.deleteSession(chatId);
+      // 显式同步本地 sessions
+      this.syncSessions();
+      // 通知其他页面(如 ChatPage)刷新
+      this.bumpListVersion();
+    } catch (e) {
+      promptAction.showToast({
+        message: (e as Error).message ?? '删除失败',
+        duration: 2000
+      });
+    } finally {
+      this.deleteTarget = null;
+      this.isDeleting = false;
+    }
+  }
+
   /** 递增 chatListVersion,通知其他页面(如已存在的 ChatPage)刷新会话列表 */
   private bumpListVersion(): void {
     const v: number = AppStorage.get<number>('chatListVersion') ?? 0;
@@ -219,6 +268,11 @@ export struct ChatSessionRootView {
       if (this.renameTargetId.length > 0) {
         this.renameDialog()
       }
+
+      // 删除确认弹窗
+      if (this.deleteTarget !== null) {
+        this.deleteConfirmDialog()
+      }
     }
     .width('100%')
     .height('100%')
@@ -276,7 +330,7 @@ export struct ChatSessionRootView {
     }
   }
 
-  /** 左滑操作按钮(重命名) */
+  /** 左滑操作按钮(重命名 / 删除) */
   @Builder
   swipeActionButtons(item: ChatSessionListItem) {
     Row() {
@@ -288,6 +342,16 @@ export struct ChatSessionRootView {
         .padding({ left: 20, right: 20 })
         .onClick(() => {
           this.openRenameDialog(item);
+        })
+
+      Button($r('app.string.session_action_delete'))
+        .fontSize(14)
+        .fontColor(Color.White)
+        .backgroundColor($r('app.color.app_danger'))
+        .height('100%')
+        .padding({ left: 20, right: 20 })
+        .onClick(() => {
+          this.promptDelete(item);
         })
     }
     .height('100%')
@@ -440,6 +504,65 @@ export struct ChatSessionRootView {
           }
           .width('100%')
           .margin({ top: 20 })
+        }
+        .width('80%')
+        .padding(20)
+        .backgroundColor($r('app.color.app_surface_1'))
+        .borderRadius($r('app.float.app_radius_lg'))
+      }
+      .width('100%')
+      .height('100%')
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor('rgba(0,0,0,0.5)')
+  }
+
+  /** 删除确认弹窗 */
+  @Builder
+  deleteConfirmDialog() {
+    Stack() {
+      Column() {
+        Column() {
+          Text($r('app.string.session_delete_confirm_title'))
+            .fontSize(17)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.app_text_primary'))
+            .margin({ bottom: 12 })
+
+          Text($r('app.string.session_delete_confirm_message'))
+            .fontSize(14)
+            .fontColor($r('app.color.app_text_secondary'))
+            .margin({ bottom: 20 })
+
+          Row() {
+            Button($r('app.string.session_delete_confirm_cancel'))
+              .fontSize(14)
+              .backgroundColor(Color.Transparent)
+              .fontColor($r('app.color.app_text_secondary'))
+              .layoutWeight(1)
+              .height(40)
+              .enabled(!this.isDeleting)
+              .onClick(() => {
+                this.cancelDelete();
+              })
+
+            Button($r('app.string.session_delete_confirm_ok'))
+              .fontSize(14)
+              .backgroundColor($r('app.color.app_danger'))
+              .fontColor(Color.White)
+              .borderRadius($r('app.float.app_radius_sm'))
+              .layoutWeight(1)
+              .height(40)
+              .margin({ left: 12 })
+              .enabled(!this.isDeleting)
+              .onClick(() => {
+                this.confirmDelete();
+              })
+          }
+          .width('100%')
         }
         .width('80%')
         .padding(20)

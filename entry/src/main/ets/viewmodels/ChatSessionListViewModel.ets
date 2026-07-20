@@ -191,6 +191,26 @@ export class ChatSessionListViewModel {
     Logger.info(LOG_TAG, 'renameSession ok');
   }
 
+  /**
+   * 删除会话。
+   * - 调用 persistenceService.deleteSession(同时删除 Chat 和所有 Message)
+   * - 成功后从 sessions 数组移除对应项(生成新引用触发 ForEach)
+   *
+   * @param chatId 会话 id
+   * @throws Error 持久化失败
+   */
+  async deleteSession(chatId: string): Promise<void> {
+    if (this.disposed) {
+      throw new Error('ViewModel disposed');
+    }
+    await this.persistenceService.deleteSession(chatId);
+    const newSessions: ChatSessionListItem[] = this.sessions.filter((item: ChatSessionListItem): boolean => {
+      return item.chat.id !== chatId;
+    });
+    this.sessions = newSessions;
+    Logger.info(LOG_TAG, 'deleteSession ok');
+  }
+
   /** 释放资源(防止后续异步操作) */
   dispose(): void {
     this.disposed = true;

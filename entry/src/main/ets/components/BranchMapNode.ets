@@ -18,17 +18,8 @@
 
 import { BranchMapDisplayInfo } from '../models/BranchMapDisplayInfo';
 
-const COLOR_ACTIVE_BORDER: string = '#5B7CFA';
-const COLOR_SELECTED_BORDER: string = '#007AFF';
-const COLOR_NORMAL_BORDER: string = '#D0D0D0';
-const COLOR_NODE_BG: string = '#FFFFFF';
-const COLOR_NODE_BG_SELECTED: string = '#EEF2FF';
-const COLOR_NODE_BG_ACTIVE: string = '#F0F4FF';
-const COLOR_TEXT_PRIMARY: string = '#333333';
-const COLOR_TEXT_SECONDARY: string = '#888888';
-const COLOR_TEXT_PREVIEW: string = '#555555';
-const COLOR_TEXT_PLACEHOLDER: string = '#999999';
-const COLOR_ACTIVE_BADGE: string = '#5B7CFA';
+// 颜色全部使用 $r('app.color.*') 资源引用,自动适配深色模式。
+// 不再使用硬编码颜色常量。
 
 @Component
 export struct BranchMapNode {
@@ -48,7 +39,9 @@ export struct BranchMapNode {
         Text(this.computeBranchLabel())
           .fontSize(13)
           .fontWeight(this.isActive ? FontWeight.Bold : FontWeight.Medium)
-          .fontColor(this.isActive ? COLOR_ACTIVE_BORDER : COLOR_TEXT_PRIMARY)
+          .fontColor(this.isActive
+            ? $r('app.color.app_accent')
+            : $r('app.color.app_text_primary'))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .width('100%')
@@ -58,7 +51,7 @@ export struct BranchMapNode {
         if (!this.displayInfo.isRoot && this.displayInfo.forkUserPreview.length > 0) {
           Text('你:' + this.displayInfo.forkUserPreview)
             .fontSize(11)
-            .fontColor(COLOR_TEXT_PREVIEW)
+            .fontColor($r('app.color.app_text_secondary'))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .margin({ top: 3 })
@@ -69,7 +62,9 @@ export struct BranchMapNode {
         // 分歧 Assistant 预览
         Text(this.computeAssistantPreview())
           .fontSize(11)
-          .fontColor(this.computeAssistantPreviewColor())
+          .fontColor(this.displayInfo.firstDivergentAssistantPreview.length === 0
+            ? $r('app.color.app_text_tertiary')
+            : $r('app.color.app_text_secondary'))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .margin({ top: 2 })
@@ -80,12 +75,12 @@ export struct BranchMapNode {
         Row() {
           Text(this.displayInfo.messageCount.toString() + ' 条消息')
             .fontSize(10)
-            .fontColor(COLOR_TEXT_SECONDARY)
+            .fontColor($r('app.color.app_text_secondary'))
 
           if (this.isActive) {
             Text('· 当前')
               .fontSize(10)
-              .fontColor(COLOR_ACTIVE_BADGE)
+              .fontColor($r('app.color.app_accent'))
               .margin({ left: 6 })
           }
         }
@@ -110,7 +105,7 @@ export struct BranchMapNode {
       // Active 右上角实心圆点
       if (this.isActive) {
         Circle({ width: 10, height: 10 })
-          .fill(COLOR_ACTIVE_BADGE)
+          .fill($r('app.color.app_accent'))
           .markAnchor({ x: 5, y: 5 })
           .position({ x: '100%', y: 0 })
           .translate({ x: -8, y: 8 })
@@ -149,24 +144,19 @@ export struct BranchMapNode {
   }
 
   /**
-   * 计算分歧 Assistant 预览颜色。
-   * 空内容(生成中)使用占位色。
+   * 计算节点背景色。
+   * Active:app_accent_surface(强调色背景,深浅色模式都明显)
+   * Selected:app_accent_surface(浅强调色背景)
+   * Normal:app_surface_1(普通表面色)
    */
-  private computeAssistantPreviewColor(): string {
-    if (this.displayInfo.firstDivergentAssistantPreview.length === 0) {
-      return COLOR_TEXT_PLACEHOLDER;
-    }
-    return COLOR_TEXT_PREVIEW;
-  }
-
-  private computeBackgroundColor(): string {
+  private computeBackgroundColor(): ResourceColor {
     if (this.isActive) {
-      return COLOR_NODE_BG_ACTIVE;
+      return $r('app.color.app_accent_surface');
     }
     if (this.isSelected) {
-      return COLOR_NODE_BG_SELECTED;
+      return $r('app.color.app_accent_surface');
     }
-    return COLOR_NODE_BG;
+    return $r('app.color.app_surface_1');
   }
 
   private computeBorderWidth(): number {
@@ -179,14 +169,19 @@ export struct BranchMapNode {
     return 1;
   }
 
-  private computeBorderColor(): string {
+  /**
+   * 计算节点边框颜色。
+   * Active/Selected:app_accent(强调色边框)
+   * Normal:app_divider(分割线色)
+   */
+  private computeBorderColor(): ResourceColor {
     if (this.isActive) {
-      return COLOR_ACTIVE_BORDER;
+      return $r('app.color.app_accent');
     }
     if (this.isSelected) {
-      return COLOR_SELECTED_BORDER;
+      return $r('app.color.app_accent');
     }
-    return COLOR_NORMAL_BORDER;
+    return $r('app.color.app_divider');
   }
 }
 

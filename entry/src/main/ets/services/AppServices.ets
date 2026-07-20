@@ -51,6 +51,7 @@ import { MessageSwipePersistenceService } from './MessageSwipePersistenceService
 import { ConversationBranchPersistenceService } from './ConversationBranchPersistenceService';
 import { ChatService } from './ChatService';
 import { ChatPersistenceService } from './ChatPersistenceService';
+import { ChatBackgroundService } from './ChatBackgroundService';
 import { ModelService } from './ModelService';
 import { DefaultProviderFactory } from './ProviderFactory';
 import { PromptPresetListViewModel } from '../viewmodels/PromptPresetListViewModel';
@@ -123,6 +124,10 @@ export class AppServices {
   private readonly conversationBranchRepository: ConversationBranchRepository;
   /** ConversationBranchPersistenceService 对话分支持久化服务(不对页面公开,T-6.4A) */
   private readonly conversationBranchPersistenceService: ConversationBranchPersistenceService;
+  /** ChatBackgroundService 聊天背景图服务(导入图片 + 模糊度 + 暗化)。在 initialize 中创建。 */
+  private chatBackgroundService: ChatBackgroundService | null = null;
+  /** 应用 Context,用于 ChatBackgroundService 等需要 filesDir 的服务 */
+  private appContext: common.Context | null = null;
 
   /**
    * 私有构造,组装全部依赖。
@@ -211,6 +216,7 @@ export class AppServices {
       this.messageSwipeRepository,
       this.conversationBranchPersistenceService
     );
+    // ChatBackgroundService 在 initialize 中 context 就绪后创建
   }
 
   /**
@@ -228,6 +234,9 @@ export class AppServices {
     Logger.info(LOG_TAG, 'initialize start');
     const services: AppServices = new AppServices();
     AppServices.instance = services;
+    // 保存 Context(用于 ChatBackgroundService 等需要 filesDir 的服务)
+    // EntryAbility.onCreate 始终传入 UIAbilityContext,这里直接保存为 common.Context。
+    services.appContext = context;
     AppServices.readyPromise = services.modelService.initialize(context)
       .then((): Promise<void> => services.appPreferences.initialize(context))
       .then((): Promise<void> => services.dbHelper.initialize(context))
@@ -243,6 +252,14 @@ export class AppServices {
       .then((): Promise<void> => services.lorebookService.initialize())
       .then((): Promise<void> => services.promptPresetService.initialize())
       .then((): void => {
+        // 创建 ChatBackgroundService(需要已初始化的 appPreferences + appContext)
+        if (services.appContext !== null) {
+          services.chatBackgroundService = new ChatBackgroundService(
+            services.appContext, services.appPreferences);
+          Logger.info(LOG_TAG, 'chatBackgroundService created');
+        } else {
+          Logger.warn(LOG_TAG, 'appContext is null, chatBackgroundService not created');
+        }
         Logger.info(LOG_TAG, 'initialize ok');
       })
       .catch((e: Object): void => {
@@ -332,6 +349,15 @@ export class AppServices {
    */
   static getChatPersistenceService(): ChatPersistenceService {
     return AppServices.getInstance().chatPersistenceService;
+  }
+
+  /**
+   * 获取 ChatBackgroundService 实例。
+   * 用于聊天界面背景图导入、读取、删除。
+   * 如果初始化时 appContext 不可用,返回 null。
+   */
+  static getChatBackgroundService(): ChatBackgroundService | null {
+    return AppServices.getInstance().chatBackgroundService;
   }
 
   /**

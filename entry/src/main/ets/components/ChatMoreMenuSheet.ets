@@ -45,6 +45,8 @@ export struct ChatMoreMenuSheet {
   onGoBranchMap: () => void = () => {};
   /** 打开会话列表 */
   onOpenSessionList: () => void = () => {};
+  /** 前往聊天背景设置 */
+  onGoChatBackground: () => void = () => {};
   /** 重新生成 */
   onRegenerate: () => void = () => {};
   /** 清空对话 */
@@ -112,6 +114,14 @@ export struct ChatMoreMenuSheet {
       // 会话列表
       this.menuRow('会话列表', false, false, (): void => {
         this.onOpenSessionList();
+      })
+
+      // 聊天背景
+      this.menuRow('聊天背景', this.busy, false, (): void => {
+        if (this.busy) {
+          return;
+        }
+        this.onGoChatBackground();
       })
 
       // 重新生成

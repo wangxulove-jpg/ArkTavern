@@ -11,6 +11,7 @@
     "pages/AppSettingsPage",
     "pages/PromptPresetListPage",
     "pages/PromptPresetEditPage",
-    "pages/BranchMapPage"
+    "pages/BranchMapPage",
+    "pages/ChatBackgroundSettingsPage"
   ]
 }

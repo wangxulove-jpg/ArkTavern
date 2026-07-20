@@ -34,15 +34,9 @@ import { router } from '@kit.ArkUI';
 
 const LOG_TAG: string = 'BranchMapPage';
 
-const COLOR_PAGE_BG: string = '#FAFAFA';
-const COLOR_TITLE_BAR_BG: string = '#FFFFFF';
-const COLOR_TEXT_PRIMARY: string = '#333333';
-const COLOR_TEXT_SECONDARY: string = '#888888';
-const COLOR_DIVIDER: string = '#E0E0E0';
-const COLOR_BUTTON_PRIMARY: string = '#5B7CFA';
-const COLOR_BUTTON_DISABLED: string = '#CCCCCC';
-const COLOR_EDGE: string = '#7A7A7A';
-const COLOR_ERROR: string = '#FF3B30';
+// 颜色全部使用 $r('app.color.*') 资源引用,自动适配深色模式。
+// 以下常量仅用于字符串资源名拼接(如 $r('app.string.' + RES_BRANCH_MAP_TITLE)),
+// 颜色不再使用硬编码字符串。
 
 const RES_BRANCH_MAP_TITLE: string = 'branch_map_title';
 const RES_BRANCH_SWITCH: string = 'branch_map_switch_button';
@@ -66,23 +60,35 @@ struct BranchMapPage {
   /** 底部导航栏/手势条避让高度 */
   @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
 
+  /**
+   * 缩放相关状态(T-6.4B-3-R1):
+   * - zoomScale: 当前缩放倍率(1.0 = 原始尺寸)
+   * - pinchBaseScale: PinchGesture 开始时的 zoomScale 基准
+   * - MIN_ZOOM / MAX_ZOOM: 缩放范围限制
+   */
+  @State zoomScale: number = 1.0;
+  @State pinchBaseScale: number = 1.0;
+  private readonly MIN_ZOOM: number = 0.5;
+  private readonly MAX_ZOOM: number = 2.5;
+  private readonly ZOOM_STEP: number = 0.25;
+
   private verticalScroller: Scroller = new Scroller();
   private horizontalScroller: Scroller = new Scroller();
-  private canvasContext: CanvasRenderingContext2D =
-    new CanvasRenderingContext2D(new RenderingContextSettings(true));
 
   aboutToAppear(): void {
     this.handleReady();
   }
 
   build() {
-    Column() {
+    // 外层 Stack alignContent=TopEnd 让缩放控件浮在右上角
+    Stack({ alignContent: Alignment.TopEnd }) {
+      Column() {
         this.titleBar();
 
         if (this.viewModel.errorMessage.length > 0) {
           Text(this.viewModel.errorMessage)
             .fontSize(13)
-            .fontColor(COLOR_ERROR)
+            .fontColor($r('app.color.app_danger'))
             .width('100%')
             .padding({ left: 16, right: 16, top: 8, bottom: 4 })
         }
@@ -90,12 +96,12 @@ struct BranchMapPage {
         if (this.viewModel.getStatusText().length > 0) {
           Text(this.viewModel.getStatusText())
             .fontSize(12)
-            .fontColor(COLOR_TEXT_SECONDARY)
+            .fontColor($r('app.color.app_text_secondary'))
             .width('100%')
             .padding({ left: 16, right: 16, top: 4, bottom: 8 })
         }
 
-        Divider().color(COLOR_DIVIDER).height(1).width('100%')
+        Divider().color($r('app.color.app_divider')).height(1).width('100%')
 
         if (this.viewModel.isLoading) {
           this.loadingState();
@@ -108,8 +114,16 @@ struct BranchMapPage {
       }
       .width('100%')
       .height('100%')
-      .backgroundColor(COLOR_PAGE_BG)
+      .backgroundColor($r('app.color.page_background'))
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+
+      // 缩放控件浮层(右上角,在树内容加载时显示)
+      if (!this.viewModel.isLoading && this.viewModel.branches.length > 0) {
+        this.zoomControls()
+      }
+    }
+    .width('100%')
+    .height('100%')
   }
 
   @Builder
@@ -118,7 +132,7 @@ struct BranchMapPage {
       Button($r('app.string.' + RES_BRANCH_BACK))
         .fontSize(14)
         .backgroundColor(Color.Transparent)
-        .fontColor(COLOR_BUTTON_PRIMARY)
+        .fontColor($r('app.color.app_accent'))
         .onClick(() => {
           this.popBack();
         })
@@ -128,7 +142,7 @@ struct BranchMapPage {
       Text($r('app.string.' + RES_BRANCH_MAP_TITLE))
         .fontSize(18)
         .fontWeight(FontWeight.Medium)
-        .fontColor(COLOR_TEXT_PRIMARY)
+        .fontColor($r('app.color.app_text_primary'))
 
       Blank()
 
@@ -139,7 +153,7 @@ struct BranchMapPage {
     }
     .width('100%')
     .padding({ left: 12, right: 12, top: this.statusBarHeight + 4, bottom: 0 })
-    .backgroundColor(COLOR_TITLE_BAR_BG)
+    .backgroundColor($r('app.color.app_surface_1'))
     .alignItems(VerticalAlign.Center)
   }
 
@@ -161,7 +175,7 @@ struct BranchMapPage {
     Column() {
       Text($r('app.string.' + RES_BRANCH_EMPTY))
         .fontSize(14)
-        .fontColor(COLOR_TEXT_SECONDARY)
+        .fontColor($r('app.color.app_text_secondary'))
     }
     .width('100%')
     .layoutWeight(1)
@@ -176,15 +190,16 @@ struct BranchMapPage {
       Scroll(this.verticalScroller) {
         Scroll(this.horizontalScroller) {
           Stack() {
-            // 连接线 Canvas(底层)
-            Canvas(this.canvasContext)
-              .width(this.viewModel.layout.canvasWidth)
-              .height(this.viewModel.layout.canvasHeight)
-              .onReady(() => {
-                this.drawConnections(this.viewModel.layout!);
-              })
+            // 连接线层(底层):Polyline 折线 + Circle 连接点
+            // 与节点同处一个 Stack,会随 Stack scale 一起缩放,实时跟随
+            ForEach(this.viewModel.layout.edges,
+              (edge: BranchTreeEdge) => {
+                this.edgeConnection(edge)
+              },
+              (edge: BranchTreeEdge) => edge.parentBranchId + '->' + edge.childBranchId
+            )
 
-            // 节点(顶层,绝对定位)
+            // 节点(顶层,绝对定位,保持原始坐标)
             ForEach(this.viewModel.layout.nodes,
               (node: BranchMapNodeLayout) => {
                 this.nodeWrapper(node)
@@ -192,8 +207,32 @@ struct BranchMapPage {
               (node: BranchMapNodeLayout) => node.branchId
             )
           }
-          .width(this.viewModel.layout.canvasWidth)
-          .height(this.viewModel.layout.canvasHeight)
+          // 缩放后的画布尺寸(让 Scroll 滚动范围跟随缩放)
+          .width(this.viewModel.layout.canvasWidth * this.zoomScale)
+          .height(this.viewModel.layout.canvasHeight * this.zoomScale)
+          // 整体缩放:从左上角(0,0)为中心,使内容从原点开始放大/缩小
+          .scale({
+            x: this.zoomScale,
+            y: this.zoomScale,
+            centerX: '0%',
+            centerY: '0%'
+          })
+          // 双指捏合缩放手势
+          .gesture(
+            PinchGesture({ fingers: 2, distance: 1 })
+              .onActionStart((event: GestureEvent) => {
+                this.pinchBaseScale = this.zoomScale;
+              })
+              .onActionUpdate((event: GestureEvent) => {
+                if (event) {
+                  const newScale: number = this.pinchBaseScale * event.scale;
+                  this.zoomScale = this.clampZoom(newScale);
+                }
+              })
+              .onActionEnd((event: GestureEvent) => {
+                this.pinchBaseScale = this.zoomScale;
+              })
+          )
         }
         .scrollable(ScrollDirection.Horizontal)
         .scrollBar(BarState.Auto)
@@ -204,6 +243,183 @@ struct BranchMapPage {
       .edgeEffect(EdgeEffect.Spring)
       .layoutWeight(1)
     }
+  }
+
+  /**
+   * 单条连接线(工作流风格):
+   * - 父节点底部连接点(Circle)
+   * - 折线 Polyline:父底部中心 → 垂直到中间 Y → 水平到子 X → 垂直到子顶部
+   * - 子节点顶部连接点(Circle)
+   *
+   * 所有元素绝对定位在 Stack 中,与节点同一坐标系,会随 Stack scale 缩放。
+   *
+   * 注意:ArkUI @Builder 不允许声明局部变量,所有坐标计算通过辅助方法获取。
+   */
+  @Builder
+  edgeConnection(edge: BranchTreeEdge) {
+    // 1. 折线(底层)
+    Polyline()
+      .width(this.getEdgePolyWidth(edge))
+      .height(this.getEdgePolyHeight(edge))
+      .position({ x: this.getEdgePolyLeft(edge), y: this.getEdgePolyTop(edge) })
+      .points(this.getEdgePoints(edge))
+      .fillOpacity(0)
+      .stroke($r('app.color.app_text_secondary'))
+      .strokeWidth(1.5)
+      .strokeLineJoin(LineJoinStyle.Round)
+      .strokeLineCap(LineCapStyle.Round)
+
+    // 2. 父节点底部连接点(Circle)
+    Circle({ width: 6, height: 6 })
+      .position({
+        x: edge.startX - 3,
+        y: edge.startY - 3
+      })
+      .fill($r('app.color.app_text_secondary'))
+
+    // 3. 子节点顶部连接点(Circle)
+    Circle({ width: 6, height: 6 })
+      .position({
+        x: edge.endX - 3,
+        y: edge.endY - 3
+      })
+      .fill($r('app.color.app_text_secondary'))
+  }
+
+  // ===== Edge 坐标计算辅助方法 =====
+  // Polyline 折线坐标原点(左上角)= (min(startX, endX), min(startY, endY))
+
+  private getEdgePolyLeft(edge: BranchTreeEdge): number {
+    return Math.min(edge.startX, edge.endX);
+  }
+
+  private getEdgePolyTop(edge: BranchTreeEdge): number {
+    return Math.min(edge.startY, edge.endY);
+  }
+
+  private getEdgePolyWidth(edge: BranchTreeEdge): number {
+    return Math.abs(edge.endX - edge.startX);
+  }
+
+  private getEdgePolyHeight(edge: BranchTreeEdge): number {
+    return Math.abs(edge.endY - edge.startY);
+  }
+
+  /**
+   * 计算折线点坐标(相对于 Polyline 左上角):
+   * 起点(startX, startY) → 垂直到 midY → 水平到 endX → 垂直到终点(endX, endY)
+   */
+  private getEdgePoints(edge: BranchTreeEdge): number[][] {
+    const polyLeft: number = this.getEdgePolyLeft(edge);
+    const polyTop: number = this.getEdgePolyTop(edge);
+    const midY: number = (edge.startY + edge.endY) / 2;
+    const startXRel: number = edge.startX - polyLeft;
+    const endXRel: number = edge.endX - polyLeft;
+    const startYRel: number = edge.startY - polyTop;
+    const endYRel: number = edge.endY - polyTop;
+    const midYRel: number = midY - polyTop;
+    return [[startXRel, startYRel], [startXRel, midYRel], [endXRel, midYRel], [endXRel, endYRel]];
+  }
+
+  /** 缩放控件浮层(右上角竖排按钮) */
+  @Builder
+  zoomControls() {
+    Column() {
+      // 放大按钮
+      Stack() {
+        Text('+')
+          .fontSize(24)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.canZoomIn()
+            ? $r('app.color.app_text_primary')
+            : $r('app.color.app_text_secondary'))
+      }
+      .width(44)
+      .height(44)
+      .backgroundColor($r('app.color.app_surface_1'))
+      .borderRadius(22)
+      .border({ width: 1, color: $r('app.color.app_divider') })
+      .margin({ bottom: 8 })
+      .opacity(this.canZoomIn() ? 1.0 : 0.4)
+      .onClick(() => {
+        this.zoomIn();
+      })
+
+      // 缩放比例(点击重置为 1.0)
+      Stack() {
+        Text(Math.round(this.zoomScale * 100) + '%')
+          .fontSize(12)
+          .fontColor($r('app.color.app_text_primary'))
+      }
+      .width(44)
+      .height(36)
+      .backgroundColor($r('app.color.app_surface_1'))
+      .borderRadius(8)
+      .border({ width: 1, color: $r('app.color.app_divider') })
+      .margin({ bottom: 8 })
+      .onClick(() => {
+        this.resetZoom();
+      })
+
+      // 缩小按钮
+      Stack() {
+        Text('−')
+          .fontSize(24)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.canZoomOut()
+            ? $r('app.color.app_text_primary')
+            : $r('app.color.app_text_secondary'))
+      }
+      .width(44)
+      .height(44)
+      .backgroundColor($r('app.color.app_surface_1'))
+      .borderRadius(22)
+      .border({ width: 1, color: $r('app.color.app_divider') })
+      .opacity(this.canZoomOut() ? 1.0 : 0.4)
+      .onClick(() => {
+        this.zoomOut();
+      })
+    }
+    // 外层 Stack alignContent=TopEnd 已对齐到右上角;
+    // 这里用 padding 微调位置:top 在状态栏 + 标题栏下方 16vp,right 距屏幕右边 16vp
+    .padding({
+      top: this.statusBarHeight + 72,
+      right: 16
+    })
+  }
+
+  // ===== 缩放辅助方法 =====
+
+  private clampZoom(scale: number): number {
+    if (scale < this.MIN_ZOOM) {
+      return this.MIN_ZOOM;
+    }
+    if (scale > this.MAX_ZOOM) {
+      return this.MAX_ZOOM;
+    }
+    return scale;
+  }
+
+  private canZoomIn(): boolean {
+    return this.zoomScale < this.MAX_ZOOM - 0.001;
+  }
+
+  private canZoomOut(): boolean {
+    return this.zoomScale > this.MIN_ZOOM + 0.001;
+  }
+
+  private zoomIn(): void {
+    let newScale: number = this.zoomScale + this.ZOOM_STEP;
+    this.zoomScale = this.clampZoom(newScale);
+  }
+
+  private zoomOut(): void {
+    let newScale: number = this.zoomScale - this.ZOOM_STEP;
+    this.zoomScale = this.clampZoom(newScale);
+  }
+
+  private resetZoom(): void {
+    this.zoomScale = 1.0;
   }
 
   @Builder
@@ -226,13 +442,13 @@ struct BranchMapPage {
   @Builder
   bottomBar() {
     Column() {
-      Divider().color(COLOR_DIVIDER).height(1).width('100%')
+      Divider().color($r('app.color.app_divider')).height(1).width('100%')
 
       Row() {
         Column() {
           Text(this.viewModel.getSelectedDisplayName())
             .fontSize(14)
-            .fontColor(COLOR_TEXT_PRIMARY)
+            .fontColor($r('app.color.app_text_primary'))
             .fontWeight(FontWeight.Medium)
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -241,7 +457,7 @@ struct BranchMapPage {
           if (this.viewModel.getSelectedForkUserPreview().length > 0) {
             Text('你:' + this.viewModel.getSelectedForkUserPreview())
               .fontSize(12)
-              .fontColor(COLOR_TEXT_SECONDARY)
+              .fontColor($r('app.color.app_text_secondary'))
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .margin({ top: 2 })
@@ -251,7 +467,7 @@ struct BranchMapPage {
           if (this.viewModel.getSelectedAssistantPreview().length > 0) {
             Text('艾伦:' + this.viewModel.getSelectedAssistantPreview())
               .fontSize(12)
-              .fontColor(COLOR_TEXT_SECONDARY)
+              .fontColor($r('app.color.app_text_secondary'))
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .margin({ top: 2 })
@@ -259,7 +475,7 @@ struct BranchMapPage {
 
           Text(this.viewModel.getSelectedMessageCount().toString() + ' 条消息')
             .fontSize(12)
-            .fontColor(COLOR_TEXT_SECONDARY)
+            .fontColor($r('app.color.app_text_secondary'))
             .margin({ top: 2 })
         }
         .alignItems(HorizontalAlign.Start)
@@ -267,7 +483,9 @@ struct BranchMapPage {
 
         Button($r('app.string.' + RES_BRANCH_SWITCH))
           .fontSize(14)
-          .backgroundColor(this.canSwitch() ? COLOR_BUTTON_PRIMARY : COLOR_BUTTON_DISABLED)
+          .backgroundColor(this.canSwitch()
+            ? $r('app.color.app_accent')
+            : $r('app.color.app_surface_2'))
           .fontColor(Color.White)
           .borderRadius(8)
           .height(40)
@@ -279,7 +497,7 @@ struct BranchMapPage {
       }
       .width('100%')
       .padding({ left: 16, right: 16, top: 12, bottom: this.navigationBarHeight + 12 })
-      .backgroundColor(COLOR_TITLE_BAR_BG)
+      .backgroundColor($r('app.color.app_surface_1'))
       .alignItems(VerticalAlign.Center)
     }
   }
@@ -298,40 +516,12 @@ struct BranchMapPage {
   private async handleSwitch(): Promise<void> {
     const previousActive: string = this.viewModel.activeBranchId;
     await this.viewModel.switchToSelected();
-    // 切换成功后重绘连接线(Active 高亮可能变化)
-    if (this.viewModel.layout !== undefined) {
-      this.drawConnections(this.viewModel.layout);
-    }
     // T-6.4B-1.2: Active Branch 真正变化时,通过 AppStorage 通知 ChatPage reload。
     // 使用 Date.now() 保证每次切换都递增,@Watch 才能检测到变化。
+    // 连接线已改为 Polyline + Circle 组件化渲染,会自动响应布局变化,无需手动重绘。
     if (this.viewModel.activeBranchId !== previousActive
       && this.viewModel.activeBranchId.length > 0) {
       AppStorage.set('branchChangeSeq', Date.now());
-    }
-  }
-
-  private drawConnections(layout: BranchTreeLayoutResult): void {
-    const ctx: CanvasRenderingContext2D = this.canvasContext;
-    // T-6.4B-2-R1: 不调用 ctx.scale(vp2px(1), vp2px(1))。
-    // ArkUI Canvas 的 width/height 以 vp 设置时,绘制坐标也使用 vp,
-    // 额外 scale 会导致坐标被双重缩放,线条绘制到画布外不可见。
-    // 清空画布(切换分支/重绘时避免残留)
-    ctx.clearRect(0, 0, layout.canvasWidth, layout.canvasHeight);
-    ctx.strokeStyle = COLOR_EDGE;
-    ctx.lineWidth = 1.5;
-    ctx.setLineDash([6, 4]);
-
-    // T-6.4B-2-R1: 使用简单折线(父底部中心 → 垂直到中间 Y → 水平到子 X → 垂直到子顶部)
-    // 比贝塞尔曲线更可靠,坐标计算简单,不会因控制点错误导致线段消失。
-    for (let i = 0; i < layout.edges.length; i++) {
-      const edge: BranchTreeEdge = layout.edges[i];
-      const midY: number = (edge.startY + edge.endY) / 2;
-      ctx.beginPath();
-      ctx.moveTo(edge.startX, edge.startY);
-      ctx.lineTo(edge.startX, midY);
-      ctx.lineTo(edge.endX, midY);
-      ctx.lineTo(edge.endX, edge.endY);
-      ctx.stroke();
     }
   }
 

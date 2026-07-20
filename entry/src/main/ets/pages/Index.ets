@@ -95,10 +95,7 @@ struct Index {
           largeWidth: 420
         },
         barBottomMargin: 24,
-        gradientMask: {
-          maskColor: '#CCF1F3F5',
-          maskHeight: 64
-        },
+        // 不设 gradientMask:浅色 maskColor 在深色模式下会显示为白色边
         systemMaterialEffect: {
           materialType: hdsMaterial.MaterialType.IMMERSIVE,
           materialLevel: hdsMaterial.MaterialLevel.EXQUISITE
