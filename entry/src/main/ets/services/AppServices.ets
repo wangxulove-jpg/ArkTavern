@@ -53,6 +53,7 @@ import { ChatMemoryRepository } from '../repositories/ChatMemoryRepository';
 import { MemoryPersistenceService } from './MemoryPersistenceService';
 import { MemoryService } from './MemoryService';
 import { ForkChatService } from './ForkChatService';
+import { ContextBudgetService } from './ContextBudgetService';
 import { ChatService } from './ChatService';
 import { ChatPersistenceService } from './ChatPersistenceService';
 import { ChatBackgroundService } from './ChatBackgroundService';
@@ -136,6 +137,8 @@ export class AppServices {
   private readonly memoryService: MemoryService;
   /** ForkChatService 从分支创建独立对话服务(不对页面公开,v8) */
   private readonly forkChatService: ForkChatService;
+  /** ContextBudgetService per-chat 上下文预算服务(v8.1) */
+  private contextBudgetService: ContextBudgetService | null = null;
   /** ChatBackgroundService 聊天背景图服务(导入图片 + 模糊度 + 暗化)。在 initialize 中创建。 */
   private chatBackgroundService: ChatBackgroundService | null = null;
   /** 应用 Context,用于 ChatBackgroundService 等需要 filesDir 的服务 */
@@ -294,6 +297,9 @@ export class AppServices {
         } else {
           Logger.warn(LOG_TAG, 'appContext is null, chatBackgroundService not created');
         }
+        // 创建 ContextBudgetService(只需 appPreferences)
+        services.contextBudgetService = new ContextBudgetService(services.appPreferences);
+        Logger.info(LOG_TAG, 'contextBudgetService created');
         Logger.info(LOG_TAG, 'initialize ok');
       })
       .catch((e: Object): void => {
@@ -402,6 +408,26 @@ export class AppServices {
   }
 
   /**
+   * 获取 ContextBudgetService 实例(v8.1 per-chat 上下文预算服务)。
+   * @throws Error 当未初始化或服务创建失败时
+   */
+  static getContextBudgetService(): ContextBudgetService {
+    const service: ContextBudgetService | null = AppServices.getInstance().contextBudgetService;
+    if (service === null) {
+      throw new Error('ContextBudgetService not initialized');
+    }
+    return service;
+  }
+
+  /**
+   * 获取 TokenCounter 实例(v8.1 上下文占用估算)。
+   * 用于 ContextBudgetViewModel 在页面侧重新估算分段 Token。
+   */
+  static getTokenCounter(): TokenCounter {
+    return AppServices.getInstance().tokenCounter;
+  }
+
+  /**
    * 获取 ChatPersistenceService 实例。
    * 用于"对话记录"Tab 等不需要完整 ChatService 的场景(只查询会话列表 / 重命名)。
    */
@@ -455,7 +481,8 @@ export class AppServices {
       services.messageSwipePersistenceService,
       services.conversationBranchPersistenceService,
       services.chatBackgroundService,
-      services.memoryService
+      services.memoryService,
+      services.contextBudgetService
     );
   }
 

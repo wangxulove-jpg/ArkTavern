@@ -49,6 +49,8 @@ export struct ChatMoreMenuSheet {
   onGoChatBackground: () => void = () => {};
   /** 前往对话记忆管理 */
   onGoMemory: () => void = () => {};
+  /** 前往上下文管理 */
+  onGoContextBudget: () => void = () => {};
   /** 重新生成 */
   onRegenerate: () => void = () => {};
   /** 清空对话 */
@@ -132,6 +134,14 @@ export struct ChatMoreMenuSheet {
           return;
         }
         this.onGoMemory();
+      })
+
+      // 上下文管理(预算设置 + 占用查看)
+      this.menuRow('上下文管理', this.busy, false, (): void => {
+        if (this.busy) {
+          return;
+        }
+        this.onGoContextBudget();
       })
 
       // 重新生成

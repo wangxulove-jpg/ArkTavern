@@ -39,6 +39,12 @@ import { KeyCode } from '@kit.InputKit';
 import { inputMethod } from '@kit.IMEKit';
 import { AppServices } from '../services/AppServices';
 import { ChatBackgroundConfig } from '../services/ChatBackgroundService';
+import { ContextBudgetViewModel } from '../viewmodels/ContextBudgetViewModel';
+import { ContextBudgetSnapshotStore } from '../services/ContextBudgetSnapshotStore';
+import {
+  ContextBudgetStats,
+  BudgetLevel
+} from '../services/ContextBudgetEstimator';
 import { ForkChatMode } from '../models/ForkChatOptions';
 import { ChatSessionListPanel } from '../components/ChatSessionListPanel';
 import { Character } from '../models/Character';
@@ -69,10 +75,16 @@ struct ChatPage {
   @State showForkModePicker: boolean = false;
   /** Fork 操作目标消息 ID */
   private forkTargetMessageId: string = '';
+  /** 上下文预算 ViewModel(v8.1) */
+  @State budgetViewModel: ContextBudgetViewModel | null = null;
+  /** 当前快照统计(由 ChatService 写入) */
+  @State budgetStats: ContextBudgetStats | null = null;
 
   @StorageLink('branchChangeSeq') @Watch('onBranchChangeSeqChanged') branchChangeSeq: number = 0;
   /** 聊天背景配置变更通知(由 ChatBackgroundSettingsPage 通过 AppStorage.setOrCreate 触发) */
   @StorageProp('chatBgConfigVersion') @Watch('onChatBgConfigVersionChanged') chatBgConfigVersion: number = 0;
+  /** 上下文预算配置变更通知(由 ContextBudgetPage 通过 AppStorage.setOrCreate 触发) */
+  @StorageProp('chatBudgetConfigVersion') @Watch('onBudgetConfigVersionChanged') chatBudgetConfigVersion: number = 0;
   /** 聊天背景配置(为 null 表示未加载) */
   @State chatBgConfig: ChatBackgroundConfig | null = null;
   /** 顶部状态栏避让高度(由 EntryAbility 写入 AppStorage) */
@@ -107,8 +119,18 @@ struct ChatPage {
       this.syncTypingStates(msgs);
       this.messages = msgs;
       this.maybeLoadChatBackground();
+      // 消息变更后刷新上下文占用统计
+      this.refreshBudgetSnapshot();
     };
     this.viewModel = vm;
+
+    // 初始化上下文预算 ViewModel(v8.1)
+    // 复用 line 109 的 modelService,避免重复声明
+    const budgetService = AppServices.getContextBudgetService();
+    const tokenCounter = AppServices.getTokenCounter();
+    this.budgetViewModel = new ContextBudgetViewModel(
+      budgetService, modelService, tokenCounter
+    );
 
     const pendingChatId: string = AppStorage.get<string>('pendingChatId') ?? '';
     const pendingCharacterId: string = AppStorage.get<string>('pendingCharacterId') ?? '';
@@ -161,6 +183,8 @@ struct ChatPage {
         this.viewModel!.reloadAfterBranchChange().catch((): void => {});
       }
     }
+    // 从二级页面返回时刷新上下文占用统计
+    this.refreshBudgetSnapshot();
   }
 
   /**
@@ -346,6 +370,8 @@ struct ChatPage {
         // margin bottom 12vp + navigationBarHeight:避开系统手势条;
         // margin left/right 12vp:与页面其他内容对齐。
         Column() {
+          // v8.1: 紧凑上下文占用指示器(输入栏上方,点击打开上下文管理)
+          this.budgetIndicator()
           this.inputArea()
         }
         .width('100%')
@@ -381,6 +407,7 @@ struct ChatPage {
             },
             onGoChatBackground: (): void => { this.navigateToChatBackgroundSettings(); },
             onGoMemory: (): void => { this.navigateToMemoryManagement(); },
+            onGoContextBudget: (): void => { this.navigateToContextBudget(); },
             onRegenerate: (): void => { this.viewModel!.regenerate(); },
             onClearChat: (): void => {
               this.showClearConfirm = true;
@@ -703,6 +730,37 @@ struct ChatPage {
 
   // ===== 底部输入区 =====
 
+  /**
+   * v8.1: 紧凑上下文占用指示器
+   * - 显示在输入栏上方(贴近输入栏,不遮挡消息)
+   * - 格式:"12.4K / 32K · 39%"
+   * - 颜色按占用级别变化(Normal/Warning/High/Exceeded)
+   * - 点击打开 ContextBudgetPage
+   * - 无统计数据时隐藏
+   */
+  @Builder
+  budgetIndicator() {
+    if (this.budgetViewModel !== null
+      && this.budgetStats !== null
+      && this.budgetViewModel!.effectiveAvailable > 0
+      && this.budgetStats!.totalInputTokens > 0) {
+      Row() {
+        Text(this.getBudgetIndicatorText())
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor(this.getBudgetIndicatorColor())
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .padding({ left: 12, right: 12, top: 4, bottom: 4 })
+      .margin({ bottom: 6 })
+      .borderRadius(12)
+      .backgroundColor($r('app.color.app_surface_1'))
+      .onClick(() => {
+        this.navigateToContextBudget();
+      })
+    }
+  }
+
   @Builder
   inputArea() {
     // 悬浮式输入容器:胶囊造型 + 鸿蒙原生材质模糊(Regular 厚度)
@@ -731,7 +789,9 @@ struct ChatPage {
         })
         .onSubmit((enterKey: EnterKeyType, event?: SubmitEvent) => {
           // 软键盘回车(EnterKeyType.Send):触发发送并保持编辑态
-          if (this.canSend() && this.viewModel !== null) {
+          if (this.isBudgetExceeded()) {
+            this.notifyBudgetBlocked();
+          } else if (this.canSend() && this.viewModel !== null) {
             this.viewModel!.send();
           }
           event?.keepEditableState();
@@ -749,6 +809,10 @@ struct ChatPage {
             }
             if (hasCtrl) {
               return false;
+            }
+            if (this.isBudgetExceeded()) {
+              this.notifyBudgetBlocked();
+              return true;
             }
             if (this.canSend() && this.viewModel !== null) {
               this.viewModel!.send();
@@ -793,6 +857,10 @@ struct ChatPage {
         .width(48)
         .margin({ right: 4 })
         .onClick(() => {
+          if (this.isBudgetExceeded()) {
+            this.notifyBudgetBlocked();
+            return;
+          }
           if (this.canSend() && this.viewModel !== null) {
             this.viewModel!.send();
           }
@@ -878,7 +946,113 @@ struct ChatPage {
   // ===== 辅助方法 =====
 
   private canSend(): boolean {
+    // v8.1: 上下文超预算时禁止发送(必须先处理超限)
+    if (this.isBudgetExceeded()) {
+      return false;
+    }
     return this.viewModel !== null && this.viewModel!.canSend;
+  }
+
+  /**
+   * v8.1: 当前上下文是否超出输入预算。
+   * 基于 budgetViewModel.stats 与 effectiveAvailable 计算。
+   */
+  private isBudgetExceeded(): boolean {
+    if (this.budgetViewModel === null || this.budgetStats === null) {
+      return false;
+    }
+    const available: number = this.budgetViewModel!.effectiveAvailable;
+    if (available <= 0) {
+      return true;
+    }
+    return this.budgetStats!.totalInputTokens > available;
+  }
+
+  /**
+   * v8.1: 当前占用比例(0~1+,无 stats 时返回 0)。
+   */
+  private getBudgetUsageRatio(): number {
+    if (this.budgetViewModel === null || this.budgetStats === null) {
+      return 0;
+    }
+    const available: number = this.budgetViewModel!.effectiveAvailable;
+    if (available <= 0) {
+      return this.budgetStats!.totalInputTokens > 0 ? 1 : 0;
+    }
+    return this.budgetStats!.totalInputTokens / available;
+  }
+
+  /**
+   * v8.1: 紧凑指示器文本,如 "12.4K / 32K · 39%"。
+   */
+  private getBudgetIndicatorText(): string {
+    if (this.budgetViewModel === null || this.budgetStats === null) {
+      return '';
+    }
+    const used: number = this.budgetStats!.totalInputTokens;
+    const available: number = this.budgetViewModel!.effectiveAvailable;
+    const ratio: number = this.getBudgetUsageRatio();
+    const percent: number = Math.round(ratio * 100);
+    return this.formatTokenCompact(used) + ' / ' + this.formatTokenCompact(available)
+      + ' · ' + percent.toString() + '%';
+  }
+
+  /**
+   * v8.2: 紧凑 Token 数值格式化。
+   * - >= 1000000 显示为 M(保留 1 位小数,如 1M / 1.5M)
+   * - >= 1000 显示为 K(保留 1 位小数,如 12.4K / 128K)
+   * - 否则原样显示
+   */
+  private formatTokenCompact(value: number): string {
+    if (value >= 1000000) {
+      const m: number = value / 1000000;
+      const s: string = m.toFixed(1);
+      if (s.endsWith('.0')) {
+        return s.substring(0, s.length - 2) + 'M';
+      }
+      return s + 'M';
+    }
+    if (value >= 1000) {
+      const k: number = value / 1000;
+      const s: string = k.toFixed(1);
+      // 去除 .0 后缀
+      if (s.endsWith('.0')) {
+        return s.substring(0, s.length - 2) + 'K';
+      }
+      return s + 'K';
+    }
+    return value.toString();
+  }
+
+  /**
+   * v8.1: 指示器颜色(按占用级别)。
+   * - Normal(<70%):text_tertiary
+   * - Warning(70~90%):app_accent
+   * - High(>=90%):app_danger
+   * - Exceeded(>100%):app_danger
+   */
+  private getBudgetIndicatorColor(): ResourceColor {
+    if (this.budgetViewModel === null || this.budgetStats === null) {
+      return $r('app.color.app_text_tertiary');
+    }
+    const ratio: number = this.getBudgetUsageRatio();
+    if (ratio >= 0.9) {
+      return $r('app.color.app_danger');
+    }
+    if (ratio >= 0.7) {
+      return $r('app.color.app_accent');
+    }
+    return $r('app.color.app_text_tertiary');
+  }
+
+  /**
+   * v8.1: 发送被预算阻止时,提示用户处理超限。
+   */
+  private notifyBudgetBlocked(): void {
+    promptAction.showToast({
+      message: '上下文已超出输入预算,请打开"上下文管理"减少历史或调整配置',
+      duration: 2000
+    });
   }
 
   private isInitialLoading(): boolean {
@@ -1059,6 +1233,77 @@ struct ChatPage {
     }
     router.pushUrl({
       url: 'pages/MemoryManagementPage',
+      params: { chatId: chatId }
+    });
+  }
+
+  /**
+   * v8.1: 刷新上下文占用统计。
+   * 由 onMessagesUpdate / onBranchChangeSeqChanged / onBudgetConfigVersionChanged / onPageShow 调用。
+   * 读取 chatService.getLastBuiltRequestMessages + getLastTokenBudget,
+   * 通过 budgetViewModel 估算分段统计,并写入 SnapshotStore 供 ContextBudgetPage 读取。
+   */
+  private refreshBudgetSnapshot(): void {
+    if (this.viewModel === null || this.budgetViewModel === null) {
+      return;
+    }
+    const chatId: string | undefined = this.viewModel!.getCurrentChatId();
+    if (chatId === undefined || chatId.length === 0) {
+      return;
+    }
+    const budget = this.viewModel!.getLastTokenBudget();
+    const requestMessages = this.viewModel!.getLastBuiltRequestMessages();
+    // 写入 SnapshotStore(无论是否为空,都更新最新状态)
+    const store = ContextBudgetSnapshotStore.getInstance();
+    store.setSnapshot({
+      chatId: chatId,
+      budget: budget,
+      requestMessages: requestMessages
+    });
+    // 异步刷新 VM 统计(避免阻塞 UI)
+    this.budgetViewModel!.refreshFromSnapshot(budget, requestMessages).then((): void => {
+      this.budgetStats = this.budgetViewModel!.stats;
+    }).catch((e: Error): void => {
+      Logger.warn(LOG_TAG, 'refreshBudgetSnapshot failed: ' + e.message);
+    });
+  }
+
+  /**
+   * v8.1: 上下文预算配置变更(由 ContextBudgetPage 触发)。
+   * 重新加载 budget 配置后,基于已有 messages 重算占用统计。
+   */
+  onBudgetConfigVersionChanged(): void {
+    if (this.budgetViewModel === null || this.viewModel === null) {
+      return;
+    }
+    const chatId: string | undefined = this.viewModel!.getCurrentChatId();
+    if (chatId === undefined || chatId.length === 0) {
+      return;
+    }
+    // 重新加载配置 + 重算 stats
+    this.budgetViewModel!.initialize(chatId).then((): void => {
+      this.refreshBudgetSnapshot();
+    }).catch((e: Error): void => {
+      Logger.warn(LOG_TAG, 'onBudgetConfigVersionChanged reload failed: ' + e.message);
+    });
+  }
+
+  /**
+   * v8.1: 导航到上下文管理页。
+   */
+  private navigateToContextBudget(): void {
+    if (this.viewModel === null) {
+      return;
+    }
+    const chatId: string | undefined = this.viewModel!.getCurrentChatId();
+    if (chatId === undefined || chatId.length === 0) {
+      promptAction.showToast({ message: '会话未就绪', duration: 1500 });
+      return;
+    }
+    // 离开前刷新一次快照,确保 ContextBudgetPage 读到最新数据
+    this.refreshBudgetSnapshot();
+    router.pushUrl({
+      url: 'pages/ContextBudgetPage',
       params: { chatId: chatId }
     });
   }
@@ -1395,5 +1640,7 @@ struct ChatPage {
     }
     Logger.info(LOG_TAG, 'onBranchChangeSeqChanged | seq=' + this.branchChangeSeq.toString());
     this.viewModel!.reloadAfterBranchChange();
+    // 分支切换后,上下文占用需重新统计
+    this.refreshBudgetSnapshot();
   }
 }

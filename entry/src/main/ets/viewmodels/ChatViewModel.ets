@@ -28,6 +28,7 @@ import { PromptPresetService } from '../services/PromptPresetService';
 import { PromptPreset } from '../models/PromptPreset';
 import { Logger } from '../utils/Logger';
 import { MessageSwipeSummary } from '../models/MessageSwipe';
+import { TokenBudget } from '../models/TokenBudget';
 import {
   ConversationBranchSummary,
   ConversationRecordCounts
@@ -953,6 +954,21 @@ export class ChatViewModel {
    */
   getCurrentChatId(): string | undefined {
     return this.chatService.getCurrentChatId();
+  }
+
+  /**
+   * v8.1: 获取最近一次构建的请求消息(用于 UI 上下文占用估算)。
+   * 反映实际发送给模型的消息(裁剪后)。
+   */
+  getLastBuiltRequestMessages(): ChatMessage[] | undefined {
+    return this.chatService.getLastBuiltRequestMessages();
+  }
+
+  /**
+   * v8.1: 获取最近一次构建的 TokenBudget(用于 UI 上下文占用显示)。
+   */
+  getLastTokenBudget(): TokenBudget | undefined {
+    return this.chatService.getLastTokenBudget();
   }
 
   /** T-6.4B-1.1: 是否已 dispose(供 onPop 回调安全检查) */

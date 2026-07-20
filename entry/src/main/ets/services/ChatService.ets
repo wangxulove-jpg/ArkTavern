@@ -41,6 +41,7 @@ import { PromptPresetService } from './PromptPresetService';
 import { MessageSwipePersistenceService } from './MessageSwipePersistenceService';
 import { ConversationBranchPersistenceService, EditedBranchGenerationTarget } from './ConversationBranchPersistenceService';
 import { MemoryService } from './MemoryService';
+import { ContextBudgetService } from './ContextBudgetService';
 import {
   ConversationBranch,
   ConversationBranchSummary,
@@ -70,6 +71,7 @@ import { Lorebook } from '../models/Lorebook';
 import { MacroContext } from '../models/MacroContext';
 import { ProviderConfig } from '../models/ProviderConfig';
 import { TokenBudget, DEFAULT_CONTEXT_WINDOW, DEFAULT_RESERVED_OUTPUT_TOKENS } from '../models/TokenBudget';
+import { BUDGET_SAFETY_MARGIN } from '../models/ContextBudgetConfig';
 import { HistoryTrimResult } from '../models/HistoryTrimResult';
 import { PersistedChatSession } from '../models/PersistedChatSession';
 import { Chat } from '../models/Chat';
@@ -191,6 +193,8 @@ export class ChatService {
   private lastTokenBudget: TokenBudget | undefined = undefined;
   /** 最近一次历史裁剪结果(只读) */
   private lastHistoryTrimResult: HistoryTrimResult | undefined = undefined;
+  /** 最后一次构建的请求消息(用于 UI 上下文占用估算,可能与实际发送的裁剪后消息不同) */
+  private lastBuiltRequestMessages: ChatMessage[] | undefined = undefined;
 
   // ===== 持久化状态 =====
   /** 当前会话 id(未初始化时为 undefined) */
@@ -221,6 +225,8 @@ export class ChatService {
   private readonly chatBackgroundService: ChatBackgroundService | null;
   /** MemoryService 长期记忆业务服务(v8,用于注入摘要和触发增量总结) */
   private readonly memoryService: MemoryService | null;
+  /** ContextBudgetService per-chat 上下文预算服务(v8.1,覆盖 effectiveSettings) */
+  private readonly contextBudgetService: ContextBudgetService | null;
   /** 当前会话的 Swipe 摘要列表 */
   private swipeSummaries: MessageSwipeSummary[] = [];
   /** 当前生成操作标识(用于阻止迟到回调),每次启动/停止递增 */
@@ -258,7 +264,8 @@ export class ChatService {
     swipePersistenceService: MessageSwipePersistenceService | null = null,
     branchPersistenceService: ConversationBranchPersistenceService | null = null,
     chatBackgroundService: ChatBackgroundService | null = null,
-    memoryService: MemoryService | null = null
+    memoryService: MemoryService | null = null,
+    contextBudgetService: ContextBudgetService | null = null
   ) {
     this.modelService = modelService;
     this.lorebookService = lorebookService;
@@ -271,6 +278,7 @@ export class ChatService {
     this.branchPersistenceService = branchPersistenceService;
     this.chatBackgroundService = chatBackgroundService;
     this.memoryService = memoryService;
+    this.contextBudgetService = contextBudgetService;
   }
 
   /**
@@ -1244,6 +1252,14 @@ export class ChatService {
   }
 
   /**
+   * 获取最近一次构建的请求消息(用于 UI 上下文占用估算)。
+   * 反映实际发送给模型的消息(若发生历史裁剪,则为裁剪后的最终消息)。
+   */
+  getLastBuiltRequestMessages(): ChatMessage[] | undefined {
+    return this.lastBuiltRequestMessages;
+  }
+
+  /**
    * 释放资源,停止当前请求。dispose 后不可复用。
    * 释放前 flush 任何 pending delta 持久化。
    */
@@ -1267,6 +1283,7 @@ export class ChatService {
     this.lastCallbacks = null;
     this.lastTokenBudget = undefined;
     this.lastHistoryTrimResult = undefined;
+    this.lastBuiltRequestMessages = undefined;
     this.activeGeneration = null;
     this.swipeSummaries = [];
     this.state = ChatState.Idle;
@@ -1562,6 +1579,8 @@ export class ChatService {
       handleStartFailure(String(e));
       return;
     }
+    // 保存最近构建的请求消息,供 UI 估算上下文占用
+    this.lastBuiltRequestMessages = requestMessages;
 
     // 计算 Token 预算 → 超预算则裁剪 → 重算预算
     await this.updateRequestPlan(requestMessages, snapshot.generationSettings);
@@ -1870,7 +1889,29 @@ export class ChatService {
       reserved = effectiveSettings.maxOutputTokens;
     }
 
-    let available: number = contextWindow > reserved ? contextWindow - reserved : 0;
+    // v8.1: per-chat 上下文预算覆盖(由 ContextBudgetService 提供)
+    // followModel=false 时,使用用户自定义值覆盖 effectiveSettings
+    if (this.contextBudgetService !== null && this.currentChatId !== undefined) {
+      try {
+        const budget = await this.contextBudgetService.getBudget(this.currentChatId);
+        if (!budget.followModel) {
+          // 自定义值已在 Service 内部 clamp 到合法范围
+          if (budget.customContextWindow > 0) {
+            contextWindow = budget.customContextWindow;
+          }
+          if (budget.customReservedOutputTokens > 0) {
+            reserved = budget.customReservedOutputTokens;
+          }
+        }
+      } catch (e) {
+        Logger.warn(LOG_TAG, 'contextBudgetService.getBudget failed: '
+          + (e instanceof Error ? e.message : String(e)));
+      }
+    }
+
+    // v8.2: 输入可用预算 = contextWindow - reserved - BUDGET_SAFETY_MARGIN
+    // 安全余量用于 Token 估算误差和 Provider 包装
+    let available: number = contextWindow - reserved - BUDGET_SAFETY_MARGIN;
     if (available < 0) {
       available = 0;
     }
@@ -1901,6 +1942,9 @@ export class ChatService {
       }
       this.lastHistoryTrimResult = trimResult;
       currentMessages = trimResult.messages;
+      // 更新 lastBuiltRequestMessages 为裁剪后的最终消息,
+      // 让 UI 上下文占用统计反映实际发送给模型的内容。
+      this.lastBuiltRequestMessages = currentMessages;
       // 输出安全裁剪统计
       Logger.info(LOG_TAG,
         'history trim: beforeMessages=' + requestMessages.length.toString()
