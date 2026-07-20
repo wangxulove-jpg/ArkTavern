@@ -14,7 +14,7 @@
  */
 
 import { relationalStore } from '@kit.ArkData';
-import { V1_TO_V2_STATEMENTS, V2_TO_V3_STATEMENTS, V3_TO_V4_STATEMENTS, V4_TO_V5_DDL_STATEMENTS, V5_TO_V6_STATEMENTS } from './DatabaseSchema';
+import { V1_TO_V2_STATEMENTS, V2_TO_V3_STATEMENTS, V3_TO_V4_STATEMENTS, V4_TO_V5_DDL_STATEMENTS, V5_TO_V6_STATEMENTS, V6_TO_V7_STATEMENTS } from './DatabaseSchema';
 import {
   TABLE_CHATS,
   TABLE_MESSAGES,
@@ -23,6 +23,7 @@ import {
   TABLE_CHAT_BRANCH_STATE,
   TABLE_CONVERSATION_BRANCH_MESSAGES,
   TABLE_CONVERSATION_BRANCH_SWIPE_SELECTIONS,
+  TABLE_CHARACTERS,
   COLUMN_ID,
   COLUMN_CHAT_ID,
   COLUMN_SEQUENCE_NUMBER,
@@ -38,7 +39,8 @@ import {
   COLUMN_POSITION,
   COLUMN_SWIPE_ASSISTANT_MESSAGE_ID,
   COLUMN_CANDIDATE_INDEX,
-  COLUMN_SWIPE_ACTIVE_CANDIDATE_INDEX
+  COLUMN_SWIPE_ACTIVE_CANDIDATE_INDEX,
+  COLUMN_SORT_ORDER
 } from './DatabaseConstants';
 import { generateUuid } from '../utils/Uuid';
 import { nowMillis } from '../utils/Time';
@@ -361,6 +363,88 @@ class V5ToV6Migration implements DatabaseMigration {
   async migrate(store: relationalStore.RdbStore): Promise<void> {
     for (let i = 0; i < V5_TO_V6_STATEMENTS.length; i++) {
       await store.executeSql(V5_TO_V6_STATEMENTS[i]);
+    }
+  }
+}
+
+/**
+ * v6 → v7 迁移
+ *
+ * 改动:
+ * - characters 表添加 sort_order INTEGER NOT NULL DEFAULT 0
+ * - chats 表添加 sort_order INTEGER NOT NULL DEFAULT 0
+ * - 回填旧数据:按现有默认排序分配连续 sort_order(0, 1, 2, ...)
+ *   - characters: 按 created_at ASC, id ASC
+ *   - chats: 按 last_message_at DESC, updated_at DESC, id ASC(保持原 list() 默认顺序)
+ *
+ * 安全性:
+ * - 所有 DDL 用 IF NOT EXISTS / ALTER TABLE ADD COLUMN(重复执行会报错,但事务保证回滚)
+ * - 数据回填使用 UPDATE WHERE id = ?,按当前列表顺序逐条更新
+ * - 任一失败全部回滚,不影响旧数据
+ */
+export function createV6ToV7Migration(): DatabaseMigration {
+  return new V6ToV7Migration();
+}
+
+class V6ToV7Migration implements DatabaseMigration {
+  readonly fromVersion: number = 6;
+  readonly toVersion: number = 7;
+
+  async migrate(store: relationalStore.RdbStore): Promise<void> {
+    // 1. 执行 DDL(添加 sort_order 字段)
+    for (let i = 0; i < V6_TO_V7_STATEMENTS.length; i++) {
+      await store.executeSql(V6_TO_V7_STATEMENTS[i]);
+    }
+
+    // 2. 回填 characters: 按 created_at ASC, id ASC 分配 sort_order
+    await this.backfillSortOrder(store, TABLE_CHARACTERS, true);
+
+    // 3. 回填 chats: 按 last_message_at DESC, updated_at DESC, id ASC 分配 sort_order
+    await this.backfillSortOrder(store, TABLE_CHATS, false);
+  }
+
+  /**
+   * 按现有默认顺序回填 sort_order(0, 1, 2, ...)
+   *
+   * @param store RDB Store
+   * @param tableName 表名
+   * @param ascending true=按 created_at ASC(characters),false=按 last_message_at DESC(chats)
+   */
+  private async backfillSortOrder(
+    store: relationalStore.RdbStore,
+    tableName: string,
+    ascending: boolean
+  ): Promise<void> {
+    const predicates: relationalStore.RdbPredicates =
+      new relationalStore.RdbPredicates(tableName);
+    if (ascending) {
+      predicates.orderByAsc(COLUMN_CREATED_AT);
+    } else {
+      predicates.orderByDesc(COLUMN_LAST_MESSAGE_AT);
+      predicates.orderByDesc(COLUMN_UPDATED_AT);
+    }
+    predicates.orderByAsc(COLUMN_ID);
+    const rs: relationalStore.ResultSet = await store.query(predicates);
+    const ids: string[] = [];
+    try {
+      while (rs.goToNextRow()) {
+        const col: number = rs.getColumnIndex(COLUMN_ID);
+        if (col >= 0) {
+          ids.push(rs.getString(col));
+        }
+      }
+    } finally {
+      rs.close();
+    }
+
+    // 逐条 UPDATE sort_order
+    for (let i = 0; i < ids.length; i++) {
+      const updatePredicates: relationalStore.RdbPredicates =
+        new relationalStore.RdbPredicates(tableName);
+      updatePredicates.equalTo(COLUMN_ID, ids[i]);
+      const bucket: relationalStore.ValuesBucket = {};
+      bucket[COLUMN_SORT_ORDER] = i;
+      await store.update(bucket, updatePredicates);
     }
   }
 }

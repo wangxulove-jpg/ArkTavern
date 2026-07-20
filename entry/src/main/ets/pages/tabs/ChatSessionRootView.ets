@@ -34,6 +34,15 @@ export const PENDING_CHAT_ID_KEY: string = 'pendingChatId';
 /** AppStorage 中待应用的 characterId(配合 pendingChatId 切换到指定角色会话) */
 export const PENDING_CHARACTER_ID_KEY: string = 'pendingCharacterId';
 
+/** 左滑图标按钮参数 */
+interface SwipeIconButtonParams {
+  icon: Resource;
+  label: Resource;
+  bgColor: Resource;
+  fgColor: Resource;
+  action: () => void;
+}
+
 @Component
 export struct ChatSessionRootView {
   @State viewModel: ChatSessionListViewModel | null = null;
@@ -330,31 +339,78 @@ export struct ChatSessionRootView {
     }
   }
 
-  /** 左滑操作按钮(重命名 / 删除) */
+  /** 左滑操作按钮(图标 + 文字,垂直布局) */
   @Builder
   swipeActionButtons(item: ChatSessionListItem) {
     Row() {
-      Button($r('app.string.session_action_rename'))
-        .fontSize(14)
-        .fontColor(Color.White)
-        .backgroundColor($r('app.color.app_accent'))
-        .height('100%')
-        .padding({ left: 20, right: 20 })
-        .onClick(() => {
-          this.openRenameDialog(item);
-        })
+      // 上移
+      this.swipeIconButton({
+        icon: $r('sys.symbol.arrow_up'),
+        label: $r('app.string.card_action_move_up'),
+        bgColor: $r('app.color.app_surface_2'),
+        fgColor: $r('app.color.app_text_primary'),
+        action: (): void => { this.viewModel!.moveUp(item.chat.id); }
+      })
 
-      Button($r('app.string.session_action_delete'))
-        .fontSize(14)
-        .fontColor(Color.White)
-        .backgroundColor($r('app.color.app_danger'))
-        .height('100%')
-        .padding({ left: 20, right: 20 })
-        .onClick(() => {
-          this.promptDelete(item);
-        })
+      // 下移
+      this.swipeIconButton({
+        icon: $r('sys.symbol.arrow_down'),
+        label: $r('app.string.card_action_move_down'),
+        bgColor: $r('app.color.app_surface_2'),
+        fgColor: $r('app.color.app_text_primary'),
+        action: (): void => { this.viewModel!.moveDown(item.chat.id); }
+      })
+
+      // 重命名
+      this.swipeIconButton({
+        icon: $r('sys.symbol.square_and_pencil'),
+        label: $r('app.string.session_action_rename'),
+        bgColor: $r('app.color.app_accent'),
+        fgColor: $r('app.color.app_on_accent'),
+        action: (): void => { this.openRenameDialog(item); }
+      })
+
+      // 删除 - 危险操作
+      this.swipeIconButton({
+        icon: $r('sys.symbol.trash'),
+        label: $r('app.string.session_action_delete'),
+        bgColor: $r('app.color.app_danger'),
+        fgColor: $r('app.color.app_on_accent'),
+        action: (): void => { this.promptDelete(item); }
+      })
     }
     .height('100%')
+  }
+
+  /** 左滑图标按钮(图标在上,文字在下,等宽分布) */
+  @Builder
+  swipeIconButton(params: SwipeIconButtonParams) {
+    Button() {
+      Column() {
+        SymbolGlyph(params.icon)
+          .fontSize(20)
+          .fontColor([params.fgColor])
+        Text(params.label)
+          .fontSize(10)
+          .fontColor(params.fgColor)
+          .margin({ top: 2 })
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .width('100%')
+      .height('100%')
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+    }
+    .type(ButtonType.Capsule)
+    .backgroundColor(params.bgColor)
+    .height('100%')
+    .layoutWeight(1)
+    .padding({ top: 6, bottom: 6, left: 4, right: 4 })
+    .margin({ left: 2, right: 2 })
+    .onClick(() => {
+      params.action();
+    })
   }
 
   /** 单个会话卡片 */

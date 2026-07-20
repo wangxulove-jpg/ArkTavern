@@ -124,10 +124,12 @@ export class ChatPersistenceService {
     const resolvedTitle: string = title !== undefined && title.length > 0
       ? title
       : DEFAULT_TITLE_PLAIN;
+    const sortOrder: number = await this.nextSortOrder();
     const chat: Chat = createChat({
       id: generateUuid(),
       characterId: characterId,
-      title: resolvedTitle
+      title: resolvedTitle,
+      sortOrder: sortOrder
     });
     if (this.branchPersistenceService !== null) {
       try {
@@ -177,10 +179,12 @@ export class ChatPersistenceService {
     const resolvedTitle: string = title !== undefined && title.length > 0
       ? title
       : DEFAULT_TITLE_PLAIN;
+    const sortOrder: number = await this.nextSortOrder();
     const chat: Chat = createChat({
       id: generateUuid(),
       characterId: characterId,
-      title: resolvedTitle
+      title: resolvedTitle,
+      sortOrder: sortOrder
     });
 
     if (firstMessage === undefined) {
@@ -754,5 +758,62 @@ export class ChatPersistenceService {
       }
     }
     return null;
+  }
+
+  /**
+   * 计算下一个 sort_order(用于新建会话时分配)。
+   * 空表返回 0。
+   */
+  private async nextSortOrder(): Promise<number> {
+    const max: number = await this.chatRepository.getMaxSortOrder();
+    return max < 0 ? 0 : max + 1;
+  }
+
+  /**
+   * 上移会话卡片(与上一条交换 sort_order)。
+   * 已是第一条时无操作返回。
+   */
+  async moveSessionUp(chatId: string): Promise<void> {
+    const chats: Chat[] = await this.chatRepository.list({
+      includeArchived: false,
+      limit: 200,
+      offset: 0
+    });
+    let index: number = -1;
+    for (let i = 0; i < chats.length; i++) {
+      if (chats[i].id === chatId) {
+        index = i;
+        break;
+      }
+    }
+    if (index <= 0) {
+      return;
+    }
+    await this.chatRepository.swapSortOrder(chatId, chats[index - 1].id);
+    Logger.info(LOG_TAG, 'moveSessionUp ok');
+  }
+
+  /**
+   * 下移会话卡片(与下一条交换 sort_order)。
+   * 已是最后一条时无操作返回。
+   */
+  async moveSessionDown(chatId: string): Promise<void> {
+    const chats: Chat[] = await this.chatRepository.list({
+      includeArchived: false,
+      limit: 200,
+      offset: 0
+    });
+    let index: number = -1;
+    for (let i = 0; i < chats.length; i++) {
+      if (chats[i].id === chatId) {
+        index = i;
+        break;
+      }
+    }
+    if (index < 0 || index >= chats.length - 1) {
+      return;
+    }
+    await this.chatRepository.swapSortOrder(chatId, chats[index + 1].id);
+    Logger.info(LOG_TAG, 'moveSessionDown ok');
   }
 }

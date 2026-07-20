@@ -211,6 +211,36 @@ export class ChatSessionListViewModel {
     Logger.info(LOG_TAG, 'deleteSession ok');
   }
 
+  /** 上移会话卡片 */
+  async moveUp(chatId: string): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
+    this.errorMessage = '';
+    try {
+      await this.persistenceService.moveSessionUp(chatId);
+      await this.reload();
+    } catch (e) {
+      this.errorMessage = '上移失败: ' + String(e);
+      Logger.error(LOG_TAG, 'moveUp failed: ' + String(e));
+    }
+  }
+
+  /** 下移会话卡片 */
+  async moveDown(chatId: string): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
+    this.errorMessage = '';
+    try {
+      await this.persistenceService.moveSessionDown(chatId);
+      await this.reload();
+    } catch (e) {
+      this.errorMessage = '下移失败: ' + String(e);
+      Logger.error(LOG_TAG, 'moveDown failed: ' + String(e));
+    }
+  }
+
   /** 释放资源(防止后续异步操作) */
   dispose(): void {
     this.disposed = true;

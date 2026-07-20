@@ -45,7 +45,8 @@ import {
   COLUMN_CREATOR,
   COLUMN_CHARACTER_VERSION,
   COLUMN_EXTENSIONS_JSON,
-  COLUMN_CHARACTER_BOOK_ID
+  COLUMN_CHARACTER_BOOK_ID,
+  COLUMN_SORT_ORDER
 } from '../database/DatabaseConstants';
 import {
   isValidTimestamp,
@@ -91,6 +92,7 @@ function characterToBucket(character: Character): relationalStore.ValuesBucket {
   bucket[COLUMN_CHARACTER_VERSION] = character.characterVersion;
   bucket[COLUMN_EXTENSIONS_JSON] = JSON.stringify(character.extensions);
   bucket[COLUMN_CHARACTER_BOOK_ID] = character.characterBookId;
+  bucket[COLUMN_SORT_ORDER] = character.sortOrder;
   return bucket;
 }
 
@@ -133,6 +135,7 @@ function characterFromRow(rs: relationalStore.ResultSet): Character {
   const characterVersion: string = readStringColumnSafe(rs, COLUMN_CHARACTER_VERSION, '');
   const extensions: Record<string, Object> = readObjectColumnSafe(rs, COLUMN_EXTENSIONS_JSON);
   const characterBookId: string = readStringColumnSafe(rs, COLUMN_CHARACTER_BOOK_ID, '');
+  const sortOrder: number = readLongColumnSafe(rs, COLUMN_SORT_ORDER, 0);
 
   return {
     id: id,
@@ -152,6 +155,7 @@ function characterFromRow(rs: relationalStore.ResultSet): Character {
     characterVersion: characterVersion,
     extensions: extensions,
     characterBookId: characterBookId,
+    sortOrder: sortOrder,
     createdAt: createdAt,
     updatedAt: updatedAt
   };
@@ -168,6 +172,22 @@ function readStringColumnSafe(rs: relationalStore.ResultSet, columnName: string,
   try {
     const value: string = rs.getString(col);
     return value !== null && value !== undefined ? value : defaultValue;
+  } catch (e) {
+    return defaultValue;
+  }
+}
+
+/**
+ * 安全读取整数列(用于 sort_order 等可空数值字段)。
+ * 列不存在或类型错误时返回默认值。
+ */
+function readLongColumnSafe(rs: relationalStore.ResultSet, columnName: string, defaultValue: number): number {
+  const col: number = rs.getColumnIndex(columnName);
+  if (col < 0) {
+    return defaultValue;
+  }
+  try {
+    return rs.getLong(col);
   } catch (e) {
     return defaultValue;
   }
@@ -310,6 +330,7 @@ export class CharacterRepository {
     const store: relationalStore.RdbStore = this.dbHelper.getStore();
     const predicates: relationalStore.RdbPredicates =
       new relationalStore.RdbPredicates(TABLE_CHARACTERS);
+    predicates.orderByAsc(COLUMN_SORT_ORDER);
     predicates.orderByAsc(COLUMN_CREATED_AT);
     predicates.orderByAsc(COLUMN_UPDATED_AT);
     predicates.orderByAsc(COLUMN_ID);
@@ -346,6 +367,7 @@ export class CharacterRepository {
     bucket[COLUMN_CHARACTER_VERSION] = character.characterVersion;
     bucket[COLUMN_EXTENSIONS_JSON] = JSON.stringify(character.extensions);
     bucket[COLUMN_CHARACTER_BOOK_ID] = character.characterBookId;
+    bucket[COLUMN_SORT_ORDER] = character.sortOrder;
 
     const predicates: relationalStore.RdbPredicates =
       new relationalStore.RdbPredicates(TABLE_CHARACTERS);
@@ -417,6 +439,86 @@ export class CharacterRepository {
     } catch (err) {
       throw DatabaseError.queryFailed(`character.exists: ${extractCauseMessage(err)}`);
     }
+  }
+
+  /**
+   * 查询当前最大 sort_order(用于新建角色时分配新值)。
+   * 空表返回 -1(新建角色 sortOrder = 0)。
+   */
+  async getMaxSortOrder(): Promise<number> {
+    const store: relationalStore.RdbStore = this.dbHelper.getStore();
+    const predicates: relationalStore.RdbPredicates =
+      new relationalStore.RdbPredicates(TABLE_CHARACTERS);
+    predicates.orderByDesc(COLUMN_SORT_ORDER);
+    predicates.limitAs(1);
+    const rs: relationalStore.ResultSet = await store.query(predicates);
+    try {
+      if (!rs.goToNextRow()) {
+        return -1;
+      }
+      const col: number = rs.getColumnIndex(COLUMN_SORT_ORDER);
+      if (col < 0) {
+        return -1;
+      }
+      return rs.getLong(col);
+    } finally {
+      rs.close();
+    }
+  }
+
+  /**
+   * 交换两个角色的 sort_order(用于上移/下移)。
+   * 使用事务保证原子性。
+   */
+  async swapSortOrder(idA: string, idB: string): Promise<void> {
+    if (idA.length === 0 || idB.length === 0 || idA === idB) {
+      throw DatabaseError.invalidData('swapSortOrder: invalid ids');
+    }
+    const store: relationalStore.RdbStore = this.dbHelper.getStore();
+    await this.dbHelper.runInTransaction(
+      async (s: relationalStore.RdbStore): Promise<void> => {
+        const orderA: number = await this.getSortOrderByIdWithStore(s, idA);
+        const orderB: number = await this.getSortOrderByIdWithStore(s, idB);
+        await this.updateSortOrderWithStore(s, idA, orderB);
+        await this.updateSortOrderWithStore(s, idB, orderA);
+      },
+      'character_swap_sort_order'
+    );
+  }
+
+  private async getSortOrderByIdWithStore(
+    store: relationalStore.RdbStore,
+    id: string
+  ): Promise<number> {
+    const predicates: relationalStore.RdbPredicates =
+      new relationalStore.RdbPredicates(TABLE_CHARACTERS);
+    predicates.equalTo(COLUMN_ID, id);
+    const rs: relationalStore.ResultSet = await store.query(predicates);
+    try {
+      if (!rs.goToNextRow()) {
+        throw DatabaseError.notFound('character not found');
+      }
+      const col: number = rs.getColumnIndex(COLUMN_SORT_ORDER);
+      if (col < 0) {
+        return 0;
+      }
+      return rs.getLong(col);
+    } finally {
+      rs.close();
+    }
+  }
+
+  private async updateSortOrderWithStore(
+    store: relationalStore.RdbStore,
+    id: string,
+    sortOrder: number
+  ): Promise<void> {
+    const predicates: relationalStore.RdbPredicates =
+      new relationalStore.RdbPredicates(TABLE_CHARACTERS);
+    predicates.equalTo(COLUMN_ID, id);
+    const bucket: relationalStore.ValuesBucket = {};
+    bucket[COLUMN_SORT_ORDER] = sortOrder;
+    await store.update(bucket, predicates);
   }
 
   /**

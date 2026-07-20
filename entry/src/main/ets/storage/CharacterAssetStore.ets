@@ -130,6 +130,38 @@ export class CharacterAssetStore {
   }
 
   /**
+   * 将 PNG 字节数组直接写入应用私有目录作为头像。
+   *
+   * 用途:
+   * - 配合 ImageConverter 实现导入时统一转 PNG 存储
+   * - 文件名格式同 saveAvatar,但扩展名固定为 .png
+   * - 旧文件由调用方通过 deleteAvatarByUri 显式删除
+   *
+   * @param pngBytes PNG 字节数组(必须为合法 PNG)
+   * @param characterId 角色 ID
+   * @returns 新的头像文件 URI(带时间戳,扩展名 .png)
+   */
+  async savePngAvatarFromBytes(pngBytes: Uint8Array, characterId: string): Promise<string> {
+    this.requireInit();
+    const timestamp: number = Date.now();
+    const destPath: string = this.baseDir + '/' + AVATAR_PREFIX + characterId + '_' + timestamp + '.png';
+    try {
+      if (pngBytes.byteLength > 50 * 1024 * 1024) {
+        throw new Error('头像文件过大,不能超过 50MB');
+      }
+      const destFile: fileIo.File = fileIo.openSync(destPath, fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.CREATE);
+      fileIo.writeSync(destFile.fd, pngBytes.buffer as ArrayBuffer);
+      fileIo.closeSync(destFile);
+
+      Logger.info(LOG_TAG, 'savePngAvatarFromBytes ok size=' + String(pngBytes.byteLength));
+      return 'file://' + destPath;
+    } catch (e) {
+      Logger.error(LOG_TAG, 'savePngAvatarFromBytes failed: ' + String(e));
+      throw new Error('保存 PNG 头像失败: ' + String(e));
+    }
+  }
+
+  /**
    * 按精确 URI 删除头像文件。
    * 用于在 updateAvatar 流程中清理被替换的旧头像文件。
    * 文件不存在时静默成功。

@@ -19,16 +19,29 @@
  */
 
 import { CharacterListViewModel } from '../../viewmodels/CharacterListViewModel';
+import { CharacterExportViewModel, CharacterExportFormat, CharacterExportResult } from '../../viewmodels/CharacterExportViewModel';
 import { Character } from '../../models/Character';
 import { AppServices } from '../../services/AppServices';
 import { EmptyStateView } from '../../components/EmptyStateView';
 import { PressableCard } from '../../components/PressableCard';
 import { CharacterImageView } from '../../components/CharacterImageView';
-import { router } from '@kit.ArkUI';
+import { router, promptAction } from '@kit.ArkUI';
+import { picker } from '@kit.CoreFileKit';
+import { fileIo } from '@kit.CoreFileKit';
 
 /** 角色编辑页路由参数,携带 characterId */
 interface CharacterEditNavParam {
   characterId: string;
+}
+
+/** 左滑矩阵单元格参数 */
+interface SwipeGridCellParams {
+  icon: Resource;
+  label: Resource;
+  bgColor: Resource;
+  fgColor: Resource;
+  disabled: boolean;
+  action: () => void;
 }
 
 @Component
@@ -38,6 +51,14 @@ export struct CharacterRootView {
   @State initError: string = '';
   /** 删除二次确认的目标角色(null 时确认弹窗不显示) */
   @State deleteTarget: Character | null = null;
+  /** 导出格式选择弹窗的目标角色(null 时不显示弹窗) */
+  @State exportTarget: Character | null = null;
+  /** 导出进行中(禁用按钮防止重复点击) */
+  @State isExporting: boolean = false;
+  /** 当前展开左滑菜单的角色 ID(null 表示全部收起) */
+  @State expandedCharId: string | null = null;
+  /** List 滚动控制器,用于点击操作后收起 swipeAction */
+  private listScroller: ListScroller = new ListScroller();
   /**
    * 跨页面列表刷新信号。
    * 由 CharacterEditPage / CharacterListPage 在角色数据变化后递增,
@@ -125,6 +146,124 @@ export struct CharacterRootView {
     return '确定删除角色"' + name + '"吗?此操作不可撤销。';
   }
 
+  // ===== 导出 =====
+
+  /** 左滑"导出":弹出格式选择 */
+  private promptExport(char: Character): void {
+    if (this.isExporting) {
+      return;
+    }
+    this.exportTarget = char;
+  }
+
+  /** 取消导出选择 */
+  private cancelExport(): void {
+    if (this.isExporting) {
+      return;
+    }
+    this.exportTarget = null;
+  }
+
+  /** 选择 PNG 导出 */
+  private async chooseExportPng(): Promise<void> {
+    if (this.exportTarget === null || this.isExporting) {
+      return;
+    }
+    const char: Character = this.exportTarget;
+    this.exportTarget = null;
+    await this.runExport(char, CharacterExportFormat.V2Png);
+  }
+
+  /** 选择 JSON 导出 */
+  private async chooseExportJson(): Promise<void> {
+    if (this.exportTarget === null || this.isExporting) {
+      return;
+    }
+    const char: Character = this.exportTarget;
+    this.exportTarget = null;
+    await this.runExport(char, CharacterExportFormat.V2Json);
+  }
+
+  /**
+   * 执行导出:调用 ViewModel 生成数据 + 系统文件保存器选择位置 + 写入文件。
+   * 用户取消 picker 时不报错。
+   */
+  private async runExport(char: Character, format: CharacterExportFormat): Promise<void> {
+    if (this.isExporting) {
+      return;
+    }
+    this.isExporting = true;
+    try {
+      const exportVm: CharacterExportViewModel = new CharacterExportViewModel(
+        AppServices.getCharacterService()
+      );
+      const result: CharacterExportResult =
+        format === CharacterExportFormat.V2Png
+          ? await exportVm.exportToPng(char.id, char.name)
+          : await exportVm.exportToJson(char.id, char.name);
+      if (!result.success) {
+        promptAction.showToast({
+          message: $r('app.string.character_export_failed'),
+          duration: 2000
+        });
+        return;
+      }
+      // 调用系统文件保存器
+      let uri: string = '';
+      try {
+        const documentPicker = new picker.DocumentViewPicker();
+        const options = new picker.DocumentSaveOptions();
+        options.newFileNames = [result.defaultFileName];
+        const uris: string[] = await documentPicker.save(options);
+        if (uris.length === 0) {
+          // 用户取消,不报错
+          return;
+        }
+        uri = uris[0];
+      } catch (e) {
+        promptAction.showToast({
+          message: $r('app.string.character_export_failed'),
+          duration: 2000
+        });
+        return;
+      }
+      // 写入文件
+      try {
+        if (format === CharacterExportFormat.V2Json) {
+          await this.writeJsonToFile(uri, result.jsonString);
+        } else {
+          await this.writePngBytesToFile(uri, result.pngBytes);
+        }
+        promptAction.showToast({
+          message: $r('app.string.character_export_success'),
+          duration: 1500
+        });
+      } catch (e) {
+        promptAction.showToast({
+          message: $r('app.string.character_export_failed'),
+          duration: 2000
+        });
+      }
+    } finally {
+      this.isExporting = false;
+    }
+  }
+
+  /** 写入 JSON 文本到文件(复用 CharacterService.writeFileContent 的 UTF-8 编码能力) */
+  private async writeJsonToFile(uri: string, jsonString: string): Promise<void> {
+    await AppServices.getCharacterService().writeFileContent(uri, jsonString);
+  }
+
+  /** 写入 PNG 字节到文件 */
+  private async writePngBytesToFile(uri: string, bytes: Uint8Array): Promise<void> {
+    const file: fileIo.File = fileIo.openSync(uri, fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.CREATE);
+    try {
+      fileIo.writeSync(file.fd, bytes.buffer as ArrayBuffer);
+    } finally {
+      fileIo.closeSync(file);
+    }
+  }
+
   build() {
     Stack() {
       Column() {
@@ -164,6 +303,11 @@ export struct CharacterRootView {
       // ===== 删除二次确认弹窗(浮层,Stack alignContent 居中)=====
       if (this.deleteTarget !== null) {
         this.deleteConfirmDialog()
+      }
+
+      // ===== 导出格式选择弹窗(浮层,Stack alignContent 居中)=====
+      if (this.exportTarget !== null) {
+        this.exportFormatDialog()
       }
     }
     .width('100%')
@@ -214,8 +358,8 @@ export struct CharacterRootView {
 
   @Builder
   characterList() {
-    List() {
-      ForEach(this.viewModel!.characters, (char: Character) => {
+    List({ scroller: this.listScroller }) {
+      ForEach(this.viewModel!.characters, (char: Character, index: number) => {
         ListItem() {
           this.characterCard(char)
         }
@@ -223,7 +367,14 @@ export struct CharacterRootView {
         .swipeAction({
           end: {
             builder: (): void => {
-              this.swipeActionButtons(char)
+              this.swipeActionGrid(char, index)
+            },
+            onStateChange: (state: SwipeActionState): void => {
+              if (state === SwipeActionState.EXPANDED) {
+                this.expandedCharId = char.id;
+              } else if (state === SwipeActionState.COLLAPSED && this.expandedCharId === char.id) {
+                this.expandedCharId = null;
+              }
             }
           }
         })
@@ -250,45 +401,123 @@ export struct CharacterRootView {
     })
   }
 
-  // ===== 左滑操作按钮(新建对话 / 编辑 / 删除) =====
+  // ===== 左滑操作区(2 行 × 3 列矩阵,位于当前角色卡右侧) =====
 
+  /**
+   * 左滑矩阵操作区。
+   * 第一行:上移 / 新建对话 / 编辑
+   * 第二行:下移 / 导出 / 删除
+   *
+   * @param char 当前角色
+   * @param index 当前角色在列表中的位置(用于禁用上移/下移)
+   */
   @Builder
-  swipeActionButtons(char: Character) {
+  swipeActionGrid(char: Character, index: number) {
     Row() {
-      // 新建对话 - 主操作
-      Button($r('app.string.character_action_new_chat'))
-        .fontSize(14)
-        .fontColor(Color.White)
-        .backgroundColor($r('app.color.app_accent'))
-        .height('100%')
-        .padding({ left: 16, right: 16 })
-        .onClick(() => {
-          this.startNewChatWithCharacter(char.id);
-        })
+      Column() {
+        // 第一行:上移 / 新建对话 / 编辑
+        Row() {
+          this.gridCell({
+            icon: $r('sys.symbol.arrow_up'),
+            label: $r('app.string.card_action_move_up'),
+            bgColor: $r('app.color.app_surface_2'),
+            fgColor: $r('app.color.app_text_primary'),
+            disabled: index === 0,
+            action: (): void => { this.viewModel!.moveUp(char.id); }
+          })
+          this.gridCell({
+            icon: $r('sys.symbol.plus'),
+            label: $r('app.string.character_action_new_chat'),
+            bgColor: $r('app.color.app_accent'),
+            fgColor: $r('app.color.app_on_accent'),
+            disabled: false,
+            action: (): void => { this.startNewChatWithCharacter(char.id); }
+          })
+          this.gridCell({
+            icon: $r('sys.symbol.square_and_pencil'),
+            label: $r('app.string.character_action_edit'),
+            bgColor: $r('app.color.app_surface_2'),
+            fgColor: $r('app.color.app_text_primary'),
+            disabled: false,
+            action: (): void => { this.editCharacter(char.id); }
+          })
+        }
+        .layoutWeight(1)
+        .width('100%')
 
-      // 编辑
-      Button($r('app.string.character_action_edit'))
-        .fontSize(14)
-        .fontColor($r('app.color.app_text_primary'))
-        .backgroundColor($r('app.color.app_surface_2'))
-        .height('100%')
-        .padding({ left: 16, right: 16 })
-        .onClick(() => {
-          this.editCharacter(char.id);
-        })
-
-      // 删除 - 危险操作
-      Button($r('app.string.character_action_delete'))
-        .fontSize(14)
-        .fontColor(Color.White)
-        .backgroundColor($r('app.color.app_danger'))
-        .height('100%')
-        .padding({ left: 16, right: 16 })
-        .onClick(() => {
-          this.promptDelete(char);
-        })
+        // 第二行:下移 / 导出 / 删除
+        Row() {
+          this.gridCell({
+            icon: $r('sys.symbol.arrow_down'),
+            label: $r('app.string.card_action_move_down'),
+            bgColor: $r('app.color.app_surface_2'),
+            fgColor: $r('app.color.app_text_primary'),
+            disabled: index === this.viewModel!.characters.length - 1,
+            action: (): void => { this.viewModel!.moveDown(char.id); }
+          })
+          this.gridCell({
+            icon: $r('sys.symbol.share'),
+            label: $r('app.string.character_action_export'),
+            bgColor: $r('app.color.app_surface_2'),
+            fgColor: $r('app.color.app_text_primary'),
+            disabled: false,
+            action: (): void => { this.promptExport(char); }
+          })
+          this.gridCell({
+            icon: $r('sys.symbol.trash'),
+            label: $r('app.string.character_action_delete'),
+            bgColor: $r('app.color.app_danger'),
+            fgColor: $r('app.color.app_on_accent'),
+            disabled: false,
+            action: (): void => { this.promptDelete(char); }
+          })
+        }
+        .layoutWeight(1)
+        .width('100%')
+      }
+      .width(220)
+      .height('100%')
+      .padding(2)
     }
     .height('100%')
+  }
+
+  /**
+   * 单个矩阵单元格(图标在上、文字在下,圆角矩形,非胶囊)。
+   * 点击后自动收起 swipeAction。
+   */
+  @Builder
+  gridCell(params: SwipeGridCellParams) {
+    Button() {
+      Column() {
+        SymbolGlyph(params.icon)
+          .fontSize(18)
+          .fontColor([params.fgColor])
+        Text(params.label)
+          .fontSize(10)
+          .fontColor(params.fgColor)
+          .margin({ top: 2 })
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .width('100%')
+      .height('100%')
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+    }
+    .type(ButtonType.Normal)
+    .backgroundColor(params.bgColor)
+    .borderRadius(10)
+    .height('100%')
+    .layoutWeight(1)
+    .margin({ left: 2, right: 2, top: 2, bottom: 2 })
+    .padding(0)
+    .enabled(!params.disabled)
+    .opacity(params.disabled ? 0.35 : 1.0)
+    .onClick(() => {
+      params.action();
+      this.listScroller.closeAllSwipeActions();
+    })
   }
 
   // ===== 展开式角色卡 =====
@@ -492,6 +721,77 @@ export struct CharacterRootView {
     .onClick(() => {
       // 点击外部取消
       this.cancelDelete();
+    })
+  }
+
+  // ===== 导出格式选择弹窗 =====
+
+  @Builder
+  exportFormatDialog() {
+    Stack() {
+      Column() {
+        Column() {
+          // 标题
+          Text($r('app.string.character_export_choose_format'))
+            .fontSize(17)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.app_text_primary'))
+            .margin({ bottom: 16 })
+
+          // PNG 选项
+          Button($r('app.string.character_export_png'))
+            .fontSize(15)
+            .fontColor($r('app.color.app_on_accent'))
+            .backgroundColor($r('app.color.app_accent'))
+            .borderRadius($r('app.float.app_radius_md'))
+            .width('100%')
+            .height(44)
+            .margin({ bottom: 8 })
+            .onClick(() => {
+              this.chooseExportPng();
+            })
+
+          // JSON 选项
+          Button($r('app.string.character_export_json'))
+            .fontSize(15)
+            .fontColor($r('app.color.app_text_primary'))
+            .backgroundColor($r('app.color.app_surface_2'))
+            .borderRadius($r('app.float.app_radius_md'))
+            .width('100%')
+            .height(44)
+            .margin({ bottom: 8 })
+            .onClick(() => {
+              this.chooseExportJson();
+            })
+
+          // 取消
+          Button($r('app.string.character_export_cancel'))
+            .fontSize(15)
+            .fontColor($r('app.color.app_text_secondary'))
+            .backgroundColor(Color.Transparent)
+            .borderRadius($r('app.float.app_radius_md'))
+            .width('100%')
+            .height(44)
+            .onClick(() => {
+              this.cancelExport();
+            })
+        }
+        .width('80%')
+        .padding(20)
+        .backgroundColor($r('app.color.app_surface_1'))
+        .borderRadius(16)
+      }
+      .width('100%')
+      .height('100%')
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor('rgba(0,0,0,0.5)')
+    .onClick(() => {
+      // 点击外部取消
+      this.cancelExport();
     })
   }
 }

@@ -25,7 +25,8 @@ import {
   COLUMN_CREATED_AT,
   COLUMN_UPDATED_AT,
   COLUMN_LAST_MESSAGE_AT,
-  COLUMN_IS_ARCHIVED
+  COLUMN_IS_ARCHIVED,
+  COLUMN_SORT_ORDER
 } from '../database/DatabaseConstants';
 import {
   intToBoolean,
@@ -63,6 +64,7 @@ function chatToBucket(chat: Chat): relationalStore.ValuesBucket {
   bucket[COLUMN_UPDATED_AT] = chat.updatedAt;
   bucket[COLUMN_LAST_MESSAGE_AT] = chat.lastMessageAt;
   bucket[COLUMN_IS_ARCHIVED] = chat.isArchived ? 1 : 0;
+  bucket[COLUMN_SORT_ORDER] = chat.sortOrder;
   return bucket;
 }
 
@@ -79,6 +81,8 @@ function chatFromRow(rs: relationalStore.ResultSet): Chat {
   const lastMessageAt: number = rs.getLong(rs.getColumnIndex(COLUMN_LAST_MESSAGE_AT));
   const isArchivedCol: number = rs.getColumnIndex(COLUMN_IS_ARCHIVED);
   const isArchived: boolean = intToBoolean(rs.getLong(isArchivedCol));
+  const sortOrderCol: number = rs.getColumnIndex(COLUMN_SORT_ORDER);
+  const sortOrder: number = sortOrderCol >= 0 ? rs.getLong(sortOrderCol) : 0;
   return {
     id: id,
     characterId: characterId,
@@ -86,7 +90,8 @@ function chatFromRow(rs: relationalStore.ResultSet): Chat {
     createdAt: createdAt,
     updatedAt: updatedAt,
     lastMessageAt: lastMessageAt,
-    isArchived: isArchived
+    isArchived: isArchived,
+    sortOrder: sortOrder
   };
 }
 
@@ -165,6 +170,7 @@ export class ChatRepository {
     if (characterId !== undefined) {
       predicates.equalTo(COLUMN_CHARACTER_ID, characterId);
     }
+    predicates.orderByAsc(COLUMN_SORT_ORDER);
     predicates.orderByDesc(COLUMN_LAST_MESSAGE_AT);
     predicates.orderByDesc(COLUMN_UPDATED_AT);
     predicates.orderByAsc(COLUMN_ID);
@@ -396,6 +402,7 @@ export class ChatRepository {
     } else {
       predicates.isNull(COLUMN_CHARACTER_ID);
     }
+    predicates.orderByAsc(COLUMN_SORT_ORDER);
     predicates.orderByDesc(COLUMN_LAST_MESSAGE_AT);
     predicates.orderByDesc(COLUMN_UPDATED_AT);
     predicates.orderByAsc(COLUMN_ID);
@@ -455,6 +462,7 @@ export class ChatRepository {
     } else {
       predicates.isNull(COLUMN_CHARACTER_ID);
     }
+    predicates.orderByAsc(COLUMN_SORT_ORDER);
     predicates.orderByDesc(COLUMN_LAST_MESSAGE_AT);
     predicates.orderByDesc(COLUMN_UPDATED_AT);
     predicates.orderByAsc(COLUMN_ID);
@@ -471,6 +479,86 @@ export class ChatRepository {
     } finally {
       rs.close();
     }
+  }
+
+  /**
+   * 查询当前最大 sort_order(用于新建会话时分配新值)。
+   * 空表返回 -1(新建会话 sortOrder = 0)。
+   */
+  async getMaxSortOrder(): Promise<number> {
+    const store: relationalStore.RdbStore = this.dbHelper.getStore();
+    const predicates: relationalStore.RdbPredicates =
+      new relationalStore.RdbPredicates(TABLE_CHATS);
+    predicates.orderByDesc(COLUMN_SORT_ORDER);
+    predicates.limitAs(1);
+    const rs: relationalStore.ResultSet = await store.query(predicates);
+    try {
+      if (!rs.goToNextRow()) {
+        return -1;
+      }
+      const col: number = rs.getColumnIndex(COLUMN_SORT_ORDER);
+      if (col < 0) {
+        return -1;
+      }
+      return rs.getLong(col);
+    } finally {
+      rs.close();
+    }
+  }
+
+  /**
+   * 交换两个会话的 sort_order(用于上移/下移)。
+   * 使用事务保证原子性。
+   */
+  async swapSortOrder(idA: string, idB: string): Promise<void> {
+    if (idA.length === 0 || idB.length === 0 || idA === idB) {
+      throw DatabaseError.invalidData('swapSortOrder: invalid ids');
+    }
+    const store: relationalStore.RdbStore = this.dbHelper.getStore();
+    await this.dbHelper.runInTransaction(
+      async (s: relationalStore.RdbStore): Promise<void> => {
+        const orderA: number = await this.getSortOrderByIdWithStore(s, idA);
+        const orderB: number = await this.getSortOrderByIdWithStore(s, idB);
+        await this.updateSortOrderWithStore(s, idA, orderB);
+        await this.updateSortOrderWithStore(s, idB, orderA);
+      },
+      'chat_swap_sort_order'
+    );
+  }
+
+  private async getSortOrderByIdWithStore(
+    store: relationalStore.RdbStore,
+    id: string
+  ): Promise<number> {
+    const predicates: relationalStore.RdbPredicates =
+      new relationalStore.RdbPredicates(TABLE_CHATS);
+    predicates.equalTo(COLUMN_ID, id);
+    const rs: relationalStore.ResultSet = await store.query(predicates);
+    try {
+      if (!rs.goToNextRow()) {
+        throw DatabaseError.notFound('chat not found');
+      }
+      const col: number = rs.getColumnIndex(COLUMN_SORT_ORDER);
+      if (col < 0) {
+        return 0;
+      }
+      return rs.getLong(col);
+    } finally {
+      rs.close();
+    }
+  }
+
+  private async updateSortOrderWithStore(
+    store: relationalStore.RdbStore,
+    id: string,
+    sortOrder: number
+  ): Promise<void> {
+    const predicates: relationalStore.RdbPredicates =
+      new relationalStore.RdbPredicates(TABLE_CHATS);
+    predicates.equalTo(COLUMN_ID, id);
+    const bucket: relationalStore.ValuesBucket = {};
+    bucket[COLUMN_SORT_ORDER] = sortOrder;
+    await store.update(bucket, predicates);
   }
 
   private validateChat(chat: Chat): void {

@@ -50,6 +50,8 @@ export interface Character {
   readonly extensions: Record<string, Object>;
   /** 角色专属世界书 ID(关联 lorebooks.id) */
   readonly characterBookId: string;
+  /** 自定义排序权重(越小越靠前,v7 引入) */
+  readonly sortOrder: number;
   /** 创建时间戳(毫秒) */
   readonly createdAt: number;
   /** 更新时间戳(毫秒) */
@@ -81,7 +83,8 @@ export function createCharacter(
   creator: string = '',
   characterVersion: string = '',
   extensions: Record<string, Object> = {},
-  characterBookId: string = ''
+  characterBookId: string = '',
+  sortOrder: number = 0
 ): Character {
   const now: number = Date.now();
   return {
@@ -102,6 +105,7 @@ export function createCharacter(
     characterVersion: characterVersion,
     extensions: extensions,
     characterBookId: characterBookId.trim(),
+    sortOrder: sortOrder,
     createdAt: now,
     updatedAt: now
   };
@@ -187,6 +191,7 @@ export interface CharacterUpdates {
   characterVersion?: string;
   extensions?: Record<string, Object>;
   characterBookId?: string;
+  sortOrder?: number;
 }
 
 /**
@@ -219,6 +224,7 @@ export function updateCharacter(
     extensions: updates.extensions !== undefined ? updates.extensions : character.extensions,
     characterBookId: updates.characterBookId !== undefined
       ? updates.characterBookId.trim() : character.characterBookId,
+    sortOrder: updates.sortOrder !== undefined ? updates.sortOrder : character.sortOrder,
     createdAt: character.createdAt,
     updatedAt: Date.now()
   };

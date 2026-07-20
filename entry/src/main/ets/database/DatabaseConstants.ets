@@ -6,7 +6,7 @@
  */
 
 export const DATABASE_NAME: string = 'arktavern.db';
-export const DATABASE_VERSION: number = 6;
+export const DATABASE_VERSION: number = 7;
 
 export const TABLE_CHARACTERS: string = 'characters';
 export const TABLE_CHATS: string = 'chats';
@@ -38,6 +38,8 @@ export const COLUMN_CREATOR: string = 'creator';
 export const COLUMN_CHARACTER_VERSION: string = 'character_version';
 export const COLUMN_EXTENSIONS_JSON: string = 'extensions_json';
 export const COLUMN_CHARACTER_BOOK_ID: string = 'character_book_id';
+/** 角色卡 / 会话的自定义排序权重(越小越靠前,v7 引入) */
+export const COLUMN_SORT_ORDER: string = 'sort_order';
 
 export const COLUMN_CHARACTER_ID: string = 'character_id';
 export const COLUMN_TITLE: string = 'title';

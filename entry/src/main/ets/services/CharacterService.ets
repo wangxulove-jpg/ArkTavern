@@ -36,6 +36,13 @@ import {
 } from '../parser/CharacterCardJsonParser';
 import { writeCharacterToJson, writeCharacterToV2Json } from '../parser/CharacterCardJsonWriter';
 import { parsePngCharacterCard, PngParseResult } from '../parser/PngCharacterCardParser';
+import {
+  exportCharacterToPng,
+  generatePlaceholderPng,
+  writeCharaCardToPng,
+  PngWriteResult
+} from '../parser/PngCharacterCardWriter';
+import { convertUriToPngBytes, isPngBytes } from '../utils/ImageConverter';
 
 const LOG_TAG: string = 'CharacterService';
 
@@ -99,9 +106,12 @@ export class CharacterService {
     systemPrompt: string = ''
   ): Promise<Character> {
     this.requireInit();
+    const sortOrder: number = await this.nextSortOrder();
     const character: Character = createCharacter(
       'char-' + generateUuid(), name, description, personality,
-      scenario, firstMessage, systemPrompt
+      scenario, firstMessage, systemPrompt,
+      '', '', '', '', [], [], '', '', {}, '',
+      sortOrder
     );
     const error: string | null = validateCharacter(character);
     if (error !== null) {
@@ -181,8 +191,18 @@ export class CharacterService {
       throw new Error('CharacterService updateAvatar: not found');
     }
     const oldAvatarUri: string = existing.avatarUri;
-    // 1. 保存新头像(生成带时间戳的新文件名)
-    const newAvatarUri: string = await this.assetStore.saveAvatar(sourceUri, id);
+    // 1. 保存新头像
+    //    - 先尝试转 PNG 统一格式(支持 JPG/WebP/BMP/GIF 输入)
+    //    - 转换失败时回退到原文件直接保存(保留源扩展名)
+    let newAvatarUri: string = '';
+    try {
+      const pngBytes: Uint8Array = await convertUriToPngBytes(sourceUri);
+      newAvatarUri = await this.assetStore.savePngAvatarFromBytes(pngBytes, id);
+      Logger.info(LOG_TAG, 'updateAvatar: converted to PNG');
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'updateAvatar: convert to PNG failed, fallback to raw copy: ' + String(e));
+      newAvatarUri = await this.assetStore.saveAvatar(sourceUri, id);
+    }
     // 2. 更新数据库
     try {
       const updated: Character = await this.update(id, { avatarUri: newAvatarUri });
@@ -299,6 +319,7 @@ export class CharacterService {
     const characterBookId: string = await this.importCharacterBookIfNeeded(parsed);
 
     // 2. 创建 Character
+    const sortOrder: number = await this.nextSortOrder();
     let character: Character = createCharacter(
       'char-' + generateUuid(),
       parsed.name,
@@ -316,7 +337,8 @@ export class CharacterService {
       parsed.creator,
       parsed.characterVersion,
       parsed.extensions,
-      characterBookId
+      characterBookId,
+      sortOrder
     );
     const error: string | null = validateCharacter(character);
     if (error !== null) {
@@ -438,6 +460,131 @@ export class CharacterService {
     Logger.info(LOG_TAG, 'exportToFile ok');
   }
 
+  // ===== V2 / PNG 导出 =====
+
+  /**
+   * 导出角色为包含 character_book 的完整 V2 JSON 字符串。
+   *
+   * 流程:
+   * 1. 加载角色
+   * 2. 加载角色专属 Lorebook(若 characterBookId 非空)
+   * 3. 把 Lorebook 转换为 Tavern Card V2 character_book 结构
+   * 4. 调用 JsonWriter 写出 V2 JSON
+   *
+   * 不包含 id / avatarUri / characterBookId / createdAt / updatedAt
+   * 不包含 API Key / Provider 配置 / 聊天记录 / 本地路径
+   */
+  async exportToV2JsonWithBook(id: string): Promise<string> {
+    this.requireInit();
+    const character: Character | null = await this.repository.getById(id);
+    if (character === null) {
+      throw new Error('CharacterService exportToV2JsonWithBook: not found');
+    }
+    // 基础 V2 JSON(不含 character_book)
+    const baseJson: string = writeCharacterToV2Json(character);
+    // 加载角色专属 Lorebook
+    let characterBookJson: string = '';
+    if (character.characterBookId.length > 0 && this.lorebookRepository !== null) {
+      try {
+        const book: Lorebook | null = await this.lorebookRepository.getById(character.characterBookId);
+        if (book !== null) {
+          characterBookJson = serializeCharacterBook(book);
+        }
+      } catch (e) {
+        Logger.warn(LOG_TAG, 'exportToV2JsonWithBook: load character_book failed: ' + String(e));
+      }
+    }
+    if (characterBookJson.length === 0) {
+      return baseJson;
+    }
+    // 把 character_book 字段注入到 V2 JSON 的 data 对象中
+    return injectFieldIntoV2Json(baseJson, 'character_book', characterBookJson);
+  }
+
+  /**
+   * 读取角色头像 PNG 字节。
+   * - 头像不存在:返回 null(调用方决定使用占位 PNG)
+   * - 头像存在:返回 PNG 字节
+   * - 读取失败:抛错
+   */
+  async readAvatarBytes(id: string): Promise<Uint8Array | null> {
+    this.requireInit();
+    const character: Character | null = await this.repository.getById(id);
+    if (character === null) {
+      throw new Error('CharacterService readAvatarBytes: not found');
+    }
+    if (character.avatarUri.length === 0) {
+      return null;
+    }
+    const buffer: ArrayBuffer = await this.readFileBytes(character.avatarUri);
+    return new Uint8Array(buffer);
+  }
+
+  /**
+   * 导出角色为 PNG 字节(包含 chara tEXt chunk)。
+   *
+   * 流程:
+   * 1. 生成完整 V2 JSON(含 character_book)
+   * 2. 读取头像字节(无头像时使用占位 PNG)
+   * 3. 调用 PngCharacterCardWriter 写入 chara tEXt chunk
+   *
+   * 失败时抛错,不生成损坏文件。
+   */
+  async exportToPngBytes(id: string): Promise<Uint8Array> {
+    this.requireInit();
+    const jsonString: string = await this.exportToV2JsonWithBook(id);
+    let avatarBytes: Uint8Array | null = null;
+    try {
+      avatarBytes = await this.readAvatarBytes(id);
+      // 校验是否为合法 PNG(PNG 签名:89 50 4E 47 0D 0A 1A 0A)
+      // 头像可能是旧数据中的 JPG/WebP,调用 ImageConverter 转 PNG
+      if (avatarBytes !== null && !isPngBytes(avatarBytes)) {
+        Logger.info(LOG_TAG, 'exportToPngBytes: avatar is not PNG, converting');
+        const character: Character | null = await this.repository.getById(id);
+        if (character !== null && character.avatarUri.length > 0) {
+          avatarBytes = await convertUriToPngBytes(character.avatarUri);
+          Logger.info(LOG_TAG, 'exportToPngBytes: convert to PNG ok size=' + String(avatarBytes.byteLength));
+        } else {
+          avatarBytes = null;
+        }
+      }
+    } catch (e) {
+      // 头像读取/转换失败,使用占位 PNG
+      Logger.warn(LOG_TAG, 'exportToPngBytes: read/convert avatar failed, using placeholder: ' + String(e));
+      avatarBytes = null;
+    }
+    const result: PngWriteResult = exportCharacterToPng(avatarBytes, jsonString);
+    if (!result.success) {
+      throw new Error('PNG 导出失败: ' + result.error);
+    }
+    Logger.info(LOG_TAG, 'exportToPngBytes ok size=' + String(result.bytes.byteLength));
+    return result.bytes;
+  }
+
+  /**
+   * 将 PNG 字节写入文件 URI(由调用方通过 DocumentViewPicker.save 获取)。
+   */
+  async writePngToFile(uri: string, bytes: Uint8Array): Promise<void> {
+    try {
+      const file: fileIo.File = fileIo.openSync(uri, fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.CREATE);
+      fileIo.writeSync(file.fd, bytes.buffer as ArrayBuffer);
+      fileIo.closeSync(file);
+      Logger.info(LOG_TAG, 'writePngToFile ok size=' + String(bytes.byteLength));
+    } catch (e) {
+      Logger.error(LOG_TAG, 'writePngToFile failed: ' + String(e));
+      throw new Error('写入 PNG 文件失败');
+    }
+  }
+
+  /**
+   * 导出角色 PNG 到指定文件 URI。
+   */
+  async exportPngToFile(id: string, uri: string): Promise<void> {
+    const bytes: Uint8Array = await this.exportToPngBytes(id);
+    await this.writePngToFile(uri, bytes);
+    Logger.info(LOG_TAG, 'exportPngToFile ok');
+  }
+
   // ===== PNG 导入 =====
 
   /**
@@ -517,6 +664,7 @@ export class CharacterService {
       Logger.warn(LOG_TAG, 'confirmPngImport: character_book import failed: ' + String(e));
     }
     // 3. 创建并保存角色
+    const sortOrder: number = await this.nextSortOrder();
     const character: Character = createCharacter(
       characterId,
       parsed.name,
@@ -534,7 +682,8 @@ export class CharacterService {
       parsed.creator,
       parsed.characterVersion,
       parsed.extensions,
-      characterBookId
+      characterBookId,
+      sortOrder
     );
     const error: string | null = validateCharacter(character);
     if (error !== null) {
@@ -611,7 +760,60 @@ export class CharacterService {
     Logger.info(LOG_TAG, 'character_book imported entries=' + String(entries.length));
     return lorebook.id;
   }
+
+  /**
+   * 计算下一个 sort_order(用于新建/导入角色时分配)。
+   * 空表返回 0。
+   */
+  private async nextSortOrder(): Promise<number> {
+    const max: number = await this.repository.getMaxSortOrder();
+    return max < 0 ? 0 : max + 1;
+  }
+
+  /**
+   * 上移角色卡片(与上一条交换 sort_order)。
+   * 已是第一条时无操作返回。
+   */
+  async moveCharacterUp(id: string): Promise<void> {
+    this.requireInit();
+    const characters: Character[] = await this.repository.list();
+    let index: number = -1;
+    for (let i = 0; i < characters.length; i++) {
+      if (characters[i].id === id) {
+        index = i;
+        break;
+      }
+    }
+    if (index <= 0) {
+      return;
+    }
+    await this.repository.swapSortOrder(id, characters[index - 1].id);
+    Logger.info(LOG_TAG, 'moveCharacterUp ok');
+  }
+
+  /**
+   * 下移角色卡片(与下一条交换 sort_order)。
+   * 已是最后一条时无操作返回。
+   */
+  async moveCharacterDown(id: string): Promise<void> {
+    this.requireInit();
+    const characters: Character[] = await this.repository.list();
+    let index: number = -1;
+    for (let i = 0; i < characters.length; i++) {
+      if (characters[i].id === id) {
+        index = i;
+        break;
+      }
+    }
+    if (index < 0 || index >= characters.length - 1) {
+      return;
+    }
+    await this.repository.swapSortOrder(id, characters[index + 1].id);
+    Logger.info(LOG_TAG, 'moveCharacterDown ok');
+  }
 }
+
+/** PNG 签名校验已迁移到 utils/ImageConverter.ets 的 isPngBytes */
 
 /**
  * 将 character_book 的 position 字符串映射为 LorebookPosition 枚举。
@@ -623,6 +825,137 @@ function mapCharacterBookPosition(position: string): LorebookPosition {
     return LorebookPosition.AfterCharacter;
   }
   return LorebookPosition.BeforeCharacter;
+}
+
+/**
+ * 将 LorebookPosition 枚举映射为 Tavern Card V2 character_book 的 position 字符串。
+ */
+function lorebookPositionToV2String(position: LorebookPosition): string {
+  if (position === LorebookPosition.AfterCharacter) {
+    return 'after_char';
+  }
+  return 'before_char';
+}
+
+/**
+ * 将 Lorebook 序列化为 Tavern Card V2 character_book JSON 字符串。
+ *
+ * V2 character_book 结构:
+ * {
+ *   "name": string,
+ *   "description": string,
+ *   "scan_depth": number,
+ *   "token_budget": number,
+ *   "recursive_scanning": boolean,
+ *   "extensions": {},
+ *   "entries": [
+ *     {
+ *       "keys": string[],
+ *       "secondary_keys": string[],
+ *       "content": string,
+ *       "enabled": boolean,
+ *       "constant": boolean,
+ *       "selective": boolean,
+ *       "position": "before_char" | "after_char",
+ *       "priority": number,
+ *       "name": string,
+ *       "comment": string,
+ *       "insertion_order": number,
+ *       "case_sensitive": boolean,
+ *       "id": number,
+ *       "extensions": {}
+ *     }
+ *   ]
+ * }
+ */
+function serializeCharacterBook(book: Lorebook): string {
+  const entriesArr: CharacterBookEntryJson[] = [];
+  for (let i = 0; i < book.entries.length; i++) {
+    const entry: LorebookEntry = book.entries[i];
+    const entryJson: CharacterBookEntryJson = {
+      keys: entry.keys,
+      secondary_keys: entry.secondaryKeys,
+      content: entry.content,
+      enabled: entry.enabled,
+      constant: entry.constant,
+      selective: entry.selective,
+      position: lorebookPositionToV2String(entry.position),
+      priority: entry.priority,
+      insertion_order: i,
+      name: entry.name,
+      comment: entry.name,
+      case_sensitive: false,
+      id: i + 1,
+      extensions: new EmptyExtensions()
+    };
+    entriesArr.push(entryJson);
+  }
+  const bookJson: CharacterBookJson = {
+    name: book.name,
+    description: book.description,
+    scan_depth: 100,
+    token_budget: 2048,
+    recursive_scanning: false,
+    extensions: new EmptyExtensions(),
+    entries: entriesArr
+  };
+  return JSON.stringify(bookJson);
+}
+
+/** Tavern Card V2 character_book.entries[] 元素的 JSON 结构 */
+interface CharacterBookEntryJson {
+  keys: string[];
+  secondary_keys: string[];
+  content: string;
+  enabled: boolean;
+  constant: boolean;
+  selective: boolean;
+  position: string;
+  priority: number;
+  insertion_order: number;
+  name: string;
+  comment: string;
+  case_sensitive: boolean;
+  id: number;
+  extensions: EmptyExtensions;
+}
+
+/** Tavern Card V2 character_book 的 JSON 结构 */
+interface CharacterBookJson {
+  name: string;
+  description: string;
+  scan_depth: number;
+  token_budget: number;
+  recursive_scanning: boolean;
+  extensions: EmptyExtensions;
+  entries: CharacterBookEntryJson[];
+}
+
+/** 空 extensions 占位对象 */
+class EmptyExtensions {
+  // 空对象,用于 extensions: {}
+}
+
+/**
+ * 将一个字段注入到 V2 JSON 字符串的 data 对象中。
+ *
+ * 简单实现:利用 V2 JSON 结构固定,
+ * 找到 `"data": {` 的位置,在其后插入新字段。
+ *
+ * @param v2Json 原始 V2 JSON 字符串
+ * @param fieldName 字段名(如 'character_book')
+ * @param fieldValueJson 字段值的 JSON 字符串
+ * @returns 注入后的 V2 JSON 字符串
+ */
+function injectFieldIntoV2Json(v2Json: string, fieldName: string, fieldValueJson: string): string {
+  const dataMarker: string = '"data": {';
+  const idx: number = v2Json.indexOf(dataMarker);
+  if (idx < 0) {
+    return v2Json;
+  }
+  const insertPos: number = idx + dataMarker.length;
+  const injection: string = '\n    "' + fieldName + '": ' + fieldValueJson + ',';
+  return v2Json.slice(0, insertPos) + injection + v2Json.slice(insertPos);
 }
 
 /**
@@ -649,6 +982,7 @@ function cloneCharacterWithNewId(character: Character, newId: string): Character
     characterVersion: character.characterVersion,
     extensions: character.extensions,
     characterBookId: character.characterBookId,
+    sortOrder: character.sortOrder,
     createdAt: character.createdAt,
     updatedAt: character.updatedAt
   };

@@ -108,7 +108,8 @@ import {
   INDEX_CONVERSATION_BRANCHES_CHAT_ID,
   INDEX_CONVERSATION_BRANCHES_PARENT_ID,
   INDEX_BRANCH_MESSAGES_MESSAGE_ID,
-  INDEX_BRANCH_SWIPE_SELECTIONS_MESSAGE_ID
+  INDEX_BRANCH_SWIPE_SELECTIONS_MESSAGE_ID,
+  COLUMN_SORT_ORDER
 } from './DatabaseConstants';
 
 const CREATE_CHARACTERS_TABLE: string =
@@ -131,7 +132,8 @@ const CREATE_CHARACTERS_TABLE: string =
   `${COLUMN_CREATOR} TEXT NOT NULL DEFAULT '', ` +
   `${COLUMN_CHARACTER_VERSION} TEXT NOT NULL DEFAULT '', ` +
   `${COLUMN_EXTENSIONS_JSON} TEXT NOT NULL DEFAULT '{}', ` +
-  `${COLUMN_CHARACTER_BOOK_ID} TEXT NOT NULL DEFAULT ''` +
+  `${COLUMN_CHARACTER_BOOK_ID} TEXT NOT NULL DEFAULT '', ` +
+  `${COLUMN_SORT_ORDER} INTEGER NOT NULL DEFAULT 0` +
   `)`;
 
 const CREATE_CHATS_TABLE: string =
@@ -142,7 +144,8 @@ const CREATE_CHATS_TABLE: string =
   `${COLUMN_CREATED_AT} INTEGER NOT NULL, ` +
   `${COLUMN_UPDATED_AT} INTEGER NOT NULL, ` +
   `${COLUMN_LAST_MESSAGE_AT} INTEGER NOT NULL DEFAULT 0, ` +
-  `${COLUMN_IS_ARCHIVED} INTEGER NOT NULL DEFAULT 0` +
+  `${COLUMN_IS_ARCHIVED} INTEGER NOT NULL DEFAULT 0, ` +
+  `${COLUMN_SORT_ORDER} INTEGER NOT NULL DEFAULT 0` +
   `)`;
 
 const CREATE_MESSAGES_TABLE: string =
@@ -435,6 +438,18 @@ const ALTER_CHARACTERS_ADD_EXTENSIONS_JSON: string =
 const ALTER_CHARACTERS_ADD_CHARACTER_BOOK_ID: string =
   `ALTER TABLE ${TABLE_CHARACTERS} ADD COLUMN ${COLUMN_CHARACTER_BOOK_ID} TEXT NOT NULL DEFAULT ''`;
 
+// ===== v7: 为 characters / chats 添加 sort_order 字段 =====
+const ALTER_CHARACTERS_ADD_SORT_ORDER: string =
+  `ALTER TABLE ${TABLE_CHARACTERS} ADD COLUMN ${COLUMN_SORT_ORDER} INTEGER NOT NULL DEFAULT 0`;
+const ALTER_CHATS_ADD_SORT_ORDER: string =
+  `ALTER TABLE ${TABLE_CHATS} ADD COLUMN ${COLUMN_SORT_ORDER} INTEGER NOT NULL DEFAULT 0`;
+
+/** v6→v7 迁移 SQL(添加 sort_order 字段;数据回填在迁移类中处理) */
+export const V6_TO_V7_STATEMENTS: string[] = [
+  ALTER_CHARACTERS_ADD_SORT_ORDER,
+  ALTER_CHATS_ADD_SORT_ORDER
+];
+
 /** v5→v6 迁移 SQL(为 characters 表添加 Tavern Card V2 字段) */
 export const V5_TO_V6_STATEMENTS: string[] = [
   ALTER_CHARACTERS_ADD_MES_EXAMPLE,
@@ -451,6 +466,11 @@ export const V5_TO_V6_STATEMENTS: string[] = [
 /** v6 完整 Schema(新安装使用,CREATE_CHARACTERS_TABLE 已包含 V2 字段) */
 export const V6_SCHEMA_STATEMENTS: string[] = [
   ...V5_SCHEMA_STATEMENTS
+];
+
+/** v7 完整 Schema(新安装使用,CREATE_CHARACTERS_TABLE / CREATE_CHATS_TABLE 已包含 sort_order) */
+export const V7_SCHEMA_STATEMENTS: string[] = [
+  ...V6_SCHEMA_STATEMENTS
 ];
 
 export function getSchemaStatements(version: number): string[] {
@@ -471,6 +491,9 @@ export function getSchemaStatements(version: number): string[] {
   }
   if (version === 6) {
     return [...V6_SCHEMA_STATEMENTS];
+  }
+  if (version === 7) {
+    return [...V7_SCHEMA_STATEMENTS];
   }
   return [];
 }

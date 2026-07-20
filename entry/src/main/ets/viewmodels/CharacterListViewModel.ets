@@ -155,6 +155,30 @@ export class CharacterListViewModel {
     }
   }
 
+  /** 上移角色卡片 */
+  async moveUp(id: string): Promise<void> {
+    this.errorMessage = '';
+    try {
+      await this.service.moveCharacterUp(id);
+      await this.load();
+    } catch (e) {
+      this.errorMessage = '上移失败: ' + String(e);
+      Logger.error(LOG_TAG, 'moveUp failed: ' + String(e));
+    }
+  }
+
+  /** 下移角色卡片 */
+  async moveDown(id: string): Promise<void> {
+    this.errorMessage = '';
+    try {
+      await this.service.moveCharacterDown(id);
+      await this.load();
+    } catch (e) {
+      this.errorMessage = '下移失败: ' + String(e);
+      Logger.error(LOG_TAG, 'moveDown failed: ' + String(e));
+    }
+  }
+
   /** 是否为当前角色 */
   isCurrent(character: Character): boolean {
     return this.currentCharacterId === character.id;

@@ -17,6 +17,8 @@ export interface Chat {
   readonly updatedAt: number;
   readonly lastMessageAt: number;
   readonly isArchived: boolean;
+  /** 自定义排序权重(越小越靠前,v7 引入) */
+  readonly sortOrder: number;
 }
 
 export interface CreateChatOptions {
@@ -24,6 +26,7 @@ export interface CreateChatOptions {
   readonly characterId?: string;
   readonly title?: string;
   readonly createdAt?: number;
+  readonly sortOrder?: number;
 }
 
 export interface ChatUpdates {
@@ -32,6 +35,7 @@ export interface ChatUpdates {
   readonly updatedAt?: number;
   readonly lastMessageAt?: number;
   readonly isArchived?: boolean;
+  readonly sortOrder?: number;
 }
 
 export function createChat(options?: CreateChatOptions): Chat {
@@ -51,6 +55,10 @@ export function createChat(options?: CreateChatOptions): Chat {
     options !== undefined && options.createdAt !== undefined
       ? options.createdAt
       : now;
+  const sortOrder: number =
+    options !== undefined && options.sortOrder !== undefined
+      ? options.sortOrder
+      : 0;
   return {
     id: id,
     characterId: characterId,
@@ -58,7 +66,8 @@ export function createChat(options?: CreateChatOptions): Chat {
     createdAt: createdAt,
     updatedAt: now,
     lastMessageAt: 0,
-    isArchived: false
+    isArchived: false,
+    sortOrder: sortOrder
   };
 }
 
@@ -75,6 +84,8 @@ export function updateChat(chat: Chat, updates: ChatUpdates): Chat {
     updates.lastMessageAt !== undefined ? updates.lastMessageAt : chat.lastMessageAt;
   const isArchived: boolean =
     updates.isArchived !== undefined ? updates.isArchived : chat.isArchived;
+  const sortOrder: number =
+    updates.sortOrder !== undefined ? updates.sortOrder : chat.sortOrder;
   return {
     id: chat.id,
     characterId: characterId,
@@ -82,6 +93,7 @@ export function updateChat(chat: Chat, updates: ChatUpdates): Chat {
     createdAt: chat.createdAt,
     updatedAt: updatedAt,
     lastMessageAt: lastMessageAt,
-    isArchived: isArchived
+    isArchived: isArchived,
+    sortOrder: sortOrder
   };
 }
