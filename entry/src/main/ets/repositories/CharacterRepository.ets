@@ -36,7 +36,16 @@ import {
   COLUMN_SYSTEM_PROMPT,
   COLUMN_AVATAR_URI,
   COLUMN_CREATED_AT,
-  COLUMN_UPDATED_AT
+  COLUMN_UPDATED_AT,
+  COLUMN_MES_EXAMPLE,
+  COLUMN_CREATOR_NOTES,
+  COLUMN_POST_HISTORY_INSTRUCTIONS,
+  COLUMN_ALTERNATE_GREETINGS_JSON,
+  COLUMN_TAGS_JSON,
+  COLUMN_CREATOR,
+  COLUMN_CHARACTER_VERSION,
+  COLUMN_EXTENSIONS_JSON,
+  COLUMN_CHARACTER_BOOK_ID
 } from '../database/DatabaseConstants';
 import {
   isValidTimestamp,
@@ -58,6 +67,7 @@ export interface CharacterImportResult {
 
 /**
  * 将 Character 转换为 ValuesBucket。
+ * alternateGreetings / tags / extensions 序列化为 JSON 字符串存储。
  * 不修改输入对象。
  */
 function characterToBucket(character: Character): relationalStore.ValuesBucket {
@@ -72,11 +82,21 @@ function characterToBucket(character: Character): relationalStore.ValuesBucket {
   bucket[COLUMN_AVATAR_URI] = character.avatarUri;
   bucket[COLUMN_CREATED_AT] = character.createdAt;
   bucket[COLUMN_UPDATED_AT] = character.updatedAt;
+  bucket[COLUMN_MES_EXAMPLE] = character.mesExample;
+  bucket[COLUMN_CREATOR_NOTES] = character.creatorNotes;
+  bucket[COLUMN_POST_HISTORY_INSTRUCTIONS] = character.postHistoryInstructions;
+  bucket[COLUMN_ALTERNATE_GREETINGS_JSON] = JSON.stringify(character.alternateGreetings);
+  bucket[COLUMN_TAGS_JSON] = JSON.stringify(character.tags);
+  bucket[COLUMN_CREATOR] = character.creator;
+  bucket[COLUMN_CHARACTER_VERSION] = character.characterVersion;
+  bucket[COLUMN_EXTENSIONS_JSON] = JSON.stringify(character.extensions);
+  bucket[COLUMN_CHARACTER_BOOK_ID] = character.characterBookId;
   return bucket;
 }
 
 /**
  * 从 ResultSet 当前行读取 Character。
+ * 兼容旧版本(数据库未升级时新列可能不存在,getColumnIndex 返回 -1)。
  * 非法字段抛 InvalidData,不返回半合法对象。
  */
 function characterFromRow(rs: relationalStore.ResultSet): Character {
@@ -102,6 +122,18 @@ function characterFromRow(rs: relationalStore.ResultSet): Character {
   if (!isValidTimestamp(updatedAt)) {
     throw DatabaseError.invalidData('character.updatedAt invalid');
   }
+
+  // ===== V2 扩展字段(向后兼容:列不存在或解析失败时使用默认值) =====
+  const mesExample: string = readStringColumnSafe(rs, COLUMN_MES_EXAMPLE, '');
+  const creatorNotes: string = readStringColumnSafe(rs, COLUMN_CREATOR_NOTES, '');
+  const postHistoryInstructions: string = readStringColumnSafe(rs, COLUMN_POST_HISTORY_INSTRUCTIONS, '');
+  const alternateGreetings: string[] = readStringArrayColumnSafe(rs, COLUMN_ALTERNATE_GREETINGS_JSON);
+  const tags: string[] = readStringArrayColumnSafe(rs, COLUMN_TAGS_JSON);
+  const creator: string = readStringColumnSafe(rs, COLUMN_CREATOR, '');
+  const characterVersion: string = readStringColumnSafe(rs, COLUMN_CHARACTER_VERSION, '');
+  const extensions: Record<string, Object> = readObjectColumnSafe(rs, COLUMN_EXTENSIONS_JSON);
+  const characterBookId: string = readStringColumnSafe(rs, COLUMN_CHARACTER_BOOK_ID, '');
+
   return {
     id: id,
     name: name,
@@ -111,9 +143,90 @@ function characterFromRow(rs: relationalStore.ResultSet): Character {
     firstMessage: firstMessage,
     systemPrompt: systemPrompt,
     avatarUri: avatarUri,
+    mesExample: mesExample,
+    creatorNotes: creatorNotes,
+    postHistoryInstructions: postHistoryInstructions,
+    alternateGreetings: alternateGreetings,
+    tags: tags,
+    creator: creator,
+    characterVersion: characterVersion,
+    extensions: extensions,
+    characterBookId: characterBookId,
     createdAt: createdAt,
     updatedAt: updatedAt
   };
+}
+
+/**
+ * 安全读取字符串列,列不存在或类型错误时返回默认值。
+ */
+function readStringColumnSafe(rs: relationalStore.ResultSet, columnName: string, defaultValue: string): string {
+  const col: number = rs.getColumnIndex(columnName);
+  if (col < 0) {
+    return defaultValue;
+  }
+  try {
+    const value: string = rs.getString(col);
+    return value !== null && value !== undefined ? value : defaultValue;
+  } catch (e) {
+    return defaultValue;
+  }
+}
+
+/**
+ * 安全读取字符串数组列(JSON 字符串)。
+ * 列不存在或解析失败时返回空数组。
+ */
+function readStringArrayColumnSafe(rs: relationalStore.ResultSet, columnName: string): string[] {
+  const col: number = rs.getColumnIndex(columnName);
+  if (col < 0) {
+    return [];
+  }
+  try {
+    const raw: string = rs.getString(col);
+    if (raw === null || raw === undefined || raw.length === 0) {
+      return [];
+    }
+    const parsed: Object = JSON.parse(raw) as Object;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    const arr: Object[] = parsed as Object[];
+    const result: string[] = [];
+    for (let i = 0; i < arr.length; i++) {
+      const item: Object = arr[i];
+      if (typeof item === 'string') {
+        result.push(item as string);
+      }
+    }
+    return result;
+  } catch (e) {
+    return [];
+  }
+}
+
+/**
+ * 安全读取对象列(JSON 字符串)。
+ * 列不存在或解析失败时返回空对象。
+ */
+function readObjectColumnSafe(rs: relationalStore.ResultSet, columnName: string): Record<string, Object> {
+  const col: number = rs.getColumnIndex(columnName);
+  if (col < 0) {
+    return {};
+  }
+  try {
+    const raw: string = rs.getString(col);
+    if (raw === null || raw === undefined || raw.length === 0) {
+      return {};
+    }
+    const parsed: Object = JSON.parse(raw) as Object;
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      return {};
+    }
+    return parsed as Record<string, Object>;
+  } catch (e) {
+    return {};
+  }
 }
 
 export class CharacterRepository {
@@ -224,6 +337,15 @@ export class CharacterRepository {
     bucket[COLUMN_SYSTEM_PROMPT] = character.systemPrompt;
     bucket[COLUMN_AVATAR_URI] = character.avatarUri;
     bucket[COLUMN_UPDATED_AT] = character.updatedAt;
+    bucket[COLUMN_MES_EXAMPLE] = character.mesExample;
+    bucket[COLUMN_CREATOR_NOTES] = character.creatorNotes;
+    bucket[COLUMN_POST_HISTORY_INSTRUCTIONS] = character.postHistoryInstructions;
+    bucket[COLUMN_ALTERNATE_GREETINGS_JSON] = JSON.stringify(character.alternateGreetings);
+    bucket[COLUMN_TAGS_JSON] = JSON.stringify(character.tags);
+    bucket[COLUMN_CREATOR] = character.creator;
+    bucket[COLUMN_CHARACTER_VERSION] = character.characterVersion;
+    bucket[COLUMN_EXTENSIONS_JSON] = JSON.stringify(character.extensions);
+    bucket[COLUMN_CHARACTER_BOOK_ID] = character.characterBookId;
 
     const predicates: relationalStore.RdbPredicates =
       new relationalStore.RdbPredicates(TABLE_CHARACTERS);

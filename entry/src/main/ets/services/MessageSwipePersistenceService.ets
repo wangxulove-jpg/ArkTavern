@@ -57,7 +57,14 @@ const LOG_TAG: string = 'MessageSwipe';
 
 /**
  * 判断消息是否可建立 Swipe。
- * 只允许: role=Assistant, source=Conversation 或 undefined。
+ * 允许 role=Assistant 且 source ∈ {Conversation, CharacterFirstMessage}。
+ *
+ * CharacterFirstMessage 可 Swipe 的用途:
+ * - 当角色有 alternate_greetings 时,first_mes 作为 Candidate 0,
+ *   alternate_greetings[i] 作为 Candidate 1..N
+ * - 用户可以在开场白之间切换(Swipe)
+ * - 用户也可以基于当前开场白生成新的 Swipe 候选(T-6.4B-1.2 Branch 模式,
+ *   由 ChatService.regenerateLastResponse / generateAlternativeCandidate 处理)
  */
 function isSwipeableMessage(message: ChatMessage): boolean {
   if (message.role !== ChatRole.Assistant) {
@@ -67,7 +74,8 @@ function isSwipeableMessage(message: ChatMessage): boolean {
   if (source === undefined) {
     return true; // 旧数据 undefined 视为 Conversation
   }
-  return source === ChatMessageSource.Conversation;
+  return source === ChatMessageSource.Conversation
+    || source === ChatMessageSource.CharacterFirstMessage;
 }
 
 export class MessageSwipePersistenceService {

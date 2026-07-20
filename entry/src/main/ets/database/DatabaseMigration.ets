@@ -14,7 +14,7 @@
  */
 
 import { relationalStore } from '@kit.ArkData';
-import { V1_TO_V2_STATEMENTS, V2_TO_V3_STATEMENTS, V3_TO_V4_STATEMENTS, V4_TO_V5_DDL_STATEMENTS } from './DatabaseSchema';
+import { V1_TO_V2_STATEMENTS, V2_TO_V3_STATEMENTS, V3_TO_V4_STATEMENTS, V4_TO_V5_DDL_STATEMENTS, V5_TO_V6_STATEMENTS } from './DatabaseSchema';
 import {
   TABLE_CHATS,
   TABLE_MESSAGES,
@@ -336,4 +336,31 @@ class V4ToV5Migration implements DatabaseMigration {
 interface BranchSwipeMigrationEntry {
   readonly assistantMessageId: string;
   readonly activeCandidateIndex: number;
+}
+
+/**
+ * 创建 v5→v6 数据库迁移。
+ *
+ * 事务中执行:
+ * 1. 为 characters 表添加 Tavern Card V2 扩展字段
+ *    (mes_example / creator_notes / post_history_instructions /
+ *     alternate_greetings_json / tags_json / creator / character_version /
+ *     extensions_json / character_book_id)
+ * 2. 旧角色新字段使用 DEFAULT 值('' / '[]' / '{}'),不强制填写
+ * 3. 任一失败全部回滚,不影响旧数据
+ * 4. 不修改 Message / Branch / Swipe 等其他表
+ */
+export function createV5ToV6Migration(): DatabaseMigration {
+  return new V5ToV6Migration();
+}
+
+class V5ToV6Migration implements DatabaseMigration {
+  readonly fromVersion: number = 5;
+  readonly toVersion: number = 6;
+
+  async migrate(store: relationalStore.RdbStore): Promise<void> {
+    for (let i = 0; i < V5_TO_V6_STATEMENTS.length; i++) {
+      await store.executeSql(V5_TO_V6_STATEMENTS[i]);
+    }
+  }
 }

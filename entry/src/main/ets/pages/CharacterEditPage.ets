@@ -1,8 +1,18 @@
 /**
  * CharacterEditPage 全屏角色编辑页(UI-3B-2)
+ *
  * 顶部:返回 + 分段切换(角色/对话) + 保存
- * 角色:图片 / 名称 / 描述 / 性格
- * 对话:System Prompt / 场景 / 开场白
+ * 角色分段:图片 → 名称 → 描述 → 性格 → 标签 → 创作者 → 角色卡版本 → 创作者备注
+ * 对话分段:场景 → 开场白 → 备用开场白 → 对话示例 → System Prompt → Post-History Instructions → 角色专属世界书
+ *
+ * 字段策略:
+ * - tags / creator / character_version / creator_notes 只作元数据,不进入 PromptBuilder
+ * - alternate_greetings 作为开场白的额外 Swipe 候选(可增删、可排序)
+ * - mes_example 进入 PromptBuilder 作为对话示例
+ * - system_prompt 空时使用默认组合,非空时支持 {{original}}
+ * - post_history_instructions 放在聊天历史之后
+ * - character_book 复用 Lorebook 编辑能力(只读展示关联 ID)
+ *
  * 路由参数:{ characterId: string } 编辑模式;undefined 新建模式。
  */
 
@@ -24,6 +34,12 @@ struct CharacterEditPage {
   @State errorMessage: string = '';
   @State activeTab: number = TAB_CHARACTER;
   @State showDiscardDialog: boolean = false;
+  /** 标签输入框当前内容(独立于 formState,只在添加时回写到 formState) */
+  @State tagInputDraft: string = '';
+  /** 备用开场白编辑态:正在编辑的索引(空表示未进入编辑) */
+  @State editingGreetingIndex: number = -1;
+  /** 备用开场白编辑态:正在编辑的内容草稿 */
+  @State editingGreetingDraft: string = '';
   /** 顶部状态栏避让高度(由 EntryAbility 写入 AppStorage) */
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   /** 底部导航栏/手势条避让高度 */
@@ -196,6 +212,7 @@ struct CharacterEditPage {
   }
 
   // ===== "角色"分段 =====
+  // 顺序:图片 → 名称 → 描述 → 性格 → 标签 → 创作者 → 角色卡版本 → 创作者备注
   @Builder
   characterTab() {
     Scroll() {
@@ -234,6 +251,44 @@ struct CharacterEditPage {
           (value: string) => {
             const updated = copyFormState(this.formState);
             updated.personalityInput = value;
+            this.formState = updated;
+          }
+        )
+
+        this.tagsSection()
+
+        this.textFieldRow(
+          $r('app.string.character_edit_field_creator'),
+          $r('app.string.character_edit_field_creator_placeholder'),
+          false,
+          this.formState.creatorInput,
+          (value: string) => {
+            const updated = copyFormState(this.formState);
+            updated.creatorInput = value;
+            this.formState = updated;
+          }
+        )
+
+        this.textFieldRow(
+          $r('app.string.character_edit_field_character_version'),
+          $r('app.string.character_edit_field_character_version_placeholder'),
+          false,
+          this.formState.characterVersionInput,
+          (value: string) => {
+            const updated = copyFormState(this.formState);
+            updated.characterVersionInput = value;
+            this.formState = updated;
+          }
+        )
+
+        this.multilineField(
+          $r('app.string.character_edit_field_creator_notes'),
+          $r('app.string.character_edit_field_creator_notes_placeholder'),
+          undefined,
+          this.formState.creatorNotesInput,
+          (value: string) => {
+            const updated = copyFormState(this.formState);
+            updated.creatorNotesInput = value;
             this.formState = updated;
           }
         )
@@ -304,23 +359,328 @@ struct CharacterEditPage {
     .alignSelf(ItemAlign.Center)
   }
 
+  /** 标签编辑区域:输入 + 添加按钮 + 标签列表(可删除) */
+  @Builder
+  tagsSection() {
+    Column() {
+      Row() {
+        Text($r('app.string.character_edit_field_tags'))
+          .fontSize($r('app.float.app_font_subtitle'))
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.app_text_primary'))
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+      .margin({ bottom: 8 })
+
+      Row() {
+        TextInput({ placeholder: $r('app.string.character_edit_field_tags_placeholder'), text: this.tagInputDraft })
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor($r('app.color.app_text_primary'))
+          .backgroundColor($r('app.color.app_surface_2'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(40)
+          .layoutWeight(1)
+          .padding({ left: 12, right: 12 })
+          .onChange((value: string) => {
+            this.tagInputDraft = value;
+          })
+
+        Button($r('app.string.character_edit_tag_add'))
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor($r('app.color.app_on_accent'))
+          .backgroundColor($r('app.color.app_accent'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(40)
+          .margin({ left: 8 })
+          .padding({ left: 12, right: 12 })
+          .enabled(this.tagInputDraft.trim().length > 0)
+          .onClick(() => {
+            this.addTagFromDraft();
+          })
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      Text($r('app.string.character_edit_field_tags_hint'))
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_tertiary'))
+        .width('100%')
+        .margin({ top: 6 })
+        .textAlign(TextAlign.Start)
+
+      if (this.formState.tagsInput.length > 0) {
+        Flex({ wrap: FlexWrap.Wrap }) {
+          ForEach(this.formState.tagsInput, (tag: string, index: number) => {
+            Row() {
+              Text(tag)
+                .fontSize($r('app.float.app_font_caption'))
+                .fontColor($r('app.color.app_text_primary'))
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .margin({ right: 6 })
+
+              Text('×')
+                .fontSize(16)
+                .fontColor($r('app.color.app_text_secondary'))
+                .onClick(() => {
+                  this.removeTagAtIndex(index);
+                })
+            }
+            .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+            .margin({ right: 8, top: 6 })
+            .backgroundColor($r('app.color.app_surface_2'))
+            .borderRadius($r('app.float.app_radius_sm'))
+            .alignItems(VerticalAlign.Center)
+          }, (tag: string, index: number) => tag + '|' + String(index))
+        }
+        .width('100%')
+        .margin({ top: 4 })
+      }
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+    .margin({ bottom: 24 })
+  }
+
+  /** 备用开场白编辑区域:可增删、可排序的列表 */
+  @Builder
+  alternateGreetingsSection() {
+    Column() {
+      Row() {
+        Text($r('app.string.character_edit_alternate_greetings'))
+          .fontSize($r('app.float.app_font_subtitle'))
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.app_text_primary'))
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+      .margin({ bottom: 8 })
+
+      Text($r('app.string.character_edit_alternate_greetings_hint'))
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_tertiary'))
+        .width('100%')
+        .margin({ bottom: 8 })
+        .textAlign(TextAlign.Start)
+
+      if (this.formState.alternateGreetingsInput.length === 0) {
+        Text($r('app.string.character_edit_alternate_greetings_empty'))
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_tertiary'))
+          .width('100%')
+          .padding({ top: 12, bottom: 12 })
+          .textAlign(TextAlign.Center)
+          .backgroundColor($r('app.color.app_surface_2'))
+          .borderRadius($r('app.float.app_radius_md'))
+      } else {
+        ForEach(this.formState.alternateGreetingsInput, (greeting: string, index: number) => {
+          this.greetingItemCard(greeting, index)
+        }, (greeting: string, index: number) => String(index) + '|' + greeting.length.toString())
+      }
+
+      Button($r('app.string.character_edit_alternate_greetings_add'))
+        .fontSize($r('app.float.app_font_body'))
+        .fontColor($r('app.color.app_accent'))
+        .backgroundColor(Color.Transparent)
+        .borderWidth(1)
+        .borderColor($r('app.color.app_accent'))
+        .borderRadius($r('app.float.app_radius_md'))
+        .height(40)
+        .width('100%')
+        .margin({ top: 8 })
+        .onClick(() => {
+          this.startAddGreeting();
+        })
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+    .margin({ bottom: 24 })
+  }
+
+  /** 单条备用开场白卡片:内容预览 + 排序按钮 + 编辑/删除按钮 */
+  @Builder
+  greetingItemCard(greeting: string, index: number) {
+    Column() {
+      // 内容预览或编辑框
+      if (this.editingGreetingIndex === index) {
+        TextArea({ placeholder: $r('app.string.character_edit_alternate_greetings_placeholder'), text: this.editingGreetingDraft })
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor($r('app.color.app_text_primary'))
+          .backgroundColor($r('app.color.app_surface_2'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(100)
+          .width('100%')
+          .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+          .onChange((value: string) => {
+            this.editingGreetingDraft = value;
+          })
+
+        Row() {
+          Button('取消')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_secondary'))
+            .backgroundColor($r('app.color.app_surface_2'))
+            .borderRadius($r('app.float.app_radius_sm'))
+            .height(32)
+            .layoutWeight(1)
+            .onClick(() => {
+              this.cancelEditGreeting();
+            })
+
+          Button('保存')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_on_accent'))
+            .backgroundColor($r('app.color.app_accent'))
+            .borderRadius($r('app.float.app_radius_sm'))
+            .height(32)
+            .layoutWeight(1)
+            .margin({ left: 8 })
+            .enabled(this.editingGreetingDraft.trim().length > 0)
+            .onClick(() => {
+              this.confirmEditGreeting(index);
+            })
+        }
+        .width('100%')
+        .margin({ top: 8 })
+      } else {
+        Text(greeting)
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor($r('app.color.app_text_primary'))
+          .width('100%')
+          .maxLines(4)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .padding({ left: 12, right: 12, top: 12, bottom: 12 })
+          .onClick(() => {
+            this.startEditGreeting(index);
+          })
+      }
+
+      // 操作按钮行(只在非编辑态显示)
+      if (this.editingGreetingIndex !== index) {
+        Row() {
+          Text('#' + String(index + 1))
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_tertiary'))
+            .layoutWeight(1)
+
+          Button() {
+            Text('↑')
+              .fontSize(14)
+              .fontColor($r('app.color.app_text_secondary'))
+          }
+          .width(32)
+          .height(32)
+          .backgroundColor(Color.Transparent)
+          .borderRadius($r('app.float.app_radius_sm'))
+          .enabled(index > 0)
+          .onClick(() => {
+            this.moveGreeting(index, index - 1);
+          })
+
+          Button() {
+            Text('↓')
+              .fontSize(14)
+              .fontColor($r('app.color.app_text_secondary'))
+          }
+          .width(32)
+          .height(32)
+          .backgroundColor(Color.Transparent)
+          .borderRadius($r('app.float.app_radius_sm'))
+          .margin({ left: 4 })
+          .enabled(index < this.formState.alternateGreetingsInput.length - 1)
+          .onClick(() => {
+            this.moveGreeting(index, index + 1);
+          })
+
+          Button('编辑')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_primary'))
+            .backgroundColor($r('app.color.app_surface_2'))
+            .borderRadius($r('app.float.app_radius_sm'))
+            .height(32)
+            .margin({ left: 4 })
+            .padding({ left: 10, right: 10 })
+            .onClick(() => {
+              this.startEditGreeting(index);
+            })
+
+          Button('删除')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_danger'))
+            .backgroundColor($r('app.color.app_surface_2'))
+            .borderRadius($r('app.float.app_radius_sm'))
+            .height(32)
+            .margin({ left: 4 })
+            .padding({ left: 10, right: 10 })
+            .onClick(() => {
+              this.removeGreeting(index);
+            })
+        }
+        .width('100%')
+        .padding({ left: 12, right: 12, bottom: 8 })
+        .alignItems(VerticalAlign.Center)
+      }
+    }
+    .width('100%')
+    .backgroundColor($r('app.color.app_surface_2'))
+    .borderRadius($r('app.float.app_radius_md'))
+    .margin({ top: 8 })
+  }
+
+  /** 角色专属世界书区域:只读展示关联 ID */
+  @Builder
+  characterBookSection() {
+    Column() {
+      Row() {
+        Text($r('app.string.character_edit_character_book'))
+          .fontSize($r('app.float.app_font_subtitle'))
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.app_text_primary'))
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+      .margin({ bottom: 8 })
+
+      if (this.formState.characterBookIdInput.length > 0) {
+        Text(this.formState.characterBookIdInput)
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor($r('app.color.app_text_primary'))
+          .width('100%')
+          .padding({ left: 12, right: 12, top: 12, bottom: 12 })
+          .backgroundColor($r('app.color.app_surface_2'))
+          .borderRadius($r('app.float.app_radius_md'))
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      } else {
+        Text($r('app.string.character_edit_character_book_empty'))
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor($r('app.color.app_text_tertiary'))
+          .width('100%')
+          .padding({ left: 12, right: 12, top: 12, bottom: 12 })
+          .backgroundColor($r('app.color.app_surface_2'))
+          .borderRadius($r('app.float.app_radius_md'))
+          .textAlign(TextAlign.Center)
+      }
+
+      Text($r('app.string.character_edit_character_book_hint'))
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_tertiary'))
+        .width('100%')
+        .margin({ top: 6 })
+        .textAlign(TextAlign.Start)
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+    .margin({ bottom: 24 })
+  }
+
   // ===== "对话"分段 =====
+  // 顺序:场景 → 开场白 → 备用开场白 → 对话示例 → System Prompt → Post-History Instructions → 角色专属世界书
   @Builder
   conversationTab() {
     Scroll() {
       Column() {
-        this.multilineField(
-          $r('app.string.character_edit_field_system_prompt'),
-          $r('app.string.character_edit_field_system_prompt_placeholder'),
-          $r('app.string.character_edit_field_system_prompt_hint'),
-          this.formState.systemPromptInput,
-          (value: string) => {
-            const updated = copyFormState(this.formState);
-            updated.systemPromptInput = value;
-            this.formState = updated;
-          }
-        )
-
         this.multilineField(
           $r('app.string.character_edit_field_scenario'),
           $r('app.string.character_edit_field_scenario_placeholder'),
@@ -344,6 +704,46 @@ struct CharacterEditPage {
             this.formState = updated;
           }
         )
+
+        this.alternateGreetingsSection()
+
+        this.multilineField(
+          $r('app.string.character_edit_field_mes_example'),
+          $r('app.string.character_edit_field_mes_example_placeholder'),
+          $r('app.string.character_edit_field_mes_example_hint'),
+          this.formState.mesExampleInput,
+          (value: string) => {
+            const updated = copyFormState(this.formState);
+            updated.mesExampleInput = value;
+            this.formState = updated;
+          }
+        )
+
+        this.multilineField(
+          $r('app.string.character_edit_field_system_prompt'),
+          $r('app.string.character_edit_field_system_prompt_placeholder'),
+          $r('app.string.character_edit_field_system_prompt_hint'),
+          this.formState.systemPromptInput,
+          (value: string) => {
+            const updated = copyFormState(this.formState);
+            updated.systemPromptInput = value;
+            this.formState = updated;
+          }
+        )
+
+        this.multilineField(
+          $r('app.string.character_edit_field_post_history'),
+          $r('app.string.character_edit_field_post_history_placeholder'),
+          $r('app.string.character_edit_field_post_history_hint'),
+          this.formState.postHistoryInstructionsInput,
+          (value: string) => {
+            const updated = copyFormState(this.formState);
+            updated.postHistoryInstructionsInput = value;
+            this.formState = updated;
+          }
+        )
+
+        this.characterBookSection()
       }
       .width('100%')
       .padding({
@@ -493,6 +893,125 @@ struct CharacterEditPage {
     .width('100%').height('100%').backgroundColor('rgba(0,0,0,0.5)')
   }
 
+  // ===== 标签操作 =====
+  private addTagFromDraft(): void {
+    const trimmed: string = this.tagInputDraft.trim();
+    if (trimmed.length === 0) {
+      return;
+    }
+    // 检查重复(大小写不敏感)
+    const lower: string = trimmed.toLowerCase();
+    for (let i = 0; i < this.formState.tagsInput.length; i++) {
+      if (this.formState.tagsInput[i].toLowerCase() === lower) {
+        this.tagInputDraft = '';
+        return;
+      }
+    }
+    const updated = copyFormState(this.formState);
+    updated.tagsInput = updated.tagsInput.concat([trimmed]);
+    this.formState = updated;
+    this.tagInputDraft = '';
+  }
+
+  private removeTagAtIndex(index: number): void {
+    if (index < 0 || index >= this.formState.tagsInput.length) {
+      return;
+    }
+    const updated = copyFormState(this.formState);
+    const next: string[] = [];
+    for (let i = 0; i < updated.tagsInput.length; i++) {
+      if (i !== index) {
+        next.push(updated.tagsInput[i]);
+      }
+    }
+    updated.tagsInput = next;
+    this.formState = updated;
+  }
+
+  // ===== 备用开场白操作 =====
+  private startAddGreeting(): void {
+    // 用 -1 表示"新建"模式,进入编辑态
+    this.editingGreetingIndex = -1;
+    this.editingGreetingDraft = '';
+  }
+
+  private startEditGreeting(index: number): void {
+    if (index < 0 || index >= this.formState.alternateGreetingsInput.length) {
+      return;
+    }
+    this.editingGreetingIndex = index;
+    this.editingGreetingDraft = this.formState.alternateGreetingsInput[index];
+  }
+
+  private cancelEditGreeting(): void {
+    this.editingGreetingIndex = -1;
+    this.editingGreetingDraft = '';
+  }
+
+  private confirmEditGreeting(index: number): void {
+    const trimmed: string = this.editingGreetingDraft.trim();
+    if (trimmed.length === 0) {
+      return;
+    }
+    const updated = copyFormState(this.formState);
+    if (index === -1) {
+      // 新增
+      updated.alternateGreetingsInput = updated.alternateGreetingsInput.concat([trimmed]);
+    } else {
+      // 编辑现有
+      const next: string[] = [];
+      for (let i = 0; i < updated.alternateGreetingsInput.length; i++) {
+        if (i === index) {
+          next.push(trimmed);
+        } else {
+          next.push(updated.alternateGreetingsInput[i]);
+        }
+      }
+      updated.alternateGreetingsInput = next;
+    }
+    this.formState = updated;
+    this.editingGreetingIndex = -1;
+    this.editingGreetingDraft = '';
+  }
+
+  private removeGreeting(index: number): void {
+    if (index < 0 || index >= this.formState.alternateGreetingsInput.length) {
+      return;
+    }
+    const updated = copyFormState(this.formState);
+    const next: string[] = [];
+    for (let i = 0; i < updated.alternateGreetingsInput.length; i++) {
+      if (i !== index) {
+        next.push(updated.alternateGreetingsInput[i]);
+      }
+    }
+    updated.alternateGreetingsInput = next;
+    this.formState = updated;
+    if (this.editingGreetingIndex === index) {
+      this.editingGreetingIndex = -1;
+      this.editingGreetingDraft = '';
+    }
+  }
+
+  private moveGreeting(from: number, to: number): void {
+    if (from === to) {
+      return;
+    }
+    if (from < 0 || from >= this.formState.alternateGreetingsInput.length) {
+      return;
+    }
+    if (to < 0 || to >= this.formState.alternateGreetingsInput.length) {
+      return;
+    }
+    const updated = copyFormState(this.formState);
+    const next: string[] = updated.alternateGreetingsInput.slice();
+    const tmp: string = next[from];
+    next[from] = next[to];
+    next[to] = tmp;
+    updated.alternateGreetingsInput = next;
+    this.formState = updated;
+  }
+
   // ===== 业务逻辑 =====
   private isDirty(): boolean {
     if (this.isLoading || this.isSaving) {
@@ -575,6 +1094,10 @@ struct CharacterEditPage {
   private async handleSave(): Promise<void> {
     if (!this.canSave() || this.isSaving) {
       return;
+    }
+    // 如果正在编辑备用开场白,先取消(草稿不保存)
+    if (this.editingGreetingIndex !== -1) {
+      this.cancelEditGreeting();
     }
     this.isSaving = true;
     try {

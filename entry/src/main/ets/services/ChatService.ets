@@ -65,7 +65,7 @@ import {
 import { NetworkError } from '../models/NetworkError';
 import { Character } from '../models/Character';
 import { Lorebook } from '../models/Lorebook';
-import { MacroContext, createMacroContext } from '../models/MacroContext';
+import { MacroContext } from '../models/MacroContext';
 import { ProviderConfig } from '../models/ProviderConfig';
 import { TokenBudget, DEFAULT_CONTEXT_WINDOW, DEFAULT_RESERVED_OUTPUT_TOKENS } from '../models/TokenBudget';
 import { HistoryTrimResult } from '../models/HistoryTrimResult';
@@ -410,6 +410,12 @@ export class ChatService {
   /**
    * 创建新会话并注入 firstMessage(如果有角色且 firstMessage 非空)。
    * 默认 title 使用角色名(无角色时为"新对话",由 persistenceService 兜底)。
+   *
+   * V2 字段支持:
+   * - 若角色有 firstMessage 且有 alternateGreetings:
+   *   - firstMessage 作为 Candidate 0
+   *   - alternateGreetings[i] 作为 Candidate 1..N(不激活,默认显示 firstMessage)
+   *   - 用户后续可通过 Swipe 切换开场白
    */
   private async createNewSession(characterId?: string): Promise<void> {
     if (this.persistenceService === null) {
@@ -441,12 +447,69 @@ export class ChatService {
       this.currentChatId = session.chat.id;
       this.messages = [firstMsg];
       this.currentSequenceNumber = 1;
+
+      // V2: 初始化 alternate_greetings 作为 Swipe 候选 1..N
+      // firstMessage 已作为 Candidate 0 的内容,不需要额外 activate
+      await this.initializeAlternateGreetingsAsSwipeCandidates(firstMsg.id);
     } else {
       const session: PersistedChatSession =
         await this.persistenceService.createSession(characterId, defaultTitle);
       this.currentChatId = session.chat.id;
       this.messages = [];
       this.currentSequenceNumber = 0;
+    }
+  }
+
+  /**
+   * 将角色的 alternateGreetings 初始化为 firstMessage 的 Swipe 候选。
+   * - 调用 ensureSwipeState 创建 Candidate 0(firstMessage 已是消息内容)
+   * - 对每个 alternateGreeting 调用 appendCandidate(activate=false)作为 Candidate 1..N
+   * - 失败不阻塞会话创建,仅记录 warning
+   *
+   * @param firstMessageId firstMessage 的消息 ID
+   */
+  private async initializeAlternateGreetingsAsSwipeCandidates(
+    firstMessageId: string
+  ): Promise<void> {
+    if (this.swipePersistenceService === null) {
+      return;
+    }
+    if (this.character === null) {
+      return;
+    }
+    const greetings: string[] = this.character.alternateGreetings;
+    if (greetings.length === 0) {
+      return;
+    }
+    try {
+      // ensureSwipeState 创建 Group + Candidate 0(以 firstMessage 内容)
+      await this.swipePersistenceService.ensureSwipeState(firstMessageId);
+      // 逐个追加 alternateGreeting 作为 Candidate 1..N,不 activate(默认显示 firstMessage)
+      for (let i = 0; i < greetings.length; i++) {
+        const greeting: string = greetings[i];
+        if (greeting.trim().length === 0) {
+          continue;
+        }
+        try {
+          await this.swipePersistenceService.appendCandidate(
+            firstMessageId,
+            {
+              content: greeting,
+              status: ChatMessageStatus.Completed,
+              isStreaming: false
+            },
+            false // activate=false,保持 firstMessage 为当前显示
+          );
+        } catch (e) {
+          // 单条追加失败不阻塞其他条目
+          Logger.warn(LOG_TAG, 'init alternate_greeting failed idx=' + String(i)
+            + ': ' + (e instanceof Error ? e.message : String(e)));
+        }
+      }
+      Logger.info(LOG_TAG, 'alternate_greetings initialized count=' + String(greetings.length));
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'initializeAlternateGreetings failed: '
+        + (e instanceof Error ? e.message : String(e)));
     }
   }
 
@@ -1585,6 +1648,12 @@ export class ChatService {
    * 世界书内容不会写入 this.messages。
    * 无 PromptBuilder 或无角色时,返回原始消息列表(跳过 System 消息)。
    *
+   * V2 字段支持:
+   * - character.mesExample:作为 DialogueExamples 段(由 PromptBuilder 处理)
+   * - character.postHistoryInstructions:作为 PostHistory 段(由 PromptBuilder 处理)
+   * - character.systemPrompt + {{original}}:由 PromptBuilder 处理
+   * - character.characterBookId:加载关联 Lorebook 作为 characterBook 参与匹配
+   *
    * @param presetSystemPrompt Preset 附加 System Prompt(可选,已宏替换)
    */
   private async buildRequestMessages(
@@ -1616,24 +1685,47 @@ export class ChatService {
       return filtered;
     }
 
-    // 获取当前世界书
+    // 获取当前全局世界书
     let lorebook: Lorebook | undefined = undefined;
     if (this.lorebookService !== null) {
       lorebook = await this.lorebookService.getCurrentLorebook() ?? undefined;
     }
 
-    // 构建宏替换上下文(characterName 来自角色,userName 为固定默认值)
-    const macroContext: MacroContext = createMacroContext(
-      this.character !== null ? this.character.name : '',
-      DEFAULT_USER_NAME
+    // 加载角色专属世界书(通过 characterBookId)
+    let characterBook: Lorebook | undefined = undefined;
+    if (this.character !== null
+      && this.character.characterBookId.length > 0
+      && this.lorebookService !== null) {
+      try {
+        const book: Lorebook | null = await this.lorebookService.getById(
+          this.character.characterBookId
+        );
+        if (book !== null) {
+          characterBook = book;
+        }
+      } catch (e) {
+        Logger.warn(LOG_TAG, 'load character_book failed: '
+          + (e instanceof Error ? e.message : String(e)));
+      }
+    }
+
+    // 通过 PromptBuilder.buildMacroContext 构建宏替换上下文
+    // (包含 description / personality / scenario / mesExample / lastMessage / originalContent)
+    const macroContext: MacroContext = this.promptBuilder.buildMacroContext(
+      this.character,
+      DEFAULT_USER_NAME,
+      sourceMessages
     );
 
     const context: PromptBuildContext = {
       character: this.character !== null ? this.character : undefined,
       lorebook: lorebook,
+      characterBook: characterBook,
       messages: sourceMessages,
       macroContext: macroContext,
       presetSystemPrompt: presetSystemPrompt
+      // enablePostHistoryInstructions 默认为 true
+      // 后续可由 Preset 配置控制
     };
 
     const result: PromptBuildResult = this.promptBuilder.build(context);
@@ -2218,16 +2310,31 @@ export class ChatService {
   }
 
   /**
-   * 更新 lastAssistantMessageId 为最后一条非 firstMessage 的 Assistant 消息 ID。
+   * 更新 lastAssistantMessageId 为最后一条 Assistant 消息 ID。
+   *
+   * V2 行为:
+   * - 优先查找 Conversation 类型(或 undefined)的 Assistant 消息
+   * - 若无,则查找 CharacterFirstMessage 类型的 Assistant 消息
+   *   (允许 firstMessage 成为 Swipe 目标,用于切换 alternate_greetings)
    */
   private updateLastAssistantMessageId(): void {
     this.lastAssistantMessageId = '';
+    // 第一遍:优先查找 Conversation 类型
     for (let i = this.messages.length - 1; i >= 0; i--) {
       const msg: ChatMessage = this.messages[i];
       if (msg.role === ChatRole.Assistant &&
         (msg.source === undefined || msg.source === ChatMessageSource.Conversation)) {
         this.lastAssistantMessageId = msg.id;
-        break;
+        return;
+      }
+    }
+    // 第二遍:无 Conversation 类型时,查找 CharacterFirstMessage 类型
+    for (let i = this.messages.length - 1; i >= 0; i--) {
+      const msg: ChatMessage = this.messages[i];
+      if (msg.role === ChatRole.Assistant &&
+        msg.source === ChatMessageSource.CharacterFirstMessage) {
+        this.lastAssistantMessageId = msg.id;
+        return;
       }
     }
   }

@@ -1,13 +1,14 @@
 /**
  * Character 角色模型
  *
- * 定义角色数据结构和校验规则,本次不做 PNG 角色卡、Lorebook、Swipe 等。
+ * 兼容 Tavern Card V1 / V2 / V3 规范字段。
  * 不依赖 ArkUI,可用于服务层和持久化层。
  *
  * 约束:
  * - name 必填,最长 100 字符
  * - 各字段最长 5000 字符
- * - 不加入 Lorebook/Swipe/PNG 元数据等后续字段
+ * - extensions 原样保存(导入、编辑、保存、导出后不得丢失)
+ * - tags / creator / character_version / creator_notes 只作元数据,不进入 PromptBuilder
  */
 
 /**
@@ -24,12 +25,31 @@ export interface Character {
   readonly personality: string;
   /** 场景/世界观 */
   readonly scenario: string;
-  /** 开场白(首次进入聊天时显示) */
+  /** 开场白(首次进入聊天时显示,作为 Candidate 0) */
   readonly firstMessage: string;
   /** 系统提示词 */
   readonly systemPrompt: string;
-  /** 头像 URI(可选,本次不实现图片导入) */
+  /** 头像 URI */
   readonly avatarUri: string;
+  /** ===== Tavern Card V2 扩展字段 ===== */
+  /** 对话示例(进入 PromptBuilder 作为示例消息) */
+  readonly mesExample: string;
+  /** 创作者备注(元数据,不进入 Prompt) */
+  readonly creatorNotes: string;
+  /** Post-History Instructions(放在聊天历史之后,生成请求之前) */
+  readonly postHistoryInstructions: string;
+  /** 备用开场白列表(作为开场白的 Swipe 候选 1..N) */
+  readonly alternateGreetings: string[];
+  /** 标签列表(元数据,不进入 Prompt) */
+  readonly tags: string[];
+  /** 创作者名(元数据,不进入 Prompt) */
+  readonly creator: string;
+  /** 角色卡版本(元数据,不进入 Prompt) */
+  readonly characterVersion: string;
+  /** 未识别扩展字段(原样保存,导入导出后不得丢失) */
+  readonly extensions: Record<string, Object>;
+  /** 角色专属世界书 ID(关联 lorebooks.id) */
+  readonly characterBookId: string;
   /** 创建时间戳(毫秒) */
   readonly createdAt: number;
   /** 更新时间戳(毫秒) */
@@ -38,6 +58,8 @@ export interface Character {
 
 const MAX_NAME_LENGTH: number = 100;
 const MAX_FIELD_LENGTH: number = 5000;
+const MAX_ALTERNATE_GREETINGS: number = 20;
+const MAX_TAGS: number = 30;
 
 /**
  * 创建新角色,自动填充 id 和时间戳。
@@ -50,7 +72,16 @@ export function createCharacter(
   scenario: string = '',
   firstMessage: string = '',
   systemPrompt: string = '',
-  avatarUri: string = ''
+  avatarUri: string = '',
+  mesExample: string = '',
+  creatorNotes: string = '',
+  postHistoryInstructions: string = '',
+  alternateGreetings: string[] = [],
+  tags: string[] = [],
+  creator: string = '',
+  characterVersion: string = '',
+  extensions: Record<string, Object> = {},
+  characterBookId: string = ''
 ): Character {
   const now: number = Date.now();
   return {
@@ -62,6 +93,15 @@ export function createCharacter(
     firstMessage: firstMessage.trim(),
     systemPrompt: systemPrompt.trim(),
     avatarUri: avatarUri.trim(),
+    mesExample: mesExample,
+    creatorNotes: creatorNotes,
+    postHistoryInstructions: postHistoryInstructions,
+    alternateGreetings: filterGreetings(alternateGreetings),
+    tags: filterTags(tags),
+    creator: creator,
+    characterVersion: characterVersion,
+    extensions: extensions,
+    characterBookId: characterBookId.trim(),
     createdAt: now,
     updatedAt: now
   };
@@ -93,6 +133,37 @@ export function validateCharacter(character: Character): string | null {
   if (character.systemPrompt.length > MAX_FIELD_LENGTH) {
     return 'System Prompt 不能超过' + MAX_FIELD_LENGTH + '个字符';
   }
+  if (character.mesExample.length > MAX_FIELD_LENGTH) {
+    return '对话示例不能超过' + MAX_FIELD_LENGTH + '个字符';
+  }
+  if (character.creatorNotes.length > MAX_FIELD_LENGTH) {
+    return '创作者备注不能超过' + MAX_FIELD_LENGTH + '个字符';
+  }
+  if (character.postHistoryInstructions.length > MAX_FIELD_LENGTH) {
+    return 'Post-History Instructions 不能超过' + MAX_FIELD_LENGTH + '个字符';
+  }
+  if (character.creator.length > MAX_NAME_LENGTH) {
+    return '创作者名称不能超过' + MAX_NAME_LENGTH + '个字符';
+  }
+  if (character.characterVersion.length > MAX_NAME_LENGTH) {
+    return '角色卡版本不能超过' + MAX_NAME_LENGTH + '个字符';
+  }
+  if (character.alternateGreetings.length > MAX_ALTERNATE_GREETINGS) {
+    return '备用开场白不能超过' + MAX_ALTERNATE_GREETINGS + '条';
+  }
+  if (character.tags.length > MAX_TAGS) {
+    return '标签不能超过' + MAX_TAGS + '个';
+  }
+  for (let i = 0; i < character.alternateGreetings.length; i++) {
+    if (character.alternateGreetings[i].length > MAX_FIELD_LENGTH) {
+      return '备用开场白不能超过' + MAX_FIELD_LENGTH + '个字符';
+    }
+  }
+  for (let i = 0; i < character.tags.length; i++) {
+    if (character.tags[i].length > MAX_NAME_LENGTH) {
+      return '单个标签不能超过' + MAX_NAME_LENGTH + '个字符';
+    }
+  }
   return null;
 }
 
@@ -107,6 +178,15 @@ export interface CharacterUpdates {
   firstMessage?: string;
   systemPrompt?: string;
   avatarUri?: string;
+  mesExample?: string;
+  creatorNotes?: string;
+  postHistoryInstructions?: string;
+  alternateGreetings?: string[];
+  tags?: string[];
+  creator?: string;
+  characterVersion?: string;
+  extensions?: Record<string, Object>;
+  characterBookId?: string;
 }
 
 /**
@@ -126,6 +206,19 @@ export function updateCharacter(
     firstMessage: updates.firstMessage !== undefined ? updates.firstMessage.trim() : character.firstMessage,
     systemPrompt: updates.systemPrompt !== undefined ? updates.systemPrompt.trim() : character.systemPrompt,
     avatarUri: updates.avatarUri !== undefined ? updates.avatarUri.trim() : character.avatarUri,
+    mesExample: updates.mesExample !== undefined ? updates.mesExample : character.mesExample,
+    creatorNotes: updates.creatorNotes !== undefined ? updates.creatorNotes : character.creatorNotes,
+    postHistoryInstructions: updates.postHistoryInstructions !== undefined
+      ? updates.postHistoryInstructions : character.postHistoryInstructions,
+    alternateGreetings: updates.alternateGreetings !== undefined
+      ? filterGreetings(updates.alternateGreetings) : character.alternateGreetings,
+    tags: updates.tags !== undefined ? filterTags(updates.tags) : character.tags,
+    creator: updates.creator !== undefined ? updates.creator : character.creator,
+    characterVersion: updates.characterVersion !== undefined
+      ? updates.characterVersion : character.characterVersion,
+    extensions: updates.extensions !== undefined ? updates.extensions : character.extensions,
+    characterBookId: updates.characterBookId !== undefined
+      ? updates.characterBookId.trim() : character.characterBookId,
     createdAt: character.createdAt,
     updatedAt: Date.now()
   };
@@ -133,13 +226,10 @@ export function updateCharacter(
 }
 
 /**
- * 构建角色聊天上下文的 System 消息内容。
- * 优先使用 systemPrompt;如果为空,组合 name/description/personality/scenario。
+ * 构建默认角色 System 内容(无自定义 systemPrompt 时的组合)。
+ * 此内容可被 {{original}} 宏引用。
  */
-export function buildCharacterSystemContent(character: Character): string {
-  if (character.systemPrompt.trim().length > 0) {
-    return character.systemPrompt;
-  }
+export function buildDefaultCharacterSystemContent(character: Character): string {
   const parts: string[] = [];
   if (character.name.trim().length > 0) {
     parts.push('你是' + character.name);
@@ -154,4 +244,59 @@ export function buildCharacterSystemContent(character: Character): string {
     parts.push('场景: ' + character.scenario);
   }
   return parts.join('\n');
+}
+
+/**
+ * 构建角色聊天上下文的 System 消息内容。
+ *
+ * 行为:
+ * - systemPrompt 为空时,返回默认组合(name/description/personality/scenario)
+ * - systemPrompt 非空时,原样返回(由 PromptBuilder 负责 {{original}} 替换)
+ */
+export function buildCharacterSystemContent(character: Character): string {
+  if (character.systemPrompt.trim().length > 0) {
+    return character.systemPrompt;
+  }
+  return buildDefaultCharacterSystemContent(character);
+}
+
+/**
+ * 过滤备用开场白:去重 + trim 空项。
+ */
+function filterGreetings(greetings: string[]): string[] {
+  const result: string[] = [];
+  const seen: Set<string> = new Set();
+  for (let i = 0; i < greetings.length; i++) {
+    const trimmed: string = greetings[i].trim();
+    if (trimmed.length === 0) {
+      continue;
+    }
+    if (seen.has(trimmed)) {
+      continue;
+    }
+    seen.add(trimmed);
+    result.push(trimmed);
+  }
+  return result;
+}
+
+/**
+ * 过滤标签:trim 空项 + 去重(大小写不敏感)。
+ */
+function filterTags(tags: string[]): string[] {
+  const result: string[] = [];
+  const seen: Set<string> = new Set();
+  for (let i = 0; i < tags.length; i++) {
+    const trimmed: string = tags[i].trim();
+    if (trimmed.length === 0) {
+      continue;
+    }
+    const lower: string = trimmed.toLowerCase();
+    if (seen.has(lower)) {
+      continue;
+    }
+    seen.add(lower);
+    result.push(trimmed);
+  }
+  return result;
 }

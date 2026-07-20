@@ -245,6 +245,15 @@ export class CharacterListViewModel {
         firstMessage: jsonResult.card.firstMessage,
         systemPrompt: jsonResult.card.systemPrompt,
         avatarUri: jsonResult.card.avatarUri,
+        mesExample: jsonResult.card.mesExample,
+        creatorNotes: jsonResult.card.creatorNotes,
+        postHistoryInstructions: jsonResult.card.postHistoryInstructions,
+        alternateGreetings: jsonResult.card.alternateGreetings,
+        tags: jsonResult.card.tags,
+        creator: jsonResult.card.creator,
+        characterVersion: jsonResult.card.characterVersion,
+        extensions: jsonResult.card.extensions,
+        characterBook: jsonResult.card.characterBook,
         sourceFormat: pngResult.sourceFormat
       };
       this.previewPngUri = uri;

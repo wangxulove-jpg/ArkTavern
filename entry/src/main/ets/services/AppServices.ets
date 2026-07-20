@@ -146,10 +146,13 @@ export class AppServices {
     this.dbHelper = new DbHelper();
     // CharacterRepository 使用与 Chat 相同的 DbHelper
     this.characterRepository = new CharacterRepository(this.dbHelper);
+    // LorebookRepository 必须在 CharacterService 之前创建,以支持角色卡 character_book 自动导入
+    this.lorebookRepository = new LorebookRepository(this.dbHelper);
     this.characterService = new CharacterService(
       this.characterRepository,
       this.characterSelectionStore,
-      characterAssetStore
+      characterAssetStore,
+      this.lorebookRepository
     );
     this.lorebookSelectionStore = new LorebookSelectionStore(this.appPreferences);
     this.characterMigrationService = new CharacterMigrationService(
@@ -160,8 +163,6 @@ export class AppServices {
     );
     // Lorebook 仅作迁移源,由 AppServices 直接管理
     this.lorebookStore = new LorebookStore();
-    // LorebookRepository 使用同一 DbHelper
-    this.lorebookRepository = new LorebookRepository(this.dbHelper);
     // LorebookService 使用 Repository + SelectionStore
     this.lorebookService = new LorebookService(
       this.lorebookRepository,

@@ -4,6 +4,7 @@
  * 数据源:CharacterRepository(RDB)。
  * 当前角色 ID:CharacterSelectionStore(Preferences)。
  * 头像:CharacterAssetStore(文件系统)。
+ * 角色专属世界书:LorebookRepository(可选,用于 character_book 自动导入)。
  *
  * 设计原则:
  * - 不依赖 ArkUI
@@ -19,13 +20,21 @@ import { fileIo } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
 import { Character, createCharacter, updateCharacter, validateCharacter, CharacterUpdates } from '../models/Character';
 import { CharacterRepository } from '../repositories/CharacterRepository';
+import { LorebookRepository } from '../repositories/LorebookRepository';
+import { LorebookPosition, createLorebook, createLorebookEntry, Lorebook, LorebookEntry } from '../models/Lorebook';
 import { CharacterSelectionStore } from '../storage/CharacterSelectionStore';
 import { CharacterAssetStore } from '../storage/CharacterAssetStore';
 import { DatabaseError, DatabaseErrorType } from '../models/DatabaseError';
 import { generateUuid } from '../utils/Uuid';
 import { Logger } from '../utils/Logger';
-import { parseCharacterJson, ParseResult, ParsedCharacterCard } from '../parser/CharacterCardJsonParser';
-import { writeCharacterToJson } from '../parser/CharacterCardJsonWriter';
+import {
+  parseCharacterJson,
+  ParseResult,
+  ParsedCharacterCard,
+  ParsedCharacterBook,
+  ParsedCharacterBookEntry
+} from '../parser/CharacterCardJsonParser';
+import { writeCharacterToJson, writeCharacterToV2Json } from '../parser/CharacterCardJsonWriter';
 import { parsePngCharacterCard, PngParseResult } from '../parser/PngCharacterCardParser';
 
 const LOG_TAG: string = 'CharacterService';
@@ -40,16 +49,19 @@ export class CharacterService {
   private readonly repository: CharacterRepository;
   private readonly selectionStore: CharacterSelectionStore;
   private readonly assetStore: CharacterAssetStore;
+  private readonly lorebookRepository: LorebookRepository | null;
   private initialized: boolean = false;
 
   constructor(
     repository: CharacterRepository,
     selectionStore: CharacterSelectionStore,
-    assetStore: CharacterAssetStore
+    assetStore: CharacterAssetStore,
+    lorebookRepository: LorebookRepository | null = null
   ) {
     this.repository = repository;
     this.selectionStore = selectionStore;
     this.assetStore = assetStore;
+    this.lorebookRepository = lorebookRepository;
   }
 
   async initialize(context: common.Context): Promise<void> {
@@ -100,19 +112,7 @@ export class CharacterService {
     } catch (e) {
       // ID 冲突时生成新 UUID 重试一次
       if (e instanceof DatabaseError && e.type === DatabaseErrorType.AlreadyExists) {
-        // createCharacter 不会重置 id,这里手动构造新对象
-        const retryCharacter: Character = {
-          id: 'char-' + generateUuid(),
-          name: character.name,
-          description: character.description,
-          personality: character.personality,
-          scenario: character.scenario,
-          firstMessage: character.firstMessage,
-          systemPrompt: character.systemPrompt,
-          avatarUri: character.avatarUri,
-          createdAt: character.createdAt,
-          updatedAt: character.updatedAt
-        };
+        const retryCharacter: Character = cloneCharacterWithNewId(character, 'char-' + generateUuid());
         await this.repository.insert(retryCharacter);
         Logger.info(LOG_TAG, 'create ok (retry)');
         return retryCharacter;
@@ -218,14 +218,23 @@ export class CharacterService {
       Logger.info(LOG_TAG, 'remove skip (not found)');
       return;
     }
-    // 1. 删除 RDB Character
+    // 1. 删除关联的角色专属世界书(如果存在)
+    if (existing.characterBookId.length > 0 && this.lorebookRepository !== null) {
+      try {
+        await this.lorebookRepository.remove(existing.characterBookId);
+        Logger.info(LOG_TAG, 'remove: character_book removed');
+      } catch (e) {
+        Logger.warn(LOG_TAG, 'remove: character_book delete failed: ' + String(e));
+      }
+    }
+    // 2. 删除 RDB Character
     await this.repository.remove(id);
-    // 2. 若是当前角色,清空选择
+    // 3. 若是当前角色,清空选择
     const currentId: string | null = await this.selectionStore.getCurrentCharacterId();
     if (currentId === id) {
       await this.selectionStore.clear();
     }
-    // 3. 删除头像文件(失败不回滚角色记录)
+    // 4. 删除头像文件(失败不回滚角色记录)
     try {
       await this.assetStore.deleteAvatar(id);
     } catch (e) {
@@ -279,10 +288,17 @@ export class CharacterService {
   /**
    * 从解析后的角色卡创建并保存 Character。
    * id 冲突时生成新 UUID,不覆盖现有角色。
+   * 如果 parsed.characterBook 非空且注入了 LorebookRepository,
+   * 自动创建 Lorebook 并链接到 characterBookId。
    */
   async importFromParsed(parsed: ParsedCharacterCard, avatarUri?: string): Promise<Character> {
     this.requireInit();
     const finalAvatarUri: string = avatarUri !== undefined ? avatarUri : parsed.avatarUri;
+
+    // 1. 导入角色专属世界书(如果存在)
+    const characterBookId: string = await this.importCharacterBookIfNeeded(parsed);
+
+    // 2. 创建 Character
     let character: Character = createCharacter(
       'char-' + generateUuid(),
       parsed.name,
@@ -291,7 +307,16 @@ export class CharacterService {
       parsed.scenario,
       parsed.firstMessage,
       parsed.systemPrompt,
-      finalAvatarUri
+      finalAvatarUri,
+      parsed.mesExample,
+      parsed.creatorNotes,
+      parsed.postHistoryInstructions,
+      parsed.alternateGreetings,
+      parsed.tags,
+      parsed.creator,
+      parsed.characterVersion,
+      parsed.extensions,
+      characterBookId
     );
     const error: string | null = validateCharacter(character);
     if (error !== null) {
@@ -302,18 +327,7 @@ export class CharacterService {
     } catch (e) {
       if (e instanceof DatabaseError && e.type === DatabaseErrorType.AlreadyExists) {
         // ID 冲突,生成新 UUID 重试
-        character = {
-          id: 'char-' + generateUuid(),
-          name: character.name,
-          description: character.description,
-          personality: character.personality,
-          scenario: character.scenario,
-          firstMessage: character.firstMessage,
-          systemPrompt: character.systemPrompt,
-          avatarUri: character.avatarUri,
-          createdAt: character.createdAt,
-          updatedAt: character.updatedAt
-        };
+        character = cloneCharacterWithNewId(character, 'char-' + generateUuid());
         await this.repository.insert(character);
       } else {
         if (e instanceof Error) {
@@ -338,7 +352,7 @@ export class CharacterService {
   }
 
   /**
-   * 将角色导出为 ArkTavern JSON 字符串。
+   * 将角色导出为 ArkTavern JSON 字符串(包含 V2 字段)。
    */
   async exportToJson(id: string): Promise<string> {
     this.requireInit();
@@ -347,6 +361,19 @@ export class CharacterService {
       throw new Error('CharacterService exportToJson: not found');
     }
     return writeCharacterToJson(character);
+  }
+
+  /**
+   * 将角色导出为 SillyTavern V2 chara_card JSON 字符串。
+   * 保留所有 V2 字段和未知 extensions,导入后导出不丢字段。
+   */
+  async exportToV2Json(id: string): Promise<string> {
+    this.requireInit();
+    const character: Character | null = await this.repository.getById(id);
+    if (character === null) {
+      throw new Error('CharacterService exportToV2Json: not found');
+    }
+    return writeCharacterToV2Json(character);
   }
 
   /**
@@ -473,13 +500,23 @@ export class CharacterService {
   /**
    * 确认 PNG 导入:保存头像 + 保存角色。
    * 头像保存失败时不创建角色;角色保存失败时回滚头像。
+   * 如果 parsed.characterBook 非空且注入了 LorebookRepository,
+   * 自动创建 Lorebook 并链接到 characterBookId。
    */
   async confirmPngImport(parsed: ParsedCharacterCard, pngUri: string): Promise<Character> {
     this.requireInit();
     const characterId: string = 'char-' + generateUuid();
     // 1. 保存头像(失败则不创建角色)
     const avatarUri: string = await this.assetStore.saveAvatar(pngUri, characterId);
-    // 2. 创建并保存角色
+    // 2. 导入角色专属世界书(如果存在)
+    let characterBookId: string = '';
+    try {
+      characterBookId = await this.importCharacterBookIfNeeded(parsed);
+    } catch (e) {
+      // character_book 导入失败不阻塞角色导入
+      Logger.warn(LOG_TAG, 'confirmPngImport: character_book import failed: ' + String(e));
+    }
+    // 3. 创建并保存角色
     const character: Character = createCharacter(
       characterId,
       parsed.name,
@@ -488,7 +525,16 @@ export class CharacterService {
       parsed.scenario,
       parsed.firstMessage,
       parsed.systemPrompt,
-      avatarUri
+      avatarUri,
+      parsed.mesExample,
+      parsed.creatorNotes,
+      parsed.postHistoryInstructions,
+      parsed.alternateGreetings,
+      parsed.tags,
+      parsed.creator,
+      parsed.characterVersion,
+      parsed.extensions,
+      characterBookId
     );
     const error: string | null = validateCharacter(character);
     if (error !== null) {
@@ -499,8 +545,15 @@ export class CharacterService {
     try {
       await this.repository.insert(character);
     } catch (e) {
-      // 角色保存失败,回滚头像
+      // 角色保存失败,回滚头像和 character_book
       await this.assetStore.deleteAvatar(characterId);
+      if (characterBookId.length > 0 && this.lorebookRepository !== null) {
+        try {
+          await this.lorebookRepository.remove(characterBookId);
+        } catch (rollbackErr) {
+          Logger.warn(LOG_TAG, 'confirmPngImport: rollback character_book failed: ' + String(rollbackErr));
+        }
+      }
       if (e instanceof Error) {
         throw e;
       }
@@ -509,4 +562,94 @@ export class CharacterService {
     Logger.info(LOG_TAG, 'confirmPngImport ok');
     return character;
   }
+
+  // ===== 角色专属世界书导入 =====
+
+  /**
+   * 从 ParsedCharacterCard.characterBook 创建 Lorebook 并返回其 ID。
+   * 如果 characterBook 为空,或未注入 LorebookRepository,返回空字符串。
+   * 失败时抛错(调用方决定是否忽略)。
+   */
+  private async importCharacterBookIfNeeded(parsed: ParsedCharacterCard): Promise<string> {
+    if (parsed.characterBook === null) {
+      return '';
+    }
+    if (this.lorebookRepository === null) {
+      Logger.warn(LOG_TAG, 'character_book skipped: lorebookRepository not injected');
+      return '';
+    }
+    const bookName: string = parsed.name + ' · 角色世界书';
+    const lorebook: Lorebook = createLorebook(bookName, '从角色卡导入的专属世界书', true);
+    const entries: LorebookEntry[] = [];
+    for (let i = 0; i < parsed.characterBook.entries.length; i++) {
+      const entry: ParsedCharacterBookEntry = parsed.characterBook.entries[i];
+      const position: LorebookPosition = mapCharacterBookPosition(entry.position);
+      const lorebookEntry: LorebookEntry = createLorebookEntry(
+        entry.name.length > 0 ? entry.name : (entry.comment.length > 0 ? entry.comment : 'Entry ' + String(i + 1)),
+        entry.keys,
+        entry.secondaryKeys,
+        entry.content,
+        entry.enabled,
+        entry.constant,
+        entry.selective,
+        position,
+        entry.priority
+      );
+      entries.push(lorebookEntry);
+    }
+    // 把 entries 加到 lorebook
+    const fullLorebook: Lorebook = {
+      id: lorebook.id,
+      name: lorebook.name,
+      description: lorebook.description,
+      enabled: lorebook.enabled,
+      entries: entries,
+      createdAt: lorebook.createdAt,
+      updatedAt: lorebook.updatedAt
+    };
+    await this.lorebookRepository.insert(fullLorebook);
+    Logger.info(LOG_TAG, 'character_book imported entries=' + String(entries.length));
+    return lorebook.id;
+  }
+}
+
+/**
+ * 将 character_book 的 position 字符串映射为 LorebookPosition 枚举。
+ * 默认 BeforeCharacter。
+ */
+function mapCharacterBookPosition(position: string): LorebookPosition {
+  const lower: string = position.toLowerCase();
+  if (lower === 'after_char' || lower === 'after' || lower === 'aftercharacter') {
+    return LorebookPosition.AfterCharacter;
+  }
+  return LorebookPosition.BeforeCharacter;
+}
+
+/**
+ * 克隆 Character 并替换 id。
+ * 用于 ID 冲突时生成新 UUID 重试。
+ * ArkTS 不允许 spread 对象字面量,必须显式构造。
+ */
+function cloneCharacterWithNewId(character: Character, newId: string): Character {
+  return {
+    id: newId,
+    name: character.name,
+    description: character.description,
+    personality: character.personality,
+    scenario: character.scenario,
+    firstMessage: character.firstMessage,
+    systemPrompt: character.systemPrompt,
+    avatarUri: character.avatarUri,
+    mesExample: character.mesExample,
+    creatorNotes: character.creatorNotes,
+    postHistoryInstructions: character.postHistoryInstructions,
+    alternateGreetings: character.alternateGreetings,
+    tags: character.tags,
+    creator: character.creator,
+    characterVersion: character.characterVersion,
+    extensions: character.extensions,
+    characterBookId: character.characterBookId,
+    createdAt: character.createdAt,
+    updatedAt: character.updatedAt
+  };
 }

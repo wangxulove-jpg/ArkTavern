@@ -15,6 +15,14 @@
  * - 不修改 Character 数据模型
  * - 不修改数据库 Schema
  * - 不修改导入/导出逻辑
+ *
+ * 字段策略:
+ * - tags / creator / character_version / creator_notes 只作元数据,不进入 PromptBuilder
+ * - alternate_greetings 作为开场白的额外 Swipe 候选
+ * - mes_example 作为对话示例进入 PromptBuilder
+ * - system_prompt / post_history_instructions 按 PromptBuilder 配置启用
+ * - extensions 原样保存,不暴露到 UI
+ * - character_book 复用 Lorebook 编辑能力(只展示关联 ID)
  */
 
 import { Character } from '../models/Character';
@@ -38,12 +46,28 @@ export interface CharacterEditFormState {
   personalityInput: string;
   /** 场景 */
   scenarioInput: string;
-  /** 开场白 */
+  /** 开场白(作为 Candidate 0) */
   firstMessageInput: string;
-  /** System Prompt */
+  /** System Prompt(角色专属,空时使用默认组合) */
   systemPromptInput: string;
-  /** 头像 URI(本轮不实现修改,仅展示) */
+  /** 头像 URI(即时落库,仅展示) */
   avatarUriInput: string;
+  /** 对话示例(进入 PromptBuilder 作为示例消息) */
+  mesExampleInput: string;
+  /** 创作者备注(元数据,不进入 Prompt) */
+  creatorNotesInput: string;
+  /** Post-History Instructions(放在聊天历史之后,生成请求之前) */
+  postHistoryInstructionsInput: string;
+  /** 备用开场白列表(作为 Swipe 候选 1..N) */
+  alternateGreetingsInput: string[];
+  /** 标签列表(元数据,不进入 Prompt) */
+  tagsInput: string[];
+  /** 创作者名(元数据,不进入 Prompt) */
+  creatorInput: string;
+  /** 角色卡版本(元数据,不进入 Prompt) */
+  characterVersionInput: string;
+  /** 角色专属世界书 ID(只读展示,关联 lorebooks.id) */
+  characterBookIdInput: string;
 }
 
 /** 空表单(新建模式) */
@@ -55,11 +79,19 @@ export function emptyFormState(): CharacterEditFormState {
     scenarioInput: '',
     firstMessageInput: '',
     systemPromptInput: '',
-    avatarUriInput: ''
+    avatarUriInput: '',
+    mesExampleInput: '',
+    creatorNotesInput: '',
+    postHistoryInstructionsInput: '',
+    alternateGreetingsInput: [],
+    tagsInput: [],
+    creatorInput: '',
+    characterVersionInput: '',
+    characterBookIdInput: ''
   };
 }
 
-/** 复制表单快照(用于不可变更新) */
+/** 复制表单快照(深拷贝数组,用于不可变更新) */
 export function copyFormState(state: CharacterEditFormState): CharacterEditFormState {
   return {
     nameInput: state.nameInput,
@@ -68,7 +100,15 @@ export function copyFormState(state: CharacterEditFormState): CharacterEditFormS
     scenarioInput: state.scenarioInput,
     firstMessageInput: state.firstMessageInput,
     systemPromptInput: state.systemPromptInput,
-    avatarUriInput: state.avatarUriInput
+    avatarUriInput: state.avatarUriInput,
+    mesExampleInput: state.mesExampleInput,
+    creatorNotesInput: state.creatorNotesInput,
+    postHistoryInstructionsInput: state.postHistoryInstructionsInput,
+    alternateGreetingsInput: state.alternateGreetingsInput.slice(),
+    tagsInput: state.tagsInput.slice(),
+    creatorInput: state.creatorInput,
+    characterVersionInput: state.characterVersionInput,
+    characterBookIdInput: state.characterBookIdInput
   };
 }
 
@@ -81,7 +121,15 @@ function formStateFromCharacter(character: Character): CharacterEditFormState {
     scenarioInput: character.scenario,
     firstMessageInput: character.firstMessage,
     systemPromptInput: character.systemPrompt,
-    avatarUriInput: character.avatarUri
+    avatarUriInput: character.avatarUri,
+    mesExampleInput: character.mesExample,
+    creatorNotesInput: character.creatorNotes,
+    postHistoryInstructionsInput: character.postHistoryInstructions,
+    alternateGreetingsInput: character.alternateGreetings.slice(),
+    tagsInput: character.tags.slice(),
+    creatorInput: character.creator,
+    characterVersionInput: character.characterVersion,
+    characterBookIdInput: character.characterBookId
   };
 }
 
@@ -184,7 +232,7 @@ export class CharacterEditViewModel {
    *
    * 注意:avatarUriInput 在 changeAvatar 时已即时落库,
    * originalCharacter.avatarUri 也同步刷新,因此 isDirty 不比较头像字段是正确的。
-   * (改头像 -> changeAvatar 即时落库 -> originalCharacter 更新 -> isDirty=false,无需提示放弃)
+   * characterBookIdInput 由独立的关联/解除关联流程处理,也不参与脏检测。
    */
   isDirty(current: CharacterEditFormState): boolean {
     if (this.originalCharacter === null) {
@@ -194,16 +242,30 @@ export class CharacterEditViewModel {
         || current.personalityInput.length > 0
         || current.scenarioInput.length > 0
         || current.firstMessageInput.length > 0
-        || current.systemPromptInput.length > 0;
+        || current.systemPromptInput.length > 0
+        || current.mesExampleInput.length > 0
+        || current.creatorNotesInput.length > 0
+        || current.postHistoryInstructionsInput.length > 0
+        || current.alternateGreetingsInput.length > 0
+        || current.tagsInput.length > 0
+        || current.creatorInput.length > 0
+        || current.characterVersionInput.length > 0;
     }
-    // 编辑模式:与原始角色比较(不比较 avatarUriInput,因头像走即时落库)
+    // 编辑模式:与原始角色比较(不比较 avatarUriInput / characterBookIdInput)
     const orig: Character = this.originalCharacter;
     return current.nameInput !== orig.name
       || current.descriptionInput !== orig.description
       || current.personalityInput !== orig.personality
       || current.scenarioInput !== orig.scenario
       || current.firstMessageInput !== orig.firstMessage
-      || current.systemPromptInput !== orig.systemPrompt;
+      || current.systemPromptInput !== orig.systemPrompt
+      || current.mesExampleInput !== orig.mesExample
+      || current.creatorNotesInput !== orig.creatorNotes
+      || current.postHistoryInstructionsInput !== orig.postHistoryInstructions
+      || !arraysEqual(current.alternateGreetingsInput, orig.alternateGreetings)
+      || !arraysEqual(current.tagsInput, orig.tags)
+      || current.creatorInput !== orig.creator
+      || current.characterVersionInput !== orig.characterVersion;
   }
 
   /**
@@ -256,21 +318,29 @@ export class CharacterEditViewModel {
     }
 
     if (this.isEditing) {
-      // 编辑模式
+      // 编辑模式:保留 extensions / characterBookId 不变
       const updated: Character = await this.characterService.update(this.editingCharacterId, {
         name: current.nameInput,
         description: current.descriptionInput,
         personality: current.personalityInput,
         scenario: current.scenarioInput,
         firstMessage: current.firstMessageInput,
-        systemPrompt: current.systemPromptInput
+        systemPrompt: current.systemPromptInput,
+        mesExample: current.mesExampleInput,
+        creatorNotes: current.creatorNotesInput,
+        postHistoryInstructions: current.postHistoryInstructionsInput,
+        alternateGreetings: current.alternateGreetingsInput.slice(),
+        tags: current.tagsInput.slice(),
+        creator: current.creatorInput,
+        characterVersion: current.characterVersionInput
       });
       this.originalCharacter = updated;
       Logger.info(LOG_TAG, 'save: update ok');
       return updated;
     }
 
-    // 新建模式
+    // 新建模式:create 默认不接收新字段,使用 create + update 组合
+    // 第一步:用基础字段创建(获得 ID)
     const created: Character = await this.characterService.create(
       current.nameInput,
       current.descriptionInput,
@@ -279,15 +349,50 @@ export class CharacterEditViewModel {
       current.firstMessageInput,
       current.systemPromptInput
     );
-    this.isEditing = true;
-    this.editingCharacterId = created.id;
-    this.originalCharacter = created;
-    Logger.info(LOG_TAG, 'save: create ok');
-    return created;
+    // 第二步:用 update 写入 V2 字段(单事务,失败回滚由调用方处理)
+    try {
+      const finalChar: Character = await this.characterService.update(created.id, {
+        mesExample: current.mesExampleInput,
+        creatorNotes: current.creatorNotesInput,
+        postHistoryInstructions: current.postHistoryInstructionsInput,
+        alternateGreetings: current.alternateGreetingsInput.slice(),
+        tags: current.tagsInput.slice(),
+        creator: current.creatorInput,
+        characterVersion: current.characterVersionInput
+      });
+      this.isEditing = true;
+      this.editingCharacterId = finalChar.id;
+      this.originalCharacter = finalChar;
+      Logger.info(LOG_TAG, 'save: create+update ok');
+      return finalChar;
+    } catch (e) {
+      // V2 字段更新失败,基础角色已创建,仍返回已创建的角色
+      Logger.warn(LOG_TAG, 'save: V2 fields update failed: ' + String(e));
+      this.isEditing = true;
+      this.editingCharacterId = created.id;
+      this.originalCharacter = created;
+      if (e instanceof Error) {
+        throw e;
+      }
+      throw new Error('save: V2 fields update failed: ' + String(e));
+    }
   }
 
   dispose(): void {
     this.disposed = true;
     this.originalCharacter = null;
   }
+}
+
+/** 比较两个字符串数组内容是否相等(顺序敏感) */
+function arraysEqual(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) {
+    return false;
+  }
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) {
+      return false;
+    }
+  }
+  return true;
 }

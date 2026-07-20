@@ -1061,6 +1061,122 @@
       "value": "保存失败"
     },
     {
+      "name": "character_edit_field_mes_example",
+      "value": "对话示例"
+    },
+    {
+      "name": "character_edit_field_mes_example_placeholder",
+      "value": "输入对话示例(可使用 <START> 分隔多段)"
+    },
+    {
+      "name": "character_edit_field_mes_example_hint",
+      "value": "作为角色说话风格示例进入 Prompt,用 <START> 分隔多段对话"
+    },
+    {
+      "name": "character_edit_field_creator_notes",
+      "value": "创作者备注"
+    },
+    {
+      "name": "character_edit_field_creator_notes_placeholder",
+      "value": "留给其他用户的说明(不进入提示词)"
+    },
+    {
+      "name": "character_edit_field_post_history",
+      "value": "Post-History Instructions"
+    },
+    {
+      "name": "character_edit_field_post_history_placeholder",
+      "value": "放在聊天历史之后的指令"
+    },
+    {
+      "name": "character_edit_field_post_history_hint",
+      "value": "仅在提示词功能启用时注入,不作为可见聊天消息保存"
+    },
+    {
+      "name": "character_edit_field_creator",
+      "value": "创作者"
+    },
+    {
+      "name": "character_edit_field_creator_placeholder",
+      "value": "创作者名(元数据)"
+    },
+    {
+      "name": "character_edit_field_character_version",
+      "value": "角色卡版本"
+    },
+    {
+      "name": "character_edit_field_character_version_placeholder",
+      "value": "如 1.0、2.0"
+    },
+    {
+      "name": "character_edit_field_tags",
+      "value": "标签"
+    },
+    {
+      "name": "character_edit_field_tags_hint",
+      "value": "元数据,不进入提示词"
+    },
+    {
+      "name": "character_edit_field_tags_placeholder",
+      "value": "输入标签后点击添加"
+    },
+    {
+      "name": "character_edit_tag_add",
+      "value": "添加"
+    },
+    {
+      "name": "character_edit_tag_delete",
+      "value": "删除"
+    },
+    {
+      "name": "character_edit_alternate_greetings",
+      "value": "备用开场白"
+    },
+    {
+      "name": "character_edit_alternate_greetings_hint",
+      "value": "作为开场白的额外 Swipe 候选,可上下拖动排序"
+    },
+    {
+      "name": "character_edit_alternate_greetings_add",
+      "value": "添加备用开场白"
+    },
+    {
+      "name": "character_edit_alternate_greetings_empty",
+      "value": "暂无备用开场白"
+    },
+    {
+      "name": "character_edit_alternate_greetings_placeholder",
+      "value": "输入备用开场白内容"
+    },
+    {
+      "name": "character_edit_alternate_greetings_move_up",
+      "value": "上移"
+    },
+    {
+      "name": "character_edit_alternate_greetings_move_down",
+      "value": "下移"
+    },
+    {
+      "name": "character_edit_character_book",
+      "value": "角色专属世界书"
+    },
+    {
+      "name": "character_edit_character_book_empty",
+      "value": "未关联角色专属世界书"
+    },
+    {
+      "name": "character_edit_character_book_hint",
+      "value": "从角色卡导入时会自动创建;也可在 Lorebook 编辑页中关联"
+    },
+    {
+      "name": "character_edit_section_metadata",
+      "value": "元数据"
+    },
+    {
+      "name": "character_edit_section_conversation",
+      "value": "对话设置"
+    },
+    {
       "name": "tab_sessions",
       "value": "对话记录"
     },

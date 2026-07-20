@@ -24,5 +24,9 @@ export enum ChatMessageSource {
   /** 外部注入的合法 System 消息(受保护) */
   ExternalSystem = 'externalSystem',
   /** Prompt Preset System Prompt(受保护,不持久化) */
-  PromptPresetSystem = 'promptPresetSystem'
+  PromptPresetSystem = 'promptPresetSystem',
+  /** Character mes_example 对话示例(受保护,不进入聊天历史) */
+  CharacterMesExample = 'characterMesExample',
+  /** Character Post-History Instructions(受保护,不进入聊天历史) */
+  CharacterPostHistory = 'characterPostHistory'
 }

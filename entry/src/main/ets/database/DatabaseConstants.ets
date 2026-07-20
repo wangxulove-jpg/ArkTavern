@@ -6,7 +6,7 @@
  */
 
 export const DATABASE_NAME: string = 'arktavern.db';
-export const DATABASE_VERSION: number = 5;
+export const DATABASE_VERSION: number = 6;
 
 export const TABLE_CHARACTERS: string = 'characters';
 export const TABLE_CHATS: string = 'chats';
@@ -27,6 +27,17 @@ export const COLUMN_SYSTEM_PROMPT: string = 'system_prompt';
 export const COLUMN_AVATAR_URI: string = 'avatar_uri';
 export const COLUMN_CREATED_AT: string = 'created_at';
 export const COLUMN_UPDATED_AT: string = 'updated_at';
+
+// ===== v6: Tavern Card V2 字段(Character 表扩展列) =====
+export const COLUMN_MES_EXAMPLE: string = 'mes_example';
+export const COLUMN_CREATOR_NOTES: string = 'creator_notes';
+export const COLUMN_POST_HISTORY_INSTRUCTIONS: string = 'post_history_instructions';
+export const COLUMN_ALTERNATE_GREETINGS_JSON: string = 'alternate_greetings_json';
+export const COLUMN_TAGS_JSON: string = 'tags_json';
+export const COLUMN_CREATOR: string = 'creator';
+export const COLUMN_CHARACTER_VERSION: string = 'character_version';
+export const COLUMN_EXTENSIONS_JSON: string = 'extensions_json';
+export const COLUMN_CHARACTER_BOOK_ID: string = 'character_book_id';
 
 export const COLUMN_CHARACTER_ID: string = 'character_id';
 export const COLUMN_TITLE: string = 'title';

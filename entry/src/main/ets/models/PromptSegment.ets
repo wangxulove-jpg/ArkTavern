@@ -4,8 +4,9 @@
  * 定义 Prompt 构建中各段的顺序和内容。
  * 不依赖 ArkUI,纯数据模型。
  *
- * 顺序固定:
- * 基础 System → PromptPreset → BeforeCharacter → Character → AfterCharacter → Conversation
+ * 固定顺序:
+ * PromptPreset → BeforeCharacter → Character → AfterCharacter
+ *   → DialogueExamples → Conversation → PostHistory
  */
 
 import { ChatRole } from './ChatRole';
@@ -20,7 +21,12 @@ export enum PromptSegmentPosition {
   PromptPreset = 'PromptPreset',
   Character = 'Character',
   AfterCharacter = 'AfterCharacter',
-  Conversation = 'Conversation'
+  /** 对话示例(mes_example),位于聊天历史之前 */
+  DialogueExamples = 'DialogueExamples',
+  /** 聊天历史(Conversation) */
+  Conversation = 'Conversation',
+  /** Post-History Instructions,位于聊天历史之后 */
+  PostHistory = 'PostHistory'
 }
 
 /**
@@ -67,7 +73,9 @@ const POSITION_ORDER: Record<string, number> = {
   'BeforeCharacter': 1,
   'Character': 2,
   'AfterCharacter': 3,
-  'Conversation': 4
+  'DialogueExamples': 4,
+  'Conversation': 5,
+  'PostHistory': 6
 };
 
 /**
