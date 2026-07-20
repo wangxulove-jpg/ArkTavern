@@ -100,6 +100,14 @@ export class ChatViewModel {
   private promptPresetService: PromptPresetService;
   private disposed: boolean = false;
 
+  // ===== 流式 UI 节流(避免高频 delta 在同一事件循环 tick 内被 ArkUI 合并) =====
+  /** setTimeout 句柄,-1 表示无 pending flush */
+  private flushTimerId: number = -1;
+  /** 上次 flush 时间戳(ms) */
+  private lastFlushTime: number = 0;
+  /** 节流间隔(ms):首次立即 flush,后续在此间隔内合并 */
+  private static readonly FLUSH_INTERVAL_MS: number = 50;
+
   /**
    * UI 状态同步回调。
    *
@@ -975,8 +983,56 @@ export class ChatViewModel {
 
   dispose(): void {
     this.disposed = true;
+    // 清理 pending flush,避免页面退出后回调到旧组件
+    if (this.flushTimerId !== -1) {
+      clearTimeout(this.flushTimerId);
+      this.flushTimerId = -1;
+    }
     this.chatService.dispose();
     Logger.info(LOG_TAG, 'dispose');
+  }
+
+  // ===== 流式 UI 节流实现 =====
+
+  /**
+   * 调度一次 onMessagesUpdate flush。
+   *
+   * 策略:leading + trailing throttle
+   * - 首次调用(距上次 >= FLUSH_INTERVAL_MS)立即 flush
+   * - 后续在间隔内的调用合并为一次延迟 flush
+   * - 始终用 this.messages(最新状态),避免与 clear/切换会话等直接调用冲突
+   */
+  private scheduleMessagesFlush(): void {
+    if (this.flushTimerId !== -1) {
+      // 已有 pending flush,本次调用被合并,等待 flush 时读取最新 this.messages
+      return;
+    }
+    const now: number = Date.now();
+    const elapsed: number = now - this.lastFlushTime;
+    if (elapsed >= ChatViewModel.FLUSH_INTERVAL_MS) {
+      // 立即 flush
+      this.flushMessages();
+    } else {
+      // 延迟到间隔结束后 flush
+      const delay: number = ChatViewModel.FLUSH_INTERVAL_MS - elapsed;
+      this.flushTimerId = setTimeout((): void => {
+        this.flushMessages();
+      }, delay);
+    }
+  }
+
+  /**
+   * 执行一次 flush,将最新 this.messages 同步到 ChatPage @State。
+   */
+  private flushMessages(): void {
+    this.flushTimerId = -1;
+    this.lastFlushTime = Date.now();
+    if (this.disposed) {
+      return;
+    }
+    if (this.onMessagesUpdate !== undefined) {
+      this.onMessagesUpdate([...this.messages]);
+    }
   }
 
   // ===== 内部方法 =====
@@ -991,16 +1047,13 @@ export class ChatViewModel {
         if (this.disposed) {
           return;
         }
-        // 始终创建新引用,确保 ArkUI @Observed 检测到变化
+        // 立即更新内部状态(同步),确保 canRegenerate / swipeSummaries 实时正确
         this.messages = [...messages];
         this.swipeSummaries = this.chatService.getSwipeSummaries();
         this.canRegenerate = this.chatService.canRegenerate();
-        // 同步到 ChatPage 的独立 @State 变量,确保 ForEach 响应式刷新
-        // (ArkUI 中 @State 持有 @Observed 对象时,ForEach 对内部数组属性
-        //  变化的响应式刷新不完整,实测日志:ForEachNode skip mark dirty)
-        if (this.onMessagesUpdate !== undefined) {
-          this.onMessagesUpdate([...this.messages]);
-        }
+        // 节流 onMessagesUpdate:高频 delta 时合并到 50ms 一次,
+        // 避免 ArkUI 在同一事件循环 tick 内合并多次 @State 赋值导致"一大段突然出现"
+        this.scheduleMessagesFlush();
       },
       onStateChanged: (state: ChatState): void => {
         if (this.disposed) {

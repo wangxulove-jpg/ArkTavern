@@ -385,6 +385,23 @@ export function buildRequestBody(request: ChatRequest, forceStream: boolean = fa
     });
   }
 
+  // 思考强度:空字符串或 undefined 不发送该字段;合法值才写入 body
+  const effort: string | undefined = request.reasoningEffort;
+  const hasEffort: boolean = effort !== undefined && effort.length > 0;
+
+  if (hasEffort) {
+    const requestBody: OpenAIChatRequestBody = {
+      model: request.model,
+      messages: messages,
+      temperature: request.temperature,
+      top_p: request.topP,
+      max_tokens: request.maxTokens,
+      stream: forceStream,
+      reasoning_effort: effort as string
+    };
+    return JSON.stringify(requestBody);
+  }
+
   const requestBody: OpenAIChatRequestBody = {
     model: request.model,
     messages: messages,

@@ -51,6 +51,27 @@ export interface ChatBackgroundConfig {
 }
 
 /**
+ * 思考强度档位枚举值
+ * - '':跟随 Provider 默认(不发送 reasoning_effort 字段)
+ * - 'none':关闭思考
+ * - 'low':低(快速)
+ * - 'medium':中(标准)
+ * - 'high':高(深度)
+ */
+export type ReasoningEffort = '' | 'none' | 'low' | 'medium' | 'high';
+
+/**
+ * 思考强度配置(per-chat)
+ */
+export interface ChatReasoningConfig {
+  /** 思考强度,空字符串表示跟随 Provider 默认 */
+  effort: ReasoningEffort;
+}
+
+/** 思考强度默认值(空字符串 = 跟随 Provider 默认) */
+const DEFAULT_REASONING_EFFORT: ReasoningEffort = '';
+
+/**
  * 聊天背景服务
  */
 export class ChatBackgroundService {
@@ -220,6 +241,35 @@ export class ChatBackgroundService {
     await this.preferences.delete(enabledKey);
     await this.preferences.delete(blurKey);
     await this.preferences.delete(dimKey);
+    // 同时删除思考强度(per-chat 设置一并清理)
+    const effortKey: string = this.buildReasoningKey(chatId);
+    await this.preferences.delete(effortKey);
+  }
+
+  // ===== 思考强度(reasoning_effort)=====
+
+  /**
+   * 获取聊天的思考强度配置。
+   * 未设置过返回默认值(effort='',跟随 Provider 默认)。
+   */
+  async getReasoningEffort(chatId: string): Promise<ReasoningEffort> {
+    const key: string = this.buildReasoningKey(chatId);
+    const stored: string = await this.preferences.getString(key, DEFAULT_REASONING_EFFORT);
+    // 校验合法性,非法值回退默认
+    if (stored === 'none' || stored === 'low' || stored === 'medium' || stored === 'high') {
+      return stored as ReasoningEffort;
+    }
+    return '';
+  }
+
+  /**
+   * 设置聊天的思考强度。
+   * @param chatId 聊天 ID
+   * @param effort 档位,空字符串表示跟随 Provider 默认
+   */
+  async setReasoningEffort(chatId: string, effort: ReasoningEffort): Promise<void> {
+    const key: string = this.buildReasoningKey(chatId);
+    await this.preferences.putString(key, effort);
   }
 
   /**
@@ -228,6 +278,13 @@ export class ChatBackgroundService {
    */
   private buildKey(chatId: string, suffix: string): string {
     return 'chat_bg_' + chatId + '_' + suffix;
+  }
+
+  /**
+   * 构造思考强度 Preferences key:chat_reasoning_<chatId>_effort
+   */
+  private buildReasoningKey(chatId: string): string {
+    return 'chat_reasoning_' + chatId + '_effort';
   }
 
   private clamp(value: number, min: number, max: number): number {

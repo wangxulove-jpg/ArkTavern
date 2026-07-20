@@ -15,11 +15,26 @@
 import { router } from '@kit.ArkUI';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { AppServices } from '../services/AppServices';
-import { ChatBackgroundConfig, ChatBackgroundService } from '../services/ChatBackgroundService';
+import { ChatBackgroundConfig, ChatBackgroundService, ReasoningEffort } from '../services/ChatBackgroundService';
 import { Logger } from '../utils/Logger';
 import { promptAction } from '@kit.ArkUI';
 
 const LOG_TAG: string = 'ChatBackgroundSettingsPage';
+
+/** 思考强度档位描述(用于 UI 渲染) */
+interface ReasoningEffortOption {
+  readonly value: ReasoningEffort;
+  readonly label: string;
+  readonly desc: string;
+}
+
+const EFFORT_OPTIONS: ReasoningEffortOption[] = [
+  { value: '', label: '跟随默认', desc: '不发送 reasoning_effort,使用 Provider 默认行为' },
+  { value: 'none', label: '关闭思考', desc: '发送 reasoning_effort=none(若 Provider 支持)' },
+  { value: 'low', label: '低 · 快速', desc: '快速响应,适合简短问答' },
+  { value: 'medium', label: '中 · 标准', desc: '平衡速度与深度' },
+  { value: 'high', label: '高 · 深度', desc: '深度思考,首字延迟较长' }
+];
 
 @Entry
 @Component
@@ -31,6 +46,8 @@ struct ChatBackgroundSettingsPage {
     blur: 30,
     dim: 30
   };
+  /** 思考强度(空字符串表示跟随默认) */
+  @State reasoningEffort: ReasoningEffort = '';
   @State isImporting: boolean = false;
   @State isSaving: boolean = false;
   /** 顶部状态栏避让高度 */
@@ -60,6 +77,8 @@ struct ChatBackgroundSettingsPage {
     try {
       const cfg = await service.getConfig(this.chatId);
       this.config = cfg;
+      const effort: ReasoningEffort = await service.getReasoningEffort(this.chatId);
+      this.reasoningEffort = effort;
     } catch (e) {
       Logger.error(LOG_TAG, 'loadConfig failed: ' + (e as Error).message);
     }
@@ -92,6 +111,11 @@ struct ChatBackgroundSettingsPage {
 
           // 暗化程度 Slider
           this.dimRow()
+
+          Divider().color($r('app.color.app_divider')).margin({ top: 4, bottom: 4 })
+
+          // 思考强度
+          this.reasoningEffortRow()
 
           Divider().color($r('app.color.app_divider')).margin({ top: 4, bottom: 4 })
 
@@ -302,6 +326,53 @@ struct ChatBackgroundSettingsPage {
   }
 
   @Builder
+  reasoningEffortRow() {
+    Column() {
+      Row() {
+        Text('思考强度')
+          .fontSize(16)
+          .fontColor($r('app.color.app_text_primary'))
+          .layoutWeight(1)
+        Text(this.getEffortLabel(this.reasoningEffort))
+          .fontSize(14)
+          .fontColor($r('app.color.app_text_secondary'))
+      }
+      .width('100%')
+      .margin({ bottom: 4 })
+
+      ForEach(EFFORT_OPTIONS, (opt: ReasoningEffortOption) => {
+        Row() {
+          Column() {
+            Text(opt.label)
+              .fontSize(14)
+              .fontColor(this.reasoningEffort === opt.value
+                ? $r('app.color.app_accent')
+                : $r('app.color.app_text_primary'))
+            Text(opt.desc)
+              .fontSize(11)
+              .fontColor($r('app.color.app_text_tertiary'))
+              .margin({ top: 2 })
+          }
+          .alignItems(HorizontalAlign.Start)
+          .layoutWeight(1)
+
+          Radio({ value: opt.value, group: 'reasoning_effort' })
+            .checked(this.reasoningEffort === opt.value)
+            .onChange((isChecked: boolean) => {
+              if (isChecked) {
+                this.onReasoningEffortChange(opt.value);
+              }
+            })
+        }
+        .width('100%')
+        .padding({ top: 8, bottom: 8 })
+      }, (opt: ReasoningEffortOption) => opt.value)
+    }
+    .width('100%')
+    .padding({ top: 12, bottom: 12 })
+  }
+
+  @Builder
   actionButtons() {
     Column() {
       // 导入图片按钮
@@ -397,6 +468,31 @@ struct ChatBackgroundSettingsPage {
     } catch (e) {
       Logger.error(LOG_TAG, 'onDimChange failed: ' + (e as Error).message);
     }
+  }
+
+  private async onReasoningEffortChange(effort: ReasoningEffort): Promise<void> {
+    const service = this.getBackgroundService();
+    if (service === null) {
+      return;
+    }
+    try {
+      await service.setReasoningEffort(this.chatId, effort);
+      this.reasoningEffort = effort;
+      this.notifyConfigChanged();
+    } catch (e) {
+      Logger.error(LOG_TAG, 'onReasoningEffortChange failed: ' + (e as Error).message);
+      promptAction.showToast({ message: '保存失败' });
+    }
+  }
+
+  /** 根据 ReasoningEffort 值获取 UI 显示标签 */
+  private getEffortLabel(effort: ReasoningEffort): string {
+    for (let i = 0; i < EFFORT_OPTIONS.length; i++) {
+      if (EFFORT_OPTIONS[i].value === effort) {
+        return EFFORT_OPTIONS[i].label;
+      }
+    }
+    return '跟随默认';
   }
 
   private async pickAndImportImage(): Promise<void> {

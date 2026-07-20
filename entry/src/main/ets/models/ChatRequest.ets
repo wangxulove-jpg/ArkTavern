@@ -32,6 +32,14 @@ export interface ChatRequestOptions {
   readonly maxTokens: number;
   /** 是否流式请求 */
   readonly stream: boolean;
+  /**
+   * 思考强度(可选):
+   * - '' 跟随 Provider 默认(不发送 reasoning_effort 字段)
+   * - 'none' 关闭思考
+   * - 'low' / 'medium' / 'high' 三档
+   * Provider 不支持时自动忽略。
+   */
+  readonly reasoningEffort?: string;
 }
 
 /**
@@ -50,6 +58,14 @@ export interface ChatRequest {
   readonly maxTokens: number;
   /** 是否流式请求 */
   readonly stream: boolean;
+  /**
+   * 思考强度(可选):
+   * - '' 或 undefined 跟随 Provider 默认(不发送 reasoning_effort 字段)
+   * - 'none' 关闭思考
+   * - 'low' / 'medium' / 'high' 三档
+   * Provider 不支持时自动忽略。
+   */
+  readonly reasoningEffort?: string;
 }
 
 /**

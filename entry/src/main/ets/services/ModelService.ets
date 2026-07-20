@@ -453,7 +453,8 @@ export class ModelService {
       temperature: options.temperature,
       topP: options.topP,
       maxTokens: options.maxTokens,
-      stream: options.stream
+      stream: options.stream,
+      reasoningEffort: options.reasoningEffort
     };
 
     const provider: AiProvider = this.resolveProvider(config);

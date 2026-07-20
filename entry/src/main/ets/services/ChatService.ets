@@ -36,6 +36,7 @@ import { PromptBuilder, PromptBuildContext, PromptBuildResult } from './PromptBu
 import { TokenCounter } from './TokenCounter';
 import { HistoryTrimmer } from './HistoryTrimmer';
 import { ChatPersistenceService } from './ChatPersistenceService';
+import { ChatBackgroundService } from './ChatBackgroundService';
 import { PromptPresetService } from './PromptPresetService';
 import { MessageSwipePersistenceService } from './MessageSwipePersistenceService';
 import { ConversationBranchPersistenceService, EditedBranchGenerationTarget } from './ConversationBranchPersistenceService';
@@ -215,6 +216,8 @@ export class ChatService {
   private readonly swipePersistenceService: MessageSwipePersistenceService | null;
   /** ConversationBranchPersistenceService 对话分支持久化服务(T-6.4A,用于活动 Branch 加载) */
   private readonly branchPersistenceService: ConversationBranchPersistenceService | null;
+  /** ChatBackgroundService(用于读取 per-chat 思考强度) */
+  private readonly chatBackgroundService: ChatBackgroundService | null;
   /** 当前会话的 Swipe 摘要列表 */
   private swipeSummaries: MessageSwipeSummary[] = [];
   /** 当前生成操作标识(用于阻止迟到回调),每次启动/停止递增 */
@@ -250,7 +253,8 @@ export class ChatService {
     persistenceService: ChatPersistenceService | null = null,
     promptPresetService: PromptPresetService | null = null,
     swipePersistenceService: MessageSwipePersistenceService | null = null,
-    branchPersistenceService: ConversationBranchPersistenceService | null = null
+    branchPersistenceService: ConversationBranchPersistenceService | null = null,
+    chatBackgroundService: ChatBackgroundService | null = null
   ) {
     this.modelService = modelService;
     this.lorebookService = lorebookService;
@@ -261,6 +265,7 @@ export class ChatService {
     this.promptPresetService = promptPresetService;
     this.swipePersistenceService = swipePersistenceService;
     this.branchPersistenceService = branchPersistenceService;
+    this.chatBackgroundService = chatBackgroundService;
   }
 
   /**
@@ -820,6 +825,27 @@ export class ChatService {
       Logger.error(LOG_TAG, 'forkAndStreamFromUser reload failed: ' + msg);
       // Branch 已创建,继续执行生成,UI 状态可能与 DB 不一致但可恢复
     }
+
+    // 3.5 修正 reload 丢失的 isStreaming 状态
+    // reloadCurrentSession 从数据库加载 messages,数据库不保存 isStreaming=true,
+    // 导致 placeholder 的 isStreaming 被重置为 false。
+    // 在 emitMessages 之前修正 placeholder 为 Streaming 状态,确保 UI 正确显示打字机效果。
+    this.messages = this.messages.map((msg: ChatMessage): ChatMessage => {
+      if (msg.id === newAssistantId) {
+        return {
+          id: msg.id,
+          role: msg.role,
+          content: msg.content,
+          createdAt: msg.createdAt,
+          updatedAt: msg.updatedAt,
+          isStreaming: true,
+          errorMessage: msg.errorMessage,
+          status: ChatMessageStatus.Streaming,
+          source: msg.source
+        };
+      }
+      return msg;
+    });
 
     // 4. 建立 BranchRegeneration 活动上下文
     this.activeGeneration = {
@@ -1538,6 +1564,17 @@ export class ChatService {
     }
 
     // 构建生效的请求选项(Preset 覆盖模型配置)
+    // 读取 per-chat 思考强度(覆盖 Provider 默认)
+    let perChatEffort: string = '';
+    if (this.chatBackgroundService !== null && this.currentChatId !== undefined) {
+      try {
+        const stored: string = await this.chatBackgroundService.getReasoningEffort(this.currentChatId);
+        perChatEffort = stored;
+      } catch (e) {
+        Logger.warn(LOG_TAG, 'getReasoningEffort failed: ' + String(e));
+      }
+    }
+
     const effectiveOptions: ChatRequestOptions = {
       temperature: snapshot.generationSettings.temperature !== undefined
         ? snapshot.generationSettings.temperature
@@ -1548,7 +1585,8 @@ export class ChatService {
       maxTokens: snapshot.generationSettings.maxOutputTokens !== undefined
         ? snapshot.generationSettings.maxOutputTokens
         : DEFAULT_OPTIONS.maxTokens,
-      stream: true
+      stream: true,
+      reasoningEffort: perChatEffort
     };
 
     try {

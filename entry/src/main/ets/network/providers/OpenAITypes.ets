@@ -29,6 +29,10 @@ export interface OpenAIRequestMessage {
 /**
  * OpenAI Chat Completions 非流式请求体。
  * stream 强制为 false。
+ *
+ * reasoning_effort 为可选字段:
+ * - undefined / '':不发送该字段(跟随 Provider 默认)
+ * - 'none' / 'low' / 'medium' / 'high':发送对应档位
  */
 export interface OpenAIChatRequestBody {
   readonly model: string;
@@ -37,6 +41,7 @@ export interface OpenAIChatRequestBody {
   readonly top_p: number;
   readonly max_tokens: number;
   readonly stream: boolean;
+  readonly reasoning_effort?: string;
 }
 
 // ===== 响应体类型定义 =====

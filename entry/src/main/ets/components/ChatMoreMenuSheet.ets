@@ -116,8 +116,8 @@ export struct ChatMoreMenuSheet {
         this.onOpenSessionList();
       })
 
-      // 聊天背景
-      this.menuRow('聊天背景', this.busy, false, (): void => {
+      // 对话设置(背景 + 思考强度)
+      this.menuRow('对话设置', this.busy, false, (): void => {
         if (this.busy) {
           return;
         }

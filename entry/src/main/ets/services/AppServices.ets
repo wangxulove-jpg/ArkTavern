@@ -396,7 +396,8 @@ export class AppServices {
       services.chatPersistenceService,
       services.promptPresetService,
       services.messageSwipePersistenceService,
-      services.conversationBranchPersistenceService
+      services.conversationBranchPersistenceService,
+      services.chatBackgroundService
     );
   }
 
