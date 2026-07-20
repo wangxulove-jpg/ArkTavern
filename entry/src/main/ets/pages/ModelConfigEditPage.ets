@@ -75,9 +75,12 @@ struct ModelConfigEditPage {
 
   @Builder
   mainView() {
-    Column() {
-      // 顶部标题栏:返回 + 标题 + 保存
-      Row() {
+    // 用 Stack 包裹 Column,把 Provider Sheet 与 Model Sheet 拆到不同容器上,
+    // 避免同一组件挂多个 bindSheet 时后定义者覆盖前者的状态绑定。
+    Stack() {
+      Column() {
+        // 顶部标题栏:返回 + 标题 + 保存
+        Row() {
         SymbolGlyph($r('sys.symbol.chevron_left'))
           .fontSize(24)
           .fontColor([$r('app.color.page_primary_text')])
@@ -144,16 +147,6 @@ struct ModelConfigEditPage {
     .width('100%')
     .height('100%')
     .backgroundColor($r('app.color.page_background'))
-    .bindSheet(this.viewModel!.providerSheetOpen, this.providerSheetBuilder, {
-      height: SheetSize.MEDIUM,
-      mode: SheetMode.EMBEDDED,
-      dragBar: false,
-      showClose: false,
-      backgroundColor: $r('app.color.app_surface_1'),
-      onDisappear: () => {
-        this.viewModel!.closeProviderSheet();
-      }
-    })
     .bindSheet(this.viewModel!.modelSheetOpen, this.modelSheetBuilder, {
       height: SheetSize.MEDIUM,
       mode: SheetMode.EMBEDDED,
@@ -162,6 +155,19 @@ struct ModelConfigEditPage {
       backgroundColor: $r('app.color.app_surface_1'),
       onDisappear: () => {
         this.viewModel!.closeModelSheet();
+      }
+    })
+    }
+    .width('100%')
+    .height('100%')
+    .bindSheet(this.viewModel!.providerSheetOpen, this.providerSheetBuilder, {
+      height: SheetSize.MEDIUM,
+      mode: SheetMode.EMBEDDED,
+      dragBar: false,
+      showClose: false,
+      backgroundColor: $r('app.color.app_surface_1'),
+      onDisappear: () => {
+        this.viewModel!.closeProviderSheet();
       }
     })
   }
@@ -200,7 +206,7 @@ struct ModelConfigEditPage {
         FormSection() {
           this.fieldLabel($r('app.string.model_settings_provider'))
           this.selectableRow(
-            this.providerDisplayName(),
+            () => this.providerDisplayName(),
             () => {
               this.viewModel!.openProviderSheet();
             }
@@ -261,7 +267,7 @@ struct ModelConfigEditPage {
           this.fieldLabel($r('app.string.model_settings_model'))
           if (this.viewModel!.isPresetMode) {
             this.selectableRow(
-              this.modelDisplayName(),
+              () => this.modelDisplayName(),
               () => {
                 this.viewModel!.openModelSheet();
               }
@@ -668,10 +674,10 @@ struct ModelConfigEditPage {
   }
 
   @Builder
-  selectableRow(value: string, onClick: () => void) {
+  selectableRow(valueProvider: () => string, onClick: () => void) {
     Row() {
-      if (value.length > 0) {
-        Text(value)
+      if (valueProvider().length > 0) {
+        Text(valueProvider())
           .fontSize($r('app.float.app_font_body'))
           .fontColor($r('app.color.app_text_primary'))
           .layoutWeight(1)
