@@ -12,6 +12,7 @@
     "pages/PromptPresetListPage",
     "pages/PromptPresetEditPage",
     "pages/BranchMapPage",
-    "pages/ChatBackgroundSettingsPage"
+    "pages/ChatBackgroundSettingsPage",
+    "pages/MemoryManagementPage"
   ]
 }

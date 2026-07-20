@@ -33,6 +33,7 @@ import {
 } from '../repositories/ConversationBranchRepository';
 import { MessageRepository } from '../repositories/MessageRepository';
 import { MessageSwipeRepository } from '../repositories/MessageSwipeRepository';
+import { MemoryPersistenceService } from './MemoryPersistenceService';
 import {
   ConversationBranch,
   BranchMessageLink,
@@ -125,17 +126,21 @@ export class ConversationBranchPersistenceService {
   private readonly branchRepository: ConversationBranchRepository;
   private readonly messageRepository: MessageRepository;
   private readonly swipeRepository: MessageSwipeRepository;
+  /** Memory 持久化服务(可选,fork 时复制祖先记忆) */
+  private readonly memoryPersistenceService: MemoryPersistenceService | null;
 
   constructor(
     dbHelper: DbHelper,
     branchRepository: ConversationBranchRepository,
     messageRepository: MessageRepository,
-    swipeRepository: MessageSwipeRepository
+    swipeRepository: MessageSwipeRepository,
+    memoryPersistenceService: MemoryPersistenceService | null = null
   ) {
     this.dbHelper = dbHelper;
     this.branchRepository = branchRepository;
     this.messageRepository = messageRepository;
     this.swipeRepository = swipeRepository;
+    this.memoryPersistenceService = memoryPersistenceService;
   }
 
   // ===== Root Branch =====
@@ -422,6 +427,18 @@ export class ConversationBranchPersistenceService {
     await this.branchRepository.copySwipeSelectionsForMessageIdsWithStore(
       store, sourceBranchId, childBranch.id, copiedMessageIds
     );
+    // 5.5 v8: 复制祖先 Branch 中 endPosition <= forkPosition 的 Memory(分叉点之前可用的)
+    //        复制品标记 inheritedFromMemoryId,不删除原 Memory,继续归祖先 Branch 所有
+    if (this.memoryPersistenceService !== null) {
+      try {
+        await this.memoryPersistenceService.copyAncestorMemoriesThroughPositionWithStore(
+          store, sourceBranchId, childBranch.id, forkPosition
+        );
+      } catch (e) {
+        // Memory 复制失败不阻塞 fork(避免影响现有 Branch 创建流程)
+        Logger.warn(LOG_TAG, 'copyAncestorMemories failed: ' + String(e));
+      }
+    }
     // 6. 若传入 selectedCandidateIndex,覆盖新 Branch 对该 Assistant 的选择
     if (selectedCandidateIndex !== undefined) {
       // 验证目标 Message 是 Assistant Conversation

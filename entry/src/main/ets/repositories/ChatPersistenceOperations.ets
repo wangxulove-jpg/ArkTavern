@@ -34,6 +34,7 @@ import { ChatRepository } from './ChatRepository';
 import { MessageRepository } from './MessageRepository';
 import { MessageSwipeRepository } from './MessageSwipeRepository';
 import { ConversationBranchPersistenceService } from '../services/ConversationBranchPersistenceService';
+import { MemoryPersistenceService } from '../services/MemoryPersistenceService';
 import { DatabaseError } from '../models/DatabaseError';
 import { extractCauseMessage } from './RepositoryMappers';
 
@@ -43,35 +44,40 @@ export class ChatPersistenceOperations {
   private readonly messageRepository: MessageRepository;
   private readonly swipeRepository: MessageSwipeRepository;
   private readonly branchPersistenceService: ConversationBranchPersistenceService | null;
+  private readonly memoryPersistenceService: MemoryPersistenceService | null;
 
   constructor(
     dbHelper: DbHelper,
     chatRepository: ChatRepository,
     messageRepository: MessageRepository,
     swipeRepository: MessageSwipeRepository,
-    branchPersistenceService: ConversationBranchPersistenceService | null = null
+    branchPersistenceService: ConversationBranchPersistenceService | null = null,
+    memoryPersistenceService: MemoryPersistenceService | null = null
   ) {
     this.dbHelper = dbHelper;
     this.chatRepository = chatRepository;
     this.messageRepository = messageRepository;
     this.swipeRepository = swipeRepository;
     this.branchPersistenceService = branchPersistenceService;
+    this.memoryPersistenceService = memoryPersistenceService;
   }
 
   /**
-   * 在一个事务中按 T-6.4A 顺序删除:
+   * 在一个事务中按顺序删除:
    * 1. conversation_branch_swipe_selections
    * 2. conversation_branch_messages
    * 3. chat_branch_state
    * 4. conversation_branches
-   * 5. message_swipe_candidates
-   * 6. message_swipe_groups
-   * 7. messages
-   * 8. chats
+   * 5. chat_memories(v8 长期记忆级联清理)
+   * 6. message_swipe_candidates
+   * 7. message_swipe_groups
+   * 8. messages
+   * 9. chats
    *
    * 任一步失败全部回滚。
    * 删除不存在 Chat 时保持幂等(不抛错)。
    * branchPersistenceService 为 null 时跳过 Branch 清理(步骤 1-4)。
+   * memoryPersistenceService 为 null 时跳过 Memory 清理(步骤 5)。
    */
   async removeChatWithMessages(chatId: string): Promise<void> {
     if (chatId === '') {
@@ -84,11 +90,15 @@ export class ChatPersistenceOperations {
           if (this.branchPersistenceService !== null) {
             await this.branchPersistenceService.removeByChatIdWithStore(store, chatId);
           }
-          // 5-6. 删除 Swipe 数据(幂等,不存在返回 0)
+          // 5. 删除 Memory 相关数据(v8,幂等)
+          if (this.memoryPersistenceService !== null) {
+            await this.memoryPersistenceService.removeByChatIdWithStore(store, chatId);
+          }
+          // 6-7. 删除 Swipe 数据(幂等,不存在返回 0)
           await this.swipeRepository.removeByChatIdWithStore(store, chatId);
-          // 7. 删除消息(幂等,不存在返回 0)
+          // 8. 删除消息(幂等,不存在返回 0)
           await this.messageRepository.removeByChatIdWithStore(store, chatId);
-          // 8. 删除 Chat(幂等,不存在不抛错)
+          // 9. 删除 Chat(幂等,不存在不抛错)
           await this.chatRepository.removeWithStore(store, chatId);
         }
       );

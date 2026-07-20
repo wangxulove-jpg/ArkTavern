@@ -47,6 +47,8 @@ export struct ChatMoreMenuSheet {
   onOpenSessionList: () => void = () => {};
   /** 前往聊天背景设置 */
   onGoChatBackground: () => void = () => {};
+  /** 前往对话记忆管理 */
+  onGoMemory: () => void = () => {};
   /** 重新生成 */
   onRegenerate: () => void = () => {};
   /** 清空对话 */
@@ -122,6 +124,14 @@ export struct ChatMoreMenuSheet {
           return;
         }
         this.onGoChatBackground();
+      })
+
+      // 对话记忆(长期记忆摘要管理)
+      this.menuRow('对话记忆', this.busy, false, (): void => {
+        if (this.busy) {
+          return;
+        }
+        this.onGoMemory();
       })
 
       // 重新生成

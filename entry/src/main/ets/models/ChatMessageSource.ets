@@ -27,6 +27,8 @@ export enum ChatMessageSource {
   PromptPresetSystem = 'promptPresetSystem',
   /** Character mes_example 对话示例(受保护,不进入聊天历史) */
   CharacterMesExample = 'characterMesExample',
+  /** 长期记忆摘要(受保护,不进入聊天历史,分支独立) */
+  MemorySummary = 'memorySummary',
   /** Character Post-History Instructions(受保护,不进入聊天历史) */
   CharacterPostHistory = 'characterPostHistory'
 }

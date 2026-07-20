@@ -6,7 +6,7 @@
  */
 
 export const DATABASE_NAME: string = 'arktavern.db';
-export const DATABASE_VERSION: number = 7;
+export const DATABASE_VERSION: number = 8;
 
 export const TABLE_CHARACTERS: string = 'characters';
 export const TABLE_CHATS: string = 'chats';
@@ -149,3 +149,22 @@ export const INDEX_CONVERSATION_BRANCHES_CHAT_ID: string = 'idx_conversation_bra
 export const INDEX_CONVERSATION_BRANCHES_PARENT_ID: string = 'idx_conversation_branches_parent_id';
 export const INDEX_BRANCH_MESSAGES_MESSAGE_ID: string = 'idx_branch_messages_message_id';
 export const INDEX_BRANCH_SWIPE_SELECTIONS_MESSAGE_ID: string = 'idx_branch_swipe_selections_message_id';
+
+// ===== v8: Chat Memory(分支感知长期记忆) =====
+export const TABLE_CHAT_MEMORIES: string = 'chat_memories';
+
+export const COLUMN_MEMORY_ID: string = 'id';
+export const COLUMN_MEMORY_CHAT_ID: string = 'chat_id';
+export const COLUMN_MEMORY_BRANCH_ID: string = 'branch_id';
+export const COLUMN_MEMORY_START_MESSAGE_ID: string = 'start_message_id';
+export const COLUMN_MEMORY_END_MESSAGE_ID: string = 'end_message_id';
+export const COLUMN_MEMORY_START_POSITION: string = 'start_position';
+export const COLUMN_MEMORY_END_POSITION: string = 'end_position';
+export const COLUMN_MEMORY_SUMMARY: string = 'summary';
+export const COLUMN_MEMORY_ENABLED: string = 'enabled';
+export const COLUMN_MEMORY_SUMMARY_VERSION: string = 'summary_version';
+export const COLUMN_MEMORY_INHERITED_FROM_MEMORY_ID: string = 'inherited_from_memory_id';
+
+export const INDEX_CHAT_MEMORIES_CHAT_ID: string = 'idx_chat_memories_chat_id';
+export const INDEX_CHAT_MEMORIES_BRANCH_ID: string = 'idx_chat_memories_branch_id';
+export const INDEX_CHAT_MEMORIES_BRANCH_END_POSITION: string = 'idx_chat_memories_branch_end_position';

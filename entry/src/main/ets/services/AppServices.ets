@@ -49,6 +49,10 @@ import { PromptPresetSelectionStore } from '../storage/PromptPresetSelectionStor
 import { PromptPresetService } from './PromptPresetService';
 import { MessageSwipePersistenceService } from './MessageSwipePersistenceService';
 import { ConversationBranchPersistenceService } from './ConversationBranchPersistenceService';
+import { ChatMemoryRepository } from '../repositories/ChatMemoryRepository';
+import { MemoryPersistenceService } from './MemoryPersistenceService';
+import { MemoryService } from './MemoryService';
+import { ForkChatService } from './ForkChatService';
 import { ChatService } from './ChatService';
 import { ChatPersistenceService } from './ChatPersistenceService';
 import { ChatBackgroundService } from './ChatBackgroundService';
@@ -124,6 +128,14 @@ export class AppServices {
   private readonly conversationBranchRepository: ConversationBranchRepository;
   /** ConversationBranchPersistenceService 对话分支持久化服务(不对页面公开,T-6.4A) */
   private readonly conversationBranchPersistenceService: ConversationBranchPersistenceService;
+  /** ChatMemoryRepository 长期记忆仓储(不对页面公开,v8) */
+  private readonly chatMemoryRepository: ChatMemoryRepository;
+  /** MemoryPersistenceService 长期记忆持久化服务(不对页面公开,v8) */
+  private readonly memoryPersistenceService: MemoryPersistenceService;
+  /** MemoryService 长期记忆业务服务(增量总结、过期标记,v8) */
+  private readonly memoryService: MemoryService;
+  /** ForkChatService 从分支创建独立对话服务(不对页面公开,v8) */
+  private readonly forkChatService: ForkChatService;
   /** ChatBackgroundService 聊天背景图服务(导入图片 + 模糊度 + 暗化)。在 initialize 中创建。 */
   private chatBackgroundService: ChatBackgroundService | null = null;
   /** 应用 Context,用于 ChatBackgroundService 等需要 filesDir 的服务 */
@@ -191,18 +203,39 @@ export class AppServices {
     this.messageSwipeRepository = new MessageSwipeRepository(this.dbHelper);
     // T-6.4A: ConversationBranch 服务(单例,共享同一 DbHelper)
     this.conversationBranchRepository = new ConversationBranchRepository(this.dbHelper);
+    this.chatMemoryRepository = new ChatMemoryRepository(this.dbHelper);
+    this.memoryPersistenceService = new MemoryPersistenceService(
+      this.dbHelper, this.chatMemoryRepository
+    );
     this.conversationBranchPersistenceService = new ConversationBranchPersistenceService(
       this.dbHelper,
       this.conversationBranchRepository,
       this.messageRepository,
-      this.messageSwipeRepository
+      this.messageSwipeRepository,
+      this.memoryPersistenceService
     );
     this.chatPersistenceOperations = new ChatPersistenceOperations(
       this.dbHelper,
       this.chatRepository,
       this.messageRepository,
       this.messageSwipeRepository,
-      this.conversationBranchPersistenceService
+      this.conversationBranchPersistenceService,
+      this.memoryPersistenceService
+    );
+    // v8: MemoryService(依赖 ModelService + MemoryPersistenceService)
+    this.memoryService = new MemoryService(
+      this.memoryPersistenceService,
+      this.modelService
+    );
+    // v8: ForkChatService(从分支创建独立对话)
+    this.forkChatService = new ForkChatService(
+      this.dbHelper,
+      this.chatRepository,
+      this.messageRepository,
+      this.messageSwipeRepository,
+      this.conversationBranchRepository,
+      this.chatMemoryRepository,
+      this.memoryPersistenceService
     );
     this.chatPersistenceService = new ChatPersistenceService(
       this.dbHelper,
@@ -345,6 +378,30 @@ export class AppServices {
   }
 
   /**
+   * 获取 MemoryService 实例(v8 长期记忆业务服务)。
+   * 用于 MemoryManagementPage 等页面查询/编辑/清除当前 Branch Memory。
+   */
+  static getMemoryService(): MemoryService {
+    return AppServices.getInstance().memoryService;
+  }
+
+  /**
+   * 获取 MemoryPersistenceService 实例(v8 长期记忆持久化服务)。
+   * 仅供 ChatService / ConversationBranchPersistenceService 等内部服务使用。
+   */
+  static getMemoryPersistenceService(): MemoryPersistenceService {
+    return AppServices.getInstance().memoryPersistenceService;
+  }
+
+  /**
+   * 获取 ForkChatService 实例(v8 从分支创建独立对话)。
+   * 用于 ChatMessageActionSheet / BranchMapPage 等触发"从此处创建独立对话"。
+   */
+  static getForkChatService(): ForkChatService {
+    return AppServices.getInstance().forkChatService;
+  }
+
+  /**
    * 获取 ChatPersistenceService 实例。
    * 用于"对话记录"Tab 等不需要完整 ChatService 的场景(只查询会话列表 / 重命名)。
    */
@@ -397,7 +454,8 @@ export class AppServices {
       services.promptPresetService,
       services.messageSwipePersistenceService,
       services.conversationBranchPersistenceService,
-      services.chatBackgroundService
+      services.chatBackgroundService,
+      services.memoryService
     );
   }
 

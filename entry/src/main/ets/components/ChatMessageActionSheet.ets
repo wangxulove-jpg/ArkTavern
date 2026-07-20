@@ -23,7 +23,8 @@ export type MessageAction =
   | 'generate_from_user'
   | 'regenerate_assistant'
   | 'continue_from_here'
-  | 'switch_branch';
+  | 'switch_branch'
+  | 'fork_chat';
 
 /** 操作项 */
 interface ActionItem {
@@ -49,6 +50,8 @@ export struct ChatMessageActionSheet {
   canContinue: boolean = false;
   /** 候选数(>1 时显示切换分支) */
   candidateCount: number = 1;
+  /** 是否可从此处创建独立对话 */
+  canForkChat: boolean = false;
   /** 关闭回调 */
   onClose: () => void = () => {};
   /** 操作点击回调 */
@@ -142,6 +145,9 @@ export struct ChatMessageActionSheet {
       if (this.canGenerateFromUser) {
         items.push({ action: 'generate_from_user', label: '从此处生成新回复', enabled: true, isDestructive: false });
       }
+      if (this.canForkChat) {
+        items.push({ action: 'fork_chat', label: '从此处创建独立对话', enabled: true, isDestructive: false });
+      }
     } else if (this.msg.role === ChatRole.Assistant) {
       items.push({ action: 'copy', label: '复制', enabled: true, isDestructive: false });
       if (this.candidateCount > 1) {
@@ -152,6 +158,9 @@ export struct ChatMessageActionSheet {
       }
       if (this.canRegenerate) {
         items.push({ action: 'regenerate_assistant', label: '重新生成', enabled: true, isDestructive: false });
+      }
+      if (this.canForkChat) {
+        items.push({ action: 'fork_chat', label: '从此处创建独立对话', enabled: true, isDestructive: false });
       }
     }
     return items;

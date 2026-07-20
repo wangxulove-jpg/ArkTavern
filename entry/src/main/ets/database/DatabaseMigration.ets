@@ -14,7 +14,7 @@
  */
 
 import { relationalStore } from '@kit.ArkData';
-import { V1_TO_V2_STATEMENTS, V2_TO_V3_STATEMENTS, V3_TO_V4_STATEMENTS, V4_TO_V5_DDL_STATEMENTS, V5_TO_V6_STATEMENTS, V6_TO_V7_STATEMENTS } from './DatabaseSchema';
+import { V1_TO_V2_STATEMENTS, V2_TO_V3_STATEMENTS, V3_TO_V4_STATEMENTS, V4_TO_V5_DDL_STATEMENTS, V5_TO_V6_STATEMENTS, V6_TO_V7_STATEMENTS, V7_TO_V8_DDL_STATEMENTS } from './DatabaseSchema';
 import {
   TABLE_CHATS,
   TABLE_MESSAGES,
@@ -445,6 +445,38 @@ class V6ToV7Migration implements DatabaseMigration {
       const bucket: relationalStore.ValuesBucket = {};
       bucket[COLUMN_SORT_ORDER] = i;
       await store.update(bucket, updatePredicates);
+    }
+  }
+}
+
+/**
+ * 创建 v7→v8 数据库迁移。
+ *
+ * 事务中执行:
+ * 1. 创建 chat_memories 表(分支感知长期记忆)
+ * 2. 创建相关索引(chat_id / branch_id / branch_id+end_position)
+ * 3. 不为旧 Chat 创建 Memory 记录(按需触发总结时才创建)
+ * 4. 任一失败全部回滚,不影响旧数据
+ * 5. 不修改现有 Branch / Message / Swipe 数据
+ *
+ * 设计:
+ * - Memory 表通过 (chat_id, branch_id) 关联现有 Branch
+ * - 不强制每个 Chat 都有 Memory,旧 Chat 视为新无 Memory,后续按需总结
+ * - 共享祖先记忆通过 inherited_from_memory_id 字段标记,删除 Branch 时不级联删除共享祖先记忆
+ */
+export function createV7ToV8Migration(): DatabaseMigration {
+  return new V7ToV8Migration();
+}
+
+class V7ToV8Migration implements DatabaseMigration {
+  readonly fromVersion: number = 7;
+  readonly toVersion: number = 8;
+
+  async migrate(store: relationalStore.RdbStore): Promise<void> {
+    // 仅执行 DDL(建表 + 建索引),不创建任何 Memory 数据
+    // 旧 Chat 视为"无 Memory",后续按需触发总结
+    for (let i = 0; i < V7_TO_V8_DDL_STATEMENTS.length; i++) {
+      await store.executeSql(V7_TO_V8_DDL_STATEMENTS[i]);
     }
   }
 }

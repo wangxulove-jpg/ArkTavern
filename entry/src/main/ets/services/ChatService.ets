@@ -40,6 +40,7 @@ import { ChatBackgroundService } from './ChatBackgroundService';
 import { PromptPresetService } from './PromptPresetService';
 import { MessageSwipePersistenceService } from './MessageSwipePersistenceService';
 import { ConversationBranchPersistenceService, EditedBranchGenerationTarget } from './ConversationBranchPersistenceService';
+import { MemoryService } from './MemoryService';
 import {
   ConversationBranch,
   ConversationBranchSummary,
@@ -218,6 +219,8 @@ export class ChatService {
   private readonly branchPersistenceService: ConversationBranchPersistenceService | null;
   /** ChatBackgroundService(用于读取 per-chat 思考强度) */
   private readonly chatBackgroundService: ChatBackgroundService | null;
+  /** MemoryService 长期记忆业务服务(v8,用于注入摘要和触发增量总结) */
+  private readonly memoryService: MemoryService | null;
   /** 当前会话的 Swipe 摘要列表 */
   private swipeSummaries: MessageSwipeSummary[] = [];
   /** 当前生成操作标识(用于阻止迟到回调),每次启动/停止递增 */
@@ -254,7 +257,8 @@ export class ChatService {
     promptPresetService: PromptPresetService | null = null,
     swipePersistenceService: MessageSwipePersistenceService | null = null,
     branchPersistenceService: ConversationBranchPersistenceService | null = null,
-    chatBackgroundService: ChatBackgroundService | null = null
+    chatBackgroundService: ChatBackgroundService | null = null,
+    memoryService: MemoryService | null = null
   ) {
     this.modelService = modelService;
     this.lorebookService = lorebookService;
@@ -266,6 +270,7 @@ export class ChatService {
     this.swipePersistenceService = swipePersistenceService;
     this.branchPersistenceService = branchPersistenceService;
     this.chatBackgroundService = chatBackgroundService;
+    this.memoryService = memoryService;
   }
 
   /**
@@ -1462,6 +1467,11 @@ export class ChatService {
             this.setState(ChatState.Completed, callbacks);
           }
           Logger.info(LOG_TAG, 'stream completed deltaCount=' + result.deltaCount);
+          // 长期记忆增量总结触发(仅 NormalResponse 触发,Swipe 不影响主历史)
+          // 异步触发,失败不影响已完成状态
+          if (context.kind === ChatGenerationKind.NormalResponse) {
+            this.triggerMemorySummaryAsync();
+          }
         }).catch((_e: Object): void => {
           // 持久化失败时仍清理上下文,避免状态卡死
           this.clearActiveGeneration(operationId);
@@ -1755,13 +1765,29 @@ export class ChatService {
       sourceMessages
     );
 
+    // 长期记忆摘要注入(从当前 Branch 取得有效摘要)
+    // 失败不阻塞:发生异常时按无摘要处理
+    let memorySummary: string | undefined = undefined;
+    if (this.memoryService !== null && this.activeBranchId.length > 0) {
+      try {
+        const injection = await this.memoryService.getInjectionContext(this.activeBranchId);
+        if (injection.enabled && injection.summary.trim().length > 0) {
+          memorySummary = injection.summary;
+        }
+      } catch (e) {
+        Logger.warn(LOG_TAG, 'load memory summary failed: '
+          + (e instanceof Error ? e.message : String(e)));
+      }
+    }
+
     const context: PromptBuildContext = {
       character: this.character !== null ? this.character : undefined,
       lorebook: lorebook,
       characterBook: characterBook,
       messages: sourceMessages,
       macroContext: macroContext,
-      presetSystemPrompt: presetSystemPrompt
+      presetSystemPrompt: presetSystemPrompt,
+      memorySummary: memorySummary
       // enablePostHistoryInstructions 默认为 true
       // 后续可由 Preset 配置控制
     };
@@ -1771,6 +1797,43 @@ export class ChatService {
       + ' lorebook=' + result.matchedLorebookEntryIds.length.toString()
       + (excludeMessageId !== undefined ? ' excluded=1' : ''));
     return result.messages;
+  }
+
+  /**
+   * 异步触发长期记忆增量总结。
+   * - 失败不抛出,不阻塞已完成状态
+   * - 不调用 await,在后台执行
+   * - 仅记录触发阶段,不记录消息内容
+   */
+  private triggerMemorySummaryAsync(): void {
+    if (this.memoryService === null) {
+      return;
+    }
+    if (this.currentChatId === undefined || this.currentChatId.length === 0) {
+      return;
+    }
+    if (this.activeBranchId.length === 0) {
+      return;
+    }
+    const chatId: string = this.currentChatId;
+    const branchId: string = this.activeBranchId;
+    const branchMessages: ChatMessage[] = this.messages.slice();
+    // 不 await:后台执行,失败仅记录日志
+    this.memoryService.trySummarize(chatId, branchId, branchMessages)
+      .then((result): void => {
+        if (result.success && result.memory !== null) {
+          Logger.info(LOG_TAG, 'MemorySummary | triggered kind=summarized');
+        } else if (result.success && result.memory === null) {
+          Logger.info(LOG_TAG, 'MemorySummary | triggered kind=skipped');
+        } else {
+          Logger.warn(LOG_TAG, 'MemorySummary | triggered kind=failed'
+            + (result.error !== undefined ? ' err=' + result.error : ''));
+        }
+      })
+      .catch((e: Object): void => {
+        Logger.warn(LOG_TAG, 'MemorySummary | triggered kind=exception: '
+          + (e instanceof Error ? e.message : String(e)));
+      });
   }
 
   /**

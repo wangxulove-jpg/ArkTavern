@@ -6,7 +6,7 @@
  *
  * 固定顺序:
  * PromptPreset → BeforeCharacter → Character → AfterCharacter
- *   → DialogueExamples → Conversation → PostHistory
+ *   → DialogueExamples → MemorySummary → Conversation → PostHistory
  */
 
 import { ChatRole } from './ChatRole';
@@ -23,6 +23,8 @@ export enum PromptSegmentPosition {
   AfterCharacter = 'AfterCharacter',
   /** 对话示例(mes_example),位于聊天历史之前 */
   DialogueExamples = 'DialogueExamples',
+  /** 长期记忆摘要,位于对话示例与聊天历史之间 */
+  MemorySummary = 'MemorySummary',
   /** 聊天历史(Conversation) */
   Conversation = 'Conversation',
   /** Post-History Instructions,位于聊天历史之后 */
@@ -74,8 +76,9 @@ const POSITION_ORDER: Record<string, number> = {
   'Character': 2,
   'AfterCharacter': 3,
   'DialogueExamples': 4,
-  'Conversation': 5,
-  'PostHistory': 6
+  'MemorySummary': 5,
+  'Conversation': 6,
+  'PostHistory': 7
 };
 
 /**

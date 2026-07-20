@@ -31,6 +31,7 @@ import {
   createV4ToV5Migration,
   createV5ToV6Migration,
   createV6ToV7Migration,
+  createV7ToV8Migration,
   DatabaseMigration,
   MigrationPath
 } from './DatabaseMigration';
@@ -58,6 +59,7 @@ export type TransactionOperation =
   | 'branch_ensure_root'
   | 'branch_append_message'
   | 'branch_update_swipe_selection'
+  | 'chat_fork'
   | 'character_swap_sort_order'
   | 'chat_swap_sort_order'
   | 'v5_migration'
@@ -82,7 +84,7 @@ export class DbHelper {
 
   constructor(
     databaseName: string = DATABASE_NAME,
-    migrations: ReadonlyArray<DatabaseMigration> = [createV1ToV2Migration(), createV2ToV3Migration(), createV3ToV4Migration(), createV4ToV5Migration(), createV5ToV6Migration(), createV6ToV7Migration()]
+    migrations: ReadonlyArray<DatabaseMigration> = [createV1ToV2Migration(), createV2ToV3Migration(), createV3ToV4Migration(), createV4ToV5Migration(), createV5ToV6Migration(), createV6ToV7Migration(), createV7ToV8Migration()]
   ) {
     this.databaseName = databaseName;
     this.migrations = migrations;

@@ -39,6 +39,7 @@ import { KeyCode } from '@kit.InputKit';
 import { inputMethod } from '@kit.IMEKit';
 import { AppServices } from '../services/AppServices';
 import { ChatBackgroundConfig } from '../services/ChatBackgroundService';
+import { ForkChatMode } from '../models/ForkChatOptions';
 import { ChatSessionListPanel } from '../components/ChatSessionListPanel';
 import { Character } from '../models/Character';
 import { TypingState } from '../models/TypingState';
@@ -64,6 +65,10 @@ struct ChatPage {
   @State actionSheetMsg: ChatMessage | null = null;
   /** 是否显示清空确认 */
   @State showClearConfirm: boolean = false;
+  /** 是否显示 Fork 模式选择弹窗 */
+  @State showForkModePicker: boolean = false;
+  /** Fork 操作目标消息 ID */
+  private forkTargetMessageId: string = '';
 
   @StorageLink('branchChangeSeq') @Watch('onBranchChangeSeqChanged') branchChangeSeq: number = 0;
   /** 聊天背景配置变更通知(由 ChatBackgroundSettingsPage 通过 AppStorage.setOrCreate 触发) */
@@ -375,6 +380,7 @@ struct ChatPage {
               this.viewModel!.openSessionList();
             },
             onGoChatBackground: (): void => { this.navigateToChatBackgroundSettings(); },
+            onGoMemory: (): void => { this.navigateToMemoryManagement(); },
             onRegenerate: (): void => { this.viewModel!.regenerate(); },
             onClearChat: (): void => {
               this.showClearConfirm = true;
@@ -392,6 +398,7 @@ struct ChatPage {
             canRegenerate: this.viewModel!.canRegenerateAssistantMessage(this.actionSheetMsg!.id),
             canContinue: this.viewModel!.canContinueFromAssistant(this.actionSheetMsg!.id),
             candidateCount: this.getCandidateCount(this.actionSheetMsg!.id),
+            canForkChat: !this.viewModel!.busy && this.viewModel!.isSessionReady,
             onClose: (): void => {
               this.showActionSheet = false;
               this.actionSheetMsg = null;
@@ -405,6 +412,11 @@ struct ChatPage {
         // 清空确认弹窗
         if (this.showClearConfirm) {
           this.clearConfirmDialog()
+        }
+
+        // Fork 模式选择弹窗
+        if (this.showForkModePicker) {
+          this.forkModePickerDialog()
         }
       }
       .width('100%')
@@ -1036,6 +1048,174 @@ struct ChatPage {
     });
   }
 
+  private navigateToMemoryManagement(): void {
+    if (this.viewModel === null) {
+      return;
+    }
+    const chatId: string | undefined = this.viewModel!.getCurrentChatId();
+    if (chatId === undefined || chatId.length === 0) {
+      promptAction.showToast({ message: '会话未就绪', duration: 1500 });
+      return;
+    }
+    router.pushUrl({
+      url: 'pages/MemoryManagementPage',
+      params: { chatId: chatId }
+    });
+  }
+
+  /**
+   * 从指定消息创建独立对话。
+   * 弹出自定义选择弹窗,让用户选择完整历史或仅记忆模式。
+   */
+  private forkChatFromMessage(messageId: string): void {
+    if (this.viewModel === null) {
+      return;
+    }
+    if (this.viewModel!.busy) {
+      promptAction.showToast({ message: $r('app.string.chat_branch_create_busy'), duration: 1500 });
+      return;
+    }
+    const chatId: string | undefined = this.viewModel!.getCurrentChatId();
+    if (chatId === undefined || chatId.length === 0) {
+      promptAction.showToast({ message: '会话未就绪', duration: 1500 });
+      return;
+    }
+    const branchId: string = this.viewModel!.activeBranchId;
+    if (branchId.length === 0) {
+      promptAction.showToast({ message: '当前无活动分支', duration: 1500 });
+      return;
+    }
+    this.forkTargetMessageId = messageId;
+    this.showForkModePicker = true;
+  }
+
+  @Builder
+  forkModePickerDialog() {
+    Stack() {
+      Column() {
+        Text('从此处创建独立对话')
+          .fontSize(18)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.app_text_primary'))
+          .margin({ top: 20, bottom: 8 })
+
+        Text('选择新会话的初始内容范围,新会话与原会话后续完全独立。')
+          .fontSize(13)
+          .fontColor($r('app.color.app_text_secondary'))
+          .lineHeight(20)
+          .margin({ left: 16, right: 16, bottom: 12 })
+
+        Divider().color($r('app.color.app_divider'))
+
+        // 携带完整历史
+        Column() {
+          Text('携带完整历史')
+            .fontSize(15)
+            .fontColor($r('app.color.app_text_primary'))
+            .margin({ top: 12, bottom: 4 })
+          Text('复制从根到当前消息的全部历史与记忆')
+            .fontSize(12)
+            .fontColor($r('app.color.app_text_tertiary'))
+        }
+        .width('100%')
+        .alignItems(HorizontalAlign.Center)
+        .padding({ top: 8, bottom: 12 })
+        .onClick(() => {
+          this.showForkModePicker = false;
+          void this.executeForkChat(this.forkTargetMessageId, true);
+        })
+
+        Divider().color($r('app.color.app_divider'))
+
+        // 只携带记忆
+        Column() {
+          Text('只携带记忆')
+            .fontSize(15)
+            .fontColor($r('app.color.app_text_primary'))
+            .margin({ top: 12, bottom: 4 })
+          Text('不复制旧消息,仅继承记忆摘要 + 最近 2 条消息')
+            .fontSize(12)
+            .fontColor($r('app.color.app_text_tertiary'))
+        }
+        .width('100%')
+        .alignItems(HorizontalAlign.Center)
+        .padding({ top: 8, bottom: 12 })
+        .onClick(() => {
+          this.showForkModePicker = false;
+          void this.executeForkChat(this.forkTargetMessageId, false);
+        })
+
+        Divider().color($r('app.color.app_divider'))
+
+        // 取消
+        Text('取消')
+          .fontSize(15)
+          .fontColor($r('app.color.app_text_secondary'))
+          .width('100%')
+          .textAlign(TextAlign.Center)
+          .padding({ top: 14, bottom: 14 })
+          .onClick(() => {
+            this.showForkModePicker = false;
+          })
+      }
+      .width('80%')
+      .backgroundColor($r('app.color.app_surface_1'))
+      .borderRadius(12)
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor('rgba(0,0,0,0.5)')
+    .onClick(() => {
+      this.showForkModePicker = false;
+    })
+  }
+
+  private async executeForkChat(
+    forkMessageId: string,
+    fullHistory: boolean
+  ): Promise<void> {
+    if (this.viewModel === null) {
+      return;
+    }
+    const sourceChatId: string | undefined = this.viewModel!.getCurrentChatId();
+    if (sourceChatId === undefined || sourceChatId.length === 0) {
+      promptAction.showToast({ message: '会话未就绪', duration: 1500 });
+      return;
+    }
+    const sourceBranchId: string = this.viewModel!.activeBranchId;
+    if (sourceBranchId.length === 0) {
+      promptAction.showToast({ message: '当前无活动分支', duration: 1500 });
+      return;
+    }
+    promptAction.showToast({ message: '正在创建独立对话...', duration: 1500 });
+    try {
+      const forkService = AppServices.getForkChatService();
+      const result = fullHistory
+        ? await forkService.forkChatWithFullHistory({
+            mode: ForkChatMode.FullHistory,
+            sourceChatId: sourceChatId,
+            sourceBranchId: sourceBranchId,
+            forkMessageId: forkMessageId
+          })
+        : await forkService.forkChatWithMemoryOnly({
+            mode: ForkChatMode.MemoryOnly,
+            sourceChatId: sourceChatId,
+            sourceBranchId: sourceBranchId,
+            keepRecentMessages: 2
+          });
+      const msg: string = '已创建新对话(复制 '
+        + result.copiedMessageCount.toString() + ' 条消息, '
+        + result.copiedMemoryCount.toString() + ' 条记忆)';
+      promptAction.showToast({ message: msg, duration: 2000 });
+    } catch (e) {
+      Logger.error(LOG_TAG, 'executeForkChat failed: ' + String(e));
+      promptAction.showToast({
+        message: '创建失败: ' + (e instanceof Error ? e.message : String(e)),
+        duration: 2500
+      });
+    }
+  }
+
   /**
    * 会话首次就绪或切换时加载背景配置。
    * 通过 lastLoadedBgChatId 缓存避免 onMessagesUpdate 反复加载。
@@ -1128,6 +1308,9 @@ struct ChatPage {
       case 'switch_branch':
         // 简化:直接 swipeNext,不弹二级菜单
         this.viewModel!.swipeNext(msg.id);
+        break;
+      case 'fork_chat':
+        this.forkChatFromMessage(msg.id);
         break;
       default:
         break;

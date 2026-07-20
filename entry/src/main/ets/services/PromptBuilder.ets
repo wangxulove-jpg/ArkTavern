@@ -14,7 +14,7 @@
  *
  * 固定消息顺序:
  * PromptPreset → BeforeCharacter → Character → AfterCharacter
- *   → DialogueExamples → Conversation → PostHistory
+ *   → DialogueExamples → MemorySummary → Conversation → PostHistory
  *
  * V2 字段处理:
  * - character.systemPrompt 非空时覆盖默认 Character 段;
@@ -68,6 +68,11 @@ export interface PromptBuildContext {
   macroContext?: MacroContext;
   /** Preset 附加 System Prompt(可选,已宏替换后的内容) */
   presetSystemPrompt?: string;
+  /**
+   * 长期记忆摘要(可选,非空时作为 System 消息插入到 DialogueExamples 与 Conversation 之间)。
+   * 调用方负责从 MemoryService.getInjectionContext 取得当前 Branch 的有效摘要文本。
+   */
+  memorySummary?: string;
   /** 是否启用 Post-History Instructions(默认 true)。
    *  Post-History Instructions 只有在对应提示词功能启用时才注入。
    *  当角色有 postHistoryInstructions 但此 flag 为 false 时不注入。 */
@@ -158,6 +163,22 @@ export class PromptBuilder {
           segments.push(exampleSegments[i]);
         }
       }
+    }
+
+    // 4.5 MemorySummary(长期记忆摘要)
+    // 由调用方从 MemoryService.getInjectionContext 取得当前 Branch 的有效摘要文本
+    // 空字符串或空白不注入
+    if (context.memorySummary !== undefined &&
+      context.memorySummary.trim().length > 0) {
+      const memorySeg: PromptSegment = createPromptSegment(
+        'memory-summary',
+        PromptSegmentPosition.MemorySummary,
+        ChatRole.System,
+        context.memorySummary,
+        0,
+        ChatMessageSource.MemorySummary
+      );
+      segments.push(memorySeg);
     }
 
     // 5. Conversation:保留输入中的所有消息(包括合法 System 消息)
