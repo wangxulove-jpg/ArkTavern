@@ -59,6 +59,13 @@ import { ChatPersistenceService } from './ChatPersistenceService';
 import { ChatBackgroundService } from './ChatBackgroundService';
 import { ModelService } from './ModelService';
 import { DefaultProviderFactory } from './ProviderFactory';
+import { HttpClient } from '../network/core/HttpClient';
+import { HarmonyHttpClient } from '../network/core/HarmonyHttpClient';
+import { MarketCacheStore } from './market/MarketCacheStore';
+import { MarketImportedMapStore } from './market/MarketImportedMapStore';
+import { MarketService } from './market/MarketService';
+import { MarketImportService } from './market/MarketImportService';
+import { MarketTranslationService } from './market/MarketTranslationService';
 import { PromptPresetListViewModel } from '../viewmodels/PromptPresetListViewModel';
 import { PromptPresetEditViewModel } from '../viewmodels/PromptPresetEditViewModel';
 import { ChatSessionListViewModel } from '../viewmodels/ChatSessionListViewModel';
@@ -141,6 +148,12 @@ export class AppServices {
   private contextBudgetService: ContextBudgetService | null = null;
   /** ChatBackgroundService 聊天背景图服务(导入图片 + 模糊度 + 暗化)。在 initialize 中创建。 */
   private chatBackgroundService: ChatBackgroundService | null = null;
+  /** 市场服务(Chub 公共只读浏览 + 搜索 + 详情 + 下载) */
+  readonly marketService: MarketService;
+  /** 市场导入服务(需要 context,在 initialize 中创建) */
+  private marketImportService: MarketImportService | null = null;
+  /** 市场翻译服务(复用 ModelService,在 initialize 中创建) */
+  private marketTranslationService: MarketTranslationService | null = null;
   /** 应用 Context,用于 ChatBackgroundService 等需要 filesDir 的服务 */
   private appContext: common.Context | null = null;
 
@@ -253,6 +266,12 @@ export class AppServices {
       this.messageSwipeRepository,
       this.conversationBranchPersistenceService
     );
+    // 市场服务(Chub 公共浏览 + 搜索 + 详情 + 下载)
+    // 使用独立的 HarmonyHttpClient 实例(非流式),不与流式 Provider 共享
+    const marketHttpClient: HttpClient = new HarmonyHttpClient();
+    const marketCacheStore: MarketCacheStore = new MarketCacheStore(this.appPreferences);
+    const marketImportedMapStore: MarketImportedMapStore = new MarketImportedMapStore(this.appPreferences);
+    this.marketService = new MarketService(marketHttpClient, marketCacheStore, marketImportedMapStore);
     // ChatBackgroundService 在 initialize 中 context 就绪后创建
   }
 
@@ -300,6 +319,24 @@ export class AppServices {
         // 创建 ContextBudgetService(只需 appPreferences)
         services.contextBudgetService = new ContextBudgetService(services.appPreferences);
         Logger.info(LOG_TAG, 'contextBudgetService created');
+        // 创建 MarketImportService(需要 appContext 写入临时 PNG 文件)
+        if (services.appContext !== null) {
+          services.marketImportService = new MarketImportService(
+            services.marketService,
+            services.characterService,
+            services.marketService.getImportedMapStore(),
+            services.appContext
+          );
+          Logger.info(LOG_TAG, 'marketImportService created');
+        } else {
+          Logger.warn(LOG_TAG, 'appContext is null, marketImportService not created');
+        }
+        // 创建 MarketTranslationService(复用 ModelService + MarketCacheStore)
+        services.marketTranslationService = new MarketTranslationService(
+          services.modelService,
+          services.marketService.getCacheStore()
+        );
+        Logger.info(LOG_TAG, 'marketTranslationService created');
         Logger.info(LOG_TAG, 'initialize ok');
       })
       .catch((e: Object): void => {
@@ -442,6 +479,32 @@ export class AppServices {
    */
   static getChatBackgroundService(): ChatBackgroundService | null {
     return AppServices.getInstance().chatBackgroundService;
+  }
+
+  /**
+   * 获取 MarketService 实例。
+   * 用于市场 Tab 浏览、搜索、详情查看、PNG/JSON 下载。
+   */
+  static getMarketService(): MarketService {
+    return AppServices.getInstance().marketService;
+  }
+
+  /**
+   * 获取 MarketImportService 实例。
+   * 用于市场角色卡导入(校验重复 + 下载 + 调用现有 CharacterService 导入流程)。
+   * 如果初始化时 appContext 不可用,返回 null。
+   */
+  static getMarketImportService(): MarketImportService | null {
+    return AppServices.getInstance().marketImportService;
+  }
+
+  /**
+   * 获取 MarketTranslationService 实例。
+   * 用于市场角色卡预览字段的中文翻译(复用 ModelService)。
+   * 初始化完成后始终可用(无外部依赖)。
+   */
+  static getMarketTranslationService(): MarketTranslationService | null {
+    return AppServices.getInstance().marketTranslationService;
   }
 
   /**

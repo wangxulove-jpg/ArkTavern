@@ -1297,6 +1297,350 @@
       "value": "后续将接入角色卡市场,敬请期待"
     },
     {
+      "name": "market_title",
+      "value": "角色市场"
+    },
+    {
+      "name": "market_search_placeholder",
+      "value": "搜索角色 / 作者 / 标签"
+    },
+    {
+      "name": "market_sort_recommended",
+      "value": "推荐"
+    },
+    {
+      "name": "market_sort_latest",
+      "value": "最新"
+    },
+    {
+      "name": "market_sort_top",
+      "value": "热门"
+    },
+    {
+      "name": "market_hide_nsfw",
+      "value": "隐藏成人"
+    },
+    {
+      "name": "market_show_nsfw",
+      "value": "显示成人"
+    },
+    {
+      "name": "market_hide_imported",
+      "value": "隐藏已导入"
+    },
+    {
+      "name": "market_show_imported",
+      "value": "显示已导入"
+    },
+    {
+      "name": "market_translate_toggle",
+      "value": "翻译为中文"
+    },
+    {
+      "name": "market_loading",
+      "value": "正在加载"
+    },
+    {
+      "name": "market_loading_more",
+      "value": "正在加载更多"
+    },
+    {
+      "name": "market_no_more",
+      "value": "没有更多了"
+    },
+    {
+      "name": "market_retry",
+      "value": "重试"
+    },
+    {
+      "name": "market_no_results",
+      "value": "未找到角色"
+    },
+    {
+      "name": "market_no_results_search_desc",
+      "value": "未找到匹配的角色,试试其他关键词"
+    },
+    {
+      "name": "market_no_results_hide_imported_desc",
+      "value": "已隐藏所有已导入角色,可关闭\"隐藏已导入\"查看全部"
+    },
+    {
+      "name": "market_no_results_default_desc",
+      "value": "尝试下拉刷新或稍后再试"
+    },
+    {
+      "name": "market_load_failed",
+      "value": "加载失败"
+    },
+    {
+      "name": "market_init_failed",
+      "value": "初始化失败"
+    },
+    {
+      "name": "market_not_initialized",
+      "value": "未初始化"
+    },
+    {
+      "name": "market_empty",
+      "value": "暂无角色卡"
+    },
+    {
+      "name": "market_try_refresh",
+      "value": "尝试下拉刷新或修改筛选条件"
+    },
+    {
+      "name": "market_already_imported",
+      "value": "已导入"
+    },
+    {
+      "name": "market_creator_prefix",
+      "value": "作者: "
+    },
+    {
+      "name": "market_contains_lorebook",
+      "value": "含世界书"
+    },
+    {
+      "name": "market_market_unavailable",
+      "value": "Chub 接口暂时不可用"
+    },
+    {
+      "name": "market_content_warning",
+      "value": "内容警告"
+    },
+    {
+      "name": "market_nsfw_confirm_message",
+      "value": "您即将显示成人(NSFW)内容。这些内容可能不适合所有用户,请确认您已年满 18 周岁并自愿查看。"
+    },
+    {
+      "name": "market_cancel",
+      "value": "取消"
+    },
+    {
+      "name": "market_confirm_show",
+      "value": "确认显示"
+    },
+    {
+      "name": "market_detail_title",
+      "value": "角色详情"
+    },
+    {
+      "name": "market_detail_back",
+      "value": "返回"
+    },
+    {
+      "name": "market_detail_rating",
+      "value": "评分"
+    },
+    {
+      "name": "market_detail_download",
+      "value": "下载"
+    },
+    {
+      "name": "market_detail_updated",
+      "value": "更新"
+    },
+    {
+      "name": "market_detail_tags_label",
+      "value": "标签"
+    },
+    {
+      "name": "market_detail_description_label",
+      "value": "描述"
+    },
+    {
+      "name": "market_detail_creator_notes_label",
+      "value": "创作者备注"
+    },
+    {
+      "name": "market_detail_first_message_label",
+      "value": "开场白预览"
+    },
+    {
+      "name": "market_detail_alt_greetings_label",
+      "value": "备用开场白"
+    },
+    {
+      "name": "market_detail_message_example_label",
+      "value": "对话示例"
+    },
+    {
+      "name": "market_detail_character_book_label",
+      "value": "角色世界书条目"
+    },
+    {
+      "name": "market_detail_card_version_label",
+      "value": "卡版本"
+    },
+    {
+      "name": "market_detail_source_label",
+      "value": "来源"
+    },
+    {
+      "name": "market_detail_stat_unit_entries",
+      "value": " 条"
+    },
+    {
+      "name": "market_detail_stat_included",
+      "value": "包含"
+    },
+    {
+      "name": "market_detail_stat_none",
+      "value": "无"
+    },
+    {
+      "name": "market_detail_import_button",
+      "value": "导入角色"
+    },
+    {
+      "name": "market_detail_importing",
+      "value": "导入中..."
+    },
+    {
+      "name": "market_detail_imported",
+      "value": "已导入"
+    },
+    {
+      "name": "market_detail_import_short",
+      "value": "导入"
+    },
+    {
+      "name": "market_detail_nsfw_warning",
+      "value": "此角色包含成人(NSFW)内容。请确认您已年满 18 周岁并自愿查看。"
+    },
+    {
+      "name": "market_detail_i_understand",
+      "value": "我已知晓"
+    },
+    {
+      "name": "market_detail_duplicate_title",
+      "value": "角色已存在"
+    },
+    {
+      "name": "market_detail_duplicate_default_name",
+      "value": "本地角色"
+    },
+    {
+      "name": "market_detail_duplicate_local_only",
+      "value": "本地已存在相同来源的角色"
+    },
+    {
+      "name": "market_detail_duplicate_message_prefix",
+      "value": "本地已存在角色\""
+    },
+    {
+      "name": "market_detail_duplicate_message_suffix",
+      "value": "\"。可以选择查看本地角色,或仍导入为副本。"
+    },
+    {
+      "name": "market_detail_view_local",
+      "value": "查看本地角色"
+    },
+    {
+      "name": "market_detail_import_as_duplicate",
+      "value": "仍导入为副本"
+    },
+    {
+      "name": "market_detail_import_success_title",
+      "value": "导入成功"
+    },
+    {
+      "name": "market_detail_import_success_default",
+      "value": "角色已导入到本地。"
+    },
+    {
+      "name": "market_detail_import_success_prefix",
+      "value": "角色\""
+    },
+    {
+      "name": "market_detail_import_success_suffix",
+      "value": "\"已导入到本地。"
+    },
+    {
+      "name": "market_detail_view_character",
+      "value": "查看角色"
+    },
+    {
+      "name": "market_detail_start_new_chat",
+      "value": "新建对话"
+    },
+    {
+      "name": "market_detail_continue_browsing",
+      "value": "继续浏览"
+    },
+    {
+      "name": "market_detail_market_service_not_ready",
+      "value": "市场导入服务未初始化"
+    },
+    {
+      "name": "market_detail_missing_character",
+      "value": "缺少角色信息"
+    },
+    {
+      "name": "market_detail_init_failed_prefix",
+      "value": "初始化失败: "
+    },
+    {
+      "name": "market_detail_load_failed_prefix",
+      "value": "加载详情失败: "
+    },
+    {
+      "name": "market_detail_import_failed_prefix",
+      "value": "导入失败: "
+    },
+    {
+      "name": "market_detail_duplicate_reason_prefix",
+      "value": "重复原因: "
+    },
+    {
+      "name": "market_detail_network_error_prefix",
+      "value": "网络错误: "
+    },
+    {
+      "name": "market_detail_parse_error_prefix",
+      "value": "角色卡解析失败: "
+    },
+    {
+      "name": "market_detail_unknown_error_prefix",
+      "value": "导入失败: "
+    },
+    {
+      "name": "market_translate_privacy_title",
+      "value": "翻译为中文"
+    },
+    {
+      "name": "market_translate_privacy_message",
+      "value": "开启后,市场预览文本(名称、简介、标签、创作者备注)将发送到当前模型服务进行翻译。不会发送完整角色卡或对话内容。翻译结果仅用于市场展示,不影响导入后的角色卡数据。"
+    },
+    {
+      "name": "market_translate_privacy_confirm",
+      "value": "我已知晓并开启"
+    },
+    {
+      "name": "market_translate_privacy_cancel",
+      "value": "暂不开启"
+    },
+    {
+      "name": "market_translate_loading",
+      "value": "翻译中"
+    },
+    {
+      "name": "market_translate_failed_keep_original",
+      "value": "翻译失败,显示原文"
+    },
+    {
+      "name": "market_view_original",
+      "value": "查看原文"
+    },
+    {
+      "name": "market_view_chinese",
+      "value": "中文"
+    },
+    {
+      "name": "market_view_english",
+      "value": "原文"
+    },
+    {
       "name": "tab_settings",
       "value": "设置"
     },

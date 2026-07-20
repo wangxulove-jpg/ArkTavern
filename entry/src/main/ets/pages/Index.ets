@@ -23,7 +23,7 @@ import { SymbolGlyphModifier, router } from '@kit.ArkUI';
 import { AppServices } from '../services/AppServices';
 import { CharacterRootView } from './tabs/CharacterRootView';
 import { ChatSessionRootView } from './tabs/ChatSessionRootView';
-import { MarketPlaceholderView } from './tabs/MarketPlaceholderView';
+import { MarketPage } from './tabs/MarketPage';
 import { SettingsRootView } from './tabs/SettingsRootView';
 
 @Entry
@@ -152,7 +152,7 @@ struct Index {
         .height('100%')
         .backgroundColor($r('app.color.app_bg'))
 
-      MarketPlaceholderView()
+      MarketPage()
     }
     .width('100%')
     .height('100%')
