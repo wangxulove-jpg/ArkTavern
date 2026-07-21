@@ -106,8 +106,9 @@ export class ChatViewModel {
   private flushTimerId: number = -1;
   /** 上次 flush 时间戳(ms) */
   private lastFlushTime: number = 0;
-  /** 节流间隔(ms):首次立即 flush,后续在此间隔内合并 */
-  private static readonly FLUSH_INTERVAL_MS: number = 50;
+  /** 节流间隔(ms):首次立即 flush,后续在此间隔内合并。
+   *  16ms ≈ 一帧(60fps),保证每帧最多 flush 一次,既流畅又不过载 */
+  private static readonly FLUSH_INTERVAL_MS: number = 16;
 
   /**
    * UI 状态同步回调。
