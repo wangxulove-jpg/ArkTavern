@@ -27,12 +27,23 @@ export interface OpenAIRequestMessage {
 }
 
 /**
+ * OpenAI response_format 对象(仅支持 json_object 类型)。
+ */
+export interface OpenAIResponseFormat {
+  readonly type: string;
+}
+
+/**
  * OpenAI Chat Completions 非流式请求体。
  * stream 强制为 false。
  *
  * reasoning_effort 为可选字段:
  * - undefined / '':不发送该字段(跟随 Provider 默认)
  * - 'none' / 'low' / 'medium' / 'high':发送对应档位
+ *
+ * response_format 为可选字段:
+ * - undefined:不发送该字段
+ * - {type: "json_object"}:强制 JSON 输出模式
  */
 export interface OpenAIChatRequestBody {
   readonly model: string;
@@ -42,6 +53,7 @@ export interface OpenAIChatRequestBody {
   readonly max_tokens: number;
   readonly stream: boolean;
   readonly reasoning_effort?: string;
+  readonly response_format?: OpenAIResponseFormat;
 }
 
 // ===== 响应体类型定义 =====

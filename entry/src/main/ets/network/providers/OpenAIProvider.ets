@@ -42,6 +42,7 @@ import {
   OpenAIChatRequestBody,
   OpenAIRequestMessage,
   OpenAIChatResponseBody,
+  OpenAIResponseFormat,
   roleToString,
   extractResponseBody,
   extractErrorDetail,
@@ -388,6 +389,25 @@ export function buildRequestBody(request: ChatRequest, forceStream: boolean = fa
   // 思考强度:空字符串或 undefined 不发送该字段;合法值才写入 body
   const effort: string | undefined = request.reasoningEffort;
   const hasEffort: boolean = effort !== undefined && effort.length > 0;
+  // JSON 输出模式:仅当显式为 true 时发送 response_format
+  const hasJsonFormat: boolean = request.responseFormatJson === true;
+  const responseFormat: OpenAIResponseFormat | undefined = hasJsonFormat
+    ? { type: 'json_object' }
+    : undefined;
+
+  if (hasEffort && hasJsonFormat) {
+    const requestBody: OpenAIChatRequestBody = {
+      model: request.model,
+      messages: messages,
+      temperature: request.temperature,
+      top_p: request.topP,
+      max_tokens: request.maxTokens,
+      stream: forceStream,
+      reasoning_effort: effort as string,
+      response_format: responseFormat as OpenAIResponseFormat
+    };
+    return JSON.stringify(requestBody);
+  }
 
   if (hasEffort) {
     const requestBody: OpenAIChatRequestBody = {
@@ -398,6 +418,19 @@ export function buildRequestBody(request: ChatRequest, forceStream: boolean = fa
       max_tokens: request.maxTokens,
       stream: forceStream,
       reasoning_effort: effort as string
+    };
+    return JSON.stringify(requestBody);
+  }
+
+  if (hasJsonFormat) {
+    const requestBody: OpenAIChatRequestBody = {
+      model: request.model,
+      messages: messages,
+      temperature: request.temperature,
+      top_p: request.topP,
+      max_tokens: request.maxTokens,
+      stream: forceStream,
+      response_format: responseFormat as OpenAIResponseFormat
     };
     return JSON.stringify(requestBody);
   }

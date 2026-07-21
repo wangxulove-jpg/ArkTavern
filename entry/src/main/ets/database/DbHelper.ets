@@ -33,6 +33,8 @@ import {
   createV6ToV7Migration,
   createV7ToV8Migration,
   createV8ToV9Migration,
+  createV9ToV10Migration,
+  createV10ToV11Migration,
   DatabaseMigration,
   MigrationPath
 } from './DatabaseMigration';
@@ -65,6 +67,14 @@ export type TransactionOperation =
   | 'chat_swap_sort_order'
   | 'v5_migration'
   | 'v5_integrity_repair'
+  | 'world_create'
+  | 'world_member_upsert'
+  | 'world_member_remove'
+  | 'world_scene_upsert'
+  | 'world_chat_link_upsert'
+  | 'world_relationship_upsert'
+  | 'world_memory_event_upsert'
+  | 'world_message_batch_append'
   | 'unknown';
 
 export class DbHelper {
@@ -85,7 +95,7 @@ export class DbHelper {
 
   constructor(
     databaseName: string = DATABASE_NAME,
-    migrations: ReadonlyArray<DatabaseMigration> = [createV1ToV2Migration(), createV2ToV3Migration(), createV3ToV4Migration(), createV4ToV5Migration(), createV5ToV6Migration(), createV6ToV7Migration(), createV7ToV8Migration(), createV8ToV9Migration()]
+    migrations: ReadonlyArray<DatabaseMigration> = [createV1ToV2Migration(), createV2ToV3Migration(), createV3ToV4Migration(), createV4ToV5Migration(), createV5ToV6Migration(), createV6ToV7Migration(), createV7ToV8Migration(), createV8ToV9Migration(), createV9ToV10Migration(), createV10ToV11Migration()]
   ) {
     this.databaseName = databaseName;
     this.migrations = migrations;
@@ -365,11 +375,21 @@ export class DbHelper {
       const msg: Object | undefined = Reflect.has(obj, 'message')
         ? (obj as Record<string, Object>).message
         : undefined;
+      // DatabaseError 携带的底层 causeMessage(脱敏后的原始错误)
+      const causeMsg: Object | undefined = Reflect.has(obj, 'causeMessage')
+        ? (obj as Record<string, Object>).causeMessage
+        : undefined;
       if (typeof code === 'number' && typeof msg === 'string') {
-        return `code=${code} message=${msg}`;
+        const causeStr: string = typeof causeMsg === 'string' && causeMsg.length > 0
+          ? ` cause=${causeMsg}`
+          : '';
+        return `code=${code} message=${msg}${causeStr}`;
       }
       if (typeof msg === 'string') {
-        return msg;
+        const causeStr: string = typeof causeMsg === 'string' && causeMsg.length > 0
+          ? ` cause=${causeMsg}`
+          : '';
+        return msg.length > 0 ? `${msg}${causeStr}` : (causeStr.length > 0 ? causeStr : msg);
       }
     }
     return 'unknown error';

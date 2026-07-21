@@ -23,7 +23,7 @@
 
 import { relationalStore } from '@kit.ArkData';
 import { DbHelper } from '../database/DbHelper';
-import { ChatMessage, ChatMessageStatus } from '../models/ChatMessage';
+import { ChatMessage, ChatMessageStatus, MessageSenderType, MessageVisibility } from '../models/ChatMessage';
 import { ChatRole } from '../models/ChatRole';
 import { ChatMessageSource } from '../models/ChatMessageSource';
 import { DatabaseError } from '../models/DatabaseError';
@@ -41,7 +41,15 @@ import {
   COLUMN_SEQUENCE_NUMBER,
   COLUMN_ERROR_MESSAGE,
   COLUMN_IS_STREAMING,
-  COLUMN_SOURCE
+  COLUMN_SOURCE,
+  COLUMN_SENDER_TYPE,
+  COLUMN_SENDER_CHARACTER_ID,
+  COLUMN_SCENE_ID,
+  COLUMN_GENERATION_BATCH_ID,
+  COLUMN_VISIBILITY,
+  COLUMN_RECIPIENT_CHARACTER_IDS_JSON,
+  COLUMN_PARTICIPANT_IDS_JSON,
+  COLUMN_WITNESS_IDS_JSON
 } from '../database/DatabaseConstants';
 import {
   parseChatRole,
@@ -50,6 +58,10 @@ import {
   chatMessageStatusToString,
   parseChatMessageSource,
   chatMessageSourceToString,
+  parseMessageSenderType,
+  messageSenderTypeToString,
+  parseMessageVisibility,
+  messageVisibilityToString,
   intToBoolean,
   isValidTimestamp,
   isValidSequence,
@@ -114,8 +126,52 @@ function buildValidatedMessageBucket(
     throw DatabaseError.invalidData('source not persistable');
   }
 
+  // v10 多人世界字段校验
+  // - senderType 默认为 'user'(向后兼容旧消息)
+  // - senderType === 'character' 时 senderCharacterId 必填
+  // - senderType === 'user' 或 'narrator' 时 senderCharacterId 必须为空
+  const senderType: MessageSenderType =
+    message.senderType !== undefined ? message.senderType : 'user';
+  messageSenderTypeToString(senderType);
+  if (senderType === 'character') {
+    if (message.senderCharacterId === undefined || message.senderCharacterId === '') {
+      throw DatabaseError.invalidData('sender_character_id empty for character message');
+    }
+  } else {
+    if (message.senderCharacterId !== undefined && message.senderCharacterId !== '') {
+      throw DatabaseError.invalidData(
+        `sender_character_id must be empty for ${senderType} message`
+      );
+    }
+  }
+
   const status: ChatMessageStatus = message.status;
   const isStreamingInt: number = resolveIsStreaming(status, message.isStreaming);
+
+  // v11 私聊字段校验
+  // - visibility 默认 'public'
+  // - visibility='private' 时 recipientCharacterIds 必填且非空
+  // - visibility='public' 或 'narrator' 时 recipientCharacterIds 必须为空
+  const visibility: MessageVisibility =
+    message.visibility !== undefined ? message.visibility : 'public';
+  messageVisibilityToString(visibility);
+  const recipientIds: string[] =
+    message.recipientCharacterIds !== undefined ? [...message.recipientCharacterIds] : [];
+  const participantIds: string[] =
+    message.participantIds !== undefined ? [...message.participantIds] : [];
+  const witnessIds: string[] =
+    message.witnessIds !== undefined ? [...message.witnessIds] : [];
+  if (visibility === 'private') {
+    if (recipientIds.length === 0) {
+      throw DatabaseError.invalidData('recipient_character_ids empty for private message');
+    }
+  } else {
+    if (recipientIds.length > 0) {
+      throw DatabaseError.invalidData(
+        `recipient_character_ids must be empty for ${visibility} message`
+      );
+    }
+  }
 
   const bucket: relationalStore.ValuesBucket = {};
   bucket[COLUMN_ID] = message.id;
@@ -129,6 +185,24 @@ function buildValidatedMessageBucket(
   bucket[COLUMN_ERROR_MESSAGE] = message.errorMessage !== undefined ? message.errorMessage : null;
   bucket[COLUMN_IS_STREAMING] = isStreamingInt;
   bucket[COLUMN_SOURCE] = chatMessageSourceToString(message.source);
+  bucket[COLUMN_SENDER_TYPE] = messageSenderTypeToString(senderType);
+  bucket[COLUMN_SENDER_CHARACTER_ID] =
+    senderType === 'character'
+      ? (message.senderCharacterId !== undefined ? message.senderCharacterId : null)
+      : null;
+  bucket[COLUMN_SCENE_ID] =
+    message.sceneId !== undefined && message.sceneId !== '' ? message.sceneId : null;
+  bucket[COLUMN_GENERATION_BATCH_ID] =
+    message.generationBatchId !== undefined && message.generationBatchId !== ''
+      ? message.generationBatchId
+      : null;
+  bucket[COLUMN_VISIBILITY] = messageVisibilityToString(visibility);
+  bucket[COLUMN_RECIPIENT_CHARACTER_IDS_JSON] =
+    recipientIds.length > 0 ? JSON.stringify(recipientIds) : null;
+  bucket[COLUMN_PARTICIPANT_IDS_JSON] =
+    participantIds.length > 0 ? JSON.stringify(participantIds) : null;
+  bucket[COLUMN_WITNESS_IDS_JSON] =
+    witnessIds.length > 0 ? JSON.stringify(witnessIds) : null;
   return bucket;
 }
 
@@ -168,6 +242,70 @@ function messageFromRow(rs: relationalStore.ResultSet): ChatMessage {
       : null;
   const source: ChatMessageSource | undefined = parseChatMessageSource(sourceStr);
 
+  // v10 多人世界字段(sender_type 列在旧库可能不存在,getColumnIndex 返回 -1 时回退 'user')
+  const senderTypeCol: number = rs.getColumnIndex(COLUMN_SENDER_TYPE);
+  const senderTypeStr: string | null =
+    (senderTypeCol >= 0 && !rs.isColumnNull(senderTypeCol))
+      ? rs.getString(senderTypeCol)
+      : null;
+  const senderType: MessageSenderType = parseMessageSenderType(senderTypeStr);
+
+  const senderCharacterIdCol: number = rs.getColumnIndex(COLUMN_SENDER_CHARACTER_ID);
+  const senderCharacterId: string | undefined =
+    (senderCharacterIdCol >= 0 && !rs.isColumnNull(senderCharacterIdCol))
+      ? rs.getString(senderCharacterIdCol)
+      : undefined;
+
+  const sceneIdCol: number = rs.getColumnIndex(COLUMN_SCENE_ID);
+  const sceneId: string | undefined =
+    (sceneIdCol >= 0 && !rs.isColumnNull(sceneIdCol))
+      ? rs.getString(sceneIdCol)
+      : undefined;
+
+  const generationBatchIdCol: number = rs.getColumnIndex(COLUMN_GENERATION_BATCH_ID);
+  const generationBatchId: string | undefined =
+    (generationBatchIdCol >= 0 && !rs.isColumnNull(generationBatchIdCol))
+      ? rs.getString(generationBatchIdCol)
+      : undefined;
+
+  // v11 私聊字段(列在旧库可能不存在,getColumnIndex 返回 -1 时回退默认值)
+  const visibilityCol: number = rs.getColumnIndex(COLUMN_VISIBILITY);
+  const visibilityStr: string | null =
+    (visibilityCol >= 0 && !rs.isColumnNull(visibilityCol))
+      ? rs.getString(visibilityCol)
+      : null;
+  const visibility: MessageVisibility = parseMessageVisibility(visibilityStr);
+
+  const recipientIdsCol: number = rs.getColumnIndex(COLUMN_RECIPIENT_CHARACTER_IDS_JSON);
+  const recipientIdsJson: string | null =
+    (recipientIdsCol >= 0 && !rs.isColumnNull(recipientIdsCol))
+      ? rs.getString(recipientIdsCol)
+      : null;
+  const recipientCharacterIds: string[] | undefined =
+    recipientIdsJson !== null && recipientIdsJson.length > 0
+      ? parseStringArrayJson(recipientIdsJson)
+      : undefined;
+
+  const participantIdsCol: number = rs.getColumnIndex(COLUMN_PARTICIPANT_IDS_JSON);
+  const participantIdsJson: string | null =
+    (participantIdsCol >= 0 && !rs.isColumnNull(participantIdsCol))
+      ? rs.getString(participantIdsCol)
+      : null;
+  const participantIds: string[] | undefined =
+    participantIdsJson !== null && participantIdsJson.length > 0
+      ? parseStringArrayJson(participantIdsJson)
+      : undefined;
+
+  const witnessIdsCol: number = rs.getColumnIndex(COLUMN_WITNESS_IDS_JSON);
+  const witnessIdsJson: string | null =
+    (witnessIdsCol >= 0 && !rs.isColumnNull(witnessIdsCol))
+      ? rs.getString(witnessIdsCol)
+      : null;
+  const witnessIds: string[] | undefined =
+    witnessIdsJson !== null && witnessIdsJson.length > 0
+      ? parseStringArrayJson(witnessIdsJson)
+      : undefined;
+
   return {
     id: id,
     role: role,
@@ -177,8 +315,40 @@ function messageFromRow(rs: relationalStore.ResultSet): ChatMessage {
     isStreaming: isStreaming,
     errorMessage: errorMessage,
     status: status,
-    source: source
+    source: source,
+    senderType: senderType,
+    senderCharacterId: senderCharacterId,
+    sceneId: sceneId,
+    generationBatchId: generationBatchId,
+    visibility: visibility,
+    recipientCharacterIds: recipientCharacterIds,
+    participantIds: participantIds,
+    witnessIds: witnessIds
   };
+}
+
+/**
+ * 安全解析 JSON 字符串为 string[]。
+ * - 输入为空或非数组时返回空数组
+ * - 数组元素必须为 string,非 string 元素跳过
+ */
+function parseStringArrayJson(json: string): string[] {
+  try {
+    const parsed: Object = JSON.parse(json);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    const arr: string[] = [];
+    for (let i = 0; i < parsed.length; i++) {
+      const item: Object = parsed[i];
+      if (typeof item === 'string') {
+        arr.push(item as string);
+      }
+    }
+    return arr;
+  } catch (e) {
+    return [];
+  }
 }
 
 function readSequenceNumber(rs: relationalStore.ResultSet): number {
@@ -452,8 +622,46 @@ export class MessageRepository {
       throw DatabaseError.invalidData('source not persistable');
     }
 
+    // v10 多人世界字段校验(同 buildValidatedMessageBucket)
+    const senderType: MessageSenderType =
+      message.senderType !== undefined ? message.senderType : 'user';
+    messageSenderTypeToString(senderType);
+    if (senderType === 'character') {
+      if (message.senderCharacterId === undefined || message.senderCharacterId === '') {
+        throw DatabaseError.invalidData('sender_character_id empty for character message');
+      }
+    } else {
+      if (message.senderCharacterId !== undefined && message.senderCharacterId !== '') {
+        throw DatabaseError.invalidData(
+          `sender_character_id must be empty for ${senderType} message`
+        );
+      }
+    }
+
     const status: ChatMessageStatus = message.status;
     const isStreamingInt: number = resolveIsStreaming(status, message.isStreaming);
+
+    // v11 私聊字段校验(同 buildValidatedMessageBucket)
+    const visibility: MessageVisibility =
+      message.visibility !== undefined ? message.visibility : 'public';
+    messageVisibilityToString(visibility);
+    const recipientIds: string[] =
+      message.recipientCharacterIds !== undefined ? [...message.recipientCharacterIds] : [];
+    const participantIds: string[] =
+      message.participantIds !== undefined ? [...message.participantIds] : [];
+    const witnessIds: string[] =
+      message.witnessIds !== undefined ? [...message.witnessIds] : [];
+    if (visibility === 'private') {
+      if (recipientIds.length === 0) {
+        throw DatabaseError.invalidData('recipient_character_ids empty for private message');
+      }
+    } else {
+      if (recipientIds.length > 0) {
+        throw DatabaseError.invalidData(
+          `recipient_character_ids must be empty for ${visibility} message`
+        );
+      }
+    }
 
     const bucket: relationalStore.ValuesBucket = {};
     bucket[COLUMN_ROLE] = chatRoleToString(message.role);
@@ -463,6 +671,24 @@ export class MessageRepository {
     bucket[COLUMN_ERROR_MESSAGE] = message.errorMessage !== undefined ? message.errorMessage : null;
     bucket[COLUMN_IS_STREAMING] = isStreamingInt;
     bucket[COLUMN_SOURCE] = chatMessageSourceToString(message.source);
+    bucket[COLUMN_SENDER_TYPE] = messageSenderTypeToString(senderType);
+  bucket[COLUMN_SENDER_CHARACTER_ID] =
+    senderType === 'character'
+      ? (message.senderCharacterId !== undefined ? message.senderCharacterId : null)
+      : null;
+  bucket[COLUMN_SCENE_ID] =
+    message.sceneId !== undefined && message.sceneId !== '' ? message.sceneId : null;
+  bucket[COLUMN_GENERATION_BATCH_ID] =
+    message.generationBatchId !== undefined && message.generationBatchId !== ''
+      ? message.generationBatchId
+      : null;
+  bucket[COLUMN_VISIBILITY] = messageVisibilityToString(visibility);
+  bucket[COLUMN_RECIPIENT_CHARACTER_IDS_JSON] =
+    recipientIds.length > 0 ? JSON.stringify(recipientIds) : null;
+  bucket[COLUMN_PARTICIPANT_IDS_JSON] =
+    participantIds.length > 0 ? JSON.stringify(participantIds) : null;
+  bucket[COLUMN_WITNESS_IDS_JSON] =
+    witnessIds.length > 0 ? JSON.stringify(witnessIds) : null;
 
     const store: relationalStore.RdbStore = this.dbHelper.getStore();
     const predicates: relationalStore.RdbPredicates =
@@ -669,6 +895,91 @@ export class MessageRepository {
         return rs.getString(ci);
       }
       return null;
+    } finally {
+      rs.close();
+    }
+  }
+
+  /**
+   * v10 多人世界:按 generationBatchId 删除同一轮消息。
+   * 用于整轮生成失败时回滚(无半轮消息)。
+   * 对不存在的批次返回 0(幂等)。
+   */
+  async removeByGenerationBatchId(generationBatchId: string): Promise<number> {
+    if (generationBatchId === '') {
+      throw DatabaseError.invalidData('generationBatchId empty');
+    }
+    const store: relationalStore.RdbStore = this.dbHelper.getStore();
+    const predicates: relationalStore.RdbPredicates =
+      new relationalStore.RdbPredicates(TABLE_MESSAGES);
+    predicates.equalTo(COLUMN_GENERATION_BATCH_ID, generationBatchId);
+    try {
+      return await store.delete(predicates);
+    } catch (err) {
+      throw DatabaseError.queryFailed(
+        `message.removeByGenerationBatchId: ${extractCauseMessage(err)}`
+      );
+    }
+  }
+
+  /**
+   * v10 多人世界:按 generationBatchId 查询同一轮的所有消息。
+   * 按 sequence_number 升序排序。
+   */
+  async listByGenerationBatchId(generationBatchId: string): Promise<ChatMessage[]> {
+    if (generationBatchId === '') {
+      throw DatabaseError.invalidData('generationBatchId empty');
+    }
+    const store: relationalStore.RdbStore = this.dbHelper.getStore();
+    const predicates: relationalStore.RdbPredicates =
+      new relationalStore.RdbPredicates(TABLE_MESSAGES);
+    predicates.equalTo(COLUMN_GENERATION_BATCH_ID, generationBatchId);
+    predicates.orderByAsc(COLUMN_SEQUENCE_NUMBER);
+    const rs: relationalStore.ResultSet = await store.query(predicates);
+    try {
+      const messages: ChatMessage[] = [];
+      while (rs.goToNextRow()) {
+        messages.push(messageFromRow(rs));
+      }
+      return messages;
+    } finally {
+      rs.close();
+    }
+  }
+
+  /**
+   * v10 多人世界:按 senderCharacterId 查询该角色在指定 chat 中的最近消息。
+   * 用于发言调度时统计角色最近连续发言次数。
+   * 按 sequence_number 降序,limit 控制条数。
+   */
+  async listRecentByCharacter(
+    chatId: string,
+    senderCharacterId: string,
+    limit: number
+  ): Promise<ChatMessage[]> {
+    if (chatId === '') {
+      throw DatabaseError.invalidData('chatId empty');
+    }
+    if (senderCharacterId === '') {
+      throw DatabaseError.invalidData('senderCharacterId empty');
+    }
+    if (limit < 1 || limit > MAX_LIMIT) {
+      throw DatabaseError.invalidData('limit out of range');
+    }
+    const store: relationalStore.RdbStore = this.dbHelper.getStore();
+    const predicates: relationalStore.RdbPredicates =
+      new relationalStore.RdbPredicates(TABLE_MESSAGES);
+    predicates.equalTo(COLUMN_CHAT_ID, chatId);
+    predicates.equalTo(COLUMN_SENDER_CHARACTER_ID, senderCharacterId);
+    predicates.orderByDesc(COLUMN_SEQUENCE_NUMBER);
+    predicates.limitAs(limit);
+    const rs: relationalStore.ResultSet = await store.query(predicates);
+    try {
+      const messages: ChatMessage[] = [];
+      while (rs.goToNextRow()) {
+        messages.push(messageFromRow(rs));
+      }
+      return messages;
     } finally {
       rs.close();
     }

@@ -481,7 +481,9 @@ export class OpenAIStreamSession implements ChatStreamHandle {
       + ' chunks=' + this.chunkCount.toString()
       + ' events=' + this.eventCount.toString()
       + ' deltas=' + this.deltaCount.toString()
-      + ' done=' + this.receivedDone.toString());
+      + ' done=' + this.receivedDone.toString()
+      + ' finishReason=' + (this.finishReason !== undefined ? this.finishReason : 'undefined')
+      + ' contentLen=' + this.accumulatedContent.length.toString());
 
     // flush SseParser 剩余内容
     const finishResult = this.sseParser.finish();

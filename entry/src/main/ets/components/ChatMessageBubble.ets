@@ -27,6 +27,8 @@ import { ChatMessage, ChatMessageStatus, createChatMessage } from '../models/Cha
 import { ChatRole } from '../models/ChatRole';
 import { CharacterImageView } from './CharacterImageView';
 import { TypingState } from '../models/TypingState';
+import { ChatRichText, ChatSenderType } from './ChatRichText';
+import { ChatTextStyle } from '../utils/ChatTextStyleSettings';
 import { Logger } from '../utils/Logger';
 
 const LOG_TAG: string = 'ChatMessageBubble';
@@ -47,6 +49,10 @@ export struct ChatMessageBubble {
   onLongPress?: (msg: ChatMessage) => void;
   /** 点击 Assistant 头像回调(可选) */
   onAvatarClick?: () => void;
+  /** 聊天文本样式设置(v11 富文本) */
+  settings: ChatTextStyle | null = null;
+  /** 发送者角色 ID(用于角色独立颜色) */
+  senderCharacterId: string = '';
 
   /** 打字机当前显示内容 */
   @State displayedContent: string = '';
@@ -134,15 +140,18 @@ export struct ChatMessageBubble {
   @Builder
   systemBubble() {
     Row() {
-      Text(this.displayedContent)
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
-        .fontStyle(FontStyle.Italic)
-        .textAlign(TextAlign.Center)
-        .maxLines(3)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .constraintSize({ maxWidth: '80%' })
-        .padding({ left: 12, right: 12, top: 4, bottom: 4 })
+      Column() {
+        ChatRichText({
+          content: this.displayedContent,
+          senderType: 'system' as ChatSenderType,
+          senderCharacterId: '',
+          isStreaming: false,
+          settings: this.settings,
+          selectable: true
+        })
+      }
+      .constraintSize({ maxWidth: '80%' })
+      .padding({ left: 12, right: 12, top: 4, bottom: 4 })
     }
     .width('100%')
     .justifyContent(FlexAlign.Center)
@@ -154,27 +163,31 @@ export struct ChatMessageBubble {
   userBubble() {
     Row() {
       Column() {
-        Text(this.displayedContent.length > 0 ? this.displayedContent : ' ')
-          .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.chat_user_text'))
-          .textAlign(TextAlign.Start)
-          .wordBreak(WordBreak.BREAK_WORD)
-          .lineHeight(22)
-          .constraintSize({ maxWidth: '78%' })
-          .backgroundColor($r('app.color.chat_user_bubble'))
-          .borderRadius({
-            topLeft: 18, topRight: 18,
-            bottomLeft: 18, bottomRight: 6
+        Column() {
+          ChatRichText({
+            content: this.displayedContent.length > 0 ? this.displayedContent : ' ',
+            senderType: 'user' as ChatSenderType,
+            senderCharacterId: '',
+            isStreaming: false,
+            settings: this.settings,
+            selectable: true
           })
-          .padding({ left: 14, right: 14, top: 10, bottom: 12 })
-          .gesture(
-            LongPressGesture()
-              .onAction(() => {
-                if (this.onLongPress !== undefined) {
-                  this.onLongPress!(this.msg);
-                }
-              })
-          )
+        }
+        .constraintSize({ maxWidth: '78%' })
+        .backgroundColor($r('app.color.chat_user_bubble'))
+        .borderRadius({
+          topLeft: 18, topRight: 18,
+          bottomLeft: 18, bottomRight: 6
+        })
+        .padding({ left: 14, right: 14, top: 10, bottom: 12 })
+        .gesture(
+          LongPressGesture()
+            .onAction(() => {
+              if (this.onLongPress !== undefined) {
+                this.onLongPress!(this.msg);
+              }
+            })
+        )
       }
       .alignItems(HorizontalAlign.End)
       .layoutWeight(1)
@@ -208,12 +221,14 @@ export struct ChatMessageBubble {
 
       // 气泡
       Column() {
-        Text(this.getDisplayContent())
-          .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_primary'))
-          .textAlign(TextAlign.Start)
-          .wordBreak(WordBreak.BREAK_WORD)
-          .lineHeight(22)
+        ChatRichText({
+          content: this.getDisplayContent(),
+          senderType: 'assistant' as ChatSenderType,
+          senderCharacterId: this.senderCharacterId,
+          isStreaming: this.typingState.isStreaming,
+          settings: this.settings,
+          selectable: true
+        })
 
         // 流式光标(打字机在追赶或流式中)
         if (this.typingState.isStreaming && this.displayedContent.length < this.typingState.content.length) {

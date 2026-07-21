@@ -159,6 +159,54 @@
     {
       "name": "app_dev_text",
       "value": "#FFCC66"
+    },
+    {
+      "name": "chat_text_primary",
+      "value": "#F0F0F0"
+    },
+    {
+      "name": "chat_text_emphasis",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "chat_text_secondary",
+      "value": "#AAAAAA"
+    },
+    {
+      "name": "chat_text_dialogue",
+      "value": "#82B1FF"
+    },
+    {
+      "name": "chat_text_narrator",
+      "value": "#B0B0B0"
+    },
+    {
+      "name": "chat_text_action",
+      "value": "#90A4AE"
+    },
+    {
+      "name": "chat_text_code",
+      "value": "#F48FB1"
+    },
+    {
+      "name": "chat_text_link",
+      "value": "#82B1FF"
+    },
+    {
+      "name": "chat_text_quote",
+      "value": "#AAAAAA"
+    },
+    {
+      "name": "chat_text_system",
+      "value": "#777777"
+    },
+    {
+      "name": "chat_code_bg",
+      "value": "#2A2A2A"
+    },
+    {
+      "name": "chat_quote_line",
+      "value": "#555555"
     }
   ]
 }

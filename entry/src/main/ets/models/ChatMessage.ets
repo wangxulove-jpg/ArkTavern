@@ -14,6 +14,22 @@ import { ChatRole } from './ChatRole';
 import { ChatMessageSource } from './ChatMessageSource';
 
 /**
+ * 消息发送者类型(v10 多人世界引入)。
+ * - user: 用户消息
+ * - character: 角色消息(senderCharacterId 必填)
+ * - narrator: 旁白/系统描述
+ */
+export type MessageSenderType = 'user' | 'character' | 'narrator';
+
+/**
+ * 消息可见范围(v11 多人世界私聊引入)。
+ * - public: 公开发言,当前所有在场角色可知
+ * - private: 私下交谈,仅 recipientCharacterIds 中的角色可知
+ * - narrator: 旁白动作,作为场景描述处理,知情范围由参与者/目击者判断
+ */
+export type MessageVisibility = 'public' | 'private' | 'narrator';
+
+/**
  * Assistant 消息状态。
  */
 export enum ChatMessageStatus {
@@ -55,6 +71,42 @@ export interface ChatMessage {
    * - 不会写入网络请求 JSON(Provider 不识别)
    */
   readonly source?: ChatMessageSource;
+  /**
+   * 发送者类型(v10 多人世界引入)。
+   * - 'user': 用户消息(默认,旧消息兼容)
+   * - 'character': 角色消息,senderCharacterId 必填
+   * - 'narrator': 旁白消息
+   */
+  readonly senderType?: MessageSenderType;
+  /** 角色消息时填入 character.id;user/narrator 消息留空 */
+  readonly senderCharacterId?: string;
+  /** 所属场景 ID(v10 多人世界,可选) */
+  readonly sceneId?: string;
+  /** 生成批次 ID(同一轮多角色消息共享同一批次) */
+  readonly generationBatchId?: string;
+  /**
+   * 消息可见范围(v11 私聊引入,可选,默认 'public')。
+   * - 'public': 公开发言
+   * - 'private': 私下交谈(仅 recipientCharacterIds 可见)
+   * - 'narrator': 旁白动作
+   */
+  readonly visibility?: MessageVisibility;
+  /**
+   * 私聊目标角色 ID 列表(v11 私聊引入)。
+   * 仅 visibility='private' 时有效;为空表示公开消息或旁白消息。
+   */
+  readonly recipientCharacterIds?: string[];
+  /**
+   * 参与者角色 ID 列表(v11 私聊引入)。
+   * 包含用户(以 'user' 占位)与所有参与该消息的角色。
+   * 用于记忆事件的 participantIds 字段。
+   */
+  readonly participantIds?: string[];
+  /**
+   * 目击者角色 ID 列表(v11 私聊引入)。
+   * 用于旁白动作或私聊被目击的场景,默认为空。
+   */
+  readonly witnessIds?: string[];
 }
 
 /**

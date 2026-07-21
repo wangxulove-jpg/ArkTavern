@@ -17,6 +17,11 @@
     "pages/ContextBudgetPage",
     "pages/MarketDetailPage",
     "pages/AiCharacterMakerPage",
-    "pages/AiCharacterPreviewPage"
+    "pages/AiCharacterPreviewPage",
+    "pages/WorldListPage",
+    "pages/WorldCreatePage",
+    "pages/WorldChatPage",
+    "pages/WorldMembersPage",
+    "pages/WorldCharacterMemoryPage"
   ]
 }

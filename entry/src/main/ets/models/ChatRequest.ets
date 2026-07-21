@@ -40,6 +40,13 @@ export interface ChatRequestOptions {
    * Provider 不支持时自动忽略。
    */
   readonly reasoningEffort?: string;
+  /**
+   * 是否强制 JSON 输出模式(可选):
+   * - true 时向 OpenAI-compatible Provider 发送 response_format={type:"json_object"}
+   * - Provider 不支持时自动忽略
+   * - 要求 prompt 中必须包含 "JSON" 字样,否则部分 Provider 会报错
+   */
+  readonly responseFormatJson?: boolean;
 }
 
 /**
@@ -66,6 +73,12 @@ export interface ChatRequest {
    * Provider 不支持时自动忽略。
    */
   readonly reasoningEffort?: string;
+  /**
+   * 是否强制 JSON 输出模式(可选):
+   * - true 时向 OpenAI-compatible Provider 发送 response_format={type:"json_object"}
+   * - Provider 不支持时自动忽略
+   */
+  readonly responseFormatJson?: boolean;
 }
 
 /**

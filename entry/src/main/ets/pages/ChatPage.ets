@@ -38,6 +38,7 @@ import { common } from '@kit.AbilityKit';
 import { KeyCode } from '@kit.InputKit';
 import { inputMethod } from '@kit.IMEKit';
 import { AppServices } from '../services/AppServices';
+import { ChatTextStyle } from '../utils/ChatTextStyleSettings';
 import { ChatBackgroundConfig } from '../services/ChatBackgroundService';
 import { ContextBudgetViewModel } from '../viewmodels/ContextBudgetViewModel';
 import { ContextBudgetSnapshotStore } from '../services/ContextBudgetSnapshotStore';
@@ -63,6 +64,8 @@ struct ChatPage {
   @State typingStates: TypingState[] = [];
   /** 当前角色对象(用于头像) */
   @State character: Character | null = null;
+  /** v11 富文本样式设置 */
+  @State chatTextStyle: ChatTextStyle | null = null;
   /** 是否显示更多菜单 */
   @State showMoreMenu: boolean = false;
   /** 是否显示消息操作菜单 */
@@ -119,6 +122,7 @@ struct ChatPage {
     const characterService = AppServices.getCharacterService();
     const promptPresetService = AppServices.getPromptPresetService();
     const chatService = AppServices.createChatService();
+    this.chatTextStyle = AppServices.getInstance().chatTextStyleSettings.get();
     const vm: ChatViewModel = new ChatViewModel(
       chatService, modelService, characterService, promptPresetService
     );
@@ -546,6 +550,8 @@ struct ChatPage {
                 characterAvatarUri: this.character !== null ? this.character!.avatarUri : '',
                 characterName: this.viewModel !== null ? this.viewModel!.characterName : '',
                 showAvatar: state.message.source !== ChatMessageSource.CharacterFirstMessage,
+                settings: this.chatTextStyle,
+                senderCharacterId: this.character !== null ? this.character!.id : '',
                 onLongPress: (target: ChatMessage): void => {
                   this.actionSheetMsg = target;
                   this.showActionSheet = true;

@@ -14,7 +14,7 @@
  */
 
 import { ChatRole } from '../models/ChatRole';
-import { ChatMessageStatus } from '../models/ChatMessage';
+import { ChatMessageStatus, MessageSenderType, MessageVisibility } from '../models/ChatMessage';
 import { ChatMessageSource } from '../models/ChatMessageSource';
 import { DatabaseError } from '../models/DatabaseError';
 
@@ -59,6 +59,44 @@ export function chatMessageSourceToString(
 ): string | null {
   if (source === undefined) return null;
   return source;
+}
+
+/**
+ * 解析消息发送者类型(v10 多人世界引入)。
+ * - 旧消息可能存在 senderType 为空或列不存在,统一回退为 'user'
+ * - 'assistant' / 'system' 视为兼容旧角色:assistant → 'character',system → 'narrator'
+ *   (仅在历史数据迁移未覆盖时出现,新写入必须使用 'user'/'character'/'narrator')
+ */
+export function parseMessageSenderType(
+  value: string | null
+): MessageSenderType {
+  if (value === null || value === '') return 'user';
+  if (value === 'user') return 'user';
+  if (value === 'character') return 'character';
+  if (value === 'narrator') return 'narrator';
+  if (value === 'assistant') return 'character';
+  if (value === 'system') return 'narrator';
+  throw DatabaseError.invalidData(`unknown sender_type: ${value}`);
+}
+
+export function messageSenderTypeToString(senderType: MessageSenderType): string {
+  return senderType;
+}
+
+/**
+ * 解析消息可见范围(v11 私聊引入)。
+ * - 旧消息可能存在 visibility 为空或列不存在,统一回退为 'public'
+ */
+export function parseMessageVisibility(value: string | null): MessageVisibility {
+  if (value === null || value === '') return 'public';
+  if (value === 'public') return 'public';
+  if (value === 'private') return 'private';
+  if (value === 'narrator') return 'narrator';
+  throw DatabaseError.invalidData(`unknown visibility: ${value}`);
+}
+
+export function messageVisibilityToString(visibility: MessageVisibility): string {
+  return visibility;
 }
 
 export function booleanToInt(value: boolean): number {

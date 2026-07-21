@@ -14,7 +14,7 @@
  */
 
 import { relationalStore } from '@kit.ArkData';
-import { V1_TO_V2_STATEMENTS, V2_TO_V3_STATEMENTS, V3_TO_V4_STATEMENTS, V4_TO_V5_DDL_STATEMENTS, V5_TO_V6_STATEMENTS, V6_TO_V7_STATEMENTS, V7_TO_V8_DDL_STATEMENTS, V8_TO_V9_STATEMENTS } from './DatabaseSchema';
+import { V1_TO_V2_STATEMENTS, V2_TO_V3_STATEMENTS, V3_TO_V4_STATEMENTS, V4_TO_V5_DDL_STATEMENTS, V5_TO_V6_STATEMENTS, V6_TO_V7_STATEMENTS, V7_TO_V8_DDL_STATEMENTS, V8_TO_V9_STATEMENTS, V9_TO_V10_DDL_STATEMENTS, V10_TO_V11_DDL_STATEMENTS } from './DatabaseSchema';
 import {
   TABLE_CHATS,
   TABLE_MESSAGES,
@@ -40,7 +40,9 @@ import {
   COLUMN_SWIPE_ASSISTANT_MESSAGE_ID,
   COLUMN_CANDIDATE_INDEX,
   COLUMN_SWIPE_ACTIVE_CANDIDATE_INDEX,
-  COLUMN_SORT_ORDER
+  COLUMN_SORT_ORDER,
+  COLUMN_ROLE,
+  COLUMN_SENDER_TYPE
 } from './DatabaseConstants';
 import { generateUuid } from '../utils/Uuid';
 import { nowMillis } from '../utils/Time';
@@ -507,6 +509,77 @@ class V8ToV9Migration implements DatabaseMigration {
   async migrate(store: relationalStore.RdbStore): Promise<void> {
     for (let i = 0; i < V8_TO_V9_STATEMENTS.length; i++) {
       await store.executeSql(V8_TO_V9_STATEMENTS[i]);
+    }
+  }
+}
+
+/**
+ * 创建 v9→v10 数据库迁移。
+ *
+ * 事务中执行:
+ * 1. messages 表扩展 sender_type / sender_character_id / scene_id / generation_batch_id
+ * 2. 创建 worlds / world_members / world_scenes / world_chat_links /
+ *    character_user_relationships / character_relationships /
+ *    world_memory_events / world_private_memories / relationship_change_history 表
+ * 3. 创建相关索引
+ * 4. 旧消息 sender_type 默认 'user' (User 消息) 或根据 role 推断
+ *    - role='user' → sender_type='user'
+ *    - role='assistant' → sender_type='character' (单角色兼容)
+ *    - role='system' → sender_type='narrator'
+ * 5. 任一失败全部回滚,不影响旧数据
+ * 6. 不修改现有 Character / Chat / Branch / Swipe / Memory 数据
+ *
+ * 设计:
+ * - 多人世界为全新独立模块,旧 Chat 不创建 World 数据
+ * - messages.sender_type 默认 'user' 保证旧 User 消息兼容
+ * - 旧 Assistant 消息在迁移时回填 sender_type='character' 以保持一致性
+ */
+export function createV9ToV10Migration(): DatabaseMigration {
+  return new V9ToV10Migration();
+}
+
+class V9ToV10Migration implements DatabaseMigration {
+  readonly fromVersion: number = 9;
+  readonly toVersion: number = 10;
+
+  async migrate(store: relationalStore.RdbStore): Promise<void> {
+    // 1. 执行 DDL(添加新字段 + 创建新表 + 创建索引)
+    for (let i = 0; i < V9_TO_V10_DDL_STATEMENTS.length; i++) {
+      await store.executeSql(V9_TO_V10_DDL_STATEMENTS[i]);
+    }
+
+    // 2. 回填旧消息的 sender_type:
+    //    role='assistant' → sender_type='character'(单角色兼容)
+    //    role='system' → sender_type='narrator'
+    //    role='user' 已经是默认 'user',无需更新
+    await store.executeSql(
+      `UPDATE ${TABLE_MESSAGES} SET ${COLUMN_SENDER_TYPE} = 'character' ` +
+      `WHERE ${COLUMN_ROLE} = 'assistant' AND ${COLUMN_SENDER_TYPE} = 'user'`
+    );
+    await store.executeSql(
+      `UPDATE ${TABLE_MESSAGES} SET ${COLUMN_SENDER_TYPE} = 'narrator' ` +
+      `WHERE ${COLUMN_ROLE} = 'system' AND ${COLUMN_SENDER_TYPE} = 'user'`
+    );
+  }
+}
+
+/**
+ * v10→v11 迁移:
+ * - 给 messages 表添加 visibility / recipient_character_ids_json / participant_ids_json / witness_ids_json 字段
+ * - 旧消息默认 visibility='public'(由 ALTER 默认值保证)
+ * - 不需要回填 recipient/participant/witness(旧消息无这些信息)
+ */
+export function createV10ToV11Migration(): DatabaseMigration {
+  return new V10ToV11Migration();
+}
+
+class V10ToV11Migration implements DatabaseMigration {
+  readonly fromVersion: number = 10;
+  readonly toVersion: number = 11;
+
+  async migrate(store: relationalStore.RdbStore): Promise<void> {
+    for (let i = 0; i < V10_TO_V11_DDL_STATEMENTS.length; i++) {
+      await store.executeSql(V10_TO_V11_DDL_STATEMENTS[i]);
     }
   }
 }

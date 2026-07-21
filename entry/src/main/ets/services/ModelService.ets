@@ -454,7 +454,8 @@ export class ModelService {
       topP: options.topP,
       maxTokens: options.maxTokens,
       stream: options.stream,
-      reasoningEffort: options.reasoningEffort
+      reasoningEffort: options.reasoningEffort,
+      responseFormatJson: options.responseFormatJson
     };
 
     const provider: AiProvider = this.resolveProvider(config);
