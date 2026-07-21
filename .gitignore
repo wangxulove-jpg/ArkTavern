@@ -19,4 +19,24 @@
 /screenshot/
 /tools/uitest/
 /tools/uitest_dump/
-docs/
+
+# 临时调试产物(构建日志 / UI dump / 截图 / layout)
+build_log*.txt
+build_ui*.txt
+layout*.xml
+lv_*.xml
+lv_*.json
+launch*.xml
+market2.xml
+screenshot_*.png
+screenshot_*.jpeg
+chat_bubble.jpeg
+market.jpeg
+session_tab.jpeg
+temp_screenshots/
+*.log
+
+# 归档文档保留版本控制,其余 docs/ 下临时文档忽略
+docs/*
+!docs/archive/
+!docs/archive/**
