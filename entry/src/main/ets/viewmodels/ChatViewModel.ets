@@ -243,12 +243,6 @@ export class ChatViewModel {
       this.canRegenerate = this.chatService.canRegenerate();
       // T-6.4B-1: 同步 Branch 状态(branches / activeBranchId / recordCounts)
       await this.refreshBranchState();
-      // T-6.4B-Closeout: 日志不记录完整 chatId(仅前 8 字符)
-      const readyChatId: string | undefined = this.chatService.getCurrentChatId();
-      const maskedChatId: string = readyChatId !== undefined && readyChatId.length > 0
-        ? readyChatId.substring(0, 8) : 'unknown';
-      Logger.info(LOG_TAG, 'session ready chatId=' + maskedChatId
-        + ' messages=' + this.messages.length.toString());
     } catch (e) {
       // 只显示一次用户可读文案,不拼接底层错误信息(可能含敏感数据)
       const msg: string = e instanceof Error ? e.message : String(e);
@@ -257,9 +251,6 @@ export class ChatViewModel {
     } finally {
       this.isInitializing = false;
     }
-
-    Logger.info(LOG_TAG, 'initialize currentModelName=' + this.currentModelName
-      + ' ready=' + this.isSessionReady.toString());
   }
 
   async send(): Promise<void> {
@@ -270,7 +261,6 @@ export class ChatViewModel {
     if (content.trim().length === 0) {
       return;
     }
-    Logger.info(LOG_TAG, 'send');
     this.errorMessage = '';
     this.statusMessage = '';
     this.isGenerating = true;
@@ -308,8 +298,6 @@ export class ChatViewModel {
       Logger.warn(LOG_TAG, 'Regenerate | eligibility_denied | session_not_ready');
       return;
     }
-    Logger.info(LOG_TAG, 'Regenerate | viewmodel_enter');
-    Logger.info(LOG_TAG, 'SwipeRuntime | stage=regenerate_enter');
     this.errorMessage = '';
     this.statusMessage = '';
     this.isGenerating = true;
@@ -427,7 +415,6 @@ export class ChatViewModel {
    * 使用 ChatService 内部 callbacks 同步状态变化。
    */
   async regenerateAsNewCandidate(): Promise<void> {
-    Logger.info(LOG_TAG, 'Regenerate | ui_click');
     await this.regenerate();
   }
 
@@ -760,7 +747,6 @@ export class ChatViewModel {
     this.isBranchOperating = true;
     this.errorMessage = '';
     this.statusMessage = '';
-    Logger.info(LOG_TAG, 'generateFromUserMessage | ui_click');
     try {
       const callbacks: ChatServiceCallbacks = this.createCallbacks();
       await this.chatService.generateFromUserMessage(messageId, callbacks);
@@ -806,7 +792,6 @@ export class ChatViewModel {
     this.isBranchOperating = true;
     this.errorMessage = '';
     this.statusMessage = '';
-    Logger.info(LOG_TAG, 'regenerateAssistantMessage | ui_click');
     try {
       const callbacks: ChatServiceCallbacks = this.createCallbacks();
       await this.chatService.regenerateAssistantMessage(messageId, callbacks);
@@ -855,7 +840,6 @@ export class ChatViewModel {
     this.isBranchOperating = true;
     this.errorMessage = '';
     this.statusMessage = '';
-    Logger.info(LOG_TAG, 'editUserMessageAndGenerate | ui_click');
     try {
       const callbacks: ChatServiceCallbacks = this.createCallbacks();
       await this.chatService.editUserMessageAndGenerate(messageId, editedContent, callbacks);
@@ -1035,7 +1019,6 @@ export class ChatViewModel {
       this.flushTimerId = -1;
     }
     this.chatService.dispose();
-    Logger.info(LOG_TAG, 'dispose');
   }
 
   // ===== 流式 UI 节流实现 =====

@@ -202,7 +202,6 @@ export class CharacterEditViewModel {
       this.isEditing = false;
       this.editingCharacterId = '';
       this.originalCharacter = null;
-      Logger.info(LOG_TAG, 'initialize: new character');
       return;
     }
     // 编辑模式
@@ -216,7 +215,6 @@ export class CharacterEditViewModel {
     this.isEditing = true;
     this.editingCharacterId = character.id;
     this.originalCharacter = character;
-    Logger.info(LOG_TAG, 'initialize: edit character');
   }
 
   /**
@@ -302,7 +300,6 @@ export class CharacterEditViewModel {
       this.editingCharacterId, sourceUri
     );
     this.originalCharacter = updated;
-    Logger.info(LOG_TAG, 'changeAvatar ok');
     return updated.avatarUri;
   }
 
@@ -343,7 +340,6 @@ export class CharacterEditViewModel {
         characterVersion: current.characterVersionInput
       });
       this.originalCharacter = updated;
-      Logger.info(LOG_TAG, 'save: update ok');
       return updated;
     }
 
@@ -372,7 +368,6 @@ export class CharacterEditViewModel {
       this.isEditing = true;
       this.editingCharacterId = finalChar.id;
       this.originalCharacter = finalChar;
-      Logger.info(LOG_TAG, 'save: create+update ok');
       return finalChar;
     } catch (e) {
       // V2 字段更新失败,基础角色已创建,仍返回已创建的角色

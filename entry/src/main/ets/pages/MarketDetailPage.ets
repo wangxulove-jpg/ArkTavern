@@ -38,7 +38,6 @@ import {
   MarketImportStatus
 } from '../services/market/MarketImportService';
 import { MarketCharacter } from '../models/MarketCharacter';
-import { truncateMarketText } from '../models/MarketCharacterDetail';
 import { MarketCharacterAvatar } from '../components/MarketCharacterAvatar';
 import { EmptyStateView } from '../components/EmptyStateView';
 import { router, promptAction } from '@kit.ArkUI';

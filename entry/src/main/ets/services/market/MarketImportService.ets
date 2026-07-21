@@ -223,7 +223,7 @@ export class MarketImportService {
       return pngResult;
     }
     // PNG 不可用或失败,记录日志后回退 JSON
-    Logger.info(LOG_TAG, 'PNG import unavailable, fallback to JSON: ' + pngResult.errorMessage);
+    Logger.warn(LOG_TAG, 'PNG import unavailable, fallback to JSON: ' + pngResult.errorMessage);
 
     // 3. JSON 导入
     let jsonResult: MarketImportResult = await this.tryJsonImport(detail, meta);
@@ -303,7 +303,6 @@ export class MarketImportService {
       const injectedCard: ParsedCharacterCard = injectMarketMetadata(jsonResult.card, meta);
       // 调用 confirmPngImport:保存头像 + 创建角色 + 自动导入 character_book
       const character: Character = await this.characterService.confirmPngImport(injectedCard, tempFileUri);
-      Logger.info(LOG_TAG, 'PNG import ok characterId=' + character.id.substring(0, 8));
       return {
         status: MarketImportStatus.Imported,
         character: character,
@@ -362,7 +361,6 @@ export class MarketImportService {
       }
       const injectedCard: ParsedCharacterCard = injectMarketMetadata(jsonResult.card, meta);
       const character: Character = await this.characterService.importFromParsed(injectedCard);
-      Logger.info(LOG_TAG, 'JSON import ok characterId=' + character.id.substring(0, 8));
       return {
         status: MarketImportStatus.Imported,
         character: character,
@@ -400,7 +398,6 @@ export class MarketImportService {
       // 由于此处不直接支持图片 URL 下载,跳过头像
       // 实际头像下载由调用方 MarketDetailPage 通过 Image 组件渲染(展示用,不持久化)
       // 真正导入头像应使用 Provider 提供的 downloadAvatar 方法,本阶段省略
-      Logger.info(LOG_TAG, 'tryDownloadAvatar: skipped (avatar not downloaded for JSON import)');
     } catch (e) {
       Logger.warn(LOG_TAG, 'tryDownloadAvatar failed: ' + String(e));
     }
@@ -476,7 +473,6 @@ function injectMarketMetadata(
     }
     // 已有 market 子字段时不覆盖
     if (arktavern['market'] !== undefined && arktavern['market'] !== null) {
-      Logger.info(LOG_TAG, 'injectMarketMetadata: existing market metadata preserved');
       // 仍然返回新的 extensions,但 market 字段保持原值
     } else {
       arktavern['market'] = JSON.parse(serializeMarketSourceMetadata(meta));

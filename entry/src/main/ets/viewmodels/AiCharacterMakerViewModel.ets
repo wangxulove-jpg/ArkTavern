@@ -136,7 +136,6 @@ export class AiCharacterMakerViewModel {
       this.generateMesExample = await this.prefs.getBoolean(KEY_DRAFT_MES_EXAMPLE, true);
       this.useCurrentModel = await this.prefs.getBoolean(KEY_DRAFT_USE_CURRENT, true);
       this.configId = await this.prefs.getString(KEY_DRAFT_CONFIG_ID, '');
-      Logger.info(LOG_TAG, 'loadDraft ok');
     } catch (e) {
       Logger.warn(LOG_TAG, 'loadDraft failed: ' + String(e));
     }
@@ -219,7 +218,6 @@ export class AiCharacterMakerViewModel {
 
     const callbacks: AiGenerationCallbacks = {
       onStart: (): void => {
-        Logger.info(LOG_TAG, 'generation onStart');
       },
       onDelta: (accumulated: string): void => {
         if (this.state !== AiMakerState.Generating) {
@@ -236,7 +234,6 @@ export class AiCharacterMakerViewModel {
         this.accumulatedText = result.rawResponse;
 
         if (result.status === AiGenerationStatus.Success) {
-          Logger.info(LOG_TAG, 'generation success');
           // 持久化生成的卡片到 AppStorage(供 Preview 页面读取)
           AppStorage.setOrCreate<ParsedCharacterCard | null>(PENDING_AI_CARD_KEY, result.card);
           AppStorage.setOrCreate<AiCharacterInput | null>(PENDING_AI_INPUT_KEY, input);
@@ -244,7 +241,6 @@ export class AiCharacterMakerViewModel {
             this.onCompleteCallback(result);
           }
         } else if (result.status === AiGenerationStatus.Cancelled) {
-          Logger.info(LOG_TAG, 'generation cancelled');
           // 取消后保留用户输入,不报错
         } else {
           Logger.warn(LOG_TAG, 'generation failed: ' + result.errorMessage);

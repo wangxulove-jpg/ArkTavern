@@ -46,7 +46,6 @@ export class CharacterAssetStore {
       Logger.error(LOG_TAG, 'initialize mkdir failed: ' + String(e));
     }
     this.initialized = true;
-    Logger.info(LOG_TAG, 'initialize ok baseDir=' + this.baseDir);
   }
 
   private requireInit(): void {
@@ -121,7 +120,6 @@ export class CharacterAssetStore {
       fileIo.writeSync(destFile.fd, buffer);
       fileIo.closeSync(destFile);
 
-      Logger.info(LOG_TAG, 'saveAvatar ok ext=' + ext + ' size=' + String(stat.size));
       return 'file://' + destPath;
     } catch (e) {
       Logger.error(LOG_TAG, 'saveAvatar failed: ' + String(e));
@@ -153,7 +151,6 @@ export class CharacterAssetStore {
       fileIo.writeSync(destFile.fd, pngBytes.buffer as ArrayBuffer);
       fileIo.closeSync(destFile);
 
-      Logger.info(LOG_TAG, 'savePngAvatarFromBytes ok size=' + String(pngBytes.byteLength));
       return 'file://' + destPath;
     } catch (e) {
       Logger.error(LOG_TAG, 'savePngAvatarFromBytes failed: ' + String(e));
@@ -180,7 +177,6 @@ export class CharacterAssetStore {
     try {
       if (fileIo.accessSync(path)) {
         fileIo.unlinkSync(path);
-        Logger.info(LOG_TAG, 'deleteAvatarByUri ok');
       }
     } catch (e) {
       Logger.warn(LOG_TAG, 'deleteAvatarByUri ignored: ' + String(e));
@@ -220,7 +216,6 @@ export class CharacterAssetStore {
         try {
           if (fileIo.accessSync(fullPath)) {
             fileIo.unlinkSync(fullPath);
-            Logger.info(LOG_TAG, 'deleteAvatar ok path=' + fullPath);
           }
         } catch (e) {
           Logger.warn(LOG_TAG, 'deleteAvatar skip ' + name + ': ' + String(e));

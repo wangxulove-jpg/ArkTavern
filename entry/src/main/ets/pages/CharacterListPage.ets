@@ -18,7 +18,6 @@
 
 import { CharacterListViewModel } from '../viewmodels/CharacterListViewModel';
 import { Character } from '../models/Character';
-import { ParsedCharacterCard } from '../parser/CharacterCardJsonParser';
 import { sanitizeFileName } from '../parser/CharacterCardJsonWriter';
 import { AppServices } from '../services/AppServices';
 import { picker } from '@kit.CoreFileKit';

@@ -17,94 +17,6 @@
       "value": "Access network for AI chat streaming"
     },
     {
-      "name": "home_app_name",
-      "value": "方舟酒馆"
-    },
-    {
-      "name": "home_app_subtitle",
-      "value": "ArkTavern"
-    },
-    {
-      "name": "home_description",
-      "value": "HarmonyOS NEXT 原生 AI 角色聊天客户端"
-    },
-    {
-      "name": "home_start_chat",
-      "value": "开始聊天"
-    },
-    {
-      "name": "home_characters",
-      "value": "角色"
-    },
-    {
-      "name": "home_lorebook",
-      "value": "世界书"
-    },
-    {
-      "name": "home_model_settings",
-      "value": "模型设置"
-    },
-    {
-      "name": "home_prompt_preset",
-      "value": "提示词预设"
-    },
-    {
-      "name": "home_app_settings",
-      "value": "应用设置"
-    },
-    {
-      "name": "home_no_sessions",
-      "value": "暂无会话"
-    },
-    {
-      "name": "home_no_sessions_desc",
-      "value": "完成模型配置后即可开始聊天"
-    },
-    {
-      "name": "home_model_not_configured",
-      "value": "尚未配置模型"
-    },
-    {
-      "name": "home_start_chat_desc",
-      "value": "选择角色,开启沉浸对话"
-    },
-    {
-      "name": "home_section_more",
-      "value": "更多入口"
-    },
-    {
-      "name": "home_initializing",
-      "value": "正在加载…"
-    },
-    {
-      "name": "home_init_failed",
-      "value": "加载失败,请重启应用"
-    },
-    {
-      "name": "home_model_ready_badge",
-      "value": "模型已就绪"
-    },
-    {
-      "name": "home_model_not_ready_badge",
-      "value": "未配置模型"
-    },
-    {
-      "name": "home_tap_to_config",
-      "value": "点击配置"
-    },
-    {
-      "name": "home_start_chat_hint",
-      "value": "开始"
-    },
-    {
-      "name": "home_version",
-      "value": "Development Preview · v0.1"
-    },
-    {
-      "name": "nav_chat_title",
-      "value": "聊天"
-    },
-    {
       "name": "nav_chat_empty",
       "value": "在下方输入消息开始聊天"
     },
@@ -121,10 +33,6 @@
       "value": "输入消息…"
     },
     {
-      "name": "chat_send",
-      "value": "发送"
-    },
-    {
       "name": "chat_stop",
       "value": "停止"
     },
@@ -133,72 +41,24 @@
       "value": "清空"
     },
     {
-      "name": "chat_generating",
-      "value": "生成中…"
-    },
-    {
-      "name": "chat_sending",
-      "value": "正在发送…"
-    },
-    {
       "name": "chat_regenerate",
       "value": "重新生成"
-    },
-    {
-      "name": "chat_copy",
-      "value": "复制"
     },
     {
       "name": "chat_copy_success",
       "value": "已复制"
     },
     {
-      "name": "chat_scroll_to_bottom",
-      "value": "回到底部"
-    },
-    {
-      "name": "chat_cancelled",
-      "value": "已停止"
-    },
-    {
-      "name": "chat_failed",
-      "value": "生成失败"
-    },
-    {
-      "name": "chat_empty_response",
-      "value": "未收到回复,请重试"
-    },
-    {
-      "name": "nav_character_title",
-      "value": "角色"
-    },
-    {
-      "name": "nav_character_empty",
-      "value": "尚未导入角色。后续支持 JSON 和 PNG 角色卡。"
-    },
-    {
       "name": "nav_lorebook_title",
       "value": "世界书"
-    },
-    {
-      "name": "nav_lorebook_empty",
-      "value": "世界书功能将在后续阶段开放。"
     },
     {
       "name": "nav_model_settings_title",
       "value": "模型设置"
     },
     {
-      "name": "nav_model_settings_empty",
-      "value": "模型配置功能正在开发中。"
-    },
-    {
       "name": "nav_app_settings_title",
       "value": "应用设置"
-    },
-    {
-      "name": "nav_app_settings_empty",
-      "value": "应用设置功能正在开发中。"
     },
     {
       "name": "settings_global_user_name_section",
@@ -225,14 +85,6 @@
       "value": "保存失败"
     },
     {
-      "name": "chat_user_name_override_section",
-      "value": "本对话称呼"
-    },
-    {
-      "name": "chat_user_name_override_label",
-      "value": "覆盖称呼"
-    },
-    {
       "name": "chat_user_name_override_placeholder",
       "value": "留空时使用角色或全局"
     },
@@ -241,44 +93,16 @@
       "value": "只影响当前对话,不修改角色或全局设置。清空后恢复使用角色或全局值。"
     },
     {
-      "name": "chat_user_name_override_saved",
-      "value": "已保存"
-    },
-    {
-      "name": "chat_user_name_override_cleared",
-      "value": "已清空覆盖,恢复角色或全局值"
-    },
-    {
-      "name": "chat_user_name_override_save_failed",
-      "value": "保存失败"
-    },
-    {
       "name": "chat_user_name_override_menu_title",
       "value": "本对话称呼"
-    },
-    {
-      "name": "home_model_configured",
-      "value": "当前模型:%1$s · %2$s"
     },
     {
       "name": "model_settings_config_list",
       "value": "配置列表"
     },
     {
-      "name": "model_settings_no_configs",
-      "value": "尚无配置,点击下方按钮新建"
-    },
-    {
-      "name": "model_settings_new_config",
-      "value": "新建配置"
-    },
-    {
       "name": "model_settings_current_badge",
       "value": "当前"
-    },
-    {
-      "name": "model_settings_form_title",
-      "value": "配置详情"
     },
     {
       "name": "model_settings_name",
@@ -287,14 +111,6 @@
     {
       "name": "model_settings_name_placeholder",
       "value": "给配置起个名字"
-    },
-    {
-      "name": "model_settings_provider_type",
-      "value": "Provider 类型"
-    },
-    {
-      "name": "model_settings_base_url",
-      "value": "Base URL"
     },
     {
       "name": "model_settings_model",
@@ -409,28 +225,12 @@
       "value": "测试中…"
     },
     {
-      "name": "model_settings_test_success_prefix",
-      "value": "连接成功"
-    },
-    {
-      "name": "model_settings_test_failed_prefix",
-      "value": "连接失败"
-    },
-    {
       "name": "model_settings_new_title",
       "value": "新建模型配置"
     },
     {
       "name": "model_settings_edit_title",
       "value": "编辑模型配置"
-    },
-    {
-      "name": "model_settings_name_required",
-      "value": "请输入配置名称"
-    },
-    {
-      "name": "model_settings_api_key_required",
-      "value": "请输入 API Key"
     },
     {
       "name": "model_settings_param_hint",
@@ -477,15 +277,7 @@
       "value": "隐藏"
     },
     {
-      "name": "model_settings_name_too_long",
-      "value": "配置名称过长"
-    },
-    {
       "name": "model_settings_select_provider_hint",
-      "value": "请选择"
-    },
-    {
-      "name": "model_settings_select_model_hint",
       "value": "请选择"
     },
     {
@@ -581,14 +373,6 @@
       "value": "取消"
     },
     {
-      "name": "character_current_char",
-      "value": "当前角色: %s"
-    },
-    {
-      "name": "character_no_current",
-      "value": "无当前角色"
-    },
-    {
       "name": "character_form_title_new",
       "value": "新建角色"
     },
@@ -603,10 +387,6 @@
     {
       "name": "character_export",
       "value": "导出"
-    },
-    {
-      "name": "character_import_title",
-      "value": "导入角色"
     },
     {
       "name": "character_import_preview",
@@ -677,28 +457,12 @@
       "value": "支持 PNG / JSON 格式(SillyTavern Character Card V2 / V3)"
     },
     {
-      "name": "character_import_source_format",
-      "value": "来源格式: %s"
-    },
-    {
-      "name": "character_import_success",
-      "value": "导入成功"
-    },
-    {
-      "name": "character_import_failed",
-      "value": "导入失败"
-    },
-    {
       "name": "character_export_success",
       "value": "导出成功"
     },
     {
       "name": "character_export_failed",
       "value": "导出失败"
-    },
-    {
-      "name": "character_export_filename",
-      "value": "%s.json"
     },
     {
       "name": "lorebook_no_lorebooks",
@@ -727,10 +491,6 @@
     {
       "name": "lorebook_delete",
       "value": "删除"
-    },
-    {
-      "name": "lorebook_delete_confirm",
-      "value": "确定删除世界书\"%s\"吗?所有条目也将一并删除。"
     },
     {
       "name": "lorebook_form_name",
@@ -765,10 +525,6 @@
       "value": "编辑世界书"
     },
     {
-      "name": "lorebook_enabled",
-      "value": "已启用"
-    },
-    {
       "name": "lorebook_disabled",
       "value": "已禁用"
     },
@@ -779,10 +535,6 @@
     {
       "name": "lorebook_disable",
       "value": "禁用"
-    },
-    {
-      "name": "lorebook_entries",
-      "value": "条目"
     },
     {
       "name": "lorebook_no_entries",
@@ -861,22 +613,6 @@
       "value": "确定删除条目\"%s\"吗?"
     },
     {
-      "name": "chat_continue_from_here",
-      "value": "从此处继续"
-    },
-    {
-      "name": "chat_generate_from_user",
-      "value": "从此处生成新回复"
-    },
-    {
-      "name": "chat_regenerate_assistant",
-      "value": "重新生成此回复"
-    },
-    {
-      "name": "chat_edit_user_message",
-      "value": "编辑"
-    },
-    {
       "name": "chat_edit_message_title",
       "value": "编辑消息"
     },
@@ -897,28 +633,8 @@
       "value": "处理中"
     },
     {
-      "name": "chat_branch_list_title",
-      "value": "分支列表"
-    },
-    {
-      "name": "chat_branch_root_name",
-      "value": "主分支"
-    },
-    {
-      "name": "chat_branch_child_name",
-      "value": "分支"
-    },
-    {
-      "name": "chat_branch_message_count",
-      "value": "%d 条消息"
-    },
-    {
       "name": "chat_branch_current_badge",
       "value": "当前"
-    },
-    {
-      "name": "chat_branch_switch_busy",
-      "value": "生成中或操作中,无法切换分支"
     },
     {
       "name": "chat_branch_create_busy",
@@ -943,38 +659,6 @@
     {
       "name": "tab_characters",
       "value": "角色卡"
-    },
-    {
-      "name": "tab_characters_subtitle",
-      "value": "Characters"
-    },
-    {
-      "name": "tab_characters_desc",
-      "value": "管理你的角色卡,点击角色进入详情"
-    },
-    {
-      "name": "tab_characters_current_label",
-      "value": "当前角色"
-    },
-    {
-      "name": "tab_characters_no_current",
-      "value": "未选定当前角色,点击进入角色列表选择"
-    },
-    {
-      "name": "tab_characters_new",
-      "value": "新建角色"
-    },
-    {
-      "name": "tab_characters_import",
-      "value": "导入角色卡"
-    },
-    {
-      "name": "tab_characters_empty",
-      "value": "暂无角色"
-    },
-    {
-      "name": "tab_characters_empty_desc",
-      "value": "点击新建或导入你的第一个角色卡"
     },
     {
       "name": "tab_characters_load_failed",
@@ -1019,10 +703,6 @@
     {
       "name": "character_export_cancel",
       "value": "取消"
-    },
-    {
-      "name": "character_export_in_progress",
-      "value": "正在导出..."
     },
     {
       "name": "character_delete_confirm_title",
@@ -1087,10 +767,6 @@
     {
       "name": "character_edit_field_user_name_placeholder",
       "value": "留空时使用全局称呼"
-    },
-    {
-      "name": "character_edit_field_user_name_hint",
-      "value": "该角色调用你时使用的称呼,只影响当前角色"
     },
     {
       "name": "character_edit_field_description",
@@ -1165,10 +841,6 @@
       "value": "放弃修改"
     },
     {
-      "name": "character_edit_save_failed",
-      "value": "保存失败"
-    },
-    {
       "name": "character_edit_field_mes_example",
       "value": "对话示例"
     },
@@ -1233,10 +905,6 @@
       "value": "添加"
     },
     {
-      "name": "character_edit_tag_delete",
-      "value": "删除"
-    },
-    {
       "name": "character_edit_alternate_greetings",
       "value": "备用开场白"
     },
@@ -1257,14 +925,6 @@
       "value": "输入备用开场白内容"
     },
     {
-      "name": "character_edit_alternate_greetings_move_up",
-      "value": "上移"
-    },
-    {
-      "name": "character_edit_alternate_greetings_move_down",
-      "value": "下移"
-    },
-    {
       "name": "character_edit_character_book",
       "value": "角色专属世界书"
     },
@@ -1277,24 +937,8 @@
       "value": "从角色卡导入时会自动创建;也可在 Lorebook 编辑页中关联"
     },
     {
-      "name": "character_edit_section_metadata",
-      "value": "元数据"
-    },
-    {
-      "name": "character_edit_section_conversation",
-      "value": "对话设置"
-    },
-    {
       "name": "tab_sessions",
       "value": "对话记录"
-    },
-    {
-      "name": "tab_sessions_subtitle",
-      "value": "Sessions"
-    },
-    {
-      "name": "tab_sessions_desc",
-      "value": "查看你的聊天历史,点击会话进入聊天"
     },
     {
       "name": "tab_sessions_empty",
@@ -1307,10 +951,6 @@
     {
       "name": "tab_sessions_load_failed",
       "value": "加载会话列表失败"
-    },
-    {
-      "name": "tab_sessions_current_badge",
-      "value": "当前"
     },
     {
       "name": "tab_sessions_new_chat",
@@ -1369,18 +1009,6 @@
       "value": "市场"
     },
     {
-      "name": "tab_market_subtitle",
-      "value": "Market"
-    },
-    {
-      "name": "tab_market_placeholder_title",
-      "value": "市场即将上线"
-    },
-    {
-      "name": "tab_market_placeholder_desc",
-      "value": "后续将接入角色卡市场,敬请期待"
-    },
-    {
       "name": "market_title",
       "value": "角色市场"
     },
@@ -1429,20 +1057,8 @@
       "value": "正在加载"
     },
     {
-      "name": "market_loading_more",
-      "value": "正在加载更多"
-    },
-    {
-      "name": "market_no_more",
-      "value": "没有更多了"
-    },
-    {
       "name": "market_retry",
       "value": "重试"
-    },
-    {
-      "name": "market_no_results",
-      "value": "未找到角色"
     },
     {
       "name": "market_no_results_search_desc",
@@ -1473,10 +1089,6 @@
       "value": "暂无角色卡"
     },
     {
-      "name": "market_try_refresh",
-      "value": "尝试下拉刷新或修改筛选条件"
-    },
-    {
       "name": "market_already_imported",
       "value": "已导入"
     },
@@ -1487,10 +1099,6 @@
     {
       "name": "market_contains_lorebook",
       "value": "含世界书"
-    },
-    {
-      "name": "market_market_unavailable",
-      "value": "Chub 接口暂时不可用"
     },
     {
       "name": "market_content_warning",
@@ -1507,10 +1115,6 @@
     {
       "name": "market_confirm_show",
       "value": "确认显示"
-    },
-    {
-      "name": "market_detail_title",
-      "value": "角色详情"
     },
     {
       "name": "market_detail_back",
@@ -1733,10 +1337,6 @@
       "value": "设置"
     },
     {
-      "name": "tab_settings_subtitle",
-      "value": "Settings"
-    },
-    {
       "name": "tab_settings_desc",
       "value": "配置 AI 与应用"
     },
@@ -1811,18 +1411,6 @@
     {
       "name": "chat_background_delete",
       "value": "删除背景"
-    },
-    {
-      "name": "chat_background_delete_confirm",
-      "value": "确定删除背景图吗?"
-    },
-    {
-      "name": "chat_background_import_failed",
-      "value": "导入失败,请重试"
-    },
-    {
-      "name": "chat_background_more_menu",
-      "value": "聊天背景"
     }
   ]
 }

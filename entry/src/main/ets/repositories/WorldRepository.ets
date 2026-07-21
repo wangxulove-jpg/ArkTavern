@@ -22,7 +22,7 @@
 import { relationalStore } from '@kit.ArkData';
 import { DbHelper } from '../database/DbHelper';
 import { DatabaseError } from '../models/DatabaseError';
-import { World, WorldUserIdentity, WorldReplyMode, parseReplyMode, EMPTY_USER_IDENTITY } from '../models/World';
+import { World, WorldUserIdentity, WorldReplyMode, parseReplyMode } from '../models/World';
 import {
   WorldMember,
   createWorldMember,

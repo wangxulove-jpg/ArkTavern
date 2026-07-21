@@ -1,36 +1,8 @@
 {
   "float": [
     {
-      "name": "page_text_font_size",
-      "value": "50fp"
-    },
-    {
-      "name": "home_title_font_size",
-      "value": "28fp"
-    },
-    {
-      "name": "home_subtitle_font_size",
-      "value": "16fp"
-    },
-    {
-      "name": "home_body_font_size",
-      "value": "15fp"
-    },
-    {
-      "name": "home_caption_font_size",
-      "value": "12fp"
-    },
-    {
-      "name": "home_entry_font_size",
-      "value": "16fp"
-    },
-    {
       "name": "nav_title_font_size",
       "value": "20fp"
-    },
-    {
-      "name": "nav_body_font_size",
-      "value": "15fp"
     },
     {
       "name": "app_spacing_4",
@@ -91,10 +63,6 @@
     {
       "name": "app_font_caption",
       "value": "12fp"
-    },
-    {
-      "name": "app_touch_target",
-      "value": "48vp"
     }
   ]
 }

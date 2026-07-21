@@ -137,18 +137,15 @@ export class PromptPresetEditViewModel {
     if (presetId !== undefined && presetId.length > 0) {
       this.isEditing = true;
       this.editingPresetId = presetId;
-      Logger.info(LOG_TAG, 'initialize mode=edit');
       try {
         const preset: PromptPreset | null = await this.presetService.getById(presetId);
         if (preset !== null) {
           // 加载成功:通过 getFormState 返回快照
           this.isEditing = true;
           this.editingPresetId = presetId;
-          Logger.info(LOG_TAG, 'repository record found=true');
         } else {
           this.isEditing = false;
           this.editingPresetId = '';
-          Logger.info(LOG_TAG, 'repository record found=false');
         }
       } catch (e) {
         this.isEditing = false;
@@ -158,7 +155,6 @@ export class PromptPresetEditViewModel {
     } else {
       this.isEditing = false;
       this.editingPresetId = '';
-      Logger.info(LOG_TAG, 'initialize mode=create');
     }
   }
 
@@ -170,7 +166,6 @@ export class PromptPresetEditViewModel {
       try {
         const preset: PromptPreset | null = await this.presetService.getById(presetId);
         if (preset !== null) {
-          Logger.info(LOG_TAG, 'form populated');
           return formStateFromPreset(preset);
         }
       } catch (e) {
@@ -290,7 +285,6 @@ export class PromptPresetEditViewModel {
           clearMaxOutputTokens: clearMaxOutputTokens,
           clearContextWindow: clearContextWindow
         });
-        Logger.info(LOG_TAG, 'update success');
       } else {
         const created: PromptPreset = await this.presetService.create({
           name: name,
@@ -302,7 +296,6 @@ export class PromptPresetEditViewModel {
           contextWindow: contextWindow
         });
         await this.presetService.setCurrentPresetId(created.id);
-        Logger.info(LOG_TAG, 'create success');
       }
       return true;
     } catch (e) {

@@ -61,7 +61,6 @@ export class CharacterExportViewModel {
     try {
       const jsonString: string = await this.characterService.exportToV2JsonWithBook(characterId);
       const baseName: string = stripExtension(sanitizeFileName(characterName));
-      Logger.info(LOG_TAG, 'exportToJson ok');
       return {
         success: true,
         format: CharacterExportFormat.V2Json,
@@ -93,7 +92,6 @@ export class CharacterExportViewModel {
     try {
       const pngBytes: Uint8Array = await this.characterService.exportToPngBytes(characterId);
       const baseName: string = stripExtension(sanitizeFileName(characterName));
-      Logger.info(LOG_TAG, 'exportToPng ok');
       return {
         success: true,
         format: CharacterExportFormat.V2Png,

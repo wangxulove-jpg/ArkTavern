@@ -76,10 +76,8 @@ export class AppPreferences {
    * @throws PreferencesError 当平台初始化失败时
    */
   async initialize(context: common.Context): Promise<void> {
-    Logger.info(LOG_TAG, 'initialize storeName=' + this.storeName);
     try {
       this.prefs = await preferences.getPreferences(context, this.storeName);
-      Logger.info(LOG_TAG, 'initialize ok');
     } catch (e) {
       const err: BusinessError = e as BusinessError;
       Logger.error(LOG_TAG, 'initialize failed code=' + err.code.toString());
@@ -128,11 +126,9 @@ export class AppPreferences {
   async getString(key: string, defValue: string): Promise<string> {
     this.validateKey(key);
     const prefs: preferences.Preferences = this.requirePrefs();
-    Logger.info(LOG_TAG, 'getString key=' + key);
     try {
       const value: preferences.ValueType = await prefs.get(key, defValue);
       if (typeof value === 'string') {
-        Logger.info(LOG_TAG, 'getString ok key=' + key);
         return value;
       }
       // 类型不匹配,返回默认值(不抛错,容错处理)
@@ -160,11 +156,9 @@ export class AppPreferences {
   async putString(key: string, value: string): Promise<void> {
     this.validateKey(key);
     const prefs: preferences.Preferences = this.requirePrefs();
-    Logger.info(LOG_TAG, 'putString key=' + key);
     try {
       await prefs.put(key, value);
       await prefs.flush();
-      Logger.info(LOG_TAG, 'putString ok key=' + key);
     } catch (e) {
       const err: BusinessError = e as BusinessError;
       Logger.error(LOG_TAG, 'putString failed key=' + key + ' code=' + err.code.toString());
@@ -188,11 +182,9 @@ export class AppPreferences {
   async getBoolean(key: string, defValue: boolean): Promise<boolean> {
     this.validateKey(key);
     const prefs: preferences.Preferences = this.requirePrefs();
-    Logger.info(LOG_TAG, 'getBoolean key=' + key);
     try {
       const value: preferences.ValueType = await prefs.get(key, defValue);
       if (typeof value === 'boolean') {
-        Logger.info(LOG_TAG, 'getBoolean ok key=' + key);
         return value;
       }
       // 类型不匹配,返回默认值(不抛错,容错处理)
@@ -220,11 +212,9 @@ export class AppPreferences {
   async putBoolean(key: string, value: boolean): Promise<void> {
     this.validateKey(key);
     const prefs: preferences.Preferences = this.requirePrefs();
-    Logger.info(LOG_TAG, 'putBoolean key=' + key);
     try {
       await prefs.put(key, value);
       await prefs.flush();
-      Logger.info(LOG_TAG, 'putBoolean ok key=' + key);
     } catch (e) {
       const err: BusinessError = e as BusinessError;
       Logger.error(LOG_TAG, 'putBoolean failed key=' + key + ' code=' + err.code.toString());
@@ -247,11 +237,9 @@ export class AppPreferences {
   async delete(key: string): Promise<void> {
     this.validateKey(key);
     const prefs: preferences.Preferences = this.requirePrefs();
-    Logger.info(LOG_TAG, 'delete key=' + key);
     try {
       await prefs.delete(key);
       await prefs.flush();
-      Logger.info(LOG_TAG, 'delete ok key=' + key);
     } catch (e) {
       const err: BusinessError = e as BusinessError;
       Logger.error(LOG_TAG, 'delete failed key=' + key + ' code=' + err.code.toString());
@@ -272,10 +260,8 @@ export class AppPreferences {
   async has(key: string): Promise<boolean> {
     this.validateKey(key);
     const prefs: preferences.Preferences = this.requirePrefs();
-    Logger.info(LOG_TAG, 'has key=' + key);
     try {
       const exists: boolean = await prefs.has(key);
-      Logger.info(LOG_TAG, 'has ok key=' + key + ' exists=' + exists.toString());
       return exists;
     } catch (e) {
       const err: BusinessError = e as BusinessError;
@@ -296,11 +282,9 @@ export class AppPreferences {
    */
   async clear(): Promise<void> {
     const prefs: preferences.Preferences = this.requirePrefs();
-    Logger.info(LOG_TAG, 'clear');
     try {
       await prefs.clear();
       await prefs.flush();
-      Logger.info(LOG_TAG, 'clear ok');
     } catch (e) {
       const err: BusinessError = e as BusinessError;
       Logger.error(LOG_TAG, 'clear failed code=' + err.code.toString());
@@ -320,10 +304,8 @@ export class AppPreferences {
    */
   async flush(): Promise<void> {
     const prefs: preferences.Preferences = this.requirePrefs();
-    Logger.info(LOG_TAG, 'flush');
     try {
       await prefs.flush();
-      Logger.info(LOG_TAG, 'flush ok');
     } catch (e) {
       const err: BusinessError = e as BusinessError;
       Logger.error(LOG_TAG, 'flush failed code=' + err.code.toString());

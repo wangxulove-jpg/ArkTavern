@@ -182,7 +182,6 @@ export class AiCharacterGenerationService {
           return;
         }
         state.aborted = true;
-        Logger.info(LOG_TAG, 'generation aborted by user');
       },
       (): boolean => state.done
     );
@@ -300,8 +299,6 @@ export class AiCharacterGenerationService {
       stream: true
     };
 
-    Logger.info(LOG_TAG, 'generation start providerId=' + config.id + ' model=' + config.modelName);
-
     // 3. 流式生成
     const rawResponse: string = await this.streamMessages(
       messages, options, state, callbacks, '生成失败'
@@ -352,8 +349,6 @@ export class AiCharacterGenerationService {
       maxTokens: GENERATION_MAX_TOKENS,
       stream: true
     };
-
-    Logger.info(LOG_TAG, 'field regen start field=' + fieldPath + ' model=' + config.modelName);
 
     const rawResponse: string = await this.streamMessages(
       messages, options, state, null, '字段重新生成失败'
@@ -540,7 +535,7 @@ export class AiCharacterGenerationService {
 
     while (state.autoFixAttempts < MAX_AUTO_FIX_ATTEMPTS && !state.aborted) {
       state.autoFixAttempts++;
-      Logger.info(LOG_TAG, 'auto fix attempt=' + String(state.autoFixAttempts)
+      Logger.warn(LOG_TAG, 'auto fix attempt=' + String(state.autoFixAttempts)
         + ' errors=' + String(lastErrors.length));
 
       const fixMessages: ChatMessage[] = buildAutoFixMessages(currentRaw, lastErrors, input);

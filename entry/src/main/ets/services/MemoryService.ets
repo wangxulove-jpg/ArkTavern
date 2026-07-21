@@ -280,7 +280,6 @@ export class MemoryService {
           now
         );
         await this.memoryPersistence.insert(newMemory);
-        Logger.info(LOG_TAG, 'memory created');
         return { success: true, memory: newMemory };
       } else {
         // 扩展范围
@@ -292,7 +291,6 @@ export class MemoryService {
           now
         );
         await this.memoryPersistence.update(updated);
-        Logger.info(LOG_TAG, 'memory updated');
         return { success: true, memory: updated };
       }
     } catch (e) {

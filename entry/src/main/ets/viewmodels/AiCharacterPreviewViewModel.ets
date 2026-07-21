@@ -181,7 +181,6 @@ export class AiCharacterPreviewViewModel {
 
     this.loaded = true;
     this.errorMessage = '';
-    Logger.info(LOG_TAG, 'loadPendingCard ok');
     return true;
   }
 
@@ -226,7 +225,6 @@ export class AiCharacterPreviewViewModel {
       AppStorage.setOrCreate<ParsedCharacterCard | null>(PENDING_AI_CARD_KEY, null);
       AppStorage.setOrCreate<AiCharacterInput | null>(PENDING_AI_INPUT_KEY, null);
 
-      Logger.info(LOG_TAG, 'save ok characterId=' + saved.id);
       this.isSaving = false;
       return true;
     } catch (e) {

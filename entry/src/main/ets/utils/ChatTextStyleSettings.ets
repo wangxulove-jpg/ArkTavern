@@ -100,7 +100,6 @@ export class ChatTextStyleSettings {
         quoteStyle: quoteStyleStr === 'indent' ? 'indent' : 'line',
         codeStyle: codeStyleStr === 'plain' ? 'plain' : 'bg'
       };
-      Logger.info(LOG_TAG, 'load ok');
     } catch (e) {
       Logger.warn(LOG_TAG, 'load failed, use default: ' + (e as Error).message);
       this.current = DEFAULT_CHAT_TEXT_STYLE;
@@ -161,7 +160,6 @@ export class ChatTextStyleSettings {
       await this.prefs.putString(KEY_LINE_HEIGHT, style.lineHeight.toString());
       await this.prefs.putString(KEY_QUOTE_STYLE, style.quoteStyle);
       await this.prefs.putString(KEY_CODE_STYLE, style.codeStyle);
-      Logger.info(LOG_TAG, 'persist ok');
     } catch (e) {
       Logger.warn(LOG_TAG, 'persist failed: ' + (e as Error).message);
     }

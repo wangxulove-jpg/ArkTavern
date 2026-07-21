@@ -30,8 +30,7 @@ import {
   WorldCharacterMemoryViewModel,
   MemoryDisplayItem,
   MemoryKind,
-  CharacterAvatarItem,
-  MemoryEmptyState
+  CharacterAvatarItem
 } from '../viewmodels/WorldCharacterMemoryViewModel';
 import { CharacterImageView } from '../components/CharacterImageView';
 import { Logger } from '../utils/Logger';

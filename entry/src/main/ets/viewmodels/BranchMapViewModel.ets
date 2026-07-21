@@ -77,7 +77,6 @@ export class BranchMapViewModel {
       await this.reload();
       // 默认选中 Active Branch
       this.selectedBranchId = this.activeBranchId;
-      Logger.info(LOG_TAG, 'loaded count=' + this.branches.length.toString());
     } catch (e) {
       this.errorMessage = '加载分支失败';
       Logger.error(LOG_TAG, 'initialize failed: ' + String(e));
@@ -119,7 +118,6 @@ export class BranchMapViewModel {
       return;
     }
     this.selectedBranchId = branchId;
-    Logger.info(LOG_TAG, 'node selected');
   }
 
   /**
@@ -144,7 +142,6 @@ export class BranchMapViewModel {
       await this.branchPersistenceService.switchActiveBranch(
         this.chatId, this.selectedBranchId
       );
-      Logger.info(LOG_TAG, 'ConversationBranch | branch switched');
       await this.reload();
       // 选中跟随 Active
       this.selectedBranchId = this.activeBranchId;
@@ -257,6 +254,5 @@ export class BranchMapViewModel {
 
   dispose(): void {
     this.disposed = true;
-    Logger.info(LOG_TAG, 'dispose');
   }
 }

@@ -5,7 +5,7 @@
  * 不直接操作 CharacterStore 或 Preferences。
  */
 
-import { Character, CharacterUpdates } from '../models/Character';
+import { Character } from '../models/Character';
 import { CharacterService } from '../services/CharacterService';
 import { ParsedCharacterCard } from '../parser/CharacterCardJsonParser';
 import { PngParseResult } from '../parser/PngCharacterCardParser';

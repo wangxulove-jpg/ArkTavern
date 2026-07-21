@@ -43,8 +43,7 @@ import { ChatBackgroundConfig } from '../services/ChatBackgroundService';
 import { ContextBudgetViewModel } from '../viewmodels/ContextBudgetViewModel';
 import { ContextBudgetSnapshotStore } from '../services/ContextBudgetSnapshotStore';
 import {
-  ContextBudgetStats,
-  BudgetLevel
+  ContextBudgetStats
 } from '../services/ContextBudgetEstimator';
 import { ForkChatMode } from '../models/ForkChatOptions';
 import { ChatSessionListPanel } from '../components/ChatSessionListPanel';
@@ -207,8 +206,6 @@ struct ChatPage {
    */
   private syncTypingStates(msgs: ChatMessage[]): void {
     const newStates: TypingState[] = [];
-    let added: number = 0;
-    let updated: number = 0;
     for (let i = 0; i < msgs.length; i++) {
       const msg: ChatMessage = msgs[i];
       // 在旧数组中查找相同 messageId 的 TypingState
@@ -224,19 +221,11 @@ struct ChatPage {
         state.content = msg.content;
         state.isStreaming = msg.isStreaming === true;
         newStates.push(state);
-        updated++;
       } else {
         newStates.push(new TypingState(msg, msg.content, msg.isStreaming === true));
-        added++;
       }
     }
     this.typingStates = newStates;
-    const lastMsg: ChatMessage | undefined = msgs.length > 0 ? msgs[msgs.length - 1] : undefined;
-    const lastStreaming: boolean = lastMsg !== undefined && lastMsg.isStreaming === true;
-    const lastLen: number = lastMsg !== undefined ? lastMsg.content.length : 0;
-    Logger.info(LOG_TAG, 'syncTypingStates | total=' + newStates.length.toString()
-      + ' added=' + added.toString() + ' updated=' + updated.toString()
-      + ' lastStreaming=' + lastStreaming.toString() + ' lastLen=' + lastLen.toString());
   }
 
   onBackPress(): boolean {
@@ -1794,7 +1783,6 @@ struct ChatPage {
     if (!this.viewModel!.isSessionReady) {
       return;
     }
-    Logger.info(LOG_TAG, 'onBranchChangeSeqChanged | seq=' + this.branchChangeSeq.toString());
     this.viewModel!.reloadAfterBranchChange();
     // 分支切换后,上下文占用需重新统计
     this.refreshBudgetSnapshot();

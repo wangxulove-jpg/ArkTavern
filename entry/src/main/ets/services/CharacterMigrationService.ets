@@ -65,11 +65,8 @@ export class CharacterMigrationService {
   async migrateIfNeeded(): Promise<CharacterMigrationResult> {
     const completed: boolean = await this.appPreferences.getBoolean(MIGRATION_MARKER_KEY, false);
     if (completed) {
-      Logger.info(LOG_TAG, 'already complete, skip');
       return createSkippedMigrationResult();
     }
-
-    Logger.info(LOG_TAG, 'start');
 
     // 1. 读取旧 Preferences Character
     const legacyCharacters: Character[] = await this.characterStore.list();
@@ -117,11 +114,6 @@ export class CharacterMigrationService {
 
     // 6. 写入完成标记
     await this.appPreferences.putBoolean(MIGRATION_MARKER_KEY, true);
-
-    Logger.info(
-      LOG_TAG,
-      `complete legacy=${legacyCount} inserted=${importResult.insertedCount} skipped=${importResult.skippedExistingCount}`
-    );
 
     return {
       attempted: true,

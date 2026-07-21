@@ -123,10 +123,6 @@ export class ChubProvider implements MarketProvider {
       readTimeoutMs: READ_TIMEOUT_MS
     };
 
-    Logger.info(LOG_TAG, 'search sort=' + mapSort(query.sort)
-      + ' first=' + first.toString() + ' last=' + last.toString()
-      + ' nsfw=' + (!query.hideNsfw).toString());
-
     const response: HttpResponse = await this.sendRequest(options);
     if (response.statusCode !== 200) {
       // 记录 404/500 等错误响应预览,便于诊断
@@ -163,8 +159,6 @@ export class ChubProvider implements MarketProvider {
       connectTimeoutMs: CONNECT_TIMEOUT_MS,
       readTimeoutMs: READ_TIMEOUT_MS
     };
-
-    Logger.info(LOG_TAG, 'detail remoteId=' + remoteId);
 
     const response: HttpResponse = await this.sendRequest(options);
     if (response.statusCode !== 200) {
@@ -289,7 +283,6 @@ function buildJsonHeaders(): HttpHeaders {
 function downloadBinary(url: string, maxSize: number): Promise<Uint8Array | null> {
   return new Promise<Uint8Array | null>((resolve, reject) => {
     const host: string = extractHostFromUrl(url);
-    Logger.info(LOG_TAG, 'downloadBinary host=' + host);
 
     const httpRequest: http.HttpRequest = http.createHttp();
     const headerObj: Record<string, string> = {
@@ -308,7 +301,6 @@ function downloadBinary(url: string, maxSize: number): Promise<Uint8Array | null
       .then((response: http.HttpResponse) => {
         try {
           const statusCode: number = response.responseCode;
-          Logger.info(LOG_TAG, 'downloadBinary status=' + statusCode.toString() + ' host=' + host);
           if (statusCode !== 200) {
             Logger.warn(LOG_TAG, 'downloadBinary non-200 status=' + statusCode.toString());
             resolve(null);

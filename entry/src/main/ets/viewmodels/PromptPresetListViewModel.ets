@@ -64,7 +64,6 @@ export class PromptPresetListViewModel {
     try {
       await this.presetService.setCurrentPresetId(id);
       this.currentPresetId = id;
-      Logger.info(LOG_TAG, 'setCurrent success');
     } catch (e) {
       this.errorMessage = '设置预设失败';
       Logger.error(LOG_TAG, 'setCurrent failed: ' + String(e));
@@ -82,7 +81,6 @@ export class PromptPresetListViewModel {
     try {
       await this.presetService.setCurrentPresetId(null);
       this.currentPresetId = '';
-      Logger.info(LOG_TAG, 'clearCurrent success');
     } catch (e) {
       this.errorMessage = '清除预设失败';
       Logger.error(LOG_TAG, 'clearCurrent failed: ' + String(e));
@@ -115,7 +113,6 @@ export class PromptPresetListViewModel {
       this.pendingDeleteId = '';
       // 删除后刷新列表和当前选择
       await this.refresh();
-      Logger.info(LOG_TAG, 'confirmDelete success');
     } catch (e) {
       this.errorMessage = '删除预设失败';
       Logger.error(LOG_TAG, 'confirmDelete failed: ' + String(e));

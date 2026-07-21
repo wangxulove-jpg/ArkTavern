@@ -9,8 +9,7 @@ import {
   Lorebook,
   LorebookEntry,
   LorebookPosition,
-  LorebookEntryUpdates,
-  validateLorebookEntry
+  LorebookEntryUpdates
 } from '../models/Lorebook';
 import { LorebookService } from '../services/LorebookService';
 import { Logger } from '../utils/Logger';

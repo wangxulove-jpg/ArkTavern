@@ -136,10 +136,6 @@ export class WorldCharacterMemoryViewModel {
     this.worldId = worldId;
     this.chatId = chatId;
     this.branchId = branchId;
-    Logger.info(
-      LOG_TAG,
-      `initialize wid=${worldId.substring(0, 4)} cid=${chatId.substring(0, 4)} bid=${branchId.substring(0, 4)}`
-    );
     await this.loadMembers();
     if (this.members.length > 0) {
       this.selectedCharacterId = this.members[0].characterId;
@@ -168,7 +164,6 @@ export class WorldCharacterMemoryViewModel {
         return item;
       });
       this.members = items;
-      Logger.info(LOG_TAG, `loadMembers ok count=${items.length}`);
     } catch (e) {
       Logger.warn(LOG_TAG, `loadMembers failed: ${(e as Error).message}`);
       this.errorMessage = '加载角色列表失败: ' + (e as Error).message;
@@ -217,10 +212,6 @@ export class WorldCharacterMemoryViewModel {
     const wid: string = this.worldId;
     const chid: string = this.chatId;
     const bid: string = this.branchId;
-    Logger.info(
-      LOG_TAG,
-      `query wid=${wid.substring(0, 4)} bid=${bid.substring(0, 4)} cid=${cid.substring(0, 4)}`
-    );
 
     try {
       // 顺序加载各类记忆(ArkTS 不支持数组解构声明,顺序调用更直观)
@@ -268,10 +259,6 @@ export class WorldCharacterMemoryViewModel {
         this.loadState = 'not_loaded';  // 表示已有数据
       }
 
-      Logger.info(
-        LOG_TAG,
-        `query ok private=${privateMems.length} known=${knownEvts.length} shared=${sharedEvts.length} public=${publicEvts.length} rel=${charRels.length} userRel=${userRel !== null ? 1 : 0}`
-      );
       this.notifyUpdate();
     } catch (e) {
       if (this.disposed) return;

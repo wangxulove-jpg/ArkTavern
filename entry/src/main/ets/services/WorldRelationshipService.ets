@@ -282,7 +282,6 @@ export class WorldRelationshipService {
         }
       }
     );
-    Logger.info(LOG_TAG, `applyRelationshipUpdates count=${updates.length}`);
   }
 
   /**

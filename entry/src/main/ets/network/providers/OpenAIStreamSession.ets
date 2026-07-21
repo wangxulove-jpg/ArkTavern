@@ -301,7 +301,6 @@ export class OpenAIStreamSession implements ChatStreamHandle {
     if (isStreamTerminalState(this.state)) {
       return;
     }
-    Logger.info(LOG_TAG, 'headers statusCode=' + statusCode.toString());
 
     if (statusCode < 200 || statusCode >= 300) {
       const errorType: NetworkErrorType = errorTypeFromStatusCode(statusCode);
@@ -391,7 +390,6 @@ export class OpenAIStreamSession implements ChatStreamHandle {
     // [DONE] 标记
     if (event.isDone) {
       this.receivedDone = true;
-      Logger.info(LOG_TAG, 'received [DONE]');
       return;
     }
 
@@ -477,13 +475,6 @@ export class OpenAIStreamSession implements ChatStreamHandle {
     if (isStreamTerminalState(this.state)) {
       return;
     }
-    Logger.info(LOG_TAG, 'complete statusCode=' + statusCode.toString()
-      + ' chunks=' + this.chunkCount.toString()
-      + ' events=' + this.eventCount.toString()
-      + ' deltas=' + this.deltaCount.toString()
-      + ' done=' + this.receivedDone.toString()
-      + ' finishReason=' + (this.finishReason !== undefined ? this.finishReason : 'undefined')
-      + ' contentLen=' + this.accumulatedContent.length.toString());
 
     // flush SseParser 剩余内容
     const finishResult = this.sseParser.finish();

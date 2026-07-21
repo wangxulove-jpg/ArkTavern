@@ -32,10 +32,6 @@ import { ChatMessage } from '../models/ChatMessage';
 import { ChatRole } from '../models/ChatRole';
 import { LorebookRepository } from '../repositories/LorebookRepository';
 import { LorebookSelectionStore } from '../storage/LorebookSelectionStore';
-import { DatabaseError } from '../models/DatabaseError';
-import { Logger } from '../utils/Logger';
-
-const LOG_TAG: string = 'LorebookService';
 
 /** 默认扫描最近消息数 */
 const DEFAULT_SCAN_MESSAGES: number = 10;
@@ -77,7 +73,6 @@ export class LorebookService {
     }
     await this.selectionStore.initialize();
     this.initialized = true;
-    Logger.info(LOG_TAG, 'initialize ok');
   }
 
   private requireInit(): void {
@@ -106,7 +101,6 @@ export class LorebookService {
       throw new Error(error);
     }
     await this.repository.insert(lorebook);
-    Logger.info(LOG_TAG, 'create success');
     return lorebook;
   }
 
@@ -122,7 +116,6 @@ export class LorebookService {
       throw new Error(error);
     }
     await this.repository.update(updated);
-    Logger.info(LOG_TAG, 'update success');
     return updated;
   }
 
@@ -134,7 +127,6 @@ export class LorebookService {
       await this.selectionStore.setCurrentLorebookId(null);
     }
     await this.repository.remove(id);
-    Logger.info(LOG_TAG, 'remove success');
   }
 
   async setCurrentLorebookId(id: string | null): Promise<void> {
@@ -146,7 +138,6 @@ export class LorebookService {
       }
     }
     await this.selectionStore.setCurrentLorebookId(id);
-    Logger.info(LOG_TAG, 'setCurrentLorebookId ok');
   }
 
   async getCurrentLorebookId(): Promise<string | null> {
@@ -197,7 +188,6 @@ export class LorebookService {
     }
     const updated: Lorebook = addEntryToLorebook(existing, entry);
     await this.repository.update(updated);
-    Logger.info(LOG_TAG, 'addEntry success');
     return updated;
   }
 
@@ -230,7 +220,6 @@ export class LorebookService {
       }
     }
     await this.repository.update(updated);
-    Logger.info(LOG_TAG, 'updateEntry success');
     return updated;
   }
 
@@ -242,7 +231,6 @@ export class LorebookService {
     }
     const updated: Lorebook = removeEntryFromLorebook(existing, entryId);
     await this.repository.update(updated);
-    Logger.info(LOG_TAG, 'removeEntry success');
     return updated;
   }
 

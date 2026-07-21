@@ -37,10 +37,6 @@
 import { KeyStore } from './KeyStore';
 import { buildAlias, isValidProviderId } from './AliasBuilder';
 import { SecureStorageErrorType, createSecureStorageError } from '../models/SecureStorageError';
-import { Logger } from '../utils/Logger';
-
-/** 日志标签 */
-const LOG_TAG: string = 'ProviderKeyStore';
 
 /**
  * Provider 级密钥管理。
@@ -67,9 +63,7 @@ export class ProviderKeyStore {
   async saveKey(providerId: string, apiKey: string): Promise<void> {
     const alias: string = this.validateAndBuildAlias(providerId);
     this.validateApiKeyOrThrow(apiKey);
-    Logger.info(LOG_TAG, 'saveKey providerId=' + providerId);
     await this.keyStore.save(alias, apiKey);
-    Logger.info(LOG_TAG, 'saveKey ok providerId=' + providerId);
   }
 
   /**
@@ -83,9 +77,7 @@ export class ProviderKeyStore {
    */
   async readKey(providerId: string): Promise<string | null> {
     const alias: string = this.validateAndBuildAlias(providerId);
-    Logger.info(LOG_TAG, 'readKey providerId=' + providerId);
     const result: string | null = await this.keyStore.read(alias);
-    Logger.info(LOG_TAG, 'readKey ok providerId=' + providerId);
     return result;
   }
 
@@ -99,9 +91,7 @@ export class ProviderKeyStore {
   async updateKey(providerId: string, apiKey: string): Promise<void> {
     const alias: string = this.validateAndBuildAlias(providerId);
     this.validateApiKeyOrThrow(apiKey);
-    Logger.info(LOG_TAG, 'updateKey providerId=' + providerId);
     await this.keyStore.update(alias, apiKey);
-    Logger.info(LOG_TAG, 'updateKey ok providerId=' + providerId);
   }
 
   /**
@@ -112,9 +102,7 @@ export class ProviderKeyStore {
    */
   async removeKey(providerId: string): Promise<void> {
     const alias: string = this.validateAndBuildAlias(providerId);
-    Logger.info(LOG_TAG, 'removeKey providerId=' + providerId);
     await this.keyStore.remove(alias);
-    Logger.info(LOG_TAG, 'removeKey ok providerId=' + providerId);
   }
 
   /**
@@ -128,9 +116,7 @@ export class ProviderKeyStore {
    */
   async hasKey(providerId: string): Promise<boolean> {
     const alias: string = this.validateAndBuildAlias(providerId);
-    Logger.info(LOG_TAG, 'hasKey providerId=' + providerId);
     const exists: boolean = await this.keyStore.exists(alias);
-    Logger.info(LOG_TAG, 'hasKey ok providerId=' + providerId + ' exists=' + exists.toString());
     return exists;
   }
 
@@ -145,14 +131,11 @@ export class ProviderKeyStore {
   async replaceKey(providerId: string, apiKey: string): Promise<void> {
     const alias: string = this.validateAndBuildAlias(providerId);
     this.validateApiKeyOrThrow(apiKey);
-    Logger.info(LOG_TAG, 'replaceKey providerId=' + providerId);
     const exists: boolean = await this.keyStore.exists(alias);
     if (exists) {
       await this.keyStore.update(alias, apiKey);
-      Logger.info(LOG_TAG, 'replaceKey update providerId=' + providerId);
     } else {
       await this.keyStore.save(alias, apiKey);
-      Logger.info(LOG_TAG, 'replaceKey save providerId=' + providerId);
     }
   }
 

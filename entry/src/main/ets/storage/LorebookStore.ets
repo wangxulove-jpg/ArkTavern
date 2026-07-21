@@ -32,11 +32,9 @@ export class LorebookStore {
     if (this.initialized) {
       return;
     }
-    Logger.info(LOG_TAG, 'initialize');
     try {
       this.prefs = await preferences.getPreferences(context, 'arktavern_settings');
       this.initialized = true;
-      Logger.info(LOG_TAG, 'initialize ok');
     } catch (e) {
       Logger.error(LOG_TAG, 'initialize failed: ' + String(e));
       throw new Error('LorebookStore initialize failed');
@@ -121,7 +119,6 @@ export class LorebookStore {
     lorebooks.push(lorebook);
     await prefs.put(KEY_LOREBOOK_LIST, JSON.stringify(lorebooks));
     await prefs.flush();
-    Logger.info(LOG_TAG, 'save ok id=' + lorebook.id);
   }
 
   async update(lorebook: Lorebook): Promise<void> {
@@ -144,7 +141,6 @@ export class LorebookStore {
     }
     await prefs.put(KEY_LOREBOOK_LIST, JSON.stringify(lorebooks));
     await prefs.flush();
-    Logger.info(LOG_TAG, 'update ok id=' + lorebook.id);
   }
 
   async remove(id: string): Promise<void> {
@@ -162,7 +158,6 @@ export class LorebookStore {
       await prefs.put(KEY_CURRENT_LOREBOOK_ID, '');
     }
     await prefs.flush();
-    Logger.info(LOG_TAG, 'remove ok id=' + id);
   }
 
   async setCurrentLorebookId(id: string | null): Promise<void> {
@@ -177,7 +172,6 @@ export class LorebookStore {
       await prefs.put(KEY_CURRENT_LOREBOOK_ID, '');
     }
     await prefs.flush();
-    Logger.info(LOG_TAG, 'setCurrentLorebookId ok id=' + id);
   }
 
   async getCurrentLorebookId(): Promise<string | null> {

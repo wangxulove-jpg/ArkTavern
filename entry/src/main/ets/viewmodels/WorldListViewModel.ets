@@ -110,7 +110,6 @@ export class WorldListViewModel {
     try {
       await this.worldService.deleteWorld(worldId);
       this.worlds = this.worlds.filter((item: WorldListItem) => item.world.id !== worldId);
-      Logger.info(LOG_TAG, 'delete ok');
     } catch (e) {
       this.errorMessage = '删除世界失败';
       Logger.error(LOG_TAG, 'delete failed: ' + String(e));

@@ -45,9 +45,6 @@ import {
 } from '../models/PromptSegment';
 import { LorebookService } from './LorebookService';
 import { MacroReplacer } from './MacroReplacer';
-import { Logger } from '../utils/Logger';
-
-const LOG_TAG: string = 'PromptBuilder';
 
 /** mes_example 分隔符,与 SillyTavern 规范一致 */
 const EXAMPLE_SEPARATOR: string = '<START>';
@@ -258,8 +255,6 @@ export class PromptBuilder {
       });
     }
 
-    Logger.info(LOG_TAG, 'build: segments=' + sorted.length + ' lorebook=' + matchedIds.length
-      + ' macro=' + (macroCtx !== undefined ? 'on' : 'off'));
     const result: PromptBuildResult = {
       messages: resultMessages,
       matchedLorebookEntryIds: matchedIds

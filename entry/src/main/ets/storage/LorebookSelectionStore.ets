@@ -24,9 +24,7 @@ export class LorebookSelectionStore {
     if (this.initialized) {
       return;
     }
-    Logger.info(LOG_TAG, 'initialize');
     this.initialized = true;
-    Logger.info(LOG_TAG, 'initialize ok');
   }
 
   private requireInit(): void {
@@ -56,12 +54,10 @@ export class LorebookSelectionStore {
     } else {
       await this.prefs.putString(KEY_CURRENT_LOREBOOK_ID, '');
     }
-    Logger.info(LOG_TAG, 'setCurrentLorebookId ok');
   }
 
   async clear(): Promise<void> {
     this.requireInit();
     await this.prefs.putString(KEY_CURRENT_LOREBOOK_ID, '');
-    Logger.info(LOG_TAG, 'clear ok');
   }
 }

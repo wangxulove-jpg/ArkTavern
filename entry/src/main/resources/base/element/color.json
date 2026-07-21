@@ -5,38 +5,6 @@
       "value": "#FFFFFF"
     },
     {
-      "name": "home_background",
-      "value": "#F5F5F5"
-    },
-    {
-      "name": "home_card_background",
-      "value": "#FFFFFF"
-    },
-    {
-      "name": "home_primary_text",
-      "value": "#1A1A1A"
-    },
-    {
-      "name": "home_secondary_text",
-      "value": "#666666"
-    },
-    {
-      "name": "home_accent",
-      "value": "#5B7CFA"
-    },
-    {
-      "name": "home_divider",
-      "value": "#E0E0E0"
-    },
-    {
-      "name": "home_dev_background",
-      "value": "#FFF8E1"
-    },
-    {
-      "name": "home_dev_text",
-      "value": "#996600"
-    },
-    {
       "name": "page_background",
       "value": "#F5F5F5"
     },
@@ -49,32 +17,8 @@
       "value": "#666666"
     },
     {
-      "name": "model_settings_accent",
-      "value": "#5B7CFA"
-    },
-    {
-      "name": "model_settings_chip_bg",
-      "value": "#EEEEEE"
-    },
-    {
-      "name": "model_settings_selected_bg",
-      "value": "#E3EAFF"
-    },
-    {
-      "name": "model_settings_field_bg",
-      "value": "#F2F2F2"
-    },
-    {
-      "name": "model_settings_button_text",
-      "value": "#FFFFFF"
-    },
-    {
       "name": "model_settings_success",
       "value": "#2E7D32"
-    },
-    {
-      "name": "model_settings_danger",
-      "value": "#D32F2F"
     },
     {
       "name": "chat_user_bubble",
@@ -99,10 +43,6 @@
     {
       "name": "chat_status_failed_bg",
       "value": "#FFEBEE"
-    },
-    {
-      "name": "chat_divider",
-      "value": "#E0E0E0"
     },
     {
       "name": "app_bg",
@@ -137,10 +77,6 @@
       "value": "#5B7CFA"
     },
     {
-      "name": "app_accent_pressed",
-      "value": "#4A6BE0"
-    },
-    {
       "name": "app_on_accent",
       "value": "#FFFFFF"
     },
@@ -151,14 +87,6 @@
     {
       "name": "app_divider",
       "value": "#E5E5E5"
-    },
-    {
-      "name": "app_dev_surface",
-      "value": "#FFF8E1"
-    },
-    {
-      "name": "app_dev_text",
-      "value": "#996600"
     },
     {
       "name": "chat_text_primary",
@@ -199,14 +127,6 @@
     {
       "name": "chat_text_system",
       "value": "#999999"
-    },
-    {
-      "name": "chat_code_bg",
-      "value": "#F5F5F5"
-    },
-    {
-      "name": "chat_quote_line",
-      "value": "#CCCCCC"
     }
   ]
 }

@@ -101,7 +101,6 @@ export class ChatBackgroundService {
       // 路径不存在,继续创建
     }
     await fs.mkdir(this.bgDirPath, true);
-    Logger.info(LOG_TAG, 'ensureDir created ' + this.bgDirPath);
   }
 
   /**
@@ -122,7 +121,6 @@ export class ChatBackgroundService {
     await this.ensureDir();
     const targetPath: string = this.bgDirPath + '/' + chatId + '.jpg';
     const targetUri: string = 'file://' + targetPath;
-    Logger.info(LOG_TAG, 'importImage start target=' + targetPath);
 
     // 读取源文件
     const sourceFile: fs.File = await fs.open(sourceUri, fs.OpenMode.READ_ONLY);
@@ -152,7 +150,6 @@ export class ChatBackgroundService {
       await fs.close(sourceFile);
     }
 
-    Logger.info(LOG_TAG, 'importImage ok bytes');
     return targetUri;
   }
 

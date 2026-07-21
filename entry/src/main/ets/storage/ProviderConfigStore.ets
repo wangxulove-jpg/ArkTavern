@@ -89,9 +89,7 @@ export class ProviderConfigStore {
    * @throws PreferencesError 当平台初始化失败时
    */
   async initialize(context: common.Context): Promise<void> {
-    Logger.info(LOG_TAG, 'initialize');
     await this.prefs.initialize(context);
-    Logger.info(LOG_TAG, 'initialize ok');
   }
 
   /**
@@ -110,10 +108,8 @@ export class ProviderConfigStore {
    * @throws PreferencesError 当存储不可用或数据整体损坏时
    */
   async list(): Promise<ProviderConfig[]> {
-    Logger.info(LOG_TAG, 'list');
     const json: string = await this.prefs.getString(KEY_PROVIDER_CONFIGS, '');
     if (json.length === 0) {
-      Logger.info(LOG_TAG, 'list empty');
       return [];
     }
     const result: CodecDecodeResult = decodeConfigs(json);
@@ -141,7 +137,6 @@ export class ProviderConfigStore {
     sorted.sort((a: ProviderConfig, b: ProviderConfig): number => {
       return a.createdAt - b.createdAt;
     });
-    Logger.info(LOG_TAG, 'list count=' + sorted.length.toString());
     return sorted;
   }
 
@@ -153,7 +148,6 @@ export class ProviderConfigStore {
    * @throws PreferencesError 当存储不可用或数据整体损坏时
    */
   async getById(id: string): Promise<ProviderConfig | null> {
-    Logger.info(LOG_TAG, 'getById id=' + id);
     const all: ProviderConfig[] = await this.list();
     for (let i = 0; i < all.length; i++) {
       if (all[i].id === id) {
@@ -171,7 +165,6 @@ export class ProviderConfigStore {
    * @throws PreferencesError 当存储不可用或数据整体损坏时
    */
   async exists(id: string): Promise<boolean> {
-    Logger.info(LOG_TAG, 'exists id=' + id);
     const all: ProviderConfig[] = await this.list();
     for (let i = 0; i < all.length; i++) {
       if (all[i].id === id) {
@@ -190,7 +183,6 @@ export class ProviderConfigStore {
    * @throws PreferencesError 当 id 重复、存储失败或序列化失败时
    */
   async save(config: ProviderConfig): Promise<void> {
-    Logger.info(LOG_TAG, 'save id=' + config.id);
     await this.serializeWrite(async (): Promise<void> => {
       const current: ProviderConfig[] = await this.list();
       for (let i = 0; i < current.length; i++) {
@@ -207,7 +199,6 @@ export class ProviderConfigStore {
       next.push(config);
       await this.persistConfigs(next);
     });
-    Logger.info(LOG_TAG, 'save ok id=' + config.id);
   }
 
   /**
@@ -220,7 +211,6 @@ export class ProviderConfigStore {
    * @throws PreferencesError 当 id 不存在、存储失败或序列化失败时
    */
   async update(config: ProviderConfig): Promise<void> {
-    Logger.info(LOG_TAG, 'update id=' + config.id);
     await this.serializeWrite(async (): Promise<void> => {
       const current: ProviderConfig[] = await this.list();
       let found: boolean = false;
@@ -243,7 +233,6 @@ export class ProviderConfigStore {
       }
       await this.persistConfigs(next);
     });
-    Logger.info(LOG_TAG, 'update ok id=' + config.id);
   }
 
   /**
@@ -256,7 +245,6 @@ export class ProviderConfigStore {
    * @throws PreferencesError 当存储失败时
    */
   async remove(id: string): Promise<void> {
-    Logger.info(LOG_TAG, 'remove id=' + id);
     await this.serializeWrite(async (): Promise<void> => {
       const current: ProviderConfig[] = await this.list();
       const next: ProviderConfig[] = [];
@@ -270,18 +258,15 @@ export class ProviderConfigStore {
       }
       if (!found) {
         // 幂等,不抛错
-        Logger.info(LOG_TAG, 'remove not found (idempotent) id=' + id);
         return;
       }
       await this.persistConfigs(next);
       // 检查并清理 current_provider_id
       const currentSelectedId: string | null = await this.readCurrentProviderIdUnsafe();
       if (currentSelectedId === id) {
-        Logger.info(LOG_TAG, 'remove clears current selection id=' + id);
         await this.prefs.delete(KEY_CURRENT_PROVIDER_ID);
       }
     });
-    Logger.info(LOG_TAG, 'remove ok id=' + id);
   }
 
   /**
@@ -294,14 +279,11 @@ export class ProviderConfigStore {
    */
   async setCurrentProviderId(id: string | null): Promise<void> {
     if (id === null) {
-      Logger.info(LOG_TAG, 'setCurrentProviderId null');
       await this.serializeWrite(async (): Promise<void> => {
         await this.prefs.delete(KEY_CURRENT_PROVIDER_ID);
       });
-      Logger.info(LOG_TAG, 'setCurrentProviderId null ok');
       return;
     }
-    Logger.info(LOG_TAG, 'setCurrentProviderId id=' + id);
     if (id.length === 0) {
       throw createPreferencesError(
         PreferencesErrorType.InvalidSelection,
@@ -322,7 +304,6 @@ export class ProviderConfigStore {
       }
       await this.prefs.putString(KEY_CURRENT_PROVIDER_ID, id);
     });
-    Logger.info(LOG_TAG, 'setCurrentProviderId ok id=' + id);
   }
 
   /**
@@ -332,7 +313,6 @@ export class ProviderConfigStore {
    * @throws PreferencesError 当存储不可用时
    */
   async getCurrentProviderId(): Promise<string | null> {
-    Logger.info(LOG_TAG, 'getCurrentProviderId');
     return await this.readCurrentProviderIdUnsafe();
   }
 
@@ -343,7 +323,6 @@ export class ProviderConfigStore {
    * @throws PreferencesError 当存储不可用或数据整体损坏时
    */
   async getCurrent(): Promise<ProviderConfig | null> {
-    Logger.info(LOG_TAG, 'getCurrent');
     const id: string | null = await this.readCurrentProviderIdUnsafe();
     if (id === null) {
       return null;

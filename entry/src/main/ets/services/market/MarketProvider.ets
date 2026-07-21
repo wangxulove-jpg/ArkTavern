@@ -12,7 +12,6 @@
  * - 若 Provider 需要认证,凭证必须使用安全存储
  */
 
-import { MarketCharacter } from '../../models/MarketCharacter';
 import { MarketCharacterDetail } from '../../models/MarketCharacterDetail';
 import { MarketQuery, MarketPageResult } from '../../models/MarketQuery';
 

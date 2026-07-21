@@ -29,9 +29,6 @@ import { CharacterImageView } from './CharacterImageView';
 import { TypingState } from '../models/TypingState';
 import { ChatRichText, ChatSenderType } from './ChatRichText';
 import { ChatTextStyle } from '../utils/ChatTextStyleSettings';
-import { Logger } from '../utils/Logger';
-
-const LOG_TAG: string = 'ChatMessageBubble';
 
 @Component
 export struct ChatMessageBubble {
@@ -64,12 +61,6 @@ export struct ChatMessageBubble {
   private static readonly TYPING_INTERVAL_MS: number = 30;
 
   aboutToAppear(): void {
-    const role: string = this.msg.role;
-    const contentLen: number = this.typingState.content.length;
-    const isStreaming: boolean = this.typingState.isStreaming;
-    Logger.info(LOG_TAG, 'aboutToAppear | role=' + role
-      + ' contentLen=' + contentLen.toString()
-      + ' isStreaming=' + isStreaming.toString());
     if (this.typingState.isStreaming && this.msg.role === ChatRole.Assistant) {
       // 流式 Assistant 消息:从空开始打字
       this.displayedContent = '';

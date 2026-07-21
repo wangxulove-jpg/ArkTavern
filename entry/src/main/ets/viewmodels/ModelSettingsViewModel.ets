@@ -33,7 +33,6 @@ import {
   hasPreset
 } from '../models/ProviderPreset';
 import { generateUuid } from '../utils/Uuid';
-import { Logger } from '../utils/Logger';
 import {
   TEMPERATURE_DEFAULT,
   TOP_P_DEFAULT,
@@ -47,8 +46,6 @@ import {
   MAX_TOKENS_MIN,
   MAX_TOKENS_MAX
 } from '../models/ProviderConfig';
-
-const LOG_TAG: string = 'ModelSettingsVM';
 
 interface ValidationResult {
   readonly valid: boolean;
@@ -123,7 +120,6 @@ export class ModelSettingsViewModel {
   // ===== 公共方法 =====
 
   async initialize(): Promise<void> {
-    Logger.info(LOG_TAG, 'initialize');
     this.isLoading = true;
     this.errorMessage = '';
     try {
@@ -146,7 +142,6 @@ export class ModelSettingsViewModel {
   }
 
   async selectConfig(id: string): Promise<void> {
-    Logger.info(LOG_TAG, 'selectConfig id=' + id);
     this.selectedConfigId = id;
     this.apiKey = '';
     this.errorMessage = '';
@@ -166,7 +161,6 @@ export class ModelSettingsViewModel {
   }
 
   startCreate(): void {
-    Logger.info(LOG_TAG, 'startCreate');
     this.selectedConfigId = null;
     this.name = '';
     this.providerType = ProviderType.OpenAICompatible;
@@ -190,7 +184,6 @@ export class ModelSettingsViewModel {
    * 页面 Select onChange 时调用,自动应用预设。
    */
   onProviderTypeChange(type: ProviderType): void {
-    Logger.info(LOG_TAG, 'providerType changed to ' + type);
     this.providerType = type;
     this.errorMessage = '';
     this.applyPresetForType(type);
@@ -198,20 +191,16 @@ export class ModelSettingsViewModel {
 
   async save(): Promise<void> {
     if (this.isSaving) {
-      Logger.info(LOG_TAG, 'save blocked: already saving');
       return;
     }
-    Logger.info(LOG_TAG, 'save clicked mode=' + (this.selectedConfigId === null ? 'create' : 'update'));
     this.errorMessage = '';
     this.statusMessage = '';
 
     const validation: ValidationResult = this.validateForm();
     if (!validation.valid) {
-      Logger.info(LOG_TAG, 'save validation failed: ' + validation.message);
       this.errorMessage = validation.message;
       return;
     }
-    Logger.info(LOG_TAG, 'save validation passed');
 
     this.isSaving = true;
     try {
@@ -221,7 +210,6 @@ export class ModelSettingsViewModel {
         await this.saveUpdate();
       }
     } catch (e) {
-      Logger.info(LOG_TAG, 'save error type=' + (isModelServiceError(e) ? (e as ModelServiceError).type : 'unknown'));
       this.errorMessage = this.toUserMessage(e, '保存失败');
     } finally {
       this.isSaving = false;
@@ -492,7 +480,6 @@ export class ModelSettingsViewModel {
     const id: string = generateUuid();
     const config: ProviderConfig = this.buildFormConfig(id);
     const apiKeyToSave: string = this.apiKey;
-    Logger.info(LOG_TAG, 'saveNew id=' + id + ' type=' + config.type);
     await this.modelService.createConfig(config, apiKeyToSave);
     this.configs = await this.modelService.listConfigs();
     const current: ProviderConfig | null = await this.modelService.getCurrentConfig();
@@ -507,13 +494,11 @@ export class ModelSettingsViewModel {
     this.showApiKey = false;
     this.statusMessage = '配置保存成功';
     this.currentConfigKeyConfigured = await this.modelService.hasApiKey(id);
-    Logger.info(LOG_TAG, 'saveNew ok id=' + id);
   }
 
   private async saveUpdate(): Promise<void> {
     const config: ProviderConfig = this.buildFormConfig(this.selectedConfigId as string);
     const apiKeyParam: string | undefined = this.apiKey.length > 0 ? this.apiKey : undefined;
-    Logger.info(LOG_TAG, 'saveUpdate id=' + config.id);
     await this.modelService.updateConfig(config, apiKeyParam);
     this.configs = await this.modelService.listConfigs();
     const current: ProviderConfig | null = await this.modelService.getCurrentConfig();
@@ -525,7 +510,6 @@ export class ModelSettingsViewModel {
     if (this.currentConfigId === (this.selectedConfigId as string)) {
       this.currentConfigKeyConfigured = await this.modelService.hasApiKey(this.selectedConfigId as string);
     }
-    Logger.info(LOG_TAG, 'saveUpdate ok id=' + config.id);
   }
 
   private buildFormConfig(id: string): ProviderConfig {

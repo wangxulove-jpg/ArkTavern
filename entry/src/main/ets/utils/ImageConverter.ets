@@ -86,7 +86,6 @@ export async function convertUriToPngBytes(sourceUri: string): Promise<Uint8Arra
       quality: PNG_PACK_QUALITY
     };
     const buffer: ArrayBuffer = await imagePacker.packing(pixelMap, packOptions);
-    Logger.info(LOG_TAG, 'convertUriToPngBytes ok size=' + String(buffer.byteLength));
     return new Uint8Array(buffer);
   } catch (e) {
     Logger.error(LOG_TAG, 'convertUriToPngBytes failed: ' + String(e));

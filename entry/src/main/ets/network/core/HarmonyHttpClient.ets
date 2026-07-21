@@ -63,7 +63,6 @@ export class HarmonyHttpClient implements HttpClient {
   request(options: HttpRequestOptions): Promise<HttpResponse> {
     return new Promise<HttpResponse>((resolve, reject) => {
       const host: string = extractHost(options.url);
-      Logger.info(LOG_TAG, 'request method=' + options.method + ' host=' + host);
 
       const httpRequest: http.HttpRequest = http.createHttp();
       const httpOptions: http.HttpRequestOptions = buildHttpOptions(options);
@@ -74,8 +73,6 @@ export class HarmonyHttpClient implements HttpClient {
             const statusCode: number = response.responseCode;
             const headers: HttpHeaders = convertHeaders(response.header);
             const body: string = convertResponseBody(response.result);
-
-            Logger.info(LOG_TAG, 'response statusCode=' + statusCode.toString() + ' host=' + host);
 
             const result: HttpResponse = {
               statusCode: statusCode,

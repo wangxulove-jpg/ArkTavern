@@ -31,9 +31,7 @@ export class PromptPresetSelectionStore {
     if (this.initialized) {
       return;
     }
-    Logger.info(LOG_TAG, 'initialize');
     this.initialized = true;
-    Logger.info(LOG_TAG, 'initialize ok');
   }
 
   private requireInit(): void {
@@ -63,12 +61,10 @@ export class PromptPresetSelectionStore {
     } else {
       await this.prefs.putString(KEY_CURRENT_PRESET_ID, '');
     }
-    Logger.info(LOG_TAG, 'setCurrentPresetId ok');
   }
 
   async clear(): Promise<void> {
     this.requireInit();
     await this.prefs.putString(KEY_CURRENT_PRESET_ID, '');
-    Logger.info(LOG_TAG, 'clear ok');
   }
 }

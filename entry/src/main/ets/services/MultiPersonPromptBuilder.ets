@@ -19,7 +19,7 @@
  * - 不让离场角色参与
  */
 
-import { ChatMessage, MessageSenderType } from '../models/ChatMessage';
+import { ChatMessage } from '../models/ChatMessage';
 import { ChatRole } from '../models/ChatRole';
 import { World, WorldUserIdentity } from '../models/World';
 import { WorldMember } from '../models/WorldMember';

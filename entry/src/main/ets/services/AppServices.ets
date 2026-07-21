@@ -338,7 +338,6 @@ export class AppServices {
     if (AppServices.readyPromise !== null) {
       return AppServices.readyPromise;
     }
-    Logger.info(LOG_TAG, 'initialize start');
     const services: AppServices = new AppServices();
     AppServices.instance = services;
     // 保存 Context(用于 ChatBackgroundService 等需要 filesDir 的服务)
@@ -366,13 +365,11 @@ export class AppServices {
         if (services.appContext !== null) {
           services.chatBackgroundService = new ChatBackgroundService(
             services.appContext, services.appPreferences);
-          Logger.info(LOG_TAG, 'chatBackgroundService created');
         } else {
           Logger.warn(LOG_TAG, 'appContext is null, chatBackgroundService not created');
         }
         // 创建 ContextBudgetService(只需 appPreferences)
         services.contextBudgetService = new ContextBudgetService(services.appPreferences);
-        Logger.info(LOG_TAG, 'contextBudgetService created');
         // 创建 MarketImportService(需要 appContext 写入临时 PNG 文件)
         if (services.appContext !== null) {
           services.marketImportService = new MarketImportService(
@@ -381,7 +378,6 @@ export class AppServices {
             services.marketService.getImportedMapStore(),
             services.appContext
           );
-          Logger.info(LOG_TAG, 'marketImportService created');
         } else {
           Logger.warn(LOG_TAG, 'appContext is null, marketImportService not created');
         }
@@ -390,8 +386,7 @@ export class AppServices {
           services.modelService,
           services.marketService.getCacheStore()
         );
-        Logger.info(LOG_TAG, 'marketTranslationService created');
-        Logger.info(LOG_TAG, 'initialize ok');
+        Logger.warn(LOG_TAG, 'AppServices initialized');
       })
       .catch((e: Object): void => {
         Logger.error(LOG_TAG, 'initialize failed: ' + (e as Error).message);

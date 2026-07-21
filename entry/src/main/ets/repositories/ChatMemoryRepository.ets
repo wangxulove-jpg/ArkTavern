@@ -16,7 +16,6 @@
 
 import { relationalStore } from '@kit.ArkData';
 import { DbHelper } from '../database/DbHelper';
-import { Logger } from '../utils/Logger';
 import { ChatMemory, createChatMemory } from '../models/ChatMemory';
 import { DatabaseError } from '../models/DatabaseError';
 import { nowMillis } from '../utils/Time';
@@ -35,8 +34,6 @@ import {
   COLUMN_CREATED_AT
 } from '../database/DatabaseConstants';
 import { memoryFromRow, memoryToBucket } from './ChatMemoryRepositoryMapper';
-
-const LOG_TAG: string = 'MemoryRepo';
 
 export class ChatMemoryRepository {
   private readonly dbHelper: DbHelper;
@@ -412,6 +409,5 @@ export class ChatMemoryRepository {
       };
       await this.insertWithStore(store, updated);
     }
-    Logger.info(LOG_TAG, 'copied memories | count=' + ancestors.length.toString());
   }
 }

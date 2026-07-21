@@ -200,7 +200,6 @@ export class ConversationBranchPersistenceService {
     const branch: ConversationBranch =
       await this.branchRepository.createRootBranchWithStore(store, chatId);
     await this.branchRepository.setActiveBranchWithStore(store, chatId, branch.id);
-    Logger.info(LOG_TAG, 'root created');
     return branch;
   }
 
@@ -268,9 +267,6 @@ export class ConversationBranchPersistenceService {
     const links: BranchMessageLink[] =
       await this.branchRepository.listMessageLinksWithStore(store, activeBranch.id);
     if (links.length === 0) {
-      Logger.info(LOG_TAG, 'loadActiveBranchMessages | branch=' + activeBranch.id.substring(0, 8)
-        + ' isRoot=' + activeBranch.isRoot.toString()
-        + ' links=0');
       return [];
     }
     // 加载该 Branch 的 SwipeSelections
@@ -305,9 +301,6 @@ export class ConversationBranchPersistenceService {
       // 普通 Message 或无 Selection 的 Assistant:直接使用 Message
       result.push(message);
     }
-    Logger.info(LOG_TAG, 'loadActiveBranchMessages | branch=' + activeBranch.id.substring(0, 8)
-      + ' isRoot=' + activeBranch.isRoot.toString()
-      + ' count=' + result.length.toString());
     return result;
   }
 
@@ -470,7 +463,6 @@ export class ConversationBranchPersistenceService {
     // 8. 触发 Branch 时间戳更新
     const now: number = nowMillis();
     await this.branchRepository.touchBranchWithStore(store, childBranch.id, now);
-    Logger.info(LOG_TAG, 'child created');
     return childBranch;
   }
 
@@ -637,12 +629,9 @@ export class ConversationBranchPersistenceService {
     );
     // 10. 更新 chat_branch_state.active_branch_id 为新 Branch
     await this.branchRepository.setActiveBranchWithStore(store, chatId, newBranch.id);
-    Logger.info(LOG_TAG, 'ConversationBranch | active branch updated');
     // 11. 触发 Branch 时间戳更新
     const now: number = nowMillis();
     await this.branchRepository.touchBranchWithStore(store, newBranch.id, now);
-    Logger.info(LOG_TAG, 'regeneration | newBranch=' + newBranch.id.substring(0, 8)
-      + ' parent=' + parentBranchId.substring(0, 8));
     // 返回新 Branch 摘要(包含 messageCount 和 isActive)
     const messageCount: number =
       await this.branchRepository.countMessagesWithStore(store, newBranch.id);
@@ -857,12 +846,9 @@ export class ConversationBranchPersistenceService {
     );
     // 12. 设置新 Branch 为 Active
     await this.branchRepository.setActiveBranchWithStore(store, chatId, newBranch.id);
-    Logger.info(LOG_TAG, 'ConversationBranch | active branch updated (edit)');
     // 13. 触发 Branch 时间戳更新
     const now: number = nowMillis();
     await this.branchRepository.touchBranchWithStore(store, newBranch.id, now);
-    Logger.info(LOG_TAG, 'edit | newBranch=' + newBranch.id.substring(0, 8)
-      + ' parent=' + parentBranchId.substring(0, 8));
     return {
       newBranchId: newBranch.id,
       newUserMessageId: newUserMessage.id,
@@ -992,7 +978,6 @@ export class ConversationBranchPersistenceService {
         createdAt: summary.createdAt
       });
     }
-    Logger.info(LOG_TAG, 'BranchMap | loaded count=' + result.length.toString());
     return result;
   }
 
@@ -1094,8 +1079,6 @@ export class ConversationBranchPersistenceService {
         Logger.warn(LOG_TAG, 'switchActiveBranch: group missing, skip');
       }
     }
-    Logger.info(LOG_TAG, 'switchActiveBranch | target=' + targetBranchId.substring(0, 8)
-      + ' selections=' + selections.length.toString());
   }
 
   /**
@@ -1210,7 +1193,6 @@ export class ConversationBranchPersistenceService {
     );
     const now: number = nowMillis();
     await this.branchRepository.touchBranchWithStore(store, activeBranch.id, now);
-    Logger.info(LOG_TAG, 'message linked');
   }
 
   /**
@@ -1256,7 +1238,6 @@ export class ConversationBranchPersistenceService {
     );
     const now: number = nowMillis();
     await this.branchRepository.touchBranchWithStore(store, activeBranch.id, now);
-    Logger.info(LOG_TAG, 'message pair linked');
   }
 
   /**
@@ -1290,7 +1271,6 @@ export class ConversationBranchPersistenceService {
     );
     const now: number = nowMillis();
     await this.branchRepository.touchBranchWithStore(store, branch.id, now);
-    Logger.info(LOG_TAG, 'root created with first message linked');
     return branch;
   }
 
@@ -1359,7 +1339,6 @@ export class ConversationBranchPersistenceService {
     await this.branchRepository.upsertSwipeSelectionWithStore(
       store, activeBranch.id, assistantMessageId, candidateIndex
     );
-    Logger.info(LOG_TAG, 'swipe selection updated');
   }
 
   // ===== 删除清理 =====
@@ -1374,7 +1353,6 @@ export class ConversationBranchPersistenceService {
     chatId: string
   ): Promise<void> {
     await this.branchRepository.removeByChatIdWithStore(store, chatId);
-    Logger.info(LOG_TAG, 'branches removed for chat');
   }
 
   // ===== v5 完整性检查与修复 =====
@@ -1460,8 +1438,6 @@ export class ConversationBranchPersistenceService {
         `repairV5Integrity: ${(err as Error).message}`
       );
     }
-    Logger.info(LOG_TAG, 'v5 integrity repaired created=' + created.toString()
-      + ' skipped=' + skipped.toString());
     return {
       createdCount: created,
       skippedCount: skipped

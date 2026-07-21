@@ -310,7 +310,6 @@ export class MarketDetailViewModel {
       if (result.status === MarketImportStatus.Imported) {
         this.importedCharacter = result.character;
         this.showImportSuccessDialog = true;
-        Logger.info(LOG_TAG, 'import ok');
       } else if (result.status === MarketImportStatus.DuplicateFound) {
         // 兜底:理论上 startImport 已检测过,此处若再触发说明并发场景
         this.showDuplicateDialog = true;

@@ -186,8 +186,6 @@ export class ForkChatService {
       throw new Error('ForkChat: full history result null');
     }
     const finalResult: ForkChatResult = holder.result;
-    Logger.info(LOG_TAG, 'forkChatWithFullHistory done msgs=' + finalResult.copiedMessageCount.toString()
-      + ' mem=' + finalResult.copiedMemoryCount.toString());
     return finalResult;
   }
 
@@ -238,8 +236,6 @@ export class ForkChatService {
       throw new Error('ForkChat: memory only result null');
     }
     const finalResult: ForkChatResult = holder.result;
-    Logger.info(LOG_TAG, 'forkChatWithMemoryOnly done msgs=' + finalResult.copiedMessageCount.toString()
-      + ' mem=' + finalResult.copiedMemoryCount.toString());
     return finalResult;
   }
 

@@ -78,11 +78,9 @@ export class ModelService {
   }
 
   async initialize(context: common.Context): Promise<void> {
-    Logger.info(LOG_TAG, 'initialize');
     try {
       await this.configStore.initialize(context);
       this.initialized = true;
-      Logger.info(LOG_TAG, 'initialize ok');
     } catch (e) {
       throw this.wrapStorageError(e, 'initialize failed');
     }
@@ -130,7 +128,6 @@ export class ModelService {
    */
   async createConfig(config: ProviderConfig, apiKey?: string): Promise<void> {
     this.requireInitialized();
-    Logger.info(LOG_TAG, 'createConfig id=' + config.id);
 
     try {
       await this.configStore.save(config);
@@ -141,7 +138,6 @@ export class ModelService {
     if (apiKey !== undefined && apiKey.length > 0) {
       try {
         await this.keyStore.saveKey(config.id, apiKey);
-        Logger.info(LOG_TAG, 'createConfig ok with key id=' + config.id);
       } catch (e) {
         Logger.warn(LOG_TAG, 'createConfig key failed, rollback id=' + config.id);
         await this.rollbackConfigDelete(config.id);
@@ -150,7 +146,6 @@ export class ModelService {
       }
       return;
     }
-    Logger.info(LOG_TAG, 'createConfig ok without key id=' + config.id);
   }
 
   /**
@@ -159,7 +154,6 @@ export class ModelService {
    */
   async updateConfig(config: ProviderConfig, apiKey?: string): Promise<void> {
     this.requireInitialized();
-    Logger.info(LOG_TAG, 'updateConfig id=' + config.id);
 
     try {
       await this.configStore.update(config);
@@ -168,14 +162,12 @@ export class ModelService {
     }
 
     if (apiKey === undefined) {
-      Logger.info(LOG_TAG, 'updateConfig ok, key preserved id=' + config.id);
       return;
     }
 
     if (apiKey.length === 0) {
       try {
         await this.keyStore.removeKey(config.id);
-        Logger.info(LOG_TAG, 'updateConfig ok, key removed id=' + config.id);
       } catch (e) {
         throw this.wrapKeyError(e, ModelServiceErrorType.StorageFailure,
           'updateConfig key remove failed');
@@ -185,7 +177,6 @@ export class ModelService {
 
     try {
       await this.keyStore.replaceKey(config.id, apiKey);
-      Logger.info(LOG_TAG, 'updateConfig ok, key replaced id=' + config.id);
     } catch (e) {
       throw this.wrapKeyError(e, ModelServiceErrorType.StorageFailure,
         'updateConfig key replace failed');
@@ -198,7 +189,6 @@ export class ModelService {
    */
   async deleteConfig(id: string): Promise<void> {
     this.requireInitialized();
-    Logger.info(LOG_TAG, 'deleteConfig id=' + id);
 
     try {
       await this.configStore.remove(id);
@@ -208,7 +198,6 @@ export class ModelService {
 
     try {
       await this.keyStore.removeKey(id);
-      Logger.info(LOG_TAG, 'deleteConfig ok id=' + id);
     } catch (e) {
       throw this.wrapKeyError(e, ModelServiceErrorType.StorageFailure,
         'deleteConfig key remove failed, config already deleted');
@@ -217,7 +206,6 @@ export class ModelService {
 
   async setCurrentConfig(id: string): Promise<void> {
     this.requireInitialized();
-    Logger.info(LOG_TAG, 'setCurrentConfig id=' + id);
     try {
       await this.configStore.setCurrentProviderId(id);
     } catch (e) {
@@ -242,7 +230,6 @@ export class ModelService {
     this.requireInitialized();
     const config: ProviderConfig = await this.resolveCurrentConfigForRequest();
     const provider: AiProvider = this.resolveProvider(config);
-    Logger.info(LOG_TAG, 'sendChat providerId=' + config.id + ' model=' + request.model);
     try {
       return await provider.sendChat(config, request);
     } catch (e) {
@@ -306,7 +293,6 @@ export class ModelService {
    */
   async testConnection(config: ProviderConfig, apiKey?: string): Promise<ChatResponse> {
     this.requireInitialized();
-    Logger.info(LOG_TAG, 'testConnection id=' + config.id);
 
     if (!isOpenAICompatibleType(config.type)) {
       throw createModelServiceError(
@@ -397,7 +383,6 @@ export class ModelService {
     }
 
     const provider: AiProvider = this.resolveProvider(config);
-    Logger.info(LOG_TAG, 'streamChat providerId=' + config.id + ' model=' + request.model);
 
     const wrappedCallbacks: ChatStreamCallbacks = {
       onStart: callbacks.onStart,
@@ -459,7 +444,6 @@ export class ModelService {
     };
 
     const provider: AiProvider = this.resolveProvider(config);
-    Logger.info(LOG_TAG, 'streamCurrentChat providerId=' + config.id + ' model=' + request.model);
 
     const wrappedCallbacks: ChatStreamCallbacks = {
       onStart: callbacks.onStart,

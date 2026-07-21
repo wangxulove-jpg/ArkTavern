@@ -32,11 +32,9 @@ export class CharacterStore {
     if (this.initialized) {
       return;
     }
-    Logger.info(LOG_TAG, 'initialize');
     try {
       this.prefs = await preferences.getPreferences(context, 'arktavern_settings');
       this.initialized = true;
-      Logger.info(LOG_TAG, 'initialize ok');
     } catch (e) {
       Logger.error(LOG_TAG, 'initialize failed: ' + String(e));
       throw new Error('CharacterStore initialize failed');
@@ -107,7 +105,6 @@ export class CharacterStore {
     characters.push(character);
     await prefs.put(KEY_CHARACTER_LIST, JSON.stringify(characters));
     await prefs.flush();
-    Logger.info(LOG_TAG, 'save ok id=' + character.id);
   }
 
   async update(character: Character): Promise<void> {
@@ -130,7 +127,6 @@ export class CharacterStore {
     }
     await prefs.put(KEY_CHARACTER_LIST, JSON.stringify(characters));
     await prefs.flush();
-    Logger.info(LOG_TAG, 'update ok id=' + character.id);
   }
 
   async remove(id: string): Promise<void> {
@@ -148,7 +144,6 @@ export class CharacterStore {
       await prefs.put(KEY_CURRENT_CHARACTER_ID, '');
     }
     await prefs.flush();
-    Logger.info(LOG_TAG, 'remove ok id=' + id);
   }
 
   async setCurrentCharacterId(id: string | null): Promise<void> {
@@ -163,7 +158,6 @@ export class CharacterStore {
       await prefs.put(KEY_CURRENT_CHARACTER_ID, '');
     }
     await prefs.flush();
-    Logger.info(LOG_TAG, 'setCurrentCharacterId ok id=' + id);
   }
 
   async getCurrentCharacterId(): Promise<string | null> {

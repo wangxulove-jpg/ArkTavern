@@ -30,9 +30,6 @@
  */
 
 import { MacroContext } from '../models/MacroContext';
-import { Logger } from '../utils/Logger';
-
-const LOG_TAG: string = 'MacroReplacer';
 
 /**
  * 匹配所有支持的宏,大小写不敏感,全局匹配。
@@ -57,63 +54,54 @@ export class MacroReplacer {
       return '';
     }
 
-    let replaceCount: number = 0;
     const result: string = content.replace(
       MACRO_PATTERN,
       (match: string, macroName: string): string => {
         const lower: string = macroName.toLowerCase();
         if (lower === 'char' || lower === 'character') {
           if (context.characterName.length > 0) {
-            replaceCount++;
             return context.characterName;
           }
           return match;
         }
         if (lower === 'user') {
           if (context.userName.length > 0) {
-            replaceCount++;
             return context.userName;
           }
           return match;
         }
         if (lower === 'description') {
           if (context.description !== undefined && context.description.length > 0) {
-            replaceCount++;
             return context.description;
           }
           return match;
         }
         if (lower === 'personality') {
           if (context.personality !== undefined && context.personality.length > 0) {
-            replaceCount++;
             return context.personality;
           }
           return match;
         }
         if (lower === 'scenario') {
           if (context.scenario !== undefined && context.scenario.length > 0) {
-            replaceCount++;
             return context.scenario;
           }
           return match;
         }
         if (lower === 'mes_example' || lower === 'mesexample') {
           if (context.mesExample !== undefined && context.mesExample.length > 0) {
-            replaceCount++;
             return context.mesExample;
           }
           return match;
         }
         if (lower === 'last_message' || lower === 'lastmessage') {
           if (context.lastMessage !== undefined && context.lastMessage.length > 0) {
-            replaceCount++;
             return context.lastMessage;
           }
           return match;
         }
         if (lower === 'original') {
           if (context.originalContent !== undefined) {
-            replaceCount++;
             return context.originalContent;
           }
           return match;
@@ -122,9 +110,6 @@ export class MacroReplacer {
       }
     );
 
-    if (replaceCount > 0) {
-      Logger.info(LOG_TAG, 'replace: count=' + replaceCount);
-    }
     return result;
   }
 }

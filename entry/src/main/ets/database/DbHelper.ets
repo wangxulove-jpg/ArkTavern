@@ -38,7 +38,7 @@ import {
   DatabaseMigration,
   MigrationPath
 } from './DatabaseMigration';
-import { DatabaseError, DatabaseErrorType } from '../models/DatabaseError';
+import { DatabaseError } from '../models/DatabaseError';
 
 const LOG_TAG: string = 'DbHelper';
 
@@ -132,18 +132,12 @@ export class DbHelper {
       this.closed = false;
     }
 
-    Logger.info(LOG_TAG, 'initialize start');
     const initPromise: Promise<relationalStore.RdbStore> = this.openAndMigrate(context);
     this.initializing = initPromise;
 
     try {
       const opened: relationalStore.RdbStore = await initPromise;
       this.store = opened;
-      const version: number = await this.readUserVersion(opened);
-      Logger.info(
-        LOG_TAG,
-        `initialize success version=${version}`
-      );
     } catch (err) {
       this.initializing = null;
       const cause: string = this.extractCauseMessage(err);
@@ -197,12 +191,10 @@ export class DbHelper {
       );
     }
     this.transactionDepth = 1;
-    Logger.info(LOG_TAG, `transaction begin operation=${operation}`);
     try {
       store.beginTransaction();
       await action(store);
       store.commit();
-      Logger.info(LOG_TAG, `transaction commit operation=${operation}`);
     } catch (err) {
       const cause: string = this.extractCauseMessage(err);
       Logger.error(LOG_TAG, `transaction rollback operation=${operation} cause=${cause}`);
@@ -247,7 +239,6 @@ export class DbHelper {
     this.store = null;
     this.initializing = null;
     this.closed = true;
-    Logger.info(LOG_TAG, 'close success');
   }
 
   private async openAndMigrate(context: common.Context): Promise<relationalStore.RdbStore> {
@@ -314,10 +305,6 @@ export class DbHelper {
         store.beginTransaction();
         await step.migrate(store);
         store.commit();
-        Logger.info(
-          LOG_TAG,
-          `migration ${step.fromVersion}->${step.toVersion} success`
-        );
       } catch (err) {
         try {
           store.rollBack();

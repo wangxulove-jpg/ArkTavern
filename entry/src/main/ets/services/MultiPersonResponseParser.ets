@@ -229,10 +229,6 @@ export class MultiPersonResponseParser {
       const err: MultiPersonParseError = emptyMessagesError();
       return { ok: false, result: null, error: err };
     }
-    Logger.info(
-      LOG_TAG,
-      `parseAsRpText ok paragraphs=${paragraphs.length} messages=${messages.length}`
-    );
     // 数量校验(放宽:RP 模式允许少量超出,只校验下限)
     if (input.replyMode === 'narrator_only') {
       // 仅旁白模式:期望 1 条 narrator 消息,但若模型也输出了角色消息,保留第一条

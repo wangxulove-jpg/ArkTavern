@@ -188,7 +188,6 @@ export class ChatSessionListViewModel {
       return item;
     });
     this.sessions = newSessions;
-    Logger.info(LOG_TAG, 'renameSession ok');
   }
 
   /**
@@ -208,7 +207,6 @@ export class ChatSessionListViewModel {
       return item.chat.id !== chatId;
     });
     this.sessions = newSessions;
-    Logger.info(LOG_TAG, 'deleteSession ok');
   }
 
   /** 上移会话卡片 */

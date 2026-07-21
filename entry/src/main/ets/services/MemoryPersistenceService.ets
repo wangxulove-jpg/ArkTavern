@@ -19,11 +19,8 @@
 
 import { relationalStore } from '@kit.ArkData';
 import { DbHelper } from '../database/DbHelper';
-import { Logger } from '../utils/Logger';
 import { ChatMemory } from '../models/ChatMemory';
 import { ChatMemoryRepository } from '../repositories/ChatMemoryRepository';
-
-const LOG_TAG: string = 'MemoryPersistence';
 
 export class MemoryPersistenceService {
   private readonly dbHelper: DbHelper;
@@ -108,7 +105,6 @@ export class MemoryPersistenceService {
   async clearOwnedByBranch(branchId: string): Promise<void> {
     const store: relationalStore.RdbStore = this.dbHelper.getStore();
     await this.repository.removeOwnedByBranchWithStore(store, branchId);
-    Logger.info(LOG_TAG, 'cleared branch owned memories');
   }
 
   /**
@@ -118,7 +114,6 @@ export class MemoryPersistenceService {
   async invalidateFromPosition(branchId: string, thresholdPosition: number): Promise<void> {
     const store: relationalStore.RdbStore = this.dbHelper.getStore();
     await this.repository.invalidateFromPositionWithStore(store, branchId, thresholdPosition);
-    Logger.info(LOG_TAG, 'invalidated memories | pos>=' + thresholdPosition.toString());
   }
 
   // ===== 事务内清理(供 ChatPersistenceOperations 调用)=====

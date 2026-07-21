@@ -329,7 +329,6 @@ export class WorldMemoryService {
   async generateMemoriesForRound(input: GenerateRoundMemoryInput): Promise<RoundMemoryResult> {
     const tag: string = `${input.worldId.substring(0, 4)}/${input.branchId.substring(0, 4)}`;
     if (input.roundMessages.length === 0) {
-      Logger.info(LOG_TAG, `generateMemories skip empty round tag=${tag}`);
       return {
         publicEventCreated: false,
         privateMemoriesCreated: 0,
@@ -403,10 +402,6 @@ export class WorldMemoryService {
           enabled: true
         });
         publicEventCreated = true;
-        Logger.info(
-          LOG_TAG,
-          `generateMemories publicEvent ok tag=${tag} participants=${participantIds.length}`
-        );
       } else {
         Logger.warn(LOG_TAG, `generateMemories publicEvent empty response tag=${tag}`);
       }
@@ -435,10 +430,6 @@ export class WorldMemoryService {
             content: privateSummary.trim()
           });
           privateMemoriesCreated++;
-          Logger.info(
-            LOG_TAG,
-            `generateMemories privateMemory ok tag=${tag} charId=${ch.id.substring(0, 4)}`
-          );
         } else {
           Logger.warn(
             LOG_TAG,
@@ -455,10 +446,6 @@ export class WorldMemoryService {
       }
     }
 
-    Logger.info(
-      LOG_TAG,
-      `generateMemories done tag=${tag} public=${publicEventCreated} private=${privateMemoriesCreated}/${input.speakerCharacters.length} failed=${failed}`
-    );
     return {
       publicEventCreated: publicEventCreated,
       privateMemoriesCreated: privateMemoriesCreated,

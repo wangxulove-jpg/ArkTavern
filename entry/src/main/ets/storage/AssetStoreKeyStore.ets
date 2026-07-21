@@ -67,11 +67,8 @@ export class AssetStoreKeyStore extends KeyStore {
     attributes.set(asset.Tag.SYNC_TYPE, asset.SyncType.NEVER);
     attributes.set(asset.Tag.CONFLICT_RESOLUTION, asset.ConflictResolution.OVERWRITE);
 
-    Logger.info('KeyStore save', 'alias=' + alias);
-
     try {
       await asset.add(attributes);
-      Logger.info('KeyStore save ok', 'alias=' + alias);
     } catch (e) {
       const err: BusinessError = e as BusinessError;
       Logger.warn('KeyStore save failed', 'alias=' + alias + ' code=' + err.code);
@@ -93,12 +90,9 @@ export class AssetStoreKeyStore extends KeyStore {
     query.set(asset.Tag.ALIAS, this.encodeText(alias));
     query.set(asset.Tag.RETURN_TYPE, asset.ReturnType.ALL);
 
-    Logger.info('KeyStore read', 'alias=' + alias);
-
     try {
       const results: Array<asset.AssetMap> = await asset.query(query);
       if (results.length === 0) {
-        Logger.info('KeyStore read empty', 'alias=' + alias);
         return null;
       }
       const first: asset.AssetMap = results[0];
@@ -109,12 +103,10 @@ export class AssetStoreKeyStore extends KeyStore {
       }
       const secretBytes: Uint8Array = secretValue as Uint8Array;
       const secret: string = this.decodeText(secretBytes);
-      Logger.info('KeyStore read ok', 'alias=' + alias);
       return secret;
     } catch (e) {
       const err: BusinessError = e as BusinessError;
       if (err.code === ASSET_NOT_FOUND_CODE) {
-        Logger.info('KeyStore read not found', 'alias=' + alias);
         return null;
       }
       Logger.warn('KeyStore read failed', 'alias=' + alias + ' code=' + err.code);
@@ -139,11 +131,8 @@ export class AssetStoreKeyStore extends KeyStore {
     const attributesToUpdate: asset.AssetMap = new Map<asset.Tag, asset.Value>();
     attributesToUpdate.set(asset.Tag.SECRET, this.encodeText(secret));
 
-    Logger.info('KeyStore update', 'alias=' + alias);
-
     try {
       await asset.update(query, attributesToUpdate);
-      Logger.info('KeyStore update ok', 'alias=' + alias);
     } catch (e) {
       const err: BusinessError = e as BusinessError;
       Logger.warn('KeyStore update failed', 'alias=' + alias + ' code=' + err.code);
@@ -171,16 +160,12 @@ export class AssetStoreKeyStore extends KeyStore {
     const query: asset.AssetMap = new Map<asset.Tag, asset.Value>();
     query.set(asset.Tag.ALIAS, this.encodeText(alias));
 
-    Logger.info('KeyStore remove', 'alias=' + alias);
-
     try {
       await asset.remove(query);
-      Logger.info('KeyStore remove ok', 'alias=' + alias);
     } catch (e) {
       const err: BusinessError = e as BusinessError;
       if (err.code === ASSET_NOT_FOUND_CODE) {
         // 幂等:不存在视为删除成功
-        Logger.info('KeyStore remove idempotent not found', 'alias=' + alias);
         return;
       }
       Logger.warn('KeyStore remove failed', 'alias=' + alias + ' code=' + err.code);
@@ -202,17 +187,13 @@ export class AssetStoreKeyStore extends KeyStore {
     query.set(asset.Tag.ALIAS, this.encodeText(alias));
     query.set(asset.Tag.RETURN_TYPE, asset.ReturnType.ATTRIBUTES);
 
-    Logger.info('KeyStore exists', 'alias=' + alias);
-
     try {
       const results: Array<asset.AssetMap> = await asset.query(query);
       const exists: boolean = results.length > 0;
-      Logger.info('KeyStore exists ok', 'alias=' + alias + ' exists=' + exists.toString());
       return exists;
     } catch (e) {
       const err: BusinessError = e as BusinessError;
       if (err.code === ASSET_NOT_FOUND_CODE) {
-        Logger.info('KeyStore exists not found', 'alias=' + alias);
         return false;
       }
       Logger.warn('KeyStore exists failed', 'alias=' + alias + ' code=' + err.code);

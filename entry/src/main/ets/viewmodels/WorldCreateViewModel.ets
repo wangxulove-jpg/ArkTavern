@@ -289,7 +289,6 @@ export class WorldCreateViewModel {
         members: members
       });
       this.createdWorldId = result.world.id;
-      Logger.info(LOG_TAG, 'createWorld ok');
       return true;
     } catch (e) {
       this.errorMessage = '创建世界失败: ' + String(e);

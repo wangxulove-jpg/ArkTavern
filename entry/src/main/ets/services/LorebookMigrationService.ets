@@ -57,11 +57,8 @@ export class LorebookMigrationService {
     const marker: boolean =
       await this.appPreferences.getBoolean(MARKER_KEY, false);
     if (marker) {
-      Logger.info(LOG_TAG, 'already complete, skip');
       return makeSkippedResult();
     }
-
-    Logger.info(LOG_TAG, 'start');
 
     // 2. 从旧 LorebookStore 读取全部 Lorebook
     const legacyBooks: Lorebook[] = await this.legacyStore.list();
@@ -90,7 +87,7 @@ export class LorebookMigrationService {
       } else {
         // RDB 不存在,清空选择
         await this.selectionStore.setCurrentLorebookId(null);
-        Logger.info(LOG_TAG, 'current lorebook not found in RDB, cleared');
+        Logger.warn(LOG_TAG, 'current lorebook not found in RDB, cleared');
       }
     } else {
       // 旧 ID 为空,保持空
@@ -112,15 +109,6 @@ export class LorebookMigrationService {
       importResult.insertedEntryCount,
       importResult.skippedExistingLorebookCount,
       currentLorebookPreserved
-    );
-
-    Logger.info(
-      LOG_TAG,
-      `complete legacyBooks=${legacyBooks.length.toString()} ` +
-      `legacyEntries=${legacyEntryCount.toString()} ` +
-      `insertedBooks=${importResult.insertedLorebookCount.toString()} ` +
-      `insertedEntries=${importResult.insertedEntryCount.toString()} ` +
-      `skipped=${importResult.skippedExistingLorebookCount.toString()}`
     );
 
     return result;

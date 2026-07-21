@@ -29,7 +29,7 @@ import {
   updatePromptPreset,
   validatePromptPreset
 } from '../models/PromptPreset';
-import { DatabaseError, DatabaseErrorType } from '../models/DatabaseError';
+import { DatabaseError } from '../models/DatabaseError';
 import { Logger } from '../utils/Logger';
 
 const LOG_TAG: string = 'PromptPresetService';
@@ -47,9 +47,7 @@ export class PromptPresetService {
   }
 
   async initialize(): Promise<void> {
-    Logger.info(LOG_TAG, 'initialize');
     await this.selectionStore.initialize();
-    Logger.info(LOG_TAG, 'initialize ok');
   }
 
   async list(): Promise<PromptPreset[]> {
@@ -63,7 +61,6 @@ export class PromptPresetService {
   async create(options: CreatePromptPresetOptions): Promise<PromptPreset> {
     const preset: PromptPreset = createPromptPreset(options);
     await this.repository.insert(preset);
-    Logger.info(LOG_TAG, 'create success');
     return preset;
   }
 
@@ -74,7 +71,6 @@ export class PromptPresetService {
     }
     const updated: PromptPreset = updatePromptPreset(existing, updates);
     await this.repository.update(updated);
-    Logger.info(LOG_TAG, 'update success');
     return updated;
   }
 
@@ -85,13 +81,11 @@ export class PromptPresetService {
       return;
     }
     await this.repository.remove(id);
-    Logger.info(LOG_TAG, 'remove success');
 
     // 如果删除的是当前 Preset,清空选择
     const currentId: string | null = await this.selectionStore.getCurrentPresetId();
     if (currentId === id) {
       await this.selectionStore.setCurrentPresetId(null);
-      Logger.info(LOG_TAG, 'current selection cleared');
     }
   }
 
@@ -108,7 +102,7 @@ export class PromptPresetService {
     if (preset === null) {
       // 当前 ID 指向不存在的 Preset,清空选择
       await this.selectionStore.setCurrentPresetId(null);
-      Logger.info(LOG_TAG, 'current selection cleared (preset not found)');
+      Logger.warn(LOG_TAG, 'current selection cleared (preset not found)');
       return null;
     }
     return preset;
@@ -117,7 +111,6 @@ export class PromptPresetService {
   async setCurrentPresetId(id: string | null): Promise<void> {
     if (id === null) {
       await this.selectionStore.setCurrentPresetId(null);
-      Logger.info(LOG_TAG, 'current selection updated');
       return;
     }
     // 验证 Preset 存在
@@ -126,6 +119,5 @@ export class PromptPresetService {
       throw DatabaseError.notFound('preset.setCurrent');
     }
     await this.selectionStore.setCurrentPresetId(id);
-    Logger.info(LOG_TAG, 'current selection updated');
   }
 }

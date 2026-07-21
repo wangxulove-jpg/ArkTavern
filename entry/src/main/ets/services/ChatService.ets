@@ -315,7 +315,6 @@ export class ChatService {
     if (character === null) {
       return false;
     }
-    Logger.info(LOG_TAG, 'initContext character=' + character.name);
 
     const newMessages: ChatMessage[] = [];
 
@@ -395,8 +394,6 @@ export class ChatService {
         this.currentChat = session.chat;
         this.messages = session.messages.slice();
         this.currentSequenceNumber = session.maxSequenceNumber;
-        Logger.info(LOG_TAG, 'session restored messages=' + this.messages.length.toString()
-          + ' maxSeq=' + this.currentSequenceNumber.toString());
       } else {
         // 创建新会话
         await this.createNewSession(characterId);
@@ -538,7 +535,6 @@ export class ChatService {
             + ': ' + (e instanceof Error ? e.message : String(e)));
         }
       }
-      Logger.info(LOG_TAG, 'alternate_greetings initialized count=' + String(greetings.length));
     } catch (e) {
       Logger.warn(LOG_TAG, 'initializeAlternateGreetings failed: '
         + (e instanceof Error ? e.message : String(e)));
@@ -622,7 +618,6 @@ export class ChatService {
       this.currentChatId, normalized
     );
     this.currentChat = updated;
-    Logger.info(LOG_TAG, 'updateUserNameOverride ok');
     return updated;
   }
 
@@ -654,7 +649,6 @@ export class ChatService {
       return;
     }
 
-    Logger.info(LOG_TAG, 'generation start kind=normal');
     this.lastCallbacks = callbacks;
     this.generationOperationId++;
 
@@ -745,7 +739,6 @@ export class ChatService {
       return;
     }
 
-    Logger.info(LOG_TAG, 'regenerate start (branch mode)');
     this.lastCallbacks = callbacks;
     await this.regenerateAsBranch(callbacks);
   }
@@ -903,7 +896,6 @@ export class ChatService {
         forkUserMessageId,
         newAssistantMessage
       );
-      Logger.info(LOG_TAG, 'ConversationBranch | regeneration branch created');
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
       Logger.error(LOG_TAG, 'forkAndStreamFromUser forkForRegeneration failed: ' + msg);
@@ -971,7 +963,6 @@ export class ChatService {
     this.emitMessages(callbacks);
 
     // 8. 启动 Provider
-    Logger.info(LOG_TAG, 'Regenerate | provider_started (branch mode)');
     this.doStream(newAssistantId, callbacks, this.activeGeneration);
   }
 
@@ -998,23 +989,18 @@ export class ChatService {
     // 递增操作标识,拒绝后续迟到回调
     this.generationOperationId++;
     if (this.currentHandle !== null) {
-      Logger.info(LOG_TAG, 'stopGeneration abort');
       this.currentHandle.abort();
       this.currentHandle = null;
     }
     if (this.state === ChatState.Sending || this.state === ChatState.Streaming) {
       const ctx: ActiveGenerationContext | null = this.activeGeneration;
-      const kind: string = ctx !== null ? ctx.kind : 'unknown';
       // 不调用 flushPersistence() — persistFinalAssistant 已包含完整最终状态,
       // 避免与 persistFinalAssistant 嵌套事务冲突(T-6.4A-R3)
       // 将当前 Assistant 消息标记为已取消(创建新对象和新数组)
       this.markAssistant(this.currentAssistantId, ChatMessageStatus.Cancelled, undefined, undefined);
       this.emitMessages(this.lastCallbacks);
-      Logger.info(LOG_TAG, 'GenerationFinal | kind=' + kind + ' stage=callback_stop');
       // 持久化最终 Cancelled 状态,完成后才清理上下文
       this.persistFinalAssistant(this.currentAssistantId).then((): void => {
-        Logger.info(LOG_TAG, 'GenerationFinal | kind=' + kind + ' stage=message_cancelled_persisted');
-        Logger.info(LOG_TAG, 'generation finalized status=cancelled');
         // Swipe 候选处理:更新摘要生成标志
         if (ctx !== null && ctx.kind === ChatGenerationKind.SwipeCandidate) {
           this.updateSwipeSummaryGeneratingFlag(false);
@@ -1023,7 +1009,6 @@ export class ChatService {
         this.persistChatActivity();
         // 持久化后才清理活动上下文
         this.clearActiveGeneration(expectedOperationId);
-        Logger.info(LOG_TAG, 'GenerationFinal | kind=' + kind + ' stage=context_cleared');
         this.currentAssistantId = null;
         this.setState(ChatState.Cancelled, this.lastCallbacks);
       }).catch((_e: Object): void => {
@@ -1072,7 +1057,6 @@ export class ChatService {
     this.currentAssistantId = null;
     this.setState(ChatState.Idle, this.lastCallbacks);
     this.emitMessages(this.lastCallbacks);
-    Logger.info(LOG_TAG, 'clearConversation');
   }
 
   // ===== T-4.5 多会话操作 =====
@@ -1145,7 +1129,6 @@ export class ChatService {
       await this.refreshBranchState();
       this.setState(ChatState.Idle, this.lastCallbacks);
       this.emitMessages(this.lastCallbacks);
-      Logger.info(LOG_TAG, 'startNewSession ok');
     } finally {
       this.sessionOperationInProgress = false;
     }
@@ -1189,7 +1172,6 @@ export class ChatService {
     this.sessionOperationInProgress = true;
     try {
       if (this.currentChatId === chatId) {
-        Logger.info(LOG_TAG, 'switchSession same chatId, skip');
         return;
       }
       this.flushPersistence();
@@ -1240,7 +1222,6 @@ export class ChatService {
     this.sessionOperationInProgress = true;
     try {
       await this.persistenceService.deleteSession(chatId);
-      Logger.info(LOG_TAG, 'deleteSession ok');
 
       if (chatId === this.currentChatId) {
         // 删除的是当前会话:查询剩余,自动切换或新建
@@ -1310,7 +1291,6 @@ export class ChatService {
     this.updateLastAssistantMessageId();
     // T-6.4B-1: 切换会话后刷新 Branch 状态
     await this.refreshBranchState();
-    Logger.info(LOG_TAG, 'switchSession ok messages=' + this.messages.length.toString());
   }
 
   /**
@@ -1356,8 +1336,6 @@ export class ChatService {
     if (this.disposed) {
       return;
     }
-    const hadActiveGeneration: boolean = this.activeGeneration !== null;
-    const wasGenerating: boolean = this.isGenerating();
     this.disposed = true;
     this.clearStartTimer();
     this.clearPersistenceTimer();
@@ -1376,14 +1354,6 @@ export class ChatService {
     this.activeGeneration = null;
     this.swipeSummaries = [];
     this.state = ChatState.Idle;
-    if (wasGenerating) {
-      Logger.info(LOG_TAG, 'SessionCleanup | action=cancel reason=active_streaming');
-    } else if (hadActiveGeneration) {
-      Logger.info(LOG_TAG, 'SessionCleanup | action=skip reason=already_completed');
-    } else {
-      Logger.info(LOG_TAG, 'SessionCleanup | action=skip reason=no_active_generation');
-    }
-    Logger.info(LOG_TAG, 'dispose');
   }
 
   // ===== 内部方法 =====
@@ -1447,9 +1417,6 @@ export class ChatService {
     if (current.operationId !== expectedOperationId) {
       return;
     }
-    if (current.kind === ChatGenerationKind.SwipeCandidate) {
-      Logger.info(LOG_TAG, 'Regenerate | state_cleared');
-    }
     this.clearPersistenceTimer();
     this.pendingPersistAssistantId = null;
     this.pendingSwipePersistPromise = null;
@@ -1484,11 +1451,11 @@ export class ChatService {
         assistantId, '', ChatMessageStatus.Failed, errorMessage, callbacks
       );
       this.currentAssistantId = null;
-      Logger.info(LOG_TAG, 'GenerationFinal | kind=' + context.kind + ' stage=callback_start_failure');
+      Logger.warn(LOG_TAG, 'GenerationFinal | kind=' + context.kind + ' stage=callback_start_failure');
       // 持久化最终 Failed 状态,完成后才清理上下文
       this.persistFinalAssistant(assistantId).then((): void => {
-        Logger.info(LOG_TAG, 'GenerationFinal | kind=' + context.kind + ' stage=message_failed_persisted');
-        Logger.info(LOG_TAG, 'generation finalized status=failed');
+        Logger.warn(LOG_TAG, 'GenerationFinal | kind=' + context.kind + ' stage=message_failed_persisted');
+        Logger.warn(LOG_TAG, 'generation finalized status=failed');
         // Swipe:更新摘要生成标志
         if (context.kind === ChatGenerationKind.SwipeCandidate) {
           this.updateSwipeSummaryGeneratingFlag(false);
@@ -1497,7 +1464,6 @@ export class ChatService {
         this.persistChatActivity();
         // 清理活动上下文(仅当仍是本次 operationId)
         this.clearActiveGeneration(operationId);
-        Logger.info(LOG_TAG, 'GenerationFinal | kind=' + context.kind + ' stage=context_cleared');
         this.setState(ChatState.Failed, callbacks);
         callbacks.onError(errorMessage);
       }).catch((_e: Object): void => {
@@ -1510,7 +1476,6 @@ export class ChatService {
     const streamCallbacks: ChatStreamCallbacks = {
       onStart: (): void => {
         this.clearStartTimer();
-        Logger.info(LOG_TAG, 'onStart');
       },
       onDelta: (delta: ChatDelta): void => {
         this.clearStartTimer();
@@ -1547,22 +1512,16 @@ export class ChatService {
           assistantId, result.content, ChatMessageStatus.Completed, undefined, callbacks
         );
         this.currentAssistantId = null;
-        Logger.info(LOG_TAG, 'GenerationFinal | kind=' + context.kind + ' stage=callback_complete');
         // 持久化最终状态,完成后才清理上下文(防止 Completed 被 normalize 误转为 Cancelled)
         this.persistFinalAssistant(assistantId).then((): void => {
-          Logger.info(LOG_TAG, 'GenerationFinal | kind=' + context.kind + ' stage=message_completed_persisted');
-          Logger.info(LOG_TAG, 'generation finalized status=completed');
           // Swipe:更新摘要生成标志
           if (context.kind === ChatGenerationKind.SwipeCandidate) {
-            Logger.info(LOG_TAG, 'Regenerate | completed');
-            Logger.info(LOG_TAG, 'SwipeRuntime | stage=final_persist_complete');
             this.updateSwipeSummaryGeneratingFlag(false);
           }
           // 更新 Chat 活跃时间(完成一次新生成)
           this.persistChatActivity();
           // 清理活动上下文(最终状态持久化完成后才清理)
           this.clearActiveGeneration(operationId);
-          Logger.info(LOG_TAG, 'GenerationFinal | kind=' + context.kind + ' stage=context_cleared');
           // 更新 lastAssistantMessageId(setState 前更新,确保 onStateChanged 读到正确值)
           this.updateLastAssistantMessageId();
           // 空回复时 finalizeAssistant 返回 Failed,state 也应为 Failed
@@ -1572,7 +1531,6 @@ export class ChatService {
           } else {
             this.setState(ChatState.Completed, callbacks);
           }
-          Logger.info(LOG_TAG, 'stream completed deltaCount=' + result.deltaCount);
           // 长期记忆增量总结触发(仅 NormalResponse 触发,Swipe 不影响主历史)
           // 异步触发,失败不影响已完成状态
           if (context.kind === ChatGenerationKind.NormalResponse) {
@@ -1614,24 +1572,23 @@ export class ChatService {
           assistantId, '', ChatMessageStatus.Failed, error.message, callbacks
         );
         this.currentAssistantId = null;
-        Logger.info(LOG_TAG, 'GenerationFinal | kind=' + context.kind + ' stage=callback_error');
+        Logger.warn(LOG_TAG, 'GenerationFinal | kind=' + context.kind + ' stage=callback_error');
         // 持久化最终 Failed 状态,完成后才清理上下文
         this.persistFinalAssistant(assistantId).then((): void => {
-          Logger.info(LOG_TAG, 'GenerationFinal | kind=' + context.kind + ' stage=message_failed_persisted');
-          Logger.info(LOG_TAG, 'generation finalized status=failed');
+          Logger.warn(LOG_TAG, 'GenerationFinal | kind=' + context.kind + ' stage=message_failed_persisted');
+          Logger.warn(LOG_TAG, 'generation finalized status=failed');
           // Swipe:更新摘要生成标志
           if (context.kind === ChatGenerationKind.SwipeCandidate) {
-            Logger.info(LOG_TAG, 'Regenerate | failed');
+            Logger.warn(LOG_TAG, 'Regenerate | failed');
             this.updateSwipeSummaryGeneratingFlag(false);
           }
           // 更新 Chat 活跃时间
           this.persistChatActivity();
           // 清理活动上下文
           this.clearActiveGeneration(operationId);
-          Logger.info(LOG_TAG, 'GenerationFinal | kind=' + context.kind + ' stage=context_cleared');
           this.setState(ChatState.Failed, callbacks);
           callbacks.onError(error.message);
-          Logger.info(LOG_TAG, 'stream failed: ' + error.message);
+          Logger.warn(LOG_TAG, 'stream failed: ' + error.message);
         }).catch((_e: Object): void => {
           this.clearActiveGeneration(operationId);
           this.setState(ChatState.Failed, callbacks);
@@ -1763,7 +1720,6 @@ export class ChatService {
 
     // 2. 获取当前 Preset
     if (this.promptPresetService === null) {
-      Logger.info(LOG_TAG, 'preset snapshot resolved enabled=false');
       return createSnapshotWithoutPreset(
         resolveEffectiveGenerationSettings(base)
       );
@@ -1778,7 +1734,6 @@ export class ChatService {
     }
 
     if (preset === null) {
-      Logger.info(LOG_TAG, 'preset snapshot resolved enabled=false');
       return createSnapshotWithoutPreset(
         resolveEffectiveGenerationSettings(base)
       );
@@ -1793,7 +1748,6 @@ export class ChatService {
       throw new Error('无法读取当前提示词预设，请重试');
     }
 
-    Logger.info(LOG_TAG, 'preset snapshot resolved enabled=true');
     return createSnapshotWithPreset(preset, settings);
   }
 
@@ -1903,9 +1857,6 @@ export class ChatService {
     };
 
     const result: PromptBuildResult = this.promptBuilder.build(context);
-    Logger.info(LOG_TAG, 'buildRequestMessages: segments=' + result.messages.length.toString()
-      + ' lorebook=' + result.matchedLorebookEntryIds.length.toString()
-      + (excludeMessageId !== undefined ? ' excluded=1' : ''));
     return result.messages;
   }
 
@@ -1931,11 +1882,7 @@ export class ChatService {
     // 不 await:后台执行,失败仅记录日志
     this.memoryService.trySummarize(chatId, branchId, branchMessages)
       .then((result): void => {
-        if (result.success && result.memory !== null) {
-          Logger.info(LOG_TAG, 'MemorySummary | triggered kind=summarized');
-        } else if (result.success && result.memory === null) {
-          Logger.info(LOG_TAG, 'MemorySummary | triggered kind=skipped');
-        } else {
+        if (!result.success) {
           Logger.warn(LOG_TAG, 'MemorySummary | triggered kind=failed'
             + (result.error !== undefined ? ' err=' + result.error : ''));
         }
@@ -2036,15 +1983,6 @@ export class ChatService {
       // 更新 lastBuiltRequestMessages 为裁剪后的最终消息,
       // 让 UI 上下文占用统计反映实际发送给模型的内容。
       this.lastBuiltRequestMessages = currentMessages;
-      // 输出安全裁剪统计
-      Logger.info(LOG_TAG,
-        'history trim: beforeMessages=' + requestMessages.length.toString()
-          + ' afterMessages=' + currentMessages.length.toString()
-          + ' removed=' + trimResult.removedMessageCount.toString()
-          + ' beforeTokens=' + trimResult.originalTokenCount.toString()
-          + ' afterTokens=' + trimResult.finalTokenCount.toString()
-          + ' availableTokens=' + available.toString()
-          + ' exceedsAfter=' + (trimResult.exceedsBudgetAfterTrim ? 'true' : 'false'));
 
       // 3) 重算 TokenBudget
       let finalTokens: number = trimResult.finalTokenCount;
@@ -2077,13 +2015,6 @@ export class ChatService {
           + ' availableTokens=' + available.toString()
           + ' remainingTokens=' + (available - inputTokens).toString()
           + ' exceedsBudget=true');
-    } else {
-      Logger.info(LOG_TAG,
-        'token estimate: messages=' + messages.toString()
-          + ' inputTokens=' + inputTokens.toString()
-          + ' availableTokens=' + available.toString()
-          + ' remainingTokens=' + (available - inputTokens).toString()
-          + ' exceedsBudget=false');
     }
   }
 
@@ -2136,11 +2067,11 @@ export class ChatService {
         assistantId, '', ChatMessageStatus.Failed, '请求启动超时,请重试', callbacks
       );
       this.currentAssistantId = null;
-      Logger.info(LOG_TAG, 'GenerationFinal | kind=' + context.kind + ' stage=callback_start_timeout');
+      Logger.warn(LOG_TAG, 'GenerationFinal | kind=' + context.kind + ' stage=callback_start_timeout');
       // 持久化最终 Failed 状态,完成后才清理上下文
       this.persistFinalAssistant(assistantId).then((): void => {
-        Logger.info(LOG_TAG, 'GenerationFinal | kind=' + context.kind + ' stage=message_failed_persisted');
-        Logger.info(LOG_TAG, 'generation finalized status=failed');
+        Logger.warn(LOG_TAG, 'GenerationFinal | kind=' + context.kind + ' stage=message_failed_persisted');
+        Logger.warn(LOG_TAG, 'generation finalized status=failed');
         // Swipe:更新摘要生成标志
         if (context.kind === ChatGenerationKind.SwipeCandidate) {
           this.updateSwipeSummaryGeneratingFlag(false);
@@ -2149,7 +2080,6 @@ export class ChatService {
         this.persistChatActivity();
         // 清理活动上下文
         this.clearActiveGeneration(context.operationId);
-        Logger.info(LOG_TAG, 'GenerationFinal | kind=' + context.kind + ' stage=context_cleared');
         this.setState(ChatState.Failed, callbacks);
         callbacks.onError('请求启动超时,请重试');
       }).catch((_e: Object): void => {
@@ -2383,7 +2313,6 @@ export class ChatService {
       } else {
         this.pendingSwipePersistPromise = deltaP;
       }
-      Logger.info(LOG_TAG, 'persistence route kind=swipe');
     } else if (this.persistenceService !== null) {
       // 正常持久化
       this.persistenceService.updateMessage(this.currentChatId, msg).catch(
@@ -2392,7 +2321,6 @@ export class ChatService {
             + (e instanceof Error ? e.message : String(e)));
         }
       );
-      Logger.info(LOG_TAG, 'persistence route kind=normal');
     }
   }
 
@@ -2466,13 +2394,11 @@ export class ChatService {
         errorMessage: msg.errorMessage !== undefined ? msg.errorMessage : undefined,
         isStreaming: msg.isStreaming ?? false
       };
-      Logger.info(LOG_TAG, 'persistence route kind=swipe');
       return this.swipePersistenceService.updateCandidate(
         ctx.assistantMessageId,
         ctx.swipeCandidateIndex,
         updates
       ).then((): void => {
-        Logger.info(LOG_TAG, 'swipe final persist ok');
       }).catch((e: Object): Promise<void> => {
         const msg2: string = e instanceof Error ? e.message : String(e);
         if (retriesLeft > 0) {
@@ -2480,14 +2406,12 @@ export class ChatService {
           return this.persistWithRetry(msg, retriesLeft - 1);
         }
         Logger.warn(LOG_TAG, 'swipe final persist failed: ' + msg2);
-        Logger.info(LOG_TAG, 'SwipeRuntime | stage=final_persist_failed');
+        Logger.warn(LOG_TAG, 'SwipeRuntime | stage=final_persist_failed');
         return Promise.reject(new Error('swipe final persist failed'));
       });
     } else if (this.persistenceService !== null) {
       // 正常持久化
-      Logger.info(LOG_TAG, 'persistence route kind=normal');
       return this.persistenceService.updateMessage(chatId, msg).then((): void => {
-        Logger.info(LOG_TAG, 'final persist ok');
       }).catch((e: Object): Promise<void> => {
         const msg2: string = e instanceof Error ? e.message : String(e);
         if (retriesLeft > 0) {
@@ -2640,7 +2564,6 @@ export class ChatService {
       // 仅更新 updatedAt,不修改 lastMessageAt
       this.persistChatTimestamp();
       this.emitMessages(this.lastCallbacks);
-      Logger.info(LOG_TAG, 'SwipeRuntime | stage=candidate_activated');
     } finally {
       this.swipeOperationInProgress = false;
     }
@@ -2681,7 +2604,6 @@ export class ChatService {
       // 仅更新 updatedAt,不修改 lastMessageAt
       this.persistChatTimestamp();
       this.emitMessages(this.lastCallbacks);
-      Logger.info(LOG_TAG, 'SwipeRuntime | stage=candidate_activated');
     } finally {
       this.swipeOperationInProgress = false;
     }
@@ -2701,7 +2623,6 @@ export class ChatService {
     if (this.disposed) {
       throw new Error('ChatService disposed');
     }
-    Logger.info(LOG_TAG, 'Regenerate | service_enter');
     if (this.isBusy()) {
       Logger.warn(LOG_TAG, 'Regenerate | eligibility_denied | busy');
       return;
@@ -2718,9 +2639,7 @@ export class ChatService {
       Logger.warn(LOG_TAG, 'Regenerate | eligibility_denied | missing_callbacks');
       return;
     }
-    Logger.info(LOG_TAG, 'Regenerate | eligibility_allowed');
 
-    Logger.info(LOG_TAG, 'Regenerate | operation_context_created');
     this.generationOperationId++;
     // 占用 swipe 操作互斥锁(保护 appendCandidate + reloadCurrentSession 期间不被并发)
     this.swipeOperationInProgress = true;
@@ -2770,8 +2689,6 @@ export class ChatService {
         }
         actualNewIndex = maxIdx;
       }
-      Logger.info(LOG_TAG, 'Regenerate | candidate_created');
-      Logger.info(LOG_TAG, 'SwipeRuntime | stage=candidate_created');
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
       Logger.error(LOG_TAG, 'Regenerate | failed | appendCandidate: ' + msg);
@@ -2833,7 +2750,6 @@ export class ChatService {
     // 启动流式请求(携带 SwipeCandidate 上下文)
     this.lastPersistedContentLength = 0;
     this.pendingPersistAssistantId = assistantMessageId;
-    Logger.info(LOG_TAG, 'Regenerate | provider_started');
     this.doStream(assistantMessageId, this.lastCallbacks, this.activeGeneration);
   }
 
@@ -3030,9 +2946,6 @@ export class ChatService {
       this.branches = branches;
       this.activeBranchId = activeBranch !== null ? activeBranch.id : '';
       this.recordCounts = counts;
-      Logger.info(LOG_TAG, 'ConversationBranch | counts loaded'
-        + ' branches=' + branches.length.toString()
-        + ' msgs=' + counts.totalUniqueMessageCount.toString());
     } catch (e) {
       Logger.warn(LOG_TAG, 'refreshBranchState failed: '
         + (e instanceof Error ? e.message : String(e)));
@@ -3110,7 +3023,6 @@ export class ChatService {
         messageId,
         selectedCandidateIndex
       );
-      Logger.info(LOG_TAG, 'ConversationBranch | child created');
       // 4. 重新加载 messages / swipeSummaries / branchState
       await this.reloadCurrentSession();
       if (this.swipePersistenceService !== null) {
@@ -3331,7 +3243,6 @@ export class ChatService {
       parentBranchId = activeBranch.id;
     }
 
-    Logger.info(LOG_TAG, 'regenerateAssistantMessage | start');
     await this.forkAndStreamFromUser(
       chatId, activeBranch.id, parentBranchId, forkUserMessageId, callbacks
     );
@@ -3405,7 +3316,6 @@ export class ChatService {
       parentBranchId = activeBranch.id;
     }
 
-    Logger.info(LOG_TAG, 'generateFromUserMessage | start');
     await this.forkAndStreamFromUser(
       chatId, activeBranch.id, parentBranchId, userMessageId, callbacks
     );
@@ -3593,7 +3503,6 @@ export class ChatService {
         newUserMessage,
         newAssistantMessage
       );
-      Logger.info(LOG_TAG, 'ConversationBranch | edit branch created');
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
       Logger.error(LOG_TAG, 'editUserMessageAndGenerate failed: ' + msg);
@@ -3640,7 +3549,6 @@ export class ChatService {
     this.emitMessages(callbacks);
 
     // 12. 启动 Provider
-    Logger.info(LOG_TAG, 'Edit | provider_started (branch mode)');
     this.doStream(editResult.newAssistantMessageId, callbacks, this.activeGeneration);
   }
 
@@ -3690,7 +3598,6 @@ export class ChatService {
     try {
       const chatId: string = this.currentChatId;
       await this.branchPersistenceService.switchActiveBranch(chatId, targetBranchId);
-      Logger.info(LOG_TAG, 'ConversationBranch | branch switched');
       // 重新加载
       await this.reloadCurrentSession();
       if (this.swipePersistenceService !== null) {
@@ -3735,8 +3642,6 @@ export class ChatService {
     }
     try {
       await this.reloadCurrentSession();
-      Logger.info(LOG_TAG, 'reloadAfterExternalBranchChange | messages='
-        + this.messages.length.toString());
       if (this.swipePersistenceService !== null) {
         this.swipeSummaries =
           await this.swipePersistenceService.listSwipeSummariesByChatId(this.currentChatId);

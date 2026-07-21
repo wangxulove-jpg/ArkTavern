@@ -78,7 +78,6 @@ export class CharacterService {
     await this.selectionStore.initialize(context);
     this.assetStore.initialize(context);
     this.initialized = true;
-    Logger.info(LOG_TAG, 'initialize ok');
   }
 
   private requireInit(): void {
@@ -124,7 +123,6 @@ export class CharacterService {
       if (e instanceof DatabaseError && e.type === DatabaseErrorType.AlreadyExists) {
         const retryCharacter: Character = cloneCharacterWithNewId(character, 'char-' + generateUuid());
         await this.repository.insert(retryCharacter);
-        Logger.info(LOG_TAG, 'create ok (retry)');
         return retryCharacter;
       }
       if (e instanceof Error) {
@@ -132,7 +130,6 @@ export class CharacterService {
       }
       throw new Error('CharacterService create failed: ' + String(e));
     }
-    Logger.info(LOG_TAG, 'create ok');
     return character;
   }
 
@@ -161,7 +158,6 @@ export class CharacterService {
       }
       throw new Error('CharacterService update failed: ' + String(e));
     }
-    Logger.info(LOG_TAG, 'update success');
     return updated;
   }
 
@@ -198,7 +194,6 @@ export class CharacterService {
     try {
       const pngBytes: Uint8Array = await convertUriToPngBytes(sourceUri);
       newAvatarUri = await this.assetStore.savePngAvatarFromBytes(pngBytes, id);
-      Logger.info(LOG_TAG, 'updateAvatar: converted to PNG');
     } catch (e) {
       Logger.warn(LOG_TAG, 'updateAvatar: convert to PNG failed, fallback to raw copy: ' + String(e));
       newAvatarUri = await this.assetStore.saveAvatar(sourceUri, id);
@@ -214,7 +209,6 @@ export class CharacterService {
           Logger.warn(LOG_TAG, 'updateAvatar: delete old avatar failed: ' + String(e));
         }
       }
-      Logger.info(LOG_TAG, 'updateAvatar ok');
       return updated;
     } catch (e) {
       // 数据库更新失败,删除新保存的头像文件回滚,旧头像仍可用
@@ -235,14 +229,12 @@ export class CharacterService {
     const existing: Character | null = await this.repository.getById(id);
     if (existing === null) {
       // 幂等:不存在视为已删除
-      Logger.info(LOG_TAG, 'remove skip (not found)');
       return;
     }
     // 1. 删除关联的角色专属世界书(如果存在)
     if (existing.characterBookId.length > 0 && this.lorebookRepository !== null) {
       try {
         await this.lorebookRepository.remove(existing.characterBookId);
-        Logger.info(LOG_TAG, 'remove: character_book removed');
       } catch (e) {
         Logger.warn(LOG_TAG, 'remove: character_book delete failed: ' + String(e));
       }
@@ -260,7 +252,6 @@ export class CharacterService {
     } catch (e) {
       Logger.warn(LOG_TAG, 'remove: deleteAvatar failed, character record already deleted');
     }
-    Logger.info(LOG_TAG, 'remove success');
   }
 
   async setCurrentCharacterId(id: string | null): Promise<void> {
@@ -272,7 +263,6 @@ export class CharacterService {
       }
     }
     await this.selectionStore.setCurrentCharacterId(id);
-    Logger.info(LOG_TAG, 'setCurrentCharacterId ok');
   }
 
   async getCurrentCharacterId(): Promise<string | null> {
@@ -359,7 +349,6 @@ export class CharacterService {
         throw new Error('CharacterService importFromParsed failed: ' + String(e));
       }
     }
-    Logger.info(LOG_TAG, 'importFromParsed ok source=' + parsed.sourceFormat);
     return character;
   }
 
@@ -416,7 +405,6 @@ export class CharacterService {
       fileIo.closeSync(file);
       const textDecoder: util.TextDecoder = util.TextDecoder.create('utf-8', { ignoreBOM: true });
       const content: string = textDecoder.decodeToString(new Uint8Array(buffer, 0, readLen));
-      Logger.info(LOG_TAG, 'readFileContent ok size=' + String(readLen));
       return content;
     } catch (e) {
       if (e instanceof Error && e.message.includes('文件过大')) {
@@ -437,7 +425,6 @@ export class CharacterService {
       const buffer: Uint8Array = textEncoder.encodeInto(content);
       fileIo.writeSync(file.fd, buffer.buffer as ArrayBuffer);
       fileIo.closeSync(file);
-      Logger.info(LOG_TAG, 'writeFileContent ok size=' + String(content.length));
     } catch (e) {
       Logger.error(LOG_TAG, 'writeFileContent failed: ' + String(e));
       throw new Error('写入文件失败');
@@ -458,7 +445,6 @@ export class CharacterService {
   async exportToFile(id: string, uri: string): Promise<void> {
     const jsonString: string = await this.exportToJson(id);
     await this.writeFileContent(uri, jsonString);
-    Logger.info(LOG_TAG, 'exportToFile ok');
   }
 
   // ===== V2 / PNG 导出 =====
@@ -540,11 +526,9 @@ export class CharacterService {
       // 校验是否为合法 PNG(PNG 签名:89 50 4E 47 0D 0A 1A 0A)
       // 头像可能是旧数据中的 JPG/WebP,调用 ImageConverter 转 PNG
       if (avatarBytes !== null && !isPngBytes(avatarBytes)) {
-        Logger.info(LOG_TAG, 'exportToPngBytes: avatar is not PNG, converting');
         const character: Character | null = await this.repository.getById(id);
         if (character !== null && character.avatarUri.length > 0) {
           avatarBytes = await convertUriToPngBytes(character.avatarUri);
-          Logger.info(LOG_TAG, 'exportToPngBytes: convert to PNG ok size=' + String(avatarBytes.byteLength));
         } else {
           avatarBytes = null;
         }
@@ -558,7 +542,6 @@ export class CharacterService {
     if (!result.success) {
       throw new Error('PNG 导出失败: ' + result.error);
     }
-    Logger.info(LOG_TAG, 'exportToPngBytes ok size=' + String(result.bytes.byteLength));
     return result.bytes;
   }
 
@@ -570,7 +553,6 @@ export class CharacterService {
       const file: fileIo.File = fileIo.openSync(uri, fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.CREATE);
       fileIo.writeSync(file.fd, bytes.buffer as ArrayBuffer);
       fileIo.closeSync(file);
-      Logger.info(LOG_TAG, 'writePngToFile ok size=' + String(bytes.byteLength));
     } catch (e) {
       Logger.error(LOG_TAG, 'writePngToFile failed: ' + String(e));
       throw new Error('写入 PNG 文件失败');
@@ -583,7 +565,6 @@ export class CharacterService {
   async exportPngToFile(id: string, uri: string): Promise<void> {
     const bytes: Uint8Array = await this.exportToPngBytes(id);
     await this.writePngToFile(uri, bytes);
-    Logger.info(LOG_TAG, 'exportPngToFile ok');
   }
 
   // ===== PNG 导入 =====
@@ -600,9 +581,8 @@ export class CharacterService {
         throw new Error('文件过大,不能超过 50MB');
       }
       const buffer: ArrayBuffer = new ArrayBuffer(stat.size);
-      const readLen: number = fileIo.readSync(file.fd, buffer);
+      fileIo.readSync(file.fd, buffer);
       fileIo.closeSync(file);
-      Logger.info(LOG_TAG, 'readFileBytes ok size=' + String(readLen));
       return buffer;
     } catch (e) {
       if (e instanceof Error && e.message.includes('文件过大')) {
@@ -710,7 +690,6 @@ export class CharacterService {
       }
       throw new Error('CharacterService confirmPngImport failed: ' + String(e));
     }
-    Logger.info(LOG_TAG, 'confirmPngImport ok');
     return character;
   }
 
@@ -759,7 +738,6 @@ export class CharacterService {
       updatedAt: lorebook.updatedAt
     };
     await this.lorebookRepository.insert(fullLorebook);
-    Logger.info(LOG_TAG, 'character_book imported entries=' + String(entries.length));
     return lorebook.id;
   }
 
@@ -790,7 +768,6 @@ export class CharacterService {
       return;
     }
     await this.repository.swapSortOrder(id, characters[index - 1].id);
-    Logger.info(LOG_TAG, 'moveCharacterUp ok');
   }
 
   /**
@@ -811,7 +788,6 @@ export class CharacterService {
       return;
     }
     await this.repository.swapSortOrder(id, characters[index + 1].id);
-    Logger.info(LOG_TAG, 'moveCharacterDown ok');
   }
 }
 

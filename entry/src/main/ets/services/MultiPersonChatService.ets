@@ -29,7 +29,7 @@ import { relationalStore } from '@kit.ArkData';
 import { DbHelper } from '../database/DbHelper';
 import { WorldService } from './WorldService';
 import { WorldRelationshipService } from './WorldRelationshipService';
-import { WorldMemoryService, GenerateRoundMemoryInput, RoundMemoryResult } from './WorldMemoryService';
+import { WorldMemoryService, GenerateRoundMemoryInput } from './WorldMemoryService';
 import { SpeakerScheduler, SpeakerCandidate } from './SpeakerScheduler';
 import {
   MultiPersonPromptBuilder,
@@ -234,7 +234,6 @@ export class MultiPersonChatService {
     this.currentSceneId = sceneId;
     this.replyMode = link.replyMode;
 
-    Logger.info(LOG_TAG, 'initialize ok');
     return {
       chatId: chatId,
       worldId: this.worldId,
@@ -362,7 +361,6 @@ export class MultiPersonChatService {
       return;
     }
     this.generationOperationId++;
-    Logger.info(LOG_TAG, 'stopGeneration abort');
     if (this.currentStreamHandle !== null) {
       try {
         this.currentStreamHandle.abort();
@@ -486,7 +484,6 @@ export class MultiPersonChatService {
     if (visibility === 'private' && replyMode === 'designated') {
       if (recipientCharacterIds.indexOf(designatedCharacterId) < 0) {
         effectiveDesignatedCharacterId = recipientCharacterIds[0];
-        Logger.info(LOG_TAG, 'private+designated: adjust designatedCharacterId to first recipient');
       }
     }
 
@@ -554,7 +551,6 @@ export class MultiPersonChatService {
     for (let i = 0; i < candidateCharacters.length; i++) {
       if (!isCurrent()) {
         // 已停止或被替换:保留前面已完整生成的消息,不继续后续角色
-        Logger.info(LOG_TAG, `executeGeneration stopped at character ${i}/${candidateCharacters.length}`);
         break;
       }
       const currentCharacter: Character = candidateCharacters[i];
@@ -693,7 +689,6 @@ export class MultiPersonChatService {
 
     if (!isCurrent()) {
       // 停止:保留已生成的消息,状态由 stopGeneration 设置
-      Logger.info(LOG_TAG, `executeGeneration interrupted, kept ${persistedMessages.length} messages`);
       return;
     }
 
@@ -780,11 +775,7 @@ export class MultiPersonChatService {
         speakerCharacters: effectiveSpeakers,
         presentCharacters: effectivePresent
       };
-      const result: RoundMemoryResult = await this.worldMemoryService.generateMemoriesForRound(input);
-      Logger.info(
-        LOG_TAG,
-        `memoryGeneration done private=${isPrivate} public=${result.publicEventCreated} private=${result.privateMemoriesCreated} failed=${result.failed}`
-      );
+      await this.worldMemoryService.generateMemoriesForRound(input);
     } catch (e) {
       Logger.warn(LOG_TAG, `doMemoryGeneration failed: ${(e as Error).message}`);
     }
@@ -855,7 +846,6 @@ export class MultiPersonChatService {
             senderCharacterId: character.id,
             sceneId: this.currentSceneId
           };
-          Logger.info(LOG_TAG, `streamSingleCharacter ok charId=${character.id} len=${cleaned.length}`);
           resolve(msg);
         },
         onError: (error: NetworkError): void => {
@@ -910,10 +900,6 @@ export class MultiPersonChatService {
       async (store: relationalStore.RdbStore): Promise<void> => {
         const maxSeq: number = await this.messageRepository.getMaxSequenceNumber(this.chatId);
         const maxPos: number = await this.branchRepository.getMaxPositionWithStore(store, this.branchId);
-        Logger.info(LOG_TAG, 'persistSingleCharacterMessage branchId=' + this.branchId.substring(0, 8)
-          + ' msgId=' + messageId.substring(0, 8)
-          + ' maxSeq=' + maxSeq + ' maxPos=' + maxPos
-          + ' vis=' + visibility);
         await this.messageRepository.insertWithStore(store, msg, this.chatId, maxSeq + 1);
         await this.branchRepository.insertMessageLinkWithStore(
           store, this.branchId, messageId, maxPos + 1
@@ -1158,9 +1144,6 @@ export class MultiPersonChatService {
   private async linkMessageToBranch(messageId: string): Promise<void> {
     const store: relationalStore.RdbStore = this.dbHelper.getStore();
     const maxPos: number = await this.branchRepository.getMaxPositionWithStore(store, this.branchId);
-    Logger.info(LOG_TAG, 'linkMessageToBranch branchId=' + this.branchId.substring(0, 8)
-      + ' msgId=' + messageId.substring(0, 8)
-      + ' maxPos=' + maxPos);
     await this.branchRepository.insertMessageLinkWithStore(
       store, this.branchId, messageId, maxPos + 1
     );

@@ -98,7 +98,6 @@ export class ChatPersistenceService {
     const chat: Chat | null =
       await this.chatRepository.getLatestByCharacterId(characterId);
     if (chat === null) {
-      Logger.info(LOG_TAG, 'openLatestSession none');
       return null;
     }
     return await this.loadSessionInternal(chat);
@@ -150,7 +149,6 @@ export class ChatPersistenceService {
     } else {
       await this.chatRepository.insert(chat);
     }
-    Logger.info(LOG_TAG, 'createSession id=' + chat.id.substring(0, 8));
     return {
       chat: chat,
       messages: [],
@@ -207,7 +205,6 @@ export class ChatPersistenceService {
       } else {
         await this.chatRepository.insert(chat);
       }
-      Logger.info(LOG_TAG, 'createSession empty id=' + chat.id.substring(0, 8));
       return {
         chat: chat,
         messages: [],
@@ -244,7 +241,6 @@ export class ChatPersistenceService {
       Logger.error(LOG_TAG, 'createSessionWithFirstMessage failed: ' + String(err));
       throw new Error(String(err));
     }
-    Logger.info(LOG_TAG, 'createSessionWithFirstMessage id=' + chat.id.substring(0, 8));
     return {
       chat: chat,
       messages: [firstMessage],
@@ -278,7 +274,6 @@ export class ChatPersistenceService {
    */
   async deleteSession(chatId: string): Promise<void> {
     await this.chatPersistenceOperations.removeChatWithMessages(chatId);
-    Logger.info(LOG_TAG, 'deleteSession id=' + chatId.substring(0, 8));
   }
 
   /**
@@ -306,7 +301,6 @@ export class ChatPersistenceService {
     const chats: Chat[] = await this.chatRepository.listByExactCharacterId(
       characterId, { limit: effectiveLimit, offset: 0 }
     );
-    Logger.info(LOG_TAG, 'listSessionsForContext count=' + chats.length.toString());
     return chats;
   }
 
@@ -330,7 +324,6 @@ export class ChatPersistenceService {
       limit: effectiveLimit,
       offset: 0
     });
-    Logger.info(LOG_TAG, 'listAllSessions count=' + chats.length.toString());
     return chats;
   }
 
@@ -393,7 +386,6 @@ export class ChatPersistenceService {
     }
     const updated: Chat = updateChat(existing, { title: trimmed });
     await this.chatRepository.update(updated);
-    Logger.info(LOG_TAG, 'renameSession ok');
     return updated;
   }
 
@@ -420,7 +412,6 @@ export class ChatPersistenceService {
     }
     const updated: Chat = updateChat(existing, { userNameOverride: trimmed });
     await this.chatRepository.update(updated);
-    Logger.info(LOG_TAG, 'updateUserNameOverride ok');
     return updated;
   }
 
@@ -494,7 +485,6 @@ export class ChatPersistenceService {
       await this.messageRepository.insert(message, chatId, nextSeq);
       await this.updateChatActivity(chatId, now);
     }
-    Logger.info(LOG_TAG, 'appendMessage seq=' + nextSeq.toString());
     return nextSeq;
   }
 
@@ -551,8 +541,6 @@ export class ChatPersistenceService {
       Logger.error(LOG_TAG, 'appendUserAndAssistant failed: ' + String(err));
       throw new Error(String(err));
     }
-    Logger.info(LOG_TAG, 'appendUserAndAssistant userSeq=' + userSeq.toString()
-      + ' assistantSeq=' + assistantSeq.toString());
     return {
       userSequenceNumber: userSeq,
       assistantSequenceNumber: assistantSeq
@@ -589,8 +577,6 @@ export class ChatPersistenceService {
   ): Promise<number> {
     const deleted: number =
       await this.messageRepository.removeAfterSequence(chatId, sequenceNumber);
-    Logger.info(LOG_TAG, 'removeMessagesAfter seq=' + sequenceNumber.toString()
-      + ' deleted=' + deleted.toString());
     return deleted;
   }
 
@@ -676,8 +662,6 @@ export class ChatPersistenceService {
       Logger.error(LOG_TAG, 'replaceAndAppend failed: ' + String(err));
       throw new Error(String(err));
     }
-    Logger.info(LOG_TAG, 'replaceAndAppend userSeq=' + userSeq.toString()
-      + ' assistantSeq=' + assistantSeq.toString());
     return assistantSeq;
   }
 
@@ -720,13 +704,7 @@ export class ChatPersistenceService {
    * 3. maxSequenceNumber 始终从 messages 表查询(全局最大值,不受 Branch 投影影响)
    */
   private async loadSessionInternal(chat: Chat): Promise<PersistedChatSession> {
-    const normalizedCount: number =
-      await this.messageRepository.normalizeInterruptedMessages(chat.id);
-    if (normalizedCount > 0) {
-      Logger.info(LOG_TAG, 'SessionReload | stage=normalize result=cancelled count=' + normalizedCount.toString());
-    } else {
-      Logger.info(LOG_TAG, 'SessionReload | stage=normalize result=unchanged');
-    }
+    await this.messageRepository.normalizeInterruptedMessages(chat.id);
 
     let messages: ChatMessage[];
     let maxSeq: number;
@@ -735,7 +713,6 @@ export class ChatPersistenceService {
       // T-6.4A: 通过 Active Branch 加载消息路径(只读,不开启写事务)
       messages = await this.branchPersistenceService.loadActiveBranchMessages(chat.id);
       maxSeq = await this.messageRepository.getMaxSequenceNumber(chat.id);
-      Logger.info(LOG_TAG, 'SessionReload | stage=active_branch_loaded count=' + messages.length.toString());
     } else {
       // 回退:直接从 messages 表加载(无 Branch 支持)
       const options: MessagePageOptions = {
@@ -751,11 +728,8 @@ export class ChatPersistenceService {
       maxSeq = records.length > 0
         ? records[records.length - 1].sequenceNumber
         : 0;
-      Logger.info(LOG_TAG, 'SessionReload | stage=direct_load count=' + messages.length.toString());
     }
 
-    Logger.info(LOG_TAG, 'session loaded messages=' + messages.length.toString()
-      + ' maxSeq=' + maxSeq.toString());
     return {
       chat: chat,
       messages: messages,
@@ -817,7 +791,6 @@ export class ChatPersistenceService {
       return;
     }
     await this.chatRepository.swapSortOrder(chatId, chats[index - 1].id);
-    Logger.info(LOG_TAG, 'moveSessionUp ok');
   }
 
   /**
@@ -841,6 +814,5 @@ export class ChatPersistenceService {
       return;
     }
     await this.chatRepository.swapSortOrder(chatId, chats[index + 1].id);
-    Logger.info(LOG_TAG, 'moveSessionDown ok');
   }
 }

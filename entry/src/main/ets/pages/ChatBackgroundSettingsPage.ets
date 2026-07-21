@@ -513,7 +513,6 @@ struct ChatBackgroundSettingsPage {
         return;
       }
       const sourceUri = result.photoUris[0];
-      Logger.info(LOG_TAG, 'pickAndImportImage picked');
       const targetUri = await service.importImage(this.chatId, sourceUri);
       // 导入后自动启用
       await service.setEnabled(this.chatId, true);

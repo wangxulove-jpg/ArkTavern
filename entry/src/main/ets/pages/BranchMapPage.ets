@@ -28,7 +28,7 @@ import { BranchMapViewModel } from '../viewmodels/BranchMapViewModel';
 import { AppServices } from '../services/AppServices';
 import { BranchMapNode } from '../components/BranchMapNode';
 import { BranchMapDisplayInfo } from '../models/BranchMapDisplayInfo';
-import { BranchMapNodeLayout, BranchTreeLayoutResult, BranchTreeEdge } from '../models/BranchMapNodeLayout';
+import { BranchMapNodeLayout, BranchTreeEdge } from '../models/BranchMapNodeLayout';
 import { Logger } from '../utils/Logger';
 import { router } from '@kit.ArkUI';
 
@@ -632,6 +632,5 @@ struct BranchMapPage {
 
   aboutToDisappear(): void {
     this.viewModel.dispose();
-    Logger.info(LOG_TAG, 'aboutToDisappear');
   }
 }

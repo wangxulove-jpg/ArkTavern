@@ -16,7 +16,6 @@
 
 import { relationalStore } from '@kit.ArkData';
 import { DbHelper } from '../database/DbHelper';
-import { Logger } from '../utils/Logger';
 import {
   ConversationBranch,
   BranchMessageLink,
@@ -61,8 +60,6 @@ import {
   extractCauseMessage
 } from './ConversationBranchRepositoryMapper';
 import { isConstraintViolation } from './RepositoryMappers';
-
-const LOG_TAG: string = 'BranchRepo';
 
 export class ConversationBranchRepository {
   private readonly dbHelper: DbHelper;
@@ -817,7 +814,6 @@ export class ConversationBranchRepository {
       new relationalStore.RdbPredicates(TABLE_CONVERSATION_BRANCHES);
     branchPredicates.equalTo(COLUMN_CHAT_ID, chatId);
     await store.delete(branchPredicates);
-    Logger.info(LOG_TAG, 'removed branches for chat');
   }
 
   // ===== v5 完整性检查 =====

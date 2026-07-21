@@ -278,20 +278,13 @@ export class WorldChatViewModel {
         ordered.push(m);
       }
     }
-    // v11 调试:打印最后一条消息的关键信息(不打印正文)
-    if (ordered.length > 0) {
-      const last: ChatMessage = ordered[ordered.length - 1];
-      Logger.info(LOG_TAG, 'loadMessages count=' + ordered.length
-        + ' lastId=' + last.id.substring(0, 8)
-        + ' lastSenderType=' + last.senderType
-        + ' lastVisibility=' + (last.visibility !== undefined ? last.visibility : 'undefined'));
-    }
     this.messages = await this.buildMessageItems(ordered);
   }
 
   /** 将 ChatMessage 列表转换为展示项 */
   private async buildMessageItems(messages: ChatMessage[]): Promise<WorldChatMessageItem[]> {
     const items: WorldChatMessageItem[] = [];
+    const characterCache: Map<string, Character | null> = new Map<string, Character | null>();
     for (let i = 0; i < messages.length; i++) {
       const m: ChatMessage = messages[i];
       const senderType: MessageSenderType = m.senderType !== undefined ? m.senderType : 'character';
@@ -299,11 +292,18 @@ export class WorldChatViewModel {
       let character: Character | null = null;
       let isDeleted: boolean = false;
       if (senderCharacterId.length > 0) {
-        try {
-          character = await this.characterService.getById(senderCharacterId);
+        if (characterCache.has(senderCharacterId)) {
+          character = characterCache.get(senderCharacterId) as Character | null;
           isDeleted = character === null;
-        } catch (e) {
-          isDeleted = true;
+        } else {
+          try {
+            character = await this.characterService.getById(senderCharacterId);
+            isDeleted = character === null;
+          } catch (e) {
+            isDeleted = true;
+            character = null;
+          }
+          characterCache.set(senderCharacterId, character);
         }
       }
       let displayName: string = '';
@@ -439,11 +439,9 @@ export class WorldChatViewModel {
       },
       onMessageReady: (message: ChatMessage) => {
         if (this.disposed) return;
-        Logger.info(LOG_TAG, 'onMessageReady triggered');
         // 每条角色消息完整生成后,重新加载消息列表(替换乐观用户消息 + 追加新角色消息)
         this.loadMessages().then((): void => {
           if (this.disposed) return;
-          Logger.info(LOG_TAG, 'onMessageReady loadMessages ok count=' + this.messages.length);
           this.notifyMessagesUpdate();
           this.notifyStateUpdate();
         }).catch((e: Object): void => {
@@ -452,7 +450,6 @@ export class WorldChatViewModel {
       },
       onComplete: (persistedMessages: ChatMessage[]) => {
         if (this.disposed) return;
-        Logger.info(LOG_TAG, 'onComplete triggered count=' + persistedMessages.length);
         this.isGenerating = false;
         this.streamingPreview = '';
         this.statusMessage = '';
@@ -462,7 +459,6 @@ export class WorldChatViewModel {
         this.notifyStateUpdate();
         // 最终刷新(确保消息列表与 DB 一致)
         this.appendPersistedMessages(persistedMessages).then((): void => {
-          Logger.info(LOG_TAG, 'onComplete appendPersistedMessages ok count=' + this.messages.length);
           this.notifyMessagesUpdate();
           this.notifyStateUpdate();
         }).catch((e: Object): void => {
@@ -840,6 +836,10 @@ export class WorldChatViewModel {
 
   dispose(): void {
     this.disposed = true;
+    if (this.streamFlushTimerId !== -1) {
+      clearTimeout(this.streamFlushTimerId);
+      this.streamFlushTimerId = -1;
+    }
     this.multiPersonChatService.dispose();
     this.messages = [];
     this.presentMembers = [];

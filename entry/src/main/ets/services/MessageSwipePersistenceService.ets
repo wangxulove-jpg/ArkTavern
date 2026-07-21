@@ -193,7 +193,6 @@ export class MessageSwipePersistenceService {
             );
           }
 
-          Logger.info(LOG_TAG, 'state created');
           result = { group: group, candidates: [candidate0] };
         }
       );
@@ -282,7 +281,6 @@ export class MessageSwipePersistenceService {
           const candidates: MessageSwipeCandidate[] =
             await this.swipeRepository.listCandidatesWithStore(store, assistantMessageId);
 
-          Logger.info(LOG_TAG, 'candidate appended index=' + newIndex.toString());
           result = { group: group, candidates: candidates };
         }
       );
@@ -414,7 +412,6 @@ export class MessageSwipePersistenceService {
           const candidates: MessageSwipeCandidate[] =
             await this.swipeRepository.listCandidatesWithStore(store, assistantMessageId);
 
-          Logger.info(LOG_TAG, 'candidate activated index=' + candidateIndex.toString());
           result = { group: updatedGroup, candidates: candidates };
         }
       );
@@ -437,7 +434,6 @@ export class MessageSwipePersistenceService {
     assistantMessageId: string
   ): Promise<void> {
     await this.swipeRepository.removeByAssistantMessageId(assistantMessageId);
-    Logger.info(LOG_TAG, 'removed');
   }
 
   /**
@@ -489,7 +485,6 @@ export class MessageSwipePersistenceService {
         isGeneratingCandidate: false
       });
     }
-    Logger.info(LOG_TAG, 'state loaded count=' + summaries.length.toString());
     return summaries;
   }
 
@@ -549,9 +544,6 @@ export class MessageSwipePersistenceService {
       } catch (err) {
         Logger.error(LOG_TAG, 'normalizeInterrupted failed');
       }
-    }
-    if (handledCount > 0) {
-      Logger.info(LOG_TAG, 'interrupted candidates normalized count=' + handledCount.toString());
     }
     return handledCount;
   }

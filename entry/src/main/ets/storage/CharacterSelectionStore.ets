@@ -32,11 +32,9 @@ export class CharacterSelectionStore {
     if (this.initialized) {
       return;
     }
-    Logger.info(LOG_TAG, 'initialize');
     try {
       this.prefs = await preferences.getPreferences(context, PREFERENCES_NAME);
       this.initialized = true;
-      Logger.info(LOG_TAG, 'initialize ok');
     } catch (e) {
       Logger.error(LOG_TAG, 'initialize failed: ' + String(e));
       throw new Error('CharacterSelectionStore initialize failed');
@@ -82,7 +80,6 @@ export class CharacterSelectionStore {
       await prefs.put(KEY_CURRENT_CHARACTER_ID, '');
     }
     await prefs.flush();
-    Logger.info(LOG_TAG, 'setCurrentCharacterId ok');
   }
 
   /**

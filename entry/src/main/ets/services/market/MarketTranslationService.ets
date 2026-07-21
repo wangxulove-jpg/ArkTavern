@@ -213,7 +213,6 @@ export class MarketTranslationService {
         stream: false
       };
 
-      Logger.info(LOG_TAG, 'translateDetail start');
       const response = await this.modelService.sendChat(request);
       const parsed: Record<string, Object> | null = parseDetailResponse(response.content);
       if (parsed === null) {
@@ -249,7 +248,6 @@ export class MarketTranslationService {
         await this.cache.putTranslation(entry);
       }
 
-      Logger.info(LOG_TAG, 'translateDetail ok');
       return {
         name: name,
         summary: summary,
@@ -366,7 +364,6 @@ export class MarketTranslationService {
         stream: false
       };
 
-      Logger.info(LOG_TAG, 'translateBatch start size=' + batch.length.toString());
       const response = await this.modelService.sendChat(request);
 
       if (opId !== this.operationId) {
@@ -406,8 +403,6 @@ export class MarketTranslationService {
         }
         onResult(item.remoteId, t);
       }
-
-      Logger.info(LOG_TAG, 'translateBatch done size=' + batch.length.toString());
     } catch (e) {
       Logger.warn(LOG_TAG, 'translateBatch failed: ' + String(e));
     }

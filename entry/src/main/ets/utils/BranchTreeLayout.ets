@@ -36,9 +36,6 @@ import {
   BranchTreeEdge
 } from '../models/BranchMapNodeLayout';
 import { BranchMapDisplayInfo } from '../models/BranchMapDisplayInfo';
-import { Logger } from './Logger';
-
-const LOG_TAG: string = 'BranchMapLayout';
 
 /** 节点固定宽度(vp) */
 const NODE_WIDTH: number = 176;
@@ -268,14 +265,6 @@ export function computeBranchTreeLayout(
   const contentHeight: number = CANVAS_PADDING * 2
     + (maxTurn + 1) * NODE_HEIGHT
     + maxTurn * (LEVEL_GAP - NODE_HEIGHT);
-
-  Logger.info(LOG_TAG, 'nodes=' + nodes.length.toString()
-    + ' roots=' + rootBranches.length.toString()
-    + ' maxTurn=' + maxTurn.toString()
-    + ' orphanNodes=0');
-  Logger.info(LOG_TAG, 'layout_ready width=' + Math.ceil(contentWidth).toString()
-    + ' height=' + Math.ceil(contentHeight).toString()
-    + ' edges=' + edges.length.toString());
 
   return {
     nodes: nodes,

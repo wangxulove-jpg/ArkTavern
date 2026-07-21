@@ -58,9 +58,6 @@ import { Character } from '../models/Character';
 import { DatabaseError } from '../models/DatabaseError';
 import { generateUuid } from '../utils/Uuid';
 import { nowMillis } from '../utils/Time';
-import { Logger } from '../utils/Logger';
-
-const LOG_TAG: string = 'WorldService';
 
 /** 创建世界时最少需要的角色数量 */
 export const MIN_WORLD_MEMBERS: number = 2;
@@ -264,7 +261,6 @@ export class WorldService {
         }
       }
     );
-    Logger.info(LOG_TAG, `createWorld ok members=${members.length}`);
     return { world: world, members: members, initialScene: initialScene };
   }
 
@@ -312,7 +308,6 @@ export class WorldService {
         await this.worldRepo.deleteWorldWithStore(store, worldId);
       }
     );
-    Logger.info(LOG_TAG, 'deleteWorld ok');
   }
 
   // ===== 成员管理 =====
@@ -426,7 +421,6 @@ export class WorldService {
     }
     await this.worldRepo.deleteMember(member.id);
     // 关系和记忆的清理由 WorldRelationshipService 单独协调(本阶段保留为简化实现)
-    Logger.info(LOG_TAG, 'removeMember ok');
   }
 
   /**

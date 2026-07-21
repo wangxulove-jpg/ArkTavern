@@ -79,14 +79,12 @@ struct WorldChatPage {
       // 订阅 ViewModel 状态更新(参照 ChatPage.onMessagesUpdate 模式)
       vm.onMessagesUpdate = (msgs: WorldChatMessageItem[]): void => {
         const prevCount: number = this.messages.length;
-        console.info('WorldChatPage | onMessagesUpdate prev=' + prevCount + ' new=' + msgs.length);
         this.messages = msgs;
         // v11 修复:消息数量增加时(新消息到达),延迟滚动到底部
         // 避免 onMessageReady 回调生成新消息后用户看不到回复
         if (msgs.length > prevCount) {
           setTimeout(() => {
             this.scrollToBottom();
-            console.info('WorldChatPage | scrollToBottom triggered msgs=' + msgs.length);
           }, 50);
         }
       };

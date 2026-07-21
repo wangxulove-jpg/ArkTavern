@@ -122,8 +122,6 @@ export class OpenAIProvider extends AiProvider {
       throw err;
     }
 
-    Logger.info(LOG_TAG, 'sendChat providerId=' + config.id + ' model=' + request.model);
-
     // 2. 读取 API Key
     const apiKey: string | null = await this.providerKeyStore.readKey(config.id);
     if (apiKey === null) {
@@ -251,8 +249,6 @@ export class OpenAIProvider extends AiProvider {
       session.failBeforeStart(callbacks, validationError);
       return;
     }
-
-    Logger.info(LOG_TAG, 'streamChat providerId=' + config.id + ' model=' + request.model);
 
     // 3. 读取 API Key
     let apiKey: string | null;
@@ -484,7 +480,6 @@ export function buildHeaders(apiKey: string): HttpHeaders {
  */
 export function parseResponse(response: HttpResponse, providerId: string): ChatResponse {
   const statusCode: number = response.statusCode;
-  Logger.info(LOG_TAG, 'parseResponse providerId=' + providerId + ' statusCode=' + statusCode.toString());
 
   // 2xx 成功
   if (statusCode >= 200 && statusCode < 300) {
