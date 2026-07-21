@@ -28,7 +28,6 @@
 import { ChatTextSegment, parseChatText, ChatTextParserOptions } from '../parser/ChatTextParser';
 import { getCharacterColor } from '../utils/ChatPalette';
 import { ChatTextStyle } from '../utils/ChatTextStyleSettings';
-import { Logger } from '../utils/Logger';
 
 /** 发送者类型 */
 export type ChatSenderType = 'user' | 'assistant' | 'character' | 'narrator' | 'system';
@@ -93,7 +92,6 @@ export struct ChatRichText {
     if (this.isStreaming) {
       this.displayedLength = 0;
       this.doParse();
-      Logger.info('ChatRichText', `aboutToAppear streaming contentLen=${this.content.length} startTypewriter`);
       this.startTypewriter();
     } else {
       this.displayedLength = this.content.length;
@@ -111,7 +109,6 @@ export struct ChatRichText {
    */
   private onContentChange(): void {
     if (this.isStreaming) {
-      Logger.info('ChatRichText', `onContentChange streaming contentLen=${this.content.length} displayedLen=${this.displayedLength} timerId=${this.typewriterTimerId}`);
       this.startTypewriter();
     } else {
       this.clearTypewriter();
@@ -173,7 +170,6 @@ export struct ChatRichText {
     if (this.displayedLength >= this.content.length) {
       return;
     }
-    Logger.info('ChatRichText', `startTypewriter displayedLen=${this.displayedLength} contentLen=${this.content.length}`);
     this.stepTypewriter();
   }
 
@@ -186,10 +182,6 @@ export struct ChatRichText {
       const step: number = Math.min(ChatRichText.TYPEWRITER_CHARS_PER_STEP, remaining);
       this.displayedLength += step;
       this.doParse();
-      // 每 20 字符输出一次,确认打字机在推进
-      if (this.displayedLength % 20 === 0) {
-        Logger.info('ChatRichText', `stepTypewriter displayedLen=${this.displayedLength} contentLen=${this.content.length}`);
-      }
     }
     // 调度下一步(如果还有未显示内容)
     if (this.displayedLength < this.content.length) {
@@ -199,7 +191,6 @@ export struct ChatRichText {
       }, ChatRichText.TYPEWRITER_INTERVAL_MS);
     } else {
       this.typewriterTimerId = -1;
-      Logger.info('ChatRichText', `stepTypewriter done displayedLen=${this.displayedLength} contentLen=${this.content.length}`);
     }
   }
 

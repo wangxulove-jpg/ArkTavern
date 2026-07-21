@@ -33,7 +33,6 @@ import { CharacterImageView } from './CharacterImageView';
 import { ChatRichText, ChatSenderType } from './ChatRichText';
 import { ChatTextStyle } from '../utils/ChatTextStyleSettings';
 import { ChatMessageRenderState } from '../models/ChatMessageRenderState';
-import { Logger } from '../utils/Logger';
 
 @Component
 export struct ChatMessageBubble {
@@ -65,10 +64,6 @@ export struct ChatMessageBubble {
   }
 
   aboutToUpdate(): void {
-    // 临时调试:确认 Bubble 重建和 content 变化
-    if (this.renderState.role === ChatRole.Assistant) {
-      Logger.info('ChatMessageBubble', `aboutToUpdate role=Assistant mid=${this.renderState.messageId.slice(0,8)} contentLen=${this.renderState.content.length} isStreaming=${this.renderState.isStreaming}`);
-    }
     // 关键不变量检查:状态/流式标志互斥校验,异常时记录便于回归
     const s: ChatMessageStatus = this.renderState.status;
     const isStreaming: boolean = this.renderState.isStreaming;
