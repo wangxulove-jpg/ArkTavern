@@ -25,6 +25,7 @@ import { ChatViewModel } from '../viewmodels/ChatViewModel';
 import { ChatMessage, ChatMessageStatus } from '../models/ChatMessage';
 import { ChatRole } from '../models/ChatRole';
 import { ChatMessageSource } from '../models/ChatMessageSource';
+import { ChatMessageRenderState } from '../models/ChatMessageRenderState';
 import { MessageSwipeSummary, MAX_SWIPE_CANDIDATES } from '../models/MessageSwipe';
 import { MessageSwipeControls } from '../components/MessageSwipeControls';
 import { HistoricalMessageEditDialog } from '../components/HistoricalMessageEditDialog';
@@ -48,7 +49,6 @@ import {
 import { ForkChatMode } from '../models/ForkChatOptions';
 import { ChatSessionListPanel } from '../components/ChatSessionListPanel';
 import { Character } from '../models/Character';
-import { TypingState } from '../models/TypingState';
 import { Logger } from '../utils/Logger';
 
 const LOG_TAG: string = 'ChatPage';
@@ -57,10 +57,12 @@ const LOG_TAG: string = 'ChatPage';
 @Component
 struct ChatPage {
   @State viewModel: ChatViewModel | null = null;
-  /** 独立 @State 消息列表(确保 ForEach 响应式刷新) */
+  /** 业务消息列表(@State 用于触发消息源数据变更,ForEach 不再直接使用) */
   @State messages: ChatMessage[] = [];
-  /** 打字机状态数组(@Observed class,与 messages 一一对应,原地修改字段触发 @ObjectLink 响应) */
-  @State typingStates: TypingState[] = [];
+  /** 稳定渲染状态列表(@Observed,ForEach 数据源,key 固定为 messageId) */
+  @State messageStates: ChatMessageRenderState[] = [];
+  /** messageId → RenderState 缓存(确保同一消息长期对应同一实例) */
+  private stateMap: Map<string, ChatMessageRenderState> = new Map<string, ChatMessageRenderState>();
   /** 当前角色对象(用于头像) */
   @State character: Character | null = null;
   /** v11 富文本样式设置 */
@@ -126,9 +128,9 @@ struct ChatPage {
       chatService, modelService, characterService, promptPresetService
     );
     vm.onMessagesUpdate = (msgs: ChatMessage[]): void => {
-      // 先同步 typingStates(原地修改字段,触发 @ObjectLink 响应)
-      this.syncTypingStates(msgs);
+      // 同步业务数据 + 同步稳定 RenderState 列表
       this.messages = msgs;
+      this.syncRenderStates(msgs);
       this.maybeLoadChatBackground();
       // 消息变更后刷新上下文占用统计
       this.refreshBudgetSnapshot();
@@ -176,6 +178,8 @@ struct ChatPage {
       this.viewModel = null;
     }
     this.messages = [];
+    this.messageStates = [];
+    this.stateMap.clear();
     const v: number = AppStorage.get<number>('chatListVersion') ?? 0;
     AppStorage.setOrCreate<number>('chatListVersion', v + 1);
   }
@@ -196,36 +200,6 @@ struct ChatPage {
     }
     // 从二级页面返回时刷新上下文占用统计
     this.refreshBudgetSnapshot();
-  }
-
-  /**
-   * 同步 typingStates 数组,与 messages 保持一致。
-   * - 已有的 TypingState:原地修改 content/isStreaming 字段(触发 @ObjectLink 响应)
-   * - 新消息:创建新 TypingState(包含 message 引用)
-   * - 已删除的消息:不放入新数组
-   */
-  private syncTypingStates(msgs: ChatMessage[]): void {
-    const newStates: TypingState[] = [];
-    for (let i = 0; i < msgs.length; i++) {
-      const msg: ChatMessage = msgs[i];
-      // 在旧数组中查找相同 messageId 的 TypingState
-      let state: TypingState | undefined = undefined;
-      for (let j = 0; j < this.typingStates.length; j++) {
-        if (this.typingStates[j].messageId === msg.id) {
-          state = this.typingStates[j];
-          break;
-        }
-      }
-      if (state !== undefined) {
-        // 原地修改字段(@Observed class 字段赋值触发 @ObjectLink 响应)
-        state.content = msg.content;
-        state.isStreaming = msg.isStreaming === true;
-        newStates.push(state);
-      } else {
-        newStates.push(new TypingState(msg, msg.content, msg.isStreaming === true));
-      }
-    }
-    this.typingStates = newStates;
   }
 
   onBackPress(): boolean {
@@ -530,15 +504,14 @@ struct ChatPage {
   messageList() {
     Scroll(this.scroller) {
       Column() {
-        ForEach(this.typingStates, (state: TypingState, _index: number) => {
-          if (state.message.role !== ChatRole.System) {
+        ForEach(this.messageStates, (state: ChatMessageRenderState, _index: number) => {
+          if (state.role !== ChatRole.System) {
             Column() {
               ChatMessageBubble({
-                msg: state.message,
-                typingState: state,
+                renderState: state,
                 characterAvatarUri: this.character !== null ? this.character!.avatarUri : '',
                 characterName: this.viewModel !== null ? this.viewModel!.characterName : '',
-                showAvatar: state.message.source !== ChatMessageSource.CharacterFirstMessage,
+                showAvatar: state.source !== ChatMessageSource.CharacterFirstMessage,
                 settings: this.chatTextStyle,
                 senderCharacterId: this.character !== null ? this.character!.id : '',
                 onLongPress: (target: ChatMessage): void => {
@@ -548,20 +521,20 @@ struct ChatPage {
               })
 
               // 分支切换控件(仅 Assistant 非首条消息)
-              if (state.message.role === ChatRole.Assistant
-                && state.message.source !== ChatMessageSource.CharacterFirstMessage
+              if (state.role === ChatRole.Assistant
+                && state.source !== ChatMessageSource.CharacterFirstMessage
                 && this.viewModel !== null) {
                 MessageSwipeControls({
-                  activeCandidateIndex: this.getSwipeActiveIndex(state.message.id),
-                  candidateCount: this.getCandidateCount(state.message.id),
+                  activeCandidateIndex: this.getSwipeActiveIndex(state.messageId),
+                  candidateCount: this.getCandidateCount(state.messageId),
                   isGenerating: this.viewModel!.isGenerating,
-                  isOperable: this.viewModel!.canOperateSwipe(state.message.id),
-                  isMaxReached: this.getCandidateCount(state.message.id) >= MAX_SWIPE_CANDIDATES,
+                  isOperable: this.viewModel!.canOperateSwipe(state.messageId),
+                  isMaxReached: this.getCandidateCount(state.messageId) >= MAX_SWIPE_CANDIDATES,
                   onPrevious: (): void => {
-                    this.viewModel!.swipePrevious(state.message.id);
+                    this.viewModel!.swipePrevious(state.messageId);
                   },
                   onNext: (): void => {
-                    this.viewModel!.swipeNext(state.message.id);
+                    this.viewModel!.swipeNext(state.messageId);
                   },
                   onRegenerate: (): void => {
                     this.viewModel!.regenerateAsNewCandidate();
@@ -573,9 +546,9 @@ struct ChatPage {
               }
 
               // 失败重试按钮
-              if (state.message.status === ChatMessageStatus.Failed
+              if (state.status === ChatMessageStatus.Failed
                 && this.viewModel !== null
-                && this.viewModel!.canRegenerateAssistantMessage(state.message.id)) {
+                && this.viewModel!.canRegenerateAssistantMessage(state.messageId)) {
                 Row() {
                   Button({ type: ButtonType.Normal, stateEffect: false }) {
                     Row() {
@@ -594,7 +567,7 @@ struct ChatPage {
                   .padding({ left: 12, right: 12 })
                   .margin({ top: 4, bottom: 4 })
                   .onClick(() => {
-                    this.regenerateAssistantMessage(state.message.id);
+                    this.regenerateAssistantMessage(state.messageId);
                   })
                 }
                 .width('100%')
@@ -604,18 +577,18 @@ struct ChatPage {
             }
             .width('100%')
           }
-        }, (state: TypingState) => state.messageId)
-      // 底部空白占位:高度等于悬浮输入栏占用空间(输入栏 56 + bottom padding 12 + navBar 12),
-      // 让 scrollEdge(Bottom) 时最后一条消息显示在悬浮输入栏上方,不被遮挡。
-      Blank().height(80 + this.navigationBarHeight)
-    }
-    .width('100%')
-    .padding({
-      left: $r('app.float.app_spacing_12'),
-      right: $r('app.float.app_spacing_12'),
-      top: 4,
-      bottom: 0
-    })
+        }, (state: ChatMessageRenderState) => state.messageId)
+        // 底部空白占位:高度等于悬浮输入栏占用空间(输入栏 56 + bottom padding 12 + navBar 12),
+        // 让 scrollEdge(Bottom) 时最后一条消息显示在悬浮输入栏上方,不被遮挡。
+        Blank().height(80 + this.navigationBarHeight)
+      }
+      .width('100%')
+      .padding({
+        left: $r('app.float.app_spacing_12'),
+        right: $r('app.float.app_spacing_12'),
+        top: 4,
+        bottom: 0
+      })
       .onAreaChange(() => {
         this.autoScrollToBottom();
       })
@@ -635,6 +608,47 @@ struct ChatPage {
         this.viewModel!.userScrolledUp = false;
       }
     })
+  }
+
+  /**
+   * 同步最新消息到稳定 RenderState 列表。
+   *
+   * 关键约束:
+   * - 同一 messageId 始终复用已有 RenderState 实例,保证 ForEach 稳定复用 Bubble
+   * - 已有实例就地调用 applyMessage,@Observed 字段赋值触发 @ObjectLink 响应式重建
+   * - 新消息才创建新 RenderState
+   * - 已不存在于最新消息中的旧状态从缓存中移除
+   * - 始终按最新消息顺序生成新 messageStates 数组(不原地修改)
+   */
+  private syncRenderStates(messages: ChatMessage[]): void {
+    const nextStates: ChatMessageRenderState[] = [];
+    const newIds: Set<string> = new Set<string>();
+    let reusedCount: number = 0;
+    let newCount: number = 0;
+    for (let i: number = 0; i < messages.length; i++) {
+      const msg: ChatMessage = messages[i];
+      newIds.add(msg.id);
+      let state: ChatMessageRenderState | undefined = this.stateMap.get(msg.id);
+      if (state === undefined) {
+        state = new ChatMessageRenderState(msg);
+        this.stateMap.set(msg.id, state);
+        newCount++;
+      } else {
+        state.applyMessage(msg);
+        reusedCount++;
+      }
+      nextStates.push(state);
+    }
+    // 清理已不在最新消息列表中的旧状态
+    const oldIds: string[] = Array.from(this.stateMap.keys());
+    let removedCount: number = 0;
+    for (let i: number = 0; i < oldIds.length; i++) {
+      if (!newIds.has(oldIds[i])) {
+        this.stateMap.delete(oldIds[i]);
+        removedCount++;
+      }
+    }
+    this.messageStates = nextStates;
   }
 
   // ===== 空会话状态 =====

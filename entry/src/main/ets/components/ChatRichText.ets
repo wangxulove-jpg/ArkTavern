@@ -52,16 +52,16 @@ function hashString(str: string): number {
 
 @Component
 export struct ChatRichText {
-  /** 原始文本内容 */
-  @Prop content: string = '';
+  /** 原始文本内容(@Watch 监听变化,触发重新解析) */
+  @Prop @Watch('onContentChange') content: string = '';
   /** 发送者类型 */
   @Prop senderType: ChatSenderType = 'assistant';
-  /** 发送者角色 ID(用于角色独立颜色) */
-  @Prop senderCharacterId: string = '';
-  /** 是否流式渲染(节流刷新) */
-  @Prop isStreaming: boolean = false;
-  /** 文本样式设置 */
-  @Prop settings: ChatTextStyle | null = null;
+  /** 发送者角色 ID(用于角色独立颜色,@Watch 触发重新应用颜色) */
+  @Prop @Watch('onSenderChange') senderCharacterId: string = '';
+  /** 是否流式渲染(节流刷新,@Watch 在生成完成时立即重新解析) */
+  @Prop @Watch('onStreamingChange') isStreaming: boolean = false;
+  /** 文本样式设置(@Watch 触发重新解析) */
+  @Prop @Watch('onSettingsChange') settings: ChatTextStyle | null = null;
   /** 是否可选择(长按复制) */
   @Prop selectable: boolean = true;
 
@@ -74,7 +74,9 @@ export struct ChatRichText {
   /** 流式节流定时器 ID */
   private throttleTimerId: number = -1;
   /** 流式节流间隔(ms) */
-  private static readonly THROTTLE_MS: number = 50;
+  private static readonly THROTTLE_MS: number = 30;
+  /** leading edge 节流:节流窗口内是否有新的 content 更新 */
+  private pendingReparse: boolean = false;
 
   /** 解析缓存(key = content hash + settings version + senderCharacterId) */
   private static cache: Map<string, CacheEntry> = new Map<string, CacheEntry>();
@@ -89,10 +91,38 @@ export struct ChatRichText {
   }
 
   /**
-   * 当 content 或 settings 变化时重新解析。
+   * @Watch 回调:content 变化时重新解析。
+   * 流式期间通过 reparse 内部节流,避免高频刷新。
    */
-  aboutToReuse(): void {
+  private onContentChange(): void {
     this.reparse();
+  }
+
+  /**
+   * @Watch 回调:settings 变化时重新解析。
+   */
+  private onSettingsChange(): void {
+    this.reparse();
+  }
+
+  /**
+   * @Watch 回调:senderCharacterId 变化时重新解析(应用角色颜色)。
+   */
+  private onSenderChange(): void {
+    this.reparse();
+  }
+
+  /**
+   * @Watch 回调:isStreaming 变化时重新解析。
+   * 生成完成(isStreaming: true → false)时立即解析最终内容,
+   * 确保未闭合 Markdown 在完成后正确解析。
+   */
+  private onStreamingChange(): void {
+    // 生成完成时立即重新解析(不走节流)
+    if (!this.isStreaming) {
+      this.clearThrottle();
+      this.doParse();
+    }
   }
 
   /**
@@ -103,21 +133,33 @@ export struct ChatRichText {
       clearTimeout(this.throttleTimerId);
       this.throttleTimerId = -1;
     }
+    this.pendingReparse = false;
   }
 
   /**
    * 重新解析文本。
-   * 流式模式下使用节流。
+   * 流式模式下使用 leading-edge 节流:首个变化立即解析,之后 30ms 内的新变化
+   * 只标记 pending,定时器触发时再补一次解析。
+   * 这样做的好处:首字延迟接近 0,高频流式期间仍能保持稳定刷新频率。
    */
   private reparse(): void {
     if (this.isStreaming) {
-      // 流式模式:节流刷新
-      this.clearThrottle();
-      this.throttleTimerId = setTimeout(() => {
+      // 没有正在跑的节流窗口:立即解析 + 启动 30ms 抑制窗口
+      if (this.throttleTimerId === -1) {
         this.doParse();
-      }, ChatRichText.THROTTLE_MS);
+        this.throttleTimerId = setTimeout(() => {
+          this.throttleTimerId = -1;
+          if (this.pendingReparse) {
+            this.pendingReparse = false;
+            this.doParse();
+          }
+        }, ChatRichText.THROTTLE_MS);
+      } else {
+        // 已有节流窗口:仅标记,定时器触发时再解析
+        this.pendingReparse = true;
+      }
     } else {
-      // 非流式:立即解析
+      // 非流式:立即解析,清空节流
       this.clearThrottle();
       this.doParse();
     }
@@ -126,6 +168,10 @@ export struct ChatRichText {
   /**
    * 执行解析。
    * 带缓存,避免重复解析未变化的历史消息。
+   *
+   * 流式期间(content 持续增长时)不写入缓存,避免高频 streaming content
+   * 持续占用 cache 槽位并触发全量 clear,导致历史消息缓存被淘汰。
+   * 流式结束后(isStreaming=false)的最终内容才写入缓存复用。
    */
   private doParse(): void {
     if (this.content.length === 0) {
@@ -162,17 +208,19 @@ export struct ChatRichText {
     };
     const parsed: ChatTextSegment[] = parseChatText(this.content, options);
 
-    // 缓存
-    if (ChatRichText.cache.size >= ChatRichText.CACHE_MAX_SIZE) {
-      // 简单淘汰:清空一半
-      ChatRichText.cache.clear();
+    // 仅在非流式状态写入长期缓存,避免流式内容污染 cache
+    if (!this.isStreaming) {
+      if (ChatRichText.cache.size >= ChatRichText.CACHE_MAX_SIZE) {
+        // 简单淘汰:清空一半
+        ChatRichText.cache.clear();
+      }
+      ChatRichText.cache.set(cacheKey, {
+        segments: parsed,
+        contentHash,
+        settingsVersion,
+        senderCharacterId: this.senderCharacterId
+      });
     }
-    ChatRichText.cache.set(cacheKey, {
-      segments: parsed,
-      contentHash,
-      settingsVersion,
-      senderCharacterId: this.senderCharacterId
-    });
 
     this.segments = parsed;
     this.lastContentHash = contentHash;

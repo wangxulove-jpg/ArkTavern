@@ -54,7 +54,7 @@ import {
   MessageSwipeState,
   MAX_SWIPE_CANDIDATES
 } from '../models/MessageSwipe';
-import { ChatMessage, ChatMessageStatus, createChatMessage } from '../models/ChatMessage';
+import { ChatMessage, ChatMessageStatus, createChatMessage, mergeChatMessage } from '../models/ChatMessage';
 import { ChatMessageSource } from '../models/ChatMessageSource';
 import { ChatRequestOptions } from '../models/ChatRequest';
 import { ChatRole } from '../models/ChatRole';
@@ -925,17 +925,11 @@ export class ChatService {
     // 在 emitMessages 之前修正 placeholder 为 Streaming 状态,确保 UI 正确显示打字机效果。
     this.messages = this.messages.map((msg: ChatMessage): ChatMessage => {
       if (msg.id === newAssistantId) {
-        return {
-          id: msg.id,
-          role: msg.role,
-          content: msg.content,
-          createdAt: msg.createdAt,
-          updatedAt: msg.updatedAt,
+        // 完整不可变复制:使用 mergeChatMessage 保留所有字段
+        return mergeChatMessage(msg, {
           isStreaming: true,
-          errorMessage: msg.errorMessage,
-          status: ChatMessageStatus.Streaming,
-          source: msg.source
-        };
+          status: ChatMessageStatus.Streaming
+        });
       }
       return msg;
     });
@@ -1479,10 +1473,17 @@ export class ChatService {
       },
       onDelta: (delta: ChatDelta): void => {
         this.clearStartTimer();
+        Logger.info(LOG_TAG, `onDelta entry aid=${assistantId.slice(0,8)} delta.len=${delta.content.length} state=${String(this.state)} disposed=${String(this.disposed)}`);
         if (this.disposed) {
           return;
         }
-        if (this.state !== ChatState.Streaming) {
+        // 允许 Sending 与 Streaming 状态处理 delta:
+        // streamCurrentChat 可能在同步/微任务阶段触发首帧 delta,
+        // 此时 setState(Streaming) 尚未执行(state 仍为 Sending),
+        // 严格守卫会丢弃所有 delta 导致回复内容为空。
+        // 对齐 onComplete(行 1502)的守卫策略。
+        if (this.state !== ChatState.Streaming && this.state !== ChatState.Sending) {
+          Logger.warn(LOG_TAG, `onDelta DROPPED state=${String(this.state)}`);
           return;
         }
         if (!isCurrent()) {
@@ -2130,15 +2131,15 @@ export class ChatService {
     }
     this.messages = this.messages.map((msg: ChatMessage): ChatMessage => {
       if (msg.id === assistantId) {
-        return {
-          id: msg.id,
-          role: msg.role,
+        // 完整不可变复制:使用 mergeChatMessage 保留所有字段
+        // (senderType / senderCharacterId / source / sceneId / generationBatchId /
+        //  visibility / recipientCharacterIds / participantIds / witnessIds 等)
+        return mergeChatMessage(msg, {
           content: msg.content + delta,
-          createdAt: msg.createdAt,
           updatedAt: Date.now(),
           isStreaming: true,
           status: ChatMessageStatus.Streaming
-        };
+        });
       }
       return msg;
     });
@@ -2176,16 +2177,14 @@ export class ChatService {
           finalError = '生成失败,未收到回复';
         }
         resultStatus = finalStatus;
-        return {
-          id: msg.id,
-          role: msg.role,
+        // 完整不可变复制:使用 mergeChatMessage 保留所有字段
+        return mergeChatMessage(msg, {
           content: finalContent,
-          createdAt: msg.createdAt,
           updatedAt: Date.now(),
           isStreaming: false,
           errorMessage: finalError,
           status: finalStatus
-        };
+        });
       }
       return msg;
     });
@@ -2207,17 +2206,14 @@ export class ChatService {
     }
     this.messages = this.messages.map((msg: ChatMessage): ChatMessage => {
       if (msg.id === assistantId) {
-        return {
-          id: msg.id,
-          role: msg.role,
-          content: msg.content,
-          createdAt: msg.createdAt,
+        // 完整不可变复制:使用 mergeChatMessage 保留所有字段
+        return mergeChatMessage(msg, {
+          content: _content !== undefined ? _content : msg.content,
           updatedAt: Date.now(),
           isStreaming: false,
           errorMessage: errorMessage !== undefined ? errorMessage : msg.errorMessage,
-          status: status,
-          source: msg.source
-        };
+          status: status
+        });
       }
       return msg;
     });
@@ -2826,17 +2822,14 @@ export class ChatService {
     this.messages = this.messages.map((msg: ChatMessage): ChatMessage => {
       if (msg.id === assistantMessageId) {
         found = true;
-        return {
-          id: msg.id,
-          role: msg.role,
+        // 完整不可变复制:使用 mergeChatMessage 保留所有字段
+        return mergeChatMessage(msg, {
           content: '',
-          createdAt: msg.createdAt,
           updatedAt: Date.now(),
           isStreaming: true,
           errorMessage: undefined,
-          status: ChatMessageStatus.Streaming,
-          source: msg.source
-        };
+          status: ChatMessageStatus.Streaming
+        });
       }
       return msg;
     });

@@ -321,6 +321,8 @@ export class ChatViewModel {
     this.isGenerating = false;
     this.statusMessage = '已停止';
     this.canRegenerate = this.chatService.canRegenerate();
+    // 终态: 立即强制 flush
+    this.flushMessagesNow();
   }
 
   clear(): void {
@@ -331,6 +333,8 @@ export class ChatViewModel {
     this.isGenerating = false;
     this.canRegenerate = false;
     this.userScrolledUp = false;
+    // 终态: 立即强制 flush(clear 立刻清空,无需等待节流)
+    this.flushMessagesNow();
     // 同步清空到 ChatPage 的独立 @State 变量
     if (this.onMessagesUpdate !== undefined) {
       this.onMessagesUpdate([]);
@@ -1064,6 +1068,19 @@ export class ChatViewModel {
     }
   }
 
+  /**
+   * 强制立即 flush(用于终态等不能等待节流的场景)。
+   * - 清除 pending flush timer
+   * - 立即执行一次 flush,确保最新 content/status/isStreaming 同步到 UI
+   */
+  private flushMessagesNow(): void {
+    if (this.flushTimerId !== -1) {
+      clearTimeout(this.flushTimerId);
+      this.flushTimerId = -1;
+    }
+    this.flushMessages();
+  }
+
   // ===== 内部方法 =====
 
   /**
@@ -1120,6 +1137,8 @@ export class ChatViewModel {
         this.swipeSummaries = this.chatService.getSwipeSummaries();
         // T-6.4B-1.2: 生成完成后同步 Branch 状态(新 Branch 已持久化)
         this.syncBranchState();
+        // 终态: 立即强制 flush,确保最终 content/status/isStreaming 同步到 UI
+        this.flushMessagesNow();
         break;
       case ChatState.Cancelled:
         this.isGenerating = false;
@@ -1127,6 +1146,8 @@ export class ChatViewModel {
         this.canRegenerate = this.chatService.canRegenerate();
         this.swipeSummaries = this.chatService.getSwipeSummaries();
         this.syncBranchState();
+        // 终态: 立即强制 flush
+        this.flushMessagesNow();
         break;
       case ChatState.Failed:
         this.isGenerating = false;
@@ -1134,6 +1155,8 @@ export class ChatViewModel {
         this.canRegenerate = this.chatService.canRegenerate();
         this.swipeSummaries = this.chatService.getSwipeSummaries();
         this.syncBranchState();
+        // 终态: 立即强制 flush
+        this.flushMessagesNow();
         break;
       default:
         break;

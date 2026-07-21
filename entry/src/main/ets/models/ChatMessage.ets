@@ -130,3 +130,94 @@ export function createChatMessage(
     createdAt: createdAt
   };
 }
+
+/**
+ * ChatMessage 字段覆盖接口(用于 mergeChatMessage)。
+ * 所有字段可选,只指定需要修改的字段,其余从 base 复制。
+ */
+export interface ChatMessageOverrides {
+  content?: string;
+  updatedAt?: number;
+  isStreaming?: boolean;
+  errorMessage?: string;
+  status?: ChatMessageStatus;
+  source?: ChatMessageSource;
+  senderType?: MessageSenderType;
+  senderCharacterId?: string;
+  sceneId?: string;
+  generationBatchId?: string;
+  visibility?: MessageVisibility;
+  recipientCharacterIds?: string[];
+  participantIds?: string[];
+  witnessIds?: string[];
+}
+
+/**
+ * 完整复制 ChatMessage(深拷贝数组字段)。
+ * @param msg 源消息
+ * @returns 新的 ChatMessage 对象,所有字段独立
+ */
+export function cloneChatMessage(msg: ChatMessage): ChatMessage {
+  return {
+    id: msg.id,
+    role: msg.role,
+    content: msg.content,
+    createdAt: msg.createdAt,
+    updatedAt: msg.updatedAt,
+    isStreaming: msg.isStreaming,
+    errorMessage: msg.errorMessage,
+    status: msg.status,
+    source: msg.source,
+    senderType: msg.senderType,
+    senderCharacterId: msg.senderCharacterId,
+    sceneId: msg.sceneId,
+    generationBatchId: msg.generationBatchId,
+    visibility: msg.visibility,
+    recipientCharacterIds: msg.recipientCharacterIds !== undefined
+      ? msg.recipientCharacterIds.slice() : undefined,
+    participantIds: msg.participantIds !== undefined
+      ? msg.participantIds.slice() : undefined,
+    witnessIds: msg.witnessIds !== undefined
+      ? msg.witnessIds.slice() : undefined
+  };
+}
+
+/**
+ * 基于 base 创建新 ChatMessage,应用 overrides 覆盖指定字段。
+ * 未在 overrides 中指定的字段从 base 完整复制(包括数组字段的深拷贝)。
+ * @param base 基础消息
+ * @param overrides 字段覆盖
+ * @returns 新的 ChatMessage 对象
+ */
+export function mergeChatMessage(
+  base: ChatMessage,
+  overrides: ChatMessageOverrides
+): ChatMessage {
+  return {
+    id: base.id,
+    role: base.role,
+    content: overrides.content !== undefined ? overrides.content : base.content,
+    createdAt: base.createdAt,
+    updatedAt: overrides.updatedAt !== undefined ? overrides.updatedAt : base.updatedAt,
+    isStreaming: overrides.isStreaming !== undefined ? overrides.isStreaming : base.isStreaming,
+    errorMessage: overrides.errorMessage !== undefined ? overrides.errorMessage : base.errorMessage,
+    status: overrides.status !== undefined ? overrides.status : base.status,
+    source: overrides.source !== undefined ? overrides.source : base.source,
+    senderType: overrides.senderType !== undefined ? overrides.senderType : base.senderType,
+    senderCharacterId: overrides.senderCharacterId !== undefined
+      ? overrides.senderCharacterId : base.senderCharacterId,
+    sceneId: overrides.sceneId !== undefined ? overrides.sceneId : base.sceneId,
+    generationBatchId: overrides.generationBatchId !== undefined
+      ? overrides.generationBatchId : base.generationBatchId,
+    visibility: overrides.visibility !== undefined ? overrides.visibility : base.visibility,
+    recipientCharacterIds: overrides.recipientCharacterIds !== undefined
+      ? overrides.recipientCharacterIds.slice()
+      : (base.recipientCharacterIds !== undefined ? base.recipientCharacterIds.slice() : undefined),
+    participantIds: overrides.participantIds !== undefined
+      ? overrides.participantIds.slice()
+      : (base.participantIds !== undefined ? base.participantIds.slice() : undefined),
+    witnessIds: overrides.witnessIds !== undefined
+      ? overrides.witnessIds.slice()
+      : (base.witnessIds !== undefined ? base.witnessIds.slice() : undefined)
+  };
+}
