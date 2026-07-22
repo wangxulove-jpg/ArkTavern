@@ -95,57 +95,54 @@ export struct ChatMessageBubble {
     .margin({ top: 4, bottom: 4 })
   }
 
-  /** User 消息:右对齐,accent 背景 */
+  /** User 消息:右对齐,accent 背景(头像在气泡上方) */
   @Builder
   userBubble() {
-    Row() {
+    Column() {
+      // 气泡
       Column() {
-        Column() {
-          ChatRichText({
-            content: this.renderState.content.length > 0 ? this.renderState.content : ' ',
-            senderType: 'user' as ChatSenderType,
-            senderCharacterId: '',
-            isStreaming: false,
-            settings: this.settings,
-            selectable: true
-          })
-        }
-        .constraintSize({ maxWidth: '78%' })
-        .backgroundColor($r('app.color.chat_user_bubble'))
-        .borderRadius({
-          topLeft: 18, topRight: 18,
-          bottomLeft: 18, bottomRight: 6
+        ChatRichText({
+          content: this.renderState.content.length > 0 ? this.renderState.content : ' ',
+          senderType: 'user' as ChatSenderType,
+          senderCharacterId: '',
+          isStreaming: false,
+          settings: this.settings,
+          selectable: true
         })
-        .padding({ left: 14, right: 14, top: 10, bottom: 12 })
-        .gesture(
-          LongPressGesture()
-            .onAction(() => {
-              if (this.onLongPress !== undefined) {
-                this.onLongPress!(this.renderState.message);
-              }
-            })
-        )
       }
-      .alignItems(HorizontalAlign.End)
-      .layoutWeight(1)
+      .constraintSize({ maxWidth: '94%' })
+      .backgroundColor($r('app.color.chat_user_bubble'))
+      .borderRadius({
+        topLeft: 16, topRight: 16,
+        bottomLeft: 16, bottomRight: 6
+      })
+      .padding({ left: 16, right: 16, top: 11, bottom: 11 })
+      .gesture(
+        LongPressGesture()
+          .onAction(() => {
+            if (this.onLongPress !== undefined) {
+              this.onLongPress!(this.renderState.message);
+            }
+          })
+      )
     }
     .width('100%')
-    .justifyContent(FlexAlign.End)
-    .margin({ top: 6, bottom: 6 })
+    .alignItems(HorizontalAlign.End)
+    .margin({ top: 8, bottom: 8 })
   }
 
-  /** Assistant 消息:头像 + 左对齐气泡 */
+  /** Assistant 消息:头像在气泡上方 + 左对齐气泡 */
   @Builder
   assistantBubble() {
-    Row() {
+    Column() {
       // 头像(可选,空会话等场景不显示)
       if (this.showAvatar) {
         CharacterImageView({
           imageUri: this.characterAvatarUri,
           fallbackName: this.characterName,
-          imgWidth: 36,
-          imgHeight: 36,
-          imgBorderRadius: 18,
+          imgWidth: 32,
+          imgHeight: 32,
+          imgBorderRadius: 16,
           displayMode: 'thumbnail',
           objectFit: ImageFit.Cover
         })
@@ -154,6 +151,7 @@ export struct ChatMessageBubble {
               this.onAvatarClick!();
             }
           })
+          .margin({ bottom: 6 })
       }
 
       // 气泡
@@ -221,12 +219,11 @@ export struct ChatMessageBubble {
       }
       .backgroundColor($r('app.color.chat_assistant_bubble'))
       .borderRadius({
-        topLeft: 6, topRight: 18,
-        bottomLeft: 18, bottomRight: 18
+        topLeft: 6, topRight: 16,
+        bottomLeft: 16, bottomRight: 16
       })
-      .padding({ left: 14, right: 14, top: 10, bottom: 12 })
-      .constraintSize({ maxWidth: '78%' })
-      .margin({ left: this.showAvatar ? 8 : 0 })
+      .padding({ left: 16, right: 16, top: 11, bottom: 11 })
+      .constraintSize({ maxWidth: '94%' })
       .alignItems(HorizontalAlign.Start)
       // 微阴影:让 Assistant 气泡在浅色背景上有浮起感
       .shadow({
@@ -245,8 +242,7 @@ export struct ChatMessageBubble {
       )
     }
     .width('100%')
-    .justifyContent(FlexAlign.Start)
-    .alignItems(VerticalAlign.Top)
-    .margin({ top: 6, bottom: 6 })
+    .alignItems(HorizontalAlign.Start)
+    .margin({ top: 8, bottom: 8 })
   }
 }

@@ -98,6 +98,15 @@ export struct SettingsRootView {
                 router.pushUrl({ url: 'pages/AppSettingsPage' });
               }
             )
+
+            // ===== 开发测试(T--3D.1 临时入口,Phase 完成后移除) =====
+            this.entryCard(
+              '3D 渲染 PoC',
+              '临时开发测试:验证 Component3D 与 ArkGraphics3D API',
+              () => {
+                router.pushUrl({ url: 'pages/Character3DPocPage' });
+              }
+            )
           }
           .width('100%')
           .padding({

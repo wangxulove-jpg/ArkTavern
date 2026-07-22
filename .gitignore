@@ -17,6 +17,7 @@
 .tmp/
 .tmp_ui_dump/
 /screenshot/
+/screenshots/
 /tools/uitest/
 /tools/uitest_dump/
 

@@ -22,6 +22,7 @@
     "pages/WorldCreatePage",
     "pages/WorldChatPage",
     "pages/WorldMembersPage",
-    "pages/WorldCharacterMemoryPage"
+    "pages/WorldCharacterMemoryPage",
+    "pages/Character3DPocPage"
   ]
 }

@@ -57,6 +57,7 @@ import { ContextBudgetService } from './ContextBudgetService';
 import { ChatService } from './ChatService';
 import { ChatPersistenceService } from './ChatPersistenceService';
 import { ChatBackgroundService } from './ChatBackgroundService';
+import { Character3DService } from './Character3DService';
 import { ModelService } from './ModelService';
 import { DefaultProviderFactory } from './ProviderFactory';
 import { HttpClient } from '../network/core/HttpClient';
@@ -83,6 +84,7 @@ import { MultiPersonPromptBuilder } from './MultiPersonPromptBuilder';
 import { MultiPersonResponseParser } from './MultiPersonResponseParser';
 import { MultiPersonChatService } from './MultiPersonChatService';
 import { ChatTextStyleSettings } from '../utils/ChatTextStyleSettings';
+import { Chat3DDisplaySettings } from '../utils/Chat3DDisplaySettings';
 import { Logger } from '../utils/Logger';
 
 const LOG_TAG: string = 'AppServices';
@@ -162,6 +164,8 @@ export class AppServices {
   private contextBudgetService: ContextBudgetService | null = null;
   /** ChatBackgroundService 聊天背景图服务(导入图片 + 模糊度 + 暗化)。在 initialize 中创建。 */
   private chatBackgroundService: ChatBackgroundService | null = null;
+  /** Character3DService 3D 模型导入与持久化服务(临时 PoC:T-3D.2)。在 initialize 中创建。 */
+  private character3DService: Character3DService | null = null;
   /** 市场服务(Chub 公共只读浏览 + 搜索 + 详情 + 下载) */
   readonly marketService: MarketService;
   /** 市场导入服务(需要 context,在 initialize 中创建) */
@@ -186,6 +190,8 @@ export class AppServices {
   private readonly multiPersonResponseParser: MultiPersonResponseParser;
   /** ChatTextStyleSettings 聊天文本样式设置(v11 富文本) */
   readonly chatTextStyleSettings: ChatTextStyleSettings;
+  /** Chat3DDisplaySettings 聊天页 3D 显示开关设置(T-3D.5) */
+  private chat3DDisplaySettings: Chat3DDisplaySettings | null = null;
 
   /**
    * 私有构造,组装全部依赖。
@@ -194,6 +200,7 @@ export class AppServices {
   private constructor() {
     this.appPreferences = new AppPreferences();
     this.chatTextStyleSettings = new ChatTextStyleSettings(this.appPreferences);
+    this.chat3DDisplaySettings = new Chat3DDisplaySettings(this.appPreferences);
     const configStore: ProviderConfigStore = new ProviderConfigStore(this.appPreferences);
     const assetKeyStore: AssetStoreKeyStore = new AssetStoreKeyStore();
     const providerKeyStore: ProviderKeyStore = new ProviderKeyStore(assetKeyStore);
@@ -347,6 +354,10 @@ export class AppServices {
       .then((): Promise<void> => services.appPreferences.initialize(context))
       .then(async (): Promise<void> => {
         await services.chatTextStyleSettings.load();
+        // T-3D.5: 加载 3D 显示开关(默认关闭,读取失败时安全降级)
+        if (services.chat3DDisplaySettings !== null) {
+          await services.chat3DDisplaySettings.load();
+        }
       })
       .then((): Promise<void> => services.dbHelper.initialize(context))
       .then((): Promise<void> => services.characterService.initialize(context))
@@ -367,6 +378,13 @@ export class AppServices {
             services.appContext, services.appPreferences);
         } else {
           Logger.warn(LOG_TAG, 'appContext is null, chatBackgroundService not created');
+        }
+        // 创建 Character3DService(临时 PoC:T-3D.2,需要 appContext + appPreferences)
+        if (services.appContext !== null) {
+          services.character3DService = new Character3DService(
+            services.appContext, services.appPreferences);
+        } else {
+          Logger.warn(LOG_TAG, 'appContext is null, character3DService not created');
         }
         // 创建 ContextBudgetService(只需 appPreferences)
         services.contextBudgetService = new ContextBudgetService(services.appPreferences);
@@ -528,6 +546,27 @@ export class AppServices {
    */
   static getChatBackgroundService(): ChatBackgroundService | null {
     return AppServices.getInstance().chatBackgroundService;
+  }
+
+  /**
+   * 获取 Character3DService 实例。
+   * 用于 3D PoC 页面导入/读取/清除 GLB 模型(临时 PoC:T-3D.2)。
+   * 如果初始化时 appContext 不可用,返回 null。
+   */
+  static getCharacter3DService(): Character3DService | null {
+    return AppServices.getInstance().character3DService;
+  }
+
+  /**
+   * 获取 Chat3DDisplaySettings 实例(T-3D.5 聊天页 3D 显示开关)。
+   * 用于 AppSettingsPage 读写开关状态,以及 ChatPage 读取当前开关。
+   */
+  static getChat3DDisplaySettings(): Chat3DDisplaySettings {
+    const settings: Chat3DDisplaySettings | null = AppServices.getInstance().chat3DDisplaySettings;
+    if (settings === null) {
+      throw new Error('Chat3DDisplaySettings not initialized');
+    }
+    return settings;
   }
 
   /**

@@ -12,6 +12,10 @@
  * - 重新生成(底部 canRegenerate 时)
  * - 清空对话(危险操作,二次确认)
  *
+ * T-3D.5A 新增:
+ * - 3D 角色模型开关(读写同一 Chat3DDisplaySettings)
+ * - 模型显示比例调节(Slider + 自动适配)
+ *
  * 复用 ChatViewModel 数据,不在组件内做业务操作。
  */
 
@@ -62,6 +66,35 @@ export struct ChatMoreMenuSheet {
   @Prop userNameOverride: string = '';
   /** v9: 当前生效的用户称呼(用于在菜单展示) */
   @Prop resolvedUserName: string = '';
+
+  /** T-3D.5A: 是否为单人角色聊天(决定是否显示 3D 开关) */
+  @Prop isSingleCharacterChat: boolean = false;
+  /** T-3D.5A: 3D 显示开关当前值 */
+  @Prop chat3DEnabled: boolean = false;
+  /** T-3D.5A: 当前模型显示比例(用于 Slider 初始值) */
+  @Prop modelScale: number = 1.0;
+  /** T-3D.5A: 是否有外部模型(决定是否显示 scale 调节) */
+  @Prop hasExternalModel: boolean = false;
+  /** T-3D.5B: 3D 区域占比(0.25 ~ 0.65) */
+  @Prop panelRatio: number = 0.40;
+  /** T-3D.5B: 旋转灵敏度(0.2 ~ 2.0) */
+  @Prop rotationSensitivity: number = 1.0;
+  /** T-3D.5A: 切换 3D 开关 */
+  onToggleChat3D: (enabled: boolean) => void = () => {};
+  /** T-3D.5A: scale 变化(实时预览,不落盘) */
+  onScaleChange: (scale: number) => void = () => {};
+  /** T-3D.5A: scale 确认(落盘) */
+  onScaleConfirm: () => void = () => {};
+  /** T-3D.5A: 自动适配(恢复当前模型 autoFit) */
+  onAutoFit: () => void = () => {};
+  /** T-3D.5B: panelRatio 变化(实时预览) */
+  onPanelRatioChange: (ratio: number) => void = () => {};
+  /** T-3D.5B: panelRatio 确认(落盘) */
+  onPanelRatioConfirm: () => void = () => {};
+  /** T-3D.5B: 旋转灵敏度变化(实时预览) */
+  onSensitivityChange: (sensitivity: number) => void = () => {};
+  /** T-3D.5B: 旋转灵敏度确认(落盘) */
+  onSensitivityConfirm: () => void = () => {};
 
   build() {
     if (this.visible) {
@@ -122,6 +155,28 @@ export struct ChatMoreMenuSheet {
 
       Divider().color($r('app.color.app_divider')).margin({ top: 8, bottom: 8 })
 
+      // T-3D.5A: 3D 角色模型开关(仅单人角色聊天显示)
+      if (this.isSingleCharacterChat) {
+        this.toggle3DRow()
+      }
+
+      // T-3D.5A: 模型显示比例调节(3D 开启 + 有外部模型时显示)
+      if (this.isSingleCharacterChat && this.chat3DEnabled && this.hasExternalModel) {
+        this.scaleSliderRow()
+      }
+
+      // T-3D.5B: 3D 画面占比调节(3D 开启时显示)
+      if (this.isSingleCharacterChat && this.chat3DEnabled) {
+        this.panelRatioSliderRow()
+      }
+
+      // T-3D.5B: 旋转灵敏度调节(3D 开启时显示)
+      if (this.isSingleCharacterChat && this.chat3DEnabled) {
+        this.sensitivitySliderRow()
+      }
+
+      Divider().color($r('app.color.app_divider')).margin({ top: 8, bottom: 8 })
+
       // 会话列表
       this.menuRow('会话列表', false, false, (): void => {
         this.onOpenSessionList();
@@ -178,6 +233,191 @@ export struct ChatMoreMenuSheet {
       this.menuRow('清空对话', this.busy, true, (): void => {
         this.onClearChat();
       })
+    }
+    .width('100%')
+  }
+
+  /**
+   * T-3D.5A: 3D 角色模型开关行。
+   * 读写同一 Chat3DDisplaySettings,与全局设置页同步。
+   */
+  @Builder
+  toggle3DRow() {
+    Row() {
+      Text('3D 角色模型')
+        .fontSize($r('app.float.app_font_body'))
+        .fontColor($r('app.color.app_text_primary'))
+        .layoutWeight(1)
+      Toggle({ type: ToggleType.Switch, isOn: this.chat3DEnabled })
+        .onChange((isOn: boolean) => {
+          this.onToggleChat3D(isOn);
+        })
+    }
+    .width('100%')
+    .height(52)
+    .padding({ left: 16, right: 16 })
+    .alignItems(VerticalAlign.Center)
+  }
+
+  /**
+   * T-3D.5A: 模型显示比例调节行。
+   * Slider 拖动时实时预览(不落盘),拖动结束后落盘。
+   * 提供"自动适配"按钮,恢复当前模型 autoFit 计算。
+   */
+  @Builder
+  scaleSliderRow() {
+    Column() {
+      Row() {
+        Text('模型显示比例')
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor($r('app.color.app_text_primary'))
+          .layoutWeight(1)
+        Text(this.modelScale.toFixed(2))
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+        Button('自动适配')
+          .fontSize($r('app.float.app_font_caption'))
+          .backgroundColor($r('app.color.app_surface_2'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(28)
+          .padding({ left: 12, right: 12 })
+          .margin({ left: 8 })
+          .onClick(() => {
+            this.onAutoFit();
+          })
+      }
+      .width('100%')
+      .height(40)
+      .padding({ left: 16, right: 16 })
+      .alignItems(VerticalAlign.Center)
+
+      Row() {
+        Slider({
+          value: this.modelScale,
+          min: 0.25,
+          max: 8.0,
+          step: 0.1
+        })
+          .layoutWeight(1)
+          .blockColor($r('app.color.app_accent'))
+          .trackColor($r('app.color.app_surface_2'))
+          .selectedColor($r('app.color.app_accent'))
+          .onChange((value: number, mode: SliderChangeMode) => {
+            // 实时预览(Moving/Click 模式)
+            if (mode === SliderChangeMode.Moving || mode === SliderChangeMode.Click) {
+              this.onScaleChange(value);
+            }
+            // 拖动结束落盘(End/Click 模式)
+            if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+              this.onScaleConfirm();
+            }
+          })
+      }
+      .width('100%')
+      .height(40)
+      .padding({ left: 16, right: 16 })
+      .alignItems(VerticalAlign.Center)
+    }
+    .width('100%')
+  }
+
+  /**
+   * T-3D.5B: 3D 画面占比调节行。
+   * 控制聊天页中 3D 区域占可用高度的比例(0.25 ~ 0.65)。
+   * Slider 拖动时实时预览,拖动结束后落盘。
+   */
+  @Builder
+  panelRatioSliderRow() {
+    Column() {
+      Row() {
+        Text('3D 画面占比')
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor($r('app.color.app_text_primary'))
+          .layoutWeight(1)
+        Text(Math.round(this.panelRatio * 100) + '%')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+      }
+      .width('100%')
+      .height(40)
+      .padding({ left: 16, right: 16 })
+      .alignItems(VerticalAlign.Center)
+
+      Row() {
+        Slider({
+          value: this.panelRatio,
+          min: 0.25,
+          max: 0.65,
+          step: 0.05
+        })
+          .layoutWeight(1)
+          .blockColor($r('app.color.app_accent'))
+          .trackColor($r('app.color.app_surface_2'))
+          .selectedColor($r('app.color.app_accent'))
+          .onChange((value: number, mode: SliderChangeMode) => {
+            if (mode === SliderChangeMode.Moving || mode === SliderChangeMode.Click) {
+              this.onPanelRatioChange(value);
+            }
+            if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+              this.onPanelRatioConfirm();
+            }
+          })
+      }
+      .width('100%')
+      .height(40)
+      .padding({ left: 16, right: 16 })
+      .alignItems(VerticalAlign.Center)
+    }
+    .width('100%')
+  }
+
+  /**
+   * T-3D.5B: 旋转灵敏度调节行。
+   * 控制单指拖动旋转模型时的灵敏度(0.2 ~ 2.0,1.0 = 标准)。
+   * Slider 拖动时实时生效,拖动结束后落盘。
+   */
+  @Builder
+  sensitivitySliderRow() {
+    Column() {
+      Row() {
+        Text('旋转灵敏度')
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor($r('app.color.app_text_primary'))
+          .layoutWeight(1)
+        Text(this.rotationSensitivity.toFixed(2))
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+      }
+      .width('100%')
+      .height(40)
+      .padding({ left: 16, right: 16 })
+      .alignItems(VerticalAlign.Center)
+
+      Row() {
+        Slider({
+          value: this.rotationSensitivity,
+          min: 0.2,
+          max: 2.0,
+          step: 0.05
+        })
+          .layoutWeight(1)
+          .blockColor($r('app.color.app_accent'))
+          .trackColor($r('app.color.app_surface_2'))
+          .selectedColor($r('app.color.app_accent'))
+          .onChange((value: number, mode: SliderChangeMode) => {
+            if (mode === SliderChangeMode.Moving || mode === SliderChangeMode.Click) {
+              this.onSensitivityChange(value);
+            }
+            if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+              this.onSensitivityConfirm();
+            }
+          })
+      }
+      .width('100%')
+      .height(40)
+      .padding({ left: 16, right: 16 })
+      .alignItems(VerticalAlign.Center)
     }
     .width('100%')
   }

@@ -12,6 +12,7 @@ import { router, promptAction } from '@kit.ArkUI';
 import { AppServices } from '../services/AppServices';
 import { AppPreferences } from '../storage/AppPreferences';
 import { GLOBAL_USER_NAME_KEY } from '../services/ChatService';
+import { Chat3DDisplaySettings } from '../utils/Chat3DDisplaySettings';
 
 @Entry
 @Component
@@ -26,11 +27,20 @@ struct AppSettingsPage {
   @State isLoading: boolean = true;
   /** 错误提示(空表示无错误) */
   @State errorMessage: string = '';
+  /** T-3D.5: 3D 显示开关(从 Chat3DDisplaySettings 加载) */
+  @State chat3DEnabled: boolean = false;
 
   private preferences: AppPreferences | null = null;
+  private chat3DSettings: Chat3DDisplaySettings | null = null;
 
   aboutToAppear(): void {
     this.preferences = AppServices.getAppPreferences();
+    try {
+      this.chat3DSettings = AppServices.getChat3DDisplaySettings();
+      this.chat3DEnabled = this.chat3DSettings.isEnabled();
+    } catch (_e) {
+      // Chat3DDisplaySettings 未初始化时保持默认关闭
+    }
     this.loadGlobalUserName();
   }
 
@@ -64,6 +74,26 @@ struct AppSettingsPage {
       promptAction.showToast({ message: $r('app.string.settings_global_user_name_save_failed') });
     } finally {
       this.isSaving = false;
+    }
+  }
+
+  /**
+   * T-3D.5: 切换 3D 显示开关。
+   * 写入成功后通过 AppStorage 通知 ChatPage 刷新。
+   */
+  private async toggleChat3D(enabled: boolean): Promise<void> {
+    if (this.chat3DSettings === null) {
+      this.errorMessage = 'Chat3DDisplaySettings 未初始化';
+      return;
+    }
+    try {
+      await this.chat3DSettings.setEnabled(enabled);
+      this.chat3DEnabled = enabled;
+    } catch (e) {
+      // 写入失败时回滚 UI 状态
+      this.chat3DEnabled = !enabled;
+      this.errorMessage = '保存失败';
+      promptAction.showToast({ message: $r('app.string.settings_global_user_name_save_failed') });
     }
   }
 
@@ -167,6 +197,40 @@ struct AppSettingsPage {
               .onClick(() => {
                 this.saveGlobalUserName();
               })
+
+            // T-3D.5: 聊天显示分区
+            Text($r('app.string.settings_chat_3d_section'))
+              .fontSize($r('app.float.app_font_subtitle'))
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.page_primary_text'))
+              .width('100%')
+              .margin({ top: 32, bottom: 12 })
+
+            Row() {
+              Column() {
+                Text($r('app.string.settings_chat_3d_enable_label'))
+                  .fontSize($r('app.float.app_font_body'))
+                  .fontColor($r('app.color.page_primary_text'))
+                  .width('100%')
+                Text($r('app.string.settings_chat_3d_enable_hint'))
+                  .fontSize($r('app.float.app_font_caption'))
+                  .fontColor($r('app.color.page_secondary_text'))
+                  .width('100%')
+                  .margin({ top: 4 })
+              }
+              .layoutWeight(1)
+              .alignItems(HorizontalAlign.Start)
+
+              Toggle({ type: ToggleType.Switch, isOn: this.chat3DEnabled })
+                .onChange((isOn: boolean) => {
+                  this.toggleChat3D(isOn);
+                })
+            }
+            .width('100%')
+            .padding({
+              top: $r('app.float.app_spacing_12'),
+              bottom: $r('app.float.app_spacing_12')
+            })
           }
           .width('100%')
           .padding({
