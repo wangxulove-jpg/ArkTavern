@@ -330,6 +330,19 @@ export struct CharacterRootView {
 
       Blank()
 
+      // T-3D.6B 临时开发测试入口:直接跳转动作管理页(绕过设置 tab 导航)
+      // Phase 1 完成后移除
+      Button('动作管理(测试)')
+        .fontSize(13)
+        .fontColor('#ffffff')
+        .backgroundColor('#ff9800')
+        .height(36)
+        .padding({ left: 12, right: 12 })
+        .margin({ right: 8 })
+        .onClick(() => {
+          router.pushUrl({ url: 'pages/Character3DActionManagerPage' });
+        })
+
       Button($r('app.string.character_import'))
         .fontSize($r('app.float.app_font_body'))
         .fontColor($r('app.color.app_accent'))

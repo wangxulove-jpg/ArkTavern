@@ -95,6 +95,10 @@ struct Character3DPocPage {
   @State private isSavingConfig: boolean = false;
   /** T-3D.5: 测试运行中 */
   @State private isRunningTests: boolean = false;
+  /** T-3D.6C-C: 模型转换进度消息(空字符串表示无转换进行中) */
+  @State private conversionProgressMessage: string = '';
+  /** T-3D.6C-C: 模型转换进度百分比 */
+  @State private conversionProgressPercent: number = 0;
   /** 顶部状态栏避让高度 */
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   /** 底部导航栏避让高度 */
@@ -180,6 +184,36 @@ struct Character3DPocPage {
           .width('100%')
           .padding({ left: 16, right: 16, top: 6, bottom: 6 })
           .backgroundColor($r('app.color.app_surface_2'))
+      }
+
+      // T-3D.6C-C: 模型转换进度条
+      if (this.conversionProgressMessage.length > 0) {
+        Column() {
+          Row() {
+            LoadingProgress()
+              .width(16)
+              .height(16)
+              .color($r('app.color.app_accent'))
+              .margin({ right: 8 })
+            Text(this.conversionProgressMessage)
+              .fontSize(12)
+              .fontColor($r('app.color.page_primary_text'))
+              .layoutWeight(1)
+            Text(this.conversionProgressPercent.toString() + '%')
+              .fontSize(12)
+              .fontColor($r('app.color.page_secondary_text'))
+          }
+          .width('100%')
+          .padding({ left: 16, right: 16, top: 6, bottom: 6 })
+          .alignItems(VerticalAlign.Center)
+
+          Progress({ value: this.conversionProgressPercent, total: 100, type: ProgressType.Linear })
+            .width('90%')
+            .color($r('app.color.app_accent'))
+            .margin({ bottom: 6 })
+        }
+        .width('100%')
+        .backgroundColor($r('app.color.app_surface_2'))
       }
 
       // 3D 渲染区(占主要高度)
@@ -689,6 +723,17 @@ struct Character3DPocPage {
             .onClick(() => {
               this.handleClearModel();
             })
+          // T-3D.6A: 动作管理入口
+          Button('动作管理')
+            .fontSize(11)
+            .backgroundColor($r('app.color.app_surface_2'))
+            .fontColor($r('app.color.app_accent'))
+            .height(28)
+            .padding({ left: 8, right: 8 })
+            .margin({ left: 8 })
+            .onClick(() => {
+              router.pushUrl({ url: 'pages/Character3DActionManagerPage' });
+            })
         } else {
           // T-3D.2: 无外部模型时显示"加载测试模型"按钮(用于设备验证)
           Button('加载测试模型')
@@ -907,8 +952,15 @@ struct Character3DPocPage {
     }
     try {
       this.errorMessage = '';
+      this.conversionProgressMessage = '';
+      this.conversionProgressPercent = 0;
       promptAction.showToast({ message: '正在导入模型…', duration: 1500 });
-      await this.vm.importModel(uris[0]);
+      await this.vm.importModel(uris[0], (progress) => {
+        this.conversionProgressMessage = progress.message;
+        this.conversionProgressPercent = progress.percent;
+      });
+      this.conversionProgressMessage = '';
+      this.conversionProgressPercent = 0;
       if (this.errorMessage.length === 0) {
         promptAction.showToast({ message: '导入成功', duration: 1500 });
       }
@@ -916,6 +968,8 @@ struct Character3DPocPage {
       const msg: string = (e as Error)?.message ?? '导入失败';
       promptAction.showToast({ message: msg, duration: 2000 });
     } finally {
+      this.conversionProgressMessage = '';
+      this.conversionProgressPercent = 0;
       this.isImporting = false;
     }
   }

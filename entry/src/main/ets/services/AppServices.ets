@@ -58,6 +58,8 @@ import { ChatService } from './ChatService';
 import { ChatPersistenceService } from './ChatPersistenceService';
 import { ChatBackgroundService } from './ChatBackgroundService';
 import { Character3DService } from './Character3DService';
+import { Character3DActionService } from './Character3DActionService';
+import { Character3DModelCompatibilityService } from './Character3DModelCompatibilityService';
 import { ModelService } from './ModelService';
 import { DefaultProviderFactory } from './ProviderFactory';
 import { HttpClient } from '../network/core/HttpClient';
@@ -166,6 +168,10 @@ export class AppServices {
   private chatBackgroundService: ChatBackgroundService | null = null;
   /** Character3DService 3D 模型导入与持久化服务(临时 PoC:T-3D.2)。在 initialize 中创建。 */
   private character3DService: Character3DService | null = null;
+  /** Character3DActionService 3D 动作资产管理服务(T-3D.6A)。在 initialize 中创建。 */
+  private character3DActionService: Character3DActionService | null = null;
+  /** Character3DModelCompatibilityService 3D 模型兼容性预处理服务(T-3D.6C-C)。在 initialize 中创建。 */
+  private character3DModelCompatibilityService: Character3DModelCompatibilityService | null = null;
   /** 市场服务(Chub 公共只读浏览 + 搜索 + 详情 + 下载) */
   readonly marketService: MarketService;
   /** 市场导入服务(需要 context,在 initialize 中创建) */
@@ -386,6 +392,30 @@ export class AppServices {
         } else {
           Logger.warn(LOG_TAG, 'appContext is null, character3DService not created');
         }
+        // 创建 Character3DActionService(T-3D.6A 动作资产管理,需要 appContext + appPreferences)
+        if (services.appContext !== null) {
+          services.character3DActionService = new Character3DActionService(
+            services.appContext, services.appPreferences);
+          services.character3DActionService.initialize();
+        } else {
+          Logger.warn(LOG_TAG, 'appContext is null, character3DActionService not created');
+        }
+        // 创建 Character3DModelCompatibilityService(T-3D.6C-C 模型兼容转换,需要 appPreferences)
+        services.character3DModelCompatibilityService = new Character3DModelCompatibilityService(
+          services.appPreferences);
+        if (services.appContext !== null) {
+          services.character3DModelCompatibilityService.initialize(services.appContext);
+        } else {
+          Logger.warn(LOG_TAG, 'appContext is null, character3DModelCompatibilityService not initialized');
+        }
+        // T-3D.6C-C: 将兼容性服务注入到 Character3DService(必须在两者都创建后执行)
+        if (services.character3DService !== null
+          && services.character3DModelCompatibilityService !== null) {
+          services.character3DService.setCompatibilityService(
+            services.character3DModelCompatibilityService);
+        } else {
+          Logger.warn(LOG_TAG, 'compatibilityService not injected to character3DService');
+        }
         // 创建 ContextBudgetService(只需 appPreferences)
         services.contextBudgetService = new ContextBudgetService(services.appPreferences);
         // 创建 MarketImportService(需要 appContext 写入临时 PNG 文件)
@@ -555,6 +585,24 @@ export class AppServices {
    */
   static getCharacter3DService(): Character3DService | null {
     return AppServices.getInstance().character3DService;
+  }
+
+  /**
+   * 获取 Character3DActionService 实例(T-3D.6A 动作资产管理)。
+   * 用于动作管理页面导入/读取/绑定/删除动作资产。
+   * 如果初始化时 appContext 不可用,返回 null。
+   */
+  static getCharacter3DActionService(): Character3DActionService | null {
+    return AppServices.getInstance().character3DActionService;
+  }
+
+  /**
+   * 获取 Character3DModelCompatibilityService 实例(T-3D.6C-C 模型兼容转换)。
+   * 用于模型导入时自动转换压缩网格扩展(EXT_meshopt_compression / KHR_mesh_quantization)。
+   * 如果初始化时不可用,返回 null。
+   */
+  static getCharacter3DModelCompatibilityService(): Character3DModelCompatibilityService | null {
+    return AppServices.getInstance().character3DModelCompatibilityService;
   }
 
   /**

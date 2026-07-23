@@ -5,6 +5,8 @@
   "main": "",
   "author": "",
   "license": "",
-  "dependencies": {}
+  "dependencies": {
+    "libmodel_converter.so": "file:./src/main/cpp/types/libmodel_converter"
+  }
 }
 

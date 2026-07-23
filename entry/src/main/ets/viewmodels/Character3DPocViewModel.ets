@@ -57,6 +57,7 @@ import {
   DEFAULT_VIEW_ROTATION_Y_DEG
 } from '../models/character3d/Character3DLoadState';
 import { Character3DService, Character3DImportResult } from '../services/Character3DService';
+import { ModelConversionProgress } from '../models/character3d/ModelCompatibility';
 import { GltfModelInfo } from '../parser/GltfValidator';
 import {
   Character3DDisplayConfig,
@@ -127,6 +128,8 @@ export class Character3DPocViewModel {
   private service: Character3DService | null = null;
   /** 当前加载的模型 URI(空字符串表示使用程序化几何体) */
   private currentModelUri: string = '';
+  /** T-3D.6C-C3: 当前模型的源 SHA-256(用于加载验证标记,无转换时为空) */
+  private currentSourceSha256: string = '';
   /** 当前加载的模型显示名(空字符串表示使用程序化几何体) */
   private currentDisplayName: string = '';
   /** 当前加载的模型摘要信息(导入后由 GltfValidator 提取;程序化几何体或重启后未验证时为 null) */
@@ -289,6 +292,16 @@ export class Character3DPocViewModel {
         }
       }
       this.setState(Character3DLoadStateEnum.Ready);
+      // T-3D.6C-C3: ArkGraphics 加载成功,标记缓存为 loadVerified
+      if (this.currentSourceSha256.length > 0 && this.service !== null) {
+        try {
+          await this.service.markModelLoadVerified(this.currentSourceSha256);
+          Logger.info(LOG_TAG, 'loadAsync: markModelLoadVerified ok, sha256='
+            + this.currentSourceSha256.substring(0, 16));
+        } catch (e) {
+          Logger.warn(LOG_TAG, 'loadAsync: markModelLoadVerified failed: ' + String(e));
+        }
+      }
       // Ready 后自动开始待机"播放"(如果有动画)
       this.startIdleIfNeeded();
       // T-3D.5B: 场景就绪后初始化手势处理器,绑定相机距离和当前配置
@@ -311,6 +324,18 @@ export class Character3DPocViewModel {
       const msg: string = err?.message ?? 'load failed';
       const stack: string = err?.stack ?? '';
       Logger.error(LOG_TAG, 'loadAsync failed: ' + msg + ' | stack: ' + stack);
+      // T-3D.6C-C3: ArkGraphics 加载失败,失效缓存(避免下次命中坏缓存)
+      if (this.currentSourceSha256.length > 0 && this.service !== null
+        && this.currentModelUri.length > 0) {
+        const inputPath: string = this.currentModelUri.startsWith('file://')
+          ? this.currentModelUri.substring('file://'.length) : this.currentModelUri;
+        try {
+          await this.service.invalidateModelCache(inputPath);
+          Logger.info(LOG_TAG, 'loadAsync: invalidateModelCache ok for failed load');
+        } catch (_ie) {
+          // ignore
+        }
+      }
       this.fireError('加载失败: ' + msg);
       this.setState(Character3DLoadStateEnum.Failed);
     }
@@ -770,8 +795,12 @@ export class Character3DPocViewModel {
    * 4. 重新加载场景
    *
    * @param sourceUri DocumentViewPicker 返回的源 URI
+   * @param onProgress T-3D.6C-C 转换进度回调(可选)
    */
-  async importModel(sourceUri: string): Promise<void> {
+  async importModel(
+    sourceUri: string,
+    onProgress?: (progress: ModelConversionProgress) => void
+  ): Promise<void> {
     if (this.disposed) {
       this.fireError('ViewModel 已释放,无法导入');
       return;
@@ -785,11 +814,12 @@ export class Character3DPocViewModel {
       return;
     }
     try {
-      const result: Character3DImportResult = await this.service.importModel(sourceUri);
+      const result: Character3DImportResult = await this.service.importModel(sourceUri, onProgress);
       this.currentModelUri = result.modelUri;
       this.currentDisplayName = result.displayName;
       this.currentModelId = result.displayName;
       this.currentModelInfo = result.modelInfo;
+      this.currentSourceSha256 = result.sourceSha256;
       // T-3D.4A: 读取该 modelId 的保存配置;若首次导入,service 已保存 autoFit 作为默认
       this.displayConfig = await this.service.getDisplayConfig(this.currentModelId);
       this.rotationYDeg = this.displayConfig.rotationYDeg;
@@ -803,6 +833,28 @@ export class Character3DPocViewModel {
       Logger.error(LOG_TAG, 'importModel failed: ' + msg);
       this.fireError('导入失败: ' + msg);
     }
+  }
+
+  /**
+   * T-3D.6C-C3 Debug: 从沙箱文件路径导入模型(绕过 DocumentViewPicker)。
+   * 仅用于自动化测试,正式发布前必须删除调用入口。
+   */
+  async importModelFromSandboxPath(
+    filePath: string,
+    onProgress?: (progress: ModelConversionProgress) => void
+  ): Promise<void> {
+    if (this.disposed) {
+      this.fireError('ViewModel 已释放,无法导入');
+      return;
+    }
+    if (this.service === null) {
+      this.fireError('未注入 Character3DService,无法导入');
+      return;
+    }
+    const sourceUri: string = filePath.startsWith('file://')
+      ? filePath : ('file://' + filePath);
+    Logger.info(LOG_TAG, 'importModelFromSandboxPath: ' + sourceUri);
+    await this.importModel(sourceUri, onProgress);
   }
 
   /**

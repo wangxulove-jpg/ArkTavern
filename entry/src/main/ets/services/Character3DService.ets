@@ -40,6 +40,15 @@ import {
   isDisplayConfigEqual
 } from '../models/character3d/Character3DDisplayConfig';
 import { computeBoundsFromGltf, computeAutoFitDisplayConfig } from '../models/character3d/ModelBounds';
+import { Character3DModelCompatibilityService } from './Character3DModelCompatibilityService';
+import {
+  ModelCompatibilityStatus,
+  ModelConversionMode,
+  ModelConversionProgress,
+  ModelConversionResult,
+  ModelCompatibilityAnalysis,
+  getConversionStageMessage
+} from '../models/character3d/ModelCompatibility';
 
 const LOG_TAG: string = 'Character3DService';
 
@@ -78,18 +87,54 @@ export interface Character3DImportResult {
   modelInfo: GltfModelInfo;
   /** T-3D.4A: 该模型的自适应默认显示配置(基于 Bounds 计算) */
   autoFitConfig: Character3DDisplayConfig;
+  /** T-3D.6C-C: 兼容性分析结果(无可转换扩展时为 null) */
+  compatibilityAnalysis: ModelCompatibilityAnalysis | null;
+  /** T-3D.6C-C: 转换结果(未执行转换时为 null) */
+  conversionResult: ModelConversionResult | null;
+  /** T-3D.6C-C3: 原始文件 SHA-256(用于加载验证标记,无转换时为空) */
+  sourceSha256: string;
 }
 
 export class Character3DService {
   private readonly assetStore: Model3DAssetStore;
   private readonly preferences: AppPreferences;
   private readonly appContext: common.Context;
+  /** T-3D.6C-C: 模型兼容性预处理服务(可选,通过 setter 注入避免循环依赖) */
+  private compatibilityService: Character3DModelCompatibilityService | null = null;
 
   constructor(context: common.Context, preferences: AppPreferences) {
     this.assetStore = new Model3DAssetStore();
     this.assetStore.initialize(context);
     this.preferences = preferences;
     this.appContext = context;
+  }
+
+  /**
+   * T-3D.6C-C: 注入模型兼容性预处理服务。
+   * 在 AppServices.initialize 中创建 compatibilityService 后调用。
+   */
+  setCompatibilityService(service: Character3DModelCompatibilityService): void {
+    this.compatibilityService = service;
+  }
+
+  /**
+   * T-3D.6C-C3: 标记当前模型缓存为已加载验证(ArkGraphics 加载成功后调用)。
+   */
+  async markModelLoadVerified(sourceSha256: string): Promise<void> {
+    if (this.compatibilityService === null || sourceSha256.length === 0) {
+      return;
+    }
+    await this.compatibilityService.markCacheLoadVerified(sourceSha256);
+  }
+
+  /**
+   * T-3D.6C-C3: 失效当前模型缓存(ArkGraphics 加载失败后调用)。
+   */
+  async invalidateModelCache(inputPath: string): Promise<void> {
+    if (this.compatibilityService === null) {
+      return;
+    }
+    await this.compatibilityService.invalidateCacheForInput(inputPath);
   }
 
   /**
@@ -146,14 +191,19 @@ export class Character3DService {
    * 1. 调用 Model3DAssetStore.saveModel 复制到沙箱
    * 2. T-3D.3: 读取沙箱文件并调用 GltfValidator 验证格式
    * 3. T-3D.4A: 检查 unsupportedRequiredExtensions,若有则拒绝并清理
-   * 4. 验证失败:删除已保存文件,抛出包含详细原因的错误
-   * 5. 验证成功:删除旧模型文件,将新 URI + 显示名写入 Preferences
-   * 6. T-3D.4A: 计算自适应显示配置并保存为该 modelId 的默认配置(若该 modelId 首次导入)
+   * 4. T-3D.6C-C: 检查 convertibleRequiredExtensions,若有则调用兼容性预处理
+   * 5. 验证失败:删除已保存文件,抛出包含详细原因的错误
+   * 6. 验证成功:删除旧模型文件,将新 URI + 显示名写入 Preferences
+   * 7. T-3D.4A: 计算自适应显示配置并保存为该 modelId 的默认配置(若该 modelId 首次导入)
    *
    * @param sourceUri DocumentViewPicker 返回的源 URI
+   * @param onProgress T-3D.6C-C 转换进度回调(可选)
    * @returns 导入结果(包含模型摘要信息和自适应配置)
    */
-  async importModel(sourceUri: string): Promise<Character3DImportResult> {
+  async importModel(
+    sourceUri: string,
+    onProgress?: (progress: ModelConversionProgress) => void
+  ): Promise<Character3DImportResult> {
     if (sourceUri.length === 0) {
       throw new Error('sourceUri must not be empty');
     }
@@ -163,6 +213,9 @@ export class Character3DService {
 
     // T-3D.3: 读取沙箱文件验证
     let modelInfo: GltfModelInfo;
+    let compatibilityAnalysis: ModelCompatibilityAnalysis | null = null;
+    let conversionResult: ModelConversionResult | null = null;
+    let loadableUri: string = newUri;
     try {
       const buffer: ArrayBuffer = await this.readModelFile(newUri);
       const result: GltfValidationResult = GltfValidator.validate(buffer);
@@ -173,13 +226,51 @@ export class Character3DService {
         throw new Error('模型格式无效: ' + result.errorMessage);
       }
       modelInfo = result.modelInfo;
-      // T-3D.4A: 检查不支持的必需扩展
+      // T-3D.4A: 检查不支持的必需扩展(不可转换)
       if (modelInfo.unsupportedRequiredExtensions.length > 0) {
         await this.assetStore.deleteModelByUri(newUri);
         const extList: string = modelInfo.unsupportedRequiredExtensions.join(', ');
         Logger.error(LOG_TAG, 'importModel rejected: unsupported required extensions: ' + extList);
         throw new Error('该模型依赖当前版本不支持的 glTF 扩展: ' + extList
-          + '。请导出为不使用该压缩扩展的标准 GLB 2.0。');
+          + '。请导出为不使用该压缩扩展的标准 GLB 2.0,或等待转换模块更新。');
+      }
+      // T-3D.6C-C: 检查可转换扩展(EXT_meshopt_compression / KHR_mesh_quantization)
+      const hasConvertible: boolean = modelInfo.convertibleRequiredExtensions.length > 0
+        || modelInfo.convertibleUsedExtensions.length > 0;
+      if (hasConvertible) {
+        if (this.compatibilityService === null) {
+          await this.assetStore.deleteModelByUri(newUri);
+          const extList: string = modelInfo.convertibleUsedExtensions.join(', ');
+          throw new Error('模型使用压缩网格扩展(' + extList
+            + '),但兼容转换服务不可用。请导出为标准 GLB 2.0。');
+        }
+        // 执行兼容性预处理
+        const filePath: string = newUri.startsWith('file://')
+          ? newUri.substring('file://'.length) : newUri;
+        const mode: ModelConversionMode = await this.compatibilityService.getConversionMode();
+        const loadableResult = await this.compatibilityService.getLoadablePath(filePath, mode, onProgress);
+        compatibilityAnalysis = loadableResult.analysis;
+        conversionResult = loadableResult.conversion;
+        if (loadableResult.path.length === 0) {
+          // 转换失败或被拒绝
+          await this.assetStore.deleteModelByUri(newUri);
+          const reason: string = conversionResult !== null
+            ? conversionResult.errorMessage
+            : (compatibilityAnalysis !== null ? compatibilityAnalysis.errorMessage : '转换失败');
+          Logger.error(LOG_TAG, 'importModel conversion failed: ' + reason);
+          throw new Error(reason);
+        }
+        // 转换成功:用转换后的路径
+        loadableUri = 'file://' + loadableResult.path;
+        // 重新读取转换后的 modelInfo(扩展已移除,Bounds 可能变化)
+        const convertedBuffer: ArrayBuffer = await this.readModelFile(loadableUri);
+        const convertedValidation: GltfValidationResult = GltfValidator.validate(convertedBuffer);
+        if (convertedValidation.valid) {
+          modelInfo = convertedValidation.modelInfo;
+        }
+        Logger.info(LOG_TAG, 'importModel converted, loadableUri=' + loadableUri
+          + ', removed=[' + (conversionResult !== null ? conversionResult.removedExtensions.join(',') : '')
+          + ']');
       }
       Logger.info(LOG_TAG, 'importModel validation ok: meshes=' + modelInfo.meshCount
         + ', materials=' + modelInfo.materialCount
@@ -201,12 +292,12 @@ export class Character3DService {
     // 读取旧 URI(用于稍后删除旧文件)
     const oldUri: string = await this.preferences.getString(PREF_KEY_MODEL_URI, '');
 
-    // 写入 Preferences
-    await this.preferences.putString(PREF_KEY_MODEL_URI, newUri);
+    // 写入 Preferences(使用转换后的 URI)
+    await this.preferences.putString(PREF_KEY_MODEL_URI, loadableUri);
     await this.preferences.putString(PREF_KEY_MODEL_DISPLAY_NAME, displayName);
 
     // 删除旧文件(失败不影响导入结果)
-    if (oldUri.length > 0 && oldUri !== newUri) {
+    if (oldUri.length > 0 && oldUri !== loadableUri && oldUri !== newUri) {
       try {
         await this.assetStore.deleteModelByUri(oldUri);
       } catch (e) {
@@ -218,12 +309,16 @@ export class Character3DService {
     const autoFitConfig: Character3DDisplayConfig = this.computeAutoFitConfig(modelInfo);
     await this.ensureModelDefaultConfig(displayName, autoFitConfig);
 
-    Logger.info(LOG_TAG, 'importModel ok, displayName=' + displayName);
+    Logger.info(LOG_TAG, 'importModel ok, displayName=' + displayName
+      + ', converted=' + (conversionResult !== null));
     return {
-      modelUri: newUri,
+      modelUri: loadableUri,
       displayName: displayName,
       modelInfo: modelInfo,
-      autoFitConfig: autoFitConfig
+      autoFitConfig: autoFitConfig,
+      compatibilityAnalysis: compatibilityAnalysis,
+      conversionResult: conversionResult,
+      sourceSha256: compatibilityAnalysis !== null ? compatibilityAnalysis.sourceSha256 : ''
     };
   }
 
@@ -334,8 +429,11 @@ export class Character3DService {
       modelUri: newUri,
       displayName: displayName,
       modelInfo: modelInfo,
-      autoFitConfig: autoFitConfig
-    };
+      autoFitConfig: autoFitConfig,
+      compatibilityAnalysis: null,
+      conversionResult: null,
+      sourceSha256: ''
+    } as Character3DImportResult;
   }
 
   /**

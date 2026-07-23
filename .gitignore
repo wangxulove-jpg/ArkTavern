@@ -8,7 +8,7 @@
 /.clangd
 /.clang-format
 /.clang-tidy
-**/.test
+**/.testp
 /.appanalyzer
 
 # MCP uitest 临时产物(UI 树 dump / 截图)
@@ -20,6 +20,12 @@
 /screenshots/
 /tools/uitest/
 /tools/uitest_dump/
+
+# Agent 开发阶段临时下载的动作测试资源(T-3D.6B)
+.agent-cache/
+
+# T-3D.6C-C3 Debug: Grace meshopt 测试模型(不提交到正式资源,仅本地构建测试)
+entry/src/main/resources/rawfile/model_import_test/
 
 # 临时调试产物(构建日志 / UI dump / 截图 / layout)
 build_log*.txt

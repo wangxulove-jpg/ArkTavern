@@ -1,0 +1,6 @@
+{
+  "name": "libmodel_converter.so",
+  "types": "./Index.d.ts",
+  "version": "1.0.0",
+  "description": "meshopt GLB 解码器 NAPI 模块(T-3D.6C-C 阶段 3)"
+}

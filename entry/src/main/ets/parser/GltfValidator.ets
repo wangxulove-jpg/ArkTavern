@@ -41,12 +41,29 @@ const CHUNK_HEADER_SIZE: number = 8;
 
 /**
  * 当前 HarmonyOS ArkGraphics3D 不支持的必需扩展黑名单。
- * 模型若 required 这些扩展,导入阶段必须拒绝。
+ * 模型若 required 这些扩展,导入阶段必须拒绝(无法自动转换)。
+ *
+ * T-3D.6C-C: EXT_meshopt_compression 和 KHR_mesh_quantization
+ * 已从黑名单移至 CONVERTIBLE_EXTENSIONS,由 Character3DModelCompatibilityService
+ * 自动转换为标准 GLB 后再加载。
  */
 const UNSUPPORTED_REQUIRED_EXTENSIONS: string[] = [
   'KHR_draco_mesh_compression',
+  'KHR_texture_basisu'
+];
+
+/**
+ * T-3D.6C-C: 可转换的扩展列表。
+ *
+ * 这些扩展虽然 ArkGraphics 不直接支持,但可以通过预处理管线
+ * 转换为标准 GLB 2.0 格式:
+ * - EXT_meshopt_compression: 通过 meshoptimizer 解码器还原为未压缩 bufferView
+ * - KHR_mesh_quantization: 先测试 ArkGraphics 是否原生支持,不支持则反量化
+ *
+ * 识别为可转换后,不再立即拒绝,而是由 Character3DModelCompatibilityService 处理。
+ */
+const CONVERTIBLE_EXTENSIONS: string[] = [
   'EXT_meshopt_compression',
-  'KHR_texture_basisu',
   'KHR_mesh_quantization'
 ];
 
@@ -88,6 +105,10 @@ export interface GltfModelInfo {
   extensionsRequired: string[];
   /** T-3D.4A: 当前运行时不支持的必需扩展列表(用于 UI 显示明确错误) */
   unsupportedRequiredExtensions: string[];
+  /** T-3D.6C-C: 可转换的必需扩展列表(如 EXT_meshopt_compression,可由预处理管线转换) */
+  convertibleRequiredExtensions: string[];
+  /** T-3D.6C-C: 可转换的使用扩展列表(extensionsUsed 中命中 CONVERTIBLE_EXTENSIONS 的) */
+  convertibleUsedExtensions: string[];
 }
 
 /**
@@ -133,7 +154,9 @@ function createEmptyModelInfo(): GltfModelInfo {
     boundsMax: null,
     extensionsUsed: [],
     extensionsRequired: [],
-    unsupportedRequiredExtensions: []
+    unsupportedRequiredExtensions: [],
+    convertibleRequiredExtensions: [],
+    convertibleUsedExtensions: []
   };
 }
 
@@ -278,10 +301,21 @@ export class GltfValidator {
     const extensionsUsed: string[] = GltfValidator.extractStringArray(gltfJson, 'extensionsUsed');
     const extensionsRequired: string[] = GltfValidator.extractStringArray(gltfJson, 'extensionsRequired');
     const unsupportedRequired: string[] = [];
+    const convertibleRequired: string[] = [];
+    const convertibleUsed: string[] = [];
     for (let i: number = 0; i < extensionsRequired.length; i++) {
       const ext: string = extensionsRequired[i];
       if (UNSUPPORTED_REQUIRED_EXTENSIONS.indexOf(ext) >= 0) {
         unsupportedRequired.push(ext);
+      } else if (CONVERTIBLE_EXTENSIONS.indexOf(ext) >= 0) {
+        convertibleRequired.push(ext);
+      }
+    }
+    // T-3D.6C-C: 同时收集 extensionsUsed 中的可转换扩展(可能 used 但未 required)
+    for (let i: number = 0; i < extensionsUsed.length; i++) {
+      const ext: string = extensionsUsed[i];
+      if (CONVERTIBLE_EXTENSIONS.indexOf(ext) >= 0) {
+        convertibleUsed.push(ext);
       }
     }
 
@@ -306,7 +340,9 @@ export class GltfValidator {
       boundsMax: boundsResult.max,
       extensionsUsed: extensionsUsed,
       extensionsRequired: extensionsRequired,
-      unsupportedRequiredExtensions: unsupportedRequired
+      unsupportedRequiredExtensions: unsupportedRequired,
+      convertibleRequiredExtensions: convertibleRequired,
+      convertibleUsedExtensions: convertibleUsed
     };
 
     return {
