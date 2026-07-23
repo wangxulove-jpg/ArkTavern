@@ -19,8 +19,6 @@
 import { GltfModelInfo } from '../../parser/GltfValidator';
 import {
   Character3DDisplayConfig,
-  SCALE_MIN,
-  SCALE_MAX,
   OFFSET_MIN,
   OFFSET_MAX,
   CAMERA_DISTANCE_MIN,
@@ -33,7 +31,10 @@ import {
   DEFAULT_ROTATION_Y_DEG,
   DEFAULT_ROTATION_Z_DEG,
   DEFAULT_CAMERA_DISTANCE,
-  CAMERA_FOV
+  CAMERA_FOV,
+  BASE_FIT_SCALE_MIN,
+  BASE_FIT_SCALE_MAX,
+  DEFAULT_BASE_FIT_SCALE
 } from './Character3DDisplayConfig';
 
 /** 期望模型在视口中的高度(单位:场景坐标) */
@@ -140,19 +141,26 @@ export function computeBoundsFromGltf(modelInfo: GltfModelInfo): ModelBounds | n
 /**
  * 根据模型 Bounds 计算自适应显示配置。
  *
- * 算法:
- * 1. scale = TARGET_MODEL_HEIGHT / bounds.height,夹紧到 [SCALE_MIN, SCALE_MAX]
- * 2. offsetX/Y/Z = 0(T-3D.5A: offset 含义改为"模型中心目标位置",autoFit 时模型中心在原点)
+ * 算法(T-3D.5D:scale 拆分为 baseFitScale + zoomFactor):
+ * 1. baseFitScale = TARGET_MODEL_HEIGHT / bounds.height,夹紧到 [BASE_FIT_SCALE_MIN, BASE_FIT_SCALE_MAX]
+ *    baseFitScale 是模型固有派生值,不作为用户缩放倍率
+ * 2. zoomFactor 默认 1.0 → scale(finalScale) = baseFitScale × 1.0 = baseFitScale
+ * 3. offsetX/Y/Z = 0(T-3D.5A: offset 含义改为"模型中心目标位置",autoFit 时模型中心在原点)
  *    旋转中心跟随由 applyDisplayConfigToScene 的数学补偿负责:
  *    rootNode.position = offset - R*(center*scale),使模型中心固定在 offset 位置
- * 3. cameraDistance = (bounds.radius * scale) / sin(FOV/2) * margin,夹紧到 [CAMERA_DISTANCE_MIN, CAMERA_DISTANCE_MAX]
- * 4. rotation 归零(面向相机)
+ * 4. cameraDistance = (bounds.radius * scale) / sin(FOV/2) * margin,夹紧到 [CAMERA_DISTANCE_MIN, CAMERA_DISTANCE_MAX]
+ * 5. rotation 归零(面向相机)
  *
  * T-3D.5A 变更:offset 从 -center*scale 改为 0
  * - 旧版:offset = -center*scale,rootNode.position = offset,把模型中心移到原点(仅 R=0 时有效)
  * - 新版:offset = 0,rootNode.position = offset - R*(center*scale),模型中心始终在 offset 位置
  * - 用户调整 offset → 模型中心移动(不是 rootNode 移动)
  * - 旋转 → 模型围绕自己中心旋转(原地自转)
+ *
+ * T-3D.5D 变更:baseFitScale 与 zoomFactor 分离
+ * - 旧版:scale 直接作为用户缩放倍率,范围 [SCALE_MIN, SCALE_MAX],不同模型体验不一致
+ * - 新版:baseFitScale 派生自模型,scale = baseFitScale(zoomFactor=1),用户通过 zoomFactor(0.1~20)缩放
+ * - 最大放大 = baseFitScale × 20 = 自动适配尺寸的 20 倍,跨模型一致
  *
  * @param bounds 模型包围盒
  * @returns 自适应显示配置;bounds 非法时返回全局默认配置
@@ -161,17 +169,19 @@ export function computeAutoFitDisplayConfig(bounds: ModelBounds | null): Charact
   if (bounds === null) {
     return createGlobalDefaultConfig();
   }
-  // 1. 计算 scale
-  let scale: number = TARGET_MODEL_HEIGHT / bounds.height;
-  if (!Number.isFinite(scale) || scale <= 0) {
-    scale = DEFAULT_SCALE;
+  // 1. 计算 baseFitScale(模型固有派生值,夹紧到安全范围,不用 SCALE_MAX 限制)
+  let baseFitScale: number = TARGET_MODEL_HEIGHT / bounds.height;
+  if (!Number.isFinite(baseFitScale) || baseFitScale <= 0) {
+    baseFitScale = DEFAULT_BASE_FIT_SCALE;
   }
-  if (scale < SCALE_MIN) {
-    scale = SCALE_MIN;
+  if (baseFitScale < BASE_FIT_SCALE_MIN) {
+    baseFitScale = BASE_FIT_SCALE_MIN;
   }
-  if (scale > SCALE_MAX) {
-    scale = SCALE_MAX;
+  if (baseFitScale > BASE_FIT_SCALE_MAX) {
+    baseFitScale = BASE_FIT_SCALE_MAX;
   }
+  // 2. zoomFactor = 1.0 → scale = baseFitScale
+  const scale: number = baseFitScale;
 
   // 2. T-3D.5A: offset = 0(模型中心在原点)
   // 旋转中心跟随由 applyDisplayConfigToScene 的数学补偿负责
@@ -203,6 +213,7 @@ export function computeAutoFitDisplayConfig(bounds: ModelBounds | null): Charact
 
   return {
     scale: scale,
+    baseFitScale: baseFitScale,
     offsetX: offsetX,
     offsetY: offsetY,
     offsetZ: offsetZ,
@@ -235,6 +246,7 @@ export function isBoundsValid(bounds: ModelBounds | null): boolean {
 function createGlobalDefaultConfig(): Character3DDisplayConfig {
   return {
     scale: DEFAULT_SCALE,
+    baseFitScale: DEFAULT_BASE_FIT_SCALE,
     offsetX: DEFAULT_OFFSET_X,
     offsetY: DEFAULT_OFFSET_Y,
     offsetZ: DEFAULT_OFFSET_Z,

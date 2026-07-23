@@ -28,6 +28,12 @@ import { PressableCard } from '../../components/PressableCard';
 import { CharacterImageView } from '../../components/CharacterImageView';
 import { promptAction, router } from '@kit.ArkUI';
 import { Chat } from '../../models/Chat';
+import { Character } from '../../models/Character';
+import { ChatArchiveViewModel } from '../../viewmodels/ChatArchiveViewModel';
+import { ChatArchiveImportConversationResult } from '../../parser/ChatArchiveSchema';
+import { Logger } from '../../utils/Logger';
+
+const LOG_TAG_SESSION: string = 'ChatSessionRootView';
 
 /** AppStorage 中待跳转的 chatId(由本视图写入,ChatPage 读取后清除) */
 export const PENDING_CHAT_ID_KEY: string = 'pendingChatId';
@@ -64,6 +70,18 @@ export struct ChatSessionRootView {
   @State deleteTarget: ChatSessionListItem | null = null;
   /** 删除进行中(防止重复点击) */
   @State isDeleting: boolean = false;
+
+  // ===== T-CHAT.1: 聊天归档导入导出 =====
+  /** T-CHAT.1: 聊天归档 ViewModel(导入流程) */
+  @State archiveViewModel: ChatArchiveViewModel | null = null;
+  /** T-CHAT.1: 是否显示导入预览弹窗 */
+  @State showImportPreview: boolean = false;
+  /** T-CHAT.1: 是否显示导入结果弹窗 */
+  @State showImportResult: boolean = false;
+  /** T-CHAT.1: 导入/导出进行中(防止重复点击) */
+  @State archiveBusy: boolean = false;
+  /** T-CHAT.1: 导出长按菜单目标项(空时不显示) */
+  @State exportTarget: ChatSessionListItem | null = null;
   /**
    * 跨页面列表刷新信号。
    * 由 ChatPage 在会话变化(发消息/新建会话/删除)后递增,触发本组件 reload。
@@ -227,7 +245,7 @@ export struct ChatSessionRootView {
   build() {
     Stack() {
       Column() {
-        // 顶栏:标题"聊天"(与其他 Tab 统一样式:Bold + 左对齐)
+        // 顶栏:标题"聊天"(与其他 Tab 统一样式:Bold + 左对齐) + T-CHAT.1 导入入口
         Row() {
           Text($r('app.string.tab_sessions'))
             .fontSize($r('app.float.app_font_title'))
@@ -235,6 +253,20 @@ export struct ChatSessionRootView {
             .fontColor($r('app.color.app_text_primary'))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .layoutWeight(1)
+
+          // T-CHAT.1: 导入聊天按钮(顶栏右侧)
+          Button('导入聊天')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_secondary'))
+            .backgroundColor($r('app.color.app_surface_2'))
+            .borderRadius($r('app.float.app_radius_sm'))
+            .height(32)
+            .padding({ left: 12, right: 12 })
+            .enabled(!this.archiveBusy)
+            .onClick(() => {
+              this.startImportFlow();
+            })
         }
         .width('100%')
         .padding({
@@ -282,6 +314,21 @@ export struct ChatSessionRootView {
       if (this.deleteTarget !== null) {
         this.deleteConfirmDialog()
       }
+
+      // T-CHAT.1: 长按导出选择弹窗
+      if (this.exportTarget !== null) {
+        this.exportChatDialog()
+      }
+
+      // T-CHAT.1: 导入预览弹窗
+      if (this.showImportPreview) {
+        this.importPreviewDialog()
+      }
+
+      // T-CHAT.1: 导入结果弹窗
+      if (this.showImportResult) {
+        this.importResultDialog()
+      }
     }
     .width('100%')
     .height('100%')
@@ -298,6 +345,20 @@ export struct ChatSessionRootView {
           title: $r('app.string.tab_sessions_empty'),
           description: $r('app.string.tab_sessions_empty_desc')
         })
+
+        // T-CHAT.1: 空状态页面也提供导入入口
+        Button('导入聊天记录')
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor($r('app.color.app_on_accent'))
+          .backgroundColor($r('app.color.app_accent'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(40)
+          .padding({ left: 24, right: 24 })
+          .margin({ top: $r('app.float.app_spacing_16') })
+          .enabled(!this.archiveBusy)
+          .onClick(() => {
+            this.startImportFlow();
+          })
       }
       .width('100%')
       .layoutWeight(1)
@@ -309,6 +370,15 @@ export struct ChatSessionRootView {
             this.sessionCard(item)
           }
           .margin({ bottom: $r('app.float.app_spacing_12') })
+          // T-CHAT.1: 长按弹出导出菜单
+          .gesture(
+            LongPressGesture()
+              .onAction(() => {
+                if (!this.archiveBusy) {
+                  this.exportTarget = item;
+                }
+              })
+          )
           .swipeAction({
             end: {
               builder: (): void => {
@@ -660,5 +730,741 @@ export struct ChatSessionRootView {
     .width('100%')
     .layoutWeight(1)
     .justifyContent(FlexAlign.Center)
+  }
+
+  // ===== T-CHAT.1: 聊天归档导入导出方法 =====
+
+  /**
+   * 懒创建 ChatArchiveViewModel。
+   */
+  private ensureArchiveViewModel(): ChatArchiveViewModel {
+    if (this.archiveViewModel === null) {
+      this.archiveViewModel = AppServices.createChatArchiveViewModel();
+    }
+    return this.archiveViewModel!;
+  }
+
+  /**
+   * T-CHAT.1: 启动导入流程。
+   * 1. 打开文件选择器
+   * 2. 读取并校验文件
+   * 3. 生成预览
+   * 4. 显示预览弹窗
+   *
+   * 用户取消不显示错误。
+   */
+  private async startImportFlow(): Promise<void> {
+    if (this.archiveBusy) {
+      return;
+    }
+    // 当前角色 ID(用于匹配判断,无角色传空)
+    const currentCharId: string = '';
+    this.archiveBusy = true;
+    try {
+      const vm: ChatArchiveViewModel = this.ensureArchiveViewModel();
+      const ok: boolean = await vm.startImportFlow(currentCharId);
+      if (!ok) {
+        // 用户取消或出错
+        if (vm.errorMessage.length > 0) {
+          promptAction.showToast({ message: vm.errorMessage, duration: 2500 });
+        }
+        vm.resetState();
+        return;
+      }
+      // 预览就绪,显示预览弹窗
+      this.showImportPreview = true;
+    } catch (e) {
+      Logger.error(LOG_TAG_SESSION, 'startImportFlow failed: ' + (e as Error).message);
+      promptAction.showToast({
+        message: (e as Error).message ?? '导入失败',
+        duration: 2500
+      });
+    } finally {
+      this.archiveBusy = false;
+    }
+  }
+
+  /**
+   * T-CHAT.1: 确认导入。
+   * 将预览数据写入数据库,显示结果弹窗。
+   */
+  private async confirmImportAction(): Promise<void> {
+    if (this.archiveBusy) {
+      return;
+    }
+    const vm: ChatArchiveViewModel | null = this.archiveViewModel;
+    if (vm === null || vm.previewPayload === null) {
+      promptAction.showToast({ message: '没有可导入的预览数据', duration: 1500 });
+      return;
+    }
+    this.archiveBusy = true;
+    try {
+      const ok: boolean = await vm.confirmImport();
+      // 关闭预览弹窗
+      this.showImportPreview = false;
+      if (ok) {
+        // 显示结果弹窗
+        this.showImportResult = true;
+      } else {
+        promptAction.showToast({ message: vm.errorMessage, duration: 2500 });
+      }
+    } catch (e) {
+      this.showImportPreview = false;
+      promptAction.showToast({
+        message: (e as Error).message ?? '导入失败',
+        duration: 2500
+      });
+    } finally {
+      this.archiveBusy = false;
+    }
+  }
+
+  /**
+   * T-CHAT.1: 取消导入预览。
+   */
+  private cancelImportPreview(): void {
+    if (this.archiveBusy) {
+      return;
+    }
+    this.showImportPreview = false;
+    if (this.archiveViewModel !== null) {
+      this.archiveViewModel!.cancelImport();
+    }
+  }
+
+  /**
+   * T-CHAT.1: 关闭导入结果弹窗,刷新会话列表。
+   */
+  private closeImportResult(): void {
+    this.showImportResult = false;
+    if (this.archiveViewModel !== null) {
+      this.archiveViewModel!.resetState();
+    }
+    // 刷新会话列表
+    if (this.viewModel !== null) {
+      this.viewModel!.reload()
+        .then((): void => {
+          this.sessions = this.viewModel!.sessions;
+        })
+        .catch((): void => {});
+    }
+  }
+
+  /**
+   * T-CHAT.1: 查看导入的聊天(跳转到第一个导入的对话)。
+   */
+  private viewImportedChats(): void {
+    const vm: ChatArchiveViewModel | null = this.archiveViewModel;
+    if (vm === null || vm.importResult === null) {
+      return;
+    }
+    const ids: string[] = vm.importResult.importedConversationIds;
+    if (ids.length === 0) {
+      this.closeImportResult();
+      return;
+    }
+    const firstId: string = ids[0];
+    this.showImportResult = false;
+    vm.resetState();
+    // 跳转到第一个导入的对话
+    AppStorage.setOrCreate<string>(PENDING_CHAT_ID_KEY, firstId);
+    AppStorage.set<string>(PENDING_CHARACTER_ID_KEY, '');
+    router.pushUrl({ url: 'pages/ChatPage' });
+  }
+
+  /**
+   * T-CHAT.1: 关闭长按导出弹窗。
+   */
+  private closeExportDialog(): void {
+    this.exportTarget = null;
+  }
+
+  /**
+   * T-CHAT.1: 长按导出 - 导出当前选中的单个对话。
+   */
+  private async exportSelectedChat(): Promise<void> {
+    const target: ChatSessionListItem | null = this.exportTarget;
+    if (target === null) {
+      return;
+    }
+    if (this.archiveBusy) {
+      return;
+    }
+    this.archiveBusy = true;
+    this.exportTarget = null;
+    try {
+      const vm: ChatArchiveViewModel = this.ensureArchiveViewModel();
+      const charName: string = target.character !== null ? target.character!.name : '';
+      const title: string = target.chat.title.length > 0 ? target.chat.title : charName;
+      const ok: boolean = await vm.exportCurrentConversation({
+        conversationId: target.chat.id,
+        conversationTitle: title,
+        characterName: charName
+      });
+      if (ok && vm.lastExportStats !== null) {
+        promptAction.showToast({
+          message: '聊天导出成功: ' + String(vm.lastExportStats!.conversationCount)
+            + ' 个对话, ' + String(vm.lastExportStats!.messageCount) + ' 条消息',
+          duration: 2500
+        });
+      } else if (!ok && vm.errorMessage.length > 0) {
+        promptAction.showToast({ message: vm.errorMessage, duration: 2500 });
+      }
+      vm.resetState();
+    } finally {
+      this.archiveBusy = false;
+    }
+  }
+
+  /**
+   * T-CHAT.1: 长按导出 - 导出该对话所属角色的全部聊天。
+   */
+  private async exportSelectedCharacterChats(): Promise<void> {
+    const target: ChatSessionListItem | null = this.exportTarget;
+    if (target === null) {
+      return;
+    }
+    if (target.character === null || target.character!.id.length === 0) {
+      promptAction.showToast({ message: '该对话无关联角色,无法导出全部聊天', duration: 1500 });
+      return;
+    }
+    if (this.archiveBusy) {
+      return;
+    }
+    this.archiveBusy = true;
+    this.exportTarget = null;
+    try {
+      const vm: ChatArchiveViewModel = this.ensureArchiveViewModel();
+      const ok: boolean = await vm.exportCharacterConversations({
+        characterId: target.character!.id,
+        characterName: target.character!.name
+      });
+      if (ok && vm.lastExportStats !== null) {
+        promptAction.showToast({
+          message: '导出成功: ' + String(vm.lastExportStats!.conversationCount)
+            + ' 个对话, ' + String(vm.lastExportStats!.messageCount) + ' 条消息',
+          duration: 2500
+        });
+      } else if (!ok && vm.errorMessage.length > 0) {
+        promptAction.showToast({ message: vm.errorMessage, duration: 2500 });
+      }
+      vm.resetState();
+    } finally {
+      this.archiveBusy = false;
+    }
+  }
+
+  /**
+   * 格式化时间戳为 YYYY-MM-DD HH:mm。
+   */
+  private formatArchiveTime(ts: number): string {
+    if (ts <= 0) {
+      return '未知';
+    }
+    const d: Date = new Date(ts);
+    const year: number = d.getFullYear();
+    const month: string = (d.getMonth() + 1).toString().padStart(2, '0');
+    const day: string = d.getDate().toString().padStart(2, '0');
+    const hour: string = d.getHours().toString().padStart(2, '0');
+    const minute: string = d.getMinutes().toString().padStart(2, '0');
+    return year + '-' + month + '-' + day + ' ' + hour + ':' + minute;
+  }
+
+  // ===== T-CHAT.1: Builder =====
+
+  /**
+   * T-CHAT.1: 长按导出选择弹窗。
+   */
+  @Builder
+  exportChatDialog() {
+    Stack() {
+      Column() {
+        Column() {
+          Text('导出聊天')
+            .fontSize(17)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.app_text_primary'))
+            .margin({ bottom: 16 })
+
+          if (this.exportTarget !== null) {
+            Text(this.exportTarget!.chat.title.length > 0
+              ? this.exportTarget!.chat.title
+              : (this.exportTarget!.character !== null ? this.exportTarget!.character!.name : '新对话'))
+              .fontSize(14)
+              .fontColor($r('app.color.app_text_secondary'))
+              .maxLines(2)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .width('100%')
+              .margin({ bottom: 16 })
+          }
+
+          // 导出当前对话
+          Button('导出当前对话')
+            .fontSize(15)
+            .fontColor($r('app.color.app_on_accent'))
+            .backgroundColor($r('app.color.app_accent'))
+            .borderRadius($r('app.float.app_radius_sm'))
+            .width('100%')
+            .height(44)
+            .enabled(!this.archiveBusy)
+            .onClick(() => {
+              this.exportSelectedChat();
+            })
+
+          // 导出该角色全部对话(有关联角色时显示)
+          if (this.exportTarget !== null
+            && this.exportTarget!.character !== null
+            && this.exportTarget!.character!.id.length > 0) {
+            Button('导出该角色全部对话')
+              .fontSize(15)
+              .fontColor($r('app.color.app_text_primary'))
+              .backgroundColor($r('app.color.app_surface_2'))
+              .borderRadius($r('app.float.app_radius_sm'))
+              .width('100%')
+              .height(44)
+              .margin({ top: 12 })
+              .enabled(!this.archiveBusy)
+              .onClick(() => {
+                this.exportSelectedCharacterChats();
+              })
+          }
+
+          // 取消
+          Button('取消')
+            .fontSize(15)
+            .fontColor($r('app.color.app_text_secondary'))
+            .backgroundColor(Color.Transparent)
+            .borderRadius($r('app.float.app_radius_sm'))
+            .width('100%')
+            .height(44)
+            .margin({ top: 12 })
+            .enabled(!this.archiveBusy)
+            .onClick(() => {
+              this.closeExportDialog();
+            })
+        }
+        .width('80%')
+        .padding(20)
+        .backgroundColor($r('app.color.app_surface_1'))
+        .borderRadius($r('app.float.app_radius_lg'))
+      }
+      .width('100%')
+      .height('100%')
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor('rgba(0,0,0,0.5)')
+    .onClick(() => {
+      if (!this.archiveBusy) {
+        this.closeExportDialog();
+      }
+    })
+  }
+
+  /**
+   * T-CHAT.1: 导入预览弹窗。
+   * 显示归档文件信息、统计、角色匹配,用户选择角色并确认导入。
+   */
+  @Builder
+  importPreviewDialog() {
+    Stack() {
+      Column() {
+        Column() {
+          Text('导入聊天预览')
+            .fontSize(17)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.app_text_primary'))
+            .margin({ bottom: 12 })
+
+          // 预览内容(archiveViewModel 已就绪)
+          if (this.archiveViewModel !== null
+            && this.archiveViewModel!.previewPayload !== null) {
+            this.importPreviewContent()
+          } else {
+            Text('正在读取文件...')
+              .fontSize(14)
+              .fontColor($r('app.color.app_text_secondary'))
+              .margin({ bottom: 16 })
+          }
+        }
+        .width('88%')
+        .constraintSize({ maxHeight: '80%' })
+        .padding(20)
+        .backgroundColor($r('app.color.app_surface_1'))
+        .borderRadius($r('app.float.app_radius_lg'))
+      }
+      .width('100%')
+      .height('100%')
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor('rgba(0,0,0,0.5)')
+  }
+
+  /**
+   * T-CHAT.1: 导入预览内容(统计 + 角色选择 + 重复提示 + 操作按钮)。
+   */
+  @Builder
+  importPreviewContent() {
+    Scroll() {
+      Column() {
+        // 文件信息
+        this.previewRow('文件名', this.archiveViewModel!.previewPayload!.stats.fileName);
+        this.previewRow('格式版本', 'v' + String(this.archiveViewModel!.previewPayload!.stats.version));
+        this.previewRow('文件大小', this.formatFileSize(this.archiveViewModel!.previewPayload!.stats.fileSize));
+        this.previewRow('导出时间', this.formatArchiveTime(this.archiveViewModel!.previewPayload!.stats.exportedAt));
+        this.previewRow('来源角色', this.archiveViewModel!.previewPayload!.stats.sourceCharacterName.length > 0
+          ? this.archiveViewModel!.previewPayload!.stats.sourceCharacterName
+          : '无');
+
+        Divider().color($r('app.color.app_divider')).margin({ top: 8, bottom: 8 })
+
+        // 统计信息
+        this.previewRow('对话数量', String(this.archiveViewModel!.previewPayload!.stats.conversationCount));
+        this.previewRow('消息总数', String(this.archiveViewModel!.previewPayload!.stats.messageCount));
+        this.previewRow('分支数量', String(this.archiveViewModel!.previewPayload!.stats.branchCount));
+        this.previewRow('候选总数', String(this.archiveViewModel!.previewPayload!.stats.candidateCount));
+        this.previewRow('最早消息', this.formatArchiveTime(this.archiveViewModel!.previewPayload!.stats.earliestMessageAt));
+        this.previewRow('最晚消息', this.formatArchiveTime(this.archiveViewModel!.previewPayload!.stats.latestMessageAt));
+        this.previewRow('包含 system', this.archiveViewModel!.previewPayload!.stats.hasSystemMessage ? '是' : '否');
+        this.previewRow('包含分支', this.archiveViewModel!.previewPayload!.stats.hasBranches ? '是' : '否');
+        if (this.archiveViewModel!.previewPayload!.stats.hasUnknownFields) {
+          this.previewRow('未知字段', '是(将忽略)');
+        }
+
+        Divider().color($r('app.color.app_divider')).margin({ top: 8, bottom: 8 })
+
+        // 重复提示
+        if (this.hasDuplicateWarning()) {
+          Text('该聊天可能已经导入。仍可导入为新对话。')
+            .fontSize(13)
+            .fontColor($r('app.color.app_danger'))
+            .width('100%')
+            .margin({ bottom: 8 })
+        }
+
+        // 角色选择
+        Text('选择目标角色:')
+          .fontSize(14)
+          .fontColor($r('app.color.app_text_secondary'))
+          .width('100%')
+          .margin({ bottom: 8 })
+
+        // 匹配角色优先显示
+        if (this.archiveViewModel!.matchedCharacters.length > 0) {
+          ForEach(this.archiveViewModel!.matchedCharacters, (c: Character) => {
+            this.characterOptionRow(c, '匹配')
+          }, (c: Character) => 'matched_' + c.id)
+        }
+
+        // 全部角色(手动选择,排除已匹配的)
+        if (this.getUnmatchedCharacters().length > 0) {
+          ForEach(this.getUnmatchedCharacters(), (c: Character) => {
+            this.characterOptionRow(c, '')
+          }, (c: Character) => 'all_' + c.id)
+        }
+
+        if (this.archiveViewModel!.allCharacters.length === 0) {
+          Text('未找到现有角色,将以无角色方式导入。')
+            .fontSize(13)
+            .fontColor($r('app.color.app_text_tertiary'))
+            .width('100%')
+            .margin({ bottom: 8 })
+        }
+
+        // 无角色选项
+        Row() {
+          Radio({ value: 'none', group: 'importChar' })
+            .checked(this.archiveViewModel!.selectedCharacterId.length === 0)
+            .onChange((checked: boolean) => {
+              if (checked && this.archiveViewModel !== null) {
+                this.archiveViewModel!.selectedCharacterId = '';
+              }
+            })
+          Text('不绑定角色')
+            .fontSize(14)
+            .fontColor($r('app.color.app_text_primary'))
+            .margin({ left: 8 })
+        }
+        .width('100%')
+        .height(44)
+        .alignItems(VerticalAlign.Center)
+        .onClick(() => {
+          if (this.archiveViewModel !== null) {
+            this.archiveViewModel!.selectedCharacterId = '';
+          }
+        })
+
+        Divider().color($r('app.color.app_divider')).margin({ top: 12, bottom: 12 })
+
+        // 操作按钮
+        Row() {
+          Button('取消')
+            .fontSize(15)
+            .backgroundColor(Color.Transparent)
+            .fontColor($r('app.color.app_text_secondary'))
+            .layoutWeight(1)
+            .height(40)
+            .enabled(!this.archiveBusy)
+            .onClick(() => {
+              this.cancelImportPreview();
+            })
+          Button('导入为新对话')
+            .fontSize(15)
+            .backgroundColor($r('app.color.app_accent'))
+            .fontColor($r('app.color.app_on_accent'))
+            .borderRadius($r('app.float.app_radius_sm'))
+            .layoutWeight(1)
+            .height(40)
+            .margin({ left: 12 })
+            .enabled(!this.archiveBusy)
+            .onClick(() => {
+              this.confirmImportAction();
+            })
+        }
+        .width('100%')
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Start)
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .scrollBar(BarState.Auto)
+  }
+
+  /**
+   * T-CHAT.1: 预览信息行(label + value)。
+   */
+  @Builder
+  previewRow(label: string, value: string) {
+    Row() {
+      Text(label)
+        .fontSize(13)
+        .fontColor($r('app.color.app_text_tertiary'))
+        .width(96)
+      Text(value)
+        .fontSize(13)
+        .fontColor($r('app.color.app_text_primary'))
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .layoutWeight(1)
+    }
+    .width('100%')
+    .height(28)
+    .alignItems(VerticalAlign.Center)
+  }
+
+  /**
+   * T-CHAT.1: 角色选择行(单选)。
+   */
+  @Builder
+  characterOptionRow(c: Character, tag: string) {
+    Row() {
+      Radio({ value: c.id, group: 'importChar' })
+        .checked(this.archiveViewModel !== null
+          && this.archiveViewModel!.selectedCharacterId === c.id)
+        .onChange((checked: boolean) => {
+          if (checked && this.archiveViewModel !== null) {
+            this.archiveViewModel!.selectedCharacterId = c.id;
+          }
+        })
+      Text(c.name)
+        .fontSize(14)
+        .fontColor($r('app.color.app_text_primary'))
+        .margin({ left: 8 })
+        .layoutWeight(1)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+      if (tag.length > 0) {
+        Text(tag)
+          .fontSize(11)
+          .fontColor($r('app.color.app_accent'))
+          .backgroundColor($r('app.color.app_surface_2'))
+          .borderRadius(4)
+          .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+      }
+    }
+    .width('100%')
+    .height(44)
+    .alignItems(VerticalAlign.Center)
+    .onClick(() => {
+      if (this.archiveViewModel !== null) {
+        this.archiveViewModel!.selectedCharacterId = c.id;
+      }
+    })
+  }
+
+  /**
+   * T-CHAT.1: 导入结果弹窗。
+   */
+  @Builder
+  importResultDialog() {
+    Stack() {
+      Column() {
+        Column() {
+          if (this.archiveViewModel !== null && this.archiveViewModel!.importResult !== null) {
+            Text('导入完成')
+              .fontSize(17)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.app_text_primary'))
+              .margin({ bottom: 12 })
+
+            // 总览
+            Text('已导入 ' + String(this.archiveViewModel!.importResult!.successCount) + ' 个对话,共 '
+              + String(this.archiveViewModel!.importResult!.totalMessageCount) + ' 条消息。')
+              .fontSize(14)
+              .fontColor($r('app.color.app_text_secondary'))
+              .width('100%')
+              .margin({ bottom: 12 })
+
+            // 失败详情
+            if (this.archiveViewModel!.importResult!.failedCount > 0) {
+              Text('失败: ' + String(this.archiveViewModel!.importResult!.failedCount) + ' 个对话')
+                .fontSize(13)
+                .fontColor($r('app.color.app_danger'))
+                .width('100%')
+                .margin({ bottom: 8 })
+
+              // 展开失败原因
+              ForEach(this.archiveViewModel!.importResult!.conversationResults, (r: ChatArchiveImportConversationResult, index: number) => {
+                if (!r.success) {
+                  Row() {
+                    Text(r.sourceTitle.length > 0 ? r.sourceTitle : '(无标题)')
+                      .fontSize(12)
+                      .fontColor($r('app.color.app_text_tertiary'))
+                      .maxLines(1)
+                      .textOverflow({ overflow: TextOverflow.Ellipsis })
+                      .layoutWeight(1)
+                    Text(r.errorMessage)
+                      .fontSize(12)
+                      .fontColor($r('app.color.app_danger'))
+                      .maxLines(2)
+                      .textOverflow({ overflow: TextOverflow.Ellipsis })
+                      .layoutWeight(2)
+                  }
+                  .width('100%')
+                  .margin({ bottom: 4 })
+                }
+              }, (r: ChatArchiveImportConversationResult, index: number) => 'fail_' + String(index))
+            }
+
+            Divider().color($r('app.color.app_divider')).margin({ top: 12, bottom: 12 })
+
+            // 操作按钮
+            Row() {
+              Button('关闭')
+                .fontSize(15)
+                .backgroundColor(Color.Transparent)
+                .fontColor($r('app.color.app_text_secondary'))
+                .layoutWeight(1)
+                .height(40)
+                .onClick(() => {
+                  this.closeImportResult();
+                })
+              if (this.archiveViewModel!.importResult!.importedConversationIds.length > 0) {
+                Button('查看导入的聊天')
+                  .fontSize(15)
+                  .backgroundColor($r('app.color.app_accent'))
+                  .fontColor($r('app.color.app_on_accent'))
+                  .borderRadius($r('app.float.app_radius_sm'))
+                  .layoutWeight(1)
+                  .height(40)
+                  .margin({ left: 12 })
+                  .onClick(() => {
+                    this.viewImportedChats();
+                  })
+              }
+            }
+            .width('100%')
+          } else {
+            Text('无导入结果')
+              .fontSize(14)
+              .fontColor($r('app.color.app_text_secondary'))
+              .margin({ bottom: 16 })
+            Button('关闭')
+              .fontSize(15)
+              .backgroundColor($r('app.color.app_surface_2'))
+              .fontColor($r('app.color.app_text_primary'))
+              .borderRadius($r('app.float.app_radius_sm'))
+              .width('100%')
+              .height(40)
+              .onClick(() => {
+                this.closeImportResult();
+              })
+          }
+        }
+        .width('85%')
+        .constraintSize({ maxHeight: '80%' })
+        .padding(20)
+        .backgroundColor($r('app.color.app_surface_1'))
+        .borderRadius($r('app.float.app_radius_lg'))
+      }
+      .width('100%')
+      .height('100%')
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor('rgba(0,0,0,0.5)')
+  }
+
+  /**
+   * T-CHAT.1: 检查预览中是否存在可能重复的对话。
+   */
+  private hasDuplicateWarning(): boolean {
+    if (this.archiveViewModel === null || this.archiveViewModel!.previewPayload === null) {
+      return false;
+    }
+    const dups = this.archiveViewModel!.previewPayload!.duplicates;
+    for (let i: number = 0; i < dups.length; i++) {
+      if (dups[i].possiblyDuplicate) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * T-CHAT.1: 获取未匹配的全部角色列表(排除已匹配角色)。
+   */
+  private getUnmatchedCharacters(): Character[] {
+    if (this.archiveViewModel === null) {
+      return [];
+    }
+    const result: Character[] = [];
+    const all: Character[] = this.archiveViewModel!.allCharacters;
+    const matched: Character[] = this.archiveViewModel!.matchedCharacters;
+    for (let i: number = 0; i < all.length; i++) {
+      const c: Character = all[i];
+      let isMatched: boolean = false;
+      for (let j: number = 0; j < matched.length; j++) {
+        if (matched[j].id === c.id) {
+          isMatched = true;
+          break;
+        }
+      }
+      if (!isMatched) {
+        result.push(c);
+      }
+    }
+    return result;
+  }
+
+  /**
+   * T-CHAT.1: 格式化文件大小。
+   */
+  private formatFileSize(size: number): string {
+    if (size < 1024) {
+      return String(size) + ' B';
+    }
+    if (size < 1024 * 1024) {
+      return (size / 1024).toFixed(1) + ' KB';
+    }
+    return (size / (1024 * 1024)).toFixed(2) + ' MB';
   }
 }

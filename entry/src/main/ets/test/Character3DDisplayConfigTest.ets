@@ -2,6 +2,7 @@
  * Character3DDisplayConfigTest 显示配置纯逻辑单元测试
  *
  * 临时开发测试: T-3D.4 模型预览与位置校准
+ * T-3D.5D: 新增 baseFitScale / zoomFactor / computeFinalScale 测试(13~16)
  *
  * 职责:
  * - 对 Character3DDisplayConfig 的所有纯逻辑函数做断言测试
@@ -13,7 +14,7 @@
  * - 本文件作为纯逻辑测试保留,供未来集成测试框架使用
  * - 调用 Character3DDisplayConfigTest.runAllTests() 可执行全部测试
  *
- * 测试项(共 12 项):
+ * 测试项(共 16 项):
  * 1. 默认配置
  * 2. scale 下限
  * 3. scale 上限
@@ -26,6 +27,10 @@
  * 10. 恢复默认
  * 11. 不同 modelId 配置隔离(通过 Preferences key 隔离验证)
  * 12. 高频内存更新不触发高频持久化(通过 isDisplayConfigEqual 短路验证)
+ * 13. T-3D.5D zoomFactor 常量值验证
+ * 14. T-3D.5D getZoomFactor(scale / baseFitScale)
+ * 15. T-3D.5D clampZoomFactor 范围夹紧
+ * 16. T-3D.5D computeFinalScale(baseFitScale × zoomFactor)
  */
 
 import { Logger } from '../utils/Logger';
@@ -36,18 +41,25 @@ import {
   isDisplayConfigEqual,
   serializeDisplayConfig,
   deserializeDisplayConfig,
+  getZoomFactor,
+  clampZoomFactor,
+  computeFinalScale,
   SCALE_MIN,
   SCALE_MAX,
   OFFSET_MIN,
   OFFSET_MAX,
   DEFAULT_SCALE,
+  DEFAULT_BASE_FIT_SCALE,
   DEFAULT_OFFSET_X,
   DEFAULT_OFFSET_Y,
   DEFAULT_OFFSET_Z,
   DEFAULT_ROTATION_X_DEG,
   DEFAULT_ROTATION_Y_DEG,
   DEFAULT_ROTATION_Z_DEG,
-  DEFAULT_CAMERA_DISTANCE
+  DEFAULT_CAMERA_DISTANCE,
+  VIEWER_ZOOM_FACTOR_MIN,
+  VIEWER_ZOOM_FACTOR_MAX,
+  VIEWER_ZOOM_FACTOR_DEFAULT
 } from '../models/character3d/Character3DDisplayConfig';
 
 const LOG_TAG: string = 'CfgTest';
@@ -69,7 +81,7 @@ interface TestSuiteResult {
 
 export class Character3DDisplayConfigTest {
   /**
-   * 运行全部 12 项测试,返回汇总结果并输出日志。
+   * 运行全部 16 项测试,返回汇总结果并输出日志。
    */
   static runAllTests(): TestSuiteResult {
     const results: TestResult[] = [];
@@ -85,6 +97,10 @@ export class Character3DDisplayConfigTest {
     results.push(Character3DDisplayConfigTest.test10_ResetToDefault());
     results.push(Character3DDisplayConfigTest.test11_ModelIsolation());
     results.push(Character3DDisplayConfigTest.test12_HighFrequencyUpdate());
+    results.push(Character3DDisplayConfigTest.test13_ZoomFactorConstants());
+    results.push(Character3DDisplayConfigTest.test14_GetZoomFactor());
+    results.push(Character3DDisplayConfigTest.test15_ClampZoomFactor());
+    results.push(Character3DDisplayConfigTest.test16_ComputeFinalScale());
 
     let passed: number = 0;
     let failed: number = 0;
@@ -110,6 +126,7 @@ export class Character3DDisplayConfigTest {
   private static test01_DefaultConfig(): TestResult {
     const c: Character3DDisplayConfig = createDefaultDisplayConfig();
     const ok: boolean = c.scale === DEFAULT_SCALE
+      && c.baseFitScale === DEFAULT_BASE_FIT_SCALE
       && c.offsetX === DEFAULT_OFFSET_X
       && c.offsetY === DEFAULT_OFFSET_Y
       && c.offsetZ === DEFAULT_OFFSET_Z
@@ -118,8 +135,8 @@ export class Character3DDisplayConfigTest {
       && c.rotationZDeg === DEFAULT_ROTATION_Z_DEG
       && c.cameraDistance === DEFAULT_CAMERA_DISTANCE;
     return Character3DDisplayConfigTest.buildResult('01_DefaultConfig', ok,
-      'scale=' + c.scale + ' offsetY=' + c.offsetY + ' rotY=' + c.rotationYDeg
-      + ' camDist=' + c.cameraDistance);
+      'scale=' + c.scale + ' bfs=' + c.baseFitScale + ' offsetY=' + c.offsetY
+      + ' rotY=' + c.rotationYDeg + ' camDist=' + c.cameraDistance);
   }
 
   /** 2. scale 下限 */
@@ -131,9 +148,9 @@ export class Character3DDisplayConfigTest {
       'expected=' + SCALE_MIN + ' actual=' + safe.scale);
   }
 
-  /** 3. scale 上限 */
+  /** 3. scale 上限(T-3D.5D: SCALE_MAX 改为 NaN 防御值 20000,需输入更大值触发夹紧) */
   private static test03_ScaleMax(): TestResult {
-    const input: Character3DDisplayConfig = Character3DDisplayConfigTest.makeConfig({ scale: 9999 });
+    const input: Character3DDisplayConfig = Character3DDisplayConfigTest.makeConfig({ scale: 99999 });
     const safe: Character3DDisplayConfig = sanitizeDisplayConfig(input);
     const ok: boolean = safe.scale === SCALE_MAX;
     return Character3DDisplayConfigTest.buildResult('03_ScaleMax', ok,
@@ -328,13 +345,107 @@ export class Character3DDisplayConfigTest {
       + ' writeCount(100次相同更新)=' + writeCount.toString());
   }
 
+  /** 13. T-3D.5D zoomFactor 常量值验证 */
+  private static test13_ZoomFactorConstants(): TestResult {
+    // 常量必须为规定值,任何修改会导致跨模型体验不一致
+    const ok: boolean = VIEWER_ZOOM_FACTOR_MIN === 0.10
+      && VIEWER_ZOOM_FACTOR_MAX === 20.0
+      && VIEWER_ZOOM_FACTOR_DEFAULT === 1.0;
+    return Character3DDisplayConfigTest.buildResult('13_ZoomFactorConstants', ok,
+      'MIN=' + VIEWER_ZOOM_FACTOR_MIN + ' MAX=' + VIEWER_ZOOM_FACTOR_MAX
+      + ' DEFAULT=' + VIEWER_ZOOM_FACTOR_DEFAULT);
+  }
+
+  /** 14. T-3D.5D getZoomFactor(scale / baseFitScale) */
+  private static test14_GetZoomFactor(): TestResult {
+    // 正常情况:zoomFactor = scale / baseFitScale
+    const c1: Character3DDisplayConfig = Character3DDisplayConfigTest.makeConfig({
+      scale: 2.0, baseFitScale: 0.5
+    });
+    const zf1: number = getZoomFactor(c1); // 2.0 / 0.5 = 4.0
+    // 默认配置:scale=1.0, baseFitScale=1.0 → zoomFactor=1.0
+    const c2: Character3DDisplayConfig = createDefaultDisplayConfig();
+    const zf2: number = getZoomFactor(c2);
+    // baseFitScale 非法(<=0)→ 回退默认 1.0
+    const c3: Character3DDisplayConfig = Character3DDisplayConfigTest.makeConfig({
+      scale: 5.0, baseFitScale: 0
+    });
+    const zf3: number = getZoomFactor(c3);
+    // baseFitScale NaN → 回退默认 1.0
+    const c4: Character3DDisplayConfig = Character3DDisplayConfigTest.makeConfig({
+      scale: 5.0, baseFitScale: NaN
+    });
+    const zf4: number = getZoomFactor(c4);
+    const ok: boolean = zf1 === 4.0 && zf2 === 1.0 && zf3 === 1.0 && zf4 === 1.0;
+    return Character3DDisplayConfigTest.buildResult('14_GetZoomFactor', ok,
+      '2/0.5=' + zf1 + ' default=' + zf2 + ' bfs=0=' + zf3 + ' bfs=NaN=' + zf4);
+  }
+
+  /** 15. T-3D.5D clampZoomFactor 范围夹紧 */
+  private static test15_ClampZoomFactor(): TestResult {
+    // 正常值不变
+    const r1: number = clampZoomFactor(1.0);
+    const r2: number = clampZoomFactor(10.5);
+    // 超过上限 → 夹紧到 MAX(20.0)
+    const r3: number = clampZoomFactor(25.0);
+    // 低于下限 → 夹紧到 MIN(0.10)
+    const r4: number = clampZoomFactor(0.05);
+    // 边界值
+    const r5: number = clampZoomFactor(0.10);
+    const r6: number = clampZoomFactor(20.0);
+    // 非法值 → 回退默认
+    const r7: number = clampZoomFactor(NaN);
+    const r8: number = clampZoomFactor(Infinity);
+    const r9: number = clampZoomFactor(-1.0);
+    const r10: number = clampZoomFactor(0);
+    const ok: boolean = r1 === 1.0 && r2 === 10.5
+      && r3 === VIEWER_ZOOM_FACTOR_MAX
+      && r4 === VIEWER_ZOOM_FACTOR_MIN
+      && r5 === VIEWER_ZOOM_FACTOR_MIN
+      && r6 === VIEWER_ZOOM_FACTOR_MAX
+      && r7 === VIEWER_ZOOM_FACTOR_DEFAULT
+      && r8 === VIEWER_ZOOM_FACTOR_DEFAULT
+      && r9 === VIEWER_ZOOM_FACTOR_DEFAULT
+      && r10 === VIEWER_ZOOM_FACTOR_DEFAULT;
+    return Character3DDisplayConfigTest.buildResult('15_ClampZoomFactor', ok,
+      '1.0=' + r1 + ' 10.5=' + r2 + ' 25→' + r3 + ' 0.05→' + r4
+      + ' NaN→' + r7 + ' Inf→' + r8 + ' -1→' + r9 + ' 0→' + r10);
+  }
+
+  /** 16. T-3D.5D computeFinalScale(baseFitScale × zoomFactor) */
+  private static test16_ComputeFinalScale(): TestResult {
+    // 正常计算:bfs × zf
+    const r1: number = computeFinalScale(0.5, 4.0); // 0.5 × 4.0 = 2.0
+    const r2: number = computeFinalScale(1.0, 1.0); // 1.0
+    const r3: number = computeFinalScale(0.1, 20.0); // 0.1 × 20.0 = 2.0
+    // zoomFactor 超范围 → 先 clamp 再计算
+    const r4: number = computeFinalScale(1.0, 25.0); // 1.0 × 20.0 = 20.0
+    const r5: number = computeFinalScale(1.0, 0.05); // 1.0 × 0.10 = 0.10
+    // baseFitScale 非法 → 回退 DEFAULT_BASE_FIT_SCALE(1.0)
+    const r6: number = computeFinalScale(0, 2.0); // 1.0 × 2.0 = 2.0
+    const r7: number = computeFinalScale(NaN, 2.0); // 1.0 × 2.0 = 2.0
+    const r8: number = computeFinalScale(-1.0, 2.0); // 1.0 × 2.0 = 2.0
+    // zoomFactor 非法 → 回退 DEFAULT(1.0)
+    const r9: number = computeFinalScale(0.5, NaN); // 0.5 × 1.0 = 0.5
+    const ok: boolean = r1 === 2.0 && r2 === 1.0 && r3 === 2.0
+      && r4 === 20.0 && r5 === 0.10
+      && r6 === 2.0 && r7 === 2.0 && r8 === 2.0
+      && r9 === 0.5;
+    return Character3DDisplayConfigTest.buildResult('16_ComputeFinalScale', ok,
+      '0.5×4=' + r1 + ' 1×1=' + r2 + ' 0.1×20=' + r3
+      + ' 1×25(clamp20)=' + r4 + ' 1×0.05(clamp0.1)=' + r5
+      + ' bfs=0→' + r6 + ' bfs=NaN→' + r7 + ' zf=NaN→' + r9);
+  }
+
   /**
    * 构造一个带部分字段覆盖的配置(其他字段为默认值)。
+   * T-3D.5D: 包含 baseFitScale 字段(默认 DEFAULT_BASE_FIT_SCALE)。
    */
   private static makeConfig(partial: Partial<Character3DDisplayConfig>): Character3DDisplayConfig {
     const base: Character3DDisplayConfig = createDefaultDisplayConfig();
     return {
       scale: partial.scale !== undefined ? partial.scale : base.scale,
+      baseFitScale: partial.baseFitScale !== undefined ? partial.baseFitScale : base.baseFitScale,
       offsetX: partial.offsetX !== undefined ? partial.offsetX : base.offsetX,
       offsetY: partial.offsetY !== undefined ? partial.offsetY : base.offsetY,
       offsetZ: partial.offsetZ !== undefined ? partial.offsetZ : base.offsetZ,

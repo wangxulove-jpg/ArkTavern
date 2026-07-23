@@ -16,8 +16,18 @@
  * - 3D 角色模型开关(读写同一 Chat3DDisplaySettings)
  * - 模型显示比例调节(Slider + 自动适配)
  *
+ * T-3D.5D 变更:
+ * - Slider 由绝对 scale(0.25~8.0)改为相对 zoomFactor(0.10~20.0)
+ * - finalScale = baseFitScale × zoomFactor,跨模型体验一致
+ *
  * 复用 ChatViewModel 数据,不在组件内做业务操作。
  */
+
+import {
+  VIEWER_ZOOM_FACTOR_MIN,
+  VIEWER_ZOOM_FACTOR_MAX,
+  VIEWER_ZOOM_FACTOR_DEFAULT
+} from '../models/character3d/Character3DDisplayConfig';
 
 @Component
 export struct ChatMoreMenuSheet {
@@ -61,18 +71,26 @@ export struct ChatMoreMenuSheet {
   onRegenerate: () => void = () => {};
   /** 清空对话 */
   onClearChat: () => void = () => {};
+  /** T-CHAT.1: 导出当前聊天 */
+  onExportCurrentChat: () => void = () => {};
+  /** T-CHAT.1: 导出该角色全部聊天 */
+  onExportCharacterChats: () => void = () => {};
 
   /** v9: 当前对话级用户称呼覆盖(空表示跟随角色或全局) */
   @Prop userNameOverride: string = '';
   /** v9: 当前生效的用户称呼(用于在菜单展示) */
   @Prop resolvedUserName: string = '';
+  /** T-CHAT.1: 当前对话 ID(用于导出,空表示未就绪) */
+  @Prop currentConversationId: string = '';
+  /** T-CHAT.1: 当前角色 ID(空表示无角色,隐藏"导出该角色全部聊天") */
+  @Prop currentCharacterId: string = '';
 
   /** T-3D.5A: 是否为单人角色聊天(决定是否显示 3D 开关) */
   @Prop isSingleCharacterChat: boolean = false;
   /** T-3D.5A: 3D 显示开关当前值 */
   @Prop chat3DEnabled: boolean = false;
-  /** T-3D.5A: 当前模型显示比例(用于 Slider 初始值) */
-  @Prop modelScale: number = 1.0;
+  /** T-3D.5D: 当前模型缩放倍率 zoomFactor(相对自动适配尺寸,0.10 ~ 20.0,用于 Slider 初始值) */
+  @Prop modelZoomFactor: number = 1.0;
   /** T-3D.5A: 是否有外部模型(决定是否显示 scale 调节) */
   @Prop hasExternalModel: boolean = false;
   /** T-3D.5B: 3D 区域占比(0.25 ~ 0.65) */
@@ -81,10 +99,10 @@ export struct ChatMoreMenuSheet {
   @Prop rotationSensitivity: number = 1.0;
   /** T-3D.5A: 切换 3D 开关 */
   onToggleChat3D: (enabled: boolean) => void = () => {};
-  /** T-3D.5A: scale 变化(实时预览,不落盘) */
-  onScaleChange: (scale: number) => void = () => {};
-  /** T-3D.5A: scale 确认(落盘) */
-  onScaleConfirm: () => void = () => {};
+  /** T-3D.5D: zoomFactor 变化(实时预览,不落盘) */
+  onZoomFactorChange: (zoomFactor: number) => void = () => {};
+  /** T-3D.5A: zoomFactor 确认(落盘) */
+  onZoomFactorConfirm: () => void = () => {};
   /** T-3D.5A: 自动适配(恢复当前模型 autoFit) */
   onAutoFit: () => void = () => {};
   /** T-3D.5B: panelRatio 变化(实时预览) */
@@ -162,7 +180,7 @@ export struct ChatMoreMenuSheet {
 
       // T-3D.5A: 模型显示比例调节(3D 开启 + 有外部模型时显示)
       if (this.isSingleCharacterChat && this.chat3DEnabled && this.hasExternalModel) {
-        this.scaleSliderRow()
+        this.zoomFactorSliderRow()
       }
 
       // T-3D.5B: 3D 画面占比调节(3D 开启时显示)
@@ -229,6 +247,28 @@ export struct ChatMoreMenuSheet {
         })
       }
 
+      Divider().color($r('app.color.app_divider')).margin({ top: 8, bottom: 8 })
+
+      // T-CHAT.1: 导出当前聊天(对话就绪时显示)
+      if (this.currentConversationId.length > 0) {
+        this.menuRow('导出当前聊天', this.busy, false, (): void => {
+          if (this.busy) {
+            return;
+          }
+          this.onExportCurrentChat();
+        })
+      }
+
+      // T-CHAT.1: 导出该角色全部聊天(有角色时显示)
+      if (this.currentCharacterId.length > 0) {
+        this.menuRow('导出该角色全部聊天', this.busy, false, (): void => {
+          if (this.busy) {
+            return;
+          }
+          this.onExportCharacterChats();
+        })
+      }
+
       // 清空对话
       this.menuRow('清空对话', this.busy, true, (): void => {
         this.onClearChat();
@@ -260,19 +300,21 @@ export struct ChatMoreMenuSheet {
   }
 
   /**
-   * T-3D.5A: 模型显示比例调节行。
+   * T-3D.5D: 模型缩放倍率调节行(zoomFactor,相对自动适配尺寸)。
+   * Slider 范围 [VIEWER_ZOOM_FACTOR_MIN(0.10), VIEWER_ZOOM_FACTOR_MAX(20.0)]。
+   * 1.0 = 自动适配尺寸;20.0 = 自动适配尺寸的 20 倍(查看局部细节)。
    * Slider 拖动时实时预览(不落盘),拖动结束后落盘。
-   * 提供"自动适配"按钮,恢复当前模型 autoFit 计算。
+   * 提供"自动适配"按钮,恢复当前模型 autoFit(zoomFactor=1.0)。
    */
   @Builder
-  scaleSliderRow() {
+  zoomFactorSliderRow() {
     Column() {
       Row() {
-        Text('模型显示比例')
+        Text('模型缩放倍率')
           .fontSize($r('app.float.app_font_body'))
           .fontColor($r('app.color.app_text_primary'))
           .layoutWeight(1)
-        Text(this.modelScale.toFixed(2))
+        Text(this.modelZoomFactor.toFixed(2) + 'x')
           .fontSize($r('app.float.app_font_caption'))
           .fontColor($r('app.color.app_text_secondary'))
         Button('自动适配')
@@ -294,9 +336,9 @@ export struct ChatMoreMenuSheet {
 
       Row() {
         Slider({
-          value: this.modelScale,
-          min: 0.25,
-          max: 8.0,
+          value: this.modelZoomFactor,
+          min: VIEWER_ZOOM_FACTOR_MIN,
+          max: VIEWER_ZOOM_FACTOR_MAX,
           step: 0.1
         })
           .layoutWeight(1)
@@ -306,11 +348,11 @@ export struct ChatMoreMenuSheet {
           .onChange((value: number, mode: SliderChangeMode) => {
             // 实时预览(Moving/Click 模式)
             if (mode === SliderChangeMode.Moving || mode === SliderChangeMode.Click) {
-              this.onScaleChange(value);
+              this.onZoomFactorChange(value);
             }
             // 拖动结束落盘(End/Click 模式)
             if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
-              this.onScaleConfirm();
+              this.onZoomFactorConfirm();
             }
           })
       }

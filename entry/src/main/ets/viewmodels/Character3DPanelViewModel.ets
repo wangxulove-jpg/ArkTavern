@@ -158,14 +158,15 @@ export class Character3DPanelViewModel {
   }
 
   /**
-   * T-3D.5A: 更新模型显示比例(只改内存,不落盘)。
-   * 用于 Slider 实时预览。
+   * T-3D.5D: 通过 zoomFactor(相对自动适配尺寸)更新模型显示比例。
+   * Slider 值范围 [0.10, 20.0],内部通过 computeFinalScale 计算最终 scale。
+   * 只改内存,不落盘(高频写盘禁止)。
    */
-  updateScale(scale: number): void {
+  updateZoomFactor(zoomFactor: number): void {
     if (this.disposed) {
       return;
     }
-    this.pocVm.updateDisplayConfig({ scale: scale });
+    this.pocVm.updateZoomFactor(zoomFactor);
   }
 
   /**

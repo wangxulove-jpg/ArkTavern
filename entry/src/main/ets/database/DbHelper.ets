@@ -75,6 +75,7 @@ export type TransactionOperation =
   | 'world_relationship_upsert'
   | 'world_memory_event_upsert'
   | 'world_message_batch_append'
+  | 'chat_archive_import'
   | 'unknown';
 
 export class DbHelper {

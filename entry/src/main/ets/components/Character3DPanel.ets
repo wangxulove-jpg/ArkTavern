@@ -69,8 +69,8 @@ export struct Character3DPanel {
   /** 是否已初始化(避免重复 initialize) */
   @State private initialized: boolean = false;
 
-  /** T-3D.5A: scale 调节请求(-1 表示无请求,>=0 表示请求更新 scale) */
-  @StorageProp('chat3dScaleRequest') @Watch('onScaleRequest') private scaleRequest: number = -1;
+  /** T-3D.5D: zoomFactor 调节请求(-1 表示无请求,>=0 表示请求更新 zoomFactor,范围 0.10~20.0) */
+  @StorageProp('chat3dScaleRequest') @Watch('onZoomFactorRequest') private scaleRequest: number = -1;
   /** T-3D.5A: 保存配置请求(递增计数,每次变化触发落盘) */
   @StorageProp('chat3dSaveRequest') @Watch('onSaveRequest') private saveRequest: number = 0;
   /** T-3D.5A: 自动适配请求(递增计数,每次变化触发 resetDisplayConfig) */
@@ -150,13 +150,15 @@ export struct Character3DPanel {
   }
 
   /**
-   * T-3D.5A: 响应 scale 调节请求(实时预览,只改内存不落盘)。
+   * T-3D.5D: 响应 zoomFactor 调节请求(实时预览,只改内存不落盘)。
+   * scaleRequest 字段语义改为 zoomFactor(0.10 ~ 20.0),
+   * AppStorage key 保持 'chat3dScaleRequest' 不变以兼容已落盘的计数器语义。
    */
-  private onScaleRequest(): void {
+  private onZoomFactorRequest(): void {
     if (!this.initialized || this.scaleRequest < 0) {
       return;
     }
-    this.vm.updateScale(this.scaleRequest);
+    this.vm.updateZoomFactor(this.scaleRequest);
   }
 
   /**

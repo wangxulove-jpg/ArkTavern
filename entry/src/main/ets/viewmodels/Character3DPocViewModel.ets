@@ -63,6 +63,12 @@ import {
   Character3DDisplayConfig,
   createDefaultDisplayConfig,
   sanitizeDisplayConfig,
+  getZoomFactor,
+  computeFinalScale,
+  clampZoomFactor,
+  VIEWER_ZOOM_FACTOR_DEFAULT,
+  VIEWER_ZOOM_FACTOR_MIN,
+  VIEWER_ZOOM_FACTOR_MAX,
   CAMERA_HEIGHT,
   CAMERA_FOV,
   CAMERA_NEAR,
@@ -375,6 +381,8 @@ export class Character3DPocViewModel {
           + this.currentBounds.height.toFixed(3) + ','
           + this.currentBounds.depth.toFixed(3) + ') radius='
           + this.currentBounds.radius.toFixed(3));
+        // T-3D.5D: 模型加载后重新派生 baseFitScale,保留用户 zoomFactor
+        this.recomputeBaseFitScaleFromBounds();
       } else {
         Logger.warn(LOG_TAG, 'supplementExternalScene: bounds null (no POSITION accessor or invalid)');
       }
@@ -1004,6 +1012,8 @@ export class Character3DPocViewModel {
     }
     const merged: Character3DDisplayConfig = {
       scale: partial.scale !== undefined ? partial.scale : this.displayConfig.scale,
+      baseFitScale: partial.baseFitScale !== undefined
+        ? partial.baseFitScale : this.displayConfig.baseFitScale,
       offsetX: partial.offsetX !== undefined ? partial.offsetX : this.displayConfig.offsetX,
       offsetY: partial.offsetY !== undefined ? partial.offsetY : this.displayConfig.offsetY,
       offsetZ: partial.offsetZ !== undefined ? partial.offsetZ : this.displayConfig.offsetZ,
@@ -1027,6 +1037,41 @@ export class Character3DPocViewModel {
     }
     if (this.onRotationChanged !== null) {
       this.onRotationChanged(this.rotationYDeg);
+    }
+  }
+
+  /**
+   * T-3D.5D: 通过 zoomFactor(相对自动适配尺寸)更新显示配置。
+   * 用于 Slider 调节:Slider 值范围 [VIEWER_ZOOM_FACTOR_MIN, VIEWER_ZOOM_FACTOR_MAX],
+   * 内部通过 computeFinalScale(baseFitScale × zoomFactor) 计算 finalScale。
+   * 只改内存,不落盘(高频写盘禁止)。
+   *
+   * @param zoomFactor 用户缩放倍率(0.1 ~ 20.0,1.0 = 自动适配尺寸)
+   */
+  updateZoomFactor(zoomFactor: number): void {
+    if (this.disposed) {
+      return;
+    }
+    const clampedZoom: number = clampZoomFactor(zoomFactor);
+    const newScale: number = computeFinalScale(this.displayConfig.baseFitScale, clampedZoom);
+    if (this.displayConfig.scale === newScale) {
+      return;
+    }
+    this.displayConfig = {
+      scale: newScale,
+      baseFitScale: this.displayConfig.baseFitScale,
+      offsetX: this.displayConfig.offsetX,
+      offsetY: this.displayConfig.offsetY,
+      offsetZ: this.displayConfig.offsetZ,
+      rotationXDeg: this.displayConfig.rotationXDeg,
+      rotationYDeg: this.displayConfig.rotationYDeg,
+      rotationZDeg: this.displayConfig.rotationZDeg,
+      cameraDistance: this.displayConfig.cameraDistance
+    };
+    this.applyDisplayConfigToScene();
+    this.updateGestureConfig();
+    if (this.onDisplayConfigChanged !== null) {
+      this.onDisplayConfigChanged(this.displayConfig);
     }
   }
 
@@ -1117,6 +1162,7 @@ export class Character3DPocViewModel {
     // 保留用户当前的 rotationY(视角方向),其他字段使用 autoFit
     const merged: Character3DDisplayConfig = {
       scale: autoFit.scale,
+      baseFitScale: autoFit.baseFitScale,
       offsetX: autoFit.offsetX,
       offsetY: autoFit.offsetY,
       offsetZ: autoFit.offsetZ,
@@ -1206,6 +1252,7 @@ export class Character3DPocViewModel {
     // 同步到 displayConfig 内存态(不落盘)
     this.displayConfig = {
       scale: this.displayConfig.scale,
+      baseFitScale: this.displayConfig.baseFitScale,
       offsetX: this.displayConfig.offsetX,
       offsetY: this.displayConfig.offsetY,
       offsetZ: this.displayConfig.offsetZ,
@@ -1258,6 +1305,7 @@ export class Character3DPocViewModel {
     // 同步到 displayConfig 内存态(不落盘)
     this.displayConfig = {
       scale: this.displayConfig.scale,
+      baseFitScale: this.displayConfig.baseFitScale,
       offsetX: this.displayConfig.offsetX,
       offsetY: this.displayConfig.offsetY,
       offsetZ: this.displayConfig.offsetZ,
@@ -1284,6 +1332,7 @@ export class Character3DPocViewModel {
     this.rotationYDeg = DEFAULT_VIEW_ROTATION_Y_DEG;
     this.displayConfig = {
       scale: this.displayConfig.scale,
+      baseFitScale: this.displayConfig.baseFitScale,
       offsetX: this.displayConfig.offsetX,
       offsetY: this.displayConfig.offsetY,
       offsetZ: this.displayConfig.offsetZ,
@@ -1331,8 +1380,8 @@ export class Character3DPocViewModel {
       onSetOffset: (offsetX: number, offsetY: number): void => {
         this.applyGestureOffset(offsetX, offsetY);
       },
-      onSetScale: (scale: number): void => {
-        this.applyGestureScale(scale);
+      onSetZoomFactor: (zoomFactor: number): void => {
+        this.applyGestureZoomFactor(zoomFactor);
       },
       onGestureEnd: (): void => {
         // 手势结束后落盘(异步,不阻塞手势)
@@ -1348,10 +1397,12 @@ export class Character3DPocViewModel {
 
   /**
    * 同步当前 displayConfig 到手势处理器。
+   * T-3D.5D: 传 zoomFactor(相对自动适配尺寸)而非 finalScale,
+   * GestureHandler 只操作 zoomFactor,baseFitScale 由 ModelBounds 派生不变。
    */
   private updateGestureConfig(): void {
     const snapshot: GestureConfigSnapshot = {
-      scale: this.displayConfig.scale,
+      zoomFactor: getZoomFactor(this.displayConfig),
       offsetX: this.displayConfig.offsetX,
       offsetY: this.displayConfig.offsetY
     };
@@ -1383,6 +1434,7 @@ export class Character3DPocViewModel {
       if (newPitch !== this.displayConfig.rotationXDeg) {
         this.displayConfig = {
           scale: this.displayConfig.scale,
+          baseFitScale: this.displayConfig.baseFitScale,
           offsetX: this.displayConfig.offsetX,
           offsetY: this.displayConfig.offsetY,
           offsetZ: this.displayConfig.offsetZ,
@@ -1399,6 +1451,7 @@ export class Character3DPocViewModel {
       if (this.displayConfig.rotationYDeg !== this.rotationYDeg) {
         this.displayConfig = {
           scale: this.displayConfig.scale,
+          baseFitScale: this.displayConfig.baseFitScale,
           offsetX: this.displayConfig.offsetX,
           offsetY: this.displayConfig.offsetY,
           offsetZ: this.displayConfig.offsetZ,
@@ -1431,6 +1484,7 @@ export class Character3DPocViewModel {
     }
     this.displayConfig = {
       scale: this.displayConfig.scale,
+      baseFitScale: this.displayConfig.baseFitScale,
       offsetX: offsetX,
       offsetY: offsetY,
       offsetZ: this.displayConfig.offsetZ,
@@ -1447,19 +1501,43 @@ export class Character3DPocViewModel {
   }
 
   /**
-   * 手势缩放回调:设置绝对 scale。
+   * T-3D.5D: 手势缩放回调:接收用户缩放倍率 zoomFactor(相对自动适配尺寸),
+   * 通过 computeFinalScale(baseFitScale × zoomFactor) 计算最终 scale。
+   *
+   * 缩小时自动 clamp offset 到新的合法范围(panLimit = BASE_PAN_LIMIT × max(1, zoomFactor)),
+   * 避免模型放大到 20 倍后平移到边缘,缩小时模型留在屏幕外。
+   *
+   * BASE_PAN_LIMIT 与 GestureHandler 保持一致(2.0)。
    */
-  private applyGestureScale(scale: number): void {
+  private applyGestureZoomFactor(zoomFactor: number): void {
     if (this.disposed) {
       return;
     }
-    if (this.displayConfig.scale === scale) {
+    const clampedZoom: number = clampZoomFactor(zoomFactor);
+    const newScale: number = computeFinalScale(this.displayConfig.baseFitScale, clampedZoom);
+    if (this.displayConfig.scale === newScale) {
       return;
     }
+    // 缩小时 clamp offset 到新范围,避免模型留在屏幕外
+    const PAN_LIMIT_BASE: number = 2.0;
+    const panLimit: number = PAN_LIMIT_BASE * Math.max(1.0, clampedZoom);
+    let newOffsetX: number = this.displayConfig.offsetX;
+    let newOffsetY: number = this.displayConfig.offsetY;
+    if (newOffsetX > panLimit) {
+      newOffsetX = panLimit;
+    } else if (newOffsetX < -panLimit) {
+      newOffsetX = -panLimit;
+    }
+    if (newOffsetY > panLimit) {
+      newOffsetY = panLimit;
+    } else if (newOffsetY < -panLimit) {
+      newOffsetY = -panLimit;
+    }
     this.displayConfig = {
-      scale: scale,
-      offsetX: this.displayConfig.offsetX,
-      offsetY: this.displayConfig.offsetY,
+      scale: newScale,
+      baseFitScale: this.displayConfig.baseFitScale,
+      offsetX: newOffsetX,
+      offsetY: newOffsetY,
       offsetZ: this.displayConfig.offsetZ,
       rotationXDeg: this.displayConfig.rotationXDeg,
       rotationYDeg: this.displayConfig.rotationYDeg,
@@ -1474,6 +1552,47 @@ export class Character3DPocViewModel {
   }
 
   /**
+   * T-3D.5D: 模型加载后重新派生 baseFitScale,保留用户 zoomFactor。
+   *
+   * 触发时机:supplementExternalScene 中 Bounds 计算完成后。
+   *
+   * 算法:
+   * 1. 从 currentBounds 重新计算 newBaseFitScale(computeAutoFitDisplayConfig)
+   * 2. 通过 getZoomFactor 推导用户当前 zoomFactor(= scale / oldBaseFitScale)
+   * 3. 新 scale = computeFinalScale(newBaseFitScale, currentZoom)
+   * 4. 更新 displayConfig(baseFitScale + scale,保留 offset/rotation/cameraDistance)
+   *
+   * 意义:不同模型 baseFitScale 差异大,直接把 scale 当 zoomFactor 会导致体验不一致。
+   *      分离后,用户 zoomFactor 在模型切换时保留,baseFitScale 随模型自适应。
+   */
+  private recomputeBaseFitScaleFromBounds(): void {
+    if (this.currentBounds === null) {
+      return;
+    }
+    // 1. 计算新的 baseFitScale
+    const autoFit: Character3DDisplayConfig = computeAutoFitDisplayConfig(this.currentBounds);
+    const newBaseFitScale: number = autoFit.baseFitScale;
+    // 2. 推导当前 zoomFactor
+    const currentZoom: number = getZoomFactor(this.displayConfig);
+    // 3. 新 scale = newBaseFitScale × currentZoom
+    const newScale: number = computeFinalScale(newBaseFitScale, currentZoom);
+    // 4. 更新 displayConfig(保留 offset/rotation/cameraDistance)
+    this.displayConfig = {
+      scale: newScale,
+      baseFitScale: newBaseFitScale,
+      offsetX: this.displayConfig.offsetX,
+      offsetY: this.displayConfig.offsetY,
+      offsetZ: this.displayConfig.offsetZ,
+      rotationXDeg: this.displayConfig.rotationXDeg,
+      rotationYDeg: this.displayConfig.rotationYDeg,
+      rotationZDeg: this.displayConfig.rotationZDeg,
+      cameraDistance: this.displayConfig.cameraDistance
+    };
+    Logger.info(LOG_TAG, 'recomputeBaseFitScaleFromBounds: newBFS=' + newBaseFitScale.toFixed(4)
+      + ', zoom=' + currentZoom.toFixed(4) + ', newScale=' + newScale.toFixed(4));
+  }
+
+  /**
    * T-3D.5B: 处理触摸开始(由 Character3DPanel 的 onTouch 转发)。
    * @param touches 所有当前活跃触摸点
    * @param changedId 新按下的指针 id
@@ -1485,7 +1604,7 @@ export class Character3DPocViewModel {
     this.initGestureHandler();
     this.updateGestureConfig();
     this.gestureHandler.handleTouch(TouchPhase.Down, touches, changedId, {
-      scale: this.displayConfig.scale,
+      zoomFactor: getZoomFactor(this.displayConfig),
       offsetX: this.displayConfig.offsetX,
       offsetY: this.displayConfig.offsetY
     });
@@ -1499,7 +1618,7 @@ export class Character3DPocViewModel {
       return;
     }
     this.gestureHandler.handleTouch(TouchPhase.Move, touches, -1, {
-      scale: this.displayConfig.scale,
+      zoomFactor: getZoomFactor(this.displayConfig),
       offsetX: this.displayConfig.offsetX,
       offsetY: this.displayConfig.offsetY
     });
@@ -1515,7 +1634,7 @@ export class Character3DPocViewModel {
       return;
     }
     this.gestureHandler.handleTouch(TouchPhase.Up, touches, changedId, {
-      scale: this.displayConfig.scale,
+      zoomFactor: getZoomFactor(this.displayConfig),
       offsetX: this.displayConfig.offsetX,
       offsetY: this.displayConfig.offsetY
     });
@@ -1529,7 +1648,7 @@ export class Character3DPocViewModel {
       return;
     }
     this.gestureHandler.handleTouch(TouchPhase.Cancel, [], -1, {
-      scale: this.displayConfig.scale,
+      zoomFactor: getZoomFactor(this.displayConfig),
       offsetX: this.displayConfig.offsetX,
       offsetY: this.displayConfig.offsetY
     });

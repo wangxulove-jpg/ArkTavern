@@ -42,6 +42,7 @@ import { AppServices } from '../services/AppServices';
 import { ChatTextStyle } from '../utils/ChatTextStyleSettings';
 import { ChatBackgroundConfig } from '../services/ChatBackgroundService';
 import { ContextBudgetViewModel } from '../viewmodels/ContextBudgetViewModel';
+import { ChatArchiveViewModel } from '../viewmodels/ChatArchiveViewModel';
 import { ContextBudgetSnapshotStore } from '../services/ContextBudgetSnapshotStore';
 import {
   ContextBudgetStats
@@ -51,6 +52,7 @@ import { ChatSessionListPanel } from '../components/ChatSessionListPanel';
 import { Character3DPanel } from '../components/Character3DPanel';
 import { Character } from '../models/Character';
 import { Logger } from '../utils/Logger';
+import { getZoomFactor } from '../models/character3d/Character3DDisplayConfig';
 
 const LOG_TAG: string = 'ChatPage';
 
@@ -129,16 +131,20 @@ struct ChatPage {
   @State chat3DPanelRatio: number = 0.40;
   /** T-3D.5B: 旋转灵敏度(0.2 ~ 2.0,1.0 = 标准) */
   @State chat3DRotationSensitivity: number = 1.0;
-  /** T-3D.5A: 当前模型显示比例(打开菜单时从 Character3DService 读取) */
-  @State chat3DModelScale: number = 1.0;
+  /** T-3D.5D: 当前模型缩放倍率 zoomFactor(相对自动适配尺寸,0.10 ~ 20.0,打开菜单时从 Character3DService 读取) */
+  @State chat3DModelZoomFactor: number = 1.0;
   /** T-3D.5A: 是否有外部模型(打开菜单时从 Character3DService 读取) */
   @State chat3DHasExternalModel: boolean = false;
-  /** T-3D.5A: scale 请求计数器(用于触发 AppStorage 通知) */
+  /** T-3D.5D: zoomFactor 请求计数器(语义改为 zoomFactor,AppStorage key 保留以兼容) */
   @StorageLink('chat3dScaleRequest') private chat3DScaleRequest: number = -1;
   /** T-3D.5A: 保存请求计数器 */
   @StorageLink('chat3dSaveRequest') private chat3DSaveRequest: number = 0;
   /** T-3D.5A: 自动适配请求计数器 */
   @StorageLink('chat3dAutoFitRequest') private chat3DAutoFitRequest: number = 0;
+  /** T-CHAT.1: 聊天归档 ViewModel(导出当前聊天/角色全部聊天) */
+  @State archiveViewModel: ChatArchiveViewModel | null = null;
+  /** T-CHAT.1: 导出进行中提示 */
+  @State archiveBusy: boolean = false;
 
   aboutToAppear(): void {
     const modelService = AppServices.getModelService();
@@ -430,10 +436,10 @@ struct ChatPage {
             busy: this.viewModel!.busy,
             userNameOverride: this.currentUserNameOverride,
             resolvedUserName: this.resolvedUserName,
-            // T-3D.5A: 3D 开关 + scale 调节
+            // T-3D.5D: 3D 开关 + zoomFactor 调节
             isSingleCharacterChat: this.isSingleCharacterChat(),
             chat3DEnabled: this.chat3DEnabled,
-            modelScale: this.chat3DModelScale,
+            modelZoomFactor: this.chat3DModelZoomFactor,
             hasExternalModel: this.chat3DHasExternalModel,
             // T-3D.5B: 3D 画面占比 + 旋转灵敏度
             panelRatio: this.chat3DPanelRatio,
@@ -441,11 +447,11 @@ struct ChatPage {
             onToggleChat3D: (enabled: boolean): void => {
               this.toggleChat3D(enabled);
             },
-            onScaleChange: (scale: number): void => {
-              this.onScaleChange(scale);
+            onZoomFactorChange: (zoomFactor: number): void => {
+              this.onZoomFactorChange(zoomFactor);
             },
-            onScaleConfirm: (): void => {
-              this.onScaleConfirm();
+            onZoomFactorConfirm: (): void => {
+              this.onZoomFactorConfirm();
             },
             onAutoFit: (): void => {
               this.onAutoFit();
@@ -1336,30 +1342,31 @@ struct ChatPage {
   }
 
   /**
-   * T-3D.5A: 加载当前 3D 模型信息(scale + hasExternalModel)。
+   * T-3D.5D: 加载当前 3D 模型信息(zoomFactor + hasExternalModel)。
    * 在打开 ChatMoreMenuSheet 时调用,用于 Slider 初始值。
+   * zoomFactor = scale / baseFitScale,相对自动适配尺寸,跨模型体验一致。
    */
   private async loadChat3DModelInfo(): Promise<void> {
     try {
       const service = AppServices.getCharacter3DService();
       if (service === null) {
         this.chat3DHasExternalModel = false;
-        this.chat3DModelScale = 1.0;
+        this.chat3DModelZoomFactor = 1.0;
         return;
       }
       const config = await service.getConfig();
       if (config.modelUri.length === 0 || !config.fileExists) {
         this.chat3DHasExternalModel = false;
-        this.chat3DModelScale = 1.0;
+        this.chat3DModelZoomFactor = 1.0;
         return;
       }
       this.chat3DHasExternalModel = true;
       const displayConfig = await service.getDisplayConfig(config.displayName);
-      this.chat3DModelScale = displayConfig.scale;
+      this.chat3DModelZoomFactor = getZoomFactor(displayConfig);
     } catch (e) {
       Logger.warn(LOG_TAG, 'loadChat3DModelInfo failed: ' + (e as Error).message);
       this.chat3DHasExternalModel = false;
-      this.chat3DModelScale = 1.0;
+      this.chat3DModelZoomFactor = 1.0;
     }
   }
 
@@ -1378,19 +1385,20 @@ struct ChatPage {
   }
 
   /**
-   * T-3D.5A: scale 变化(实时预览,不落盘)。
+   * T-3D.5D: zoomFactor 变化(实时预览,不落盘)。
    * 通过 AppStorage 通知 Character3DPanel 更新 Scene。
+   * AppStorage key 保留 'chat3dScaleRequest' 以兼容,值语义为 zoomFactor。
    */
-  private onScaleChange(scale: number): void {
-    this.chat3DModelScale = scale;
-    this.chat3DScaleRequest = scale;
+  private onZoomFactorChange(zoomFactor: number): void {
+    this.chat3DModelZoomFactor = zoomFactor;
+    this.chat3DScaleRequest = zoomFactor;
   }
 
   /**
-   * T-3D.5A: scale 确认(落盘)。
+   * T-3D.5D: zoomFactor 确认(落盘)。
    * 通过 AppStorage 通知 Character3DPanel 保存配置。
    */
-  private onScaleConfirm(): void {
+  private onZoomFactorConfirm(): void {
     this.chat3DSaveRequest = this.chat3DSaveRequest + 1;
   }
 
@@ -1693,6 +1701,97 @@ struct ChatPage {
       url: 'pages/ContextBudgetPage',
       params: { chatId: chatId }
     });
+  }
+
+  // ===== T-CHAT.1: 聊天归档导出 =====
+
+  /**
+   * T-CHAT.1: 导出当前聊天。
+   * 从 ChatViewModel 获取当前 chatId 与角色信息,调用 ChatArchiveViewModel 执行导出。
+   */
+  private async exportCurrentChat(): Promise<void> {
+    if (this.viewModel === null) {
+      return;
+    }
+    if (this.archiveBusy) {
+      return;
+    }
+    const chatId: string | undefined = this.viewModel!.getCurrentChatId();
+    if (chatId === undefined || chatId.length === 0) {
+      promptAction.showToast({ message: '会话未就绪', duration: 1500 });
+      return;
+    }
+    this.archiveBusy = true;
+    try {
+      const vm: ChatArchiveViewModel = this.ensureArchiveViewModel();
+      const title: string = this.viewModel!.characterName.length > 0
+        ? this.viewModel!.characterName
+        : '对话';
+      const charName: string = this.character !== null ? this.character!.name : '';
+      const ok: boolean = await vm.exportCurrentConversation({
+        conversationId: chatId,
+        conversationTitle: title,
+        characterName: charName
+      });
+      if (ok && vm.lastExportStats !== null) {
+        promptAction.showToast({
+          message: '聊天导出成功: ' + String(vm.lastExportStats!.conversationCount)
+            + ' 个对话, ' + String(vm.lastExportStats!.messageCount) + ' 条消息',
+          duration: 2500
+        });
+      } else if (!ok && vm.errorMessage.length > 0) {
+        promptAction.showToast({ message: vm.errorMessage, duration: 2500 });
+      }
+      vm.resetState();
+    } finally {
+      this.archiveBusy = false;
+    }
+  }
+
+  /**
+   * T-CHAT.1: 导出该角色全部聊天。
+   */
+  private async exportCharacterChats(): Promise<void> {
+    if (this.viewModel === null) {
+      return;
+    }
+    if (this.archiveBusy) {
+      return;
+    }
+    if (this.character === null || this.character!.id.length === 0) {
+      promptAction.showToast({ message: '当前无角色,无法导出', duration: 1500 });
+      return;
+    }
+    this.archiveBusy = true;
+    try {
+      const vm: ChatArchiveViewModel = this.ensureArchiveViewModel();
+      const ok: boolean = await vm.exportCharacterConversations({
+        characterId: this.character!.id,
+        characterName: this.character!.name
+      });
+      if (ok && vm.lastExportStats !== null) {
+        promptAction.showToast({
+          message: '导出成功: ' + String(vm.lastExportStats!.conversationCount)
+            + ' 个对话, ' + String(vm.lastExportStats!.messageCount) + ' 条消息',
+          duration: 2500
+        });
+      } else if (!ok && vm.errorMessage.length > 0) {
+        promptAction.showToast({ message: vm.errorMessage, duration: 2500 });
+      }
+      vm.resetState();
+    } finally {
+      this.archiveBusy = false;
+    }
+  }
+
+  /**
+   * 懒创建 ChatArchiveViewModel。
+   */
+  private ensureArchiveViewModel(): ChatArchiveViewModel {
+    if (this.archiveViewModel === null) {
+      this.archiveViewModel = AppServices.createChatArchiveViewModel();
+    }
+    return this.archiveViewModel!;
   }
 
   /**

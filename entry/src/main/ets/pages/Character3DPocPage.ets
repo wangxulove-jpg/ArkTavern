@@ -34,25 +34,29 @@ import { GltfModelInfo } from '../parser/GltfValidator';
 import { Logger } from '../utils/Logger';
 import { Character3DDisplayConfigTest } from '../test/Character3DDisplayConfigTest';
 import { Chat3DPanelTest } from '../test/Chat3DPanelTest';
+import { Character3DGestureHandlerTest } from '../test/Character3DGestureHandlerTest';
 import {
   Character3DDisplayConfig,
-  SCALE_MIN,
-  SCALE_MAX,
+  createDefaultDisplayConfig,
   OFFSET_MIN,
   OFFSET_MAX,
   ROTATION_MIN_DEG,
   ROTATION_MAX_DEG,
   CAMERA_DISTANCE_MIN,
   CAMERA_DISTANCE_MAX,
-  DEFAULT_SCALE,
   DEFAULT_OFFSET_X,
   DEFAULT_OFFSET_Y,
   DEFAULT_OFFSET_Z,
   DEFAULT_ROTATION_X_DEG,
   DEFAULT_ROTATION_Y_DEG,
   DEFAULT_ROTATION_Z_DEG,
-  DEFAULT_CAMERA_DISTANCE
+  DEFAULT_CAMERA_DISTANCE,
+  VIEWER_ZOOM_FACTOR_MIN,
+  VIEWER_ZOOM_FACTOR_MAX,
+  VIEWER_ZOOM_FACTOR_DEFAULT,
+  getZoomFactor
 } from '../models/character3d/Character3DDisplayConfig';
+import { TouchPointData, TouchPhase } from '../models/character3d/Character3DGestureHandler';
 
 const LOG_TAG: string = 'Char3DPocPage';
 
@@ -79,16 +83,7 @@ struct Character3DPocPage {
   /** 导入操作进行中(防止重复点击) */
   @State private isImporting: boolean = false;
   /** T-3D.4: 显示配置(用于 Slider 双向绑定) */
-  @State private displayConfig: Character3DDisplayConfig = {
-    scale: DEFAULT_SCALE,
-    offsetX: DEFAULT_OFFSET_X,
-    offsetY: DEFAULT_OFFSET_Y,
-    offsetZ: DEFAULT_OFFSET_Z,
-    rotationXDeg: DEFAULT_ROTATION_X_DEG,
-    rotationYDeg: DEFAULT_ROTATION_Y_DEG,
-    rotationZDeg: DEFAULT_ROTATION_Z_DEG,
-    cameraDistance: DEFAULT_CAMERA_DISTANCE
-  };
+  @State private displayConfig: Character3DDisplayConfig = createDefaultDisplayConfig();
   /** T-3D.4: 显示配置面板是否展开 */
   @State private isPanelExpanded: boolean = false;
   /** T-3D.4: 保存按钮是否正在落盘(防重复点击) */
@@ -170,6 +165,54 @@ struct Character3DPocPage {
     this.vm.onDisplayConfigChanged = (cfg: Character3DDisplayConfig): void => {
       this.displayConfig = cfg;
     };
+  }
+
+  /**
+   * T-3D.5D: 将 ArkUI TouchEvent 转换为 TouchPointData[] 并转发到 ViewModel。
+   *
+   * 与 Character3DPanel.handleTouchEvent 保持完全一致:
+   * - 转发完整 touches(不只是 touches[0])
+   * - 处理 Down/Move/Up/Cancel 四种 phase
+   * - 双指操作通过完整 touches 数组识别
+   * - 双指转单指由 GestureHandler 的 suppressSingleRotate 处理
+   */
+  private handleTouchEvent(event: TouchEvent): void {
+    const touches: TouchObject[] = event.touches;
+    const changedTouches: TouchObject[] = event.changedTouches;
+    const points: TouchPointData[] = [];
+    for (let i = 0; i < touches.length; i++) {
+      const t: TouchObject = touches[i];
+      points.push({ id: t.id, x: t.x, y: t.y });
+    }
+    const phase: TouchPhase = this.touchTypeToPhase(event.type);
+    if (phase === TouchPhase.Down || phase === TouchPhase.Up) {
+      const changedId: number = changedTouches.length > 0 ? changedTouches[0].id : -1;
+      if (phase === TouchPhase.Down) {
+        this.vm.handleTouchStart(points, changedId);
+      } else {
+        this.vm.handleTouchUp(points, changedId);
+      }
+    } else if (phase === TouchPhase.Move) {
+      this.vm.handleTouchMove(points);
+    } else if (phase === TouchPhase.Cancel) {
+      this.vm.handleTouchCancel();
+    }
+  }
+
+  /**
+   * T-3D.5D: ArkUI TouchType → TouchPhase。
+   */
+  private touchTypeToPhase(type: TouchType): TouchPhase {
+    if (type === TouchType.Down) {
+      return TouchPhase.Down;
+    }
+    if (type === TouchType.Up) {
+      return TouchPhase.Up;
+    }
+    if (type === TouchType.Move) {
+      return TouchPhase.Move;
+    }
+    return TouchPhase.Cancel;
   }
 
   build() {
@@ -280,16 +323,16 @@ struct Character3DPocPage {
   displayConfigSliders() {
     Scroll() {
       Column() {
-        // 缩放
+        // T-3D.5D 缩放倍率(相对自动适配尺寸,0.10~20.0,1.0 = 自动适配)
         this.sliderRow(
-          '缩放',
-          this.displayConfig.scale,
-          SCALE_MIN,
-          SCALE_MAX,
-          DEFAULT_SCALE,
+          '缩放倍率',
+          getZoomFactor(this.displayConfig),
+          VIEWER_ZOOM_FACTOR_MIN,
+          VIEWER_ZOOM_FACTOR_MAX,
+          VIEWER_ZOOM_FACTOR_DEFAULT,
           2,
           (v: number) => {
-            this.vm.updateDisplayConfig({ scale: v });
+            this.vm.updateZoomFactor(v);
           }
         )
         // 垂直位置(offsetY)
@@ -483,10 +526,11 @@ struct Character3DPocPage {
 
   /**
    * T-3D.4: 显示配置摘要文本(折叠时显示)。
+   * T-3D.5D: S(scale) 改为 Z(zoomFactor,相对自动适配尺寸)。
    */
   private displayConfigSummary(): string {
     const c: Character3DDisplayConfig = this.displayConfig;
-    return 'S:' + c.scale.toFixed(2)
+    return 'Z:' + getZoomFactor(c).toFixed(2)
       + ' Y:' + c.offsetY.toFixed(2)
       + ' R:' + c.rotationYDeg.toFixed(0) + '°'
       + ' D:' + c.cameraDistance.toFixed(2);
@@ -645,17 +689,22 @@ struct Character3DPocPage {
           .width('100%')
           .height('100%')
           .onTouch((event: TouchEvent) => {
-            if (event.type === TouchType.Up) {
-              this.vm.handleTouch();
+            // T-3D.5D: 转发完整 TouchEvent 到统一手势状态机,
+            // 与 Character3DPanel 使用同一套 GestureHandler 逻辑:
+            // - 单指:旋转(水平 yaw + 垂直 pitch,无惯性)
+            // - 双指:平移或缩放(互斥,锁定后不切换)
+            // - 双指转单指:抑制剩余手指立即旋转
+            // - Cancel:清空状态,保留最后视角
+            this.handleTouchEvent(event);
+          })
+          .onAreaChange((_oldValue: Area, newValue: Area) => {
+            // T-3D.5D: 同步视口尺寸到 GestureHandler(用于双指平移世界单位换算)
+            const w: number = typeof newValue.width === 'number' ? newValue.width : 0;
+            const h: number = typeof newValue.height === 'number' ? newValue.height : 0;
+            if (w > 0 && h > 0) {
+              this.vm.setGestureViewport(w, h);
             }
           })
-          .gesture(
-            PanGesture()
-              .onActionUpdate((e: GestureEvent) => {
-                // 水平拖动旋转
-                this.vm.handleDragX(e.offsetX);
-              })
-          )
 
         // 触摸反馈浮层(短暂闪烁)
         if (this.touchCount > 0) {
@@ -856,7 +905,7 @@ struct Character3DPocPage {
 
       // T-3D.5: 测试运行按钮(第三行)
       Row() {
-        Button('运行测试(T-3D.4+T-3D.5)')
+        Button('运行测试(T-3D.4+T-3D.5+T-3D.5D)')
           .fontSize(13)
           .enabled(!this.isRunningTests)
           .backgroundColor(this.isRunningTests ? $r('app.color.app_surface_2') : $r('app.color.app_accent'))
@@ -1041,7 +1090,7 @@ struct Character3DPocPage {
   }
 
   /**
-   * T-3D.5: 运行全部纯逻辑测试(T-3D.4 + T-3D.5)。
+   * T-3D.5: 运行全部纯逻辑测试(T-3D.4 + T-3D.5 + T-3D.5D)。
    * 通过 toast 显示测试结果摘要。
    */
   private async handleRunAllTests(): Promise<void> {
@@ -1055,13 +1104,16 @@ struct Character3DPocPage {
       const r4 = Character3DDisplayConfigTest.runAllTests();
       // T-3D.5 聊天页 3D 面板测试(14 项)
       const r5 = await Chat3DPanelTest.runAllTests();
-      const totalPassed: number = r4.passed + r5.passed;
-      const totalFailed: number = r4.failed + r5.failed;
-      const total: number = r4.total + r5.total;
+      // T-3D.5D 手势状态机测试(模拟 pointer 序列)
+      const r5d = Character3DGestureHandlerTest.runAllTests();
+      const totalPassed: number = r4.passed + r5.passed + r5d.passed;
+      const totalFailed: number = r4.failed + r5.failed + r5d.failed;
+      const total: number = r4.total + r5.total + r5d.total;
       const summary: string = '测试完成: ' + totalPassed + '/' + total + ' passed, '
         + totalFailed + ' failed'
         + '\nT-3D.4: ' + r4.passed + '/' + r4.total
-        + '\nT-3D.5: ' + r5.passed + '/' + r5.total;
+        + '\nT-3D.5: ' + r5.passed + '/' + r5.total
+        + '\nT-3D.5D: ' + r5d.passed + '/' + r5d.total;
       Logger.info('PoCPage', summary);
       promptAction.showToast({ message: summary, duration: 5000 });
     } catch (e) {

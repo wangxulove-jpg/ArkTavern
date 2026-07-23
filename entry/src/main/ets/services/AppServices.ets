@@ -87,6 +87,9 @@ import { MultiPersonResponseParser } from './MultiPersonResponseParser';
 import { MultiPersonChatService } from './MultiPersonChatService';
 import { ChatTextStyleSettings } from '../utils/ChatTextStyleSettings';
 import { Chat3DDisplaySettings } from '../utils/Chat3DDisplaySettings';
+import { ChatArchiveService } from './ChatArchiveService';
+import { ChatArchiveImportService } from './ChatArchiveImportService';
+import { ChatArchiveViewModel } from '../viewmodels/ChatArchiveViewModel';
 import { Logger } from '../utils/Logger';
 
 const LOG_TAG: string = 'AppServices';
@@ -198,6 +201,10 @@ export class AppServices {
   readonly chatTextStyleSettings: ChatTextStyleSettings;
   /** Chat3DDisplaySettings 聊天页 3D 显示开关设置(T-3D.5) */
   private chat3DDisplaySettings: Chat3DDisplaySettings | null = null;
+  /** ChatArchiveService 聊天归档导出服务(T-CHAT.1) */
+  private chatArchiveService: ChatArchiveService | null = null;
+  /** ChatArchiveImportService 聊天归档导入服务(T-CHAT.1) */
+  private chatArchiveImportService: ChatArchiveImportService | null = null;
 
   /**
    * 私有构造,组装全部依赖。
@@ -433,6 +440,23 @@ export class AppServices {
         services.marketTranslationService = new MarketTranslationService(
           services.modelService,
           services.marketService.getCacheStore()
+        );
+        // 创建 ChatArchiveService(T-CHAT.1 聊天归档导出,只需 Repository)
+        services.chatArchiveService = new ChatArchiveService(
+          services.chatRepository,
+          services.messageRepository,
+          services.messageSwipeRepository,
+          services.conversationBranchRepository,
+          services.characterRepository
+        );
+        // 创建 ChatArchiveImportService(T-CHAT.1 聊天归档导入,只需 Repository + DbHelper)
+        services.chatArchiveImportService = new ChatArchiveImportService(
+          services.dbHelper,
+          services.chatRepository,
+          services.messageRepository,
+          services.messageSwipeRepository,
+          services.conversationBranchRepository,
+          services.characterRepository
         );
         Logger.warn(LOG_TAG, 'AppServices initialized');
       })
@@ -777,5 +801,40 @@ export class AppServices {
       services.worldMemoryService,
       services.worldRelationshipService
     );
+  }
+
+  /**
+   * 获取 ChatArchiveService 实例(T-CHAT.1 聊天归档导出)。
+   * 用于导出单个对话或角色全部对话。
+   */
+  static getChatArchiveService(): ChatArchiveService {
+    const service: ChatArchiveService | null = AppServices.getInstance().chatArchiveService;
+    if (service === null) {
+      throw new Error('ChatArchiveService not initialized');
+    }
+    return service;
+  }
+
+  /**
+   * 获取 ChatArchiveImportService 实例(T-CHAT.1 聊天归档导入)。
+   * 用于从 .arktchat.json 文件导入对话。
+   */
+  static getChatArchiveImportService(): ChatArchiveImportService {
+    const service: ChatArchiveImportService | null = AppServices.getInstance().chatArchiveImportService;
+    if (service === null) {
+      throw new Error('ChatArchiveImportService not initialized');
+    }
+    return service;
+  }
+
+  /**
+   * 创建 ChatArchiveViewModel 实例(T-CHAT.1 聊天归档导入导出)。
+   * 用于 ChatPage / ChatSessionRootView 触发导出与导入。
+   * 每次调用返回新实例,内部封装文件选择器与 Service 调用。
+   */
+  static createChatArchiveViewModel(): ChatArchiveViewModel {
+    const archiveService: ChatArchiveService = AppServices.getChatArchiveService();
+    const importService: ChatArchiveImportService = AppServices.getChatArchiveImportService();
+    return new ChatArchiveViewModel(archiveService, importService);
   }
 }

@@ -5643,3 +5643,323 @@ C++ GlbContainerValidator 的非 4 字节对齐 chunkLength 检查(代码行 96-
 按任务要求停止,不进入 T-3D.6D 聊天动作联动或其他任务。
 
 
+## 聊天记录导入与导出闭环
+
+### 一、任务目标
+
+实现 ArkTavern 聊天记录的完整导入导出闭环:
+1. 导出当前聊天
+2. 导出当前角色的全部聊天
+3. 从文件导入聊天记录
+4. 导入前预览(不写数据库)
+5. 将导入内容安全写入现有聊天数据库
+6. 导入后可立即查看和继续聊天
+
+完成后停止,不继续修改 3D、模型转换、动作管理或聊天动作联动。
+
+### 二、数据格式设计
+
+#### ArkTavernChatArchive v1
+
+- 文件扩展名:`.arktchat.json`
+- 顶层字段:`format` / `version` / `scope`(single|character) / `exportedAt` / `appVersion` / `character` / `conversations`
+- `character`:sourceCharacterId / name / avatarName
+- `conversations[]`:sourceConversationId / title / createdAt / updatedAt / lastMessageAt / userNameOverride / sortOrder / messages / branches / swipeGroups
+- `messages[]`:sourceMessageId / role / content / createdAt / updatedAt / order / status / errorMessage / source / senderType / senderCharacterId / sceneId / generationBatchId / visibility / recipientCharacterIds / participantIds / witnessIds
+- `branches[]`:sourceBranchId / parentSourceBranchId / forkSourceMessageId / name / isRoot / createdAt / updatedAt / lastMessageAt / messageLinks / swipeSelections
+- `swipeGroups[]`:sourceAssistantMessageId / candidates[]
+
+校验由 `ChatArchiveValidator` 完成:格式名、版本、必填字段、枚举值、数组非空、时间戳合法性等。
+
+### 三、实现内容
+
+#### 1. 导出服务 `ChatArchiveService.ets`
+
+- `exportConversation(conversationId, targetUri)`:导出单个对话
+- `exportCharacterConversations(characterId, targetUri)`:导出角色全部对话
+- 分页加载消息(MESSAGE_PAGE_SIZE=200,按 sequence 升序)
+- 转换 Chat / ChatMessage / ConversationBranch / MessageSwipeGroup 为归档格式
+- 通过 DocumentViewPicker.save 选择目标文件,fileIo 写入 UTF-8 JSON
+- 文件名规则:角色名_对话标题_时间戳.arktchat.json,过滤非法字符
+
+#### 2. 导入服务 `ChatArchiveImportService.ets`
+
+- `buildPreview(fileUri, fileName, currentCharacterId)`:读取文件 → SHA-256 → JSON 解析 → Schema 校验 → 预览统计 → 重复检测(不写数据库)
+- `performImport(payload, options)`:逐个 conversation 独立事务导入,单个失败不影响其他
+- 导入流程:
+  - 重新生成本地 ID(chatId / messageId / branchId / candidateId)
+  - 建立 sourceId → localId 映射,恢复消息父子、分支、Swipe 关系
+  - 插入 Chat → Messages → Root Branch + chat_branch_state → Child Branches → BranchMessageLinks → SwipeGroups + Candidates → SwipeSelections
+  - 角色匹配:sourceCharacterId 精确匹配 > 名称匹配 > 用户手动选择
+  - 重复标题追加"（导入）"后缀
+- 安全:文件大小限制(MAX_ARCHIVE_FILE_SIZE)、SHA-256 校验、Schema 校验、全事务写入
+
+#### 3. ViewModel `ChatArchiveViewModel.ets`
+
+- 管理导入导出状态(isExporting / isImporting / previewStats / importResult / error)
+- 暴露 exportCurrentChat / exportAllChats / pickAndPreviewImport / confirmImport / cancelImport
+- 重复检测提示:用户可选"仍然导入"(forceImport=true)或取消
+
+#### 4. UI 入口
+
+- `ChatMoreMenuSheet.ets`:聊天页"更多"菜单添加"导出当前聊天"
+- `ChatPage.ets`:处理导出回调,调用 DocumentViewPicker.save
+- `ChatSessionRootView.ets`:会话列表页添加"导入聊天记录"入口;会话项长按菜单添加"导出此聊天"
+
+#### 5. 服务注册 `AppServices.ets`
+
+- 注册 ChatArchiveService / ChatArchiveImportService / ChatArchiveViewModel
+
+### 四、关键 Bug 修复:会话初始化失败
+
+#### 现象
+
+导入的会话在进入聊天页时显示"会话初始化失败",hilog 报:
+```
+ChatService | initializeSession failed: record not found
+ChatViewModel | selectSession failed: DatabaseError: record not found
+```
+
+#### 根因
+
+`ChatArchiveImportService.ets` 中 Root Branch 创建逻辑错误:
+- 旧代码先调用 `createRootBranch(localChatId)` 在内存生成一个 branch 对象(带新 ID),再调用 `createRootBranchWithStore(store, localChatId)` 在数据库中插入(内部又生成一个新 ID)
+- `localRootBranchId` 使用了内存对象的 ID(未插入数据库),而 `setActiveBranchWithStore` 写入的 active_branch_id 指向不存在的 branch
+- 会话加载时 `getActiveBranch` 查到 active_branch_id,再 `getBranch` 查不到该 branch → 抛 notFound
+
+#### 修复
+
+使用 `createRootBranchWithStore` 的返回值作为 `localRootBranchId`(数据库实际插入的 ID),而非外部 `createRootBranch` 生成的未插入 ID。同时移除事务内的 active branch 验证检查(RDB 事务快照隔离导致同事务内读不到刚写入的 state,验证永远失败,产生误导性 warning)。
+
+### 五、真机验收
+
+设备:nova 13 Pro(4BD9K24C18008717)
+
+#### 1. 导出当前聊天
+
+- 从聊天页"更多"菜单选择"导出当前聊天"
+- DocumentViewPicker.save 选择保存位置
+- hilog:`ChatArchiveService | exportConversation done convs=1 msgs=5`
+- 生成文件:史培培_史培培_20260723_2215.arktchat.json(8063 字节)
+
+#### 2. 导入预览
+
+- 从会话列表页选择"导入聊天记录"
+- DocumentViewPicker.select 选择 .arktchat.json 文件
+- hilog:`ChatArchiveImport | buildPreview size=8063 sha=7P+0I5LI` → `buildPreview done convs=1 msgs=5 dup=1`
+- 预览显示:1 个对话、5 条消息、检测到 1 个重复
+
+#### 3. 导入执行
+
+- 确认导入(选择目标角色)
+- hilog:`ChatArchiveImport | performImport start convs=1 char=char-ce0` → `imported conv[0] msgs=5`
+- 导入成功,会话列表出现新会话
+
+#### 4. 导入后查看与继续聊天
+
+- 点击导入的会话,正常加载消息(无 initializeSession 错误)
+- 可继续发送消息并收到流式回复
+- hilog 无 `initializeSession failed` / `selectSession failed` 错误
+
+#### 5. 修复前后对比
+
+- 修复前:导入后会话初始化失败,无法进入聊天页(record not found)
+- 修复后:导入后会话正常加载,可查看历史消息并继续聊天
+
+### 六、Debug 代码清理
+
+- 移除 `ChatArchiveImportService.ets` 中事务内的 active branch 验证检查(5 行,因 RDB 快照隔离永远触发 warning)
+- 移除修复后不再使用的 `createRootBranch` / `createChildBranch` import
+- 无其他临时 debug 代码残留
+
+### 七、修改文件清单
+
+**新增**:
+- `entry/src/main/ets/parser/ChatArchiveSchema.ets` — ArkTavernChatArchive v1 格式定义与类型
+- `entry/src/main/ets/parser/ChatArchiveValidator.ets` — JSON Schema 校验
+- `entry/src/main/ets/services/ChatArchiveService.ets` — 导出服务
+- `entry/src/main/ets/services/ChatArchiveImportService.ets` — 导入服务
+- `entry/src/main/ets/viewmodels/ChatArchiveViewModel.ets` — 导入导出状态管理
+
+**修改**:
+- `entry/src/main/ets/services/AppServices.ets` — 注册新服务与 ViewModel
+- `entry/src/main/ets/components/ChatMoreMenuSheet.ets` — 添加"导出当前聊天"入口
+- `entry/src/main/ets/pages/ChatPage.ets` — 导出功能处理逻辑
+- `entry/src/main/ets/pages/tabs/ChatSessionRootView.ets` — 添加"导入聊天记录"入口与会话长按导出
+
+### 八、已知限制
+
+1. **重复检测基于指纹**:标题 + 消息数 + 首末消息时间 + 首条消息摘要,内容小幅修改的对话可能漏判
+2. **异常文件测试未全面覆盖**:仅 Schema 校验覆盖格式错误,未测试超大文件、恶意 JSON、编码异常等边界
+3. **角色全部聊天导出未实机验证**:仅验证了单对话导出导入 round-trip
+4. **Branch 完整性**:当前仅导入 Root Branch 和 Child Branches 的 messageLinks,复杂分支拓扑未实机验证
+
+### 九、最终结论
+
+**聊天记录导入与导出闭环完成。单对话导出(5 条消息)→ 文件保存 → 导入预览(检测到重复)→ 确认导入 → 会话正常加载 → 可继续聊天,全链路真机验证通过。关键 Bug(导入后会话初始化失败)已修复:根因为 Root Branch ID 关联错误,使用 createRootBranchWithStore 返回值替代外部 createRootBranch 生成的未插入 ID。Debug 代码已清理,增量构建通过。**
+
+按任务要求停止,不继续修改 3D、模型转换、动作管理或聊天动作联动。
+
+---
+
+## T-3D.5D PoC 与聊天页 3D 手势统一及大倍率缩放 — 完成
+
+### 目标
+
+- PoC 与聊天页手势一致(单指旋转 / 双指缩放 / 双指平移 / 模式互斥 / 双指转单指抑制 / Cancel)
+- 最大放大倍率提升到自动适配尺寸的 20 倍
+- 为独立模型查看器建立共享底座(Character3DGestureHandler + Character3DDisplayConfig 常量 + zoomFactor 语义)
+- 不开发完整模型查看器页面
+- 不修改模型导入转换、聊天数据库或动作管理功能
+
+### 原始差异
+
+修改前 PoC 页面与聊天页存在以下差异:
+
+1. **PoC 缺失完整触摸事件**:PoC 页面使用 `PanGesture` 仅支持水平旋转,不转发 Down/Move/Up/Cancel 完整序列,不识别双指
+2. **PoC 与聊天页配置差异**:PoC 使用旧 `scale` 语义(绝对值),聊天页 Slider 也用 `scale`,但范围 0.25~8.0,未使用 `zoomFactor`
+3. **原缩放上限**:Slider 最大值 8.0,GestureHandler 常量 `SCALE_MAX = 8.0`,无法达到 20 倍
+4. **重复手势逻辑风险**:PoC 页面 PanGesture 与 Character3DGestureHandler 逻辑重复,且只处理水平旋转
+5. **viewport 差异**:PoC 页面未同步 viewport 到 GestureHandler
+6. **双指缩放算法风险**:原算法可能逐帧连乘导致数值漂移(虽然实际代码已用快照,但常量与语义未统一)
+7. **baseFitScale 与 zoomFactor 未分离**:配置中 `scale` 直接作为用户缩放倍率,不同模型自适应尺寸不同导致跨模型体验不一致
+
+### 共享实现
+
+1. **唯一 GestureHandler**:`Character3DGestureHandler` 继续作为唯一手势状态机,PoC 和聊天页共用,禁止页面层写第二套缩放/平移/旋转算法
+2. **共享 ViewTransform**:统一字段 `yaw / pitch / zoomFactor / baseFitScale / finalScale / offsetX / offsetY / viewportWidth / viewportHeight / cameraDistance`,语义 `finalScale = baseFitScale × zoomFactor`
+3. **baseFitScale 方案**:模型加载后在 `recomputeBaseFitScaleFromBounds` 中根据 Bounds 重新计算,用户操作只修改 `zoomFactor`,模型切换时 `baseFitScale` 自适应而 `zoomFactor` 保留
+4. **zoomFactor 方案**:用户相对缩放倍率,范围 [0.10, 20.0],默认 1.0;`getZoomFactor(config) = config.scale / config.baseFitScale`;`computeFinalScale(bfs, zf) = bfs × clampZoomFactor(zf)`
+5. **共享配置常量**:统一定义在 `Character3DDisplayConfig.ets`,禁止页面层重复声明
+6. **ViewerSurface**:本任务未提取独立 `Character3DViewerSurface.ets` 组件(避免大规模回归),改为通过共享 `Character3DGestureHandler` + `Character3DDisplayConfig` 常量 + `Character3DPocViewModel` 实现 PoC 与聊天页一致性,为未来 StandaloneViewer 保留复用入口
+
+### 缩放范围
+
+统一常量(定义在 `Character3DDisplayConfig.ets`):
+
+```
+VIEWER_ZOOM_FACTOR_MIN = 0.10    // 最小显示为自动适配尺寸的 10%
+VIEWER_ZOOM_FACTOR_MAX = 20.0    // 最大显示为自动适配尺寸的 20 倍
+VIEWER_ZOOM_FACTOR_DEFAULT = 1.0 // 自动适配后的默认显示尺寸
+```
+
+- 旧最大值:8.0(Slider max + SCALE_MAX)
+- 新最大值:20.0(VIEWER_ZOOM_FACTOR_MAX)
+
+PoC 页面 Slider、聊天页 ChatMoreMenuSheet Slider、GestureHandler clamp 全部引用同一常量,未在任一页面层重复定义。
+
+### 手势结果
+
+- **单指旋转**:水平控制 yaw,垂直控制 pitch,使用相邻 Move 增量,松手立即停止,无惯性,不因模型放大改变灵敏度
+- **双指缩放**:基于手势开始快照 `startZoomFactor × currentDistance / startDistance`,避免逐帧连乘漂移;`startDistance <= MIN_FINGER_DISTANCE(1.0)` 时不执行缩放,避免 NaN/Infinity
+- **双指平移**:使用两指中心点,`worldPerPixel = cameraDistance × PAN_FACTOR / viewportHeight`,与 zoomFactor 解耦,高倍率不会飞走
+- **模式互斥**:`TwoFingerPending` 状态下根据 `SCALE_THRESHOLD_RATIO(0.10)` 和 `TRANSLATE_THRESHOLD_PX(14)` 锁定 `TwoFingerScale` 或 `TwoFingerTranslate`,本次手势结束前不切换
+- **双指转单指**:抬起一指时设置 `suppressSingleRotate = true`,剩余手指 Move 不改变 yaw/pitch,全部抬起后清除,下一次新单指 Down 才能旋转
+- **Cancel**:清空所有 pointer、初始距离、初始中心、pending 状态,回到 Idle,保留最后有效视角
+- **resetView**:yaw/pitch 归零,zoomFactor 保留(baseFitScale 不重置),offset 清零
+- **高倍率平移**:`panLimit = BASE_PAN_LIMIT(2.0) × max(1.0, startZoomFactor)`,20 倍时允许查看模型局部
+- **缩小时 offset 回收**:`applyGestureZoomFactor` 在缩小时 clamp offset 到新范围,避免模型留在屏幕外
+
+### 测试
+
+#### 模拟 pointer 单元测试(Character3DGestureHandlerTest.ets,14 项)
+
+1. `01_SingleRotate`:单指 Down → Move(dx>0, dy>0) → Up,yaw/pitch 变化,状态 Idle→SingleRotate→Idle
+2. `02_TwoFingerScale`:双指距离 200→400(ratio=2.0),zoom 1.0→2.0,offset 不变
+3. `03_MaxZoomFactor`:距离比例 30x,zoom 稳定在 20.0;继续增大仍为 20.0;合拢后立即下降
+4. `04_CumulativeZoom`:连续三手势 1→4 → 4→12 → 12→20(每次从当前 zoom 开始,不重置)
+5. `05_MinZoomFactor`:缩小到 0.01,zoom 稳定在 0.10;放大时立即恢复
+6. `06_TwoFingerTranslate`:距离不变,中心移动 20px(>14px 阈值),锁定 translate,zoom 不变
+7. `07_HighZoomTranslate`:zoom=10 时双指平移,仍可控,zoom 保持 10.0
+8. `08_ModeMutexScaleFirst`:先改变距离锁定 scale,再移动中心,保持 scale
+9. `09_ModeMutexTranslateFirst`:先移动中心锁定 translate,再改变距离,保持 translate,zoom 不变
+10. `10_TwoFingerToSingleSuppress`:双指操作后抬起一指,剩余手指移动不旋转;全部抬起后新单指手势可旋转
+11. `11_CancelSingleRotate`:SingleRotate 状态 Cancel,状态回 Idle,yaw 保留,可开始新手势
+12. `12_CancelTwoFingerScale`:TwoFingerScale 状态 Cancel,状态回 Idle,zoom 保留
+13. `13_InvalidValues`:viewport=0 / 相同坐标 / NaN / Infinity / 重复 ID,不 crash,不产生 NaN
+14. `14_PageConsistency`:相同 pointer 序列输入两个 handler,输出 yaw/pitch/zoom/offset 完全一致(1e-4 误差)
+
+测试入口:PoC 页面"运行测试"按钮,汇总 T-3D.4(16项)+ T-3D.5(14项)+ T-3D.5D(14项)。
+
+#### 显示配置单元测试(Character3DDisplayConfigTest.ets,新增 4 项)
+
+13. `13_ZoomFactorConstants`:验证 VIEWER_ZOOM_FACTOR_MIN/MAX/DEFAULT 值
+14. `14_GetZoomFactor`:验证 `getZoomFactor(config) = config.scale / config.baseFitScale`
+15. `15_ClampZoomFactor`:验证 clamp 到 [0.10, 20.0],NaN/Infinity 回退默认
+16. `16_ComputeFinalScale`:验证 `computeFinalScale(bfs, zf) = bfs × clampZoomFactor(zf)`
+
+### 真机验证
+
+- **HAP 路径**:`entry/build/default/outputs/default/entry-default-signed.hap`(13.6 MB)
+- **覆盖安装**:`hdc -t 127.0.0.1:5555 install -r` 成功
+- **应用启动**:`aa start -a EntryAbility -b com.example.arktavern` 成功
+- **导航验证**:通过"动作管理(测试)"按钮进入动作管理页,布局 dump 确认页面加载正常,显示"3D / 导入模型 / 动作(16) / grace_meshopt"等内容
+- **真机手势验证限制**:设备在准备点击"导入模型"按钮跳转 PoC 页面时 ADB 连接断开(`hdc tconn` 失败,`hdc list targets` 返回 Empty),多次重连失败。根据 project_memory 规则"同一设备测试命令最多运行 2 次,若两次均为相同环境错误,记录并停止",不再重试
+
+### 未实现范围(明确排除)
+
+- 独立全屏模型查看页面(StandaloneViewer)
+- 动画时间轴
+- 节点树
+- 骨骼树
+- 材质编辑
+- 灯光编辑
+- 环境背景
+- 模型截图
+- Morph 控制
+- 动画混合
+
+### 修改文件清单
+
+1. `entry/src/main/ets/models/character3d/Character3DDisplayConfig.ets`
+   - 新增 `VIEWER_ZOOM_FACTOR_MIN/MAX/DEFAULT` 常量
+   - 新增 `DEFAULT_BASE_FIT_SCALE` 常量
+   - `Character3DDisplayConfig` interface 新增 `baseFitScale` 字段
+   - 新增 `getZoomFactor / clampZoomFactor / computeFinalScale` 纯函数
+   - `sanitizeDisplayConfig` / `serializeDisplayConfig` / `deserializeDisplayConfig` 支持 baseFitScale
+2. `entry/src/main/ets/models/character3d/Character3DGestureHandler.ets`
+   - 常量统一引用 Character3DDisplayConfig
+   - `startZoomFactor` 快照语义(非 finalScale)
+   - `applyTwoFingerScale` 基于快照计算,避免逐帧连乘
+   - `applyTwoFingerTranslate` 平移速度与 zoomFactor 解耦,offset 动态限制
+   - `logZoomBoundary` 边界日志去重(每次手势最多一次)
+   - `MIN_FINGER_DISTANCE` 防御 NaN/Infinity
+3. `entry/src/main/ets/viewmodels/Character3DPocViewModel.ets`
+   - 新增 `updateZoomFactor` / `applyGestureZoomFactor` / `recomputeBaseFitScaleFromBounds`
+   - 8 处对象字面量补全 `baseFitScale` 字段
+   - 缩小时 clamp offset 到新范围
+4. `entry/src/main/ets/viewmodels/Character3DPanelViewModel.ets`
+   - `updateZoomFactor` 代理方法转发到 pocVm
+5. `entry/src/main/ets/components/Character3DPanel.ets`
+   - `onZoomFactorRequest` 响应 zoomFactor 调节请求(AppStorage key 保留 `chat3dScaleRequest` 兼容)
+   - `handleTouchEvent` 转发完整 TouchEvent(Down/Move/Up/Cancel)
+6. `entry/src/main/ets/components/ChatMoreMenuSheet.ets`
+   - `modelScale` → `modelZoomFactor`
+   - `onScaleChange` → `onZoomFactorChange`,`onScaleConfirm` → `onZoomFactorConfirm`
+   - Slider 范围改为 [VIEWER_ZOOM_FACTOR_MIN, VIEWER_ZOOM_FACTOR_MAX]
+7. `entry/src/main/ets/pages/Character3DPocPage.ets`
+   - 移除旧 PanGesture
+   - 新增 `handleTouchEvent` / `touchTypeToPhase`,转发完整 TouchEvent
+   - `onAreaChange` 同步 viewport 到 GestureHandler
+   - Slider 改为 zoomFactor(0.10~20.0)
+   - 接入 `Character3DGestureHandlerTest.runAllTests()` 测试入口
+8. `entry/src/main/ets/pages/ChatPage.ets`
+   - `chat3DModelScale` → `chat3DModelZoomFactor`
+   - `onScaleChange` → `onZoomFactorChange`,`onScaleConfirm` → `onZoomFactorConfirm`
+   - `loadChat3DModelInfo` 使用 `getZoomFactor(displayConfig)` 读取初始值
+   - ChatMoreMenuSheet 调用处参数名同步
+9. `entry/src/main/ets/test/Character3DDisplayConfigTest.ets`
+   - `makeConfig` 支持 baseFitScale 字段
+   - 新增 test13~test16(zoomFactor 常量 / getZoomFactor / clampZoomFactor / computeFinalScale)
+10. `entry/src/main/ets/test/Character3DGestureHandlerTest.ets`(新建)
+    - 14 项模拟 pointer 单元测试
+    - `GestureTestRig` 测试台封装 handler + capture + activePointers
+    - `GestureOutputCapture` 捕获 yaw/pitch/zoom/offset 输出
+
+### 最终结论
+
+**T-3D.5D PoC 与聊天页 3D 手势统一及大倍率缩放核心实现完成。PoC 页面与聊天页面共用唯一 `Character3DGestureHandler` 状态机,共用 `Character3DDisplayConfig` 统一常量(VIEWER_ZOOM_FACTOR_MAX=20.0),共用 `zoomFactor` 语义(finalScale = baseFitScale × zoomFactor)。模拟 pointer 单元测试 14 项 + 显示配置测试 4 项全部接入 PoC 测试入口。entry@default 增量构建通过,HAP 覆盖安装成功,应用启动正常,导航到动作管理页验证布局加载。真机手势完整验证因设备 ADB 连接断开受限,根据规则不再重试,建议后续手动验证 20 倍缩放与双指平移局部查看。**
+
+按任务要求停止,不开始完整模型查看器。
+
+
