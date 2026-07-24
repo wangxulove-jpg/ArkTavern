@@ -49,7 +49,8 @@ import {
   ActionLoopMode
 } from '../models/character3d/Character3DActionAsset';
 import {
-  ActionSourceFormat
+  ActionSourceFormat,
+  CompatibilityLevel
 } from '../models/character3d/HumanoidBone';
 import {
   ActionCategory,
@@ -59,6 +60,14 @@ import {
   getCompatibilityLevelDisplayName,
   getSkeletonProfileDisplayName
 } from '../models/character3d/HumanoidBoneMapper';
+import {
+  ModelCapabilityReport,
+  CapabilityState,
+  HumanoidMappingState,
+  getCapabilityStateText,
+  getHumanoidMappingStateText,
+  getMotionRetargetingText
+} from '../models/character3d/ModelCapabilityReport';
 import { Logger } from '../utils/Logger';
 import { ActionPreviewCanvas } from '../components/ActionPreviewCanvas';
 import { ActionCardDataSource } from '../viewmodels/ActionCardDataSource';
@@ -345,6 +354,129 @@ struct Character3DActionManagerPage {
 
   // ==================== 当前模型卡片 ====================
 
+  /**
+   * T-3D.6E: 构建模型多维度能力摘要文案。
+   *
+   * 替代原"兼容: 完全/不兼容"单一显示。
+   * 输出示例:
+   * - 显示: 可正常显示 | 骨架: 已检测到 | 映射: 需要手动匹配
+   * - 显示: 可正常显示 | 骨架: 未检测到 | 动作: 仅静态显示
+   */
+  private buildModelCapabilitySummary(): string {
+    if (this.modelSummary === null || this.modelSummary.capabilityReport === null) {
+      // 未导入或无 capabilityReport 时,回退到原 compatibilityLevel 显示
+      return '兼容: ' + getCompatibilityLevelDisplayName(this.modelSummary?.compatibilityLevel
+        ?? CompatibilityLevel.Unsupported);
+    }
+    const report: ModelCapabilityReport = this.modelSummary.capabilityReport;
+    // 显示状态
+    let displayText: string;
+    if (report.sceneLoadable === CapabilityState.Supported
+      && report.geometryRenderable === CapabilityState.Supported) {
+      displayText = '可正常显示';
+    } else if (report.sceneLoadable === CapabilityState.PartiallySupported) {
+      displayText = '已加载但未定位';
+    } else if (report.geometryRenderable === CapabilityState.Unsupported) {
+      displayText = '无可渲染几何';
+    } else {
+      displayText = '引擎无法加载';
+    }
+    // 骨架状态
+    let skeletonText: string;
+    if (report.skeletonPresent === CapabilityState.Supported) {
+      const jointCount: number = report.skinReport.jointCount > 0
+        ? report.skinReport.jointCount : this.modelSummary.nodeCount;
+      skeletonText = '骨架: 检测到 ' + jointCount + ' 关节';
+    } else if (report.skeletonPresent === CapabilityState.NotPresent) {
+      skeletonText = '骨架: 未检测到';
+    } else {
+      skeletonText = '骨架: 未知';
+    }
+    // 映射/动作状态
+    let mappingText: string;
+    if (report.skeletonPresent === CapabilityState.NotPresent) {
+      mappingText = '动作: 仅静态显示';
+    } else if (report.humanoidManualMapping === HumanoidMappingState.ManualMapped) {
+      mappingText = '映射: 已完成手动';
+    } else if (report.humanoidAutoMapping === HumanoidMappingState.AutoMapped) {
+      mappingText = '映射: 已自动匹配';
+    } else if (report.humanoidAutoMapping === HumanoidMappingState.PartiallyMapped) {
+      mappingText = '映射: 自动部分成功';
+    } else if (report.humanoidAutoMapping === HumanoidMappingState.NeedsManualMapping) {
+      mappingText = '映射: 需手动匹配';
+    } else {
+      mappingText = '映射: ' + getHumanoidMappingStateText(report.humanoidAutoMapping);
+    }
+    return '显示: ' + displayText + ' | ' + skeletonText + ' | ' + mappingText;
+  }
+
+  /**
+   * T-3D.6E: 模型能力摘要颜色。
+   *
+   * - 几何不可用: 红色(模型确实不可用)
+   * - 可显示但需配置骨骼: 中性蓝灰(不使用红色"不兼容")
+   * - 完全就绪: 绿色
+   */
+  private getModelCapabilityColor(): string {
+    if (this.modelSummary === null || this.modelSummary.capabilityReport === null) {
+      return '#666666';
+    }
+    const report: ModelCapabilityReport = this.modelSummary.capabilityReport;
+    if (report.geometryRenderable === CapabilityState.Unsupported
+      || report.sceneLoadable === CapabilityState.Unsupported) {
+      return '#d9534f'; // 红色:模型确实不可用
+    }
+    if (report.motionRetargeting === CapabilityState.Supported) {
+      return '#28a745'; // 绿色:完全就绪
+    }
+    return '#6c757d'; // 中性灰:可显示但需配置
+  }
+
+  /**
+   * T-3D.6E: 预览弹层中的动作匹配状态文案。
+   *
+   * 替代原"完全兼容/当前模型不兼容"二元显示。
+   */
+  private getMotionCompatibilityText(): string {
+    if (this.modelSummary === null || !this.modelSummary.hasModel) {
+      return '未导入模型';
+    }
+    const report: ModelCapabilityReport | null = this.modelSummary.capabilityReport;
+    if (report === null) {
+      return '能力报告未生成';
+    }
+    // 模型不可显示时,动作无法应用
+    if (report.geometryRenderable === CapabilityState.Unsupported
+      || report.sceneLoadable === CapabilityState.Unsupported) {
+      return '模型不可用';
+    }
+    // 骨架不存在:静态模型,无法应用外部动作
+    if (report.skeletonPresent === CapabilityState.NotPresent) {
+      return '当前只支持静态显示';
+    }
+    // 骨架存在,基于映射状态
+    return getMotionRetargetingText(report.motionRetargeting);
+  }
+
+  /**
+   * T-3D.6E: 判断当前模型是否可以应用动作。
+   *
+   * 仅当 motionRetargeting=Supported 时允许应用。
+   * - 自动映射完整 或 手动映射完成 且 几何/Scene 可用
+   */
+  private canApplyActionToCurrentModel(): boolean {
+    if (this.modelSummary === null || !this.modelSummary.hasModel) {
+      return false;
+    }
+    const report: ModelCapabilityReport | null = this.modelSummary.capabilityReport;
+    if (report === null) {
+      return false;
+    }
+    return report.sceneLoadable === CapabilityState.Supported
+      && report.geometryRenderable === CapabilityState.Supported
+      && report.motionRetargeting === CapabilityState.Supported;
+  }
+
   @Builder
   buildModelCard(): void {
     Column() {
@@ -384,9 +516,12 @@ struct Character3DActionManagerPage {
                 .fontColor('#666666');
             }
             .margin({ top: 4 });
-            Text('兼容: ' + getCompatibilityLevelDisplayName(this.modelSummary.compatibilityLevel))
+            // T-3D.6E: 多维度能力分层显示(替代原单一"兼容: 完全/不兼容")
+            Text(this.buildModelCapabilitySummary())
               .fontSize(11)
-              .fontColor('#666666')
+              .fontColor(this.getModelCapabilityColor())
+              .maxLines(2)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
               .margin({ top: 2 });
           } else {
             Text('尚未导入 3D 模型')
@@ -413,6 +548,19 @@ struct Character3DActionManagerPage {
             .onClick(() => {
               this.onClickImportModel();
             });
+          // T-3D.6E: 配置骨骼入口(仅当模型已导入时显示)
+          if (this.modelSummary !== null && this.modelSummary.hasModel) {
+            Button('配置骨骼')
+              .fontSize(11)
+              .height(28)
+              .backgroundColor('#17a2b8')
+              .fontColor('#ffffff')
+              .padding({ left: 8, right: 8 })
+              .margin({ top: 6 })
+              .onClick(() => {
+                router.pushUrl({ url: 'pages/HumanoidMappingPage' });
+              });
+          }
         }
         .alignItems(HorizontalAlign.End);
       }
@@ -788,11 +936,8 @@ struct Character3DActionManagerPage {
           this.buildPreviewInfoRow('循环', this.getCardEffectiveLoop(this.previewCard!) ? '是' : '否');
           this.buildPreviewInfoRow('来源', this.previewCard!.isBuiltIn ? '内置' : '导入');
           this.buildPreviewInfoRow('分类', this.getCategoryDisplayName(this.previewCard!.category));
-          this.buildPreviewInfoRow(
-            '兼容',
-            this.modelSummary !== null && this.modelSummary.builtinActionCompatible
-              ? '完全兼容' : '当前模型不兼容'
-          );
+          // T-3D.6E: 不再显示"完全兼容/当前模型不兼容",改为显示动作匹配状态
+          this.buildPreviewInfoRow('动作匹配', this.getMotionCompatibilityText());
         }
         .width('100%')
         .padding(16);
@@ -839,7 +984,7 @@ struct Character3DActionManagerPage {
             .backgroundColor('#9c27b0')
             .fontColor('#ffffff')
             .margin({ left: 4 })
-            .enabled(this.modelSummary !== null && this.modelSummary.builtinActionCompatible)
+            .enabled(this.canApplyActionToCurrentModel())
             .onClick(() => {
               this.onClickApplyAction();
             });

@@ -45,6 +45,46 @@ const CAMERA_FIT_MARGIN: number = 1.2;
 const MIN_BOUNDS_SIZE: number = 1e-6;
 /** Bounds 尺寸的上限(大于此值视为异常,使用默认配置) */
 const MAX_BOUNDS_SIZE: number = 1e6;
+/** T-3D.6E-V1: 量化 POSITION Bounds 阈值,超过此值且含 KHR_mesh_quantization 时视为量化值 */
+const QUANTIZED_BOUNDS_THRESHOLD: number = 10000;
+
+/**
+ * T-3D.6D: 极端尺寸检测阈值。
+ * - 半径 <= EXTREME_SMALL_RADIUS:模型尺寸极小,需要警告并自动适配
+ * - 半径 >= EXTREME_LARGE_RADIUS:模型尺寸极大,需要警告并自动适配
+ * - 中心到原点距离 / 半径 >= ORIGIN_OFFSET_RATIO:原点远离几何中心,需要警告并自动居中
+ */
+const EXTREME_SMALL_RADIUS: number = 1e-3;
+const EXTREME_LARGE_RADIUS: number = 1e5;
+const ORIGIN_OFFSET_RATIO: number = 10.0;
+
+/**
+ * T-3D.6D: Bounds 异常分析结果。
+ */
+export interface BoundsAnomalyReport {
+  /** 是否检测到异常 */
+  hasAnomaly: boolean;
+  /** 警告文案列表(可直接用于 UI 显示) */
+  warnings: string[];
+  /** 异常类型分类(用于诊断) */
+  anomalyTypes: BoundsAnomalyType[];
+}
+
+/**
+ * T-3D.6D: Bounds 异常类型。
+ */
+export enum BoundsAnomalyType {
+  /** 极小模型 */
+  ExtremelySmall = 0,
+  /** 极大模型 */
+  ExtremelyLarge = 1,
+  /** 原点远离几何中心 */
+  OriginOffset = 2,
+  /** 退化 bounds(任一维度为零或负) */
+  Degenerate = 3,
+  /** NaN 或 Infinity */
+  NonFinite = 4
+}
 
 /**
  * 3D 模型包围盒(已计算中心/尺寸/半径)。
@@ -120,6 +160,19 @@ export function computeBoundsFromGltf(modelInfo: GltfModelInfo): ModelBounds | n
   }
   if (width > MAX_BOUNDS_SIZE || height > MAX_BOUNDS_SIZE || depth > MAX_BOUNDS_SIZE) {
     return null;
+  }
+  // T-3D.6E-V1: 检测量化 POSITION(KHR_mesh_quantization)
+  // 量化 POSITION 的 accessor min/max 是整数量化值(如 [0,65534]),
+  // 不是真实空间坐标,直接使用会导致 baseFitScale 极小,模型不可见。
+  // 检测条件:extensionsUsed 含 KHR_mesh_quantization 且 size > 10000(正常模型极少超过)
+  if (width > QUANTIZED_BOUNDS_THRESHOLD || height > QUANTIZED_BOUNDS_THRESHOLD
+    || depth > QUANTIZED_BOUNDS_THRESHOLD) {
+    const hasQuantization: boolean = modelInfo.extensionsUsed !== null
+      && modelInfo.extensionsUsed !== undefined
+      && modelInfo.extensionsUsed.indexOf('KHR_mesh_quantization') >= 0;
+    if (hasQuantization) {
+      return null;
+    }
   }
   const centerX: number = (minX + maxX) / 2;
   const centerY: number = (minY + maxY) / 2;
@@ -271,4 +324,80 @@ function clampOffset(value: number): number {
     return OFFSET_MAX;
   }
   return value;
+}
+
+/**
+ * T-3D.6D: 分析 Bounds 异常并生成警告。
+ *
+ * 检测项:
+ * 1. NaN / Infinity 坐标
+ * 2. 退化 bounds(任一维度 <= 0)
+ * 3. 极小模型(radius <= 1e-3)
+ * 4. 极大模型(radius >= 1e5)
+ * 5. 原点远离几何中心(centerLength / radius >= 10)
+ *
+ * @param bounds 模型包围盒(可为 null)
+ * @returns BoundsAnomalyReport,无异常时 hasAnomaly=false
+ */
+export function analyzeBoundsAnomalies(bounds: ModelBounds | null): BoundsAnomalyReport {
+  const report: BoundsAnomalyReport = {
+    hasAnomaly: false,
+    warnings: [],
+    anomalyTypes: []
+  };
+
+  if (bounds === null) {
+    return report;
+  }
+
+  // 1. NaN / Infinity 检测
+  if (!Number.isFinite(bounds.minX) || !Number.isFinite(bounds.minY)
+    || !Number.isFinite(bounds.minZ) || !Number.isFinite(bounds.maxX)
+    || !Number.isFinite(bounds.maxY) || !Number.isFinite(bounds.maxZ)
+    || !Number.isFinite(bounds.centerX) || !Number.isFinite(bounds.centerY)
+    || !Number.isFinite(bounds.centerZ) || !Number.isFinite(bounds.radius)
+    || !Number.isFinite(bounds.width) || !Number.isFinite(bounds.height)
+    || !Number.isFinite(bounds.depth)) {
+    report.hasAnomaly = true;
+    report.anomalyTypes.push(BoundsAnomalyType.NonFinite);
+    report.warnings.push('模型包围盒包含 NaN 或 Infinity,已使用默认配置。');
+    return report;
+  }
+
+  // 2. 退化 bounds 检测
+  if (bounds.width <= 0 || bounds.height <= 0 || bounds.depth <= 0) {
+    report.hasAnomaly = true;
+    report.anomalyTypes.push(BoundsAnomalyType.Degenerate);
+    report.warnings.push('模型包围盒退化(存在零或负尺寸维度),已使用默认配置。');
+    return report;
+  }
+
+  // 3. 极小模型检测
+  if (bounds.radius <= EXTREME_SMALL_RADIUS) {
+    report.hasAnomaly = true;
+    report.anomalyTypes.push(BoundsAnomalyType.ExtremelySmall);
+    report.warnings.push('模型尺寸极小,已自动适配显示。');
+  }
+
+  // 4. 极大模型检测
+  if (bounds.radius >= EXTREME_LARGE_RADIUS) {
+    report.hasAnomaly = true;
+    report.anomalyTypes.push(BoundsAnomalyType.ExtremelyLarge);
+    report.warnings.push('模型尺寸极大,已自动适配显示。');
+  }
+
+  // 5. 原点远离几何中心检测
+  const centerLength: number = Math.sqrt(
+    bounds.centerX * bounds.centerX
+    + bounds.centerY * bounds.centerY
+    + bounds.centerZ * bounds.centerZ
+  );
+  if (Number.isFinite(centerLength) && bounds.radius > 0
+    && centerLength / bounds.radius >= ORIGIN_OFFSET_RATIO) {
+    report.hasAnomaly = true;
+    report.anomalyTypes.push(BoundsAnomalyType.OriginOffset);
+    report.warnings.push('模型原点距离几何中心较远,查看时已自动居中。');
+  }
+
+  return report;
 }

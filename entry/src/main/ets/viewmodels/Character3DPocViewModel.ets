@@ -89,6 +89,11 @@ import {
   GestureCallbacks,
   GestureConfigSnapshot
 } from '../models/character3d/Character3DGestureHandler';
+import {
+  ModelVisibilityReport,
+  ModelVisibilityInput,
+  analyzeModelVisibility
+} from '../models/character3d/ModelVisibility';
 
 const LOG_TAG: string = 'Char3DPocVM';
 
@@ -101,6 +106,14 @@ const PITCH_MIN_DEG: number = -60;
 const PITCH_MAX_DEG: number = 60;
 /** T-3D.5A: 拖动死区(像素),小于此值视为抖动,不触发旋转 */
 const DRAG_DEAD_ZONE_PX: number = 3;
+
+/**
+ * T-3D.6E: 相机 near/far 计算结果。
+ */
+interface CameraNearFar {
+  near: number;
+  far: number;
+}
 
 /**
  * PoC ViewModel。
@@ -120,6 +133,14 @@ export class Character3DPocViewModel {
   private sceneValue: Scene | null = null;
   /** 根节点(用于旋转整个人形占位) */
   private rootNode: Node | null = null;
+  /**
+   * T-3D.6E: 模型所有根节点列表(外部 GLB 加载时,sceneRoot 下所有原有 children)。
+   *
+   * 用于多 root node 模型:applyDisplayConfigToScene 对每个节点都应用 scale/offset/rotation,
+   * 否则只变换第一个 root 会导致其余 root 的 mesh 不在正确位置(模型不可见根因之一)。
+   * 程序化几何体场景下,此数组只含一个元素(与 rootNode 相同)。
+   */
+  private modelRootNodes: Node[] = [];
   /** 相机实例 */
   private cameraValue: Camera | null = null;
   /** 当前播放的动画(null 表示无动画或未播放) */
@@ -385,6 +406,9 @@ export class Character3DPocViewModel {
         this.recomputeBaseFitScaleFromBounds();
       } else {
         Logger.warn(LOG_TAG, 'supplementExternalScene: bounds null (no POSITION accessor or invalid)');
+        // T-3D.6E-V1: Bounds 为 null 时(如量化 POSITION 无法计算真实 Bounds),
+        // 重置 baseFitScale 和 scale 为默认值,避免使用上一个模型的错误 baseFitScale
+        this.resetDisplayConfigToDefault();
       }
     } else {
       Logger.warn(LOG_TAG, 'supplementExternalScene: currentModelInfo null');
@@ -400,19 +424,26 @@ export class Character3DPocViewModel {
     Logger.info(LOG_TAG, 'supplementExternalScene: sceneRoot name=' + sceneRoot.name
       + ', childrenCount=' + childCount.toString());
 
-    // T-3D.4A: 选取模型根节点(用于 scale/offset/rotation 变换)
-    // 优先使用 sceneRoot 的第一个子节点(模型的根节点),避免变换影响相机和灯光
-    if (childCount > 0) {
-      const modelRoot: Node | null = sceneRoot.children.get(0);
-      if (modelRoot !== null) {
-        this.rootNode = modelRoot;
-        Logger.info(LOG_TAG, 'supplementExternalScene: model root selected, name=' + modelRoot.name);
-      } else {
-        this.rootNode = sceneRoot;
-        Logger.warn(LOG_TAG, 'supplementExternalScene: first child null, using sceneRoot');
+    // T-3D.6E: 收集 sceneRoot 下所有原有 children 作为模型根节点。
+    // 必须在 append camera/light 之前完成,否则相机灯光会被错误地当成模型根。
+    // 多 root node 模型(如 Grace Lying Pose)在 scene.nodes 中有多个根,
+    // 旧实现只取 children.get(0) 会导致其余 root 的 mesh 不被变换 → 模型不可见根因。
+    this.modelRootNodes = [];
+    for (let i: number = 0; i < childCount; i++) {
+      const n: Node | null = sceneRoot.children.get(i);
+      if (n !== null) {
+        this.modelRootNodes.push(n);
       }
+    }
+    if (this.modelRootNodes.length > 0) {
+      // rootNode 仍指向第一个模型根(用于旋转中心推导等单节点逻辑)
+      this.rootNode = this.modelRootNodes[0];
+      Logger.info(LOG_TAG, 'supplementExternalScene: modelRootNodes collected, count='
+        + this.modelRootNodes.length + ', first=' + this.modelRootNodes[0].name);
     } else {
+      // sceneRoot 无子节点(罕见),退化为使用 sceneRoot 自身
       this.rootNode = sceneRoot;
+      this.modelRootNodes = [sceneRoot];
       Logger.warn(LOG_TAG, 'supplementExternalScene: no children, using sceneRoot as model root');
     }
 
@@ -504,6 +535,8 @@ export class Character3DPocViewModel {
     const rootPos: Position3 = { x: 0, y: 0, z: 0 };
     root.position = rootPos;
     this.rootNode = root;
+    // T-3D.6E: 程序化几何体场景只有一个根节点,modelRootNodes 与 rootNode 一致
+    this.modelRootNodes = [root];
     // T-3D.4A: 将 root 挂载到场景树
     sceneRoot.children.append(root);
     Logger.info(LOG_TAG, 'buildProceduralScene: root appended to sceneRoot');
@@ -841,28 +874,6 @@ export class Character3DPocViewModel {
       Logger.error(LOG_TAG, 'importModel failed: ' + msg);
       this.fireError('导入失败: ' + msg);
     }
-  }
-
-  /**
-   * T-3D.6C-C3 Debug: 从沙箱文件路径导入模型(绕过 DocumentViewPicker)。
-   * 仅用于自动化测试,正式发布前必须删除调用入口。
-   */
-  async importModelFromSandboxPath(
-    filePath: string,
-    onProgress?: (progress: ModelConversionProgress) => void
-  ): Promise<void> {
-    if (this.disposed) {
-      this.fireError('ViewModel 已释放,无法导入');
-      return;
-    }
-    if (this.service === null) {
-      this.fireError('未注入 Character3DService,无法导入');
-      return;
-    }
-    const sourceUri: string = filePath.startsWith('file://')
-      ? filePath : ('file://' + filePath);
-    Logger.info(LOG_TAG, 'importModelFromSandboxPath: ' + sourceUri);
-    await this.importModel(sourceUri, onProgress);
   }
 
   /**
@@ -1593,6 +1604,143 @@ export class Character3DPocViewModel {
   }
 
   /**
+   * T-3D.6E-V1: 重置显示配置到默认值。
+   *
+   * 用于 Bounds 无法计算(如量化 POSITION)时,避免使用上一个模型的错误 baseFitScale。
+   * 使用默认 Bounds [-1,1] 计算完整的 autoFit 配置(scale/baseFitScale/cameraDistance),
+   * 保留用户的 rotation 和 offset。
+   */
+  private resetDisplayConfigToDefault(): void {
+    // T-3D.6E-V1: 使用默认 Bounds 计算 autoFit,确保 cameraDistance 合理
+    const defaultBounds: ModelBounds = {
+      minX: -1, minY: -1, minZ: -1,
+      maxX: 1, maxY: 1, maxZ: 1,
+      centerX: 0, centerY: 0, centerZ: 0,
+      width: 2, height: 2, depth: 2,
+      radius: Math.sqrt(12) / 2
+    };
+    const autoFit: Character3DDisplayConfig = computeAutoFitDisplayConfig(defaultBounds);
+    this.displayConfig = {
+      scale: autoFit.scale,
+      baseFitScale: autoFit.baseFitScale,
+      offsetX: this.displayConfig.offsetX,
+      offsetY: this.displayConfig.offsetY,
+      offsetZ: this.displayConfig.offsetZ,
+      rotationXDeg: this.displayConfig.rotationXDeg,
+      rotationYDeg: this.displayConfig.rotationYDeg,
+      rotationZDeg: this.displayConfig.rotationZDeg,
+      cameraDistance: autoFit.cameraDistance
+    };
+    Logger.info(LOG_TAG, 'resetDisplayConfigToDefault: scale=' + this.displayConfig.scale.toFixed(4)
+      + ', bfs=' + this.displayConfig.baseFitScale.toFixed(4)
+      + ', camDist=' + this.displayConfig.cameraDistance.toFixed(3));
+  }
+
+  /**
+   * T-3D.6E: 适配视图(frameModel)— 重新计算 Bounds 并自动取景。
+   *
+   * 执行步骤(任务文档第七节):
+   * 1. 清理当前手势状态(避免后续手势回调污染)
+   * 2. zoomFactor = 1.0(回到自动适配尺寸)
+   * 3. offsetX/Y/Z = 0(模型中心回到原点)
+   * 4. 使用真实 Bounds(computeAutoFitDisplayConfig)
+   * 5. 更新 viewer root center offset(由 applyDisplayConfigToScene 应用)
+   * 6. 更新 baseFitScale
+   * 7. 更新 camera target(相机始终看向原点,offset 移动模型到原点)
+   * 8. 更新 camera distance(autoFit 计算)
+   * 9. 更新 near/far(由 applyDisplayConfigToScene 动态计算)
+   * 10. 请求渲染(applyDisplayConfigToScene 触发)
+   *
+   * 使用场景:
+   * - 模型加载后画面空白,用户主动点击"适配视图"按钮
+   * - 模型变换后用户希望恢复完整视图
+   * - 调试用:验证 Bounds 计算是否正确
+   *
+   * @returns true 表示成功取景,false 表示 Bounds 无效无法取景
+   */
+  frameModel(): boolean {
+    if (this.disposed) {
+      Logger.warn(LOG_TAG, 'frameModel ignored: disposed');
+      return false;
+    }
+    // 1. 清理手势状态
+    this.gestureHandler.resetState();
+    // T-3D.6E-V1: Bounds 为 null(如量化 POSITION 无法计算真实 Bounds)时,
+    // 使用默认 Bounds [-1,1] 计算自动取景,使模型以合理 scale 和 cameraDistance 显示。
+    // 不再直接 return false,避免用户点击"适配视图"无效果。
+    let boundsForFit: ModelBounds | null = this.currentBounds;
+    if (boundsForFit === null) {
+      Logger.warn(LOG_TAG, 'frameModel: currentBounds null, using default bounds [-1,1]');
+      boundsForFit = {
+        minX: -1, minY: -1, minZ: -1,
+        maxX: 1, maxY: 1, maxZ: 1,
+        centerX: 0, centerY: 0, centerZ: 0,
+        width: 2, height: 2, depth: 2,
+        radius: Math.sqrt(12) / 2 // 对角线长度 / 2
+      };
+    }
+    // 2~8: 使用 autoFit 配置覆盖当前 displayConfig(zoomFactor=1.0, offset=0)
+    const autoFit: Character3DDisplayConfig = computeAutoFitDisplayConfig(boundsForFit);
+    this.displayConfig = sanitizeDisplayConfig(autoFit);
+    // 同步旋转角度(用于 UI 显示)
+    this.rotationYDeg = this.displayConfig.rotationYDeg;
+    // 9~10: 应用到场景(动态 near/far 在 applyDisplayConfigToScene 内计算)
+    this.applyDisplayConfigToScene();
+    // 同步手势处理器视口与配置
+    this.updateGestureConfig();
+    Logger.info(LOG_TAG, 'frameModel: bfs=' + this.displayConfig.baseFitScale.toFixed(4)
+      + ', scale=' + this.displayConfig.scale.toFixed(4)
+      + ', camDist=' + this.displayConfig.cameraDistance.toFixed(3));
+    // 通知 UI 刷新
+    if (this.onDisplayConfigChanged !== null) {
+      this.onDisplayConfigChanged(this.displayConfig);
+    }
+    if (this.onRotationChanged !== null) {
+      this.onRotationChanged(this.rotationYDeg);
+    }
+    return true;
+  }
+
+  /**
+   * T-3D.6E: 获取当前可见性诊断报告(供 UI 显示"加载诊断")。
+   *
+   * 将当前 Scene/Bounds/Camera/Transform 状态打包为 ModelVisibilityInput,
+   * 调用 analyzeModelVisibility 返回诊断报告。
+   */
+  getVisibilityReport(): ModelVisibilityReport {
+    const isExternal: boolean = this.currentModelUri.length > 0;
+    // 程序化几何体场景:renderableMeshCount 用 modelRootNodes 数量近似
+    // 外部模型:用 currentModelInfo.meshCount
+    const renderableMeshCount: number = isExternal && this.currentModelInfo !== null
+      ? this.currentModelInfo.meshCount
+      : this.modelRootNodes.length;
+    const input: ModelVisibilityInput = {
+      bounds: this.currentBounds,
+      sceneCreated: this.sceneValue !== null,
+      sceneRootAttached: this.sceneValue !== null && this.sceneValue.root !== null,
+      modelRootAttached: this.modelRootNodes.length > 0,
+      renderableMeshCount: renderableMeshCount,
+      visibleMeshCount: renderableMeshCount, // ArkGraphics 不暴露 visible 字段,假设全部可见
+      hasInvalidNodeTransform: false, // 由 GltfBoundsCalculator 跳过非法节点时记录
+      hasAnimationMovedModel: false, // 当前默认不自动播放动画
+      cameraDistance: this.displayConfig.cameraDistance,
+      nearPlane: CAMERA_NEAR, // 实际动态 near/far,但诊断用基础值
+      farPlane: CAMERA_FAR,
+      finalScale: this.displayConfig.scale,
+      hasNegativeScale: false,
+      scaleApplied: this.modelRootNodes.length > 0,
+      offsetApplied: true,
+      hasTransparentMaterial: false, // 由材质诊断模块填充(后续 P0.10)
+      hasBackFaceCulling: false,
+      hasInvalidSkinMatrices: false, // 由 Skin 诊断模块填充(后续 P0.11)
+      hasInvalidJointWeights: false,
+      hasQuantizedPosition: this.currentModelInfo !== null
+        && this.currentModelInfo.convertibleUsedExtensions.indexOf('KHR_mesh_quantization') >= 0
+    };
+    return analyzeModelVisibility(input);
+  }
+
+  /**
    * T-3D.5B: 处理触摸开始(由 Character3DPanel 的 onTouch 转发)。
    * @param touches 所有当前活跃触摸点
    * @param changedId 新按下的指针 id
@@ -1704,6 +1852,8 @@ export class Character3DPocViewModel {
     this.currentAnimation = null;
     this.cameraValue = null;
     this.rootNode = null;
+    // T-3D.6E: 清理多 root node 列表(Node 实例由 scene.destroy() 释放,这里只清引用)
+    this.modelRootNodes = [];
     if (this.sceneValue !== null) {
       try {
         this.sceneValue.destroy();
@@ -1716,7 +1866,7 @@ export class Character3DPocViewModel {
 
   /**
    * 将当前 displayConfig 应用到场景:
-   * - rootNode:position(补偿后 offset) + rotation(rotationXYZDeg) + scale(scale)
+   * - 所有 modelRootNodes:position(补偿后 offset) + rotation(rotationXYZDeg) + scale(scale)
    * - camera:position(0, camY, cameraDistance) + fov/near/far
    *
    * T-3D.4A: 相机 Y 位置根据模型类型决定:
@@ -1732,14 +1882,26 @@ export class Character3DPocViewModel {
    * - 仅对外部模型且有有效 Bounds 时启用补偿
    * - 程序化几何体无 Bounds,保持原行为(围绕 rootNode 原点旋转)
    *
+   * T-3D.6E: 多 root node 处理
+   * - 对 modelRootNodes 中每个节点应用相同的 position/rotation/scale
+   * - 不同 root 的几何中心不同,但全局 Bounds 的中心只有一个 → 所有 root 共用同一补偿
+   * - 这样保证多 root 模型(如 Grace Lying Pose)所有 mesh 都被正确变换
+   *
+   * T-3D.6E: 动态 near/far
+   * - 旧实现使用固定 CAMERA_NEAR=0.1 / CAMERA_FAR=100,大模型或高 zoom 会被裁剪
+   * - 新实现根据 modelRadius * finalScale 和 cameraDistance 动态计算:
+   *   near = max(MIN_NEAR, dist - scaledRadius * SAFETY_FACTOR)
+   *   far  = dist + scaledRadius * FAR_FACTOR
+   * - 保证 0.1x zoom(模型变小,距离相对变大)和 20x zoom(模型变大)都不会被裁剪
+   *
    * 若 rootNode 或 cameraValue 为 null 则跳过对应部分。
    */
   private applyDisplayConfigToScene(): void {
     const cfg: Character3DDisplayConfig = this.displayConfig;
     const isExternal: boolean = this.currentModelUri.length > 0;
     const camY: number = isExternal ? 0 : CAMERA_HEIGHT;
-    // 应用到 root 节点
-    if (this.rootNode !== null) {
+    // 应用到所有模型根节点(T-3D.6E: 多 root node 处理)
+    if (this.modelRootNodes.length > 0) {
       try {
         // 三轴旋转:按 ZYX 顺序合成四元数
         const rxRad: number = cfg.rotationXDeg * Math.PI / 180;
@@ -1776,9 +1938,22 @@ export class Character3DPocViewModel {
           posZ = cfg.offsetZ - rotated.z;
         }
 
-        this.rootNode.position = { x: posX, y: posY, z: posZ };
-        this.rootNode.rotation = qFinal;
-        this.rootNode.scale = { x: cfg.scale, y: cfg.scale, z: cfg.scale };
+        // T-3D.6E: 对所有 modelRootNodes 应用相同变换
+        // 多 root node 模型每个 root 都需要应用 scale/offset/rotation
+        // 否则只变换第一个 root 会导致其余 root 的 mesh 留在原位 → 模型不可见
+        const posFinal: Position3 = { x: posX, y: posY, z: posZ };
+        const scaleFinal: Position3 = { x: cfg.scale, y: cfg.scale, z: cfg.scale };
+        for (let i: number = 0; i < this.modelRootNodes.length; i++) {
+          const node: Node = this.modelRootNodes[i];
+          try {
+            node.position = posFinal;
+            node.rotation = qFinal;
+            node.scale = scaleFinal;
+          } catch (eNode) {
+            Logger.warn(LOG_TAG, 'applyDisplayConfig node[' + i + '] failed: '
+              + (eNode as Error)?.message);
+          }
+        }
       } catch (e) {
         Logger.warn(LOG_TAG, 'applyDisplayConfig root failed: ' + (e as Error)?.message);
       }
@@ -1792,12 +1967,64 @@ export class Character3DPocViewModel {
           z: cfg.cameraDistance
         };
         this.cameraValue.fov = CAMERA_FOV;
-        this.cameraValue.nearPlane = CAMERA_NEAR;
-        this.cameraValue.farPlane = CAMERA_FAR;
+        // T-3D.6E: 动态 near/far,根据模型缩放后半径与相机距离计算
+        // 防止 20x zoom 时模型超出 far 或 near plane 被裁剪
+        const nearFar: CameraNearFar = this.computeDynamicNearFar(
+          cfg.cameraDistance, cfg.scale, this.currentBounds
+        );
+        this.cameraValue.nearPlane = nearFar.near;
+        this.cameraValue.farPlane = nearFar.far;
       } catch (e) {
         Logger.warn(LOG_TAG, 'applyDisplayConfig camera failed: ' + (e as Error)?.message);
       }
     }
+  }
+
+  /**
+   * T-3D.6E: 根据模型缩放后半径与相机距离动态计算 near/far。
+   *
+   * 算法:
+   *   scaledRadius = bounds.radius * finalScale
+   *   near = max(MIN_NEAR, cameraDistance - scaledRadius * NEAR_SAFETY)
+   *   far  = cameraDistance + scaledRadius * FAR_FACTOR
+   *
+   * 边界处理:
+   * - bounds 为 null(程序化几何体或无 Bounds):回退固定 CAMERA_NEAR/CAMERA_FAR
+   * - near 必须 > 0 且 < far
+   * - 0.1x zoom:模型变小,距离相对变大,near/far 仍能容纳
+   * - 20x zoom:模型变大,scaledRadius 增大,near 不切近,far 不切远
+   *
+   * @param cameraDistance 相机距离
+   * @param finalScale 最终缩放(baseFitScale × zoomFactor)
+   * @param bounds 模型 Bounds(可为 null)
+   */
+  private computeDynamicNearFar(
+    cameraDistance: number,
+    finalScale: number,
+    bounds: ModelBounds | null
+  ): CameraNearFar {
+    if (bounds === null || !Number.isFinite(finalScale) || finalScale <= 0) {
+      return { near: CAMERA_NEAR, far: CAMERA_FAR };
+    }
+    const scaledRadius: number = bounds.radius * finalScale;
+    if (!Number.isFinite(scaledRadius) || scaledRadius <= 0) {
+      return { near: CAMERA_NEAR, far: CAMERA_FAR };
+    }
+    // NEAR_SAFETY=1.5:留 50% 余量,防止 modelRadius 估算偏小
+    const NEAR_SAFETY: number = 1.5;
+    // FAR_FACTOR=4.0:far 远超模型,保证 0.1x zoom 也不切远
+    const FAR_FACTOR: number = 4.0;
+    // MIN_NEAR=0.05:防止 near 过小导致深度精度问题
+    const MIN_NEAR: number = 0.05;
+    let near: number = cameraDistance - scaledRadius * NEAR_SAFETY;
+    if (near < MIN_NEAR) {
+      near = MIN_NEAR;
+    }
+    let far: number = cameraDistance + scaledRadius * FAR_FACTOR;
+    if (far <= near) {
+      far = near + 1.0;
+    }
+    return { near: near, far: far };
   }
 
   /**

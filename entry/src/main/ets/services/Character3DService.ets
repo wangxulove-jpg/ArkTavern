@@ -39,7 +39,12 @@ import {
   deserializeDisplayConfig,
   isDisplayConfigEqual
 } from '../models/character3d/Character3DDisplayConfig';
-import { computeBoundsFromGltf, computeAutoFitDisplayConfig } from '../models/character3d/ModelBounds';
+import {
+  computeBoundsFromGltf,
+  computeAutoFitDisplayConfig,
+  analyzeBoundsAnomalies,
+  BoundsAnomalyReport
+} from '../models/character3d/ModelBounds';
 import { Character3DModelCompatibilityService } from './Character3DModelCompatibilityService';
 import {
   ModelCompatibilityStatus,
@@ -49,6 +54,20 @@ import {
   ModelCompatibilityAnalysis,
   getConversionStageMessage
 } from '../models/character3d/ModelCompatibility';
+import { ModelImportDiagnostics, ModelImportDiagnosticReport } from '../parser/ModelImportDiagnostics';
+import {
+  ModelImportErrorCode,
+  ModelImportStage,
+  ModelInspectionResult,
+  getErrorMessage
+} from '../models/character3d/ModelImportResult';
+import {
+  ModelCapabilityReport,
+  ModelCapabilityInput,
+  analyzeModelCapability
+} from '../models/character3d/ModelCapabilityReport';
+import { BoneMappingResult } from '../models/character3d/HumanoidBone';
+import { mapBones } from '../models/character3d/HumanoidBoneMapper';
 
 const LOG_TAG: string = 'Character3DService';
 
@@ -58,6 +77,10 @@ const PREF_KEY_MODEL_URI: string = 'character_3d_model_uri';
 const PREF_KEY_MODEL_DISPLAY_NAME: string = 'character_3d_model_display_name';
 /** Preferences key 前缀:3D 模型显示配置(per-model,后接 modelId) */
 const PREF_KEY_DISPLAY_CONFIG_PREFIX: string = 'character_3d_display_config_';
+/** T-3D.6E: Preferences key:当前模型能力分层报告(JSON 字符串,全局单模型) */
+const PREF_KEY_CAPABILITY_REPORT: string = 'character_3d_capability_report';
+/** T-3D.6E: Preferences key:当前模型自动骨骼映射结果(JSON 字符串) */
+const PREF_KEY_BONE_MAPPING: string = 'character_3d_bone_mapping';
 /** 内置测试模型文件名(rawfile 目录下) */
 const RAWFILE_TEST_MODEL_NAME: string = 'test_model.glb';
 /** 内置测试模型显示名 */
@@ -93,6 +116,16 @@ export interface Character3DImportResult {
   conversionResult: ModelConversionResult | null;
   /** T-3D.6C-C3: 原始文件 SHA-256(用于加载验证标记,无转换时为空) */
   sourceSha256: string;
+  /** T-3D.6D: 详细扫描结果(到达扫描阶段后非空) */
+  inspection: ModelInspectionResult | null;
+  /** T-3D.6D: 导入过程中的警告列表(含 Bounds 异常、扩展警告等) */
+  warnings: string[];
+  /** T-3D.6D: 是否命中已有缓存(重复导入相同 sourceSha256) */
+  fromCache: boolean;
+  /** T-3D.6E: 模型能力分层报告(12 维度,UI 可分别显示) */
+  capabilityReport: ModelCapabilityReport | null;
+  /** T-3D.6E: 自动骨骼映射结果(无骨架时为 null) */
+  boneMapping: BoneMappingResult | null;
 }
 
 export class Character3DService {
@@ -155,6 +188,24 @@ export class Character3DService {
   }
 
   /**
+   * T-3D.6F-A: 读取当前模型 GLB 文件的 ArrayBuffer(用于表面点选)。
+   *
+   * @returns GLB ArrayBuffer,模型不存在时返回 null
+   */
+  async getGlbBuffer(): Promise<ArrayBuffer | null> {
+    try {
+      const config: Character3DModelConfig = await this.getConfig();
+      if (config.modelUri.length === 0 || !config.fileExists) {
+        return null;
+      }
+      return await this.readModelFile(config.modelUri);
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'getGlbBuffer failed: ' + (e as Error)?.message);
+      return null;
+    }
+  }
+
+  /**
    * T-3D.4A: 根据 modelUri 重新读取模型文件并验证,返回 GltfModelInfo。
    *
    * 用途:应用重启后从 Preferences 恢复模型时,需要重新获取模型信息(Bounds/扩展等),
@@ -190,11 +241,13 @@ export class Character3DService {
    * 流程:
    * 1. 调用 Model3DAssetStore.saveModel 复制到沙箱
    * 2. T-3D.3: 读取沙箱文件并调用 GltfValidator 验证格式
-   * 3. T-3D.4A: 检查 unsupportedRequiredExtensions,若有则拒绝并清理
-   * 4. T-3D.6C-C: 检查 convertibleRequiredExtensions,若有则调用兼容性预处理
-   * 5. 验证失败:删除已保存文件,抛出包含详细原因的错误
-   * 6. 验证成功:删除旧模型文件,将新 URI + 显示名写入 Preferences
-   * 7. T-3D.4A: 计算自适应显示配置并保存为该 modelId 的默认配置(若该 modelId 首次导入)
+   * 3. T-3D.6D: 调用 ModelImportDiagnostics 做容器+语义+扫描严格诊断
+   * 4. T-3D.4A: 检查 unsupportedRequiredExtensions,若有则拒绝并清理
+   * 5. T-3D.6C-C: 检查 convertibleRequiredExtensions,若有则调用兼容性预处理
+   * 6. 验证失败:删除已保存文件,抛出包含详细原因的错误
+   * 7. 验证成功:删除旧模型文件,将新 URI + 显示名写入 Preferences
+   * 8. T-3D.4A: 计算自适应显示配置并保存为该 modelId 的默认配置(若该 modelId 首次导入)
+   * 9. T-3D.6D: 计算 Bounds 异常警告(极小/极大/原点偏移/NaN)
    *
    * @param sourceUri DocumentViewPicker 返回的源 URI
    * @param onProgress T-3D.6C-C 转换进度回调(可选)
@@ -216,8 +269,28 @@ export class Character3DService {
     let compatibilityAnalysis: ModelCompatibilityAnalysis | null = null;
     let conversionResult: ModelConversionResult | null = null;
     let loadableUri: string = newUri;
+    let inspection: ModelInspectionResult | null = null;
+    const importWarnings: string[] = [];
+    let fromCache: boolean = false;
     try {
       const buffer: ArrayBuffer = await this.readModelFile(newUri);
+
+      // T-3D.6D: 严格诊断(GLB 容器 + glTF 语义 + 结构扫描)
+      // GltfValidator 仍作为主验证器(向后兼容),诊断器作为补充校验
+      const diagnostics: ModelImportDiagnosticReport = ModelImportDiagnostics.diagnose(buffer);
+      if (!diagnostics.passed) {
+        await this.assetStore.deleteModelByUri(newUri);
+        const errCode: ModelImportErrorCode = diagnostics.errorCode ?? ModelImportErrorCode.Unknown;
+        const userMsg: string = getErrorMessage(errCode);
+        Logger.error(LOG_TAG, 'importModel diagnostics failed: code=' + errCode
+          + ', msg=' + diagnostics.diagnosticMessage);
+        throw new Error(userMsg + '(' + diagnostics.diagnosticMessage + ')');
+      }
+      inspection = diagnostics.inspection;
+      for (let i: number = 0; i < diagnostics.warnings.length; i++) {
+        importWarnings.push(diagnostics.warnings[i]);
+      }
+
       const result: GltfValidationResult = GltfValidator.validate(buffer);
       if (!result.valid) {
         // 验证失败:删除已保存文件,抛出清晰错误
@@ -262,6 +335,7 @@ export class Character3DService {
         }
         // 转换成功:用转换后的路径
         loadableUri = 'file://' + loadableResult.path;
+        fromCache = conversionResult !== null && conversionResult.fromCache;
         // 重新读取转换后的 modelInfo(扩展已移除,Bounds 可能变化)
         const convertedBuffer: ArrayBuffer = await this.readModelFile(loadableUri);
         const convertedValidation: GltfValidationResult = GltfValidator.validate(convertedBuffer);
@@ -270,7 +344,7 @@ export class Character3DService {
         }
         Logger.info(LOG_TAG, 'importModel converted, loadableUri=' + loadableUri
           + ', removed=[' + (conversionResult !== null ? conversionResult.removedExtensions.join(',') : '')
-          + ']');
+          + '], fromCache=' + fromCache);
       }
       Logger.info(LOG_TAG, 'importModel validation ok: meshes=' + modelInfo.meshCount
         + ', materials=' + modelInfo.materialCount
@@ -287,6 +361,17 @@ export class Character3DService {
       const msg: string = (e as Error)?.message ?? 'validate failed';
       Logger.error(LOG_TAG, 'importModel validate error: ' + msg);
       throw new Error('模型验证失败: ' + msg);
+    }
+
+    // T-3D.6D: 检测 Bounds 异常并追加警告
+    const bounds = computeBoundsFromGltf(modelInfo);
+    const anomalyReport: BoundsAnomalyReport = analyzeBoundsAnomalies(bounds);
+    if (anomalyReport.hasAnomaly) {
+      for (let i: number = 0; i < anomalyReport.warnings.length; i++) {
+        importWarnings.push(anomalyReport.warnings[i]);
+      }
+      Logger.info(LOG_TAG, 'importModel bounds anomaly: '
+        + anomalyReport.anomalyTypes.join(','));
     }
 
     // 读取旧 URI(用于稍后删除旧文件)
@@ -309,8 +394,42 @@ export class Character3DService {
     const autoFitConfig: Character3DDisplayConfig = this.computeAutoFitConfig(modelInfo);
     await this.ensureModelDefaultConfig(displayName, autoFitConfig);
 
+    // T-3D.6E: 生成能力分层报告(综合 inspection + modelInfo + boneMapping)
+    let boneMapping: BoneMappingResult | null = null;
+    let capabilityReport: ModelCapabilityReport | null = null;
+    try {
+      boneMapping = mapBones(modelInfo.nodeNames, displayName, modelInfo.hasSkins);
+      const hasRenderableMesh: boolean = modelInfo.meshCount > 0;
+      const capabilityInput: ModelCapabilityInput = {
+        modelInfo: modelInfo,
+        gltfJson: null, // 不持有 gltfJson,深度分析由 inspection 字段提供降级
+        inspection: inspection,
+        boneMapping: boneMapping,
+        sceneLoaded: false, // 导入阶段尚未加载 Scene,运行时由 ViewModel 更新
+        hasRenderableMesh: hasRenderableMesh,
+        hasManualMapping: false,
+        manualMappingValid: false
+      };
+      capabilityReport = analyzeModelCapability(capabilityInput);
+      // 持久化报告与映射,供 ActionManagerViewModel 读取
+      await this.preferences.putString(
+        PREF_KEY_CAPABILITY_REPORT, JSON.stringify(capabilityReport)
+      );
+      await this.preferences.putString(
+        PREF_KEY_BONE_MAPPING, JSON.stringify(boneMapping)
+      );
+      Logger.info(LOG_TAG, 'importModel capability: skeleton='
+        + capabilityReport.skeletonPresent
+        + ', autoMap=' + capabilityReport.humanoidAutoMapping
+        + ', motion=' + capabilityReport.motionRetargeting);
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'importModel capability analysis failed: '
+        + (e as Error)?.message);
+    }
+
     Logger.info(LOG_TAG, 'importModel ok, displayName=' + displayName
-      + ', converted=' + (conversionResult !== null));
+      + ', converted=' + (conversionResult !== null)
+      + ', warnings=' + importWarnings.length);
     return {
       modelUri: loadableUri,
       displayName: displayName,
@@ -318,7 +437,12 @@ export class Character3DService {
       autoFitConfig: autoFitConfig,
       compatibilityAnalysis: compatibilityAnalysis,
       conversionResult: conversionResult,
-      sourceSha256: compatibilityAnalysis !== null ? compatibilityAnalysis.sourceSha256 : ''
+      sourceSha256: compatibilityAnalysis !== null ? compatibilityAnalysis.sourceSha256 : '',
+      inspection: inspection,
+      warnings: importWarnings,
+      fromCache: fromCache,
+      capabilityReport: capabilityReport,
+      boneMapping: boneMapping
     };
   }
 
@@ -337,7 +461,45 @@ export class Character3DService {
     }
     await this.preferences.delete(PREF_KEY_MODEL_URI);
     await this.preferences.delete(PREF_KEY_MODEL_DISPLAY_NAME);
+    await this.preferences.delete(PREF_KEY_CAPABILITY_REPORT);
+    await this.preferences.delete(PREF_KEY_BONE_MAPPING);
     Logger.info(LOG_TAG, 'clearModel ok');
+  }
+
+  /**
+   * T-3D.6E: 读取持久化的能力分层报告。
+   *
+   * @returns ModelCapabilityReport 或 null(未导入或解析失败)
+   */
+  async getCapabilityReport(): Promise<ModelCapabilityReport | null> {
+    try {
+      const json: string = await this.preferences.getString(PREF_KEY_CAPABILITY_REPORT, '');
+      if (json.length === 0) {
+        return null;
+      }
+      return JSON.parse(json) as ModelCapabilityReport;
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'getCapabilityReport failed: ' + (e as Error)?.message);
+      return null;
+    }
+  }
+
+  /**
+   * T-3D.6E: 读取持久化的自动骨骼映射结果。
+   *
+   * @returns BoneMappingResult 或 null(未导入或解析失败)
+   */
+  async getBoneMapping(): Promise<BoneMappingResult | null> {
+    try {
+      const json: string = await this.preferences.getString(PREF_KEY_BONE_MAPPING, '');
+      if (json.length === 0) {
+        return null;
+      }
+      return JSON.parse(json) as BoneMappingResult;
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'getBoneMapping failed: ' + (e as Error)?.message);
+      return null;
+    }
   }
 
   /**
@@ -365,6 +527,8 @@ export class Character3DService {
    * 模拟器无 root 权限,无法访问 Download 目录,改用 rawfile 方式加载真实模型。
    * 这对应任务说明"情况 C":HarmonyOS 3D API 通过私有沙箱路径加载,rawfile 作为源。
    *
+   * T-3D.6D: 集成 ModelImportDiagnostics 进行严格诊断,检测 Bounds 异常并生成警告。
+   *
    * @param fileName rawfile 中的文件名(如 'teacher-love.glb')
    * @param displayName 显示名(用于 UI 和 modelId 隔离)
    * @returns 导入结果
@@ -381,6 +545,22 @@ export class Character3DService {
     // 从 rawfile 读取模型
     const buffer: ArrayBuffer = await this.readRawfileToBuffer(fileName);
     Logger.info(LOG_TAG, 'importFromRawfileByName: rawfile read, size=' + buffer.byteLength);
+
+    // T-3D.6D: 严格诊断(GLB 容器 + glTF 语义 + 结构扫描)
+    let inspection: ModelInspectionResult | null = null;
+    const importWarnings: string[] = [];
+    const diagnostics: ModelImportDiagnosticReport = ModelImportDiagnostics.diagnose(buffer);
+    if (!diagnostics.passed) {
+      const errCode: ModelImportErrorCode = diagnostics.errorCode ?? ModelImportErrorCode.Unknown;
+      const userMsg: string = getErrorMessage(errCode);
+      Logger.error(LOG_TAG, 'importFromRawfileByName diagnostics failed: code=' + errCode
+        + ', msg=' + diagnostics.diagnosticMessage);
+      throw new Error(userMsg + '(' + diagnostics.diagnosticMessage + ')');
+    }
+    inspection = diagnostics.inspection;
+    for (let i: number = 0; i < diagnostics.warnings.length; i++) {
+      importWarnings.push(diagnostics.warnings[i]);
+    }
 
     // T-3D.3: 验证 GLB 格式
     const result: GltfValidationResult = GltfValidator.validate(buffer);
@@ -422,9 +602,50 @@ export class Character3DService {
 
     // T-3D.4A: 计算自适应配置并保存为该 modelId 默认配置
     const autoFitConfig: Character3DDisplayConfig = this.computeAutoFitConfig(modelInfo);
+
+    // T-3D.6D: 检测 Bounds 异常并追加警告
+    const bounds = computeBoundsFromGltf(modelInfo);
+    const anomalyReport: BoundsAnomalyReport = analyzeBoundsAnomalies(bounds);
+    if (anomalyReport.hasAnomaly) {
+      for (let i: number = 0; i < anomalyReport.warnings.length; i++) {
+        importWarnings.push(anomalyReport.warnings[i]);
+      }
+      Logger.info(LOG_TAG, 'importFromRawfileByName bounds anomaly: '
+        + anomalyReport.anomalyTypes.join(','));
+    }
+
     await this.ensureModelDefaultConfig(displayName, autoFitConfig);
 
-    Logger.info(LOG_TAG, 'importFromRawfileByName ok, name=' + displayName);
+    // T-3D.6E: 生成能力分层报告(rawfile 导入路径同样填充)
+    let boneMapping: BoneMappingResult | null = null;
+    let capabilityReport: ModelCapabilityReport | null = null;
+    try {
+      boneMapping = mapBones(modelInfo.nodeNames, displayName, modelInfo.hasSkins);
+      const hasRenderableMesh: boolean = modelInfo.meshCount > 0;
+      const capabilityInput: ModelCapabilityInput = {
+        modelInfo: modelInfo,
+        gltfJson: null,
+        inspection: inspection,
+        boneMapping: boneMapping,
+        sceneLoaded: false,
+        hasRenderableMesh: hasRenderableMesh,
+        hasManualMapping: false,
+        manualMappingValid: false
+      };
+      capabilityReport = analyzeModelCapability(capabilityInput);
+      await this.preferences.putString(
+        PREF_KEY_CAPABILITY_REPORT, JSON.stringify(capabilityReport)
+      );
+      await this.preferences.putString(
+        PREF_KEY_BONE_MAPPING, JSON.stringify(boneMapping)
+      );
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'importFromRawfileByName capability analysis failed: '
+        + (e as Error)?.message);
+    }
+
+    Logger.info(LOG_TAG, 'importFromRawfileByName ok, name=' + displayName
+      + ', warnings=' + importWarnings.length);
     return {
       modelUri: newUri,
       displayName: displayName,
@@ -432,7 +653,12 @@ export class Character3DService {
       autoFitConfig: autoFitConfig,
       compatibilityAnalysis: null,
       conversionResult: null,
-      sourceSha256: ''
+      sourceSha256: '',
+      inspection: inspection,
+      warnings: importWarnings,
+      fromCache: false,
+      capabilityReport: capabilityReport,
+      boneMapping: boneMapping
     } as Character3DImportResult;
   }
 

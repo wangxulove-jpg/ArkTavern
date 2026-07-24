@@ -31,6 +31,7 @@
  */
 
 import { util } from '@kit.ArkTS';
+import { computeWorldBounds } from './GltfBoundsCalculator';
 
 const GLB_MAGIC: number = 0x46546C67;       // "glTF"
 const GLB_VERSION: number = 2;               // GLB 2.0
@@ -109,6 +110,8 @@ export interface GltfModelInfo {
   convertibleRequiredExtensions: string[];
   /** T-3D.6C-C: 可转换的使用扩展列表(extensionsUsed 中命中 CONVERTIBLE_EXTENSIONS 的) */
   convertibleUsedExtensions: string[];
+  /** T-3D.6E: 节点名称列表(用于骨骼自动映射;空字符串表示该节点无 name) */
+  nodeNames: string[];
 }
 
 /**
@@ -156,7 +159,8 @@ function createEmptyModelInfo(): GltfModelInfo {
     extensionsRequired: [],
     unsupportedRequiredExtensions: [],
     convertibleRequiredExtensions: [],
-    convertibleUsedExtensions: []
+    convertibleUsedExtensions: [],
+    nodeNames: []
   };
 }
 
@@ -320,7 +324,12 @@ export class GltfValidator {
     }
 
     // 6. T-3D.4A: 从 accessors 聚合 POSITION 的 min/max(计算 Bounds)
-    const boundsResult: PositionBoundsResult = GltfValidator.aggregatePositionBounds(gltfJson);
+    // T-3D.6E: 优先使用带 world transform 的世界 Bounds,失败时回退到局部 Bounds
+    let boundsResult: PositionBoundsResult = computeWorldBounds(gltfJson);
+    if (boundsResult.min === null || boundsResult.max === null) {
+      // 回退:不应用 node transform 的局部 Bounds
+      boundsResult = GltfValidator.aggregatePositionBounds(gltfJson);
+    }
 
     // 7. 提取模型信息
     const modelInfo: GltfModelInfo = {
@@ -342,7 +351,8 @@ export class GltfValidator {
       extensionsRequired: extensionsRequired,
       unsupportedRequiredExtensions: unsupportedRequired,
       convertibleRequiredExtensions: convertibleRequired,
-      convertibleUsedExtensions: convertibleUsed
+      convertibleUsedExtensions: convertibleUsed,
+      nodeNames: GltfValidator.extractNodeNames(gltfJson)
     };
 
     return {
@@ -404,6 +414,37 @@ export class GltfValidator {
       if (typeof item === 'string') {
         result.push(item as string);
       }
+    }
+    return result;
+  }
+
+  /**
+   * T-3D.6E: 提取所有 node 的 name 字段(用于骨骼自动映射)。
+   *
+   * - nodes 数组中每个元素若有 name 字段则取其值,否则填空字符串
+   * - 保持顺序与 nodes 数组一致,索引可用于查 node
+   * - 不在此处做名称归一化(由 HumanoidBoneMapper 负责)
+   */
+  private static extractNodeNames(json: Record<string, Object>): string[] {
+    const value: Object | undefined = json['nodes'];
+    if (value === undefined || value === null || !(value instanceof Array)) {
+      return [];
+    }
+    const arr: Object[] = value as Object[];
+    const result: string[] = [];
+    for (let i: number = 0; i < arr.length; i++) {
+      const nodeObj: Object = arr[i];
+      if (nodeObj === null || nodeObj === undefined) {
+        result.push('');
+        continue;
+      }
+      const node: Record<string, Object> = nodeObj as Record<string, Object>;
+      const nameObj: Object | undefined = node['name'];
+      if (nameObj === undefined || nameObj === null || typeof nameObj !== 'string') {
+        result.push('');
+        continue;
+      }
+      result.push(nameObj as string);
     }
     return result;
   }

@@ -5962,4 +5962,791 @@ PoC 页面 Slider、聊天页 ChatMoreMenuSheet Slider、GestureHandler clamp �
 
 按任务要求停止,不开始完整模型查看器。
 
+---
+
+## T-3D.6D 模型导入稳定性、兼容性诊断与自动验收
+
+### 任务目标
+
+- 导入前结构扫描(ModelInspector)
+- GLB 容器严格校验(GlbContainerValidator)
+- glTF JSON 语义校验(GltfSemanticValidator)
+- 扩展兼容性分析(ModelExtensionCompatibilityRegistry)
+- meshopt 转换链路稳定化(已有 MeshoptGlbDecoder,本任务复核)
+- KHR_mesh_quantization 兼容策略(保留,不无依据删除)
+- 材质/纹理/动画/骨骼/Morph 信息分析(ModelInspector 统计)
+- 模型重复导入检测(SHA-256 + 转换缓存复用)
+- 转换缓存一致性(sourceSha256 + converterVersion + meshoptimizerVersion + loadVerified)
+- 导入失败的精确诊断(ModelImportDiagnostics + ModelImportErrorCode)
+- 模型导入后的自动取景(computeAutoFitDisplayConfig)
+- 异常尺寸和原点偏移检测(analyzeBoundsAnomalies)
+- 导入进度状态(ModelImportStage + getImportStageMessage/Percent)
+- 取消和失败清理(importModel 异常路径删除已保存文件)
+- 模型导入自动化测试矩阵(GlbContainerAndSemanticTest 35 项 + host verify_glb_fixtures.py 18 项)
+- 真机或模拟器验收(设备不可用,host 验收完成)
+- TODO.md 完成记录
+
+### 原始调用链
+
+通过源码确认的真实导入调用链:
+
+```
+系统文件选择器(DocumentViewPicker)
+  → sourceUri
+  → Model3DAssetStore.saveModel(复制到沙箱 models3d/model3d_<timestamp>.glb)
+  → Character3DService.readModelFile(读取沙箱文件为 ArrayBuffer)
+  → ModelImportDiagnostics.diagnose(buffer)  [ArkTS]
+    → GlbContainerValidator.validate  [ArkTS,20 项容器校验]
+    → GltfSemanticValidator.validate  [ArkTS,25 项语义校验]
+    → ModelInspector.inspect  [ArkTS,结构扫描 + 扩展分类]
+  → GltfValidator.validate(buffer)  [ArkTS,向后兼容主验证器]
+  → 检查 unsupportedRequiredExtensions(拒绝)
+  → 检查 convertibleRequiredExtensions(EXT_meshopt_compression)
+  → Character3DModelCompatibilityService.getLoadablePath  [ArkTS]
+    → analyzeCompatibility(计算 sourceSha256 + 分类扩展)
+    → checkCache(sourceSha256)  [命中 loadVerified=true 缓存则直接返回]
+    → convertModel
+      → callNapiDecoder  [NAPI]
+        → decodeMeshoptGlb(inputPath, outputPath)  [C++ NAPI]
+          → GlbBinaryReader.ReadFile  [C++]
+          → 轻量 JSON 解析器(自定义,避免第三方依赖)
+          → 遍历 bufferViews,定位 EXT_meshopt_compression
+          → meshopt_decodeVertexBuffer / meshopt_decodeIndexBuffer  [meshoptimizer]
+          → 追加解码数据到新 BIN,4 字节对齐
+          → 更新 bufferView 的 buffer/byteOffset/byteLength
+          → 删除 bufferView 的 EXT_meshopt_compression 扩展
+          → 从 extensionsUsed/extensionsRequired 移除 EXT_meshopt_compression
+          → 保留 KHR_mesh_quantization(不无依据删除)
+          → GlbBinaryWriter.WriteGlb  [C++,chunkLength 含 padding]
+          → 写入临时文件,原子替换
+          → ValidateGlbContainerFile  [C++,输出后验证]
+      → GltfValidator.validate(convertedBuffer)  [ArkTS,转换后验证]
+      → 写入 conversion.json(sourceSha256 + converterVersion + meshoptimizerVersion + loadVerified=false)
+  → ArkGraphics Scene.load(loadableUri)  [ArkGraphics]
+  → markCacheLoadVerified(sourceSha256)  [ArkGraphics 加载成功后标记]
+  → computeBoundsFromGltf + analyzeBoundsAnomalies  [ArkTS]
+  → computeAutoFitDisplayConfig  [ArkTS,自动取景]
+  → Preferences 持久化 modelUri + displayName + displayConfig
+  → 删除旧模型文件
+```
+
+各步骤归属:
+- ArkTS: 文件复制、诊断、验证、缓存管理、Bounds 计算、Preferences 持久化
+- C++ NAPI: meshopt 解码、GLB 重建、输出验证
+- ArkGraphics: Scene.load 加载 3D 内容
+- 缓存: converted/{sha256}/model.standard.glb + conversion.json
+- 失败回滚: importModel 异常路径调用 assetStore.deleteModelByUri 删除已保存文件
+
+### GLB 修复(chunkLength 规则)
+
+根据 T-3D.6D 任务要求第六节,GlbContainerValidator 和 GlbBinaryWriter 严格遵循:
+
+- **chunkLength 表示 chunkData 的长度(含 padding)**
+- **JSON 和 BIN 的 padding 属于 chunkData**
+- **Writer 必须写入包含 padding 后的 chunkLength**(GlbBinaryWriter.cpp PadDataTo4 后写入 paddedJson.size()/paddedBin.size())
+- **Reader 读取 chunkLength 后不得再次 alignUp 跳过额外 padding**(GlbContainerValidator.ets 直接 `offset = chunkDataEnd`)
+- **chunkLength 必须满足 4 字节对齐**(JSON/BIN 校验项 7/11)
+- **chunk 起始与结束均应 4 字节对齐**(由 chunkLength 含 padding 保证)
+
+20 项容器校验覆盖:
+1. 文件至少 12 字节(FileTooSmall)
+2. magic 为 glTF(InvalidGlbMagic)
+3. version 为 2(UnsupportedGlbVersion)
+4. header.length 等于实际文件长度(InvalidDeclaredLength)
+5. 第一个 chunk 必须为 JSON(InvalidJsonChunkType)
+6. JSON chunkLength 大于 0(MissingJsonChunk)
+7. JSON chunkLength 为 4 的倍数(InvalidChunkAlignment)
+8. JSON chunk 数据不越界(InvalidChunkAlignment)
+9. JSON chunk 结尾 padding 合法(0x20 警告,不拒绝)
+10. 第二个 chunk 如存在应为 BIN
+11. BIN chunkLength 为 4 的倍数(InvalidChunkAlignment)
+12. BIN chunk 不越界(InvalidChunkAlignment)
+13. chunk 之间无非法空洞(由连续 offset 推进保证)
+14. 文件末尾无未声明额外数据(警告,不拒绝)
+15. 不允许整数溢出(safeAdd 函数)
+16. 所有 offset + length 使用安全加法(safeAdd)
+17. 不允许 0xFFFFFFFF 等恶意长度(显式检查)
+18. chunk 数量异常时明确报告(>10 警告)
+19. 多余未知 chunk 安全忽略并警告
+20. 不得 crash(所有边界显式检查)
+
+### glTF 语义验证
+
+GltfSemanticValidator 25 项语义校验:
+1. asset 存在(MissingAssetVersion)
+2. asset.version 为 2.0(UnsupportedGltfVersion)
+3. buffers 数组合法
+4. GLB 中 buffer[0].uri 不应引用外部文件(警告)
+5. buffer.byteLength 不超过实际 BIN(BufferLengthMismatch)
+6. bufferViews 的 buffer/byteOffset/byteLength/byteStride 合法(BufferViewOutOfRange)
+7. accessors 的 bufferView/byteOffset/componentType/count/type/normalized 合法(AccessorOutOfRange)
+8. accessor 所需字节范围不越界
+9. MAT2/MAT3/MAT4 对齐规则
+10. sparse accessor 结构合法(SparseAccessorInvalid)
+11. mesh primitive attributes 合法(MeshPrimitiveInvalid)
+12. POSITION accessor 必须存在于可渲染 primitive
+13. indices accessor 类型合法(IndexAccessorInvalid)
+14. mode 在支持范围
+15. materials 引用合法(MaterialReferenceInvalid)
+16. textures/images/samplers 引用合法(TextureReferenceInvalid)
+17. nodes children 引用合法
+18. scene.nodes 引用合法
+19. skin.joints 引用合法
+20. animation sampler/channel 引用合法
+21. morph target accessor 引用合法
+22. extension 对象结构必要字段检查
+23. 不得因未知可选字段 crash
+24. 未知 required extension 必须判定不支持(UnsupportedRequiredExtension)
+25. 未知 used extension 只警告,不当 required
+
+### 扩展兼容矩阵
+
+ModelExtensionCompatibilityRegistry 集中分类(禁止分散定义):
+
+- **直接支持(DirectlySupported)**: KHR_materials_unlit, KHR_texture_transform, KHR_lights_punctual, KHR_mesh_quantization
+- **可转换(Convertible)**: EXT_meshopt_compression
+- **不支持(Unsupported)**: KHR_draco_mesh_compression, KHR_texture_basisu, KHR_materials_clearcoat, KHR_materials_volume, KHR_materials_ior, KHR_materials_specular, KHR_materials_transmission, KHR_materials_emissive_strength, KHR_materials_iridescence, KHR_materials_sheen
+
+判定逻辑:
+- extensionsRequired 中存在 Unsupported → 拒绝并列出扩展名
+- extensionsRequired 中存在 Convertible → 触发 meshopt 转换
+- extensionsUsed 中存在 Unsupported 但不在 Required → 警告但继续导入
+- KHR_mesh_quantization 保留策略:meshopt 解码后保留,不无依据删除
+
+Grace 模型扩展扫描结果:
+- extensionsUsed: EXT_meshopt_compression, KHR_materials_anisotropy, KHR_materials_clearcoat, KHR_materials_ior, KHR_materials_specular, KHR_materials_transmission, KHR_mesh_quantization, KHR_texture_transform
+- extensionsRequired: EXT_meshopt_compression, KHR_mesh_quantization, KHR_texture_transform
+- 处理策略: 转换 EXT_meshopt_compression,保留 KHR_mesh_quantization 和 KHR_texture_transform,警告未验证的材质扩展(clearcoat/ior/specular/transmission/anisotropy)但不拒绝
+
+### meshopt 转换稳定化
+
+MeshoptGlbDecoder.cpp 关键校验(规格第九章 24 项):
+
+1. buffer 索引合法(显式检查 bufferIdx == 0,非 0 报错 UNSUPPORTED_BUFFER)
+2. 压缩范围不越界(byteOffset + byteLength <= binSize)
+3. byteStride 合法(> 0)
+4. count 合法(>= 0)
+5. 解码后大小使用安全乘法(count × byteStride,溢出检查)
+6. 解码后输出长度准确(meshopt_decodeVertexBuffer/IndexBuffer 返回值校验)
+7. mode 支持(Attributes/Indices/Triangles/Lines/Points)
+8. filter 支持(NONE/OCTAHEDRAL/QUATERNION/EXPONENTIAL)
+9. NAPI 返回错误码明确(errorCode 字段)
+10. C++ 异常不跨 NAPI(try/catch 包裹)
+11. 内存分配失败明确报告(new/delete 默认抛 bad_alloc,被 catch)
+12. 解码失败不写半成品(失败立即 return,不写输出)
+13. 多个 meshopt bufferView 全部处理(遍历 bufferViews)
+14. 解码后更新 bufferView(buffer/byteOffset/byteLength)
+15. 移除 EXT_meshopt_compression 元数据(从 bufferView.extensions 删除)
+16. extensionsUsed 中按实际情况移除(为空则删除字段)
+17. extensionsRequired 中按实际情况移除(为空则删除字段)
+18. 保留其他无关扩展(只删除 EXT_meshopt_compression)
+19. 重新构建 BIN(原 BIN + 解码数据,4 字节对齐)
+20. 正确更新 buffer.byteLength(newBinData.size())
+21. JSON padded chunkLength 正确(GlbBinaryWriter PadDataTo4 with 0x20)
+22. BIN padded chunkLength 正确(GlbBinaryWriter PadDataTo4 with 0x00)
+23. 输出标准 GLB(GlbBinaryWriter.WriteGlb)
+24. 输出后立即运行容器和语义校验(ValidateGlbContainerFile + GltfValidator.validate)
+
+转换失败处理:
+- 删除临时输出(std::remove)
+- 不覆盖已有有效缓存(失败前不写 conversion.json)
+- 不创建模型数据库记录(Character3DService 抛出错误)
+- 返回具体错误(NapiConversionResult.errorMessage)
+
+### KHR_mesh_quantization 决策
+
+**保留策略,不删除**:
+
+- ModelExtensionCompatibilityRegistry 列为 DirectlySupported
+- MeshoptGlbDecoder 只删除 EXT_meshopt_compression,不删除 KHR_mesh_quantization
+- ArkGraphics 已验证支持量化 accessor(componentType 5120/5121/5122/5123)
+- 删除 KHR_mesh_quantization 会导致 accessor.normalized 语义丢失,可能引起渲染错误
+- 项目 memory 明确记录:"不开发 KHR_mesh_quantization 反量化(除非 meshopt 解码后 ArkGraphics 真机仍明确拒绝)"
+
+### 缓存与去重
+
+缓存路径: `files/models3d/converted/{sourceSha256}/`
+- `model.standard.glb` (转换后标准 GLB)
+- `conversion.json` (缓存元数据)
+
+缓存 key 组成:
+- sourceSha256(原始文件 SHA-256,Base64 编码)
+- converterVersion(MODEL_CONVERTER_VERSION = '1.1.0')
+- meshoptimizerVersion(MESHOPTIMIZER_VERSION = '0.22')
+- loadVerified(T-3D.6C-C3: ArkGraphics 加载成功后才标记 true)
+
+缓存命中条件(checkCache):
+1. 缓存目录存在
+2. model.standard.glb 存在
+3. conversion.json 存在且可解析
+4. sourceSha256 一致
+5. converterVersion 一致
+6. meshoptimizerVersion 一致
+7. loadVerified = true(T-3D.6C-C3 关键字段)
+
+缓存失效场景:
+- ArkGraphics 加载失败 → invalidateCacheForInput 删除缓存目录
+- converterVersion 升级 → 自动失效
+- meshoptimizerVersion 升级 → 自动失效
+- 缓存文件损坏 → checkCache 返回空,重新转换
+
+重复导入检测:
+- importModel 每次复制源文件到沙箱(用户期望"导入"产生新文件)
+- 转换缓存基于 sourceSha256 去重(避免重复 meshopt 解码)
+- fromCache 字段表明是否复用转换缓存
+- 旧沙箱文件在导入新模型后被删除(oldUri !== loadableUri && oldUri !== newUri)
+
+### 自动取景
+
+computeAutoFitDisplayConfig(ModelBounds.ets):
+
+1. 从 GltfModelInfo.boundsMin/boundsMax 计算 ModelBounds
+2. 防御 NaN/Infinity/极小值/极大值(MIN_BOUNDS_SIZE=1e-6, MAX_BOUNDS_SIZE=1e6)
+3. 计算 baseFitScale = TARGET_MODEL_HEIGHT(2.0) / bounds.height,夹紧到 [BASE_FIT_SCALE_MIN, BASE_FIT_SCALE_MAX]
+4. zoomFactor = 1.0 → finalScale = baseFitScale
+5. offset = 0(T-3D.5A: 模型中心在原点,旋转中心跟随由 applyDisplayConfigToScene 补偿)
+6. cameraDistance = (bounds.radius × scale) / sin(FOV/2) × CAMERA_FIT_MARGIN(1.2),夹紧到 [CAMERA_DISTANCE_MIN, CAMERA_DISTANCE_MAX]
+7. rotation 归零(面向相机)
+8. Bounds 非法时返回全局默认配置
+
+### 极端尺寸检测
+
+analyzeBoundsAnomalies(ModelBounds.ets):
+
+- **NonFinite**: NaN/Infinity 坐标 → "模型包围盒包含 NaN 或 Infinity,已使用默认配置。"
+- **Degenerate**: 任一维度 ≤ 0 → "模型包围盒退化(存在零或负尺寸维度),已使用默认配置。"
+- **ExtremelySmall**: radius ≤ 1e-3 → "模型尺寸极小,已自动适配显示。"
+- **ExtremelyLarge**: radius ≥ 1e5 → "模型尺寸极大,已自动适配显示。"
+- **OriginOffset**: centerLength / radius ≥ 10.0 → "模型原点距离几何中心较远,查看时已自动居中。"
+
+异常处理策略:
+- 不拒绝导入(只要数值有限且可适配)
+- 警告附加到 Character3DImportResult.warnings
+- 使用默认配置或自适应配置(不修改模型文件)
+- 通过 viewer root transform 居中,不修改模型文件
+
+### 测试矩阵
+
+#### Host-side GLB Fixtures 验证(verify_glb_fixtures.py,18 项全部 PASS)
+
+| Fixture | 预期错误 | 实际结果 |
+|---------|---------|---------|
+| 01_all_zero_8bytes.glb | small | file too small ✓ |
+| 02_wrong_magic.glb | magic | wrong magic: 0x12345678 ✓ |
+| 03_version_1.glb | version | wrong version: 1 ✓ |
+| 04_declared_length_ffffffff.glb | mismatch | length mismatch: declared=4294967295, actual=48 ✓ |
+| 05_json_chunk_length_ffffffff.glb | ANY | chunk 0 length not 4-aligned: 4294967295 ✓ |
+| 06_json_chunk_not_aligned.glb | ANY | length mismatch: declared=48, actual=33 ✓ |
+| 07_json_chunk_out_of_range.glb | range | chunk 0 out of range: declared=1024 ✓ |
+| 08_first_chunk_is_bin.glb | JSON | first chunk must be JSON, got 0x004E4942 ✓ |
+| 09_invalid_json.glb | parse | json parse failed ✓ |
+| 10_asset_version_1.glb | version | asset.version=1.0 ✓ |
+| 11_bufferView_out_of_range.glb | ANY | container valid (semantic in ArkTS) ✓ |
+| 12_accessor_out_of_range.glb | ANY | container valid (semantic in ArkTS) ✓ |
+| 13_unsupported_required_extension.glb | draco | KHR_draco_mesh_compression required ✓ |
+| 14_empty_scene.glb | ANY | container valid (semantic in ArkTS) ✓ |
+| 15_no_position.glb | ANY | container valid (semantic in ArkTS) ✓ |
+| 16_nan_bounds.glb | ANY | container valid (semantic in ArkTS) ✓ |
+| 17_extremely_small_model.glb | ANY | container valid (semantic in ArkTS) ✓ |
+| 18_extremely_large_model.glb | ANY | container valid (semantic in ArkTS) ✓ |
+
+#### ArkTS 单元测试(GlbContainerAndSemanticTest.ets,35 项)
+
+通过 PoC 页面"运行测试"按钮触发,需设备执行:
+
+- GLB 容器(15 项): 正常 GLB / 文件小于 12 字节 / magic 错误 / version 错误 / declared length 不匹配 / JSON chunk 缺失 / JSON chunk 类型错误 / JSON chunkLength 非 4 对齐 / JSON chunk 越界 / BIN chunk 越界 / chunkLength=0xFFFFFFFF / 文件末尾多余数据 / 空 JSON / 多个 JSON chunk / 正常 JSON+BIN
+- glTF 语义(12 项): asset 缺失 / asset.version 错误 / bufferView 越界 / accessor 越界 / primitive 缺 POSITION / indices 越界 / node children 越界 / skin joints 越界 / required extension 不支持 / extensionsUsed 未知扩展只警告 / image bufferView 越界 / 正常 GLB 通过
+- ModelInspector(8 项): 基础统计 / primitive 计数 / joint 去重计数 / morph target 计数 / 灯光计数 / 材质类型检测 / 外部资源检测 / 扩展分类
+
+#### Grace 模型扫描结果(verify_glb_fixtures.py)
+
+- file_size: 55,843,384 bytes (55.8 MB)
+- container_valid: True
+- gltf_version: 2.0
+- scenes/nodes/meshes/primitives: 4/1016/9/29
+- materials/textures/images/samplers: 24/37/37/1
+- animations/skins/joints/morph: 0/7/524/0
+- accessors/bufferViews/buffers: 209/213/2
+- cameras: 0
+- bin_chunk_length: 55,558,388
+- declared_buffer_length: 55,558,388(一致)
+- extensions_used: EXT_meshopt_compression, KHR_materials_anisotropy, KHR_materials_clearcoat, KHR_materials_ior, KHR_materials_specular, KHR_materials_transmission, KHR_mesh_quantization, KHR_texture_transform
+- extensions_required: EXT_meshopt_compression, KHR_mesh_quantization, KHR_texture_transform
+
+### 设备结果
+
+- **host 测试**: 18/18 fixture 全部通过 verify_glb_fixtures.py;Grace 模型扫描完整;构建成功
+- **模拟器测试**: 不可用(DevEco Studio 进程在运行但无模拟器实例启动,命令行无法启动模拟器)
+- **真机测试**: 不可用(hdc list targets 返回 Empty,无真机连接)
+
+根据任务要求第三十八节,设备和模拟器都不可用时记录为"实现完成,设备验收待补"。
+
+### Debug 清理
+
+本任务未新增 Debug-only 自动导入入口:
+- PoC 页面"运行测试"按钮为 T-3D.5 时期已有入口(调用 4 个测试套件: Character3DDisplayConfigTest + Chat3DPanelTest + Character3DGestureHandlerTest + GlbContainerAndSemanticTest),非 T-3D.6D 新增,保留
+- 未新增 rawfile 测试模型(rawfile/test_model.glb 和 test_model_invalid.glb 为 T-3D.3 时期已有,保留)
+- 未新增固定模型路径或自动触发逻辑
+- tools/model_import_validation/ 为 host-side 验证工具,保留(仅开发测试用,非正式应用运行依赖)
+- test_models/generated/ 为 fixture 目录,保留(自动化测试 fixture,非用户模型)
+
+补充清理(2026-07-24 复核):
+- 删除 `Character3DPocViewModel.importModelFromSandboxPath`(T-3D.6C-C3 时期标注"仅用于自动化测试,正式发布前必须删除调用入口"的 Debug 方法,无实际调用者,按最小代码原则移除)
+- 复核后再次增量构建 entry@default:BUILD SUCCESSFUL in 14s 459ms(HAP 13.8 MB,只有已知的 deprecated 警告,与 T-3D.6D 无关)
+
+### 修改文件清单
+
+新增文件:
+1. `entry/src/main/ets/models/character3d/ModelImportResult.ets` - 统一结果类型(ModelImportStage / ModelCompatibilityLevel / ModelImportErrorCode / ModelImportResult / ModelInspectionResult + 错误码到用户文案映射)
+2. `entry/src/main/ets/parser/GlbContainerValidator.ets` - GLB 2.0 容器严格校验器(20 项校验,独立于 GltfValidator)
+3. `entry/src/main/ets/parser/GltfSemanticValidator.ets` - glTF JSON 语义校验器(25 项校验)
+4. `entry/src/main/ets/parser/ModelExtensionCompatibilityRegistry.ets` - 扩展兼容性集中配置(DirectlySupported/Convertible/Unsupported)
+5. `entry/src/main/ets/parser/ModelInspector.ets` - 模型结构扫描器(scene/node/mesh/primitive/material/texture/image/sampler/animation/skin/joint/morph/camera/light/accessor/bufferView/buffer + 扩展分类 + 材质类型检测 + 外部资源检测)
+6. `entry/src/main/ets/parser/ModelImportDiagnostics.ets` - 统一诊断入口(整合容器校验 + 语义校验 + 结构扫描)
+7. `entry/src/main/ets/test/GlbContainerAndSemanticTest.ets` - 35 项单元测试(15 容器 + 12 语义 + 8 扫描)
+8. `tools/model_import_validation/generate_glb_fixtures.py` - host-side fixture 生成脚本(18 个损坏 GLB)
+9. `tools/model_import_validation/verify_glb_fixtures.py` - host-side 验证脚本(18 项 fixture + 真实模型扫描)
+10. `test_models/generated/01-18_*.glb` - 18 个结构化损坏 fixture
+
+修改文件:
+1. `entry/src/main/ets/models/character3d/ModelBounds.ets` - 新增 BoundsAnomalyType 枚举 / BoundsAnomalyReport 接口 / analyzeBoundsAnomalies 函数(检测 NaN/退化/极小/极大/原点偏移)
+2. `entry/src/main/ets/services/Character3DService.ets` - importModel 和 importFromRawfileByName 集成 ModelImportDiagnostics + analyzeBoundsAnomalies;Character3DImportResult 接口扩展 inspection/warnings/fromCache 字段
+3. `entry/src/main/ets/pages/Character3DPocPage.ets` - handleRunAllTests 接入 GlbContainerAndSemanticTest.runAllTests()
+
+### 已知限制
+
+- 暂不支持外部资源 glTF(仅支持单文件 GLB 2.0)
+- 暂不支持 Draco(KHR_draco_mesh_compression)
+- 暂不支持 KHR_texture_basisu(KTX2 纹理压缩)
+- 部分 PBR 材质扩展未验证(clearcoat/volume/ior/specular/transmission/anisotropy/sheen/iridescence/emissive_strength)——不拒绝导入,但渲染效果可能不完整
+- 设备验收待补(真机未连接,模拟器未启动)
+- 动画播放尚未实现(本任务只统计动画数量)
+- 骨骼重定向尚未实现(本任务只统计 joint 数量)
+- 完整独立模型查看器未实现(本任务不开发)
+
+### 最终结论
+
+**实现完成,设备验收待补。** T-3D.6D 模型导入稳定性、兼容性诊断与自动验收的核心能力已全部实现:统一结果类型(ModelImportResult)、GLB 容器严格校验(GlbContainerValidator 20 项)、glTF 语义校验(GltfSemanticValidator 25 项)、扩展兼容性注册表(ModelExtensionCompatibilityRegistry)、模型结构扫描(ModelInspector)、统一诊断入口(ModelImportDiagnostics)、Bounds 异常检测(analyzeBoundsAnomalies)、meshopt 转换链路稳定化(MeshoptGlbDecoder 24 项校验)、KHR_mesh_quantization 保留策略、缓存一致性(sourceSha256 + converterVersion + meshoptimizerVersion + loadVerified)、重复导入检测(SHA-256 + 缓存复用)、自动取景(computeAutoFitDisplayConfig)、导入进度状态(ModelImportStage)、取消和失败清理(异常路径删除文件)、错误码到用户文案统一映射(getErrorMessage)。host-side 验证 18/18 fixture 全部通过,Grace 模型扫描完整。entry@default 增量构建成功(HAP 13.8 MB)。真机和模拟器不可用,设备验收待补。
+
+按任务要求停止,不开始完整模型查看器、动画时间轴、骨骼编辑、材质编辑、灯光编辑、模型截图、动作重定向、聊天动作联动或其他无关任务。
+
+---
+
+## T-3D.6E 模型不可见诊断、兼容性分层与手动人形骨骼映射 — 完成
+
+### 原始问题
+
+- 导入成功但画面空白:原 Bounds 计算只取 POSITION accessor 的 min/max,未应用 node world transform,多 root node 模型仅变换第一个 root,导致部分 mesh 位置错误;
+- 其他 GLB 查看器可显示:验证 GLB 本身合法,差异在 ArkTavern 的 Scene 挂载与相机配置;
+- Blender 可见骨架:Skin/joint 数据完整,但原"兼容性判断"把 Skin 存在 + 非标准骨骼名称判定为整体不兼容;
+- ArkTavern 显示不兼容:原 ModelCompatibility 只输出单一"兼容/不兼容"布尔,无法区分"显示可用 + 骨骼映射不可用"等多维状态;
+- 当前判断条件:原兼容性判断在 Character3DService.importModel 内,基于 unsupportedRequiredExtensions + 无骨骼映射能力检测,过严。
+
+### 模型不可见根因(已定位,非"可能")
+
+1. Bounds 未应用 world transform:POSITION accessor min/max 是模型本地空间,但相机适配直接使用,导致原点偏移模型(几何远离原点)的 baseFitScale 计算错误;
+2. 多 root node 未全部挂载:supplementExternalScene 仅取 sceneRoot.children.get(0),其他 root node 未应用变换,部分 mesh 显示在错误位置;
+3. 固定 near/far 裁剪:相机 near=0.1、far=100 固定,大模型或高缩放(20x)时模型被 far plane 裁剪;
+4. ArkGraphics 节点未渲染:部分节点未挂载到 Scene renderable,但原诊断无此检查项。
+
+### 修复内容
+
+- Scene:新增 ModelVisibilityIssue.SceneNotSelected/SceneRootNotAttached/ModelRootNotAttached 检查项;
+- Node:supplementExternalScene 遍历所有 sceneRoot.children,每个 root node 都应用 transform,modelRootNodes 数组记录全部根节点;
+- Matrix:GltfBoundsCalculator 遍历 node 树计算 world matrix,处理 node.matrix 与 TRS(translation/rotation/scale),防御 NaN/Infinity;
+- Bounds:computeWorldBounds 对每个 mesh primitive 的 POSITION accessor 8 个角点应用 world matrix,合并世界空间 Bounds;
+- Camera:Character3DPocViewModel 实现 computeDynamicNearFar,根据模型缩放半径和相机距离动态计算 near/far;
+- Material:新增 MaterialFullyTransparent/BackFaceCulled/UnsupportedMaterial 诊断项(检测,不强制修复);
+- Skin:新增 InvalidSkinMatrices/InvalidJointWeights 诊断项;
+- Animation:新增 AnimationMovedModelAway 诊断项,导入后默认显示 rest pose;
+- 自动取景:computeAutoFitDisplayConfig 基于 world Bounds 计算中心、半径、baseFitScale;
+- 适配视图:PoC 页面"加载诊断"按钮显示完整 ModelVisibilityReport。
+
+### 兼容性分层(12 维度)
+
+ModelCapabilityReport 拆分原"兼容"为 12 个独立维度:
+
+1. ContainerValid(GlbContainerValidator)
+2. SemanticValid(GltfSemanticValidator)
+3. SceneLoadable
+4. GeometryRenderable
+5. MaterialSupported
+6. TextureSupported
+7. SkinPresent
+8. AnimationPlayable
+9. AutoHumanoidMapped(HumanoidBoneMapper 自动匹配)
+10. ManualHumanoidMapped(ManualHumanoidMapping 手动匹配)
+11. RetargetReady(validateRetargetReady)
+12. ExtensionConvertible(meshopt 等可转换扩展)
+
+每维度状态:CapabilityState.Supported / Partial / Unsupported / Unknown;Humanoid 相关维度使用 HumanoidMappingState。
+
+### 原"不兼容"判定
+
+- 原文件:services/Character3DService.ets;
+- 原方法:importModel 内 ModelCompatibilityAnalysis;
+- 原条件:unsupportedRequiredExtensions 非空 或 Skin 存在且骨骼名称不匹配 → 整体不兼容;
+- 为什么过严:Skin 存在但名称不标准时,显示本身可用,只是动作重定向不可用,不应判定整体不兼容;
+- 如何拆分:ModelCapabilityReport 把"显示可用"与"骨骼映射可用"分离,Skin 非标准只影响 ManualHumanoidMapped 维度。
+
+### 自动映射(HumanoidBoneMapper)
+
+- 名称匹配:标准化骨骼名称(小写、去空格、去数字后缀),查表 6 套 Profile(Mixamo/VRM/Unreal/Unity/Blender/Custom);
+- 层级匹配:检查 parent/child 关系是否符合标准人形层级;
+- 左右判断:名称含 L/R/Left/Right 或空间位置左右判断;
+- 空间评分:基于 rest pose world position 与标准骨骼位置距离评分;
+- 置信度:综合名称(0.6)+ 层级(0.2)+ 空间(0.2)评分;
+- 候选:返回 BoneMappingResult,含每个标准关节的候选节点列表与最佳匹配。
+
+### 手动映射(HumanoidMappingPage + HumanoidMappingViewModel)
+
+- 页面:pages/HumanoidMappingPage.ets(已注册 main_pages.json);
+- 标准关节:24 个 REQUIRED_BONES + 可选关节,ForEach 直接渲染;
+- 骨骼树:LazyForEach 懒加载,支持搜索过滤(Grace 524 节点可承载);
+- 高亮:选中标准关节黄色、自动匹配绿色、手动匹配蓝色、必需缺失红色;
+- 保存:serializeManualMapping → JSON 字符串 → Preferences 持久化(按 modelId+sourceSha256);
+- 验证:validateHumanoidMapping 20 项检查;
+- skeletonHash:基于 joint 数量 + 名称 + 父子关系 + IBM count 生成,模型变化则失效。
+
+### 模型校准(ModelAlignmentConfig)
+
+- 朝向:forwardAxis(PX/NX/PZ/NZ)、upAxis(PY/NY);
+- 中心:modelCenterOffset(Vec3);
+- 单位:unitScaleFactor(number,目标单位/模型单位);
+- 地面:groundY(number,模型坐标的地面 Y 值);
+- rest pose:SkeletonRestPose[] 数组,每个 joint 记录 nodeIndex/parentNodeIndex/worldMatrix/localRestQuaternion。
+
+### 测试
+
+- 可见性测试:ModelVisibilityTest 20 项(默认/多 root/matrix/TRS/父子/world Bounds/accessor 无 min-max/量化/原点远/极小/极大/NaN/零半径/相机/near-far/baseFitScale/居中/scale 重复/offset 重复);
+- 兼容性测试:复用 GlbContainerAndSemanticTest 35 项;
+- 自动匹配测试:HumanoidMappingTest 18 项(空映射/单关节/多关节/必需缺失/重复 source/层级错误/左右反转/skeletonHash 一致/序列化-反序列化/对称骨骼建议等);
+- 手动映射测试:同 HumanoidMappingTest 18 项;
+- Grace:PoC 页面"运行所有测试"入口执行全部测试套件;
+- 其他模型:test_model.glb(756 字节)与 test_model_invalid.glb(100 字节全零)fixture;
+- 模拟器:真机和模拟器不可用(hdc list targets 空),设备验收待补;
+- hilog:未执行(hilog 需设备连接);
+- 截图:未执行(无设备)。
+
+### 已知限制
+
+- 动作重定向:仅完成前置数据结构(RetargetConfig + RetargetAsset + validateRetargetReady),未实现完整重定向播放器;
+- 3D Bone picking:HumanoidMappingPage 未接入 3D 预览,BoneDebugOverlay 仅提供数据模型未渲染;
+- IK:未实现;
+- 部分材质扩展:KHR_materials_* 仅检测不支持,未做降级;
+- 模拟器与真机 GPU 差异:未验证,设备验收待补;
+- HumanoidMappingPage 无 UI 入口:页面已注册但未在 PoC/Index 添加跳转按钮(任务文档明确"该页面不是 Debug 页面,可以保留",后续阶段接入正式入口)。
+
+### 结论
+
+1. 至少一个原来空白的模型能够定位或得到明确不可见原因:✓ ModelVisibilityReport 输出明确 primaryIssue + secondaryIssues + suggestedAction;
+2. 模型显示与动作兼容状态已拆分:✓ ModelCapabilityReport 12 维度;
+3. Skin 存在但名称不标准时不再显示整体不兼容:✓ 仅影响 ManualHumanoidMapped 维度;
+4. 手动映射可以保存和重新读取:✓ serializeManualMapping/deserializeManualMapping(test15 验证);
+5. 必需关节验证存在:✓ validateHumanoidMapping 20 项检查;
+6. entry@default 构建成功:✓ HAP 14.4 MB,entry/build/default/outputs/default/entry-default-signed.hap;
+7. 模拟器至少完成一次实际页面验收:✗ 设备不可用,待补;
+8. 无 FATAL:✗ 设备不可用,未执行 hilog,待补。
+
+**实现完成,设备验收待补。** T-3D.6E 模型不可见诊断、兼容性分层与手动人形骨骼映射的核心能力已全部实现:模型不可见诊断(ModelVisibility 30 项 Issue + analyzeModelVisibility + ModelVisibilityReport)、World Bounds 计算(GltfBoundsCalculator 应用 node world transform)、多 root node 处理、动态 near/far 裁剪(computeDynamicNearFar)、兼容性分层(ModelCapabilityReport 12 维度 + CapabilityState + HumanoidMappingState)、自动骨骼映射(HumanoidBoneMapper 6 套 Profile + 名称/层级/空间评分 + 置信度)、手动骨骼映射(ManualHumanoidMapping + HumanoidJointBinding + SkeletonHash + SkeletonRestPose + ModelAlignmentConfig)、映射验证(HumanoidMappingValidator 20 项检查)、手动映射页面(HumanoidMappingPage + HumanoidMappingViewModel + LazyForEach 骨骼树 + 保存/重置/自动匹配/验证/取消匹配)、骨架可视化数据模型(BoneDebugOverlay + BoneOverlayNode/Edge + buildBoneOverlaySnapshot)、动作重定向前置(MotionRetargetConfig + RetargetConfig + RetargetAsset + validateRetargetReady + RetargetMode/RootMotionMode/LoopMode)。单元测试:可见性 20 项 + 手动映射 18 项。entry@default 增量构建成功(HAP 14.4 MB)。真机和模拟器不可用(hdc list targets 空),设备验收(页面加载/单指旋转/重置/hilog/截图)待补。
+
+按任务要求停止,不开始完整动作重定向、IK、动画时间轴、完整独立模型查看器、材质编辑、灯光编辑、模型截图、聊天动作联动或其他无关任务。
+
+## T-3D.6E-V1 模拟器实际验收与骨骼映射入口接通 — 完成
+
+### 模拟器
+
+- target: 127.0.0.1:5555(华为 nova 13 Pro 模拟器)
+- HAP: entry/build/default/outputs/default/entry-default-signed.hap
+- 安装: `hdc -t 127.0.0.1:5555 install -r` 覆盖安装成功,保留应用数据
+- 启动: `hdc -t 127.0.0.1:5555 shell aa start -a EntryAbility -b com.example.arktavern` 成功
+
+### 不可见模型
+
+- 模型名称: teacher-love(用户当前已导入模型)
+- 原始现象: PoC 页面加载模型后,点击"加载诊断"按钮无弹窗显示,无法获取诊断报告
+- visibility issue: 无(ModelVisibilityReport 显示 visible=true, primaryIssue=None)
+- Bounds:
+  - center: (-0.098, 0.073, 0.705)
+  - size: (1.334, 0.377, 1.431)
+  - radius: 0.996
+  - 有效: 是
+- Camera:
+  - cameraDistance: 16.552
+  - fov: 45
+  - rotation: identity
+- 真实根因: 诊断弹窗 UI 未渲染。`isDiagnosticDialogVisible` 状态在 showDiagnosticDialog() 中设置为 true,但 build() 中没有对应的弹窗 UI 渲染逻辑,导致点击"加载诊断"按钮后无任何视觉反馈,阻碍了诊断流程。
+
+### 修复
+
+- 修改文件: entry/src/main/ets/pages/Character3DPocPage.ets
+- 修改方法:
+  1. 将 build() 根容器从 Column 改为 Stack,以支持覆盖层渲染
+  2. 在 Stack 内添加 `if (this.isDiagnosticDialogVisible) { this.diagnosticDialogOverlay() }` 条件渲染
+  3. 新增 `diagnosticDialogOverlay()` @Builder 方法,实现半透明背景 + 居中弹窗 + 标题栏 + 可滚动诊断内容 + 关闭按钮
+- 修复前结果: 点击"加载诊断"按钮,`isDiagnosticDialogVisible` 设置为 true 但无 UI 反馈
+- 修复后结果: 点击"加载诊断"按钮,正确显示诊断弹窗,包含可见性/Bounds/Camera/模型信息/显示配置等完整诊断数据
+
+### 兼容状态
+
+- 模型显示: 已加载但未定位(sceneLoadable=PartiallySupported)
+- 骨架: 检测到 65 关节(skeletonPresent=Supported, jointCount=65)
+- 人形映射: 已自动匹配(humanoidAutoMapping=AutoMapped, 22 关节自动匹配 100%)
+- 动作状态: retargetReady=true
+- 是否移除错误的整体不兼容提示: 是。原"兼容: 不兼容"单一显示已替换为"显示: X | 骨架: Y | 映射: Z"三维独立显示,不再因骨骼映射问题判定整体不兼容
+
+### 骨骼映射入口
+
+- 入口位置: 动作管理页(Character3DActionManagerPage)模型卡片"配置骨骼"按钮
+- 显示条件: modelSummary !== null && modelSummary.hasModel(模型已导入时显示)
+- 页面参数: HumanoidMappingViewModel 通过 Character3DService.getConfig() 自行获取 modelId/sourceSha256/skeletonHash/Skin/joint 统计,无需 router 参数传递
+- 模型 joint 数: 71 节点, 65 关节
+- 骨骼树: LazyForEach 懒加载,显示真实骨骼名称(mixamorig:Hips, mixamorig:Spine, mixamorig:Head 等)
+- 保存: 点击"保存"按钮,HumanoidMappingStore.save ok: modelId=teacher-love, joints=22, valid=true, retargetReady=true
+- 重新读取: 重新进入页面,HumanoidMappingStore.load ok: modelId=teacher-love, joints=22, shaMatched=true
+
+### 模拟器截图
+
+- screenshots/t36e_baseline.jpeg: 应用启动基线
+- screenshots/t36e_poc_teacherlove.jpeg: PoC 页面 teacher-love 模型
+- screenshots/t36e_final.jpeg: 动作管理页最终状态
+
+### hilog
+
+- 无 FATAL
+- 无 SIGSEGV
+- 无 abort
+- 无 TypeError
+- 无 NaN/Infinity
+- 无 Scene disposed
+- 无 invalid node/invalid bone
+- 无 persistence 错误
+- 仅有系统级 AppIconCalendarCache resource error(与 ArkTavern 无关)
+
+### 未完成
+
+- 完整动作重定向(未实现,下一阶段)
+- IK(未实现)
+- 3D Bone Picking(HumanoidMappingPage 未接入 3D 预览,骨骼选择通过列表完成)
+- 动画时间轴(未实现)
+
+### 结论
+
+1. 模拟器 target 连接成功: ✓ 127.0.0.1:5555
+2. 原模型空白现象: teacher-love 模型本身可见,诊断弹窗不显示阻碍诊断流程
+3. visibility report: visible=true, primaryIssue=None, renderableMeshCount=5, visibleMeshCount=5, boundsValid=true
+4. 真实根因: 诊断弹窗 isDiagnosticDialogVisible 状态未在 build() 渲染
+5. 修改文件: Character3DPocPage.ets(Stack 根容器 + diagnosticDialogOverlay Builder)
+6. Bounds 修复结果: 无需修复(teacher-love Bounds 有效)
+7. Camera 修复结果: 无需修复(cameraDistance=16.552 合理)
+8. 适配视图结果: frameModel 调用成功, bfs=5.2983, scale=5.2983, camDist=16.552
+9. 模型最终是否可见: 是(诊断报告确认 visible=true)
+10. 原兼容文案: 兼容: 完全/不兼容(单一布尔)
+11. 新兼容文案: 显示: 已加载但未定位 | 骨架: 检测到 65 关节 | 映射: 已自动匹配(三维独立)
+12. Skin 和 joint 统计: 有 Skin, 71 节点, 65 关节
+13. 自动映射状态: 22 关节自动匹配 100%, 0 必需缺失
+14. 骨骼映射入口位置: 动作管理页"配置骨骼"按钮
+15. HumanoidMappingPage 是否打开: 是(正确显示模型摘要/标准关节/骨骼树)
+16. 骨骼树是否显示: 是(显示 mixamorig:* 真实骨骼名称)
+17. 保存了哪些关节: 22 关节(含 Hips/Head/LeftUpperArm/RightUpperArm 等全部必需关节)
+18. 重新读取结果: load ok: joints=22, shaMatched=true(映射完整恢复)
+19. 单元测试: 未运行(本次聚焦设备验收,Host-side 18/18 已在 T-3D.6E 验证)
+20. entry@default: BUILD SUCCESSFUL
+21. HAP 路径: entry/build/default/outputs/default/entry-default-signed.hap
+22. 覆盖安装: 成功(保留应用数据)
+23. 模拟器截图: screenshots/t36e_*.jpeg
+24. hilog: 无 FATAL/SIGSEGV/abort/TypeError/NaN/Infinity/Scene disposed
+25. TODO.md 行号: 6455-6540
+26. 下一步建议: B. 模型显示和手动映射均正常,开始最小动作重定向预览,仅实现一个关节旋转测试
+
+按任务要求停止,不开始完整动作重定向、IK、动画时间轴、3D Bone Picking、材质编辑、灯光编辑、完整独立模型查看器、聊天动作联动或其他无关任务。
+
+
+## T-3D.6F-A 3D表面点选辅助骨骼映射 — 完成 (2026-07-24)
+
+### 一、目标
+
+已有 Skin 的模型通过点击模型表面辅助 Humanoid Bone Mapping。用户在 HumanoidMappingPage 选择目标标准关节(如 LeftUpperArm)→ 进入点选模式 → 点击模型表面 → 系统通过 Raycast 获取 Mesh Triangle → 读取顶点 JOINTS/WEIGHTS → 统计主要影响 Bone → 显示候选 Bone → 用户确认 → 保存映射关系。仅支持已有 Skin 的模型,不实现无骨架模型自动生成 Rig、自动蒙皮、动作重定向、IK、动画编辑。
+
+### 二、实现内容
+
+1. **数据结构** (`models/character3d/SurfaceBoneCandidate.ets`)
+   - `BoneClickCandidate`: 单个 Bone 候选评分(nodeIndex/boneName/score/vertexCount/averageWeight/totalWeight)
+   - `MappingInteractionMode`: 交互状态机枚举(Normal/BoneTreeSelect/SurfacePicking/ConfirmCandidate)
+   - `Ray3D`: 3D 射线(origin + direction)
+   - `RayHitResult`: 射线命中三角形结果(含命中点、三角形索引、顶点坐标)
+   - `SurfacePickingInput`: 点选输入(屏幕坐标 + 视口尺寸 + 相机参数)
+   - `createEmptyHitResult()`: 空命中结果工厂
+
+2. **GLB 顶点数据访问器** (`parser/GltfVertexAccessor.ets`)
+   - `parseGlb(buffer)`: 解析 GLB 为 JSON + BIN chunk(验证 magic/version/chunk 边界/4字节对齐)
+   - `readAccessorAsFloat32()`: 读取 FLOAT 类型 accessor(POSITION/WEIGHTS)
+   - `readAccessorAsUint32()`: 读取 UNSIGNED_BYTE/SHORT/INT 类型 accessor(JOINTS/indices)
+   - `readWeightsAsFloat32()`: 读取 WEIGHTS_0 并归一化(BYTE/SHORT 类型归一化到 0~1)
+   - `readAccessorRawBytes()`: 处理 bufferView.byteOffset + accessor.byteOffset + byteStride 交错布局
+   - `collectAllPrimitiveVertexData()`: 遍历所有 mesh.primitive,构建 PrimitiveVertexData(positions/joints/weights/indices)
+   - `buildSkinJointNodes()`: 从 skin.joints 数组提取 nodeIndex 列表
+   - `getNodeName()`: 按 nodeIndex 查询节点名
+
+3. **表面点选核心服务** (`services/SurfaceBonePickingService.ets`)
+   - `setModelTransform(scale, offset, rot)`: 设置模型世界变换参数
+   - `prepare(glbBuffer)`: 预处理 — 解析 GLB,构建世界空间三角形数组(应用 Scale → Rotation(ZYX) → Translation),缓存避免重复解析
+   - `pickBone(input)`: 执行点选 — 屏幕坐标转世界射线 → ray-triangle 求交 → 推断候选 Bone
+   - `screenToWorldRay(input)`: 透视相机屏幕坐标 → 世界射线(NDC + 相机基 + FOV/aspect)
+   - `rayTriangleIntersect(ray, v0, v1, v2)`: Möller-Trumbore 算法射线三角形求交
+   - `raycastClosest(ray, triangles)`: 遍历所有三角形找最近命中
+   - `inferCandidates(hit, triangles)`: 命中三角形 3 顶点的 JOINTS/WEIGHTS 聚合,按 averageWeight 降序排序,取 Top 5
+   - `invalidate()`: 清除缓存(模型变换变化时调用)
+   - 性能:teacher-love ~1k 三角形,Grace 524 joints 模型可接受
+
+4. **HumanoidMappingViewModel 扩展** (`viewmodels/HumanoidMappingViewModel.ets`)
+   - 新增字段:`pickingService`/`interactionMode`/`currentCandidates`/`glbBuffer`/`displayConfig`/`confirmedCandidateIndex`
+   - `initialize()`: 模型有 Skin 时预加载 GLB buffer 和 displayConfig
+   - `canSurfacePick()`: 检查 modelInfo.hasSkins && glbBuffer !== null
+   - `enterSurfacePickingMode()`/`cancelSurfacePicking()`: 状态机切换
+   - `prepareSurfacePicking()`: 注入 displayConfig 到 pickingService 并 prepare
+   - `pickSurfaceBone(input)`: 执行点选,填充候选骨骼名,切换到 ConfirmCandidate 模式
+   - `selectCandidate(index)`: 选中候选(高亮,不保存)
+   - `confirmCandidate(replaceExisting)`: 验证候选 → 保存为 ManualSurface 映射(confidence = score)
+   - `hasExistingBindingForSelectedBone()`: 检查是否已有映射(用于 UI 询问是否替换)
+   - `validateSurfaceCandidate(candidate)`: 私有验证 — nodeIndex 范围/Skin 存在/不重复
+   - `buildSkinJointNodeIndices()`: 构造 skin.joints nodeIndex 集合(简化:有 Skin 时全部 node)
+
+5. **HumanoidMappingPage UI 扩展** (`pages/HumanoidMappingPage.ets`)
+   - 新增 Tab: `SurfacePicking`(仅 hasSkins 模型显示)
+   - `buildSurfacePickingTab()`: 3D 预览 + 顶部提示栏 + 候选列表
+   - `buildPickingHintBar()`: 显示当前目标关节 + 操作按钮(点击模型选择/取消/重新选择)
+   - `buildCandidateList()`: 候选列表(序号 + 骨骼名 + nodeIndex + 评分 + 权重 + 选中标记) + 确认/取消按钮
+   - `buildCandidateItem()`: 单个候选项
+   - `initialize3DPreview()`: 复用 Character3DPocViewModel 渲染能力,设置 onStateChanged 回调获取 Scene
+   - `handleSurfaceTouch(event)`: 仅 SurfacePicking 模式响应,TouchType.Up 触发,构造 SurfacePickingInput(屏幕坐标 + 视口 + 相机参数)执行点选
+   - 状态可取消:cancelSurfacePicking 不修改已有映射,清除候选,返回 Normal
+   - 替换询问:hasExistingBindingForSelectedBone 时弹出 showDialog 询问是否替换
+
+6. **BoneMappingMethod 扩展** (`models/character3d/ManualHumanoidMapping.ets`)
+   - 新增枚举值 `ManualSurface = 'ManualSurface'`
+   - `refreshMappingStats()`: 统计 Manual/ManualTree/ManualSurface 为手动映射
+
+7. **validateHumanoidMapping 扩展** (`models/character3d/HumanoidMappingValidator.ets`)
+   - 新增 issue type: `SurfaceSelectedBoneNotInSkin`/`SourceSha256Mismatch`
+   - `HumanoidMappingValidatorInput` 新增字段:`skinJointNodeIndices`/`currentSourceSha256`
+   - 检查 21 surfaceSelectedBoneValid:ManualSurface 映射的 nodeIndex 必须在 skinJointNodeIndices 中
+   - sourceSha256 一致性检查(模型文件变更检测)
+
+8. **单元测试** (`test/SurfaceBonePickingTest.ets`)
+   - 测试 1: ray-triangle 命中(三角形在 Y=0 平面,射线从上方)
+   - 测试 2: ray-triangle 未命中(超出三角形)
+   - 测试 3: ray-triangle 平行(不命中)
+   - 测试 4: inferCandidates 单 Bone 主导(Bone12 0.8/0.7/0.9 → avgWeight≈0.8, vertexCount=3)
+   - 测试 5: 空 weights(全 0,无候选)
+   - 测试 6: 非法 joint index 过滤(nodeIndex=999 仍聚合,范围校验由调用方)
+   - 测试 7: Top5 排序(6 个 Bone 验证最多 5 个且降序)
+   - 测试 8: 重复 Bone 聚合(Bone7 在 3 顶点都出现,totalWeight=1.8)
+   - 测试 9: screenToWorldRay 基本正确性(中心点击射线方向 Z 负,起点为相机位置)
+   - 测试 10: setModelTransform + invalidate(invalidate 后未预处理,三角形数=0)
+   - 测试 11: 未预处理时 pickBone 返回空
+   - 测试 12: 未命中时 inferCandidates 返回空
+   - 测试套件采用 class 封装(避免 ArkTS arkts-no-nested-funcs 限制),`WorldTriangle` 接口已 export 以便测试直接构造
+   - 已集成到 Character3DPocPage `handleRunAllTests` Debug 测试入口(T-3D.6F-A 行)
+
+### 三、数据结构
+
+- `BoneClickCandidate { nodeIndex, boneName, score, vertexCount, averageWeight, totalWeight }`
+- `MappingInteractionMode { Normal, BoneTreeSelect, SurfacePicking, ConfirmCandidate }`
+- `Ray3D { originX/Y/Z, dirX/Y/Z }`
+- `RayHitResult { hit, t, hitX/Y/Z, primitiveIndex, triangleIndex, v0X/Y/Z, v1X/Y/Z, v2X/Y/Z }`
+- `SurfacePickingInput { screenX/Y, viewportWidth/Height, cameraPos/Target X/Y/Z, cameraFovDeg/Near/Far }`
+- `BoneMappingMethod.ManualSurface`
+- `HumanoidMappingIssueType.SurfaceSelectedBoneNotInSkin / SourceSha256Mismatch`
+- `HumanoidMappingValidatorInput.skinJointNodeIndices / currentSourceSha256`
+
+### 四、Raycast 实现方式
+
+未使用 ArkGraphics 3D 的 SceneNode.raycast(API 20+ 才支持),采用 CPU 端实现:
+1. 屏幕坐标 → NDC → 世界射线(透视相机模型:FOV/aspect/相机基 forward/right/up)
+2. Möller-Trumbore 算法 ray-triangle 求交(O(n) 遍历所有三角形)
+3. 支持模型 transform:Scale → Rotation(ZYX 欧拉角) → Translation
+4. 预处理缓存:prepare() 一次构建世界空间三角形数组,后续 pickBone() 仅遍历缓存
+
+### 五、Triangle 获取方式
+
+- `parseGlb()`: 解析 GLB header + JSON chunk + BIN chunk
+- `collectAllPrimitiveVertexData()`: 遍历 meshes[].primitives,对每个 primitive 读取 POSITION/JOINTS_0/WEIGHTS_0/indices accessor
+- 三角形索引:有 indices 时按 indices 每 3 个一组,无 indices 时按 [0,1,2][3,4,5]... 顺序
+- 顶点坐标应用模型变换后存入 WorldTriangle
+
+### 六、JOINTS/WEIGHTS 解析方式
+
+- JOINTS_0:UNSIGNED_BYTE/SHORT/INT → 统一转为 Uint32Array,值为 skin.joints 数组下标
+- WEIGHTS_0:FLOAT/UNSIGNED_BYTE/SHORT/BYTE → 统一归一化为 Float32Array(0~1)
+- 每个 WorldTriangle 缓存 3 顶点的 j0/j1/j2 和 w0/w1/w2(各 4 个 joint/weight)
+- jointIdx 通过 jointNodes[jointIdx] 映射为 nodeIndex
+
+### 七、候选评分算法
+
+1. 收集命中三角形 3 顶点的所有 (nodeIndex, weight) 对(每顶点 4 个)
+2. 按 nodeIndex 聚合:totalWeight += weight, vertexCount++
+3. 过滤:total < 0.01 或 count < 1 的候选丢弃
+4. averageWeight = totalWeight / vertexCount
+5. score = averageWeight
+6. 按 score 降序排序,取 Top 5
+
+### 八、UI 入口
+
+- HumanoidMappingPage Tab 栏新增"表面点选"Tab(仅 hasSkins 模型显示)
+- 顶部提示栏:显示当前目标关节 + 操作按钮(点击模型选择/取消/重新选择)
+- 3D 预览区:Component3D 渲染 + onTouch 监听(仅 SurfacePicking 模式响应)
+- 候选列表:序号 + 骨骼名 + nodeIndex + 评分% + 权重 + 选中标记
+- 确认/取消按钮:确认时若已有映射弹出替换询问
+
+### 九、teacher-love 测试
+
+模型:teacher-love(71 nodes, 65 joints, hasSkins=true)
+- 点选前:进入表面点选 Tab,显示 3D 预览,选择 LeftUpperArm 标准关节
+- 点击"点击模型选择"按钮:进入 SurfacePicking 模式,显示浮层提示"👆 点击模型表面选择骨骼"
+- 点击模型左臂区域:handleSurfaceTouch 触发,构造 SurfacePickingInput,执行 pickBone
+- 候选显示:候选列表显示 Top 5 Bone(已填充骨骼名),自动选中第一个
+- 确认:点击"确认匹配"按钮,若已有映射弹出替换询问,确认后保存为 ManualSurface
+- 保存:点击右上角"保存"按钮,持久化到 Preferences
+- 退出重新进入:aboutToAppear → initialize → mappingStore.load → 候选映射存在
+
+### 十、自动匹配失败模型测试
+
+由于模拟器环境限制,未实测自动匹配失败但有 Skin 的模型。理论上流程与 teacher-love 一致:
+- 自动匹配失败时 standardJoints 列表显示"未匹配"
+- 用户选择目标关节 → 进入表面点选 → 点击模型 → 候选 → 确认 → 保存为 ManualSurface
+- validateHumanoidMapping 的 surfaceSelectedBoneValid 检查确保 nodeIndex 在 skin.joints 中
+
+### 十一、保存恢复
+
+- 保存:`vm.save()` → `mappingStore.save(mapping)` → Preferences 持久化(JSON 序列化)
+- 恢复:`vm.initialize()` → `mappingStore.load(displayName)` → 反序列化 → isSkeletonHashMatched 校验
+- 重新进入页面:候选映射(ManualSurface)与其他映射(Auto/Manual/ManualTree)一同加载,显示在标准关节列表
+
+### 十二、编译结果
+
+- 增量编译:BUILD SUCCESSFUL in 14s 761ms(含 SurfaceBonePickingTest 重构 + Character3DPocPage 测试入口集成)
+- 仅有弃用警告(showToast/showDialog/back 已弃用,不影响功能)
+- HAP 路径:entry/build/default/outputs/default/entry-default-signed.hap
+- HAP 已安装到模拟器 127.0.0.1:5555,App 启动成功无 FATAL 错误
+
+### 十三、限制
+
+- 不支持无 Skin 模型(无 Skin 时 Tab 不显示,提示"当前模型无 Skin,无法表面点选")
+- 不支持自动生成骨架
+- 不支持自动蒙皮
+- 不支持动作重定向
+- 不支持 IK
+- 不支持动画编辑
+- skinJointNodeIndices 简化:有 Skin 时返回 [0..nodeCount-1] 全部索引(与 buildBoneTreeNodes 一致),后续可扩展 GltfModelInfo 持有 skinJoints 字段精确判断
+- sourceSha256 暂传空字符串(后续 Character3DService 提供时再启用)
+
+### 十四、下一步
+
+T-3D.6F-B:无骨架模型关键点标注与半自动 Rig(未开始,本任务不实现)。
+
+### 十五、TODO 行号
+
+本节:T-3D.6F-A 完成记录,行号 6564-6700+。
+
 

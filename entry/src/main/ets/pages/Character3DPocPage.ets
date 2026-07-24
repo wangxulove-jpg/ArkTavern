@@ -35,6 +35,10 @@ import { Logger } from '../utils/Logger';
 import { Character3DDisplayConfigTest } from '../test/Character3DDisplayConfigTest';
 import { Chat3DPanelTest } from '../test/Chat3DPanelTest';
 import { Character3DGestureHandlerTest } from '../test/Character3DGestureHandlerTest';
+import { GlbContainerAndSemanticTest } from '../test/GlbContainerAndSemanticTest';
+import { ModelVisibilityTest } from '../test/ModelVisibilityTest';
+import { HumanoidMappingTest } from '../test/HumanoidMappingTest';
+import { runSurfaceBonePickingTests } from '../test/SurfaceBonePickingTest';
 import {
   Character3DDisplayConfig,
   createDefaultDisplayConfig,
@@ -57,6 +61,12 @@ import {
   getZoomFactor
 } from '../models/character3d/Character3DDisplayConfig';
 import { TouchPointData, TouchPhase } from '../models/character3d/Character3DGestureHandler';
+import {
+  ModelVisibilityReport,
+  ModelVisibilityIssue,
+  getVisibilityIssueText
+} from '../models/character3d/ModelVisibility';
+import { ModelBounds } from '../models/character3d/ModelBounds';
 
 const LOG_TAG: string = 'Char3DPocPage';
 
@@ -94,6 +104,12 @@ struct Character3DPocPage {
   @State private conversionProgressMessage: string = '';
   /** T-3D.6C-C: 模型转换进度百分比 */
   @State private conversionProgressPercent: number = 0;
+  /** T-3D.6E: 加载诊断弹窗可见性 */
+  @State private isDiagnosticDialogVisible: boolean = false;
+  /** T-3D.6E: 加载诊断文本 */
+  @State private diagnosticText: string = '';
+  /** T-3D.6E: 模型不可见非阻塞提示(空字符串表示无提示) */
+  @State private visibilityHintText: string = '';
   /** 顶部状态栏避让高度 */
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   /** 底部导航栏避让高度 */
@@ -146,6 +162,12 @@ struct Character3DPocPage {
       }
       if (state === Character3DLoadStateEnum.Disposed) {
         this.scene = null;
+      }
+      // T-3D.6E: 进入 Ready 后自动评估可见性,若存在问题显示非阻塞提示
+      if (state === Character3DLoadStateEnum.Ready) {
+        this.updateVisibilityHint();
+      } else {
+        this.visibilityHintText = '';
       }
     };
     this.vm.onRotationChanged = (deg: number): void => {
@@ -216,62 +238,124 @@ struct Character3DPocPage {
   }
 
   build() {
-    Column() {
-      this.titleBar()
+    Stack() {
+      Column() {
+        this.titleBar()
 
-      // 状态/错误信息条
-      if (this.errorMessage.length > 0) {
-        Text(this.errorMessage)
-          .fontSize(12)
-          .fontColor($r('app.color.app_danger'))
-          .width('100%')
-          .padding({ left: 16, right: 16, top: 6, bottom: 6 })
-          .backgroundColor($r('app.color.app_surface_2'))
-      }
+        // 状态/错误信息条
+        if (this.errorMessage.length > 0) {
+          Text(this.errorMessage)
+            .fontSize(12)
+            .fontColor($r('app.color.app_danger'))
+            .width('100%')
+            .padding({ left: 16, right: 16, top: 6, bottom: 6 })
+            .backgroundColor($r('app.color.app_surface_2'))
+        }
 
-      // T-3D.6C-C: 模型转换进度条
-      if (this.conversionProgressMessage.length > 0) {
-        Column() {
-          Row() {
-            LoadingProgress()
-              .width(16)
-              .height(16)
+        // T-3D.6C-C: 模型转换进度条
+        if (this.conversionProgressMessage.length > 0) {
+          Column() {
+            Row() {
+              LoadingProgress()
+                .width(16)
+                .height(16)
+                .color($r('app.color.app_accent'))
+                .margin({ right: 8 })
+              Text(this.conversionProgressMessage)
+                .fontSize(12)
+                .fontColor($r('app.color.page_primary_text'))
+                .layoutWeight(1)
+              Text(this.conversionProgressPercent.toString() + '%')
+                .fontSize(12)
+                .fontColor($r('app.color.page_secondary_text'))
+            }
+            .width('100%')
+            .padding({ left: 16, right: 16, top: 6, bottom: 6 })
+            .alignItems(VerticalAlign.Center)
+
+            Progress({ value: this.conversionProgressPercent, total: 100, type: ProgressType.Linear })
+              .width('90%')
               .color($r('app.color.app_accent'))
-              .margin({ right: 8 })
-            Text(this.conversionProgressMessage)
-              .fontSize(12)
-              .fontColor($r('app.color.page_primary_text'))
-              .layoutWeight(1)
-            Text(this.conversionProgressPercent.toString() + '%')
-              .fontSize(12)
-              .fontColor($r('app.color.page_secondary_text'))
+              .margin({ bottom: 6 })
           }
           .width('100%')
-          .padding({ left: 16, right: 16, top: 6, bottom: 6 })
-          .alignItems(VerticalAlign.Center)
-
-          Progress({ value: this.conversionProgressPercent, total: 100, type: ProgressType.Linear })
-            .width('90%')
-            .color($r('app.color.app_accent'))
-            .margin({ bottom: 6 })
+          .backgroundColor($r('app.color.app_surface_2'))
         }
-        .width('100%')
-        .backgroundColor($r('app.color.app_surface_2'))
+
+        // 3D 渲染区(占主要高度)
+        this.renderArea()
+
+        // T-3D.4: 显示配置面板(可折叠)
+        this.displayConfigPanel()
+
+        // 控制栏
+        this.controlsBar()
       }
+      .width('100%')
+      .height('100%')
+      .backgroundColor($r('app.color.page_background'))
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
-      // 3D 渲染区(占主要高度)
-      this.renderArea()
-
-      // T-3D.4: 显示配置面板(可折叠)
-      this.displayConfigPanel()
-
-      // 控制栏
-      this.controlsBar()
+      // T-3D.6E-V1: 加载诊断弹窗(覆盖层)
+      if (this.isDiagnosticDialogVisible) {
+        this.diagnosticDialogOverlay()
+      }
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.page_background'))
-    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+  }
+
+  /**
+   * T-3D.6E-V1: 加载诊断弹窗覆盖层。
+   */
+  @Builder
+  diagnosticDialogOverlay(): void {
+    Column() {
+      // 弹窗内容
+      Column() {
+        // 标题栏
+        Row() {
+          Text('加载诊断')
+            .fontSize(16)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.app_text_primary'))
+          Blank()
+          Button('关闭')
+            .fontSize(13)
+            .backgroundColor($r('app.color.app_surface_2'))
+            .fontColor($r('app.color.app_text_secondary'))
+            .height(30)
+            .padding({ left: 12, right: 12 })
+            .onClick(() => {
+              this.isDiagnosticDialogVisible = false;
+            })
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16, top: 12, bottom: 8 })
+
+        // 诊断内容(可滚动)
+        Scroll() {
+          Text(this.diagnosticText)
+            .fontSize(12)
+            .fontColor($r('app.color.app_text_primary'))
+            .fontFamily('monospace')
+            .lineHeight(18)
+            .padding(16)
+            .width('100%')
+        }
+        .layoutWeight(1)
+        .scrollBar(BarState.Auto)
+      }
+      .width('92%')
+      .height('70%')
+      .backgroundColor($r('app.color.app_surface_1'))
+      .borderRadius(16)
+    }
+    .width('100%')
+    .height('100%')
+    .position({ x: 0, y: 0 })
+    .backgroundColor('rgba(0,0,0,0.6)')
+    .justifyContent(FlexAlign.Center)
   }
 
   /**
@@ -811,6 +895,16 @@ struct Character3DPocPage {
           .padding({ left: 16, right: 16, bottom: 4 })
       }
 
+      // T-3D.6E: 模型不可见非阻塞提示(仅外部模型且存在关键可见性问题时显示)
+      if (this.isExternalModel && this.visibilityHintText.length > 0) {
+        Text(this.visibilityHintText)
+          .fontSize(11)
+          .fontColor($r('app.color.app_danger'))
+          .width('100%')
+          .maxLines(3)
+          .padding({ left: 16, right: 16, bottom: 4 })
+      }
+
       // 动画状态提示
       if (!this.vm.hasAnimation()) {
         Text('提示: 当前场景无动画,动画未验证')
@@ -897,7 +991,46 @@ struct Character3DPocPage {
           .layoutWeight(1)
           .onClick(() => {
             this.errorMessage = '';
+            this.visibilityHintText = '';
             this.vm.reload();
+          })
+      }
+      .width('100%')
+      .padding({ left: 12, right: 12, top: 4 })
+
+      // T-3D.6E: 诊断按钮行 — 适配视图 / 加载诊断
+      Row() {
+        Button('适配视图')
+          .fontSize(13)
+          .enabled(this.canRespond() && this.isExternalModel)
+          .backgroundColor(this.canRespond() && this.isExternalModel
+            ? $r('app.color.app_accent') : $r('app.color.app_surface_2'))
+          .fontColor(this.canRespond() && this.isExternalModel
+            ? Color.White : $r('app.color.app_text_tertiary'))
+          .height(36)
+          .layoutWeight(1)
+          .onClick(() => {
+            const ok: boolean = this.vm.frameModel();
+            if (ok) {
+              this.visibilityHintText = '';
+              promptAction.showToast({ message: '已重新取景', duration: 1200 });
+            } else {
+              promptAction.showToast({ message: 'Bounds 无效,无法取景', duration: 1500 });
+            }
+          })
+
+        Button('加载诊断')
+          .fontSize(13)
+          .enabled(this.canRespond())
+          .backgroundColor(this.canRespond()
+            ? $r('app.color.app_accent') : $r('app.color.app_surface_2'))
+          .fontColor(this.canRespond()
+            ? Color.White : $r('app.color.app_text_tertiary'))
+          .height(36)
+          .layoutWeight(1)
+          .margin({ left: 8 })
+          .onClick(() => {
+            this.showDiagnosticDialog();
           })
       }
       .width('100%')
@@ -972,6 +1105,136 @@ struct Character3DPocPage {
       summary += '  [' + flags.join('/') + ']';
     }
     return summary;
+  }
+
+  /**
+   * T-3D.6E: 评估当前可见性并更新非阻塞提示。
+   *
+   * 仅在外部模型 + Ready 状态 + 主问题非 None 时显示提示。
+   * 程序化几何体场景不评估(始终可见)。
+   */
+  private updateVisibilityHint(): void {
+    if (!this.isExternalModel) {
+      this.visibilityHintText = '';
+      return;
+    }
+    const report: ModelVisibilityReport = this.vm.getVisibilityReport();
+    if (report.primaryIssue === ModelVisibilityIssue.None) {
+      this.visibilityHintText = '';
+      return;
+    }
+    // 仅在"模型已加载但不可见"类问题(Scene/ModelRoot/mesh/Bounds)时显示提示
+    const criticalIssues: ModelVisibilityIssue[] = [
+      ModelVisibilityIssue.SceneNotSelected,
+      ModelVisibilityIssue.ModelRootNotAttached,
+      ModelVisibilityIssue.NoRenderableMesh,
+      ModelVisibilityIssue.MeshNodesHidden,
+      ModelVisibilityIssue.InvalidBounds,
+      ModelVisibilityIssue.ZeroBounds
+    ];
+    let isCritical: boolean = false;
+    for (let i: number = 0; i < criticalIssues.length; i++) {
+      if (report.primaryIssue === criticalIssues[i]) {
+        isCritical = true;
+        break;
+      }
+    }
+    if (isCritical) {
+      this.visibilityHintText = '模型已加载,但当前视图未检测到可见几何。点击"适配视图"重新定位,或打开"加载诊断"查看原因。';
+    } else {
+      this.visibilityHintText = '';
+    }
+  }
+
+  /**
+   * T-3D.6E: 打开加载诊断弹窗,显示 ModelVisibilityReport 详情。
+   */
+  private showDiagnosticDialog(): void {
+    const report: ModelVisibilityReport = this.vm.getVisibilityReport();
+    const lines: string[] = [];
+    lines.push('可见: ' + (report.visible ? '是' : '否'));
+    lines.push('主问题: ' + getVisibilityIssueText(report.primaryIssue));
+    if (report.secondaryIssues.length > 0) {
+      const secondaryTexts: string[] = [];
+      for (let i: number = 0; i < report.secondaryIssues.length; i++) {
+        secondaryTexts.push(getVisibilityIssueText(report.secondaryIssues[i]));
+      }
+      lines.push('次要问题: ' + secondaryTexts.join('; '));
+    }
+    lines.push('可渲染 mesh: ' + report.renderableMeshCount);
+    lines.push('可见 mesh: ' + report.visibleMeshCount);
+    lines.push('Bounds 有效: ' + (report.boundsValid ? '是' : '否'));
+    if (report.boundsValid) {
+      lines.push('Bounds 中心: ('
+        + report.boundsCenter.x.toFixed(2) + ','
+        + report.boundsCenter.y.toFixed(2) + ','
+        + report.boundsCenter.z.toFixed(2) + ')');
+      lines.push('Bounds 半径: ' + report.boundsRadius.toFixed(3));
+    }
+    lines.push('相机距离: ' + report.cameraDistance.toFixed(3));
+    if (report.suggestedAction.length > 0) {
+      lines.push('建议: ' + report.suggestedAction);
+    }
+    if (report.warnings.length > 0) {
+      lines.push('警告:');
+      for (let i: number = 0; i < report.warnings.length; i++) {
+        lines.push('  - ' + report.warnings[i]);
+      }
+    }
+    // 附加模型信息
+    if (this.modelInfo !== null) {
+      const info: GltfModelInfo = this.modelInfo as GltfModelInfo;
+      lines.push('');
+      lines.push('--- 模型信息 ---');
+      lines.push('Node: ' + info.nodeCount);
+      lines.push('Mesh: ' + info.meshCount);
+      lines.push('Material: ' + info.materialCount);
+      lines.push('Skin: ' + (info.hasSkins ? '有' : '无'));
+      lines.push('Animation: ' + info.animationCount);
+      lines.push('Camera: ' + info.cameraCount);
+      if (info.boundsMin !== null && info.boundsMax !== null) {
+        lines.push('Bounds min: ('
+          + info.boundsMin[0].toFixed(2) + ','
+          + info.boundsMin[1].toFixed(2) + ','
+          + info.boundsMin[2].toFixed(2) + ')');
+        lines.push('Bounds max: ('
+          + info.boundsMax[0].toFixed(2) + ','
+          + info.boundsMax[1].toFixed(2) + ','
+          + info.boundsMax[2].toFixed(2) + ')');
+      }
+    }
+    // 附加当前显示配置
+    const cfg: Character3DDisplayConfig = this.vm.getDisplayConfig();
+    lines.push('');
+    lines.push('--- 显示配置 ---');
+    lines.push('baseFitScale: ' + cfg.baseFitScale.toFixed(4));
+    lines.push('scale: ' + cfg.scale.toFixed(4));
+    lines.push('zoomFactor: ' + getZoomFactor(cfg).toFixed(4));
+    lines.push('offset: ('
+      + cfg.offsetX.toFixed(3) + ','
+      + cfg.offsetY.toFixed(3) + ','
+      + cfg.offsetZ.toFixed(3) + ')');
+    lines.push('rotation: ('
+      + cfg.rotationXDeg.toFixed(1) + ','
+      + cfg.rotationYDeg.toFixed(1) + ','
+      + cfg.rotationZDeg.toFixed(1) + ')');
+    lines.push('cameraDistance: ' + cfg.cameraDistance.toFixed(3));
+    const bounds: ModelBounds | null = this.vm.getCurrentBounds();
+    if (bounds !== null) {
+      lines.push('');
+      lines.push('--- 当前 Bounds ---');
+      lines.push('center: ('
+        + bounds.centerX.toFixed(3) + ','
+        + bounds.centerY.toFixed(3) + ','
+        + bounds.centerZ.toFixed(3) + ')');
+      lines.push('size: ('
+        + bounds.width.toFixed(3) + ','
+        + bounds.height.toFixed(3) + ','
+        + bounds.depth.toFixed(3) + ')');
+      lines.push('radius: ' + bounds.radius.toFixed(3));
+    }
+    this.diagnosticText = lines.join('\n');
+    this.isDiagnosticDialogVisible = true;
   }
 
   /**
@@ -1090,7 +1353,7 @@ struct Character3DPocPage {
   }
 
   /**
-   * T-3D.5: 运行全部纯逻辑测试(T-3D.4 + T-3D.5 + T-3D.5D)。
+   * T-3D.5: 运行全部纯逻辑测试(T-3D.4 + T-3D.5 + T-3D.5D + T-3D.6D)。
    * 通过 toast 显示测试结果摘要。
    */
   private async handleRunAllTests(): Promise<void> {
@@ -1106,14 +1369,29 @@ struct Character3DPocPage {
       const r5 = await Chat3DPanelTest.runAllTests();
       // T-3D.5D 手势状态机测试(模拟 pointer 序列)
       const r5d = Character3DGestureHandlerTest.runAllTests();
-      const totalPassed: number = r4.passed + r5.passed + r5d.passed;
-      const totalFailed: number = r4.failed + r5.failed + r5d.failed;
-      const total: number = r4.total + r5.total + r5d.total;
+      // T-3D.6D GLB 容器与 glTF 语义校验测试(35 项)
+      const r6d = GlbContainerAndSemanticTest.runAllTests();
+      // T-3D.6E 模型可见性诊断测试(20 项)
+      const r6e1 = ModelVisibilityTest.runAllTests();
+      // T-3D.6E 手动人形骨骼映射测试(18 项)
+      const r6e2 = HumanoidMappingTest.runAllTests();
+      // T-3D.6F-A 表面点选骨骼推断测试
+      const r6fa = runSurfaceBonePickingTests();
+      const totalPassed: number = r4.passed + r5.passed + r5d.passed + r6d.passed
+        + r6e1.passed + r6e2.passed + r6fa.passed;
+      const totalFailed: number = r4.failed + r5.failed + r5d.failed + r6d.failed
+        + r6e1.failed + r6e2.failed + r6fa.failed;
+      const total: number = r4.total + r5.total + r5d.total + r6d.total
+        + r6e1.total + r6e2.total + r6fa.total;
       const summary: string = '测试完成: ' + totalPassed + '/' + total + ' passed, '
         + totalFailed + ' failed'
         + '\nT-3D.4: ' + r4.passed + '/' + r4.total
         + '\nT-3D.5: ' + r5.passed + '/' + r5.total
-        + '\nT-3D.5D: ' + r5d.passed + '/' + r5d.total;
+        + '\nT-3D.5D: ' + r5d.passed + '/' + r5d.total
+        + '\nT-3D.6D: ' + r6d.passed + '/' + r6d.total
+        + '\nT-3D.6E-Vis: ' + r6e1.passed + '/' + r6e1.total
+        + '\nT-3D.6E-Map: ' + r6e2.passed + '/' + r6e2.total
+        + '\nT-3D.6F-A: ' + r6fa.passed + '/' + r6fa.total;
       Logger.info('PoCPage', summary);
       promptAction.showToast({ message: summary, duration: 5000 });
     } catch (e) {

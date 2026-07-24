@@ -160,6 +160,28 @@ export class Character3DGestureHandler {
     this.twoFingerId2 = -1;
   }
 
+  /**
+   * T-3D.6E: 重置手势状态(保留 callbacks 和配置,只清空 pointers 与状态)。
+   *
+   * 用于 frameModel() 等场景:用户点击"适配视图"后,清空当前手势上下文,
+   * 避免上一次未结束的手势回调污染新视角。
+   *
+   * 与 dispose 的区别:
+   * - dispose:永久销毁,后续 handleTouch 直接 return
+   * - resetState:可继续使用,callbacks/视口/灵敏度保留
+   */
+  resetState(): void {
+    this.stateValue = GestureState.Idle;
+    this.activePointers.clear();
+    this.suppressSingleRotate = false;
+    this.primaryPointerId = -1;
+    this.twoFingerId1 = -1;
+    this.twoFingerId2 = -1;
+    this.lastZoomFactor = 1.0;
+    this.zoomMaxLogged = false;
+    this.zoomMinLogged = false;
+  }
+
   private updateActivePointers(phase: TouchPhase, touches: TouchPointData[], changedId: number): void {
     if (phase === TouchPhase.Cancel) {
       this.activePointers.clear();

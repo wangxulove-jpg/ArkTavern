@@ -60,6 +60,8 @@ import { ChatBackgroundService } from './ChatBackgroundService';
 import { Character3DService } from './Character3DService';
 import { Character3DActionService } from './Character3DActionService';
 import { Character3DModelCompatibilityService } from './Character3DModelCompatibilityService';
+import { HumanoidMappingStore } from '../storage/HumanoidMappingStore';
+import { HumanoidMappingViewModel } from '../viewmodels/HumanoidMappingViewModel';
 import { ModelService } from './ModelService';
 import { DefaultProviderFactory } from './ProviderFactory';
 import { HttpClient } from '../network/core/HttpClient';
@@ -836,5 +838,23 @@ export class AppServices {
     const archiveService: ChatArchiveService = AppServices.getChatArchiveService();
     const importService: ChatArchiveImportService = AppServices.getChatArchiveImportService();
     return new ChatArchiveViewModel(archiveService, importService);
+  }
+
+  /**
+   * T-3D.6E: 创建 HumanoidMappingViewModel 实例(手动骨骼映射页面)。
+   *
+   * 内部注入 Character3DService 和新建的 HumanoidMappingStore(基于 appPreferences)。
+   * 每次调用返回新实例,页面 aboutToDisappear 时由页面自行释放。
+   *
+   * @throws Error 当 Character3DService 未初始化时
+   */
+  static createHumanoidMappingViewModel(): HumanoidMappingViewModel {
+    const services: AppServices = AppServices.getInstance();
+    const character3DService: Character3DService | null = services.character3DService;
+    if (character3DService === null) {
+      throw new Error('Character3DService not initialized');
+    }
+    const mappingStore: HumanoidMappingStore = new HumanoidMappingStore(services.appPreferences);
+    return new HumanoidMappingViewModel(character3DService, mappingStore);
   }
 }

@@ -40,6 +40,11 @@ import {
   SkeletonProfile,
   CompatibilityLevel
 } from '../models/character3d/HumanoidBone';
+import {
+  ModelCapabilityReport,
+  CapabilityState,
+  HumanoidMappingState
+} from '../models/character3d/ModelCapabilityReport';
 import { Logger } from '../utils/Logger';
 
 const LOG_TAG: string = 'Char3DActionMgrVM';
@@ -104,10 +109,12 @@ export interface ModelSummary {
   nodeCount: number;
   /** 骨骼 Profile */
   skeletonProfile: SkeletonProfile;
-  /** 兼容等级 */
+  /** 兼容等级(保留向后兼容,UI 应优先使用 capabilityReport) */
   compatibilityLevel: CompatibilityLevel;
-  /** 是否兼容内置动作(Direct) */
+  /** 是否兼容内置动作(Direct)(保留向后兼容,UI 应优先使用 capabilityReport) */
   builtinActionCompatible: boolean;
+  /** T-3D.6E: 多维度能力分层报告(可能为 null,未导入或解析失败) */
+  capabilityReport: ModelCapabilityReport | null;
 }
 
 export class Character3DActionManagerViewModel {
@@ -340,6 +347,10 @@ export class Character3DActionManagerViewModel {
 
   /**
    * 加载当前模型摘要。
+   *
+   * T-3D.6E: 不再仅用单一 builtinActionCompatible 判定"不兼容",
+   * 改为从 Character3DService 读取多维度 ModelCapabilityReport,
+   * UI 可基于 sceneLoadable/geometryRenderable/skeletonPresent/humanoidAutoMapping 等独立显示。
    */
   async loadModelSummary(): Promise<ModelSummary> {
     const config: Character3DModelConfig = await this.model3DService.getConfig();
@@ -353,7 +364,8 @@ export class Character3DActionManagerViewModel {
         nodeCount: 0,
         skeletonProfile: SkeletonProfile.Unknown,
         compatibilityLevel: CompatibilityLevel.Unsupported,
-        builtinActionCompatible: false
+        builtinActionCompatible: false,
+        capabilityReport: null
       } as ModelSummary;
     }
     // 解析模型信息
@@ -370,14 +382,29 @@ export class Character3DActionManagerViewModel {
     } catch (e) {
       Logger.warn(LOG_TAG, 'loadModelSummary getModelInfo failed: ' + (e as Error)?.message);
     }
-    // 当前无法从 GltfModelInfo 精确推导骨骼 Profile,
-    // 暂时将内置动作兼容性设为 false(仅 ArkTavernHumanoidV1 骨骼模型可应用)
-    // 后续 T-3D.6D 实现骨骼识别后再启用
-    const skeletonProfile: SkeletonProfile = SkeletonProfile.Unknown;
-    const compatibilityLevel: CompatibilityLevel = hasSkins
+    // T-3D.6E: 读取多维度能力报告(由 Character3DService 在导入时持久化)
+    let capabilityReport: ModelCapabilityReport | null = null;
+    try {
+      capabilityReport = await this.model3DService.getCapabilityReport();
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'loadModelSummary getCapabilityReport failed: ' + (e as Error)?.message);
+    }
+    // 推导骨骼 Profile 和兼容等级(从 capabilityReport.autoMappingResult 获取)
+    let skeletonProfile: SkeletonProfile = SkeletonProfile.Unknown;
+    let compatibilityLevel: CompatibilityLevel = hasSkins
       ? CompatibilityLevel.PartialHumanoid
       : CompatibilityLevel.Unsupported;
-    const builtinActionCompatible: boolean = false;
+    if (capabilityReport !== null && capabilityReport.autoMappingResult !== null) {
+      skeletonProfile = capabilityReport.autoMappingResult.profile;
+      compatibilityLevel = capabilityReport.autoMappingResult.compatibility;
+    }
+    // 内置动作兼容性:
+    // - 仅当 sceneLoadable=Supported 且 geometryRenderable=Supported 且 motionRetargeting=Supported 时为 true
+    // - 否则保留 false,但 UI 不再显示"当前模型不兼容",改为显示具体维度状态
+    const builtinActionCompatible: boolean = capabilityReport !== null
+      && capabilityReport.sceneLoadable === CapabilityState.Supported
+      && capabilityReport.geometryRenderable === CapabilityState.Supported
+      && capabilityReport.motionRetargeting === CapabilityState.Supported;
     return {
       hasModel: true,
       displayName: config.displayName,
@@ -387,7 +414,8 @@ export class Character3DActionManagerViewModel {
       nodeCount: nodeCount,
       skeletonProfile: skeletonProfile,
       compatibilityLevel: compatibilityLevel,
-      builtinActionCompatible: builtinActionCompatible
+      builtinActionCompatible: builtinActionCompatible,
+      capabilityReport: capabilityReport
     } as ModelSummary;
   }
 

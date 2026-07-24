@@ -24,6 +24,7 @@
     "pages/WorldMembersPage",
     "pages/WorldCharacterMemoryPage",
     "pages/Character3DPocPage",
-    "pages/Character3DActionManagerPage"
+    "pages/Character3DActionManagerPage",
+    "pages/HumanoidMappingPage"
   ]
 }
