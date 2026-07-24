@@ -1,0 +1,304 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-07-24",
+  "referenceDevice": {
+    "width": 1224,
+    "height": 2776,
+    "orientation": "portrait",
+    "note": "参考设备分辨率,坐标 fallback 仅在该分辨率下近似有效"
+  },
+  "rules": {
+    "selectorPriority": [
+      "componentId",
+      "accessibilityText",
+      "text",
+      "fallbackCenter"
+    ],
+    "coordinatesAreFallbackOnly": true,
+    "dynamicListById": "动态列表(模型库卡片/动作卡片)通过 item id 前缀定位,不保存固定坐标",
+    "updatePolicy": "页面布局或按钮改动时,必须在同一个提交中更新本文件"
+  },
+  "pages": {
+    "Index": {
+      "route": "pages/Index",
+      "title": "方舟酒馆",
+      "entryPaths": [
+        "应用启动默认页",
+        "router.back() 从任意二级页面返回"
+      ],
+      "returnMethod": "系统返回键 / router.back()",
+      "controls": {
+        "tabCharacter": {
+          "text": "角色卡",
+          "note": "HdsTabs 第 0 个 Tab"
+        },
+        "tabChatSession": {
+          "text": "对话记录",
+          "note": "HdsTabs 第 1 个 Tab"
+        },
+        "tabMarket": {
+          "text": "市场",
+          "note": "HdsTabs 第 2 个 Tab"
+        },
+        "tabSettings": {
+          "text": "设置",
+          "note": "HdsTabs 第 3 个 Tab"
+        },
+        "entry3DPoc": {
+          "text": "3D 渲染 PoC",
+          "container": "SettingsRootView.entryCard",
+          "note": "设置 Tab 列表项,点击跳转 pages/Character3DPocPage"
+        }
+      }
+    },
+    "Character3DPocPage": {
+      "route": "pages/Character3DPocPage",
+      "title": "3D 渲染 PoC",
+      "entryPaths": [
+        "设置 Tab -> 3D 渲染 PoC",
+        "动作管理 -> 导入模型(跳转至此页)"
+      ],
+      "returnMethod": "左上角返回按钮(poc.back) 或 router.back()",
+      "controls": {
+        "back": {
+          "componentId": "poc.back",
+          "icon": "sys.symbol.chevron_left"
+        },
+        "importFile": {
+          "componentId": "poc.importFile",
+          "text": "导入文件",
+          "note": "T-4.2: 调用 AvatarLibraryService.importAndActivate,导入后进入模型库"
+        },
+        "clearModel": {
+          "componentId": "poc.clearModel",
+          "text": "清除模型"
+        },
+        "actionManager": {
+          "componentId": "poc.actionManager",
+          "text": "动作管理",
+          "note": "跳转 pages/Character3DActionManagerPage"
+        },
+        "openAvatarLibrary": {
+          "componentId": "poc.openAvatarLibrary",
+          "text": "模型库",
+          "note": "跳转 pages/AvatarLibraryPage"
+        },
+        "play": {
+          "componentId": "poc.play",
+          "text": "播放"
+        },
+        "pause": {
+          "componentId": "poc.pause",
+          "text": "暂停"
+        },
+        "stop": {
+          "componentId": "poc.stop",
+          "text": "停止"
+        },
+        "resetView": {
+          "componentId": "poc.resetView",
+          "text": "重置视角"
+        },
+        "autoFit": {
+          "componentId": "poc.autoFit",
+          "text": "自动适配"
+        },
+        "reload": {
+          "componentId": "poc.reload",
+          "text": "重新加载"
+        },
+        "fitView": {
+          "componentId": "poc.fitView",
+          "text": "适配视图"
+        },
+        "loadDiagnostics": {
+          "componentId": "poc.loadDiagnostics",
+          "text": "加载诊断"
+        },
+        "runTests": {
+          "componentId": "poc.runTests",
+          "text": "运行测试",
+          "note": "开发构建专用"
+        }
+      }
+    },
+    "Character3DActionManagerPage": {
+      "route": "pages/Character3DActionManagerPage",
+      "title": "动作管理",
+      "entryPaths": [
+        "3D 渲染 PoC -> 动作管理(poc.actionManager)",
+        "设置 Tab -> 3D 渲染 PoC -> 动作管理"
+      ],
+      "returnMethod": "左上角返回按钮(actionManager.back) 或 router.back()",
+      "controls": {
+        "back": {
+          "componentId": "actionManager.back",
+          "icon": "sys.symbol.chevron_left"
+        },
+        "search": {
+          "componentId": "actionManager.search",
+          "icon": "sys.symbol.magnifyingglass",
+          "note": "切换搜索输入框显示"
+        },
+        "importAction": {
+          "componentId": "actionManager.importAction",
+          "text": "导入动作",
+          "note": "打开文件选择器导入动作 GLB"
+        },
+        "importModel": {
+          "componentId": "actionManager.importModel",
+          "text": "导入模型",
+          "note": "跳转到 3D PoC 页面导入模型"
+        },
+        "openHumanoidMapping": {
+          "componentId": "actionManager.openHumanoidMapping",
+          "text": "配置骨骼",
+          "note": "仅当模型已导入时显示,跳转 pages/HumanoidMappingPage"
+        }
+      },
+      "dynamicLists": {
+        "actionCards": {
+          "itemSelector": {
+            "containerIdPrefix": "actionManager.card.",
+            "nameText": "<displayName>"
+          },
+          "note": "动作卡片通过 actionManager.card.<actionId> 定位,单击打开预览弹层,长按打开管理菜单"
+        }
+      },
+      "dialogs": {
+        "detailsSheet": {
+          "trigger": "管理菜单 -> 查看详情 / 设置循环方式",
+          "note": "T-4.2: 详情弹窗顶部含 3D 动作预览(ActionAvatarPreview3D),显示当前激活 Avatar 执行该动作",
+          "controls": {
+            "play": {
+              "componentId": "actionDetail.play",
+              "text": "播放/暂停(切换)"
+            },
+            "replay": {
+              "componentId": "actionDetail.replay",
+              "text": "重播"
+            },
+            "stop": {
+              "componentId": "actionDetail.stop",
+              "text": "停止"
+            },
+            "close": {
+              "componentId": "actionDetail.close",
+              "text": "关闭",
+              "note": "关闭弹窗并释放 3D 预览 Scene"
+            }
+          }
+        },
+        "previewDialog": {
+          "trigger": "单击动作卡片",
+          "note": "预览弹层使用内置动作包 GLB 预览(非当前 Avatar)"
+        },
+        "manageSheet": {
+          "trigger": "长按动作卡片",
+          "note": "管理菜单:预览动作/绑定槽位/设置循环方式/查看详情/隐藏/删除"
+        },
+        "renameDialog": {
+          "trigger": "管理菜单 -> 重命名(导入动作)",
+          "controls": {
+            "confirm": { "text": "确定" },
+            "cancel": { "text": "取消" }
+          }
+        },
+        "deleteConfirmDialog": {
+          "trigger": "管理菜单 -> 删除(导入动作)",
+          "controls": {
+            "confirm": { "text": "删除" },
+            "cancel": { "text": "取消" }
+          }
+        },
+        "bindSlotDialog": {
+          "trigger": "管理菜单 -> 绑定动作槽位"
+        }
+      }
+    },
+    "AvatarLibraryPage": {
+      "route": "pages/AvatarLibraryPage",
+      "title": "Avatar 模型库",
+      "entryPaths": [
+        "3D 渲染 PoC -> 模型库(poc.openAvatarLibrary)"
+      ],
+      "returnMethod": "router.back()",
+      "controls": {
+        "import": {
+          "componentId": "avatarLibrary.import",
+          "text": "导入新模型",
+          "note": "打开文件选择器导入 VRM/GLB,导入后自动激活"
+        },
+        "clearAll": {
+          "componentId": "avatarLibrary.clearAll",
+          "text": "清空全部",
+          "note": "仅当列表非空时显示"
+        }
+      },
+      "dynamicLists": {
+        "avatarCards": {
+          "itemSelector": {
+            "containerIdPrefix": "avatarLibrary.card.",
+            "nameText": "<displayName>"
+          },
+          "actions": {
+            "setActiveIdSuffix": ".setActive",
+            "moreIdSuffix": ".more"
+          },
+          "note": "模型库卡片通过 avatarLibrary.card.<avatarId> 定位;设为当前按钮 .setActive 后缀,更多菜单 .more 后缀"
+        }
+      },
+      "dialogs": {
+        "renameDialog": {
+          "trigger": "卡片更多菜单 -> 重命名",
+          "controls": {
+            "confirm": { "componentId": "avatarLibrary.rename.confirm", "text": "确定" },
+            "cancel": { "componentId": "avatarLibrary.rename.cancel", "text": "取消" }
+          }
+        },
+        "deleteConfirmDialog": {
+          "trigger": "卡片更多菜单 -> 删除",
+          "controls": {
+            "confirm": { "componentId": "avatarLibrary.delete.confirm", "text": "删除" },
+            "cancel": { "componentId": "avatarLibrary.delete.cancel", "text": "取消" }
+          }
+        }
+      }
+    },
+    "HumanoidMappingPage": {
+      "route": "pages/HumanoidMappingPage",
+      "title": "骨骼映射",
+      "entryPaths": [
+        "动作管理 -> 配置骨骼(actionManager.openHumanoidMapping)"
+      ],
+      "returnMethod": "左上角返回按钮(humanoidMapping.back) 或 router.back()",
+      "controls": {
+        "back": {
+          "componentId": "humanoidMapping.back",
+          "icon": "sys.symbol.chevron_left"
+        },
+        "reloadVrmBones": {
+          "componentId": "humanoidMapping.reloadVrmBones",
+          "text": "读取 VRM 标准骨骼 / 自动匹配",
+          "note": "VRM 模型显示'读取 VRM 标准骨骼',普通 GLB 显示'自动匹配'"
+        },
+        "validate": {
+          "componentId": "humanoidMapping.validate",
+          "text": "验证"
+        },
+        "save": {
+          "componentId": "humanoidMapping.save",
+          "text": "保存"
+        }
+      }
+    }
+  },
+  "automationGuidelines": {
+    "beforeAutomation": "必须先读取本文件,优先使用 componentId 定位",
+    "coordinateFallback": "坐标仅作为参考设备分辨率下的 fallback,其他分辨率需重新 dump",
+    "dynamicLists": "模型库卡片和动作卡片通过 id 前缀定位,不保存固定坐标",
+    "afterLayoutChange": "页面布局或按钮改动时,必须在同一个提交中更新本文件",
+    "cleanup": "UI 自动化完成后必须删除临时 dump 和截图,只保留正式验收截图",
+    "inconsistency": "如果 UI map 与当前页面不一致,先更新 UI map,再继续自动化"
+  }
+}
