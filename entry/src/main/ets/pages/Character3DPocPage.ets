@@ -30,6 +30,7 @@ import { Scene } from '@kit.ArkGraphics3D';
 import { Character3DPocViewModel } from '../viewmodels/Character3DPocViewModel';
 import { Character3DLoadStateEnum } from '../models/character3d/Character3DLoadState';
 import { AppServices } from '../services/AppServices';
+import { AvatarLibraryService, DuplicateAvatarResult } from '../services/AvatarLibraryService';
 import { GltfModelInfo } from '../parser/GltfValidator';
 import { Logger } from '../utils/Logger';
 import { Character3DDisplayConfigTest } from '../test/Character3DDisplayConfigTest';
@@ -39,6 +40,7 @@ import { GlbContainerAndSemanticTest } from '../test/GlbContainerAndSemanticTest
 import { ModelVisibilityTest } from '../test/ModelVisibilityTest';
 import { HumanoidMappingTest } from '../test/HumanoidMappingTest';
 import { runSurfaceBonePickingTests } from '../test/SurfaceBonePickingTest';
+import { runVrmHumanoidPipelineTests } from '../test/VrmHumanoidPipelineTest';
 import {
   Character3DDisplayConfig,
   createDefaultDisplayConfig,
@@ -127,6 +129,14 @@ struct Character3DPocPage {
       } else {
         Logger.warn(LOG_TAG, 'Character3DService is null, import disabled');
       }
+      // T-4.2 阶段 2: 注入 AvatarLibraryService 以订阅 AvatarChangedEvent
+      // 必须在 initialize() 之前完成,以便 initialize 期间触发的 reload 能正常工作
+      const avatarLibraryService: AvatarLibraryService | null = AppServices.getAvatarLibraryService();
+      if (avatarLibraryService !== null) {
+        this.vm.setAvatarLibraryService(avatarLibraryService);
+      } else {
+        Logger.warn(LOG_TAG, 'AvatarLibraryService is null, avatar sync disabled');
+      }
     } catch (e) {
       Logger.warn(LOG_TAG, 'AppServices not ready: ' + (e as Error)?.message);
     }
@@ -141,6 +151,9 @@ struct Character3DPocPage {
   onPageShow(): void {
     Logger.info(LOG_TAG, 'onPageShow');
     this.vm.onPageShown();
+    // T-4.2 阶段 2.4: 页面重新可见时主动校验激活 Avatar 是否变化
+    // 不依赖事件:PoC 可能在 AvatarLibraryPage 期间被暂停错过事件
+    this.vm.refreshActiveAvatarIfChanged();
   }
 
   onPageHide(): void {
@@ -663,6 +676,7 @@ struct Character3DPocPage {
       }
       .width(40)
       .height(40)
+      .key('poc.back')
       .onClick(() => {
         router.back();
       })
@@ -676,20 +690,9 @@ struct Character3DPocPage {
 
       Blank()
 
-      // T-3D.4A: 导入 teacher-love 测试模型(模拟器无 Download 目录,改用 rawfile)
-      Button('导入模型')
-        .fontSize(13)
-        .enabled(!this.isImporting && this.loadState !== Character3DLoadStateEnum.Loading)
-        .backgroundColor($r('app.color.app_surface_2'))
-        .fontColor($r('app.color.app_text_secondary'))
-        .height(32)
-        .padding({ left: 10, right: 10 })
-        .margin({ right: 8 })
-        .onClick(() => {
-          this.handleImportTeacherLove();
-        })
-
-      // 导入模型按钮(从文件选择器)
+      // T-4.2 阶段 3: 导入文件按钮(从文件选择器,统一走 AvatarLibraryService.importAndActivate)
+      // 旧"导入模型"测试入口已删除:不再直接调用 Character3DService.importModel,
+      // 所有用户导入必须进入 Avatar 模型库,确保单一数据源
       Button('导入文件')
         .fontSize(13)
         .enabled(!this.isImporting && this.loadState !== Character3DLoadStateEnum.Loading)
@@ -697,6 +700,7 @@ struct Character3DPocPage {
         .fontColor(Color.White)
         .height(32)
         .padding({ left: 12, right: 12 })
+        .key('poc.importFile')
         .onClick(() => {
           this.openModelPicker();
         })
@@ -704,28 +708,6 @@ struct Character3DPocPage {
     .width('100%')
     .padding({ left: 12, right: 12, top: this.statusBarHeight + 4, bottom: 4 })
     .alignItems(VerticalAlign.Center)
-  }
-
-  /**
-   * T-3D.4A: 从 rawfile 导入 teacher-love.glb(模拟器无 Download 目录的替代方案)。
-   */
-  private async handleImportTeacherLove(): Promise<void> {
-    if (this.isImporting) {
-      return;
-    }
-    this.isImporting = true;
-    this.errorMessage = '';
-    try {
-      promptAction.showToast({ message: '正在导入 teacher-love 模型…', duration: 1500 });
-      await this.vm.importFromRawfileByName('teacher-love.glb', 'teacher-love');
-      promptAction.showToast({ message: '导入成功', duration: 1500 });
-    } catch (e) {
-      const msg: string = (e as Error)?.message ?? '导入失败';
-      this.errorMessage = msg;
-      promptAction.showToast({ message: '导入失败: ' + msg, duration: 2000 });
-    } finally {
-      this.isImporting = false;
-    }
   }
 
   @Builder
@@ -853,6 +835,7 @@ struct Character3DPocPage {
             .height(28)
             .padding({ left: 8, right: 8 })
             .margin({ left: 8 })
+            .key('poc.clearModel')
             .onClick(() => {
               this.handleClearModel();
             })
@@ -864,21 +847,36 @@ struct Character3DPocPage {
             .height(28)
             .padding({ left: 8, right: 8 })
             .margin({ left: 8 })
+            .key('poc.actionManager')
             .onClick(() => {
               router.pushUrl({ url: 'pages/Character3DActionManagerPage' });
             })
-        } else {
-          // T-3D.2: 无外部模型时显示"加载测试模型"按钮(用于设备验证)
-          Button('加载测试模型')
+          // T-4.1 阶段 B: Avatar 模型库入口
+          Button('模型库')
             .fontSize(11)
-            .enabled(!this.isImporting && this.loadState !== Character3DLoadStateEnum.Loading)
-            .backgroundColor($r('app.color.app_surface_2'))
-            .fontColor($r('app.color.app_accent'))
+            .backgroundColor('#6f42c1')
+            .fontColor(Color.White)
             .height(28)
             .padding({ left: 8, right: 8 })
             .margin({ left: 8 })
+            .key('poc.openAvatarLibrary')
             .onClick(() => {
-              this.handleLoadTestModel();
+              router.pushUrl({ url: 'pages/AvatarLibraryPage' });
+            })
+        } else {
+          // T-4.1 阶段 B: 无外部模型时也显示模型库入口(支持从库中导入)
+          // T-4.2 阶段 4: 删除旧"加载测试模型"按钮(绕过 AvatarLibraryService,违反单一数据源)
+          // 用户首次使用通过"导入文件"或"模型库"导入模型
+          Button('模型库')
+            .fontSize(11)
+            .backgroundColor('#6f42c1')
+            .fontColor(Color.White)
+            .height(28)
+            .padding({ left: 8, right: 8 })
+            .margin({ left: 8 })
+            .key('poc.openAvatarLibrary')
+            .onClick(() => {
+              router.pushUrl({ url: 'pages/AvatarLibraryPage' });
             })
         }
       }
@@ -924,6 +922,7 @@ struct Character3DPocPage {
           .fontColor(this.canPlay() ? Color.White : $r('app.color.app_text_tertiary'))
           .height(36)
           .layoutWeight(1)
+          .key('poc.play')
           .onClick(() => {
             this.vm.play();
           })
@@ -936,6 +935,7 @@ struct Character3DPocPage {
           .height(36)
           .layoutWeight(1)
           .margin({ left: 8, right: 8 })
+          .key('poc.pause')
           .onClick(() => {
             this.vm.pause();
           })
@@ -947,6 +947,7 @@ struct Character3DPocPage {
           .fontColor(this.canStop() ? Color.White : $r('app.color.app_text_tertiary'))
           .height(36)
           .layoutWeight(1)
+          .key('poc.stop')
           .onClick(() => {
             this.vm.stop();
           })
@@ -963,6 +964,7 @@ struct Character3DPocPage {
           .fontColor(this.canRespond() ? Color.White : $r('app.color.app_text_tertiary'))
           .height(36)
           .layoutWeight(1)
+          .key('poc.resetView')
           .onClick(() => {
             this.vm.resetView();
           })
@@ -977,6 +979,7 @@ struct Character3DPocPage {
           .height(36)
           .layoutWeight(1)
           .margin({ left: 8, right: 8 })
+          .key('poc.autoFit')
           .onClick(() => {
             this.vm.autoFitView();
             promptAction.showToast({ message: '已自动适配视角', duration: 1200 });
@@ -989,6 +992,7 @@ struct Character3DPocPage {
           .fontColor(Color.White)
           .height(36)
           .layoutWeight(1)
+          .key('poc.reload')
           .onClick(() => {
             this.errorMessage = '';
             this.visibilityHintText = '';
@@ -1009,6 +1013,7 @@ struct Character3DPocPage {
             ? Color.White : $r('app.color.app_text_tertiary'))
           .height(36)
           .layoutWeight(1)
+          .key('poc.fitView')
           .onClick(() => {
             const ok: boolean = this.vm.frameModel();
             if (ok) {
@@ -1029,12 +1034,18 @@ struct Character3DPocPage {
           .height(36)
           .layoutWeight(1)
           .margin({ left: 8 })
+          .key('poc.loadDiagnostics')
           .onClick(() => {
             this.showDiagnosticDialog();
           })
       }
       .width('100%')
       .padding({ left: 12, right: 12, top: 4 })
+
+      // T-4.2 阶段 4.2: 已删除 Alicia(0.x)/Seed-san(1.0)/MToon(1.0) 三个 VRM 样本测试按钮。
+      // 原因:这三个按钮直接调用 vm.importFromRawfileByName,绕过 AvatarLibraryService,
+      // 违反"Avatar 单一数据源"原则。VRM 样本文件(rawfile/vrm_samples/)保留用于自动测试。
+      // 用户如需导入 VRM 样本,通过顶部"导入文件"或"模型库"页面统一入口。
 
       // T-3D.5: 测试运行按钮(第三行)
       Row() {
@@ -1045,6 +1056,7 @@ struct Character3DPocPage {
           .fontColor(this.isRunningTests ? $r('app.color.app_text_tertiary') : Color.White)
           .height(36)
           .layoutWeight(1)
+          .key('poc.runTests')
           .onClick(() => {
             this.handleRunAllTests();
           })
@@ -1239,6 +1251,11 @@ struct Character3DPocPage {
 
   /**
    * 打开系统文件选择器选择 GLB/GLTF 模型文件。
+   *
+   * T-4.2 阶段 3: 统一走 AvatarLibraryService.importAndActivate,
+   * 确保导入的模型进入 Avatar 模型库并设为激活。
+   * AvatarChangedEvent 会自动触发 PoC 重新加载新 Avatar 的 Scene,
+   * 因此此处不再调用 vm.importModel(避免 Character3DService 与 AvatarLibraryService 状态分裂)。
    */
   private async openModelPicker(): Promise<void> {
     if (this.isImporting) {
@@ -1262,18 +1279,39 @@ struct Character3DPocPage {
       this.isImporting = false;
       return;
     }
+    const avatarLibraryService: AvatarLibraryService | null = AppServices.getAvatarLibraryService();
+    if (avatarLibraryService === null) {
+      promptAction.showToast({ message: 'Avatar 服务未就绪', duration: 2000 });
+      this.isImporting = false;
+      return;
+    }
     try {
       this.errorMessage = '';
       this.conversionProgressMessage = '';
       this.conversionProgressPercent = 0;
       promptAction.showToast({ message: '正在导入模型…', duration: 1500 });
-      await this.vm.importModel(uris[0], (progress) => {
-        this.conversionProgressMessage = progress.message;
-        this.conversionProgressPercent = progress.percent;
-      });
+      // T-4.2 阶段 3.1: 调用 AvatarLibraryService.importAndActivate,模型自动入库+激活
+      // 事件分发器会触发 vm.onAvatarChanged → 重新加载新 Avatar 的 Scene
+      const result: DuplicateAvatarResult = await avatarLibraryService.importAndActivate(
+        uris[0],
+        '', // displayName 为空,由 Service 从源 URI 提取
+        true, // activateAfterImport:导入后立即激活
+        (progress) => {
+          this.conversionProgressMessage = progress.message;
+          this.conversionProgressPercent = progress.percent;
+        }
+      );
       this.conversionProgressMessage = '';
       this.conversionProgressPercent = 0;
-      if (this.errorMessage.length === 0) {
+      if (result.duplicate) {
+        // T-4.2 阶段 3.3: 重复检测命中,提示用户已存在
+        const existingName: string = result.existingRecord !== null
+          ? result.existingRecord.displayName : '同名模型';
+        promptAction.showToast({
+          message: '该模型已在模型库中:' + existingName,
+          duration: 2500
+        });
+      } else if (this.errorMessage.length === 0) {
         promptAction.showToast({ message: '导入成功', duration: 1500 });
       }
     } catch (e) {
@@ -1308,29 +1346,8 @@ struct Character3DPocPage {
     }
   }
 
-  /**
-   * 加载内置测试模型(从 rawfile 读取并写入沙箱)。
-   * 仅用于 T-3D.2 设备验证。
-   */
-  private async handleLoadTestModel(): Promise<void> {
-    if (this.isImporting) {
-      return;
-    }
-    this.isImporting = true;
-    try {
-      this.errorMessage = '';
-      promptAction.showToast({ message: '正在加载测试模型…', duration: 1500 });
-      await this.vm.importFromRawfile();
-      if (this.errorMessage.length === 0) {
-        promptAction.showToast({ message: '测试模型已加载', duration: 1500 });
-      }
-    } catch (e) {
-      const msg: string = (e as Error)?.message ?? '加载测试模型失败';
-      promptAction.showToast({ message: msg, duration: 2000 });
-    } finally {
-      this.isImporting = false;
-    }
-  }
+  // T-4.2 阶段 4: 已删除 handleLoadTestModel 函数(原调用 vm.importFromRawfile 绕过模型库)
+  // test_model.glb rawfile 保留用于自动测试,不再通过 UI 入口加载
 
   private canPlay(): boolean {
     return this.loadState === Character3DLoadStateEnum.Ready
@@ -1377,12 +1394,14 @@ struct Character3DPocPage {
       const r6e2 = HumanoidMappingTest.runAllTests();
       // T-3D.6F-A 表面点选骨骼推断测试
       const r6fa = runSurfaceBonePickingTests();
+      // T-4.1 VRM Humanoid 闭环管线测试(10 项)
+      const r41 = runVrmHumanoidPipelineTests();
       const totalPassed: number = r4.passed + r5.passed + r5d.passed + r6d.passed
-        + r6e1.passed + r6e2.passed + r6fa.passed;
+        + r6e1.passed + r6e2.passed + r6fa.passed + r41.passed;
       const totalFailed: number = r4.failed + r5.failed + r5d.failed + r6d.failed
-        + r6e1.failed + r6e2.failed + r6fa.failed;
+        + r6e1.failed + r6e2.failed + r6fa.failed + r41.failed;
       const total: number = r4.total + r5.total + r5d.total + r6d.total
-        + r6e1.total + r6e2.total + r6fa.total;
+        + r6e1.total + r6e2.total + r6fa.total + r41.total;
       const summary: string = '测试完成: ' + totalPassed + '/' + total + ' passed, '
         + totalFailed + ' failed'
         + '\nT-3D.4: ' + r4.passed + '/' + r4.total
@@ -1391,7 +1410,8 @@ struct Character3DPocPage {
         + '\nT-3D.6D: ' + r6d.passed + '/' + r6d.total
         + '\nT-3D.6E-Vis: ' + r6e1.passed + '/' + r6e1.total
         + '\nT-3D.6E-Map: ' + r6e2.passed + '/' + r6e2.total
-        + '\nT-3D.6F-A: ' + r6fa.passed + '/' + r6fa.total;
+        + '\nT-3D.6F-A: ' + r6fa.passed + '/' + r6fa.total
+        + '\nT-4.1-VRM: ' + r41.passed + '/' + r41.total;
       Logger.info('PoCPage', summary);
       promptAction.showToast({ message: summary, duration: 5000 });
     } catch (e) {

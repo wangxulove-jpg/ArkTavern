@@ -22,7 +22,7 @@
 
 import { router, promptAction } from '@kit.ArkUI';
 import { picker } from '@kit.CoreFileKit';
-import { Scene, Animation } from '@kit.ArkGraphics3D';
+import { Scene, Animation, Camera, Light, LightType, Position3, SceneNodeParameters, SceneResourceFactory, Node } from '@kit.ArkGraphics3D';
 import { AppServices } from '../services/AppServices';
 import { Character3DService, Character3DModelConfig } from '../services/Character3DService';
 import {
@@ -70,7 +70,14 @@ import {
 } from '../models/character3d/ModelCapabilityReport';
 import { Logger } from '../utils/Logger';
 import { ActionPreviewCanvas } from '../components/ActionPreviewCanvas';
+import { ActionAvatarPreview3D } from '../components/ActionAvatarPreview3D';
 import { ActionCardDataSource } from '../viewmodels/ActionCardDataSource';
+import {
+  ActionAvatarPreviewViewModel,
+  ActionPreview3DState,
+  PreviewActionInfo
+} from '../viewmodels/ActionAvatarPreviewViewModel';
+import { AvatarLibraryService } from '../services/AvatarLibraryService';
 
 const LOG_TAG: string = 'Char3DActionPage';
 
@@ -127,12 +134,30 @@ struct Character3DActionManagerPage {
   // T-3D.6C-C: 动作详情 Sheet(含循环设置)
   @State private detailsCard: ActionCardItem | null = null;
 
+  // ========== T-4.2 阶段5: 动作详情 3D 预览状态 ==========
+  /** 动作详情预览 ViewModel(弹窗打开时创建,关闭时 dispose) */
+  private detailsPreviewVm: ActionAvatarPreviewViewModel | null = null;
+  /** 详情预览 Scene(由 ViewModel 回调写入) */
+  @State private detailsPreviewScene: Scene | null = null;
+  /** 详情预览状态 */
+  @State private detailsPreviewState: ActionPreview3DState = ActionPreview3DState.Idle;
+  /** 详情预览错误信息 */
+  @State private detailsPreviewError: string = '';
+  /** 详情预览当前 Avatar 显示名 */
+  @State private detailsPreviewAvatarName: string = '';
+
   // ========== 预览 3D 状态 ==========
   @State private previewScene: Scene | null = null;
   @State private previewAnimation: Animation | null = null;
   @State private previewPlaying: boolean = false;
   @State private previewLoading: boolean = false;
   @State private previewPackUri: string = '';
+  /** T-4.2C: 预览提示信息(如"跨模型动作重定向尚未接通") */
+  @State private previewNotice: string = '';
+  /** T-4.2C: 预览当前 Avatar 显示名 */
+  @State private previewAvatarName: string = '';
+  /** T-4.2D: 预览弹窗 ViewModel(复用 ActionAvatarPreviewViewModel 的 bounds 驱动取景) */
+  private previewVm: ActionAvatarPreviewViewModel | null = null;
 
   // ========== 避让高度 ==========
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
@@ -152,6 +177,11 @@ struct Character3DActionManagerPage {
         return;
       }
       this.vm = new Character3DActionManagerViewModel(this.actionService, this.model3DService);
+      // T-4.2C: 注入 AvatarLibraryService 以按 avatarId 读取/生成能力报告
+      const avatarLibraryService: AvatarLibraryService | null = AppServices.getAvatarLibraryService();
+      if (avatarLibraryService !== null) {
+        this.vm.setAvatarLibraryService(avatarLibraryService);
+      }
       this.loadAllData();
     }).catch((e: Error): void => {
       Logger.error(LOG_TAG, 'whenReady failed: ' + e.message);
@@ -162,16 +192,23 @@ struct Character3DActionManagerPage {
 
   aboutToDisappear(): void {
     this.cleanupPreviewScene();
+    this.cleanupDetailsPreview();
   }
 
   onPageHide(): void {
     this.cleanupPreviewScene();
+    this.cleanupDetailsPreview();
   }
 
   /**
    * 清理预览 Scene 资源。
    */
   private cleanupPreviewScene(): void {
+    // T-4.2D: 释放 previewVm(会自动 destroy Scene)
+    if (this.previewVm !== null) {
+      this.previewVm.dispose();
+      this.previewVm = null;
+    }
     if (this.previewAnimation !== null) {
       try {
         this.previewAnimation.stop();
@@ -189,6 +226,97 @@ struct Character3DActionManagerPage {
       this.previewScene = null;
     }
     this.previewPlaying = false;
+    this.previewNotice = '';
+    this.previewAvatarName = '';
+  }
+
+  /**
+   * T-4.2 阶段5: 初始化动作详情 3D 预览。
+   *
+   * 打开详情弹窗时调用:
+   * 1. 创建 ViewModel 并注入 AvatarLibraryService
+   * 2. 绑定状态/错误/Scene 回调
+   * 3. 调用 initialize 加载当前激活 Avatar
+   */
+  private async initDetailsPreview(card: ActionCardItem): Promise<void> {
+    // 先清理上一次残留
+    this.cleanupDetailsPreview();
+
+    const avatarLibraryService: AvatarLibraryService | null = AppServices.getAvatarLibraryService();
+    if (avatarLibraryService === null) {
+      Logger.warn(LOG_TAG, 'initDetailsPreview: AvatarLibraryService null');
+      this.detailsPreviewError = 'Avatar 服务未就绪';
+      this.detailsPreviewState = ActionPreview3DState.Failed;
+      return;
+    }
+
+    const vm: ActionAvatarPreviewViewModel = new ActionAvatarPreviewViewModel();
+    vm.setAvatarLibraryService(avatarLibraryService);
+    // T-4.2D: 注入 Character3DService 用于 bounds 驱动取景
+    const char3DService: Character3DService | null = AppServices.getCharacter3DService();
+    if (char3DService !== null) {
+      vm.setCharacter3DService(char3DService);
+    }
+    vm.onStateChanged = (state: ActionPreview3DState): void => {
+      this.detailsPreviewState = state;
+    };
+    vm.onError = (message: string): void => {
+      this.detailsPreviewError = message;
+    };
+    vm.onSceneReady = (scene: Scene | null): void => {
+      this.detailsPreviewScene = scene;
+    };
+    vm.onAvatarInfo = (displayName: string, _hasAnimation: boolean): void => {
+      this.detailsPreviewAvatarName = displayName;
+    };
+
+    this.detailsPreviewVm = vm;
+    this.detailsPreviewError = '';
+    this.detailsPreviewState = ActionPreview3DState.Idle;
+    this.detailsPreviewScene = null;
+    this.detailsPreviewAvatarName = '';
+
+    const actionInfo: PreviewActionInfo = {
+      actionId: card.id,
+      displayName: card.displayName,
+      clipName: card.clipName,
+      clipIndex: card.clipIndex,
+      loop: card.loop,
+      durationMs: card.durationMs
+    };
+    try {
+      await vm.initialize(actionInfo);
+    } catch (e) {
+      Logger.error(LOG_TAG, 'initDetailsPreview failed: ' + (e as Error)?.message);
+      this.detailsPreviewError = '加载预览失败: ' + (e as Error)?.message;
+      this.detailsPreviewState = ActionPreview3DState.Failed;
+    }
+  }
+
+  /**
+   * T-4.2 阶段5: 清理动作详情 3D 预览资源。
+   *
+   * 关闭弹窗或页面销毁时调用,释放 Scene。
+   */
+  private cleanupDetailsPreview(): void {
+    if (this.detailsPreviewVm !== null) {
+      this.detailsPreviewVm.dispose();
+      this.detailsPreviewVm = null;
+    }
+    this.detailsPreviewScene = null;
+    this.detailsPreviewState = ActionPreview3DState.Idle;
+    this.detailsPreviewError = '';
+    this.detailsPreviewAvatarName = '';
+  }
+
+  /**
+   * T-4.2 阶段5: 重试加载详情预览。
+   */
+  private async retryDetailsPreview(): Promise<void> {
+    if (this.detailsCard === null) {
+      return;
+    }
+    await this.initDetailsPreview(this.detailsCard);
   }
 
   /**
@@ -294,6 +422,7 @@ struct Character3DActionManagerPage {
       SymbolGlyph($r('sys.symbol.chevron_left'))
         .fontSize(24)
         .fontColor(['#333333'])
+        .key('actionManager.back')
         .onClick(() => {
           router.back();
         });
@@ -308,6 +437,7 @@ struct Character3DActionManagerPage {
         .fontSize(20)
         .fontColor(['#333333'])
         .margin({ right: 12 })
+        .key('actionManager.search')
         .onClick(() => {
           this.showSearchInput = !this.showSearchInput;
           if (!this.showSearchInput) {
@@ -322,6 +452,7 @@ struct Character3DActionManagerPage {
         .backgroundColor('#007DFF')
         .fontColor('#ffffff')
         .padding({ left: 12, right: 12 })
+        .key('actionManager.importAction')
         .onClick(() => {
           this.onClickImportAction();
         });
@@ -545,10 +676,12 @@ struct Character3DActionManagerPage {
             .backgroundColor('#28a745')
             .fontColor('#ffffff')
             .padding({ left: 8, right: 8 })
+            .key('actionManager.importModel')
             .onClick(() => {
               this.onClickImportModel();
             });
           // T-3D.6E: 配置骨骼入口(仅当模型已导入时显示)
+          // T-4.2B: 传入当前激活 avatarId
           if (this.modelSummary !== null && this.modelSummary.hasModel) {
             Button('配置骨骼')
               .fontSize(11)
@@ -557,8 +690,9 @@ struct Character3DActionManagerPage {
               .fontColor('#ffffff')
               .padding({ left: 8, right: 8 })
               .margin({ top: 6 })
+              .key('actionManager.openHumanoidMapping')
               .onClick(() => {
-                router.pushUrl({ url: 'pages/HumanoidMappingPage' });
+                this.onClickOpenHumanoidMapping();
               });
           }
         }
@@ -814,6 +948,7 @@ struct Character3DActionManagerPage {
     .width('100%')
     .borderRadius(12)
     .clip(true)
+    .key('actionManager.card.' + card.id)
     .onClick(() => {
       this.onClickCard(card);
     })
@@ -893,41 +1028,85 @@ struct Character3DActionManagerPage {
         .padding({ left: 16, right: 8, top: 12, bottom: 8 });
 
         // 3D 预览区域
-        Column() {
+        Stack() {
           if (this.previewLoading) {
-            LoadingProgress()
-              .width(40)
-              .height(40)
-              .color('#007DFF');
-            Text('加载预览...')
-              .fontSize(13)
-              .fontColor('#666666')
-              .margin({ top: 8 });
+            Column() {
+              LoadingProgress()
+                .width(40)
+                .height(40)
+                .color('#007DFF');
+              Text('加载当前 Avatar...')
+                .fontSize(13)
+                .fontColor('#666666')
+                .margin({ top: 8 });
+            }
+            .justifyContent(FlexAlign.Center)
+            .alignItems(HorizontalAlign.Center);
           } else if (this.previewScene !== null) {
+            // 正常渲染 3D 场景(当前 Avatar 静态模型)
             Component3D({
               scene: this.previewScene as Scene,
               modelType: ModelType.SURFACE
             })
               .width('100%')
               .height('100%');
+
+            // 底部叠加提示信息
+            if (this.previewNotice.length > 0) {
+              Column() {
+                Text(this.previewNotice)
+                  .fontSize(11)
+                  .fontColor('#666666')
+                  .backgroundColor('rgba(255,255,255,0.8)')
+                  .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+                  .borderRadius(4)
+                  .maxLines(2)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis });
+              }
+              .width('100%')
+              .height('100%')
+              .justifyContent(FlexAlign.End)
+              .alignItems(HorizontalAlign.Center)
+              .padding({ bottom: 8 });
+            }
+            // 顶部叠加 Avatar 名称
+            if (this.previewAvatarName.length > 0) {
+              Column() {
+                Text(this.previewAvatarName)
+                  .fontSize(11)
+                  .fontColor('#333333')
+                  .backgroundColor('rgba(255,255,255,0.8)')
+                  .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+                  .borderRadius(4)
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis });
+              }
+              .width('100%')
+              .height('100%')
+              .justifyContent(FlexAlign.Start)
+              .alignItems(HorizontalAlign.Start)
+              .padding({ left: 8, top: 8 });
+            }
           } else {
+            // 无 Scene:显示错误/提示信息
             Column() {
-              Text(this.getCategoryIcon(this.previewCard!.category))
-                .fontSize(64);
-              Text('预览不可用')
+              Text('⚠')
+                .fontSize(40)
+                .fontColor('#ff9800');
+              Text(this.previewNotice.length > 0 ? this.previewNotice : '预览不可用')
                 .fontSize(13)
-                .fontColor('#999999')
-                .margin({ top: 8 });
+                .fontColor('#666666')
+                .margin({ top: 8 })
+                .textAlign(TextAlign.Center);
             }
             .justifyContent(FlexAlign.Center)
-            .alignItems(HorizontalAlign.Center);
+            .alignItems(HorizontalAlign.Center)
+            .padding(16);
           }
         }
         .width('100%')
         .height(300)
-        .backgroundColor('#e0e0e0')
-        .justifyContent(FlexAlign.Center)
-        .alignItems(HorizontalAlign.Center);
+        .backgroundColor('#e0e0e0');
 
         // 动作信息
         Column() {
@@ -1073,13 +1252,13 @@ struct Character3DActionManagerPage {
         this.buildManageMenuItem('设置循环方式', () => {
           const card: ActionCardItem = this.manageCard!;
           this.manageCard = null;
-          this.detailsCard = card;
+          this.openDetailsSheet(card);
         });
         // 查看详情(打开详情 Sheet,含循环设置)
         this.buildManageMenuItem('查看详情', () => {
           const card: ActionCardItem = this.manageCard!;
           this.manageCard = null;
-          this.detailsCard = card;
+          this.openDetailsSheet(card);
         });
         // 隐藏此动作(仅内置)
         if (this.manageCard!.isBuiltIn) {
@@ -1165,83 +1344,125 @@ struct Character3DActionManagerPage {
         .backgroundColor('rgba(0,0,0,0.5)')
         .hitTestBehavior(HitTestMode.Block)
         .onClick(() => {
-          this.detailsCard = null;
+          this.closeDetailsSheet();
         });
 
-      Column() {
-        // 标题
-        Text(this.detailsCard!.displayName)
-          .fontSize(16)
-          .fontWeight(FontWeight.Medium)
-          .fontColor('#333333')
-          .margin({ bottom: 16 });
+      Scroll() {
+        Column() {
+          // 标题
+          Text(this.detailsCard!.displayName)
+            .fontSize(16)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#333333')
+            .margin({ bottom: 12 });
 
-        // 基本信息
-        this.buildDetailRow('ID', this.detailsCard!.id);
-        this.buildDetailRow('Clip', this.detailsCard!.clipName);
-        this.buildDetailRow('时长', this.formatDuration(this.detailsCard!.durationMs));
-        this.buildDetailRow('来源', this.detailsCard!.isBuiltIn ? '内置' : '导入');
-        this.buildDetailRow('骨骼', getSkeletonProfileDisplayName(this.detailsCard!.skeletonProfile));
-        this.buildDetailRow('兼容', getCompatibilityLevelDisplayName(this.detailsCard!.compatibilityLevel));
-        this.buildDetailRow('默认循环', this.getDefaultLoopLabel(this.detailsCard!));
+          // T-4.2 阶段5: 3D 动作预览区域(显示当前激活 Avatar 执行该动作)
+          ActionAvatarPreview3D({
+            scene: this.detailsPreviewScene,
+            state: this.detailsPreviewState,
+            avatarName: this.detailsPreviewAvatarName,
+            actionName: this.detailsCard!.displayName,
+            errorMessage: this.detailsPreviewError,
+            onPlay: () => { this.detailsPreviewVm?.play(); },
+            onPause: () => { this.detailsPreviewVm?.pause(); },
+            onReplay: () => { this.detailsPreviewVm?.replay(); },
+            onStop: () => { this.detailsPreviewVm?.stop(); },
+            onRetry: () => { this.retryDetailsPreview(); }
+          });
 
-        // 分隔线
-        Divider()
-          .color('#e0e0e0')
-          .margin({ top: 16, bottom: 16 });
+          // 分隔线
+          Divider()
+            .color('#e0e0e0')
+            .margin({ top: 12, bottom: 12 });
 
-        // 循环方式设置
-        Text('循环方式')
-          .fontSize(14)
-          .fontWeight(FontWeight.Medium)
-          .fontColor('#333333')
-          .margin({ bottom: 8 });
+          // 基本信息
+          this.buildDetailRow('ID', this.detailsCard!.id);
+          this.buildDetailRow('Clip', this.detailsCard!.clipName);
+          this.buildDetailRow('时长', this.formatDuration(this.detailsCard!.durationMs));
+          this.buildDetailRow('来源', this.detailsCard!.isBuiltIn ? '内置' : '导入');
+          this.buildDetailRow('骨骼', getSkeletonProfileDisplayName(this.detailsCard!.skeletonProfile));
+          this.buildDetailRow('兼容', getCompatibilityLevelDisplayName(this.detailsCard!.compatibilityLevel));
+          this.buildDetailRow('默认循环', this.getDefaultLoopLabel(this.detailsCard!));
 
-        Text('默认: ' + this.getDefaultLoopLabel(this.detailsCard!)
-          + '    当前设置: ' + this.getLoopModeLabel(this.detailsCard!.loopMode))
-          .fontSize(12)
-          .fontColor('#888888')
-          .margin({ bottom: 12 });
+          // 分隔线
+          Divider()
+            .color('#e0e0e0')
+            .margin({ top: 16, bottom: 16 });
 
-        // 三个选项
-        this.buildLoopModeOption('跟随默认', ActionLoopMode.UseDefault);
-        this.buildLoopModeOption('循环播放', ActionLoopMode.Loop);
-        this.buildLoopModeOption('播放一次', ActionLoopMode.PlayOnce);
+          // 循环方式设置
+          Text('循环方式')
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#333333')
+            .margin({ bottom: 8 });
 
-        // 恢复默认设置(loopMode 非 UseDefault 时显示)
-        if (this.detailsCard!.loopMode !== ActionLoopMode.UseDefault) {
-          Button('恢复默认设置')
-            .fontSize(13)
-            .height(36)
+          Text('默认: ' + this.getDefaultLoopLabel(this.detailsCard!)
+            + '    当前设置: ' + this.getLoopModeLabel(this.detailsCard!.loopMode))
+            .fontSize(12)
+            .fontColor('#888888')
+            .margin({ bottom: 12 });
+
+          // 三个选项
+          this.buildLoopModeOption('跟随默认', ActionLoopMode.UseDefault);
+          this.buildLoopModeOption('循环播放', ActionLoopMode.Loop);
+          this.buildLoopModeOption('播放一次', ActionLoopMode.PlayOnce);
+
+          // 恢复默认设置(loopMode 非 UseDefault 时显示)
+          if (this.detailsCard!.loopMode !== ActionLoopMode.UseDefault) {
+            Button('恢复默认设置')
+              .fontSize(13)
+              .height(36)
+              .width('100%')
+              .backgroundColor('#f0f0f0')
+              .fontColor('#666666')
+              .margin({ top: 12 })
+              .onClick(() => {
+                this.onClickResetLoopMode();
+              });
+          }
+
+          // 关闭按钮
+          Button('关闭')
+            .fontSize(14)
+            .height(40)
             .width('100%')
-            .backgroundColor('#f0f0f0')
-            .fontColor('#666666')
-            .margin({ top: 12 })
+            .backgroundColor('#007DFF')
+            .fontColor('#ffffff')
+            .margin({ top: 16 })
+            .key('actionDetail.close')
             .onClick(() => {
-              this.onClickResetLoopMode();
+              this.closeDetailsSheet();
             });
         }
-
-        // 关闭按钮
-        Button('关闭')
-          .fontSize(14)
-          .height(40)
-          .width('100%')
-          .backgroundColor('#007DFF')
-          .fontColor('#ffffff')
-          .margin({ top: 16 })
-          .onClick(() => {
-            this.detailsCard = null;
-          });
+        .width('100%')
+        .alignItems(HorizontalAlign.Start);
       }
-      .width('85%')
+      .width('88%')
+      .height('80%')
       .backgroundColor('#ffffff')
       .borderRadius(16)
-      .padding(20);
+      .padding(20)
+      .scrollBar(BarState.Auto);
     }
     .width('100%')
     .height('100%')
     .alignContent(Alignment.Center);
+  }
+
+  /**
+   * T-4.2 阶段5: 关闭详情弹窗并释放 3D 预览资源。
+   */
+  private closeDetailsSheet(): void {
+    this.detailsCard = null;
+    this.cleanupDetailsPreview();
+  }
+
+  /**
+   * T-4.2 阶段5: 打开详情弹窗并初始化 3D 预览。
+   */
+  private openDetailsSheet(card: ActionCardItem): void {
+    this.detailsCard = card;
+    this.initDetailsPreview(card);
   }
 
   @Builder
@@ -1298,7 +1519,7 @@ struct Character3DActionManagerPage {
     if (ok) {
       // 更新当前详情卡片的 loopMode(避免重新加载整列表)
       card.loopMode = mode;
-      this.detailsCard = null;
+      this.closeDetailsSheet();
       promptAction.showToast({ message: '已设置为' + this.vm.getLoopModeLabel(mode), duration: 1500 });
       await this.loadActionCards();
     } else {
@@ -1319,7 +1540,7 @@ struct Character3DActionManagerPage {
     const ok: boolean = await this.vm.resetLoopMode(modelId, actionId);
     if (ok) {
       card.loopMode = ActionLoopMode.UseDefault;
-      this.detailsCard = null;
+      this.closeDetailsSheet();
       promptAction.showToast({ message: '已恢复默认', duration: 1500 });
       await this.loadActionCards();
     } else {
@@ -1720,41 +1941,63 @@ struct Character3DActionManagerPage {
   }
 
   /**
-   * 加载预览 Scene。
+   * T-4.2D: 加载预览 Scene(复用 ActionAvatarPreviewViewModel 的 bounds 驱动取景)。
+   *
+   * 修复前(T-4.2C):使用独立的 supplementPreviewScene 硬编码 camera position,
+   *                 未设置 camera.enabled/rotation,未应用 modelRootNodes transform → 灰屏。
+   * 修复后:复用 ActionAvatarPreviewViewModel,与 detailsSheet 使用同一套 bounds 驱动逻辑。
    */
   private async loadPreviewScene(card: ActionCardItem): Promise<void> {
     this.cleanupPreviewScene();
-    if (this.vm === null) {
+    this.previewNotice = '';
+    this.previewAvatarName = '';
+
+    const avatarLibraryService: AvatarLibraryService | null = AppServices.getAvatarLibraryService();
+    if (avatarLibraryService === null) {
+      Logger.warn(LOG_TAG, 'loadPreviewScene: AvatarLibraryService null');
+      this.previewNotice = 'Avatar 服务未就绪';
       this.previewLoading = false;
       return;
     }
-    try {
-      // 确保内置动作包已缓存
-      const packUri: string = await this.vm.ensureBuiltinPackReady();
-      this.previewPackUri = packUri;
-      // 加载 Scene
-      const scene: Scene = await Scene.load(packUri);
+
+    // T-4.2D: 创建 ActionAvatarPreviewViewModel 复用 bounds 驱动取景
+    const vm: ActionAvatarPreviewViewModel = new ActionAvatarPreviewViewModel();
+    vm.setAvatarLibraryService(avatarLibraryService);
+    const char3DService: Character3DService | null = AppServices.getCharacter3DService();
+    if (char3DService !== null) {
+      vm.setCharacter3DService(char3DService);
+    }
+    vm.onStateChanged = (state: ActionPreview3DState): void => {
+      Logger.info(LOG_TAG, 'loadPreviewScene: state=' + state);
+    };
+    vm.onError = (message: string): void => {
+      this.previewNotice = message;
+      Logger.error(LOG_TAG, 'loadPreviewScene error: ' + message);
+    };
+    vm.onSceneReady = (scene: Scene | null): void => {
       this.previewScene = scene;
-      // 播放指定动画
-      const animations: Animation[] = scene.animations;
-      if (animations.length > card.clipIndex && card.clipIndex >= 0) {
-        const anim: Animation = animations[card.clipIndex];
-        anim.enabled = true;
-        anim.start();
-        this.previewAnimation = anim;
-        this.previewPlaying = true;
-      } else if (animations.length > 0) {
-        // 回退到第一个动画
-        const anim: Animation = animations[0];
-        anim.enabled = true;
-        anim.start();
-        this.previewAnimation = anim;
-        this.previewPlaying = true;
-      }
-      Logger.info(LOG_TAG, 'loadPreviewScene ok: clipIndex=' + card.clipIndex
-        + ', anims=' + animations.length);
+      Logger.info(LOG_TAG, 'loadPreviewScene: onSceneReady, scene=' + (scene !== null));
+    };
+    vm.onAvatarInfo = (displayName: string, _hasAnimation: boolean): void => {
+      this.previewAvatarName = displayName;
+    };
+
+    this.previewVm = vm;
+    this.previewNotice = '当前运行时尚未接通跨模型动作重定向,仅显示静态 Avatar';
+
+    const actionInfo: PreviewActionInfo = {
+      actionId: card.id,
+      displayName: card.displayName,
+      clipName: card.clipName,
+      clipIndex: card.clipIndex,
+      loop: card.loop,
+      durationMs: card.durationMs
+    };
+    try {
+      await vm.initialize(actionInfo);
     } catch (e) {
       Logger.error(LOG_TAG, 'loadPreviewScene failed: ' + (e as Error)?.message);
+      this.previewNotice = '加载 Avatar 失败: ' + (e as Error)?.message;
     } finally {
       this.previewLoading = false;
     }
@@ -2001,6 +2244,34 @@ struct Character3DActionManagerPage {
   private onClickImportModel(): void {
     // 跳转到 3D PoC 页面(用户可在那里导入模型)
     router.pushUrl({ url: 'pages/Character3DPocPage' });
+  }
+
+  /**
+   * T-4.2B: 点击"配置骨骼"按钮,跳转到 HumanoidMappingPage 并传入当前激活 avatarId。
+   *
+   * 流程:
+   * 1. 通过 AvatarLibraryService.getActiveAvatarId() 获取当前激活 avatarId
+   * 2. 通过 router.pushUrl 传参跳转
+   * 3. 无激活 Avatar 时提示用户先导入模型
+   */
+  private async onClickOpenHumanoidMapping(): Promise<void> {
+    const avatarLibraryService: AvatarLibraryService | null = AppServices.getAvatarLibraryService();
+    if (avatarLibraryService === null) {
+      Logger.warn(LOG_TAG, 'onClickOpenHumanoidMapping: AvatarLibraryService null');
+      return;
+    }
+    const activeAvatarId: string = await avatarLibraryService.getActiveAvatarId();
+    if (activeAvatarId.length === 0) {
+      promptAction.showToast({
+        message: '请先在模型库中导入并激活一个 Avatar',
+        duration: 2000
+      });
+      return;
+    }
+    router.pushUrl({
+      url: 'pages/HumanoidMappingPage',
+      params: { avatarId: activeAvatarId }
+    });
   }
 
   /**

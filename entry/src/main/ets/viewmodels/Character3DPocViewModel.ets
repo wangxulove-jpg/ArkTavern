@@ -57,6 +57,13 @@ import {
   DEFAULT_VIEW_ROTATION_Y_DEG
 } from '../models/character3d/Character3DLoadState';
 import { Character3DService, Character3DImportResult } from '../services/Character3DService';
+import { AvatarLibraryService } from '../services/AvatarLibraryService';
+import {
+  AvatarChangeDispatcher,
+  AvatarChangedEvent,
+  AvatarChangeListener
+} from '../services/AvatarChangeEvent';
+import { AvatarRecord } from '../storage/AvatarLibraryStore';
 import { ModelConversionProgress } from '../models/character3d/ModelCompatibility';
 import { GltfModelInfo } from '../parser/GltfValidator';
 import {
@@ -153,6 +160,16 @@ export class Character3DPocViewModel {
   private pageHidden: boolean = false;
   /** Character3DService 实例(可选,用于导入/读取/清除外部模型) */
   private service: Character3DService | null = null;
+  /** T-4.2: AvatarLibraryService 实例(可选,用于订阅 AvatarChangedEvent + 读取激活 Avatar) */
+  private avatarLibraryService: AvatarLibraryService | null = null;
+  /** T-4.2: 已加载的 avatarId(用于检测切换;空字符串表示从未加载 Avatar) */
+  private loadedAvatarId: string = '';
+  /** T-4.2: 已加载的 revision(用于过滤重复事件) */
+  private loadedRevision: number = 0;
+  /** T-4.2: Scene 加载代际(每次重新加载递增,旧 await 返回后比对失效) */
+  private sceneLoadGeneration: number = 0;
+  /** T-4.2: AvatarChangedEvent 订阅引用(用于 dispose 时取消) */
+  private avatarChangeListener: AvatarChangeListener | null = null;
   /** 当前加载的模型 URI(空字符串表示使用程序化几何体) */
   private currentModelUri: string = '';
   /** T-3D.6C-C3: 当前模型的源 SHA-256(用于加载验证标记,无转换时为空) */
@@ -161,6 +178,8 @@ export class Character3DPocViewModel {
   private currentDisplayName: string = '';
   /** 当前加载的模型摘要信息(导入后由 GltfValidator 提取;程序化几何体或重启后未验证时为 null) */
   private currentModelInfo: GltfModelInfo | null = null;
+  /** T-4.1: 最近一次导入结果(用于 UI 显示 VRM 骨骼识别状态) */
+  private lastImportResult: Character3DImportResult | null = null;
   /** T-3D.4A: 当前模型标识(使用 displayName,用于 per-model 显示配置隔离) */
   private currentModelId: string = '';
   /** T-3D.4A: 当前模型 Bounds(从 GltfModelInfo 计算,用于 autoFit 和 UI 显示) */
@@ -827,6 +846,273 @@ export class Character3DPocViewModel {
   }
 
   /**
+   * T-4.2 阶段 2: 注入 AvatarLibraryService 并订阅 AvatarChangedEvent。
+   *
+   * 必须在 initialize() 之前调用。
+   * 订阅后,任何来源的 Avatar 切换(用户点击设为当前 / 导入新模型)都会触发本 VM 重新加载 Scene。
+   *
+   * 幂等:重复调用会先取消旧订阅再创建新订阅。
+   */
+  setAvatarLibraryService(avatarLibraryService: AvatarLibraryService): void {
+    if (this.disposed) {
+      return;
+    }
+    // 先取消旧订阅(避免重复)
+    if (this.avatarChangeListener !== null && this.avatarLibraryService !== null) {
+      this.avatarLibraryService.unsubscribe(this.avatarChangeListener);
+      this.avatarChangeListener = null;
+    }
+    this.avatarLibraryService = avatarLibraryService;
+    // 初始化 loadedRevision 为当前 revision(避免收到历史事件)
+    this.loadedRevision = avatarLibraryService.getDispatcher().getCurrentRevision();
+    // 创建监听器并订阅
+    const listener: AvatarChangeListener = (event: AvatarChangedEvent): void => {
+      this.onAvatarChanged(event);
+    };
+    this.avatarChangeListener = listener;
+    avatarLibraryService.subscribe(listener);
+    Logger.info(LOG_TAG, 'setAvatarLibraryService ok, initialRevision=' + this.loadedRevision);
+  }
+
+  /**
+   * T-4.2 阶段 2: AvatarChangedEvent 处理。
+   *
+   * 收到事件后:
+   * 1. 若 revision <= loadedRevision,忽略(防止重复处理同一事件)
+   * 2. 若 currentAvatarId 为空(取消激活),清空 Scene
+   * 3. 否则读取该 Avatar 的 record,重新加载 Scene
+   *
+   * 异步加载使用 sceneLoadGeneration 防止旧 Scene 覆盖新 Scene。
+   */
+  private onAvatarChanged(event: AvatarChangedEvent): void {
+    if (this.disposed) {
+      return;
+    }
+    if (event.revision <= this.loadedRevision) {
+      Logger.info(LOG_TAG, 'onAvatarChanged ignored: stale revision ' + event.revision
+        + ' <= ' + this.loadedRevision);
+      return;
+    }
+    Logger.info(LOG_TAG, 'onAvatarChanged: rev=' + event.revision
+      + ', curr=' + event.currentAvatarId.substring(0, 8)
+      + ', prev=' + event.previousAvatarId.substring(0, 8)
+      + ', source=' + event.source);
+    if (event.currentAvatarId.length === 0) {
+      // 取消激活:清空模型
+      this.loadedRevision = event.revision;
+      this.loadedAvatarId = '';
+      this.clearModelInternal();
+      return;
+    }
+    // 异步重新加载(使用 generation token)
+    this.reloadFromAvatarIdAsync(event.currentAvatarId, event.runtimeUri, event.displayName, event.revision);
+  }
+
+  /**
+   * T-4.2 阶段 2: 异步从 avatarId 重新加载 Scene。
+   *
+   * 使用 sceneLoadGeneration 防止"旧模型加载晚于新模型返回时覆盖新 Scene"。
+   * 每次 await 返回后必须检查 generation === sceneLoadGeneration。
+   *
+   * @param avatarId 目标 avatarId
+   * @param runtimeUri 事件中携带的 runtime URI(可作为快速路径;若失效则从 store 重新读取)
+   * @param displayName 显示名
+   * @param revision 事件 revision(成功后写入 loadedRevision)
+   */
+  private async reloadFromAvatarIdAsync(
+    avatarId: string,
+    runtimeUri: string,
+    displayName: string,
+    revision: number
+  ): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
+    const generation: number = ++this.sceneLoadGeneration;
+    Logger.info(LOG_TAG, 'reloadFromAvatarIdAsync: gen=' + generation
+      + ', avatar=' + avatarId.substring(0, 8));
+
+    // 停止当前动画 + 释放旧 Scene
+    this.stopAndReleaseScene();
+
+    // 读取 AvatarRecord(优先用事件携带的 runtimeUri,若失败则从 store 读取)
+    let modelUri: string = runtimeUri;
+    let displayNameFinal: string = displayName;
+    if (modelUri.length === 0 && this.avatarLibraryService !== null) {
+      const rec: AvatarRecord | null = await this.avatarLibraryService.getAvatar(avatarId);
+      if (generation !== this.sceneLoadGeneration) {
+        Logger.info(LOG_TAG, 'reloadFromAvatarIdAsync: late callback discarded (getAvatar)');
+        return;
+      }
+      if (rec === null) {
+        this.fireError('Avatar 不存在: ' + avatarId.substring(0, 8));
+        return;
+      }
+      modelUri = rec.modelUri;
+      displayNameFinal = rec.displayName;
+    }
+
+    // 更新内部状态
+    this.currentModelUri = modelUri;
+    this.currentDisplayName = displayNameFinal;
+    this.currentModelId = displayNameFinal;
+    this.currentSourceSha256 = ''; // Avatar 切换时不携带 sha256,清空避免错误标记
+    this.currentBounds = null;
+
+    // 读取模型 info(用于 Bounds 和 autoFit)
+    if (this.service !== null) {
+      try {
+        const info: GltfModelInfo | null = await this.service.getModelInfoByUri(modelUri);
+        if (generation !== this.sceneLoadGeneration) {
+          Logger.info(LOG_TAG, 'reloadFromAvatarIdAsync: late callback discarded (getModelInfo)');
+          return;
+        }
+        this.currentModelInfo = info;
+        if (info !== null) {
+          try {
+            const autoFit: Character3DDisplayConfig = this.service.computeAutoFitConfig(info);
+            await this.service.ensureModelDefaultConfig(displayNameFinal, autoFit);
+          } catch (e) {
+            Logger.warn(LOG_TAG, 'reloadFromAvatarIdAsync: ensureModelDefaultConfig failed: '
+              + (e as Error)?.message);
+          }
+        }
+      } catch (e) {
+        Logger.warn(LOG_TAG, 'reloadFromAvatarIdAsync: getModelInfo failed: ' + (e as Error)?.message);
+        this.currentModelInfo = null;
+      }
+    }
+
+    // 读取该 modelId 的显示配置
+    if (this.service !== null) {
+      try {
+        this.displayConfig = await this.service.getDisplayConfig(this.currentModelId);
+        this.rotationYDeg = this.displayConfig.rotationYDeg;
+      } catch (e) {
+        Logger.warn(LOG_TAG, 'reloadFromAvatarIdAsync: load display config failed: '
+          + (e as Error)?.message);
+        this.displayConfig = createDefaultDisplayConfig();
+      }
+    }
+    if (generation !== this.sceneLoadGeneration) {
+      Logger.info(LOG_TAG, 'reloadFromAvatarIdAsync: late callback discarded (displayConfig)');
+      return;
+    }
+
+    // 标记 revision(在 loadAsync 成功前就更新,防止事件队列堆积)
+    this.loadedRevision = revision;
+    this.loadedAvatarId = avatarId;
+
+    // 触发重新加载
+    this.loadAsync();
+  }
+
+  /**
+   * T-4.2 阶段 2: 停止动画 + 释放 Scene(不修改 state,由后续 loadAsync 重新进入 Loading)。
+   */
+  private stopAndReleaseScene(): void {
+    if (this.currentAnimation !== null) {
+      try {
+        this.currentAnimation.stop();
+      } catch (_e) {
+        // ignore
+      }
+      this.currentAnimation = null;
+    }
+    this.cameraValue = null;
+    this.rootNode = null;
+    this.modelRootNodes = [];
+    if (this.sceneValue !== null) {
+      try {
+        this.sceneValue.destroy();
+      } catch (_e) {
+        // ignore
+      }
+      this.sceneValue = null;
+    }
+    // 重置手势状态(避免新手势基于旧 cameraDistance)
+    this.gestureHandler.resetState();
+  }
+
+  /**
+   * T-4.2 阶段 2: 内部清空模型(取消激活场景)。
+   */
+  private clearModelInternal(): void {
+    this.stopAndReleaseScene();
+    this.currentModelUri = '';
+    this.currentDisplayName = '';
+    this.currentModelId = '';
+    this.currentModelInfo = null;
+    this.currentBounds = null;
+    this.displayConfig = createDefaultDisplayConfig();
+    this.rotationYDeg = this.displayConfig.rotationYDeg;
+    this.loadAsync();
+  }
+
+  /**
+   * T-4.2 阶段 2.4: 页面重新可见时主动校验当前激活 Avatar 是否变化。
+   *
+   * 不能只依赖事件: PoC 页面可能在 AvatarLibraryPage 打开期间被暂停,
+   * 错过事件分发。返回 PoC 页面时通过此方法主动比较:
+   * - 当前 store 的 activeAvatarId
+   * - 当前 store 的 dispatcher.revision
+   * - 本 VM 的 loadedAvatarId / loadedRevision
+   *
+   * 不一致时立即触发 reloadFromAvatarIdAsync。
+   */
+  async refreshActiveAvatarIfChanged(): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
+    if (this.avatarLibraryService === null) {
+      return;
+    }
+    try {
+      const currentActiveId: string = await this.avatarLibraryService.getActiveAvatarId();
+      const currentRevision: number =
+        this.avatarLibraryService.getDispatcher().getCurrentRevision();
+      if (currentActiveId === this.loadedAvatarId && currentRevision === this.loadedRevision) {
+        Logger.info(LOG_TAG, 'refreshActiveAvatarIfChanged: no change, avatar='
+          + currentActiveId.substring(0, 8) + ', rev=' + currentRevision);
+        return;
+      }
+      Logger.info(LOG_TAG, 'refreshActiveAvatarIfChanged: changed! loaded=('
+        + this.loadedAvatarId.substring(0, 8) + ', rev=' + this.loadedRevision
+        + ') current=(' + currentActiveId.substring(0, 8) + ', rev=' + currentRevision + ')');
+      if (currentActiveId.length === 0) {
+        this.loadedRevision = currentRevision;
+        this.loadedAvatarId = '';
+        this.clearModelInternal();
+        return;
+      }
+      const rec: AvatarRecord | null = await this.avatarLibraryService.getAvatar(currentActiveId);
+      if (rec === null) {
+        Logger.warn(LOG_TAG, 'refreshActiveAvatarIfChanged: avatar not found, skip');
+        return;
+      }
+      this.reloadFromAvatarIdAsync(
+        currentActiveId, rec.modelUri, rec.displayName, currentRevision
+      );
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'refreshActiveAvatarIfChanged failed: ' + (e as Error)?.message);
+    }
+  }
+
+  /**
+   * T-4.2 阶段 2: 获取已加载的 avatarId(供 UI 显示)。
+   */
+  getLoadedAvatarId(): string {
+    return this.loadedAvatarId;
+  }
+
+  /**
+   * T-4.2 阶段 2: 获取已加载的 revision。
+   */
+  getLoadedRevision(): number {
+    return this.loadedRevision;
+  }
+
+  /**
    * 导入外部 GLB/GLTF 模型文件。
    *
    * 流程:
@@ -861,6 +1147,7 @@ export class Character3DPocViewModel {
       this.currentModelId = result.displayName;
       this.currentModelInfo = result.modelInfo;
       this.currentSourceSha256 = result.sourceSha256;
+      this.lastImportResult = result;
       // T-3D.4A: 读取该 modelId 的保存配置;若首次导入,service 已保存 autoFit 作为默认
       this.displayConfig = await this.service.getDisplayConfig(this.currentModelId);
       this.rotationYDeg = this.displayConfig.rotationYDeg;
@@ -924,6 +1211,7 @@ export class Character3DPocViewModel {
       this.currentDisplayName = result.displayName;
       this.currentModelId = result.displayName;
       this.currentModelInfo = result.modelInfo;
+      this.lastImportResult = result;
       // T-3D.4A: 读取该 modelId 的保存配置;若首次导入,service 已保存 autoFit 作为默认
       this.displayConfig = await this.service.getDisplayConfig(this.currentModelId);
       this.rotationYDeg = this.displayConfig.rotationYDeg;
@@ -963,6 +1251,7 @@ export class Character3DPocViewModel {
       this.currentDisplayName = result.displayName;
       this.currentModelId = result.displayName;
       this.currentModelInfo = result.modelInfo;
+      this.lastImportResult = result;
       // T-3D.4A: 读取该 modelId 的保存配置;若首次导入,service 已保存 autoFit 作为默认
       this.displayConfig = await this.service.getDisplayConfig(this.currentModelId);
       this.rotationYDeg = this.displayConfig.rotationYDeg;
@@ -1001,6 +1290,14 @@ export class Character3DPocViewModel {
    */
   getModelInfo(): GltfModelInfo | null {
     return this.currentModelInfo;
+  }
+
+  /**
+   * T-4.1: 获取最近一次导入结果(用于 UI 显示 VRM 骨骼识别状态)。
+   * @returns 最近一次导入结果,未导入过时为 null
+   */
+  getLastImportResult(): Character3DImportResult | null {
+    return this.lastImportResult;
   }
 
   /**

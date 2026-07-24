@@ -124,6 +124,8 @@ export interface GltfValidationResult {
   errorMessage: string;
   /** 模型摘要信息(验证失败时为默认值) */
   modelInfo: GltfModelInfo;
+  /** T-4.1: 解析后的 glTF JSON 对象(验证失败时为 null),供 VRMImporter 等下游使用 */
+  gltfJson: Record<string, Object> | null;
 }
 
 /**
@@ -171,7 +173,8 @@ function createFailure(message: string): GltfValidationResult {
   return {
     valid: false,
     errorMessage: message,
-    modelInfo: createEmptyModelInfo()
+    modelInfo: createEmptyModelInfo(),
+    gltfJson: null
   };
 }
 
@@ -358,7 +361,8 @@ export class GltfValidator {
     return {
       valid: true,
       errorMessage: '',
-      modelInfo: modelInfo
+      modelInfo: modelInfo,
+      gltfJson: gltfJson
     };
   }
 

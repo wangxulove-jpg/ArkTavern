@@ -48,6 +48,8 @@ interface ProfileCandidate {
  */
 interface BoneMatchResult {
   nodeName: string;
+  /** T-4.1: 节点索引(来自 nodeNames 数组下标) */
+  nodeIndex: number;
   confidence: number;
 }
 
@@ -223,7 +225,7 @@ function findBestMatch(
       continue;
     }
     if (best === null || confidence > best.confidence) {
-      best = { nodeName: nodeName, confidence: confidence };
+      best = { nodeName: nodeName, nodeIndex: i, confidence: confidence };
     }
   }
   return best;
@@ -256,6 +258,7 @@ function matchWithProfile(
           modelId: modelId,
           standardBone: entry.standard,
           sourceNodeName: '',
+          sourceNodeIndex: -1,
           confidence: 0.0,
           required: true,
           valid: false
@@ -270,6 +273,7 @@ function matchWithProfile(
       modelId: modelId,
       standardBone: entry.standard,
       sourceNodeName: best.nodeName,
+      sourceNodeIndex: best.nodeIndex,
       confidence: best.confidence,
       required: isRequired,
       valid: true

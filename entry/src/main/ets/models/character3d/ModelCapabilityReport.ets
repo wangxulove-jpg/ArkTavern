@@ -2,6 +2,7 @@
  * ModelCapabilityReport 模型能力分层报告
  *
  * T-3D.6E P1: 彻底拆分"兼容"的含义
+ * T-4.0: 新增 VRM 维度(Expression/LookAt/SpringBone/FirstPerson/MToon/VRM)
  *
  * 职责:
  * - 定义 CapabilityState 枚举(单一能力状态)
@@ -10,7 +11,9 @@
  * - 定义 ModelCapabilityReport 接口(多维度能力报告)
  * - 定义 SkinValidationReport 接口(Skin 数据校验)
  * - 定义 MaterialValidationReport 接口(材质校验)
+ * - 定义 VrmCapabilityReport 接口(VRM 扩展能力报告)
  * - 提供 analyzeModelCapability 函数,综合各维度生成报告
+ * - 提供 analyzeVrmCapability 函数,从 VrmAsset 生成 VRM 维度报告
  * - 提供各状态的中文文案
  *
  * 设计原则:
@@ -18,6 +21,7 @@
  * - 不得影响 sceneLoadable / geometryRenderable / skeletonPresent
  * - 模型可显示但骨骼未映射时不得使用红色"模型不兼容"
  * - 所有状态独立可读,UI 可分别显示
+ * - VRM 维度独立评估,非 VRM 文件全部为 NotPresent
  *
  * 不依赖 ArkUI / ArkGraphics3D,纯逻辑可单元测试。
  */
@@ -27,6 +31,8 @@ import { ModelInspectionResult } from './ModelImportResult';
 import { HumanoidBone, REQUIRED_BONES } from './HumanoidBone';
 import { BoneMappingResult, SkeletonProfile, CompatibilityLevel } from './HumanoidBone';
 import { analyzeSkinAndMaterial } from '../../parser/GltfSkinMaterialAnalyzer';
+import { VrmAsset } from './vrm/VrmAsset';
+import { VrmVersion, isVrm } from './vrm/VrmVersion';
 
 /**
  * 单一能力状态。
@@ -88,7 +94,15 @@ export enum CapabilityDimension {
   Skin = 'Skin',
   Animation = 'Animation',
   HumanoidMapping = 'HumanoidMapping',
-  Retargeting = 'Retargeting'
+  Retargeting = 'Retargeting',
+  // T-4.0 VRM 维度
+  Vrm = 'Vrm',
+  Expression = 'Expression',
+  LookAt = 'LookAt',
+  SpringBone = 'SpringBone',
+  FirstPerson = 'FirstPerson',
+  MToon = 'MToon',
+  NodeConstraint = 'NodeConstraint'
 }
 
 /**
@@ -144,9 +158,63 @@ export interface MaterialValidationReport {
 }
 
 /**
+ * VRM 扩展能力报告(T-4.0 新增)。
+ *
+ * 非 VRM 文件所有字段为 NotPresent/0/null。
+ * VRM 文件根据 VrmAsset 填充。
+ *
+ * 注意:SpringBone/LookAt/Expression 仅"已解析",Runtime 待后续实现。
+ */
+export interface VrmCapabilityReport {
+  /** 是否 VRM 文件 */
+  isVrm: boolean;
+  /** VRM 版本(NonVrm/Vrm0x/Vrm1) */
+  vrmVersion: VrmVersion;
+  /** VRM 解析是否整体成功 */
+  vrmParsed: CapabilityState;
+  /** Expression 能力(已解析的表情数量) */
+  expression: CapabilityState;
+  /** LookAt 能力(已解析的视线配置) */
+  lookAt: CapabilityState;
+  /** SpringBone 能力(已解析的物理骨骼,Runtime Pending) */
+  springBone: CapabilityState;
+  /** FirstPerson 能力(已解析的第一人称配置) */
+  firstPerson: CapabilityState;
+  /** MToon 材质扩展 */
+  mtoonMaterial: CapabilityState;
+  /** NodeConstraint 扩展 */
+  nodeConstraint: CapabilityState;
+  /** VRM Humanoid 显式映射(优先级高于 auto/manual) */
+  vrmHumanoid: CapabilityState;
+
+  /** 表情数量 */
+  expressionCount: number;
+  /** Blink 表情数 */
+  blinkExpressionCount: number;
+  /** LipSync 表情数 */
+  lipSyncExpressionCount: number;
+  /** SpringBone 关节总数 */
+  springBoneJointCount: number;
+  /** SpringBone 链(spring)数量 */
+  springBoneSpringCount: number;
+  /** SpringBone 碰撞体数量 */
+  springBoneColliderCount: number;
+  /** FirstPerson 网格标注数 */
+  firstPersonAnnotationCount: number;
+  /** VRM Humanoid 已映射骨骼数 */
+  vrmHumanoidBoneCount: number;
+  /** VRM Humanoid 必需骨骼映射数 */
+  vrmHumanoidRequiredMapped: number;
+
+  /** VRM 解析错误(空表示无错误) */
+  vrmParseError: string;
+}
+
+/**
  * 模型能力分层报告。
  *
  * 12 个维度独立评估,UI 可分别显示。
+ * T-4.0: 新增 vrm 字段(VrmCapabilityReport)。
  */
 export interface ModelCapabilityReport {
   /** 容器(GLB 头)是否有效 */
@@ -184,6 +252,9 @@ export interface ModelCapabilityReport {
   /** 自动映射详情(若已评估) */
   autoMappingResult: BoneMappingResult | null;
 
+  /** T-4.0: VRM 扩展能力报告(非 VRM 为全 NotPresent) */
+  vrm: VrmCapabilityReport;
+
   /** 警告列表 */
   warnings: ModelCapabilityWarning[];
 
@@ -211,6 +282,8 @@ export interface ModelCapabilityInput {
   hasManualMapping: boolean;
   /** 手动映射是否已通过验证 */
   manualMappingValid: boolean;
+  /** T-4.0: VRM 资产(非 VRM 文件传 null) */
+  vrmAsset: VrmAsset | null;
 }
 
 /**
@@ -249,6 +322,34 @@ export function createEmptyMaterialReport(): MaterialValidationReport {
 }
 
 /**
+ * 创建空的 VRM 能力报告(非 VRM 文件使用)。
+ */
+export function createEmptyVrmCapabilityReport(): VrmCapabilityReport {
+  return {
+    isVrm: false,
+    vrmVersion: VrmVersion.NonVrm,
+    vrmParsed: CapabilityState.NotPresent,
+    expression: CapabilityState.NotPresent,
+    lookAt: CapabilityState.NotPresent,
+    springBone: CapabilityState.NotPresent,
+    firstPerson: CapabilityState.NotPresent,
+    mtoonMaterial: CapabilityState.NotPresent,
+    nodeConstraint: CapabilityState.NotPresent,
+    vrmHumanoid: CapabilityState.NotPresent,
+    expressionCount: 0,
+    blinkExpressionCount: 0,
+    lipSyncExpressionCount: 0,
+    springBoneJointCount: 0,
+    springBoneSpringCount: 0,
+    springBoneColliderCount: 0,
+    firstPersonAnnotationCount: 0,
+    vrmHumanoidBoneCount: 0,
+    vrmHumanoidRequiredMapped: 0,
+    vrmParseError: ''
+  };
+}
+
+/**
  * T-3D.6E: 综合分析模型能力,生成多维度报告。
  *
  * 评估顺序:
@@ -259,6 +360,7 @@ export function createEmptyMaterialReport(): MaterialValidationReport {
  * 5. 动画(来自 inspection)
  * 6. 人形映射(来自 boneMapping)
  * 7. 动作重定向(综合判断)
+ * 8. T-4.0: VRM 维度(来自 vrmAsset)
  *
  * @param input 输入参数
  * @returns ModelCapabilityReport
@@ -453,6 +555,12 @@ export function analyzeModelCapability(input: ModelCapabilityInput): ModelCapabi
     } else {
       humanoidManualMapping = HumanoidMappingState.NeedsManualMapping;
     }
+    // T-4.0: VRM 显式映射优先,若 VRM humanoid 有效则覆盖 auto/manual 状态
+    if (input.vrmAsset !== null && isVrm(input.vrmAsset.version)
+      && input.vrmAsset.humanoid.valid) {
+      humanoidAutoMapping = HumanoidMappingState.AutoMapped;
+      humanoidManualMapping = HumanoidMappingState.ManualMapped;
+    }
   }
 
   // 7. 动作重定向
@@ -468,6 +576,9 @@ export function analyzeModelCapability(input: ModelCapabilityInput): ModelCapabi
   } else {
     motionRetargeting = CapabilityState.Unsupported;
   }
+
+  // 8. T-4.0: VRM 维度分析
+  const vrmReport: VrmCapabilityReport = analyzeVrmCapability(input.vrmAsset, warnings);
 
   // 摘要
   const summary: string = buildSummary(
@@ -491,9 +602,104 @@ export function analyzeModelCapability(input: ModelCapabilityInput): ModelCapabi
     skinReport: skinReport,
     materialReport: materialReport,
     autoMappingResult: autoMappingResult,
+    vrm: vrmReport,
     warnings: warnings,
     summary: summary
   };
+}
+
+/**
+ * T-4.0: 从 VrmAsset 生成 VRM 能力报告。
+ *
+ * 评估:
+ * - vrmParsed: 整体解析成功(meta + humanoid)
+ * - expression: 表情数量 > 0
+ * - lookAt: lookAt.valid
+ * - springBone: 关节总数 > 0(Runtime Pending)
+ * - firstPerson: meshAnnotations 数量 > 0
+ * - mtoonMaterial: hasMToonMaterial
+ * - nodeConstraint: hasNodeConstraint
+ * - vrmHumanoid: humanoid.valid
+ *
+ * @param asset VRM 资产(非 VRM 传 null)
+ * @param warnings 警告列表(可选,传入则追加 VRM 警告)
+ * @returns VRM 能力报告
+ */
+export function analyzeVrmCapability(
+  asset: VrmAsset | null,
+  warnings: ModelCapabilityWarning[] | null
+): VrmCapabilityReport {
+  if (asset === null || !isVrm(asset.version)) {
+    return createEmptyVrmCapabilityReport();
+  }
+
+  const report: VrmCapabilityReport = {
+    isVrm: true,
+    vrmVersion: asset.version,
+    vrmParsed: asset.valid ? CapabilityState.Supported : CapabilityState.PartiallySupported,
+    expression: asset.expressions.expressions.length > 0
+      ? CapabilityState.Supported : CapabilityState.NotPresent,
+    lookAt: asset.lookAt.valid
+      ? CapabilityState.Supported : CapabilityState.NotPresent,
+    springBone: asset.springBone.totalJointCount > 0
+      ? CapabilityState.PartiallySupported : CapabilityState.NotPresent, // Runtime Pending
+    firstPerson: asset.firstPerson.meshAnnotations.length > 0
+      ? CapabilityState.Supported : CapabilityState.NotPresent,
+    mtoonMaterial: asset.hasMToonMaterial
+      ? CapabilityState.Supported : CapabilityState.NotPresent,
+    nodeConstraint: asset.hasNodeConstraint
+      ? CapabilityState.Supported : CapabilityState.NotPresent,
+    vrmHumanoid: asset.humanoid.valid
+      ? CapabilityState.Supported : CapabilityState.NotPresent,
+    expressionCount: asset.expressions.expressions.length,
+    blinkExpressionCount: asset.expressions.blinkCount,
+    lipSyncExpressionCount: asset.expressions.lipSyncCount,
+    springBoneJointCount: asset.springBone.totalJointCount,
+    springBoneSpringCount: asset.springBone.springs.length,
+    springBoneColliderCount: asset.springBone.colliders.length,
+    firstPersonAnnotationCount: asset.firstPerson.meshAnnotations.length,
+    vrmHumanoidBoneCount: asset.humanoid.bones.length,
+    vrmHumanoidRequiredMapped: asset.humanoid.mappedRequiredCount,
+    vrmParseError: asset.parseError
+  };
+
+  // 警告
+  if (warnings !== null) {
+    if (!asset.valid) {
+      warnings.push({
+        dimension: CapabilityDimension.Vrm,
+        message: 'VRM 解析不完整: ' + (asset.parseError.length > 0 ? asset.parseError : 'meta 或 humanoid 缺失')
+      });
+    }
+    if (asset.springBone.totalJointCount > 0) {
+      warnings.push({
+        dimension: CapabilityDimension.SpringBone,
+        message: 'SpringBone 已解析(' + asset.springBone.totalJointCount
+          + ' 关节),Runtime 待后续实现'
+      });
+    }
+    if (asset.hasMToonMaterial) {
+      warnings.push({
+        dimension: CapabilityDimension.MToon,
+        message: '检测到 VRMC_materials_mtoon 扩展,渲染可能存在差异'
+      });
+    }
+    if (asset.lookAt.valid) {
+      warnings.push({
+        dimension: CapabilityDimension.LookAt,
+        message: 'LookAt 已解析,Runtime 待后续实现'
+      });
+    }
+    if (asset.expressions.expressions.length > 0) {
+      warnings.push({
+        dimension: CapabilityDimension.Expression,
+        message: 'Expression 已解析(' + asset.expressions.expressions.length
+          + ' 个),Runtime 待后续实现'
+      });
+    }
+  }
+
+  return report;
 }
 
 /**
@@ -590,4 +796,48 @@ export function getMotionRetargetingText(state: CapabilityState): string {
     case CapabilityState.Unknown: return '尚未评估';
     default: return '';
   }
+}
+
+/**
+ * T-4.0: VRM 版本文案。
+ */
+export function getVrmVersionText(version: VrmVersion): string {
+  switch (version) {
+    case VrmVersion.Vrm1: return 'VRM 1.0';
+    case VrmVersion.Vrm0x: return 'VRM 0.x';
+    case VrmVersion.NonVrm: return '非 VRM';
+    default: return '';
+  }
+}
+
+/**
+ * T-4.0: VRM 能力维度文案(用于 UI 展示)。
+ *
+ * 返回各维度的展示文案,如 "Expression: 已解析(18 个)"。
+ */
+export function getVrmCapabilitySummary(report: VrmCapabilityReport): string[] {
+  const lines: string[] = [];
+  if (!report.isVrm) {
+    lines.push('非 VRM 文件');
+    return lines;
+  }
+  lines.push('版本: ' + getVrmVersionText(report.vrmVersion));
+  lines.push('解析: ' + getCapabilityStateText(report.vrmParsed));
+  lines.push('Humanoid: ' + getCapabilityStateText(report.vrmHumanoid)
+    + ' (' + report.vrmHumanoidBoneCount + ' 骨骼, 必需 ' + report.vrmHumanoidRequiredMapped + '/7)');
+  lines.push('Expression: ' + getCapabilityStateText(report.expression)
+    + ' (' + report.expressionCount + ' 个, Blink ' + report.blinkExpressionCount
+    + ', LipSync ' + report.lipSyncExpressionCount + ')');
+  lines.push('LookAt: ' + getCapabilityStateText(report.lookAt));
+  lines.push('SpringBone: ' + getCapabilityStateText(report.springBone)
+    + ' (' + report.springBoneJointCount + ' 关节, ' + report.springBoneSpringCount + ' 链, '
+    + report.springBoneColliderCount + ' 碰撞体)');
+  lines.push('FirstPerson: ' + getCapabilityStateText(report.firstPerson)
+    + ' (' + report.firstPersonAnnotationCount + ' 标注)');
+  lines.push('MToon: ' + getCapabilityStateText(report.mtoonMaterial));
+  lines.push('NodeConstraint: ' + getCapabilityStateText(report.nodeConstraint));
+  if (report.vrmParseError.length > 0) {
+    lines.push('错误: ' + report.vrmParseError);
+  }
+  return lines;
 }

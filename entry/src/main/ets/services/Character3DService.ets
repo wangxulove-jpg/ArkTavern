@@ -68,6 +68,15 @@ import {
 } from '../models/character3d/ModelCapabilityReport';
 import { BoneMappingResult } from '../models/character3d/HumanoidBone';
 import { mapBones } from '../models/character3d/HumanoidBoneMapper';
+import { VrmAsset } from '../models/character3d/vrm/VrmAsset';
+import { VrmVersion, isVrm } from '../models/character3d/vrm/VrmVersion';
+import { importVrm } from '../parser/VRMImporter';
+import { detectVrm } from '../parser/VrmDetector';
+import {
+  resolveVrmHumanoid,
+  vrmParseResultToBoneMappingResult,
+  VrmHumanoidParseResult
+} from '../parser/VrmHumanoidResolver';
 
 const LOG_TAG: string = 'Character3DService';
 
@@ -79,8 +88,12 @@ const PREF_KEY_MODEL_DISPLAY_NAME: string = 'character_3d_model_display_name';
 const PREF_KEY_DISPLAY_CONFIG_PREFIX: string = 'character_3d_display_config_';
 /** T-3D.6E: Preferences key:当前模型能力分层报告(JSON 字符串,全局单模型) */
 const PREF_KEY_CAPABILITY_REPORT: string = 'character_3d_capability_report';
+/** T-4.2C: Preferences key 前缀:按 Avatar 隔离的能力报告(后接 avatarId_sourceSha256 前 16 位) */
+const PREF_KEY_CAPABILITY_REPORT_AVATAR_PREFIX: string = 'character_3d_cap_report_avatar_';
 /** T-3D.6E: Preferences key:当前模型自动骨骼映射结果(JSON 字符串) */
 const PREF_KEY_BONE_MAPPING: string = 'character_3d_bone_mapping';
+/** T-4.1: Preferences key:VRM 资产 JSON(按 sourceSha256 前 16 位区分) */
+const PREF_KEY_VRM_ASSET_PREFIX: string = 'character_3d_vrm_asset_';
 /** 内置测试模型文件名(rawfile 目录下) */
 const RAWFILE_TEST_MODEL_NAME: string = 'test_model.glb';
 /** 内置测试模型显示名 */
@@ -96,6 +109,41 @@ export interface Character3DModelConfig {
   displayName: string;
   /** 模型文件是否仍然存在(URI 非空但文件丢失时为 false) */
   fileExists: boolean;
+}
+
+/**
+ * T-4.1: VRM 与骨骼映射综合解析结果(resolveVrmAndBoneMapping 内部使用)。
+ */
+interface VrmAndBoneMappingResult {
+  vrmAsset: VrmAsset | null;
+  boneMapping: BoneMappingResult;
+  isVrm: boolean;
+  vrmVersion: VrmVersion;
+  declaredHumanBoneCount: number;
+  validHumanBoneCount: number;
+  providerSource: string;
+}
+
+/**
+ * T-4.1 A10: VRM 重解析结果(供 HumanoidMappingViewModel 使用)。
+ */
+export interface VrmReparseResult {
+  /** 是否 VRM */
+  isVrm: boolean;
+  /** VRM 版本 */
+  vrmVersion: VrmVersion;
+  /** VRM 资产(非 VRM 时为 null) */
+  vrmAsset: VrmAsset | null;
+  /** 骨骼映射结果 */
+  boneMapping: BoneMappingResult | null;
+  /** VRM 声明骨骼数 */
+  declaredHumanBoneCount: number;
+  /** VRM 有效骨骼数 */
+  validHumanBoneCount: number;
+  /** HumanoidProvider 来源 */
+  providerSource: string;
+  /** 错误信息(空表示成功) */
+  error: string;
 }
 
 /**
@@ -126,6 +174,18 @@ export interface Character3DImportResult {
   capabilityReport: ModelCapabilityReport | null;
   /** T-3D.6E: 自动骨骼映射结果(无骨架时为 null) */
   boneMapping: BoneMappingResult | null;
+  /** T-4.1: 是否 VRM 模型 */
+  isVrm: boolean;
+  /** T-4.1: VRM 版本(NonVrm 时为 NonVrm) */
+  vrmVersion: VrmVersion;
+  /** T-4.1: VRM 资产(非 VRM 时为 null) */
+  vrmAsset: VrmAsset | null;
+  /** T-4.1: VRM 声明骨骼数 */
+  declaredHumanBoneCount: number;
+  /** T-4.1: VRM 有效骨骼数 */
+  validHumanBoneCount: number;
+  /** T-4.1: HumanoidProvider 来源(VrmDeclared/ManualOverride/AutoDetected/None) */
+  humanoidProviderSource: string;
 }
 
 export class Character3DService {
@@ -251,11 +311,14 @@ export class Character3DService {
    *
    * @param sourceUri DocumentViewPicker 返回的源 URI
    * @param onProgress T-3D.6C-C 转换进度回调(可选)
+   * @param keepOldModel T-4.1 阶段 B: 是否保留旧模型文件(AvatarLibraryService 导入多模型时传 true,
+   *        避免删除前一个 Avatar 的模型文件;默认 false 保持向后兼容)
    * @returns 导入结果(包含模型摘要信息和自适应配置)
    */
   async importModel(
     sourceUri: string,
-    onProgress?: (progress: ModelConversionProgress) => void
+    onProgress?: (progress: ModelConversionProgress) => void,
+    keepOldModel: boolean = false
   ): Promise<Character3DImportResult> {
     if (sourceUri.length === 0) {
       throw new Error('sourceUri must not be empty');
@@ -272,6 +335,8 @@ export class Character3DService {
     let inspection: ModelInspectionResult | null = null;
     const importWarnings: string[] = [];
     let fromCache: boolean = false;
+    // T-4.1: gltfJson(转换后优先),供 VRM 检测和骨骼解析使用
+    let effectiveGltfJson: Record<string, Object> | null = null;
     try {
       const buffer: ArrayBuffer = await this.readModelFile(newUri);
 
@@ -299,6 +364,8 @@ export class Character3DService {
         throw new Error('模型格式无效: ' + result.errorMessage);
       }
       modelInfo = result.modelInfo;
+      // T-4.1: 保留原始 gltfJson(优先使用转换后的,转换会移除压缩扩展但保留 VRM 扩展)
+      effectiveGltfJson = result.gltfJson;
       // T-3D.4A: 检查不支持的必需扩展(不可转换)
       if (modelInfo.unsupportedRequiredExtensions.length > 0) {
         await this.assetStore.deleteModelByUri(newUri);
@@ -341,6 +408,9 @@ export class Character3DService {
         const convertedValidation: GltfValidationResult = GltfValidator.validate(convertedBuffer);
         if (convertedValidation.valid) {
           modelInfo = convertedValidation.modelInfo;
+          // T-4.1: 转换后 VRM 扩展仍然保留(仅移除 meshopt/quantization),
+          // 使用转换后的 gltfJson 进行 VRM 检测更准确
+          effectiveGltfJson = convertedValidation.gltfJson;
         }
         Logger.info(LOG_TAG, 'importModel converted, loadableUri=' + loadableUri
           + ', removed=[' + (conversionResult !== null ? conversionResult.removedExtensions.join(',') : '')
@@ -382,7 +452,8 @@ export class Character3DService {
     await this.preferences.putString(PREF_KEY_MODEL_DISPLAY_NAME, displayName);
 
     // 删除旧文件(失败不影响导入结果)
-    if (oldUri.length > 0 && oldUri !== loadableUri && oldUri !== newUri) {
+    // T-4.1 阶段 B: keepOldModel=true 时跳过(AvatarLibraryService 导入多模型时使用)
+    if (!keepOldModel && oldUri.length > 0 && oldUri !== loadableUri && oldUri !== newUri) {
       try {
         await this.assetStore.deleteModelByUri(oldUri);
       } catch (e) {
@@ -394,24 +465,47 @@ export class Character3DService {
     const autoFitConfig: Character3DDisplayConfig = this.computeAutoFitConfig(modelInfo);
     await this.ensureModelDefaultConfig(displayName, autoFitConfig);
 
-    // T-3D.6E: 生成能力分层报告(综合 inspection + modelInfo + boneMapping)
+    // T-4.1: VRM 显式骨骼闭环 + 能力分层报告
+    // 优先使用 VRM 显式 HumanBones(VrmDeclared),非 VRM 或 VRM 无效骨骼时回退到名称匹配
     let boneMapping: BoneMappingResult | null = null;
     let capabilityReport: ModelCapabilityReport | null = null;
+    let vrmAsset: VrmAsset | null = null;
+    let isVrm: boolean = false;
+    let vrmVersion: VrmVersion = VrmVersion.NonVrm;
+    let declaredHumanBoneCount: number = 0;
+    let validHumanBoneCount: number = 0;
+    let humanoidProviderSource: string = 'None';
     try {
-      boneMapping = mapBones(modelInfo.nodeNames, displayName, modelInfo.hasSkins);
+      const sourceSha: string = compatibilityAnalysis !== null ? compatibilityAnalysis.sourceSha256 : '';
+      const vrmAndBone = this.resolveVrmAndBoneMapping(
+        effectiveGltfJson, modelInfo, displayName, sourceSha
+      );
+      boneMapping = vrmAndBone.boneMapping;
+      vrmAsset = vrmAndBone.vrmAsset;
+      isVrm = vrmAndBone.isVrm;
+      vrmVersion = vrmAndBone.vrmVersion;
+      declaredHumanBoneCount = vrmAndBone.declaredHumanBoneCount;
+      validHumanBoneCount = vrmAndBone.validHumanBoneCount;
+      humanoidProviderSource = vrmAndBone.providerSource;
+
+      // T-4.1: 持久化 VRM 资产(供 HumanoidMappingViewModel 读取)
+      if (vrmAsset !== null) {
+        await this.saveVrmAsset(vrmAsset);
+      }
+
       const hasRenderableMesh: boolean = modelInfo.meshCount > 0;
       const capabilityInput: ModelCapabilityInput = {
         modelInfo: modelInfo,
-        gltfJson: null, // 不持有 gltfJson,深度分析由 inspection 字段提供降级
+        gltfJson: null,
         inspection: inspection,
         boneMapping: boneMapping,
-        sceneLoaded: false, // 导入阶段尚未加载 Scene,运行时由 ViewModel 更新
+        sceneLoaded: false,
         hasRenderableMesh: hasRenderableMesh,
         hasManualMapping: false,
-        manualMappingValid: false
+        manualMappingValid: false,
+        vrmAsset: vrmAsset
       };
       capabilityReport = analyzeModelCapability(capabilityInput);
-      // 持久化报告与映射,供 ActionManagerViewModel 读取
       await this.preferences.putString(
         PREF_KEY_CAPABILITY_REPORT, JSON.stringify(capabilityReport)
       );
@@ -421,7 +515,11 @@ export class Character3DService {
       Logger.info(LOG_TAG, 'importModel capability: skeleton='
         + capabilityReport.skeletonPresent
         + ', autoMap=' + capabilityReport.humanoidAutoMapping
-        + ', motion=' + capabilityReport.motionRetargeting);
+        + ', motion=' + capabilityReport.motionRetargeting
+        + ', isVrm=' + isVrm
+        + ', vrmVersion=' + vrmVersion
+        + ', validBones=' + validHumanBoneCount
+        + ', providerSource=' + humanoidProviderSource);
     } catch (e) {
       Logger.warn(LOG_TAG, 'importModel capability analysis failed: '
         + (e as Error)?.message);
@@ -442,7 +540,13 @@ export class Character3DService {
       warnings: importWarnings,
       fromCache: fromCache,
       capabilityReport: capabilityReport,
-      boneMapping: boneMapping
+      boneMapping: boneMapping,
+      isVrm: isVrm,
+      vrmVersion: vrmVersion,
+      vrmAsset: vrmAsset,
+      declaredHumanBoneCount: declaredHumanBoneCount,
+      validHumanBoneCount: validHumanBoneCount,
+      humanoidProviderSource: humanoidProviderSource
     };
   }
 
@@ -467,6 +571,40 @@ export class Character3DService {
   }
 
   /**
+   * T-4.1 阶段 B: 将已存在于沙箱的模型文件设为当前激活模型(不复制文件,不重新验证)。
+   *
+   * 用途:AvatarLibraryService.setActiveAvatar 切换激活模型时调用,
+   * 模型文件已在首次导入时复制到沙箱,此处仅更新 Preferences 指针。
+   *
+   * 与 importModel 的区别:
+   * - 不调用 saveModel(不复制文件)
+   * - 不调用 GltfValidator(不重新验证)
+   * - 不调用 VRM 解析(不重新解析骨骼)
+   * - 清空 capabilityReport 和 boneMapping(避免显示前一个模型的过期数据)
+   *
+   * 副作用:capabilityReport 和 boneMapping 被清空,
+   * HumanoidMappingPage 打开时会显示"未检测到";如需完整元数据,
+   * 用户可在该页面重新触发自动匹配。
+   *
+   * @param modelUri 沙箱模型文件 URI(file:// 开头,必须已存在)
+   * @param displayName 显示名
+   */
+  async setCurrentModelByUri(modelUri: string, displayName: string): Promise<void> {
+    if (modelUri.length === 0) {
+      throw new Error('modelUri must not be empty');
+    }
+    if (!this.assetStore.exists(modelUri)) {
+      throw new Error('模型文件不存在: ' + displayName);
+    }
+    await this.preferences.putString(PREF_KEY_MODEL_URI, modelUri);
+    await this.preferences.putString(PREF_KEY_MODEL_DISPLAY_NAME, displayName);
+    // 清空能力报告和骨骼映射(属于前一个模型,避免显示过期数据)
+    await this.preferences.delete(PREF_KEY_CAPABILITY_REPORT);
+    await this.preferences.delete(PREF_KEY_BONE_MAPPING);
+    Logger.info(LOG_TAG, 'setCurrentModelByUri ok: name=' + displayName);
+  }
+
+  /**
    * T-3D.6E: 读取持久化的能力分层报告。
    *
    * @returns ModelCapabilityReport 或 null(未导入或解析失败)
@@ -480,6 +618,145 @@ export class Character3DService {
       return JSON.parse(json) as ModelCapabilityReport;
     } catch (e) {
       Logger.warn(LOG_TAG, 'getCapabilityReport failed: ' + (e as Error)?.message);
+      return null;
+    }
+  }
+
+  /**
+   * T-4.2C: 读取按 Avatar 隔离的能力报告。
+   *
+   * 与 getCapabilityReport() 的区别:
+   * - getCapabilityReport 读取全局键,切换 Avatar 时被清空
+   * - 本方法按 avatarId + sourceSha256 读取,跨 Avatar 切换不丢失
+   *
+   * @param avatarId Avatar ID
+   * @param sourceSha256 模型文件 SHA-256
+   * @returns ModelCapabilityReport 或 null(未生成或解析失败)
+   */
+  async getCapabilityReportForAvatar(
+    avatarId: string,
+    sourceSha256: string
+  ): Promise<ModelCapabilityReport | null> {
+    if (avatarId.length === 0) {
+      return null;
+    }
+    try {
+      const shaPart: string = sourceSha256.length > 0 ? sourceSha256.substring(0, 16) : 'nosha';
+      const key: string = PREF_KEY_CAPABILITY_REPORT_AVATAR_PREFIX + avatarId + '_' + shaPart;
+      const json: string = await this.preferences.getString(key, '');
+      if (json.length === 0) {
+        return null;
+      }
+      return JSON.parse(json) as ModelCapabilityReport;
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'getCapabilityReportForAvatar failed: ' + (e as Error)?.message);
+      return null;
+    }
+  }
+
+  /**
+   * T-4.2C: 保存按 Avatar 隔离的能力报告。
+   */
+  async saveCapabilityReportForAvatar(
+    avatarId: string,
+    sourceSha256: string,
+    report: ModelCapabilityReport
+  ): Promise<void> {
+    if (avatarId.length === 0) {
+      return;
+    }
+    try {
+      const shaPart: string = sourceSha256.length > 0 ? sourceSha256.substring(0, 16) : 'nosha';
+      const key: string = PREF_KEY_CAPABILITY_REPORT_AVATAR_PREFIX + avatarId + '_' + shaPart;
+      await this.preferences.putString(key, JSON.stringify(report));
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'saveCapabilityReportForAvatar failed: ' + (e as Error)?.message);
+    }
+  }
+
+  /**
+   * T-4.2C: 为指定 Avatar 的模型生成能力报告(按需生成,不依赖全局当前模型)。
+   *
+   * 流程:
+   * 1. 读取模型文件并验证 GLB
+   * 2. 执行 ModelInspector 扫描
+   * 3. 解析 VRM + 骨骼映射
+   * 4. 调用 analyzeModelCapability 生成报告
+   * 5. 按 avatarId + sourceSha256 持久化
+   *
+   * @param modelUri 沙箱模型文件 URI(file://...)
+   * @param displayName 显示名
+   * @param sourceSha256 模型文件 SHA-256
+   * @param avatarId Avatar ID
+   * @returns ModelCapabilityReport 或 null(生成失败)
+   */
+  async generateCapabilityReportForAvatar(
+    modelUri: string,
+    displayName: string,
+    sourceSha256: string,
+    avatarId: string
+  ): Promise<ModelCapabilityReport | null> {
+    if (modelUri.length === 0 || avatarId.length === 0) {
+      return null;
+    }
+    try {
+      Logger.info(LOG_TAG, 'generateCapabilityReportForAvatar: avatarId=' + avatarId.substring(0, 8)
+        + ', name=' + displayName);
+
+      // 1. 读取并验证 GLB
+      const buffer: ArrayBuffer = await this.readModelFile(modelUri);
+      const result: GltfValidationResult = GltfValidator.validate(buffer);
+      if (!result.valid || result.gltfJson === null) {
+        Logger.warn(LOG_TAG, 'generateCapabilityReportForAvatar: GLB invalid');
+        return null;
+      }
+      const modelInfo: GltfModelInfo = result.modelInfo;
+
+      // 2. 扫描模型(使用 ModelImportDiagnostics 获取 inspection)
+      let inspection: ModelInspectionResult | null = null;
+      try {
+        const diagnostics: ModelImportDiagnosticReport = ModelImportDiagnostics.diagnose(buffer);
+        inspection = diagnostics.inspection;
+      } catch (e) {
+        Logger.warn(LOG_TAG, 'generateCapabilityReportForAvatar diagnostics failed: '
+          + (e as Error)?.message);
+      }
+
+      // 3. 解析 VRM + 骨骼映射
+      const vrmAndBone = this.resolveVrmAndBoneMapping(
+        result.gltfJson, modelInfo, displayName, sourceSha256
+      );
+      if (vrmAndBone.vrmAsset !== null) {
+        await this.saveVrmAsset(vrmAndBone.vrmAsset);
+      }
+
+      // 4. 生成能力报告
+      const hasRenderableMesh: boolean = modelInfo.meshCount > 0;
+      const capabilityInput: ModelCapabilityInput = {
+        modelInfo: modelInfo,
+        gltfJson: null,
+        inspection: inspection,
+        boneMapping: vrmAndBone.boneMapping,
+        sceneLoaded: false,
+        hasRenderableMesh: hasRenderableMesh,
+        hasManualMapping: false,
+        manualMappingValid: false,
+        vrmAsset: vrmAndBone.vrmAsset
+      };
+      const report: ModelCapabilityReport = analyzeModelCapability(capabilityInput);
+
+      // 5. 持久化(按 avatarId + sourceSha256)
+      await this.saveCapabilityReportForAvatar(avatarId, sourceSha256, report);
+
+      Logger.info(LOG_TAG, 'generateCapabilityReportForAvatar ok: skeleton='
+        + report.skeletonPresent
+        + ', autoMap=' + report.humanoidAutoMapping
+        + ', motion=' + report.motionRetargeting
+        + ', isVrm=' + vrmAndBone.isVrm
+        + ', validBones=' + vrmAndBone.validHumanBoneCount);
+      return report;
+    } catch (e) {
+      Logger.error(LOG_TAG, 'generateCapabilityReportForAvatar failed: ' + (e as Error)?.message);
       return null;
     }
   }
@@ -500,6 +777,286 @@ export class Character3DService {
       Logger.warn(LOG_TAG, 'getBoneMapping failed: ' + (e as Error)?.message);
       return null;
     }
+  }
+
+  /**
+   * T-4.1: 读取持久化的 VRM 资产。
+   *
+   * @param sourceSha256 模型文件 SHA-256
+   * @returns VrmAsset 或 null
+   */
+  async getVrmAsset(sourceSha256: string): Promise<VrmAsset | null> {
+    if (sourceSha256.length === 0) {
+      return null;
+    }
+    try {
+      const key: string = PREF_KEY_VRM_ASSET_PREFIX + sourceSha256.substring(0, 16);
+      const json: string = await this.preferences.getString(key, '');
+      if (json.length === 0) {
+        return null;
+      }
+      return JSON.parse(json) as VrmAsset;
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'getVrmAsset failed: ' + (e as Error)?.message);
+      return null;
+    }
+  }
+
+  /**
+   * T-4.1: 持久化 VRM 资产。
+   */
+  async saveVrmAsset(asset: VrmAsset): Promise<void> {
+    if (!isVrm(asset.version) || asset.sourceSha256.length === 0) {
+      return;
+    }
+    try {
+      const key: string = PREF_KEY_VRM_ASSET_PREFIX + asset.sourceSha256.substring(0, 16);
+      await this.preferences.putString(key, JSON.stringify(asset));
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'saveVrmAsset failed: ' + (e as Error)?.message);
+    }
+  }
+
+  /**
+   * T-4.1 A10: 为当前模型重新解析 VRM Humanoid(用于"读取 VRM 标准骨骼"按钮)。
+   *
+   * 流程:
+   * 1. 读取当前模型 URI
+   * 2. 读取文件并验证 GLB → 获取 gltfJson
+   * 3. 按内容检测 VRM
+   * 4. 解析 HumanBones → 生成 VrmDeclared bindings(含 nodeIndex)
+   * 5. 持久化 boneMapping 和 vrmAsset
+   *
+   * @returns VRM 重解析结果;非 VRM 或失败时返回 isVrm=false
+   */
+  async reparseVrmForCurrentModel(): Promise<VrmReparseResult> {
+    const config: Character3DModelConfig = await this.getConfig();
+    if (config.modelUri.length === 0 || !config.fileExists) {
+      return {
+        isVrm: false, vrmVersion: VrmVersion.NonVrm, vrmAsset: null,
+        boneMapping: null, declaredHumanBoneCount: 0, validHumanBoneCount: 0,
+        providerSource: 'None', error: '当前未导入模型'
+      };
+    }
+    try {
+      const buffer: ArrayBuffer = await this.readModelFile(config.modelUri);
+      const result: GltfValidationResult = GltfValidator.validate(buffer);
+      if (!result.valid || result.gltfJson === null) {
+        return {
+          isVrm: false, vrmVersion: VrmVersion.NonVrm, vrmAsset: null,
+          boneMapping: null, declaredHumanBoneCount: 0, validHumanBoneCount: 0,
+          providerSource: 'None', error: '模型文件无法解析'
+        };
+      }
+      const vrmAndBone = this.resolveVrmAndBoneMapping(
+        result.gltfJson, result.modelInfo, config.displayName, ''
+      );
+      // 持久化
+      if (vrmAndBone.vrmAsset !== null) {
+        await this.saveVrmAsset(vrmAndBone.vrmAsset);
+      }
+      if (vrmAndBone.boneMapping !== null) {
+        await this.preferences.putString(
+          PREF_KEY_BONE_MAPPING, JSON.stringify(vrmAndBone.boneMapping)
+        );
+      }
+      Logger.info(LOG_TAG, 'reparseVrmForCurrentModel: isVrm=' + vrmAndBone.isVrm
+        + ', validBones=' + vrmAndBone.validHumanBoneCount
+        + ', providerSource=' + vrmAndBone.providerSource);
+      return {
+        isVrm: vrmAndBone.isVrm,
+        vrmVersion: vrmAndBone.vrmVersion,
+        vrmAsset: vrmAndBone.vrmAsset,
+        boneMapping: vrmAndBone.boneMapping,
+        declaredHumanBoneCount: vrmAndBone.declaredHumanBoneCount,
+        validHumanBoneCount: vrmAndBone.validHumanBoneCount,
+        providerSource: vrmAndBone.providerSource,
+        error: ''
+      };
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'reparseVrmForCurrentModel error: ' + (e as Error)?.message);
+      return {
+        isVrm: false, vrmVersion: VrmVersion.NonVrm, vrmAsset: null,
+        boneMapping: null, declaredHumanBoneCount: 0, validHumanBoneCount: 0,
+        providerSource: 'None', error: (e as Error)?.message ?? 'unknown'
+      };
+    }
+  }
+
+  /**
+   * T-4.2B: 为指定 URI 的模型重新解析 VRM Humanoid,不依赖全局 config。
+   *
+   * 与 reparseVrmForCurrentModel 的区别:
+   * - 不读取全局 PREF_KEY_MODEL_URI,直接使用传入的 modelUri
+   * - 不写入全局 PREF_KEY_BONE_MAPPING,避免覆盖其他 Avatar 的缓存
+   * - VRM 资产仍按 sourceSha256 持久化(可跨 Avatar 复用)
+   *
+   * 用于 HumanoidMappingPage 按指定 avatarId 加载模型的场景。
+   *
+   * @param modelUri 沙箱模型文件 URI(file://...)
+   * @param displayName 显示名(用于 BoneMappingResult.modelId)
+   * @param sourceSha256 模型文件 SHA-256(用于 VRM 资产持久化)
+   * @returns VRM 重解析结果;非 VRM 或失败时返回 isVrm=false
+   */
+  async reparseVrmForUri(
+    modelUri: string,
+    displayName: string,
+    sourceSha256: string
+  ): Promise<VrmReparseResult> {
+    if (modelUri.length === 0) {
+      return {
+        isVrm: false, vrmVersion: VrmVersion.NonVrm, vrmAsset: null,
+        boneMapping: null, declaredHumanBoneCount: 0, validHumanBoneCount: 0,
+        providerSource: 'None', error: 'modelUri 为空'
+      };
+    }
+    try {
+      const buffer: ArrayBuffer = await this.readModelFile(modelUri);
+      const result: GltfValidationResult = GltfValidator.validate(buffer);
+      if (!result.valid || result.gltfJson === null) {
+        return {
+          isVrm: false, vrmVersion: VrmVersion.NonVrm, vrmAsset: null,
+          boneMapping: null, declaredHumanBoneCount: 0, validHumanBoneCount: 0,
+          providerSource: 'None', error: '模型文件无法解析'
+        };
+      }
+      const vrmAndBone = this.resolveVrmAndBoneMapping(
+        result.gltfJson, result.modelInfo, displayName, sourceSha256
+      );
+      // 仅持久化 VRM 资产(按 sourceSha256 隔离,可跨 Avatar 复用)
+      // 不写入全局 PREF_KEY_BONE_MAPPING,避免覆盖其他 Avatar 缓存
+      if (vrmAndBone.vrmAsset !== null) {
+        await this.saveVrmAsset(vrmAndBone.vrmAsset);
+      }
+      Logger.info(LOG_TAG, 'reparseVrmForUri: isVrm=' + vrmAndBone.isVrm
+        + ', validBones=' + vrmAndBone.validHumanBoneCount
+        + ', providerSource=' + vrmAndBone.providerSource
+        + ', name=' + displayName);
+      return {
+        isVrm: vrmAndBone.isVrm,
+        vrmVersion: vrmAndBone.vrmVersion,
+        vrmAsset: vrmAndBone.vrmAsset,
+        boneMapping: vrmAndBone.boneMapping,
+        declaredHumanBoneCount: vrmAndBone.declaredHumanBoneCount,
+        validHumanBoneCount: vrmAndBone.validHumanBoneCount,
+        providerSource: vrmAndBone.providerSource,
+        error: ''
+      };
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'reparseVrmForUri error: ' + (e as Error)?.message);
+      return {
+        isVrm: false, vrmVersion: VrmVersion.NonVrm, vrmAsset: null,
+        boneMapping: null, declaredHumanBoneCount: 0, validHumanBoneCount: 0,
+        providerSource: 'None', error: (e as Error)?.message ?? 'unknown'
+      };
+    }
+  }
+
+  /**
+   * T-4.1: 解析 VRM 并生成骨骼映射。
+   *
+   * 核心集成点:将 VRMImporter 接入导入流程。
+   * - 检测 VRM 身份(按内容,非后缀)
+   * - 调用 VRMImporter 解析 VrmAsset
+   * - 将 VrmHumanoid 转换为 BoneBindingResult(confidence=1.0)
+   * - 非 VRM 或 VRM 无有效骨骼时回退到 mapBones
+   *
+   * @param gltfJson glTF JSON 对象
+   * @param modelInfo 模型摘要信息
+   * @param displayName 显示名(modelId)
+   * @param sourceSha256 模型文件 SHA-256(可能为空)
+   * @returns VRM 解析结果 + 骨骼映射 + Provider 来源
+   */
+  private resolveVrmAndBoneMapping(
+    gltfJson: Record<string, Object> | null,
+    modelInfo: GltfModelInfo,
+    displayName: string,
+    sourceSha256: string
+  ): VrmAndBoneMappingResult {
+    let vrmAsset: VrmAsset | null = null;
+    let isVrm: boolean = false;
+    let vrmVersion: VrmVersion = VrmVersion.NonVrm;
+    let declaredHumanBoneCount: number = 0;
+    let validHumanBoneCount: number = 0;
+    let providerSource: string = 'None';
+
+    // 尝试 VRM 解析(按内容检测,非后缀)
+    if (gltfJson !== null) {
+      try {
+        const vrmDetection = detectVrm(gltfJson);
+        if (vrmDetection.isVrm) {
+          isVrm = true;
+          vrmVersion = vrmDetection.version;
+          Logger.info(LOG_TAG, 'VRM detected by content: version=' + vrmVersion
+            + ', specVersion=' + vrmDetection.specVersion
+            + ', exporter=' + vrmDetection.exporterVersion);
+
+          const vrmResult = importVrm({
+            gltfJson: gltfJson,
+            sourceSha256: sourceSha256,
+            nodeNames: modelInfo.nodeNames,
+            nodeCount: modelInfo.nodeCount,
+            meshCount: modelInfo.meshCount,
+            materialCount: modelInfo.materialCount,
+            imageCount: 0
+          });
+
+          if (vrmResult.isVrm && vrmResult.asset.valid) {
+            vrmAsset = vrmResult.asset;
+            // 解析 VRM Humanoid 为 HumanoidJointBinding[]
+            const parseResult: VrmHumanoidParseResult = resolveVrmHumanoid(
+              vrmResult.asset.humanoid,
+              modelInfo.nodeNames,
+              modelInfo.nodeCount
+            );
+            declaredHumanBoneCount = parseResult.declaredBoneCount;
+            validHumanBoneCount = parseResult.validBoneCount;
+
+            if (parseResult.validBoneCount > 0) {
+              // VRM 有效,使用 VRM 映射
+              providerSource = 'VrmDeclared';
+              const vrmBoneMapping: BoneMappingResult = vrmParseResultToBoneMappingResult(
+                parseResult, modelInfo.nodeNames, displayName
+              );
+              Logger.info(LOG_TAG, 'VRM humanoid mapping: valid=' + validHumanBoneCount
+                + ', declared=' + declaredHumanBoneCount
+                + ', providerSource=VrmDeclared');
+              return {
+                vrmAsset: vrmAsset,
+                boneMapping: vrmBoneMapping,
+                isVrm: isVrm,
+                vrmVersion: vrmVersion,
+                declaredHumanBoneCount: declaredHumanBoneCount,
+                validHumanBoneCount: validHumanBoneCount,
+                providerSource: providerSource
+              };
+            } else {
+              Logger.warn(LOG_TAG, 'VRM detected but no valid humanoid bones, fallback to mapBones');
+            }
+          } else if (vrmResult.error.length > 0) {
+            Logger.warn(LOG_TAG, 'VRM parse error: ' + vrmResult.error);
+          }
+        }
+      } catch (e) {
+        Logger.warn(LOG_TAG, 'VRM detection failed: ' + (e as Error)?.message);
+      }
+    }
+
+    // 非 VRM 或 VRM 无有效骨骼:回退到旧的名称匹配
+    const boneMapping: BoneMappingResult = mapBones(
+      modelInfo.nodeNames, displayName, modelInfo.hasSkins
+    );
+    providerSource = boneMapping.mappings.length > 0 ? 'AutoDetected' : 'None';
+
+    return {
+      vrmAsset: vrmAsset,
+      boneMapping: boneMapping,
+      isVrm: isVrm,
+      vrmVersion: vrmVersion,
+      declaredHumanBoneCount: declaredHumanBoneCount,
+      validHumanBoneCount: validHumanBoneCount,
+      providerSource: providerSource
+    };
   }
 
   /**
@@ -531,10 +1088,11 @@ export class Character3DService {
    *
    * @param fileName rawfile 中的文件名(如 'teacher-love.glb')
    * @param displayName 显示名(用于 UI 和 modelId 隔离)
+   * @param keepOldModel T-4.1 阶段 B: 是否保留旧模型文件(AvatarLibraryService 导入多模型时传 true)
    * @returns 导入结果
    */
   async importFromRawfileByName(
-    fileName: string, displayName: string
+    fileName: string, displayName: string, keepOldModel: boolean = false
   ): Promise<Character3DImportResult> {
     if (fileName.length === 0) {
       throw new Error('fileName must not be empty');
@@ -592,7 +1150,8 @@ export class Character3DService {
     await this.preferences.putString(PREF_KEY_MODEL_DISPLAY_NAME, displayName);
 
     // 删除旧文件(失败不影响导入结果)
-    if (oldUri.length > 0 && oldUri !== newUri) {
+    // T-4.1 阶段 B: keepOldModel=true 时跳过(AvatarLibraryService 导入多模型时使用)
+    if (!keepOldModel && oldUri.length > 0 && oldUri !== newUri) {
       try {
         await this.assetStore.deleteModelByUri(oldUri);
       } catch (e) {
@@ -616,11 +1175,31 @@ export class Character3DService {
 
     await this.ensureModelDefaultConfig(displayName, autoFitConfig);
 
-    // T-3D.6E: 生成能力分层报告(rawfile 导入路径同样填充)
+    // T-4.1: VRM 显式骨骼闭环(rawfile 路径同样集成)
     let boneMapping: BoneMappingResult | null = null;
     let capabilityReport: ModelCapabilityReport | null = null;
+    let vrmAsset: VrmAsset | null = null;
+    let isVrm: boolean = false;
+    let vrmVersion: VrmVersion = VrmVersion.NonVrm;
+    let declaredHumanBoneCount: number = 0;
+    let validHumanBoneCount: number = 0;
+    let humanoidProviderSource: string = 'None';
     try {
-      boneMapping = mapBones(modelInfo.nodeNames, displayName, modelInfo.hasSkins);
+      const vrmAndBone = this.resolveVrmAndBoneMapping(
+        result.gltfJson, modelInfo, displayName, ''
+      );
+      boneMapping = vrmAndBone.boneMapping;
+      vrmAsset = vrmAndBone.vrmAsset;
+      isVrm = vrmAndBone.isVrm;
+      vrmVersion = vrmAndBone.vrmVersion;
+      declaredHumanBoneCount = vrmAndBone.declaredHumanBoneCount;
+      validHumanBoneCount = vrmAndBone.validHumanBoneCount;
+      humanoidProviderSource = vrmAndBone.providerSource;
+
+      if (vrmAsset !== null) {
+        await this.saveVrmAsset(vrmAsset);
+      }
+
       const hasRenderableMesh: boolean = modelInfo.meshCount > 0;
       const capabilityInput: ModelCapabilityInput = {
         modelInfo: modelInfo,
@@ -630,7 +1209,8 @@ export class Character3DService {
         sceneLoaded: false,
         hasRenderableMesh: hasRenderableMesh,
         hasManualMapping: false,
-        manualMappingValid: false
+        manualMappingValid: false,
+        vrmAsset: vrmAsset
       };
       capabilityReport = analyzeModelCapability(capabilityInput);
       await this.preferences.putString(
@@ -639,6 +1219,10 @@ export class Character3DService {
       await this.preferences.putString(
         PREF_KEY_BONE_MAPPING, JSON.stringify(boneMapping)
       );
+      Logger.info(LOG_TAG, 'importFromRawfileByName capability: isVrm=' + isVrm
+        + ', vrmVersion=' + vrmVersion
+        + ', validBones=' + validHumanBoneCount
+        + ', providerSource=' + humanoidProviderSource);
     } catch (e) {
       Logger.warn(LOG_TAG, 'importFromRawfileByName capability analysis failed: '
         + (e as Error)?.message);
@@ -658,8 +1242,14 @@ export class Character3DService {
       warnings: importWarnings,
       fromCache: false,
       capabilityReport: capabilityReport,
-      boneMapping: boneMapping
-    } as Character3DImportResult;
+      boneMapping: boneMapping,
+      isVrm: isVrm,
+      vrmVersion: vrmVersion,
+      vrmAsset: vrmAsset,
+      declaredHumanBoneCount: declaredHumanBoneCount,
+      validHumanBoneCount: validHumanBoneCount,
+      humanoidProviderSource: humanoidProviderSource
+    };
   }
 
   /**

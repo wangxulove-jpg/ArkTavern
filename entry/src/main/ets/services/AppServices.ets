@@ -58,6 +58,7 @@ import { ChatService } from './ChatService';
 import { ChatPersistenceService } from './ChatPersistenceService';
 import { ChatBackgroundService } from './ChatBackgroundService';
 import { Character3DService } from './Character3DService';
+import { AvatarLibraryService } from './AvatarLibraryService';
 import { Character3DActionService } from './Character3DActionService';
 import { Character3DModelCompatibilityService } from './Character3DModelCompatibilityService';
 import { HumanoidMappingStore } from '../storage/HumanoidMappingStore';
@@ -177,6 +178,8 @@ export class AppServices {
   private character3DActionService: Character3DActionService | null = null;
   /** Character3DModelCompatibilityService 3D 模型兼容性预处理服务(T-3D.6C-C)。在 initialize 中创建。 */
   private character3DModelCompatibilityService: Character3DModelCompatibilityService | null = null;
+  /** AvatarLibraryService Avatar 模型库业务服务(T-4.1 阶段 B)。在 initialize 中创建。 */
+  private avatarLibraryService: AvatarLibraryService | null = null;
   /** 市场服务(Chub 公共只读浏览 + 搜索 + 详情 + 下载) */
   readonly marketService: MarketService;
   /** 市场导入服务(需要 context,在 initialize 中创建) */
@@ -425,6 +428,16 @@ export class AppServices {
         } else {
           Logger.warn(LOG_TAG, 'compatibilityService not injected to character3DService');
         }
+        // T-4.1 阶段 B: 创建 AvatarLibraryService(需要 appContext + appPreferences + character3DService)
+        if (services.appContext !== null && services.character3DService !== null) {
+          services.avatarLibraryService = new AvatarLibraryService(
+            services.appContext,
+            services.appPreferences,
+            services.character3DService
+          );
+        } else {
+          Logger.warn(LOG_TAG, 'avatarLibraryService not created (context or character3DService null)');
+        }
         // 创建 ContextBudgetService(只需 appPreferences)
         services.contextBudgetService = new ContextBudgetService(services.appPreferences);
         // 创建 MarketImportService(需要 appContext 写入临时 PNG 文件)
@@ -611,6 +624,15 @@ export class AppServices {
    */
   static getCharacter3DService(): Character3DService | null {
     return AppServices.getInstance().character3DService;
+  }
+
+  /**
+   * 获取 AvatarLibraryService 实例(T-4.1 阶段 B Avatar 模型库)。
+   * 用于模型库管理页面和 Agent 通过 avatarId 调用已保存模型。
+   * 如果初始化时不可用,返回 null。
+   */
+  static getAvatarLibraryService(): AvatarLibraryService | null {
+    return AppServices.getInstance().avatarLibraryService;
   }
 
   /**
@@ -843,10 +865,10 @@ export class AppServices {
   /**
    * T-3D.6E: 创建 HumanoidMappingViewModel 实例(手动骨骼映射页面)。
    *
-   * 内部注入 Character3DService 和新建的 HumanoidMappingStore(基于 appPreferences)。
+   * 内部注入 Character3DService、HumanoidMappingStore 和 AvatarLibraryService。
    * 每次调用返回新实例,页面 aboutToDisappear 时由页面自行释放。
    *
-   * @throws Error 当 Character3DService 未初始化时
+   * @throws Error 当 Character3DService 或 AvatarLibraryService 未初始化时
    */
   static createHumanoidMappingViewModel(): HumanoidMappingViewModel {
     const services: AppServices = AppServices.getInstance();
@@ -854,7 +876,11 @@ export class AppServices {
     if (character3DService === null) {
       throw new Error('Character3DService not initialized');
     }
+    const avatarLibraryService: AvatarLibraryService | null = services.avatarLibraryService;
+    if (avatarLibraryService === null) {
+      throw new Error('AvatarLibraryService not initialized');
+    }
     const mappingStore: HumanoidMappingStore = new HumanoidMappingStore(services.appPreferences);
-    return new HumanoidMappingViewModel(character3DService, mappingStore);
+    return new HumanoidMappingViewModel(character3DService, mappingStore, avatarLibraryService);
   }
 }

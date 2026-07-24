@@ -670,3 +670,55 @@ AGENTS.md 前文 "Project Structure" 中的 `Reference/` 段落仅作概念性�
 
 8. 普通任务仅验证受影响链路。
    页面功能的实机验证控制在 3–6 个关键操作，不做全应用巡检。
+
+## UI Automation Map
+
+本节为 T-4.2 新增,约束所有 Agent 的 UI 自动化行为。
+
+### UI 定位文件
+
+- UI 自动化定位文件:`automation/ui/ark_tavern_ui_map.json`
+- 这是整个项目唯一正式 UI 自动化定位文件。
+
+### 自动化前必须先读取
+
+- 在任何 UI 自动化操作应用前,必须先读取 `automation/ui/ark_tavern_ui_map.json`。
+- 不得仅凭对话记忆、旧截图或临时日志猜测控件位置。
+- 优先使用 `componentId` / `accessibilityText` 定位;坐标只能作为 `referenceDevice` 分辨率下的 fallback。
+
+### 定位优先级
+
+1. stable component id(`.key()` 设置的稳定 id)
+2. accessibility id / accessibility text
+3. 按钮文字
+4. 页面标题 + 相对区域
+5. fallback bounds/center(仅限 referenceDevice 分辨率)
+
+### 动态列表
+
+- 模型库卡片(AvatarLibraryPage)和动作卡片(Character3DActionManagerPage)位置会随数据数量变化。
+- 不要保存每张卡片的固定坐标。
+- 动态列表通过 item id 前缀定位:
+  - 模型库卡片:`avatarLibrary.card.<avatarId>`
+  - 动作卡片:`actionManager.card.<actionId>`
+- 卡片内操作按钮通过 id 后缀定位:
+  - 设为当前:`.setActive`
+  - 更多菜单:`.more`
+
+### 页面改动后必须同步更新
+
+- 页面布局或按钮改动时,必须在同一个提交中更新 `automation/ui/ark_tavern_ui_map.json`。
+- 禁止把新的固定坐标只写在临时日志、TODO.md、对话记录或测试脚本常量中。
+- 新增固定按钮时,必须同时:
+  1. 在页面代码中添加 `.key('<scope>.<name>')`
+  2. 在 UI map 文件中登记该 componentId
+
+### 一致性要求
+
+- 如果 UI map 与当前页面不一致:先更新 UI map,再继续自动化。
+- 不得在不更新 UI map 的情况下继续使用失效坐标。
+
+### 清理规则
+
+- UI 自动化完成后必须删除临时 dump 和截图,只保留正式验收截图。
+- 不得在仓库中残留 `layout_*.json`、`snapshot_*.png` 等临时文件(位于 `automation/` 目录外的临时产物)。

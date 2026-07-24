@@ -85,12 +85,14 @@ export interface HumanoidJointBinding {
  * 映射方式。
  *
  * - Auto: 自动骨骼名匹配
+ * - VrmDeclared: VRM 扩展显式声明(T-4.1,confidence=1.0,非算法猜测)
  * - Manual: 手动骨骼树选择(历史值,语义等同 ManualTree)
  * - ManualTree: 手动从骨骼树选择
  * - ManualSurface: 手动从模型表面点选推断
  */
 export enum BoneMappingMethod {
   Auto = 'Auto',
+  VrmDeclared = 'VrmDeclared',
   Manual = 'Manual',
   ManualTree = 'ManualTree',
   ManualSurface = 'ManualSurface'
@@ -195,6 +197,8 @@ export interface ManualHumanoidMapping {
   profileVersion: number;
   /** 模型 ID(= displayName) */
   modelId: string;
+  /** T-4.2B: Avatar ID(缓存隔离主键,旧记录可能为空) */
+  avatarId: string;
   /** 模型文件 SHA-256(导入时记录) */
   sourceSha256: string;
   /** 骨架 hash(变化则映射失效) */
@@ -213,6 +217,8 @@ export interface ManualHumanoidMapping {
   autoMappedCount: number;
   /** 手动映射数量 */
   manualMappedCount: number;
+  /** T-4.1: VRM 声明映射数量 */
+  vrmDeclaredCount: number;
   /** 缺失的必需关节 */
   requiredMissing: HumanoidBone[];
   /** 缺失的可选关节 */
@@ -238,22 +244,26 @@ export interface ManualHumanoidMapping {
  * @param modelId 模型 ID
  * @param sourceSha256 模型文件 SHA-256
  * @param skeletonHash 骨架 hash
+ * @param avatarId T-4.2B: Avatar ID(缓存隔离主键,默认空字符串向后兼容)
  */
 export function createEmptyManualMapping(
   modelId: string,
   sourceSha256: string,
-  skeletonHash: string
+  skeletonHash: string,
+  avatarId: string = ''
 ): ManualHumanoidMapping {
   const now: number = Date.now();
   return {
     profileVersion: 1,
     modelId: modelId,
+    avatarId: avatarId,
     sourceSha256: sourceSha256,
     skeletonHash: skeletonHash,
     joints: [],
     alignment: createDefaultAlignmentConfig(),
     autoMappedCount: 0,
     manualMappedCount: 0,
+    vrmDeclaredCount: 0,
     requiredMissing: [],
     optionalMissing: [],
     valid: false,
@@ -387,12 +397,15 @@ export function refreshMappingStats(
 ): void {
   let autoCount: number = 0;
   let manualCount: number = 0;
+  let vrmDeclaredCount: number = 0;
   // ArkTS 对 Set<enum> 支持有限,用数组查重
   const mappedTargets: HumanoidBone[] = [];
   for (let i: number = 0; i < mapping.joints.length; i++) {
     const joint: HumanoidJointBinding = mapping.joints[i];
     if (joint.mappingMethod === BoneMappingMethod.Auto) {
       autoCount++;
+    } else if (joint.mappingMethod === BoneMappingMethod.VrmDeclared) {
+      vrmDeclaredCount++;
     } else if (joint.mappingMethod === BoneMappingMethod.Manual
       || joint.mappingMethod === BoneMappingMethod.ManualTree
       || joint.mappingMethod === BoneMappingMethod.ManualSurface) {
@@ -402,6 +415,7 @@ export function refreshMappingStats(
   }
   mapping.autoMappedCount = autoCount;
   mapping.manualMappedCount = manualCount;
+  mapping.vrmDeclaredCount = vrmDeclaredCount;
 
   // 计算缺失
   const missingRequired: HumanoidBone[] = [];
@@ -527,6 +541,7 @@ export function clearAllBindings(mapping: ManualHumanoidMapping): void {
   mapping.joints = [];
   mapping.autoMappedCount = 0;
   mapping.manualMappedCount = 0;
+  mapping.vrmDeclaredCount = 0;
   mapping.requiredMissing = [];
   mapping.optionalMissing = [];
   mapping.valid = false;
@@ -564,6 +579,10 @@ export function deserializeManualMapping(json: string): ManualHumanoidMapping | 
     const obj: ManualHumanoidMapping = JSON.parse(json) as ManualHumanoidMapping;
     if (obj === null || obj.profileVersion === undefined) {
       return null;
+    }
+    // T-4.2B: 向后兼容,旧记录无 avatarId 字段时补空字符串
+    if (obj.avatarId === undefined || obj.avatarId === null) {
+      obj.avatarId = '';
     }
     return obj;
   } catch (e) {

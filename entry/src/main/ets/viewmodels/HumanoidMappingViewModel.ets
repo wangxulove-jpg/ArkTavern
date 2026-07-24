@@ -16,7 +16,9 @@
  * 不读取聊天 / Prompt / API Key。
  */
 
-import { Character3DService, Character3DModelConfig } from '../services/Character3DService';
+import { Character3DService, Character3DModelConfig, VrmReparseResult } from '../services/Character3DService';
+import { AvatarLibraryService } from '../services/AvatarLibraryService';
+import { AvatarRecord } from '../storage/AvatarLibraryStore';
 import { HumanoidMappingStore, HumanoidMappingLoadResult } from '../storage/HumanoidMappingStore';
 import { Logger } from '../utils/Logger';
 import {
@@ -24,7 +26,8 @@ import {
   REQUIRED_BONES,
   ALL_STANDARD_BONES,
   BoneMappingResult,
-  HumanoidBoneMapping
+  HumanoidBoneMapping,
+  SkeletonProfile
 } from '../models/character3d/HumanoidBone';
 import {
   ManualHumanoidMapping,
@@ -61,6 +64,8 @@ import {
   Character3DDisplayConfig,
   createDefaultDisplayConfig
 } from '../models/character3d/Character3DDisplayConfig';
+import { mapBones } from '../models/character3d/HumanoidBoneMapper';
+import { VrmVersion } from '../models/character3d/vrm/VrmVersion';
 
 const LOG_TAG: string = 'HumanoidMappingVM';
 
@@ -107,9 +112,61 @@ export interface StandardJointItem {
   statusColor: string;
 }
 
+/**
+ * T-4.2B: 骨骼映射诊断信息(0 结果时显示)。
+ */
+export interface MappingDiagnosticInfo {
+  /** Avatar ID 前 8 位 */
+  avatarId: string;
+  /** Avatar 显示名 */
+  displayName: string;
+  /** 模型文件名 */
+  modelFileName: string;
+  /** 是否 VRM */
+  isVrm: boolean;
+  /** VRM 版本文本 */
+  vrmVersionText: string;
+  /** VRM 扩展是否存在 */
+  vrmExtensionPresent: boolean;
+  /** VRM 声明骨骼数 */
+  declaredHumanBoneCount: number;
+  /** VRM 有效骨骼数 */
+  validHumanBoneCount: number;
+  /** 转换后 binding 数量 */
+  bindingCount: number;
+  /** HumanoidProvider 来源 */
+  providerSource: string;
+  /** 是否命中旧缓存 */
+  legacyCacheHit: boolean;
+  /** 重解析错误信息 */
+  reparseError: string;
+}
+
 export class HumanoidMappingViewModel {
   private readonly character3DService: Character3DService;
   private readonly mappingStore: HumanoidMappingStore;
+  private readonly avatarLibraryService: AvatarLibraryService;
+
+  /** T-4.2B: 当前 Avatar ID(缓存隔离主键) */
+  private avatarId: string = '';
+  /** T-4.2B: 当前 Avatar 记录 */
+  private avatarRecord: AvatarRecord | null = null;
+  /** T-4.2B: 是否 VRM */
+  private isVrm: boolean = false;
+  /** T-4.2B: VRM 版本 */
+  private vrmVersion: VrmVersion = VrmVersion.NonVrm;
+  /** T-4.2B: 模型文件 SHA-256 */
+  private sourceSha256: string = '';
+  /** T-4.2B: VRM 重解析结果(诊断用) */
+  private vrmReparseResult: VrmReparseResult | null = null;
+  /** T-4.2B: HumanoidProvider 来源 */
+  private providerSource: string = 'None';
+  /** T-4.2B: VRM 声明骨骼数 */
+  private declaredHumanBoneCount: number = 0;
+  /** T-4.2B: VRM 有效骨骼数 */
+  private validHumanBoneCount: number = 0;
+  /** T-4.2B: 是否命中旧缓存(诊断用) */
+  private legacyCacheHit: boolean = false;
 
   /** 当前模型配置 */
   private modelConfig: Character3DModelConfig = {
@@ -146,65 +203,207 @@ export class HumanoidMappingViewModel {
   /** T-3D.6F-A: 当前用户确认的候选索引(-1 未确认) */
   private confirmedCandidateIndex: number = -1;
 
-  constructor(character3DService: Character3DService, mappingStore: HumanoidMappingStore) {
+  constructor(
+    character3DService: Character3DService,
+    mappingStore: HumanoidMappingStore,
+    avatarLibraryService: AvatarLibraryService
+  ) {
     this.character3DService = character3DService;
     this.mappingStore = mappingStore;
+    this.avatarLibraryService = avatarLibraryService;
   }
 
   /**
-   * 初始化:加载模型配置、模型信息、已有映射。
+   * T-4.2B: 初始化:按 avatarId 加载 Avatar、模型信息、已有映射。
    *
-   * @returns true 初始化成功,false 无模型或失败
+   * 流程:
+   * 1. 优先使用传入的 avatarId;为空时读取 AvatarLibraryService.getActiveAvatarId()
+   * 2. 通过 AvatarLibraryService.getAvatar(avatarId) 获取 AvatarRecord
+   * 3. 使用 record.modelUri / displayName / sourceSha256
+   * 4. 加载 GltfModelInfo,计算 skeletonHash
+   * 5. 按 avatarId 加载手动映射;无则尝试旧 modelId 缓存迁移
+   * 6. VRM 模型:调用 reparseVrmForUri 获取 VrmExplicit boneMapping
+   *    非 VRM 模型:调用 mapBones(nodeNames) 获取名称匹配 boneMapping
+   * 7. VRM 旧缓存 mappingCount=0 或 source=Auto 时忽略旧缓存
+   *
+   * @param avatarId 可选,路由参数传入的 avatarId;为空时读取 active avatar
+   * @returns true 初始化成功,false 无 Avatar 或失败
    */
-  async initialize(): Promise<boolean> {
+  async initialize(avatarId?: string): Promise<boolean> {
     try {
-      this.modelConfig = await this.character3DService.getConfig();
-      if (this.modelConfig.modelUri.length === 0 || !this.modelConfig.fileExists) {
-        Logger.warn(LOG_TAG, 'initialize: no model imported');
+      // 1. 解析 avatarId
+      let resolvedAvatarId: string = avatarId ?? '';
+      if (resolvedAvatarId.length === 0) {
+        resolvedAvatarId = await this.avatarLibraryService.getActiveAvatarId();
+      }
+      if (resolvedAvatarId.length === 0) {
+        Logger.warn(LOG_TAG, 'initialize: no active avatar');
         return false;
       }
-      // 加载模型信息
-      this.modelInfo = await this.character3DService.getModelInfoByUri(this.modelConfig.modelUri);
+      this.avatarId = resolvedAvatarId;
+
+      // 2. 获取 AvatarRecord
+      const record: AvatarRecord | null = await this.avatarLibraryService.getAvatar(resolvedAvatarId);
+      if (record === null) {
+        Logger.warn(LOG_TAG, 'initialize: avatar not found, id=' + resolvedAvatarId.substring(0, 8));
+        return false;
+      }
+      this.avatarRecord = record;
+      this.isVrm = record.isVrm;
+      this.sourceSha256 = record.sourceSha256;
+      this.declaredHumanBoneCount = record.declaredHumanBoneCount;
+      this.validHumanBoneCount = record.validHumanBoneCount;
+
+      // VRM 版本字符串转枚举
+      this.vrmVersion = this.parseVrmVersion(record.vrmVersion, record.isVrm);
+
+      // 3. 填充 modelConfig(供旧代码使用)
+      this.modelConfig = {
+        modelUri: record.modelUri,
+        displayName: record.displayName,
+        fileExists: true
+      };
+
+      // 4. 加载模型信息
+      this.modelInfo = await this.character3DService.getModelInfoByUri(record.modelUri);
       if (this.modelInfo === null) {
         Logger.warn(LOG_TAG, 'initialize: getModelInfoByUri returned null');
         return false;
       }
-      // 计算 skeleton hash(基于 nodeNames 和 nodeCount,简化版)
+
+      // 5. 计算 skeleton hash
       this.currentSkeletonHash = this.computeCurrentSkeletonHash(this.modelInfo);
-      // 加载自动映射
-      this.autoMappingResult = await this.character3DService.getBoneMapping();
-      // 加载已有手动映射
+
+      // 6. 按 avatarId 加载手动映射
       const loadResult: HumanoidMappingLoadResult = await this.mappingStore.load(
-        this.modelConfig.displayName, ''
+        resolvedAvatarId, record.sourceSha256
       );
       if (loadResult.mapping !== null
         && isSkeletonHashMatched(loadResult.mapping, this.currentSkeletonHash)) {
-        this.mapping = loadResult.mapping;
-        Logger.info(LOG_TAG, 'initialize: loaded existing mapping, joints='
-          + this.mapping.joints.length);
+        // T-4.2B: VRM 旧缓存检测 - mappingCount=0 或全部 Auto 时忽略
+        if (record.isVrm && this.isLegacyVrmCache(loadResult.mapping)) {
+          Logger.info(LOG_TAG, 'initialize: ignoring legacy VRM cache (0 or Auto mappings)');
+          await this.mappingStore.delete(resolvedAvatarId);
+          this.mapping = createEmptyManualMapping(
+            record.displayName, record.sourceSha256, this.currentSkeletonHash, resolvedAvatarId
+          );
+        } else {
+          this.mapping = loadResult.mapping;
+          // 确保 avatarId 字段已回填(旧迁移数据可能为空)
+          if (this.mapping.avatarId.length === 0) {
+            this.mapping.avatarId = resolvedAvatarId;
+          }
+          Logger.info(LOG_TAG, 'initialize: loaded existing mapping, joints='
+            + this.mapping.joints.length);
+        }
       } else {
-        // 创建空映射
-        this.mapping = createEmptyManualMapping(
-          this.modelConfig.displayName, '', this.currentSkeletonHash
+        // T-4.2B: 尝试旧 modelId 缓存迁移
+        const legacyResult: HumanoidMappingLoadResult = await this.mappingStore.loadLegacyByModelId(
+          record.displayName, record.sourceSha256
         );
-        Logger.info(LOG_TAG, 'initialize: created empty mapping');
+        if (legacyResult.mapping !== null
+          && isSkeletonHashMatched(legacyResult.mapping, this.currentSkeletonHash)) {
+          this.legacyCacheHit = true;
+          // VRM 旧缓存检测
+          if (record.isVrm && this.isLegacyVrmCache(legacyResult.mapping)) {
+            Logger.info(LOG_TAG, 'initialize: ignoring legacy VRM cache by modelId (0 or Auto)');
+            await this.mappingStore.deleteLegacyByModelId(record.displayName);
+          } else {
+            // 迁移到 avatarId key
+            legacyResult.mapping.avatarId = resolvedAvatarId;
+            this.mapping = legacyResult.mapping;
+            await this.mappingStore.save(this.mapping);
+            await this.mappingStore.deleteLegacyByModelId(record.displayName);
+            Logger.info(LOG_TAG, 'initialize: migrated legacy mapping to avatarId, joints='
+              + this.mapping.joints.length);
+          }
+        }
+        if (this.mapping === null) {
+          this.mapping = createEmptyManualMapping(
+            record.displayName, record.sourceSha256, this.currentSkeletonHash, resolvedAvatarId
+          );
+          Logger.info(LOG_TAG, 'initialize: created empty mapping');
+        }
       }
-      // T-3D.6F-A: 预加载 GLB buffer(用于表面点选)
+
+      // 7. 获取自动映射结果
+      if (record.isVrm) {
+        // VRM: 重新解析获取 VrmExplicit boneMapping
+        const reparse: VrmReparseResult = await this.character3DService.reparseVrmForUri(
+          record.modelUri, record.displayName, record.sourceSha256
+        );
+        this.vrmReparseResult = reparse;
+        if (reparse.boneMapping !== null) {
+          this.autoMappingResult = reparse.boneMapping;
+          this.providerSource = reparse.providerSource;
+          this.declaredHumanBoneCount = reparse.declaredHumanBoneCount;
+          this.validHumanBoneCount = reparse.validHumanBoneCount;
+        } else {
+          this.providerSource = 'None';
+          Logger.warn(LOG_TAG, 'initialize: VRM reparse failed, error=' + reparse.error);
+        }
+      } else {
+        // 非 VRM: 名称匹配
+        this.autoMappingResult = mapBones(
+          this.modelInfo.nodeNames, record.displayName, this.modelInfo.hasSkins
+        );
+        this.providerSource = this.autoMappingResult.mappings.length > 0 ? 'Auto' : 'None';
+      }
+
+      // 8. T-3D.6F-A: 预加载 GLB buffer(用于表面点选)
       if (this.modelInfo.hasSkins) {
         this.glbBuffer = await this.character3DService.getGlbBuffer();
         if (this.glbBuffer !== null) {
           Logger.info(LOG_TAG, 'initialize: glbBuffer loaded, size=' + this.glbBuffer.byteLength);
         }
-        // T-3D.6F-A: 加载模型显示配置(用于表面点选的世界变换和相机参数)
-        this.displayConfig = await this.character3DService.getDisplayConfig(this.modelConfig.displayName);
+        this.displayConfig = await this.character3DService.getDisplayConfig(record.displayName);
         Logger.info(LOG_TAG, 'initialize: displayConfig scale=' + this.displayConfig.scale
           + ', camDist=' + this.displayConfig.cameraDistance);
       }
+
+      Logger.info(LOG_TAG, 'initialize ok: avatarId=' + resolvedAvatarId.substring(0, 8)
+        + ', isVrm=' + this.isVrm
+        + ', providerSource=' + this.providerSource
+        + ', declaredBones=' + this.declaredHumanBoneCount
+        + ', validBones=' + this.validHumanBoneCount);
       return true;
     } catch (e) {
       Logger.error(LOG_TAG, 'initialize failed: ' + (e as Error)?.message);
       return false;
     }
+  }
+
+  /**
+   * T-4.2B: 解析 VRM 版本字符串为枚举。
+   */
+  private parseVrmVersion(versionStr: string, isVrm: boolean): VrmVersion {
+    if (!isVrm) {
+      return VrmVersion.NonVrm;
+    }
+    if (versionStr === 'Vrm0x') {
+      return VrmVersion.Vrm0x;
+    }
+    if (versionStr === 'Vrm1') {
+      return VrmVersion.Vrm1;
+    }
+    return VrmVersion.NonVrm;
+  }
+
+  /**
+   * T-4.2B: 检测旧 VRM 缓存是否应被忽略。
+   *
+   * 条件:映射关节数为 0,或全部为 Auto(非 VrmDeclared)。
+   */
+  private isLegacyVrmCache(mapping: ManualHumanoidMapping): boolean {
+    if (mapping.joints.length === 0) {
+      return true;
+    }
+    for (let i: number = 0; i < mapping.joints.length; i++) {
+      if (mapping.joints[i].mappingMethod !== BoneMappingMethod.Auto) {
+        return false;
+      }
+    }
+    return true;
   }
 
   /**
@@ -241,6 +440,118 @@ export class HumanoidMappingViewModel {
    */
   getModelDisplayName(): string {
     return this.modelConfig.displayName;
+  }
+
+  /**
+   * T-4.2B: 获取当前 Avatar ID。
+   */
+  getAvatarId(): string {
+    return this.avatarId;
+  }
+
+  /**
+   * T-4.2B: 是否 VRM 模型。
+   */
+  getIsVrm(): boolean {
+    return this.isVrm;
+  }
+
+  /**
+   * T-4.2B: 获取 VRM 版本枚举。
+   */
+  getVrmVersion(): VrmVersion {
+    return this.vrmVersion;
+  }
+
+  /**
+   * T-4.2B: 获取 VRM 版本显示文本。
+   */
+  getVrmVersionText(): string {
+    if (!this.isVrm) {
+      return 'GLB';
+    }
+    if (this.vrmVersion === VrmVersion.Vrm0x) {
+      return 'VRM 0.x';
+    }
+    if (this.vrmVersion === VrmVersion.Vrm1) {
+      return 'VRM 1.0';
+    }
+    return 'VRM(未知版本)';
+  }
+
+  /**
+   * T-4.2B: 获取模型文件 URI(仅显示文件名部分,不含完整路径)。
+   */
+  getModelFileName(): string {
+    if (this.avatarRecord === null) {
+      return '';
+    }
+    // 从 modelUri 中提取文件名(file://<path>/<name>.vrm)
+    const uri: string = this.avatarRecord.modelUri;
+    const slashIdx: number = uri.lastIndexOf('/');
+    if (slashIdx >= 0 && slashIdx < uri.length - 1) {
+      return uri.substring(slashIdx + 1);
+    }
+    return uri;
+  }
+
+  /**
+   * T-4.2B: 获取 HumanoidProvider 来源。
+   */
+  getProviderSource(): string {
+    return this.providerSource;
+  }
+
+  /**
+   * T-4.2B: 获取 VRM 声明骨骼数。
+   */
+  getDeclaredHumanBoneCount(): number {
+    return this.declaredHumanBoneCount;
+  }
+
+  /**
+   * T-4.2B: 获取 VRM 有效骨骼数。
+   */
+  getValidHumanBoneCount(): number {
+    return this.validHumanBoneCount;
+  }
+
+  /**
+   * T-4.2B: 是否命中旧缓存(诊断用)。
+   */
+  isLegacyCacheHit(): boolean {
+    return this.legacyCacheHit;
+  }
+
+  /**
+   * T-4.2B: 获取 VRM 重解析结果(诊断用)。
+   */
+  getVrmReparseResult(): VrmReparseResult | null {
+    return this.vrmReparseResult;
+  }
+
+  /**
+   * T-4.2B: 构建诊断信息(0 结果时显示)。
+   *
+   * 包含:当前 Avatar、当前读取文件、VRM 扩展是否存在、
+   * humanBones 原始数量、转换后 binding 数量、Provider source、是否命中旧缓存。
+   */
+  buildDiagnosticInfo(): MappingDiagnosticInfo {
+    const info: MappingDiagnosticInfo = {
+      avatarId: this.avatarId.substring(0, 8),
+      displayName: this.modelConfig.displayName,
+      modelFileName: this.getModelFileName(),
+      isVrm: this.isVrm,
+      vrmVersionText: this.getVrmVersionText(),
+      vrmExtensionPresent: this.vrmReparseResult !== null && this.vrmReparseResult.isVrm,
+      declaredHumanBoneCount: this.declaredHumanBoneCount,
+      validHumanBoneCount: this.validHumanBoneCount,
+      bindingCount: this.autoMappingResult !== null ? this.autoMappingResult.mappings.length : 0,
+      providerSource: this.providerSource,
+      legacyCacheHit: this.legacyCacheHit,
+      reparseError: this.vrmReparseResult !== null ? this.vrmReparseResult.error : ''
+    };
+    return info;
   }
 
   /**
@@ -341,13 +652,21 @@ export class HumanoidMappingViewModel {
     if (binding === null) {
       return '未匹配';
     }
+    if (binding.mappingMethod === BoneMappingMethod.VrmDeclared) {
+      return 'VRM标准';
+    }
     if (binding.mappingMethod === BoneMappingMethod.Auto) {
       return '自动(' + (binding.confidence * 100).toFixed(0) + '%)';
     }
     if (binding.mappingMethod === BoneMappingMethod.ManualSurface) {
       return '表面(' + (binding.confidence * 100).toFixed(0) + '%)';
     }
-    return '手动';
+    if (binding.mappingMethod === BoneMappingMethod.Manual
+      || binding.mappingMethod === BoneMappingMethod.ManualTree) {
+      return '手动';
+    }
+    Logger.warn(LOG_TAG, 'unknown mappingMethod: ' + binding.mappingMethod);
+    return '未知来源';
   }
 
   /**
@@ -360,13 +679,20 @@ export class HumanoidMappingViewModel {
     if (binding === null) {
       return REQUIRED_BONES.indexOf(bone) >= 0 ? '#d9534f' : '#999999';
     }
+    if (binding.mappingMethod === BoneMappingMethod.VrmDeclared) {
+      return '#6f42c1';
+    }
     if (binding.mappingMethod === BoneMappingMethod.Auto) {
       return binding.confidence >= 0.85 ? '#28a745' : '#ffc107';
     }
     if (binding.mappingMethod === BoneMappingMethod.ManualSurface) {
       return '#17a2b8';
     }
-    return '#007DFF';
+    if (binding.mappingMethod === BoneMappingMethod.Manual
+      || binding.mappingMethod === BoneMappingMethod.ManualTree) {
+      return '#007DFF';
+    }
+    return '#999999';
   }
 
   /**
@@ -441,7 +767,12 @@ export class HumanoidMappingViewModel {
   /**
    * 自动匹配:将自动映射结果应用到当前手动映射。
    *
-   * 策略:仅接受 confidence >= 0.85 的自动映射。
+   * T-4.1 A10: 区分 VRM 显式映射和普通名称匹配。
+   * - VRM 映射(sourceNodeIndex >= 0 且 confidence === 1.0)使用 VrmDeclared,
+   *   直接使用 sourceNodeIndex,避免名称查找失败
+   * - 普通名称匹配使用 Auto,通过 findNodeIndexByName 查找
+   *
+   * 策略:仅接受 confidence >= 0.85 的映射。
    */
   applyAutoMapping(): number {
     if (this.mapping === null || this.autoMappingResult === null) {
@@ -453,11 +784,21 @@ export class HumanoidMappingViewModel {
       if (autoMapping.confidence < 0.85) {
         continue;
       }
+      // T-4.1: VRM 显式映射优先使用 sourceNodeIndex
+      let nodeIndex: number = autoMapping.sourceNodeIndex;
+      let method: BoneMappingMethod = BoneMappingMethod.Auto;
+      if (autoMapping.sourceNodeIndex >= 0) {
+        // VRM 显式映射:直接使用 nodeIndex
+        method = BoneMappingMethod.VrmDeclared;
+      } else {
+        // 普通名称匹配:通过名称查找
+        nodeIndex = this.findNodeIndexByName(autoMapping.sourceNodeName);
+      }
       const binding: HumanoidJointBinding = {
         targetJoint: autoMapping.standardBone,
-        sourceNodeIndex: this.findNodeIndexByName(autoMapping.sourceNodeName),
+        sourceNodeIndex: nodeIndex,
         sourceBoneName: autoMapping.sourceNodeName,
-        mappingMethod: BoneMappingMethod.Auto,
+        mappingMethod: method,
         confidence: autoMapping.confidence
       };
       if (binding.sourceNodeIndex >= 0) {
@@ -470,6 +811,80 @@ export class HumanoidMappingViewModel {
     }
     Logger.info(LOG_TAG, 'applyAutoMapping: applied=' + appliedCount);
     return appliedCount;
+  }
+
+  /**
+   * T-4.1 A10: 读取 VRM 标准骨骼(VRM 模型专用)。
+   *
+   * T-4.2B: 改用 reparseVrmForUri(modelUri) 而非 reparseVrmForCurrentModel(),
+   * 确保按当前 avatarId 对应的模型文件解析,不依赖全局 config。
+   *
+   * @returns 应用的骨骼数;非 VRM 或失败时返回 0
+   */
+  async applyVrmDeclaredMapping(): Promise<number> {
+    if (this.mapping === null || this.avatarRecord === null) {
+      return 0;
+    }
+    const reparse: VrmReparseResult = await this.character3DService.reparseVrmForUri(
+      this.avatarRecord.modelUri,
+      this.avatarRecord.displayName,
+      this.avatarRecord.sourceSha256
+    );
+    this.vrmReparseResult = reparse;
+    if (!reparse.isVrm || reparse.boneMapping === null) {
+      Logger.warn(LOG_TAG, 'applyVrmDeclaredMapping: not VRM or no boneMapping, error=' + reparse.error);
+      return 0;
+    }
+    // 更新 autoMappingResult 为 VRM 重解析结果
+    this.autoMappingResult = reparse.boneMapping;
+    this.providerSource = reparse.providerSource;
+    this.declaredHumanBoneCount = reparse.declaredHumanBoneCount;
+    this.validHumanBoneCount = reparse.validHumanBoneCount;
+    let appliedCount: number = 0;
+    for (let i: number = 0; i < reparse.boneMapping.mappings.length; i++) {
+      const m: HumanoidBoneMapping = reparse.boneMapping.mappings[i];
+      if (m.sourceNodeIndex < 0) {
+        continue;
+      }
+      const binding: HumanoidJointBinding = {
+        targetJoint: m.standardBone,
+        sourceNodeIndex: m.sourceNodeIndex,
+        sourceBoneName: m.sourceNodeName,
+        mappingMethod: BoneMappingMethod.VrmDeclared,
+        confidence: 1.0
+      };
+      setJointBinding(this.mapping, binding);
+      appliedCount++;
+    }
+    if (appliedCount > 0) {
+      refreshMappingStats(this.mapping, REQUIRED_BONES, OPTIONAL_BONES);
+    }
+    Logger.info(LOG_TAG, 'applyVrmDeclaredMapping: applied=' + appliedCount
+      + ', declared=' + reparse.declaredHumanBoneCount
+      + ', valid=' + reparse.validHumanBoneCount);
+    return appliedCount;
+  }
+
+  /**
+   * T-4.1 A10: 检测当前模型的 autoMappingResult 是否来自 VRM 显式声明。
+   *
+   * 用于 UI 决定按钮文案("读取 VRM 标准骨骼" vs "自动匹配")。
+   */
+  isVrmDeclaredMappingAvailable(): boolean {
+    if (this.autoMappingResult === null) {
+      return false;
+    }
+    // VRM 映射的特征:profile 是 VRM0/VRM1 且至少一个 mapping 有 sourceNodeIndex >= 0
+    if (this.autoMappingResult.profile !== SkeletonProfile.VRM0
+      && this.autoMappingResult.profile !== SkeletonProfile.VRM1) {
+      return false;
+    }
+    for (let i: number = 0; i < this.autoMappingResult.mappings.length; i++) {
+      if (this.autoMappingResult.mappings[i].sourceNodeIndex >= 0) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**

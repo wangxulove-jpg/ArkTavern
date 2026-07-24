@@ -62,6 +62,11 @@ import { Logger } from '../utils/Logger';
 
 const LOG_TAG: string = 'HumanoidMappingPage';
 
+/** T-4.2B: 路由参数接口 */
+interface HumanoidMappingRouteParams {
+  avatarId: string;
+}
+
 /** Tab 枚举 */
 enum MappingTab {
   StandardJoints = 0,
@@ -111,6 +116,16 @@ struct HumanoidMappingPage {
   @State private isInitializing: boolean = true;
   @State private errorMessage: string = '';
 
+  // T-4.2B: Avatar 完整信息(顶部显示)
+  @State private avatarIdShort: string = '';
+  @State private avatarDisplayName: string = '';
+  @State private avatarModelFileName: string = '';
+  @State private avatarModelType: string = '';
+  @State private avatarProviderSource: string = '';
+  @State private avatarDeclaredBones: number = 0;
+  @State private avatarValidBones: number = 0;
+  @State private showDiagnostic: boolean = false;
+
   // 模型摘要
   @State private modelDisplayName: string = '';
   @State private totalNodeCount: number = 0;
@@ -119,6 +134,10 @@ struct HumanoidMappingPage {
   @State private requiredMissingCount: number = 0;
   @State private autoMappedCount: number = 0;
   @State private manualMappedCount: number = 0;
+  /** T-4.1 A10: VRM 标准骨骼映射数 */
+  @State private vrmDeclaredCount: number = 0;
+  /** T-4.1 A10: 是否 VRM 显式映射(决定按钮文案) */
+  @State private isVrmMapping: boolean = false;
 
   // 当前 Tab
   @State private currentTab: MappingTab = MappingTab.StandardJoints;
@@ -183,10 +202,23 @@ struct HumanoidMappingPage {
   private async initializePage(): Promise<void> {
     try {
       await AppServices.whenReady();
+      // T-4.2B: 优先读取路由参数 avatarId
+      let routeAvatarId: string = '';
+      try {
+        const rawParams: object = router.getParams() as object;
+        if (rawParams !== null && rawParams !== undefined) {
+          const params: HumanoidMappingRouteParams = rawParams as HumanoidMappingRouteParams;
+          if (params.avatarId !== undefined && params.avatarId !== null) {
+            routeAvatarId = params.avatarId;
+          }
+        }
+      } catch (e) {
+        Logger.warn(LOG_TAG, 'getParams failed: ' + (e as Error)?.message);
+      }
       this.vm = AppServices.createHumanoidMappingViewModel();
-      const ok: boolean = await this.vm.initialize();
+      const ok: boolean = await this.vm.initialize(routeAvatarId);
       if (!ok) {
-        this.errorMessage = '未导入模型或模型信息不可用,请先在动作管理页导入模型';
+        this.errorMessage = '未找到 Avatar 或模型信息不可用,请先在模型库中导入模型';
         this.isInitializing = false;
         return;
       }
@@ -241,9 +273,19 @@ struct HumanoidMappingPage {
     if (this.vm === null) {
       return;
     }
+    // T-4.2B: Avatar 完整信息
+    this.avatarIdShort = this.vm.getAvatarId().substring(0, 8);
+    this.avatarDisplayName = this.vm.getModelDisplayName();
+    this.avatarModelFileName = this.vm.getModelFileName();
+    this.avatarModelType = this.vm.getVrmVersionText();
+    this.avatarProviderSource = this.vm.getProviderSource();
+    this.avatarDeclaredBones = this.vm.getDeclaredHumanBoneCount();
+    this.avatarValidBones = this.vm.getValidHumanBoneCount();
+
     this.modelDisplayName = this.vm.getModelDisplayName();
     this.totalNodeCount = this.vm.getTotalNodeCount();
     this.hasSkins = this.vm.hasSkins();
+    this.isVrmMapping = this.vm.isVrmDeclaredMappingAvailable();
     this.standardJoints = this.vm.buildStandardJointItems();
     this.refreshBoneTree();
     this.refreshMappingStats();
@@ -277,12 +319,14 @@ struct HumanoidMappingPage {
       this.requiredMissingCount = 0;
       this.autoMappedCount = 0;
       this.manualMappedCount = 0;
+      this.vrmDeclaredCount = 0;
       return;
     }
     this.mappedCount = mapping.joints.length;
     this.requiredMissingCount = mapping.requiredMissing.length;
     this.autoMappedCount = mapping.autoMappedCount;
     this.manualMappedCount = mapping.manualMappedCount;
+    this.vrmDeclaredCount = mapping.vrmDeclaredCount;
   }
 
   build(): void {
@@ -323,6 +367,7 @@ struct HumanoidMappingPage {
       SymbolGlyph($r('sys.symbol.chevron_left'))
         .fontSize(24)
         .fontColor(['#333333'])
+        .key('humanoidMapping.back')
         .onClick(() => {
           router.back();
         });
@@ -332,16 +377,21 @@ struct HumanoidMappingPage {
         .fontColor('#333333')
         .margin({ left: 8 });
       Blank();
-      // 自动匹配按钮
-      Button('自动匹配')
+      // T-4.1 A10: VRM 模型显示"读取 VRM 标准骨骼",普通 GLB 显示"自动匹配"
+      Button(this.isVrmMapping ? '读取 VRM 标准骨骼' : '自动匹配')
         .fontSize(12)
         .height(30)
-        .backgroundColor('#17a2b8')
+        .backgroundColor(this.isVrmMapping ? '#6f42c1' : '#17a2b8')
         .fontColor('#ffffff')
         .padding({ left: 10, right: 10 })
         .enabled(!this.isInitializing && this.errorMessage.length === 0)
+        .key('humanoidMapping.reloadVrmBones')
         .onClick(() => {
-          this.onClickAutoMap();
+          if (this.isVrmMapping) {
+            this.onClickReadVrmBones();
+          } else {
+            this.onClickAutoMap();
+          }
         });
       // 验证按钮
       Button('验证')
@@ -352,6 +402,7 @@ struct HumanoidMappingPage {
         .padding({ left: 10, right: 10 })
         .margin({ left: 8 })
         .enabled(!this.isInitializing && this.errorMessage.length === 0)
+        .key('humanoidMapping.validate')
         .onClick(() => {
           this.onClickValidate();
         });
@@ -364,6 +415,7 @@ struct HumanoidMappingPage {
         .padding({ left: 10, right: 10 })
         .margin({ left: 8 })
         .enabled(!this.isInitializing && this.errorMessage.length === 0 && !this.isSaving)
+        .key('humanoidMapping.save')
         .onClick(() => {
           this.onClickSave();
         });
@@ -429,14 +481,22 @@ struct HumanoidMappingPage {
   @Builder
   buildModelSummary(): void {
     Column() {
+      // T-4.2B: Avatar 完整信息(顶部)
       Row() {
-        Text(this.modelDisplayName)
+        Text(this.avatarDisplayName)
           .fontSize(15)
           .fontWeight(FontWeight.Medium)
           .fontColor('#333333')
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .layoutWeight(1);
+        Text(this.avatarModelType)
+          .fontSize(10)
+          .fontColor('#6f42c1')
+          .backgroundColor('#f3e8ff')
+          .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+          .borderRadius(4)
+          .margin({ left: 8 });
         if (this.hasSkins) {
           Text('有 Skin')
             .fontSize(10)
@@ -444,7 +504,7 @@ struct HumanoidMappingPage {
             .backgroundColor('#e8f5e9')
             .padding({ left: 6, right: 6, top: 2, bottom: 2 })
             .borderRadius(4)
-            .margin({ left: 8 });
+            .margin({ left: 4 });
         } else {
           Text('无 Skin')
             .fontSize(10)
@@ -452,18 +512,57 @@ struct HumanoidMappingPage {
             .backgroundColor('#fbe9e7')
             .padding({ left: 6, right: 6, top: 2, bottom: 2 })
             .borderRadius(4)
-            .margin({ left: 8 });
+            .margin({ left: 4 });
         }
       }
       .width('100%');
 
+      // T-4.2B: Avatar 详细信息
+      Row() {
+        Text('ID: ' + this.avatarIdShort)
+          .fontSize(11)
+          .fontColor('#999999');
+        Text(' | ')
+          .fontSize(11)
+          .fontColor('#cccccc');
+        Text('文件: ' + this.avatarModelFileName)
+          .fontSize(11)
+          .fontColor('#999999')
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .layoutWeight(1);
+      }
+      .width('100%')
+      .margin({ top: 4 });
+
+      Row() {
+        Text('骨骼来源: ' + this.avatarProviderSource)
+          .fontSize(11)
+          .fontColor(this.avatarProviderSource === 'VrmExplicit' ? '#6f42c1' : '#666666');
+        Text(' | ')
+          .fontSize(11)
+          .fontColor('#cccccc');
+        Text('声明: ' + this.avatarDeclaredBones.toString())
+          .fontSize(11)
+          .fontColor('#666666');
+        Text(' | ')
+          .fontSize(11)
+          .fontColor('#cccccc');
+        Text('有效: ' + this.avatarValidBones.toString())
+          .fontSize(11)
+          .fontColor('#666666');
+      }
+      .width('100%')
+      .margin({ top: 2 });
+
+      // 映射统计
       Row() {
         Column() {
           Text(this.totalNodeCount.toString())
             .fontSize(16)
             .fontWeight(FontWeight.Medium)
             .fontColor('#333333');
-          Text('节点')
+          Text('模型节点')
             .fontSize(10)
             .fontColor('#999999')
             .margin({ top: 2 });
@@ -476,7 +575,7 @@ struct HumanoidMappingPage {
             .fontSize(16)
             .fontWeight(FontWeight.Medium)
             .fontColor('#007DFF');
-          Text('已匹配')
+          Text('标准骨骼')
             .fontSize(10)
             .fontColor('#999999')
             .margin({ top: 2 });
@@ -489,7 +588,7 @@ struct HumanoidMappingPage {
             .fontSize(16)
             .fontWeight(FontWeight.Medium)
             .fontColor('#28a745');
-          Text('自动')
+          Text('名称自动')
             .fontSize(10)
             .fontColor('#999999')
             .margin({ top: 2 });
@@ -497,12 +596,28 @@ struct HumanoidMappingPage {
         .alignItems(HorizontalAlign.Center)
         .layoutWeight(1);
 
+        // T-4.1 A12: VRM 标准骨骼数(VRM 模型时显示)
+        if (this.isVrmMapping) {
+          Column() {
+            Text(this.vrmDeclaredCount.toString())
+              .fontSize(16)
+              .fontWeight(FontWeight.Medium)
+              .fontColor('#6f42c1');
+            Text('VRM声明')
+              .fontSize(10)
+              .fontColor('#999999')
+              .margin({ top: 2 });
+          }
+          .alignItems(HorizontalAlign.Center)
+          .layoutWeight(1);
+        }
+
         Column() {
           Text(this.manualMappedCount.toString())
             .fontSize(16)
             .fontWeight(FontWeight.Medium)
             .fontColor('#17a2b8');
-          Text('手动')
+          Text('手动覆盖')
             .fontSize(10)
             .fontColor('#999999')
             .margin({ top: 2 });
@@ -525,11 +640,72 @@ struct HumanoidMappingPage {
       }
       .width('100%')
       .margin({ top: 8 });
+
+      // T-4.2B: 诊断面板(0 结果时显示)
+      if (this.showDiagnostic && this.vm !== null) {
+        this.buildDiagnosticPanel();
+      }
     }
     .width('100%')
     .padding(12)
     .backgroundColor('#ffffff')
     .borderRadius(0);
+  }
+
+  /**
+   * T-4.2B: 诊断面板(0 结果时显示)。
+   */
+  @Builder
+  buildDiagnosticPanel(): void {
+    Column() {
+      Text('诊断信息(匹配结果为 0)')
+        .fontSize(12)
+        .fontWeight(FontWeight.Medium)
+        .fontColor('#dc3545')
+        .margin({ bottom: 6 });
+
+      if (this.vm !== null) {
+        Text('当前 Avatar: ' + this.vm.getModelDisplayName())
+          .fontSize(11)
+          .fontColor('#666666');
+        Text('当前读取文件: ' + this.vm.getModelFileName())
+          .fontSize(11)
+          .fontColor('#666666')
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis });
+        Text('VRM 扩展是否存在: ' + (this.vm.getVrmReparseResult() !== null
+          && this.vm.getVrmReparseResult()!.isVrm ? '是' : '否'))
+          .fontSize(11)
+          .fontColor('#666666');
+        Text('声明骨骼数: ' + this.vm.getDeclaredHumanBoneCount().toString())
+          .fontSize(11)
+          .fontColor('#666666');
+        Text('有效骨骼数: ' + this.vm.getValidHumanBoneCount().toString())
+          .fontSize(11)
+          .fontColor('#666666');
+        Text('转换后 binding 数: ' + (this.vm.getMapping() !== null
+          ? this.vm.getMapping()!.joints.length.toString() : '0'))
+          .fontSize(11)
+          .fontColor('#666666');
+        Text('Provider source: ' + this.vm.getProviderSource())
+          .fontSize(11)
+          .fontColor('#666666');
+        Text('是否命中旧缓存: ' + (this.vm.isLegacyCacheHit() ? '是' : '否'))
+          .fontSize(11)
+          .fontColor('#666666');
+        if (this.vm.getVrmReparseResult() !== null
+          && this.vm.getVrmReparseResult()!.error.length > 0) {
+          Text('重解析错误: ' + this.vm.getVrmReparseResult()!.error)
+            .fontSize(11)
+            .fontColor('#dc3545');
+        }
+      }
+    }
+    .width('100%')
+    .padding(10)
+    .backgroundColor('#fff5f5')
+    .borderRadius(8)
+    .margin({ top: 8 });
   }
 
   // ==================== Tab 栏 ====================
@@ -1327,10 +1503,45 @@ struct HumanoidMappingPage {
     }
     const count: number = this.vm.applyAutoMapping();
     this.refreshAll();
-    promptAction.showToast({
-      message: '自动匹配 ' + count + ' 个关节(置信度 ≥ 85%)',
-      duration: 2000
-    });
+    // T-4.2B: 禁止把 0 个匹配显示为"成功"
+    if (count > 0) {
+      this.showDiagnostic = false;
+      promptAction.showToast({
+        message: '自动匹配 ' + count + ' 个关节(置信度 ≥ 85%)',
+        duration: 2000
+      });
+    } else {
+      this.showDiagnostic = true;
+      promptAction.showToast({
+        message: '自动匹配结果为 0,请查看诊断信息',
+        duration: 2500
+      });
+    }
+  }
+
+  /**
+   * T-4.1 A10: 读取 VRM 标准骨骼(VRM 模型专用按钮)。
+   */
+  private async onClickReadVrmBones(): Promise<void> {
+    if (this.vm === null) {
+      return;
+    }
+    const count: number = await this.vm.applyVrmDeclaredMapping();
+    this.refreshAll();
+    if (count > 0) {
+      this.showDiagnostic = false;
+      promptAction.showToast({
+        message: 'VRM 标准骨骼已识别 ' + count + ' 个',
+        duration: 2000
+      });
+    } else {
+      // T-4.2B: 0 结果时显示诊断面板
+      this.showDiagnostic = true;
+      promptAction.showToast({
+        message: '未检测到 VRM 标准骨骼,请查看诊断信息',
+        duration: 2500
+      });
+    }
   }
 
   private onClickValidate(): void {

@@ -17,6 +17,8 @@
 
 import { Character3DActionService, ActionAssetListItem } from '../services/Character3DActionService';
 import { Character3DService, Character3DModelConfig } from '../services/Character3DService';
+import { AvatarLibraryService } from '../services/AvatarLibraryService';
+import { AvatarRecord } from '../storage/AvatarLibraryStore';
 import { ActionDisplayPreferenceStore, AliasEntry } from '../services/ActionDisplayPreferenceStore';
 import { ActionPlaybackPreferenceStore } from '../services/ActionPlaybackPreferenceStore';
 import {
@@ -120,6 +122,7 @@ export interface ModelSummary {
 export class Character3DActionManagerViewModel {
   private actionService: Character3DActionService;
   private model3DService: Character3DService;
+  private avatarLibraryService: AvatarLibraryService | null = null;
   private displayPrefStore: ActionDisplayPreferenceStore;
   private playbackPrefStore: ActionPlaybackPreferenceStore;
 
@@ -131,6 +134,13 @@ export class Character3DActionManagerViewModel {
     this.model3DService = model3DService;
     this.displayPrefStore = actionService.getDisplayPreferenceStore();
     this.playbackPrefStore = actionService.getPlaybackPreferenceStore();
+  }
+
+  /**
+   * T-4.2C: 注入 AvatarLibraryService(用于按 avatarId 读取/生成能力报告)。
+   */
+  setAvatarLibraryService(service: AvatarLibraryService): void {
+    this.avatarLibraryService = service;
   }
 
   /**
@@ -351,6 +361,10 @@ export class Character3DActionManagerViewModel {
    * T-3D.6E: 不再仅用单一 builtinActionCompatible 判定"不兼容",
    * 改为从 Character3DService 读取多维度 ModelCapabilityReport,
    * UI 可基于 sceneLoadable/geometryRenderable/skeletonPresent/humanoidAutoMapping 等独立显示。
+   *
+   * T-4.2C: 能力报告按 avatarId + sourceSha256 读取(不依赖全局键)。
+   * 若 AvatarLibraryService 已注入且当前有激活 Avatar,优先按 avatarId 读取;
+   * 不存在时按需生成并持久化。回退到全局键(向后兼容)。
    */
   async loadModelSummary(): Promise<ModelSummary> {
     const config: Character3DModelConfig = await this.model3DService.getConfig();
@@ -382,12 +396,49 @@ export class Character3DActionManagerViewModel {
     } catch (e) {
       Logger.warn(LOG_TAG, 'loadModelSummary getModelInfo failed: ' + (e as Error)?.message);
     }
-    // T-3D.6E: 读取多维度能力报告(由 Character3DService 在导入时持久化)
+    // T-4.2C: 按 avatarId + sourceSha256 读取能力报告
     let capabilityReport: ModelCapabilityReport | null = null;
-    try {
-      capabilityReport = await this.model3DService.getCapabilityReport();
-    } catch (e) {
-      Logger.warn(LOG_TAG, 'loadModelSummary getCapabilityReport failed: ' + (e as Error)?.message);
+    let activeAvatar: AvatarRecord | null = null;
+    if (this.avatarLibraryService !== null) {
+      try {
+        activeAvatar = await this.avatarLibraryService.getActiveAvatar();
+      } catch (e) {
+        Logger.warn(LOG_TAG, 'loadModelSummary getActiveAvatar failed: ' + (e as Error)?.message);
+      }
+    }
+    if (activeAvatar !== null) {
+      // 优先按 avatarId 读取
+      try {
+        capabilityReport = await this.model3DService.getCapabilityReportForAvatar(
+          activeAvatar.avatarId, activeAvatar.sourceSha256
+        );
+      } catch (e) {
+        Logger.warn(LOG_TAG, 'loadModelSummary getCapabilityReportForAvatar failed: '
+          + (e as Error)?.message);
+      }
+      // 不存在时按需生成
+      if (capabilityReport === null) {
+        Logger.info(LOG_TAG, 'loadModelSummary: capability report not found for avatarId='
+          + activeAvatar.avatarId.substring(0, 8) + ', generating on-demand');
+        try {
+          capabilityReport = await this.model3DService.generateCapabilityReportForAvatar(
+            activeAvatar.modelUri, activeAvatar.displayName,
+            activeAvatar.sourceSha256, activeAvatar.avatarId
+          );
+        } catch (e) {
+          Logger.warn(LOG_TAG, 'loadModelSummary generateCapabilityReportForAvatar failed: '
+            + (e as Error)?.message);
+        }
+      }
+      Logger.info(LOG_TAG, 'loadModelSummary: avatarId=' + activeAvatar.avatarId.substring(0, 8)
+        + ', reportFound=' + (capabilityReport !== null));
+    } else {
+      // 回退到全局键(向后兼容,无 Avatar 库场景)
+      try {
+        capabilityReport = await this.model3DService.getCapabilityReport();
+      } catch (e) {
+        Logger.warn(LOG_TAG, 'loadModelSummary getCapabilityReport failed: ' + (e as Error)?.message);
+      }
     }
     // 推导骨骼 Profile 和兼容等级(从 capabilityReport.autoMappingResult 获取)
     let skeletonProfile: SkeletonProfile = SkeletonProfile.Unknown;

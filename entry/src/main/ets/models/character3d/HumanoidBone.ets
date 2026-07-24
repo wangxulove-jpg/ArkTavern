@@ -118,6 +118,8 @@ export interface HumanoidBoneMapping {
   standardBone: HumanoidBone;
   /** 模型中的源节点名 */
   sourceNodeName: string;
+  /** T-4.1: 源节点索引(VRM 显式映射时直接使用,避免名称查找失败;-1 表示未设置) */
+  sourceNodeIndex: number;
   /** 映射置信度(0.0~1.0) */
   confidence: number;
   /** 是否为必需骨骼 */
