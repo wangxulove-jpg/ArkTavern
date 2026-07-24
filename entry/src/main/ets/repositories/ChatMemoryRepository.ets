@@ -16,7 +16,7 @@
 
 import { relationalStore } from '@kit.ArkData';
 import { DbHelper } from '../database/DbHelper';
-import { ChatMemory, createChatMemory } from '../models/ChatMemory';
+import { ChatMemory, createChatMemory, MemoryType } from '../models/ChatMemory';
 import { DatabaseError } from '../models/DatabaseError';
 import { nowMillis } from '../utils/Time';
 import { generateUuid } from '../utils/Uuid';
@@ -31,7 +31,14 @@ import {
   COLUMN_MEMORY_SUMMARY_VERSION,
   COLUMN_MEMORY_INHERITED_FROM_MEMORY_ID,
   COLUMN_UPDATED_AT,
-  COLUMN_CREATED_AT
+  COLUMN_CREATED_AT,
+  COLUMN_MEMORY_TYPE,
+  COLUMN_MEMORY_INVALIDATED,
+  COLUMN_MEMORY_TITLE,
+  COLUMN_MEMORY_DETAIL,
+  COLUMN_MEMORY_IMPORTANCE,
+  COLUMN_MEMORY_KEYWORDS_JSON,
+  COLUMN_MEMORY_SOURCE_HASH
 } from '../database/DatabaseConstants';
 import { memoryFromRow, memoryToBucket } from './ChatMemoryRepositoryMapper';
 
@@ -105,6 +112,84 @@ export class ChatMemoryRepository {
       rs.close();
     }
     return result;
+  }
+
+  // ===== v12: 多层记忆查询 =====
+
+  /**
+   * v12: 获取指定 Branch 的有效记忆(enabled=1 且 invalidated=0,按 endPosition ASC)。
+   * 失效或禁用的记忆不返回,用于 PromptBuilder 注入。
+   */
+  async listValidByBranchWithStore(
+    store: relationalStore.RdbStore,
+    branchId: string
+  ): Promise<ChatMemory[]> {
+    if (branchId.length === 0) {
+      throw DatabaseError.invalidData('listValidByBranch: branchId empty');
+    }
+    const predicates: relationalStore.RdbPredicates =
+      new relationalStore.RdbPredicates(TABLE_CHAT_MEMORIES);
+    predicates.equalTo(COLUMN_MEMORY_BRANCH_ID, branchId);
+    predicates.and();
+    predicates.equalTo(COLUMN_MEMORY_ENABLED, 1);
+    predicates.and();
+    predicates.equalTo(COLUMN_MEMORY_INVALIDATED, 0);
+    predicates.orderByAsc(COLUMN_MEMORY_END_POSITION);
+    const rs: relationalStore.ResultSet = await store.query(predicates);
+    const result: ChatMemory[] = [];
+    try {
+      while (rs.goToNextRow()) {
+        result.push(memoryFromRow(rs));
+      }
+    } finally {
+      rs.close();
+    }
+    return result;
+  }
+
+  async listValidByBranch(branchId: string): Promise<ChatMemory[]> {
+    const store: relationalStore.RdbStore = this.dbHelper.getStore();
+    return await this.listValidByBranchWithStore(store, branchId);
+  }
+
+  /**
+   * v12: 获取指定 Branch 某类型的有效记忆(enabled=1 且 invalidated=0)。
+   * 按 importance DESC, endPosition ASC 排序(高优先级在前)。
+   */
+  async listValidByBranchAndTypeWithStore(
+    store: relationalStore.RdbStore,
+    branchId: string,
+    memoryType: MemoryType
+  ): Promise<ChatMemory[]> {
+    if (branchId.length === 0) {
+      throw DatabaseError.invalidData('listValidByBranchAndType: branchId empty');
+    }
+    const predicates: relationalStore.RdbPredicates =
+      new relationalStore.RdbPredicates(TABLE_CHAT_MEMORIES);
+    predicates.equalTo(COLUMN_MEMORY_BRANCH_ID, branchId);
+    predicates.and();
+    predicates.equalTo(COLUMN_MEMORY_TYPE, memoryType);
+    predicates.and();
+    predicates.equalTo(COLUMN_MEMORY_ENABLED, 1);
+    predicates.and();
+    predicates.equalTo(COLUMN_MEMORY_INVALIDATED, 0);
+    predicates.orderByDesc(COLUMN_MEMORY_IMPORTANCE);
+    predicates.orderByAsc(COLUMN_MEMORY_END_POSITION);
+    const rs: relationalStore.ResultSet = await store.query(predicates);
+    const result: ChatMemory[] = [];
+    try {
+      while (rs.goToNextRow()) {
+        result.push(memoryFromRow(rs));
+      }
+    } finally {
+      rs.close();
+    }
+    return result;
+  }
+
+  async listValidByBranchAndType(branchId: string, memoryType: MemoryType): Promise<ChatMemory[]> {
+    const store: relationalStore.RdbStore = this.dbHelper.getStore();
+    return await this.listValidByBranchAndTypeWithStore(store, branchId, memoryType);
   }
 
   /**
@@ -311,6 +396,7 @@ export class ChatMemoryRepository {
   /**
    * 删除 Branch 中 endPosition >= threshold 的所有 Memory(用于编辑/切换 Swipe 后使摘要失效)。
    * 不区分继承/自产,因为失效后需要重新总结。
+   * 注意:这是硬删除。v12 推荐使用 softInvalidateFromPositionWithStore 进行软失效。
    */
   async invalidateFromPositionWithStore(
     store: relationalStore.RdbStore,
@@ -328,17 +414,47 @@ export class ChatMemoryRepository {
     await store.delete(predicates);
   }
 
+  /**
+   * v12: 软失效 Branch 中 endPosition >= threshold 的所有 Memory。
+   * 设置 invalidated=1,不删除数据,保留可追溯性。
+   * 失效记忆不再注入 Prompt,后台按需重建。
+   * 只失效当前 Branch 的记忆,不影响其他 Branch。
+   */
+  async softInvalidateFromPositionWithStore(
+    store: relationalStore.RdbStore,
+    branchId: string,
+    thresholdPosition: number
+  ): Promise<void> {
+    if (branchId.length === 0) {
+      throw DatabaseError.invalidData('softInvalidateFromPosition: branchId empty');
+    }
+    const predicates: relationalStore.RdbPredicates =
+      new relationalStore.RdbPredicates(TABLE_CHAT_MEMORIES);
+    predicates.equalTo(COLUMN_MEMORY_BRANCH_ID, branchId);
+    predicates.and();
+    predicates.greaterThanOrEqualTo(COLUMN_MEMORY_END_POSITION, thresholdPosition);
+    predicates.and();
+    predicates.equalTo(COLUMN_MEMORY_INVALIDATED, 0);
+    const bucket: relationalStore.ValuesBucket = {};
+    bucket[COLUMN_MEMORY_INVALIDATED] = 1;
+    bucket[COLUMN_UPDATED_AT] = nowMillis();
+    await store.update(bucket, predicates);
+  }
+
   // ===== Fork 支持 =====
 
   /**
    * 为 fork 复制祖先 Memory 到子 Branch(标记 inheritedFromMemoryId)。
-   * 只复制 endPosition <= forkPosition 的祖先 Memory(分叉点之前可用的)。
+   * 只复制 endPosition <= forkPosition 且未失效的祖先 Memory(分叉点之前可用的)。
    *
-   * 复制策略:
+   * v12 复制策略:
    * - 创建新的 Memory 记录(新 ID),branchId = childBranchId
    * - inheritedFromMemoryId = 原 Memory ID(标记继承)
-   * - 其余字段保持不变(summary / startMessageId / endMessageId / positions / createdAt)
+   * - 保留 summary / startMessageId / endMessageId / positions / createdAt
+   * - 保留 v12 字段(memoryType / title / detail / importance / keywordsJson / sourceHash)
+   * - invalidated 重置为 false(子 Branch 新起点)
    * - updatedAt 设为当前时间(标记继承时间)
+   * - 只复制 core / chapter / rolling 类型(不复制已失效的)
    *
    * 原 Memory 不删除,继续归祖先 Branch 所有。
    */
@@ -354,12 +470,14 @@ export class ChatMemoryRepository {
     if (childBranchId.length === 0) {
       throw DatabaseError.invalidData('copyAncestorMemories: childBranchId empty');
     }
-    // 读取源 Branch 中 endPosition <= forkPosition 的所有 Memory
+    // 读取源 Branch 中 endPosition <= forkPosition 且未失效的 Memory
     const predicates: relationalStore.RdbPredicates =
       new relationalStore.RdbPredicates(TABLE_CHAT_MEMORIES);
     predicates.equalTo(COLUMN_MEMORY_BRANCH_ID, sourceBranchId);
     predicates.and();
     predicates.lessThanOrEqualTo(COLUMN_MEMORY_END_POSITION, forkPosition);
+    predicates.and();
+    predicates.equalTo(COLUMN_MEMORY_INVALIDATED, 0);
     predicates.orderByAsc(COLUMN_MEMORY_END_POSITION);
     const rs: relationalStore.ResultSet = await store.query(predicates);
     const ancestors: ChatMemory[] = [];
@@ -378,36 +496,30 @@ export class ChatMemoryRepository {
     const now: number = nowMillis();
     for (let i = 0; i < ancestors.length; i++) {
       const ancestor: ChatMemory = ancestors[i];
-      // 创建继承副本(新 ID)
-      const inherited: ChatMemory = createChatMemory(
-        generateUuid(),
-        ancestor.chatId,
-        childBranchId,
-        ancestor.startMessageId,
-        ancestor.endMessageId,
-        ancestor.startPosition,
-        ancestor.endPosition,
-        ancestor.summary,
-        ancestor.createdAt, // 保留原创建时间
-        ancestor.id // 标记继承来源
-      );
-      // 更新 updatedAt 为当前时间
-      const updated: ChatMemory = {
-        id: inherited.id,
-        chatId: inherited.chatId,
-        branchId: inherited.branchId,
-        startMessageId: inherited.startMessageId,
-        endMessageId: inherited.endMessageId,
-        startPosition: inherited.startPosition,
-        endPosition: inherited.endPosition,
-        summary: inherited.summary,
-        createdAt: inherited.createdAt,
+      // 创建继承副本(新 ID),保留所有字段,invalidated 重置为 false
+      const inherited: ChatMemory = {
+        id: generateUuid(),
+        chatId: ancestor.chatId,
+        branchId: childBranchId,
+        startMessageId: ancestor.startMessageId,
+        endMessageId: ancestor.endMessageId,
+        startPosition: ancestor.startPosition,
+        endPosition: ancestor.endPosition,
+        summary: ancestor.summary,
+        createdAt: ancestor.createdAt,
         updatedAt: now,
         enabled: ancestor.enabled,
         summaryVersion: ancestor.summaryVersion,
-        inheritedFromMemoryId: inherited.inheritedFromMemoryId
+        inheritedFromMemoryId: ancestor.id,
+        memoryType: ancestor.memoryType,
+        title: ancestor.title,
+        detail: ancestor.detail,
+        importance: ancestor.importance,
+        keywordsJson: ancestor.keywordsJson,
+        sourceHash: ancestor.sourceHash,
+        invalidated: false
       };
-      await this.insertWithStore(store, updated);
+      await this.insertWithStore(store, inherited);
     }
   }
 }

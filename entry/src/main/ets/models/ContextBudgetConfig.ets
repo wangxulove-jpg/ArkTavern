@@ -44,12 +44,61 @@ export const MIN_CUSTOM_RESERVED_OUTPUT_TOKENS: number = 256;
 export const MAX_CUSTOM_RESERVED_OUTPUT_TOKENS: number = 384000;
 
 /**
- * 安全余量(Token):
+ * 安全余量下限(Token):
  * - 用于 Token 估算误差(本地估算器与模型实际 tokenizer 差异)
  * - 用于 Provider 包装(系统消息、JSON 序列化等附加 Token)
- * - 输入可用预算 = contextWindow - reservedOutputTokens - BUDGET_SAFETY_MARGIN
+ * - 至少 1024 Token,避免小上下文窗口时余量不足
  */
-export const BUDGET_SAFETY_MARGIN: number = 512;
+export const MIN_SAFETY_MARGIN: number = 1024;
+
+/**
+ * 安全余量比例(占 contextWindow 的比例)。
+ * 推荐 3%,即 contextWindow 越大,余量也按比例增大。
+ */
+export const SAFETY_MARGIN_RATIO: number = 0.03;
+
+/**
+ * 安全余量上限(Token):
+ * - 防止超大上下文窗口(如 1M)时余量过大浪费
+ * - 8192 Token 足以覆盖估算误差和 Provider 包装
+ */
+export const MAX_SAFETY_MARGIN: number = 8192;
+
+/**
+ * 历史默认目标保留条数(最近原始消息窗口)。
+ * - 默认 30 条,可根据 Token 预算动态增减
+ * - 不是绝对固定值,Token 充足时可多于 30 条
+ */
+export const DEFAULT_RECENT_WINDOW_TARGET: number = 30;
+
+/**
+ * 历史最少完整轮次(User+Assistant 对)。
+ * - Token 极度不足时,至少保留最近若干完整轮次
+ * - 避免上下文裁剪到只剩半截对话
+ */
+export const MIN_COMPLETE_TURNS: number = 2;
+
+/**
+ * 动态计算安全余量。
+ * 规则:取 max(MIN_SAFETY_MARGIN, contextWindow * SAFETY_MARGIN_RATIO),并限制在 MAX_SAFETY_MARGIN 以内。
+ *
+ * @param contextWindow 当前上下文窗口大小
+ * @returns 安全余量 Token 数
+ */
+export function calculateSafetyMargin(contextWindow: number): number {
+  if (contextWindow <= 0) {
+    return MIN_SAFETY_MARGIN;
+  }
+  const ratioBased: number = Math.floor(contextWindow * SAFETY_MARGIN_RATIO);
+  const margin: number = Math.max(MIN_SAFETY_MARGIN, ratioBased);
+  return Math.min(margin, MAX_SAFETY_MARGIN);
+}
+
+/**
+ * @deprecated 使用 calculateSafetyMargin(contextWindow) 替代。
+ * 保留仅为向后兼容,新代码不应使用。
+ */
+export const BUDGET_SAFETY_MARGIN: number = MIN_SAFETY_MARGIN;
 
 /**
  * 可选上下文窗口档位(用户可在 UI 快速选择)。

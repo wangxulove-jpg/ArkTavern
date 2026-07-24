@@ -468,6 +468,43 @@ export class MessageRepository {
     }
   }
 
+  /**
+   * 批量按 ID 查询消息(使用 RdbPredicates.in 安全参数化,不拼接 SQL)。
+   * 返回 Map<id, ChatMessage>,调用方按需从 Map 取值。
+   * 分批查询(每批 100 个 ID),避免 SQLite 参数数量上限。
+   *
+   * @param store 事务/连接复用 store
+   * @param ids 要查询的消息 ID 列表
+   * @returns Map<id, ChatMessage>(不存在的 ID 不会出现在 Map 中)
+   */
+  async listByIdsWithStore(
+    store: relationalStore.RdbStore,
+    ids: string[]
+  ): Promise<Map<string, ChatMessage>> {
+    const result: Map<string, ChatMessage> = new Map<string, ChatMessage>();
+    if (ids.length === 0) {
+      return result;
+    }
+    const BATCH_SIZE: number = 100;
+    for (let i: number = 0; i < ids.length; i += BATCH_SIZE) {
+      const end: number = Math.min(i + BATCH_SIZE, ids.length);
+      const batch: string[] = ids.slice(i, end);
+      const predicates: relationalStore.RdbPredicates =
+        new relationalStore.RdbPredicates(TABLE_MESSAGES);
+      predicates.in(COLUMN_ID, batch);
+      const rs: relationalStore.ResultSet = await store.query(predicates);
+      try {
+        while (rs.goToNextRow()) {
+          const msg: ChatMessage = messageFromRow(rs);
+          result.set(msg.id, msg);
+        }
+      } finally {
+        rs.close();
+      }
+    }
+    return result;
+  }
+
   async listByChat(
     chatId: string,
     options?: MessagePageOptions

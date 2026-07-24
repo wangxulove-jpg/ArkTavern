@@ -19,7 +19,7 @@
 
 import { relationalStore } from '@kit.ArkData';
 import { DbHelper } from '../database/DbHelper';
-import { ChatMemory } from '../models/ChatMemory';
+import { ChatMemory, MemoryType } from '../models/ChatMemory';
 import { ChatMemoryRepository } from '../repositories/ChatMemoryRepository';
 
 export class MemoryPersistenceService {
@@ -50,6 +50,22 @@ export class MemoryPersistenceService {
    */
   async listByBranch(branchId: string): Promise<ChatMemory[]> {
     return await this.repository.listByBranch(branchId);
+  }
+
+  /**
+   * v12: 获取指定 Branch 的有效 Memory(enabled=1 且 invalidated=0)。
+   * 用于 PromptBuilder 注入和 MemoryService 多层记忆加载。
+   */
+  async listValidByBranch(branchId: string): Promise<ChatMemory[]> {
+    return await this.repository.listValidByBranch(branchId);
+  }
+
+  /**
+   * v12: 获取指定 Branch 某类型的有效 Memory(enabled=1 且 invalidated=0)。
+   * 按 importance DESC, endPosition ASC 排序。
+   */
+  async listValidByBranchAndType(branchId: string, memoryType: MemoryType): Promise<ChatMemory[]> {
+    return await this.repository.listValidByBranchAndType(branchId, memoryType);
   }
 
   /**
@@ -108,12 +124,23 @@ export class MemoryPersistenceService {
   }
 
   /**
-   * 使 Branch 中 endPosition >= thresholdPosition 的 Memory 失效(删除)。
+   * 使 Branch 中 endPosition >= thresholdPosition 的 Memory 失效(硬删除)。
    * 用于编辑消息或切换 Swipe 后使摘要过期。
+   * v12 推荐使用 softInvalidateFromPosition 进行软失效。
    */
   async invalidateFromPosition(branchId: string, thresholdPosition: number): Promise<void> {
     const store: relationalStore.RdbStore = this.dbHelper.getStore();
     await this.repository.invalidateFromPositionWithStore(store, branchId, thresholdPosition);
+  }
+
+  /**
+   * v12: 软失效 Branch 中 endPosition >= thresholdPosition 的 Memory。
+   * 设置 invalidated=1,不删除数据,保留可追溯性。
+   * 失效记忆不再注入 Prompt,后台按需重建。
+   */
+  async softInvalidateFromPosition(branchId: string, thresholdPosition: number): Promise<void> {
+    const store: relationalStore.RdbStore = this.dbHelper.getStore();
+    await this.repository.softInvalidateFromPositionWithStore(store, branchId, thresholdPosition);
   }
 
   // ===== 事务内清理(供 ChatPersistenceOperations 调用)=====
@@ -133,8 +160,9 @@ export class MemoryPersistenceService {
 
   /**
    * 事务内:为 fork 复制祖先 Memory 到子 Branch。
-   * 只复制 endPosition <= forkPosition 的祖先 Memory(分叉点之前可用的)。
+   * 只复制 endPosition <= forkPosition 且未失效的祖先 Memory(分叉点之前可用的)。
    * 复制品标记 inheritedFromMemoryId,不删除原 Memory。
+   * v12: 保留所有多层记忆字段,invalidated 重置为 false。
    */
   async copyAncestorMemoriesThroughPositionWithStore(
     store: relationalStore.RdbStore,

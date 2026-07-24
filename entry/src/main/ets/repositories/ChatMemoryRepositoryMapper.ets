@@ -8,7 +8,7 @@
  */
 
 import { relationalStore } from '@kit.ArkData';
-import { ChatMemory } from '../models/ChatMemory';
+import { ChatMemory, MemoryType, DEFAULT_MEMORY_TYPE } from '../models/ChatMemory';
 import { DatabaseError } from '../models/DatabaseError';
 import {
   COLUMN_MEMORY_ID,
@@ -23,7 +23,14 @@ import {
   COLUMN_UPDATED_AT,
   COLUMN_MEMORY_ENABLED,
   COLUMN_MEMORY_SUMMARY_VERSION,
-  COLUMN_MEMORY_INHERITED_FROM_MEMORY_ID
+  COLUMN_MEMORY_INHERITED_FROM_MEMORY_ID,
+  COLUMN_MEMORY_TYPE,
+  COLUMN_MEMORY_TITLE,
+  COLUMN_MEMORY_DETAIL,
+  COLUMN_MEMORY_IMPORTANCE,
+  COLUMN_MEMORY_KEYWORDS_JSON,
+  COLUMN_MEMORY_SOURCE_HASH,
+  COLUMN_MEMORY_INVALIDATED
 } from '../database/DatabaseConstants';
 import {
   booleanToInt,
@@ -32,8 +39,21 @@ import {
   isValidSequence
 } from './RepositoryMappers';
 
+/** 合法记忆类型集合 */
+const VALID_MEMORY_TYPES: Set<string> = new Set(['core', 'chapter', 'rolling', 'legacy']);
+
+/** 将字符串安全转换为 MemoryType,非法值回退为默认 */
+function parseMemoryType(raw: string): MemoryType {
+  if (VALID_MEMORY_TYPES.has(raw)) {
+    return raw as MemoryType;
+  }
+  return DEFAULT_MEMORY_TYPE;
+}
+
 /**
  * 从 ResultSet 读取 ChatMemory(当前行)。
+ * v12: 同时读取 memoryType / title / detail / importance / keywordsJson / sourceHash / invalidated。
+ *      旧表(v8~v11 迁移中)这些列由 ALTER 添加 DEFAULT 值,读取安全。
  */
 export function memoryFromRow(rs: relationalStore.ResultSet): ChatMemory {
   const id: string = rs.getString(rs.getColumnIndex(COLUMN_MEMORY_ID));
@@ -85,6 +105,31 @@ export function memoryFromRow(rs: relationalStore.ResultSet): ChatMemory {
     (inheritedCol >= 0 && !rs.isColumnNull(inheritedCol))
       ? rs.getString(inheritedCol) : undefined;
 
+  // v12 多层记忆字段(旧数据迁移后 DEFAULT 值已由数据库填充)
+  const memoryTypeCol: number = rs.getColumnIndex(COLUMN_MEMORY_TYPE);
+  const memoryType: MemoryType = memoryTypeCol >= 0
+    ? parseMemoryType(rs.getString(memoryTypeCol))
+    : DEFAULT_MEMORY_TYPE;
+
+  const titleCol: number = rs.getColumnIndex(COLUMN_MEMORY_TITLE);
+  const title: string = titleCol >= 0 ? rs.getString(titleCol) : '';
+
+  const detailCol: number = rs.getColumnIndex(COLUMN_MEMORY_DETAIL);
+  const detail: string = detailCol >= 0 ? rs.getString(detailCol) : '';
+
+  const importanceCol: number = rs.getColumnIndex(COLUMN_MEMORY_IMPORTANCE);
+  const importance: number = importanceCol >= 0 ? rs.getLong(importanceCol) : 0;
+
+  const keywordsCol: number = rs.getColumnIndex(COLUMN_MEMORY_KEYWORDS_JSON);
+  const keywordsJson: string = keywordsCol >= 0 ? rs.getString(keywordsCol) : '[]';
+
+  const sourceHashCol: number = rs.getColumnIndex(COLUMN_MEMORY_SOURCE_HASH);
+  const sourceHash: string = sourceHashCol >= 0 ? rs.getString(sourceHashCol) : '';
+
+  const invalidatedCol: number = rs.getColumnIndex(COLUMN_MEMORY_INVALIDATED);
+  const invalidatedInt: number = invalidatedCol >= 0 ? rs.getLong(invalidatedCol) : 0;
+  const invalidated: boolean = intToBoolean(invalidatedInt);
+
   return {
     id,
     chatId,
@@ -98,12 +143,20 @@ export function memoryFromRow(rs: relationalStore.ResultSet): ChatMemory {
     updatedAt,
     enabled,
     summaryVersion,
-    inheritedFromMemoryId
+    inheritedFromMemoryId,
+    memoryType,
+    title,
+    detail,
+    importance,
+    keywordsJson,
+    sourceHash,
+    invalidated
   };
 }
 
 /**
  * ChatMemory → ValuesBucket(用于 insert / replace)。
+ * v12: 包含所有多层记忆字段。
  */
 export function memoryToBucket(memory: ChatMemory): relationalStore.ValuesBucket {
   const bucket: relationalStore.ValuesBucket = {};
@@ -124,5 +177,12 @@ export function memoryToBucket(memory: ChatMemory): relationalStore.ValuesBucket
   } else {
     bucket[COLUMN_MEMORY_INHERITED_FROM_MEMORY_ID] = null;
   }
+  bucket[COLUMN_MEMORY_TYPE] = memory.memoryType;
+  bucket[COLUMN_MEMORY_TITLE] = memory.title;
+  bucket[COLUMN_MEMORY_DETAIL] = memory.detail;
+  bucket[COLUMN_MEMORY_IMPORTANCE] = memory.importance;
+  bucket[COLUMN_MEMORY_KEYWORDS_JSON] = memory.keywordsJson;
+  bucket[COLUMN_MEMORY_SOURCE_HASH] = memory.sourceHash;
+  bucket[COLUMN_MEMORY_INVALIDATED] = booleanToInt(memory.invalidated);
   return bucket;
 }

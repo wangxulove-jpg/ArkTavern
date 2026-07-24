@@ -6,12 +6,28 @@
  * - 通过 startPosition/endPosition 记录覆盖范围
  * - inheritedFromMemoryId 标记从祖先 Branch 继承而来(共享,不复制)
  *
+ * v12 多层记忆扩展:
+ * - memoryType: 记忆类型(core/chapter/rolling/legacy)
+ * - title: 记忆标题(章节标题或核心记忆标签)
+ * - detail: 详细内容(比 summary 更丰富)
+ * - importance: 重要度(0-100,用于注入优先级排序)
+ * - keywordsJson: 关键词 JSON 数组(用于相关记忆匹配)
+ * - sourceHash: 源内容哈希(用于检测源消息变化)
+ * - invalidated: 是否已失效(编辑/删除/Swipe 切换后标记,不再注入 Prompt)
+ *
  * 设计约束:
- * - 不存储消息正文,只存储 summary
+ * - 不存储消息正文,只存储 summary / detail
  * - 范围 [startPosition, endPosition] 闭区间
- * - 同一 Branch 可有多条 Memory(覆盖不同范围),但通常只保留最新一条
+ * - 同一 Branch 可有多条 Memory(覆盖不同范围/不同类型)
  * - 删除 Branch 时,继承来的共享祖先 Memory 不得被误删
+ * - 失效记忆(invalidated=true)不注入 Prompt,但保留数据以便追溯
  */
+
+/** 记忆类型枚举(v12 引入) */
+export type MemoryType = 'core' | 'chapter' | 'rolling' | 'legacy';
+
+/** 默认记忆类型:旧数据迁移后为 'rolling' */
+export const DEFAULT_MEMORY_TYPE: MemoryType = 'rolling';
 
 /**
  * 单条长期记忆。
@@ -31,7 +47,7 @@ export interface ChatMemory {
   readonly startPosition: number;
   /** 结束 position(闭区间) */
   readonly endPosition: number;
-  /** 摘要文本 */
+  /** 摘要文本(简短摘要,兼容旧字段) */
   summary: string;
   /** 创建时间(ms) */
   readonly createdAt: number;
@@ -47,6 +63,20 @@ export interface ChatMemory {
    * - 非 undefined:从祖先继承,删除 Branch 时不得删除该 Memory(由原 Branch 持有)
    */
   readonly inheritedFromMemoryId?: string;
+  /** v12: 记忆类型(core/chapter/rolling/legacy),默认 'rolling' */
+  memoryType: MemoryType;
+  /** v12: 记忆标题(章节标题或核心记忆标签),默认 '' */
+  title: string;
+  /** v12: 详细内容(比 summary 更丰富的章节摘要),默认 '' */
+  detail: string;
+  /** v12: 重要度(0-100,用于注入优先级排序),默认 0 */
+  importance: number;
+  /** v12: 关键词 JSON 数组字符串(用于相关记忆匹配),默认 '[]' */
+  keywordsJson: string;
+  /** v12: 源内容哈希(用于检测源消息变化),默认 '' */
+  sourceHash: string;
+  /** v12: 是否已失效(编辑/删除/Swipe 切换后标记,不再注入 Prompt),默认 false */
+  invalidated: boolean;
 }
 
 /**
@@ -101,6 +131,7 @@ export const DEFAULT_SUMMARY_POINTS: MemorySummaryPoints = {
 
 /**
  * 工厂函数:创建新的 ChatMemory。
+ * v12 新字段使用默认值,可通过 withMemoryType / withDetail 等单独设置。
  */
 export function createChatMemory(
   id: string,
@@ -127,7 +158,14 @@ export function createChatMemory(
     updatedAt: now,
     enabled: true,
     summaryVersion: 1,
-    inheritedFromMemoryId
+    inheritedFromMemoryId,
+    memoryType: DEFAULT_MEMORY_TYPE,
+    title: '',
+    detail: '',
+    importance: 0,
+    keywordsJson: '[]',
+    sourceHash: '',
+    invalidated: false
   };
 }
 
@@ -148,7 +186,14 @@ export function withUpdatedSummary(memory: ChatMemory, newSummary: string, now: 
     updatedAt: now,
     enabled: memory.enabled,
     summaryVersion: memory.summaryVersion + 1,
-    inheritedFromMemoryId: memory.inheritedFromMemoryId
+    inheritedFromMemoryId: memory.inheritedFromMemoryId,
+    memoryType: memory.memoryType,
+    title: memory.title,
+    detail: memory.detail,
+    importance: memory.importance,
+    keywordsJson: memory.keywordsJson,
+    sourceHash: memory.sourceHash,
+    invalidated: memory.invalidated
   };
 }
 
@@ -175,7 +220,14 @@ export function withExtendedRange(
     updatedAt: now,
     enabled: memory.enabled,
     summaryVersion: memory.summaryVersion + 1,
-    inheritedFromMemoryId: memory.inheritedFromMemoryId
+    inheritedFromMemoryId: memory.inheritedFromMemoryId,
+    memoryType: memory.memoryType,
+    title: memory.title,
+    detail: memory.detail,
+    importance: memory.importance,
+    keywordsJson: memory.keywordsJson,
+    sourceHash: memory.sourceHash,
+    invalidated: memory.invalidated
   };
 }
 
@@ -196,6 +248,167 @@ export function withEnabled(memory: ChatMemory, enabled: boolean, now: number): 
     updatedAt: now,
     enabled,
     summaryVersion: memory.summaryVersion,
-    inheritedFromMemoryId: memory.inheritedFromMemoryId
+    inheritedFromMemoryId: memory.inheritedFromMemoryId,
+    memoryType: memory.memoryType,
+    title: memory.title,
+    detail: memory.detail,
+    importance: memory.importance,
+    keywordsJson: memory.keywordsJson,
+    sourceHash: memory.sourceHash,
+    invalidated: memory.invalidated
   };
+}
+
+/**
+ * v12 不可变更新:memoryType 字段。
+ */
+export function withMemoryType(memory: ChatMemory, memoryType: MemoryType, now: number): ChatMemory {
+  return {
+    id: memory.id,
+    chatId: memory.chatId,
+    branchId: memory.branchId,
+    startMessageId: memory.startMessageId,
+    endMessageId: memory.endMessageId,
+    startPosition: memory.startPosition,
+    endPosition: memory.endPosition,
+    summary: memory.summary,
+    createdAt: memory.createdAt,
+    updatedAt: now,
+    enabled: memory.enabled,
+    summaryVersion: memory.summaryVersion,
+    inheritedFromMemoryId: memory.inheritedFromMemoryId,
+    memoryType,
+    title: memory.title,
+    detail: memory.detail,
+    importance: memory.importance,
+    keywordsJson: memory.keywordsJson,
+    sourceHash: memory.sourceHash,
+    invalidated: memory.invalidated
+  };
+}
+
+/**
+ * v12 不可变更新:detail 字段(同时更新 updatedAt)。
+ */
+export function withDetail(memory: ChatMemory, detail: string, now: number): ChatMemory {
+  return {
+    id: memory.id,
+    chatId: memory.chatId,
+    branchId: memory.branchId,
+    startMessageId: memory.startMessageId,
+    endMessageId: memory.endMessageId,
+    startPosition: memory.startPosition,
+    endPosition: memory.endPosition,
+    summary: memory.summary,
+    createdAt: memory.createdAt,
+    updatedAt: now,
+    enabled: memory.enabled,
+    summaryVersion: memory.summaryVersion,
+    inheritedFromMemoryId: memory.inheritedFromMemoryId,
+    memoryType: memory.memoryType,
+    title: memory.title,
+    detail,
+    importance: memory.importance,
+    keywordsJson: memory.keywordsJson,
+    sourceHash: memory.sourceHash,
+    invalidated: memory.invalidated
+  };
+}
+
+/**
+ * v12 不可变更新:title 字段。
+ */
+export function withTitle(memory: ChatMemory, title: string, now: number): ChatMemory {
+  return {
+    id: memory.id,
+    chatId: memory.chatId,
+    branchId: memory.branchId,
+    startMessageId: memory.startMessageId,
+    endMessageId: memory.endMessageId,
+    startPosition: memory.startPosition,
+    endPosition: memory.endPosition,
+    summary: memory.summary,
+    createdAt: memory.createdAt,
+    updatedAt: now,
+    enabled: memory.enabled,
+    summaryVersion: memory.summaryVersion,
+    inheritedFromMemoryId: memory.inheritedFromMemoryId,
+    memoryType: memory.memoryType,
+    title,
+    detail: memory.detail,
+    importance: memory.importance,
+    keywordsJson: memory.keywordsJson,
+    sourceHash: memory.sourceHash,
+    invalidated: memory.invalidated
+  };
+}
+
+/**
+ * v12 不可变更新:invalidated 字段(标记失效/恢复)。
+ */
+export function withInvalidated(memory: ChatMemory, invalidated: boolean, now: number): ChatMemory {
+  return {
+    id: memory.id,
+    chatId: memory.chatId,
+    branchId: memory.branchId,
+    startMessageId: memory.startMessageId,
+    endMessageId: memory.endMessageId,
+    startPosition: memory.startPosition,
+    endPosition: memory.endPosition,
+    summary: memory.summary,
+    createdAt: memory.createdAt,
+    updatedAt: now,
+    enabled: memory.enabled,
+    summaryVersion: memory.summaryVersion,
+    inheritedFromMemoryId: memory.inheritedFromMemoryId,
+    memoryType: memory.memoryType,
+    title: memory.title,
+    detail: memory.detail,
+    importance: memory.importance,
+    keywordsJson: memory.keywordsJson,
+    sourceHash: memory.sourceHash,
+    invalidated
+  };
+}
+
+/**
+ * v12 不可变更新:多字段批量更新(用于章节生成时一次性设置 title/detail/keywords/importance 等)。
+ */
+export function withMemoryMetadata(
+  memory: ChatMemory,
+  updates: MemoryMetadataUpdates,
+  now: number
+): ChatMemory {
+  return {
+    id: memory.id,
+    chatId: memory.chatId,
+    branchId: memory.branchId,
+    startMessageId: memory.startMessageId,
+    endMessageId: memory.endMessageId,
+    startPosition: memory.startPosition,
+    endPosition: memory.endPosition,
+    summary: memory.summary,
+    createdAt: memory.createdAt,
+    updatedAt: now,
+    enabled: memory.enabled,
+    summaryVersion: memory.summaryVersion,
+    inheritedFromMemoryId: memory.inheritedFromMemoryId,
+    memoryType: updates.memoryType !== undefined ? updates.memoryType : memory.memoryType,
+    title: updates.title !== undefined ? updates.title : memory.title,
+    detail: updates.detail !== undefined ? updates.detail : memory.detail,
+    importance: updates.importance !== undefined ? updates.importance : memory.importance,
+    keywordsJson: updates.keywordsJson !== undefined ? updates.keywordsJson : memory.keywordsJson,
+    sourceHash: updates.sourceHash !== undefined ? updates.sourceHash : memory.sourceHash,
+    invalidated: memory.invalidated
+  };
+}
+
+/** withMemoryMetadata 的更新参数 */
+export interface MemoryMetadataUpdates {
+  title?: string;
+  detail?: string;
+  importance?: number;
+  keywordsJson?: string;
+  sourceHash?: string;
+  memoryType?: MemoryType;
 }

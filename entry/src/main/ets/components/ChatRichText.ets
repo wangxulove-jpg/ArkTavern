@@ -5,7 +5,7 @@
  * - 接收原始文本和发送者信息,解析为富文本片段并渲染
  * - 支持 Markdown 子集(加粗/斜体/删除线/代码/链接/引用/列表)
  * - 支持角色对白差异化配色
- * - 支持流式渲染(节流刷新)
+ * - 支持流式渲染(节流刷新,不再叠加逐字打字机)
  * - 支持长按复制原始文本
  * - 支持字体大小/行间距缩放
  *
@@ -36,8 +36,6 @@ export type ChatSenderType = 'user' | 'assistant' | 'character' | 'narrator' | '
 interface CacheEntry {
   readonly segments: ChatTextSegment[];
   readonly contentHash: number;
-  readonly settingsVersion: number;
-  readonly senderCharacterId: string;
 }
 
 /** 简单字符串哈希(FNV-1a 32位) */
@@ -67,67 +65,51 @@ export struct ChatRichText {
 
   /** 当前解析的片段(状态) */
   @State private segments: ChatTextSegment[] = [];
-  /** 上次解析的内容哈希 */
-  private lastContentHash: number = 0;
-  /** 上次解析的设置版本 */
-  private lastSettingsVersion: number = -1;
 
-  // ===== 打字机效果 =====
-  /** 当前已显示的字符数(打字机效果) */
-  private displayedLength: number = 0;
-  /** 打字机定时器 ID */
-  private typewriterTimerId: number = -1;
-  /** 打字机间隔(ms):60ms ≈ 一帧(60fps 帧间隔 16ms 的 ~4 倍),便于肉眼观察 */
-  private static readonly TYPEWRITER_INTERVAL_MS: number = 60;
-  /** 每步推进的字符数:1 字符/帧 ≈ 16 字符/秒,接近真人打字速度 */
-  private static readonly TYPEWRITER_CHARS_PER_STEP: number = 1;
+  // ===== 流式解析节流 =====
+  /** 节流定时器 ID(-1 表示无 pending 解析) */
+  private parseTimerId: number = -1;
+  /** 上次解析时间戳(ms) */
+  private lastParseTime: number = 0;
+  /** 节流间隔(ms):流式期间约 50ms 解析一次,平衡流畅度与性能 */
+  private static readonly STREAM_PARSE_INTERVAL_MS: number = 50;
 
-  /** 解析缓存(key = content hash + settings version + senderCharacterId) */
+  /** 解析缓存(LRU,key = content hash + 设置指纹 + senderCharacterId) */
   private static cache: Map<string, CacheEntry> = new Map<string, CacheEntry>();
-  private static readonly CACHE_MAX_SIZE: number = 100;
+  /** 缓存上限(LRU,达到后淘汰最旧条目) */
+  private static readonly CACHE_MAX_SIZE: number = 200;
 
   aboutToAppear(): void {
-    // 流式消息:从 0 开始,启动打字机逐字显示
-    // 非流式消息:立即显示全部(历史消息)
-    if (this.isStreaming) {
-      this.displayedLength = 0;
-      this.doParse();
-      this.startTypewriter();
-    } else {
-      this.displayedLength = this.content.length;
-      this.doParse();
-    }
+    // 流式和非流式都直接解析完整 content(不再使用打字机逐字显示)
+    this.doParse();
   }
 
   aboutToDisappear(): void {
-    this.clearTypewriter();
+    this.clearParseTimer();
   }
 
   /**
    * @Watch 回调:content 变化时重新解析。
-   * 流式期间通过打字机效果逐步显示,非流式立即显示。
+   * 流式期间节流解析(约 50ms 一次),非流式立即解析。
    */
   private onContentChange(): void {
     if (this.isStreaming) {
-      this.startTypewriter();
+      this.scheduleStreamParse();
     } else {
-      this.clearTypewriter();
-      this.displayedLength = this.content.length;
+      this.clearParseTimer();
       this.doParse();
     }
   }
 
   /**
-   * @Watch 回调:settings 变化时重新解析。
-   * 不清空 displayedLength(保留当前显示位置),仅重新解析。
+   * @Watch 回调:settings 变化时立即重新解析。
    */
   private onSettingsChange(): void {
     this.doParse();
   }
 
   /**
-   * @Watch 回调:senderCharacterId 变化时重新解析(应用角色颜色)。
-   * 不清空 displayedLength(保留当前显示位置),仅重新解析。
+   * @Watch 回调:senderCharacterId 变化时立即重新解析(应用角色颜色)。
    */
   private onSenderChange(): void {
     this.doParse();
@@ -135,80 +117,63 @@ export struct ChatRichText {
 
   /**
    * @Watch 回调:isStreaming 变化时重新解析。
-   * 生成完成(isStreaming: true → false)时立即显示全部内容,
-   * 确保打字机效果结束时无残留未显示字符。
+   * 生成完成(isStreaming: true → false)时立即完整解析,确保最终内容正确。
    */
   private onStreamingChange(): void {
     if (!this.isStreaming) {
-      this.clearTypewriter();
-      this.displayedLength = this.content.length;
+      this.clearParseTimer();
       this.doParse();
     }
   }
 
-  // ===== 打字机效果实现 =====
+  // ===== 流式解析节流实现 =====
 
   /**
-   * 清除打字机定时器。
+   * 清除节流定时器。
    */
-  private clearTypewriter(): void {
-    if (this.typewriterTimerId !== -1) {
-      clearTimeout(this.typewriterTimerId);
-      this.typewriterTimerId = -1;
+  private clearParseTimer(): void {
+    if (this.parseTimerId !== -1) {
+      clearTimeout(this.parseTimerId);
+      this.parseTimerId = -1;
     }
   }
 
   /**
-   * 启动打字机效果。
-   * 如果已有定时器在运行,不重复启动(定时器会持续读取最新 this.content)。
-   * 如果已显示完毕,不启动。
+   * 调度流式解析(leading + trailing throttle)。
+   * - 首次(距上次 >= STREAM_PARSE_INTERVAL_MS)立即解析
+   * - 后续在间隔内的调用合并为一次延迟解析
    */
-  private startTypewriter(): void {
-    if (this.typewriterTimerId !== -1) {
+  private scheduleStreamParse(): void {
+    if (this.parseTimerId !== -1) {
+      // 已有 pending 解析,本次调用被合并
       return;
     }
-    if (this.displayedLength >= this.content.length) {
-      return;
-    }
-    this.stepTypewriter();
-  }
-
-  /**
-   * 打字机单步:推进 displayedLength,解析截断内容,然后调度下一步。
-   */
-  private stepTypewriter(): void {
-    if (this.displayedLength < this.content.length) {
-      const remaining: number = this.content.length - this.displayedLength;
-      const step: number = Math.min(ChatRichText.TYPEWRITER_CHARS_PER_STEP, remaining);
-      this.displayedLength += step;
+    const now: number = Date.now();
+    const elapsed: number = now - this.lastParseTime;
+    if (elapsed >= ChatRichText.STREAM_PARSE_INTERVAL_MS) {
       this.doParse();
-    }
-    // 调度下一步(如果还有未显示内容)
-    if (this.displayedLength < this.content.length) {
-      this.typewriterTimerId = setTimeout((): void => {
-        this.typewriterTimerId = -1;
-        this.stepTypewriter();
-      }, ChatRichText.TYPEWRITER_INTERVAL_MS);
     } else {
-      this.typewriterTimerId = -1;
+      const delay: number = ChatRichText.STREAM_PARSE_INTERVAL_MS - elapsed;
+      this.parseTimerId = setTimeout((): void => {
+        this.parseTimerId = -1;
+        this.doParse();
+      }, delay);
     }
   }
 
   /**
    * 执行解析。
    *
-   * 打字机效果:实际显示内容 = this.content.substring(0, this.displayedLength)。
-   * 流式期间 displayedLength 由 stepTypewriter 逐步推进,产生逐字显示效果。
-   * 非流式期间 displayedLength === content.length,显示全部。
+   * 流式和非流式都解析完整 content(SSE 已具备逐步显示效果,不再叠加打字机)。
+   * 未闭合 Markdown 由 ChatTextParser 安全降级为普通文本。
    *
    * 缓存策略:
-   * - 流式期间(打字机运行中)跳过缓存读写,避免高频中间状态污染 cache
-   * - 非流式期间(最终内容)使用缓存复用,避免历史消息重复解析
+   * - 非流式:使用 LRU 缓存复用,避免历史消息重复解析
+   * - 流式:跳过缓存(中间状态不需要缓存),直接解析
    */
   private doParse(): void {
-    // 打字机截断:只解析到 displayedLength
-    const displayContent: string = this.content.substring(0, this.displayedLength);
-    if (displayContent.length === 0) {
+    this.lastParseTime = Date.now();
+    if (this.content.length === 0) {
       this.segments = [];
       return;
     }
@@ -223,46 +188,67 @@ export struct ChatRichText {
       codeStyle: 'bg'
     };
 
-    // 流式期间:跳过缓存,直接解析截断内容(打字机推进每步都需要新解析)
-    if (this.isStreaming) {
-      const options: ChatTextParserOptions = {
-        enableMarkdown: settings.enableMarkdown,
-        enableDialogue: settings.enableDialogue
-      };
-      this.segments = parseChatText(displayContent, options);
-      return;
-    }
-
-    // 非流式:使用缓存复用
-    const contentHash: number = hashString(displayContent);
-    const cacheKey: string = contentHash.toString() + '_' + this.senderCharacterId + '_' + settings.enableMarkdown + '_' + settings.enableDialogue;
-    const cached: CacheEntry | undefined = ChatRichText.cache.get(cacheKey);
-    if (cached !== undefined && cached.contentHash === contentHash) {
-      this.segments = cached.segments;
-      this.lastContentHash = contentHash;
-      return;
-    }
-
-    // 解析
     const options: ChatTextParserOptions = {
       enableMarkdown: settings.enableMarkdown,
       enableDialogue: settings.enableDialogue
     };
-    const parsed: ChatTextSegment[] = parseChatText(displayContent, options);
 
-    // 写入缓存
-    if (ChatRichText.cache.size >= ChatRichText.CACHE_MAX_SIZE) {
-      ChatRichText.cache.clear();
+    // 流式期间:跳过缓存,直接解析当前完整 content
+    if (this.isStreaming) {
+      this.segments = parseChatText(this.content, options);
+      return;
     }
+
+    // 非流式:使用 LRU 缓存复用
+    const contentHash: number = hashString(this.content);
+    const cacheKey: string = this.buildCacheKey(contentHash, settings);
+    const cached: CacheEntry | undefined = ChatRichText.cache.get(cacheKey);
+    if (cached !== undefined && cached.contentHash === contentHash) {
+      // LRU:命中时移到末尾(Map 保持插入顺序)
+      ChatRichText.cache.delete(cacheKey);
+      ChatRichText.cache.set(cacheKey, cached);
+      this.segments = cached.segments;
+      return;
+    }
+
+    // 解析并写入缓存
+    const parsed: ChatTextSegment[] = parseChatText(this.content, options);
+    this.evictCacheIfNeeded();
     ChatRichText.cache.set(cacheKey, {
       segments: parsed,
-      contentHash,
-      settingsVersion: 0,
-      senderCharacterId: this.senderCharacterId
+      contentHash: contentHash
     });
 
     this.segments = parsed;
-    this.lastContentHash = contentHash;
+  }
+
+  /**
+   * 构建缓存 key(包含 content hash + 设置指纹 + senderCharacterId)。
+   * 任何影响渲染的设置变化都会导致 key 变化,确保缓存正确隔离。
+   */
+  private buildCacheKey(contentHash: number, settings: ChatTextStyle): string {
+    return contentHash.toString() + '_'
+      + this.senderCharacterId + '_'
+      + (settings.enableMarkdown ? '1' : '0') + '_'
+      + (settings.enableDialogue ? '1' : '0') + '_'
+      + settings.fontSize.toString() + '_'
+      + settings.lineHeight.toString() + '_'
+      + settings.quoteStyle + '_'
+      + settings.codeStyle;
+  }
+
+  /**
+   * LRU 淘汰:达到上限时删除最旧条目(Map 的第一个 key)。
+   */
+  private evictCacheIfNeeded(): void {
+    while (ChatRichText.cache.size >= ChatRichText.CACHE_MAX_SIZE) {
+      // Map 迭代顺序 = 插入顺序,第一个即最旧
+      const oldestKey: string | undefined = ChatRichText.cache.keys().next().value;
+      if (oldestKey === undefined) {
+        break;
+      }
+      ChatRichText.cache.delete(oldestKey);
+    }
   }
 
   /**
@@ -271,8 +257,6 @@ export struct ChatRichText {
   private getSegmentColor(seg: ChatTextSegment): ResourceColor {
     // 角色独立颜色优先(对白)
     if (seg.dialogue && this.senderType === 'character' && this.settings !== null && this.settings.enableCharacterColor && this.senderCharacterId.length > 0) {
-      // 注意:ArkUI 的 .fontColor 不支持直接传 hex 字符串给 ResourceColor,
-      // 但我们可以返回 string 类型(ResourceColor 支持 string)
       return getCharacterColor(this.senderCharacterId);
     }
 

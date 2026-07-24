@@ -30,6 +30,7 @@ import { MessageSwipeSummary, MAX_SWIPE_CANDIDATES } from '../models/MessageSwip
 import { MessageSwipeControls } from '../components/MessageSwipeControls';
 import { HistoricalMessageEditDialog } from '../components/HistoricalMessageEditDialog';
 import { ChatMessageBubble } from '../components/ChatMessageBubble';
+import { ChatMessageDataSource } from '../components/ChatMessageDataSource';
 import { ChatMessageActionSheet, MessageAction } from '../components/ChatMessageActionSheet';
 import { ChatMoreMenuSheet } from '../components/ChatMoreMenuSheet';
 import { CharacterImageView } from '../components/CharacterImageView';
@@ -107,6 +108,8 @@ struct ChatPage {
   /** 底部导航栏/手势条避让高度 */
   @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
   private scroller: Scroller = new Scroller();
+  /** 懒加载数据源(配合 LazyForEach,仅构建可视区域气泡) */
+  private dataSource: ChatMessageDataSource = new ChatMessageDataSource();
   private lastMessageCount: number = 0;
   private editDialogController: CustomDialogController | null = null;
   private editingMessageId: string = '';
@@ -120,6 +123,10 @@ struct ChatPage {
   private pendingReloadAfterBranchChange: boolean = false;
   /** 已加载过背景配置的 chatId,避免 onMessagesUpdate 反复加载 */
   private lastLoadedBgChatId: string = '';
+  /** 键盘弹起延迟滚动定时器 ID(-1 表示无 pending) */
+  private keyboardScrollTimerId: number = -1;
+  /** 3D 自动适配后延迟读取模型信息定时器 ID(-1 表示无 pending) */
+  private autoFitTimerId: number = -1;
 
   /** T-3D.5: 是否显示 3D 角色模型(由 AppSettings 控制,通过 AppStorage 通知刷新) */
   @StorageProp('chat3dConfigVersion') @Watch('onChat3DConfigVersionChanged') chat3DConfigVersion: number = 0;
@@ -170,8 +177,13 @@ struct ChatPage {
       this.messages = msgs;
       this.syncRenderStates(msgs);
       this.maybeLoadChatBackground();
-      // 消息变更后刷新上下文占用统计
-      this.refreshBudgetSnapshot();
+      // 流式 delta 期间不刷新预算(避免高频 token 估算拖慢 UI)。
+      // 只在非流式状态刷新:用户消息加入 / 回复完成 / 编辑删除 / Swipe / 分支切换 / 页面进入。
+      // 其他触发点(onPageShow / onBudgetConfigVersionChanged / onBranchChangeSeqChanged)保持不变。
+      const isStreaming: boolean = msgs.length > 0 && msgs[msgs.length - 1].isStreaming === true;
+      if (!isStreaming) {
+        this.refreshBudgetSnapshot();
+      }
     };
     this.viewModel = vm;
 
@@ -218,6 +230,7 @@ struct ChatPage {
     this.messages = [];
     this.messageStates = [];
     this.stateMap.clear();
+    this.dataSource.clear();
     const v: number = AppStorage.get<number>('chatListVersion') ?? 0;
     AppStorage.setOrCreate<number>('chatListVersion', v + 1);
   }
@@ -599,7 +612,7 @@ struct ChatPage {
   messageList() {
     Scroll(this.scroller) {
       Column() {
-        ForEach(this.messageStates, (state: ChatMessageRenderState, _index: number) => {
+        LazyForEach(this.dataSource, (state: ChatMessageRenderState, _index: number) => {
           if (state.role !== ChatRole.System) {
             Column() {
               ChatMessageBubble({
@@ -744,6 +757,8 @@ struct ChatPage {
       }
     }
     this.messageStates = nextStates;
+    // 同步懒加载数据源,触发 LazyForEach 按 key 复用已有气泡组件
+    this.dataSource.setStates(nextStates);
   }
 
   // ===== 空会话状态 =====
@@ -1409,7 +1424,11 @@ struct ChatPage {
   private onAutoFit(): void {
     this.chat3DAutoFitRequest = this.chat3DAutoFitRequest + 1;
     // 自动适配后刷新本地 scale 显示(延迟读取,等 Character3DPanel 处理完)
-    setTimeout(() => {
+    if (this.autoFitTimerId !== -1) {
+      clearTimeout(this.autoFitTimerId);
+    }
+    this.autoFitTimerId = setTimeout((): void => {
+      this.autoFitTimerId = -1;
       this.loadChat3DModelInfo();
     }, 500);
   }

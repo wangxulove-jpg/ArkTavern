@@ -36,6 +36,7 @@ import { MacroReplacer } from './MacroReplacer';
 import { PromptBuilder } from './PromptBuilder';
 import { TokenCounter } from './TokenCounter';
 import { HistoryTrimmer } from './HistoryTrimmer';
+import { RecentMessageSelector } from './RecentMessageSelector';
 import { DbHelper } from '../database/DbHelper';
 import { ChatRepository } from '../repositories/ChatRepository';
 import { MessageRepository } from '../repositories/MessageRepository';
@@ -118,6 +119,8 @@ export class AppServices {
   private readonly tokenCounter: TokenCounter;
   /** HistoryTrimmer 历史裁剪服务(不对页面公开) */
   private readonly historyTrimmer: HistoryTrimmer;
+  /** RecentMessageSelector 最近原始消息窗口选择器(v8.3 Phase 2,不对页面公开) */
+  private readonly recentMessageSelector: RecentMessageSelector;
   /** DbHelper 数据库底座(不对页面公开) */
   private readonly dbHelper: DbHelper;
   /** ChatRepository 聊天仓储(不对页面公开) */
@@ -269,6 +272,8 @@ export class AppServices {
     this.promptBuilder = new PromptBuilder(this.lorebookService, macroReplacer);
     this.tokenCounter = new TokenCounter();
     this.historyTrimmer = new HistoryTrimmer(this.tokenCounter);
+    // v8.3 Phase 2: 最近原始消息窗口选择器(去重 + 窗口 + 完整轮次)
+    this.recentMessageSelector = new RecentMessageSelector(this.tokenCounter);
     // 持久化层组合:全部 Repository 共享同一 DbHelper 实例
     this.chatRepository = new ChatRepository(this.dbHelper);
     this.messageRepository = new MessageRepository(this.dbHelper);
@@ -738,7 +743,8 @@ export class AppServices {
       services.chatBackgroundService,
       services.memoryService,
       services.contextBudgetService,
-      services.appPreferences
+      services.appPreferences,
+      services.recentMessageSelector
     );
   }
 

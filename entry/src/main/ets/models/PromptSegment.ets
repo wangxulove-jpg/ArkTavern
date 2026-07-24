@@ -6,7 +6,15 @@
  *
  * 固定顺序:
  * PromptPreset → BeforeCharacter → Character → AfterCharacter
- *   → DialogueExamples → MemorySummary → Conversation → PostHistory
+ *   → DialogueExamples → MemoryCore → MemoryChapter → MemoryRolling → MemoryLegacy
+ *   → Conversation → PostHistory
+ *
+ * v12 多层记忆:
+ * - MemoryCore:核心长期事实(最高优先级)
+ * - MemoryChapter:章节摘要(按时间顺序)
+ * - MemoryRolling:近期滚动摘要
+ * - MemoryLegacy:旧数据迁移摘要
+ * - MemorySummary:旧版单段摘要(兼容)
  */
 
 import { ChatRole } from './ChatRole';
@@ -23,7 +31,15 @@ export enum PromptSegmentPosition {
   AfterCharacter = 'AfterCharacter',
   /** 对话示例(mes_example),位于聊天历史之前 */
   DialogueExamples = 'DialogueExamples',
-  /** 长期记忆摘要,位于对话示例与聊天历史之间 */
+  /** v12: 核心长期事实(最高优先级记忆) */
+  MemoryCore = 'MemoryCore',
+  /** v12: 章节摘要(按时间顺序) */
+  MemoryChapter = 'MemoryChapter',
+  /** v12: 近期滚动摘要 */
+  MemoryRolling = 'MemoryRolling',
+  /** v12: 旧数据迁移摘要(只读) */
+  MemoryLegacy = 'MemoryLegacy',
+  /** 旧版单段长期记忆摘要(兼容,新代码应使用 MemoryCore/Chapter/Rolling) */
   MemorySummary = 'MemorySummary',
   /** 聊天历史(Conversation) */
   Conversation = 'Conversation',
@@ -76,9 +92,13 @@ const POSITION_ORDER: Record<string, number> = {
   'Character': 2,
   'AfterCharacter': 3,
   'DialogueExamples': 4,
-  'MemorySummary': 5,
-  'Conversation': 6,
-  'PostHistory': 7
+  'MemoryCore': 5,
+  'MemoryChapter': 6,
+  'MemoryRolling': 7,
+  'MemoryLegacy': 8,
+  'MemorySummary': 9,
+  'Conversation': 10,
+  'PostHistory': 11
 };
 
 /**

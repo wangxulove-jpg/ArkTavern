@@ -276,12 +276,17 @@ export class ConversationBranchPersistenceService {
     for (let i = 0; i < selections.length; i++) {
       selectionMap.set(selections[i].assistantMessageId, selections[i].candidateIndex);
     }
-    // 按 messageId 加载并投影
+    // 批量按 ID 查询所有消息(避免 N+1:100 条消息不再执行 100 次独立查询)
+    const messageIds: string[] = links.map((l: BranchMessageLink): string => l.messageId);
+    const messageMap: Map<string, ChatMessage> =
+      await this.messageRepository.listByIdsWithStore(store, messageIds);
+
+    // 按 link 顺序组装结果(保持 Branch position 顺序)
     const result: ChatMessage[] = [];
     for (let i = 0; i < links.length; i++) {
       const messageId: string = links[i].messageId;
-      const message: ChatMessage | null = await this.messageRepository.getById(messageId);
-      if (message === null) {
+      const message: ChatMessage | undefined = messageMap.get(messageId);
+      if (message === undefined) {
         // Message 已被删除但 Link 仍存在,跳过(数据完整性问题)
         Logger.warn(LOG_TAG, 'message missing in branch path');
         continue;

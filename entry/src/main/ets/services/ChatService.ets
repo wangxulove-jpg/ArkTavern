@@ -32,9 +32,10 @@
 
 import { ModelService } from './ModelService';
 import { LorebookService } from './LorebookService';
-import { PromptBuilder, PromptBuildContext, PromptBuildResult } from './PromptBuilder';
+import { PromptBuilder, PromptBuildContext, PromptBuildResult, MemoryLayersInjection } from './PromptBuilder';
 import { TokenCounter } from './TokenCounter';
 import { HistoryTrimmer } from './HistoryTrimmer';
+import { RecentMessageSelector } from './RecentMessageSelector';
 import { ChatPersistenceService } from './ChatPersistenceService';
 import { ChatBackgroundService } from './ChatBackgroundService';
 import { PromptPresetService } from './PromptPresetService';
@@ -72,7 +73,12 @@ import { Lorebook } from '../models/Lorebook';
 import { MacroContext } from '../models/MacroContext';
 import { ProviderConfig } from '../models/ProviderConfig';
 import { TokenBudget, DEFAULT_CONTEXT_WINDOW, DEFAULT_RESERVED_OUTPUT_TOKENS } from '../models/TokenBudget';
-import { BUDGET_SAFETY_MARGIN } from '../models/ContextBudgetConfig';
+import {
+  calculateSafetyMargin,
+  DEFAULT_RECENT_WINDOW_TARGET,
+  MIN_COMPLETE_TURNS
+} from '../models/ContextBudgetConfig';
+import { ContextHistorySelection } from '../models/ContextHistorySelection';
 import { HistoryTrimResult } from '../models/HistoryTrimResult';
 import { PersistedChatSession } from '../models/PersistedChatSession';
 import { Chat } from '../models/Chat';
@@ -187,6 +193,13 @@ export class ChatService {
   private readonly promptBuilder: PromptBuilder | null;
   private readonly tokenCounter: TokenCounter | null;
   private readonly historyTrimmer: HistoryTrimmer | null;
+  /**
+   * RecentMessageSelector 最近原始消息窗口选择器(v8.3 Phase 2)。
+   * - 在 PromptBuilder 之前筛选最近窗口,去重已被记忆覆盖的旧原文
+   * - 无状态,可被多个 ChatService 共享
+   * - 为 null 时回退到旧行为(把全部 sourceMessages 传给 PromptBuilder)
+   */
+  private readonly recentMessageSelector: RecentMessageSelector | null;
   private readonly persistenceService: ChatPersistenceService | null;
   private readonly promptPresetService: PromptPresetService | null;
   /** 当前角色(用于 PromptBuilder 构建) */
@@ -275,7 +288,8 @@ export class ChatService {
     chatBackgroundService: ChatBackgroundService | null = null,
     memoryService: MemoryService | null = null,
     contextBudgetService: ContextBudgetService | null = null,
-    appPreferences: AppPreferences | null = null
+    appPreferences: AppPreferences | null = null,
+    recentMessageSelector: RecentMessageSelector | null = null
   ) {
     this.modelService = modelService;
     this.lorebookService = lorebookService;
@@ -290,6 +304,7 @@ export class ChatService {
     this.memoryService = memoryService;
     this.contextBudgetService = contextBudgetService;
     this.appPreferences = appPreferences;
+    this.recentMessageSelector = recentMessageSelector;
   }
 
   /**
@@ -1536,6 +1551,11 @@ export class ChatService {
           // 异步触发,失败不影响已完成状态
           if (context.kind === ChatGenerationKind.NormalResponse) {
             this.triggerMemorySummaryAsync();
+          } else if (context.kind === ChatGenerationKind.SwipeCandidate) {
+            // v12: Swipe 候选生成完成后,失效该 Assistant position 之后的记忆
+            // 新候选内容已替代旧候选,旧摘要可能不准确
+            // 失败不阻塞,只记录 warn
+            this.invalidateMemoryFromMessagePosition(assistantId);
           }
         }).catch((_e: Object): void => {
           // 持久化失败时仍清理上下文,避免状态卡死
@@ -1830,18 +1850,60 @@ export class ChatService {
       sourceMessages
     );
 
-    // 长期记忆摘要注入(从当前 Branch 取得有效摘要)
-    // 失败不阻塞:发生异常时按无摘要处理
-    let memorySummary: string | undefined = undefined;
+    // 长期记忆注入(v12 多层优先,回退单段)
+    // v12: 优先使用 getMultiLayerInjectionContext 获取 Core/Chapter/Rolling/Legacy 分层记忆
+    // 失败或无记忆时回退到空,不影响主流程
+    // v8.3 Phase 2: 同时取得 memoryEndPosition 用于 RecentMessageSelector 去重
+    let memoryLayers: MemoryLayersInjection | undefined = undefined;
+    let memoryEndPosition: number = -1;
     if (this.memoryService !== null && this.activeBranchId.length > 0) {
       try {
-        const injection = await this.memoryService.getInjectionContext(this.activeBranchId);
-        if (injection.enabled && injection.summary.trim().length > 0) {
-          memorySummary = injection.summary;
+        const multi = await this.memoryService.getMultiLayerInjectionContext(this.activeBranchId);
+        if (multi.enabled) {
+          // v12: 使用分层注入
+          memoryLayers = {
+            core: multi.core,
+            chapter: multi.chapter,
+            rolling: multi.rolling,
+            legacy: multi.legacy
+          };
+          memoryEndPosition = multi.endPosition;
         }
       } catch (e) {
-        Logger.warn(LOG_TAG, 'load memory summary failed: '
+        Logger.warn(LOG_TAG, 'load multi-layer memory failed: '
           + (e instanceof Error ? e.message : String(e)));
+      }
+    }
+
+    // v8.3 Phase 2: 使用 RecentMessageSelector 选择最近原始消息窗口
+    // - 与长期记忆范围去重:已被记忆覆盖且不在最近窗口的消息不注入原文
+    // - 默认保留最近 DEFAULT_RECENT_WINDOW_TARGET(30)条
+    // - 保证最近 MIN_COMPLETE_TURNS(2)完整 User+Assistant 轮次
+    // - availableTokens 传一个宽松上限,让 RecentMessageSelector 主要做去重 + 窗口
+    //   精确 Token 裁剪由后续 HistoryTrimmer 完成
+    // - 为 null 时回退到旧行为(传全部 sourceMessages)
+    let conversationMessages: ChatMessage[] = sourceMessages;
+    if (this.recentMessageSelector !== null && this.tokenCounter !== null) {
+      try {
+        const selection: ContextHistorySelection = this.recentMessageSelector.select(
+          sourceMessages,
+          {
+            targetCount: DEFAULT_RECENT_WINDOW_TARGET,
+            minCompleteTurns: MIN_COMPLETE_TURNS,
+            availableTokens: Number.MAX_SAFE_INTEGER,
+            memoryEndPosition: memoryEndPosition
+          }
+        );
+        conversationMessages = selection.recentMessages;
+        if (selection.selectedCount === 0 && sourceMessages.length > 0) {
+          // 选择器异常返回空:回退到 sourceMessages,避免空请求
+          Logger.warn(LOG_TAG, 'RecentMessageSelector returned empty, fallback to sourceMessages');
+          conversationMessages = sourceMessages;
+        }
+      } catch (e) {
+        Logger.warn(LOG_TAG, 'RecentMessageSelector failed, fallback to sourceMessages: '
+          + (e instanceof Error ? e.message : String(e)));
+        conversationMessages = sourceMessages;
       }
     }
 
@@ -1849,10 +1911,11 @@ export class ChatService {
       character: this.character !== null ? this.character : undefined,
       lorebook: lorebook,
       characterBook: characterBook,
-      messages: sourceMessages,
+      messages: conversationMessages,
       macroContext: macroContext,
       presetSystemPrompt: presetSystemPrompt,
-      memorySummary: memorySummary
+      // v12: 优先使用分层注入;memoryLayers 为 undefined 时 PromptBuilder 回退到 memorySummary(此处不传)
+      memoryLayers: memoryLayers
       // enablePostHistoryInstructions 默认为 true
       // 后续可由 Preset 配置控制
     };
@@ -1863,6 +1926,8 @@ export class ChatService {
 
   /**
    * 异步触发长期记忆增量总结。
+   * v12: 优先调用 tryGenerateMultiLayerMemory(章节优先,回退 rolling),
+   * 失败时回退到旧版 trySummarize,保证兼容性。
    * - 失败不抛出,不阻塞已完成状态
    * - 不调用 await,在后台执行
    * - 仅记录触发阶段,不记录消息内容
@@ -1880,8 +1945,9 @@ export class ChatService {
     const chatId: string = this.currentChatId;
     const branchId: string = this.activeBranchId;
     const branchMessages: ChatMessage[] = this.messages.slice();
+    // v12: 优先使用多层记忆生成(章节优先,回退 rolling)
     // 不 await:后台执行,失败仅记录日志
-    this.memoryService.trySummarize(chatId, branchId, branchMessages)
+    this.memoryService.tryGenerateMultiLayerMemory(chatId, branchId, branchMessages)
       .then((result): void => {
         if (!result.success) {
           Logger.warn(LOG_TAG, 'MemorySummary | triggered kind=failed'
@@ -1890,6 +1956,43 @@ export class ChatService {
       })
       .catch((e: Object): void => {
         Logger.warn(LOG_TAG, 'MemorySummary | triggered kind=exception: '
+          + (e instanceof Error ? e.message : String(e)));
+      });
+  }
+
+  /**
+   * v12: 失效指定消息 position 之后的记忆(软失效)。
+   * 用于 Swipe 切换、Swipe 候选生成完成等场景。
+   * - 找到 messageId 在 this.messages 中的索引作为 position
+   * - 调用 memoryService.softInvalidateFromPosition(branchId, position)
+   * - 失败不阻塞,只记录 warn
+   * - 不记录消息内容
+   *
+   * @param messageId 触发失效的消息 ID(该 position 及之后的记忆都会失效)
+   */
+  private invalidateMemoryFromMessagePosition(messageId: string): void {
+    if (this.memoryService === null) {
+      return;
+    }
+    if (this.activeBranchId.length === 0) {
+      return;
+    }
+    // 查找消息 position(在 this.messages 中的索引)
+    let position: number = -1;
+    for (let i = 0; i < this.messages.length; i++) {
+      if (this.messages[i].id === messageId) {
+        position = i;
+        break;
+      }
+    }
+    if (position < 0) {
+      return;
+    }
+    const branchId: string = this.activeBranchId;
+    // 不 await:后台执行,失败仅记录日志
+    this.memoryService.softInvalidateFromPosition(branchId, position)
+      .catch((e: Object): void => {
+        Logger.warn(LOG_TAG, 'MemoryInvalidate | failed: '
           + (e instanceof Error ? e.message : String(e)));
       });
   }
@@ -1948,9 +2051,14 @@ export class ChatService {
       }
     }
 
-    // v8.2: 输入可用预算 = contextWindow - reserved - BUDGET_SAFETY_MARGIN
-    // 安全余量用于 Token 估算误差和 Provider 包装
-    let available: number = contextWindow - reserved - BUDGET_SAFETY_MARGIN;
+    // v8.3 Phase 2: 输入可用预算 = contextWindow - reserved - safetyMargin
+    // 安全余量动态计算:
+    // - 至少 MIN_SAFETY_MARGIN(1024)Token,避免小上下文窗口时余量不足
+    // - 按 contextWindow 的 3% 计算,大上下文窗口时余量按比例增大
+    // - 上限 MAX_SAFETY_MARGIN(8192)Token,避免超大上下文窗口(1M)时余量浪费
+    // 安全余量用于 Token 估算误差和 Provider 包装(系统消息、JSON 序列化等附加 Token)
+    const safetyMargin: number = calculateSafetyMargin(contextWindow);
+    let available: number = contextWindow - reserved - safetyMargin;
     if (available < 0) {
       available = 0;
     }
@@ -2112,37 +2220,42 @@ export class ChatService {
   }
 
   /**
-   * 通知消息列表变更(传递新数组副本)。
+   * 通知消息列表变更。
+   * this.messages 已是不可变更新产生的新数组引用,直接传递避免额外复制。
    * callbacks 为 null 时跳过(用于 dispose 后或无回调场景)。
    */
   private emitMessages(callbacks: ChatServiceCallbacks | null): void {
     if (callbacks === null) {
       return;
     }
-    callbacks.onMessagesChanged([...this.messages]);
+    callbacks.onMessagesChanged(this.messages);
   }
 
   /**
    * 追加 delta 内容到指定 Assistant 消息(创建新对象和新数组)。
+   *
+   * 优化:用 findIndex + slice + 替换目标元素,代替 map 全量遍历。
+   * slice 浅拷贝比 map 快(不调用函数),且只对目标元素调用 mergeChatMessage。
    */
   private appendDelta(assistantId: string, delta: string, callbacks: ChatServiceCallbacks): void {
     if (delta.length === 0) {
       return;
     }
-    this.messages = this.messages.map((msg: ChatMessage): ChatMessage => {
-      if (msg.id === assistantId) {
-        // 完整不可变复制:使用 mergeChatMessage 保留所有字段
-        // (senderType / senderCharacterId / source / sceneId / generationBatchId /
-        //  visibility / recipientCharacterIds / participantIds / witnessIds 等)
-        return mergeChatMessage(msg, {
-          content: msg.content + delta,
-          updatedAt: Date.now(),
-          isStreaming: true,
-          status: ChatMessageStatus.Streaming
-        });
-      }
-      return msg;
+    const idx: number = this.messages.findIndex((m: ChatMessage): boolean => m.id === assistantId);
+    if (idx < 0) {
+      return;
+    }
+    const oldMsg: ChatMessage = this.messages[idx];
+    // 完整不可变复制:使用 mergeChatMessage 保留所有字段
+    const newMsg: ChatMessage = mergeChatMessage(oldMsg, {
+      content: oldMsg.content + delta,
+      updatedAt: Date.now(),
+      isStreaming: true,
+      status: ChatMessageStatus.Streaming
     });
+    const newMessages: ChatMessage[] = this.messages.slice();
+    newMessages[idx] = newMsg;
+    this.messages = newMessages;
     this.emitMessages(callbacks);
   }
 
@@ -2559,6 +2672,9 @@ export class ChatService {
       this.updateLastAssistantMessageId();
       // 仅更新 updatedAt,不修改 lastMessageAt
       this.persistChatTimestamp();
+      // v12: 切换候选后,失效该 Assistant position 之后的记忆(内容已变化,旧摘要可能不准确)
+      // 失败不阻塞,只记录 warn
+      this.invalidateMemoryFromMessagePosition(assistantMessageId);
       this.emitMessages(this.lastCallbacks);
     } finally {
       this.swipeOperationInProgress = false;
@@ -2599,6 +2715,9 @@ export class ChatService {
       this.updateLastAssistantMessageId();
       // 仅更新 updatedAt,不修改 lastMessageAt
       this.persistChatTimestamp();
+      // v12: 切换候选后,失效该 Assistant position 之后的记忆(内容已变化,旧摘要可能不准确)
+      // 失败不阻塞,只记录 warn
+      this.invalidateMemoryFromMessagePosition(assistantMessageId);
       this.emitMessages(this.lastCallbacks);
     } finally {
       this.swipeOperationInProgress = false;

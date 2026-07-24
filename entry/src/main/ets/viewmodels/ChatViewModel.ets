@@ -1094,12 +1094,13 @@ export class ChatViewModel {
         if (this.disposed) {
           return;
         }
-        // 立即更新内部状态(同步),确保 canRegenerate / swipeSummaries 实时正确
-        this.messages = [...messages];
-        this.swipeSummaries = this.chatService.getSwipeSummaries();
-        this.canRegenerate = this.chatService.canRegenerate();
-        // 节流 onMessagesUpdate:高频 delta 时合并到 50ms 一次,
-        // 避免 ArkUI 在同一事件循环 tick 内合并多次 @State 赋值导致"一大段突然出现"
+        // 直接引用 ChatService 产生的新数组(不可变更新保证不会原地修改)。
+        // 避免每次 delta 复制完整数组。
+        this.messages = messages;
+        // delta 期间不重新计算 swipeSummaries / canRegenerate:
+        // - swipeSummaries 只在 Swipe 数据变化/消息完成/分支切换时更新(由终态回调统一处理)
+        // - canRegenerate 只在状态变化/消息完成后更新
+        // 避免高频 delta 重复扫描全历史
         this.scheduleMessagesFlush();
       },
       onStateChanged: (state: ChatState): void => {

@@ -1,10 +1,17 @@
 /**
- * MemoryManagementPage 对话记忆管理页(v8)
+ * MemoryManagementPage 对话记忆管理页(v12)
+ *
+ * v12 升级:
+ * - 按 Core/Chapter/Rolling/Legacy 分类展示记忆
+ * - 支持查看/编辑/启用/禁用/删除单条 Memory
+ * - 显示失效状态和继承标记
+ * - 显示覆盖消息范围和创建时间
  *
  * 功能:
- * - 显示当前 Active Branch 的最新 Memory(摘要文本 / 范围 / 更新时间 / 字符节省估算)
+ * - 显示当前 Active Branch 的全部 Memory(按类型分组)
  * - 启用/禁用 Memory
  * - 手动编辑摘要文本
+ * - 手动删除单条 Memory
  * - 手动触发重新生成摘要(强制,不检查阈值)
  * - 清除当前 Branch 自产记忆(继承祖先的不删)
  *
@@ -17,7 +24,7 @@
 
 import { router, promptAction } from '@kit.ArkUI';
 import { AppServices } from '../services/AppServices';
-import { MemoryManagementViewModel } from '../viewmodels/MemoryManagementViewModel';
+import { MemoryManagementViewModel, MemoryDisplayItem, MemoryTypeGroup } from '../viewmodels/MemoryManagementViewModel';
 import { Logger } from '../utils/Logger';
 
 const LOG_TAG: string = 'MemoryMgmtPage';
@@ -88,10 +95,10 @@ struct MemoryManagementPage {
                 .fontSize(14)
                 .fontColor($r('app.color.app_text_tertiary'))
                 .margin({ top: 40, bottom: 40 })
-            } else if (this.viewModel.memory === null) {
+            } else if (this.viewModel.memoryGroups.length === 0) {
               this.emptyState()
             } else {
-              this.memoryContent()
+              this.memoryListContent()
             }
 
             Blank().height(this.navigationBarHeight + 32)
@@ -108,6 +115,10 @@ struct MemoryManagementPage {
 
       if (this.showClearConfirm) {
         this.clearConfirmDialog()
+      }
+
+      if (this.viewModel.showDeleteConfirm) {
+        this.deleteConfirmDialog()
       }
     }
     .width('100%')
@@ -219,24 +230,15 @@ struct MemoryManagementPage {
   }
 
   @Builder
-  memoryContent() {
+  memoryListContent() {
     Column() {
-      // 启用开关
-      this.enableRow()
-
-      Divider().color($r('app.color.app_divider')).margin({ top: 4, bottom: 4 })
-
-      // 摘要展示 / 编辑
-      if (this.viewModel.isEditing) {
-        this.summaryEditArea()
-      } else {
-        this.summaryDisplayArea()
-      }
-
-      Divider().color($r('app.color.app_divider')).margin({ top: 4, bottom: 4 })
-
       // 统计信息
       this.statsCard()
+
+      // 按类型分组展示
+      ForEach(this.viewModel.memoryGroups, (group: MemoryTypeGroup) => {
+        this.memoryTypeGroupSection(group)
+      }, (group: MemoryTypeGroup) => group.memoryType)
 
       // 操作按钮
       this.actionButtons()
@@ -245,105 +247,228 @@ struct MemoryManagementPage {
   }
 
   @Builder
-  enableRow() {
-    Row() {
-      Column() {
-        Text('启用记忆注入')
+  memoryTypeGroupSection(group: MemoryTypeGroup) {
+    Column() {
+      // 分组标题
+      Row() {
+        Text(group.typeLabel)
           .fontSize(15)
+          .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.app_text_primary'))
-        Text('禁用后,生成请求不会包含此摘要')
+        Blank()
+        Text(group.items.length.toString() + ' 条')
           .fontSize(12)
           .fontColor($r('app.color.app_text_tertiary'))
-          .margin({ top: 2 })
       }
-      .alignItems(HorizontalAlign.Start)
-      .layoutWeight(1)
+      .width('100%')
+      .padding({ top: 12, bottom: 8 })
 
-      Toggle({ type: ToggleType.Switch, isOn: this.viewModel.memory !== null && this.viewModel.memory.enabled })
-        .enabled(!this.viewModel.isOperating)
-        .onChange((isOn: boolean) => {
-          void this.viewModel.toggleEnabled();
-        })
+      // 该类型的 Memory 列表
+      ForEach(group.items, (item: MemoryDisplayItem) => {
+        this.memoryItemCard(item)
+      }, (item: MemoryDisplayItem) => item.memory.id)
     }
     .width('100%')
-    .padding({ top: 12, bottom: 12 })
-    .alignItems(VerticalAlign.Center)
   }
 
   @Builder
-  summaryDisplayArea() {
+  memoryItemCard(item: MemoryDisplayItem) {
     Column() {
+      // 卡片头部:标题 + 状态标签
       Row() {
-        Text('摘要')
-          .fontSize(15)
+        Text(item.displayTitle)
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.app_text_primary'))
-        Blank()
-        Text('编辑')
-          .fontSize(13)
-          .fontColor($r('app.color.app_accent'))
-          .onClick(() => {
-            this.viewModel.enterEditMode();
-          })
+          .layoutWeight(1)
+
+        // 失效标签
+        if (item.isInvalidated) {
+          Text('已失效')
+            .fontSize(11)
+            .fontColor($r('app.color.app_danger'))
+            .margin({ left: 8 })
+        }
+
+        // 继承标签
+        if (item.isInherited) {
+          Text('继承')
+            .fontSize(11)
+            .fontColor($r('app.color.app_text_tertiary'))
+            .margin({ left: 8 })
+        }
+
+        // 禁用标签
+        if (!item.isEnabled && !item.isInvalidated) {
+          Text('已禁用')
+            .fontSize(11)
+            .fontColor($r('app.color.app_text_tertiary'))
+            .margin({ left: 8 })
+        }
       }
       .width('100%')
 
-      Text(this.viewModel.memory !== null ? this.viewModel.memory.summary : '')
-        .fontSize(14)
+      // 摘要预览
+      Text(item.summaryPreview)
+        .fontSize(13)
         .fontColor($r('app.color.app_text_secondary'))
         .width('100%')
-        .margin({ top: 8 })
-        .lineHeight(22)
+        .margin({ top: 6 })
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+      // 展开详情
+      if (this.viewModel.expandedMemoryId === item.memory.id) {
+        this.memoryItemDetail(item)
       }
+
+      // 底部信息:范围 + 时间
+      Row() {
+        Text('范围: ' + item.coverageText)
+          .fontSize(11)
+          .fontColor($r('app.color.app_text_tertiary'))
+        Blank()
+        Text(item.createdTimeText)
+          .fontSize(11)
+          .fontColor($r('app.color.app_text_tertiary'))
+      }
+      .width('100%')
+      .margin({ top: 8 })
+
+      // 操作按钮
+      if (this.viewModel.expandedMemoryId === item.memory.id && !item.isInvalidated) {
+        Row() {
+          Button(item.isEnabled ? '禁用' : '启用')
+            .fontSize(12)
+            .backgroundColor(Color.Transparent)
+            .fontColor($r('app.color.app_accent'))
+            .layoutWeight(1)
+            .enabled(!this.viewModel.isOperating)
+            .onClick(() => {
+              this.viewModel.toggleEnabled(item.memory.id);
+            })
+
+          Divider().vertical(true).height(20).color($r('app.color.app_divider'))
+
+          Button('编辑')
+            .fontSize(12)
+            .backgroundColor(Color.Transparent)
+            .fontColor($r('app.color.app_accent'))
+            .layoutWeight(1)
+            .enabled(!this.viewModel.isOperating)
+            .onClick(() => {
+              this.viewModel.enterEditMode(item.memory.id);
+            })
+
+          Divider().vertical(true).height(20).color($r('app.color.app_divider'))
+
+          Button('删除')
+            .fontSize(12)
+            .backgroundColor(Color.Transparent)
+            .fontColor($r('app.color.app_danger'))
+            .layoutWeight(1)
+            .enabled(!this.viewModel.isOperating)
+            .onClick(() => {
+              this.viewModel.requestDelete(item.memory.id);
+            })
+        }
+        .width('100%')
+        .margin({ top: 8 })
+      }
+    }
     .width('100%')
-    .padding({ top: 12, bottom: 12 })
+    .padding(12)
+    .borderRadius(8)
+    .backgroundColor($r('app.color.app_surface_2'))
+    .margin({ top: 8 })
+    .onClick(() => {
+      this.viewModel.toggleExpand(item.memory.id);
+    })
   }
 
   @Builder
-  summaryEditArea() {
+  memoryItemDetail(item: MemoryDisplayItem) {
+    Column() {
+      // 完整摘要
+      if (this.viewModel.isEditing && this.viewModel.editingMemoryId === item.memory.id) {
+        this.summaryEditArea(item)
+      } else {
+        Text(item.memory.summary)
+          .fontSize(13)
+          .fontColor($r('app.color.app_text_secondary'))
+          .width('100%')
+          .margin({ top: 8 })
+          .lineHeight(20)
+      }
+
+      // 详细内容(如果有)
+      if (item.memory.detail.length > 0) {
+        Divider().color($r('app.color.app_divider')).margin({ top: 8, bottom: 8 })
+
+        Text('详细内容')
+          .fontSize(12)
+          .fontColor($r('app.color.app_text_tertiary'))
+          .margin({ bottom: 4 })
+        Text(item.memory.detail)
+          .fontSize(13)
+          .fontColor($r('app.color.app_text_secondary'))
+          .width('100%')
+          .lineHeight(20)
+      }
+    }
+    .width('100%')
+    .margin({ top: 8 })
+    .onClick(() => {
+      // 阻止冒泡到卡片点击
+    })
+  }
+
+  @Builder
+  summaryEditArea(item: MemoryDisplayItem) {
     Column() {
       Row() {
         Text('编辑摘要')
-          .fontSize(15)
+          .fontSize(13)
           .fontColor($r('app.color.app_text_primary'))
         Blank()
         Text('取消')
-          .fontSize(13)
+          .fontSize(12)
           .fontColor($r('app.color.app_text_tertiary'))
           .margin({ right: 16 })
           .onClick(() => {
             this.viewModel.cancelEdit();
           })
         Text('保存')
-          .fontSize(13)
+          .fontSize(12)
           .fontColor($r('app.color.app_accent'))
           .onClick(() => {
-            void this.viewModel.saveEditedSummary();
+            this.viewModel.saveEditedSummary();
           })
       }
       .width('100%')
 
       TextArea({ text: this.viewModel.editingSummary, placeholder: '编辑摘要内容' })
-        .fontSize(14)
+        .fontSize(13)
         .width('100%')
-        .height(180)
+        .height(160)
         .margin({ top: 8 })
         .onChange((value: string) => {
           this.viewModel.editingSummary = value;
         })
     }
     .width('100%')
-    .padding({ top: 12, bottom: 12 })
+    .margin({ top: 8 })
   }
 
   @Builder
   statsCard() {
     Column() {
       Row() {
-        Text('覆盖范围')
+        Text('消息总数')
           .fontSize(13)
           .fontColor($r('app.color.app_text_secondary'))
         Blank()
-        Text(this.formatCoverage())
+        Text(this.viewModel.totalMessageCount.toString())
           .fontSize(13)
           .fontColor($r('app.color.app_text_primary'))
       }
@@ -351,23 +476,11 @@ struct MemoryManagementPage {
       .padding({ top: 8, bottom: 4 })
 
       Row() {
-        Text('最后更新')
+        Text('已总结消息数')
           .fontSize(13)
           .fontColor($r('app.color.app_text_secondary'))
         Blank()
-        Text(this.formatTime(this.viewModel.memory !== null ? this.viewModel.memory.updatedAt : 0))
-          .fontSize(13)
-          .fontColor($r('app.color.app_text_primary'))
-      }
-      .width('100%')
-      .padding({ top: 4, bottom: 4 })
-
-      Row() {
-        Text('摘要字符数')
-          .fontSize(13)
-          .fontColor($r('app.color.app_text_secondary'))
-        Blank()
-        Text(this.viewModel.summaryChars.toString())
+        Text(this.viewModel.summarizedMessageCount.toString())
           .fontSize(13)
           .fontColor($r('app.color.app_text_primary'))
       }
@@ -379,8 +492,7 @@ struct MemoryManagementPage {
           .fontSize(13)
           .fontColor($r('app.color.app_text_secondary'))
         Blank()
-        Text(this.viewModel.unsummarizedMessageCount.toString()
-          + ' / ' + this.viewModel.totalMessageCount.toString())
+        Text(this.viewModel.unsummarizedMessageCount.toString())
           .fontSize(13)
           .fontColor($r('app.color.app_text_primary'))
       }
@@ -393,6 +505,18 @@ struct MemoryManagementPage {
           .fontColor($r('app.color.app_text_secondary'))
         Blank()
         Text(this.viewModel.unsummarizedChars.toString())
+          .fontSize(13)
+          .fontColor($r('app.color.app_text_primary'))
+      }
+      .width('100%')
+      .padding({ top: 4, bottom: 4 })
+
+      Row() {
+        Text('记忆总字符数')
+          .fontSize(13)
+          .fontColor($r('app.color.app_text_secondary'))
+        Blank()
+        Text(this.viewModel.summaryChars.toString())
           .fontSize(13)
           .fontColor($r('app.color.app_text_primary'))
       }
@@ -419,7 +543,7 @@ struct MemoryManagementPage {
         .fontColor($r('app.color.app_text_primary'))
         .enabled(!this.viewModel.isOperating && this.viewModel.totalMessageCount > 0)
         .onClick(() => {
-          void this.viewModel.regenerateSummary();
+          this.viewModel.regenerateSummary();
         })
 
       // 清除当前分支记忆
@@ -478,7 +602,7 @@ struct MemoryManagementPage {
             .height(48)
             .onClick(() => {
               this.showClearConfirm = false;
-              void this.executeClear();
+              this.executeClear();
             })
         }
         .width('100%')
@@ -495,38 +619,65 @@ struct MemoryManagementPage {
     })
   }
 
+  @Builder
+  deleteConfirmDialog() {
+    Stack() {
+      Column() {
+        Text('删除记忆')
+          .fontSize(18)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.app_text_primary'))
+          .margin({ top: 16, bottom: 8 })
+
+        Text('确定要删除这条记忆吗?删除后不可恢复,但原始消息不会被修改。')
+          .fontSize(13)
+          .fontColor($r('app.color.app_text_secondary'))
+          .lineHeight(20)
+          .margin({ left: 16, right: 16, bottom: 16 })
+
+        Divider().color($r('app.color.app_divider'))
+
+        Row() {
+          Button('取消')
+            .fontSize(15)
+            .backgroundColor(Color.Transparent)
+            .fontColor($r('app.color.app_text_secondary'))
+            .layoutWeight(1)
+            .height(48)
+            .onClick(() => {
+              this.viewModel.cancelDelete();
+            })
+
+          Divider().vertical(true).height(24).color($r('app.color.app_divider'))
+
+          Button('删除')
+            .fontSize(15)
+            .backgroundColor(Color.Transparent)
+            .fontColor($r('app.color.app_danger'))
+            .layoutWeight(1)
+            .height(48)
+            .onClick(() => {
+              this.viewModel.confirmDelete();
+            })
+        }
+        .width('100%')
+      }
+      .width('80%')
+      .backgroundColor($r('app.color.app_surface_1'))
+      .borderRadius(12)
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor('rgba(0,0,0,0.5)')
+    .onClick(() => {
+      this.viewModel.cancelDelete();
+    })
+  }
+
   private async executeClear(): Promise<void> {
     await this.viewModel.clearOwnedMemory();
     if (this.viewModel.errorMessage.length === 0) {
       promptAction.showToast({ message: '已清除当前分支记忆', duration: 1500 });
     }
-  }
-
-  private formatCoverage(): string {
-    if (this.viewModel.memory === null) {
-      return '0 / ' + this.viewModel.totalMessageCount.toString();
-    }
-    const start: number = this.viewModel.memory.startPosition;
-    const end: number = this.viewModel.memory.endPosition;
-    if (end < 0) {
-      return '0 / ' + this.viewModel.totalMessageCount.toString();
-    }
-    return (start + 1).toString() + ' - ' + (end + 1).toString()
-      + ' / ' + this.viewModel.totalMessageCount.toString();
-  }
-
-  private formatTime(ts: number): string {
-    if (ts <= 0) {
-      return '从未';
-    }
-    const date: Date = new Date(ts);
-    const y: number = date.getFullYear();
-    const m: number = date.getMonth() + 1;
-    const d: number = date.getDate();
-    const h: number = date.getHours();
-    const min: number = date.getMinutes();
-    const pad = (n: number): string => n < 10 ? '0' + n.toString() : n.toString();
-    return y.toString() + '-' + pad(m) + '-' + pad(d)
-      + ' ' + pad(h) + ':' + pad(min);
   }
 }

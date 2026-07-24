@@ -43,11 +43,28 @@ import {
   createPromptSegment,
   sortSegments
 } from '../models/PromptSegment';
+import { ChatMemory } from '../models/ChatMemory';
 import { LorebookService } from './LorebookService';
 import { MacroReplacer } from './MacroReplacer';
 
 /** mes_example 分隔符,与 SillyTavern 规范一致 */
 const EXAMPLE_SEPARATOR: string = '<START>';
+
+/**
+ * v12 多层记忆注入参数。
+ * 由调用方从 MemoryService.getMultiLayerInjectionContext 获取后传入。
+ * 提供此字段时,优先使用分层注入;否则回退到 memorySummary 单段注入。
+ */
+export interface MemoryLayersInjection {
+  /** Core 记忆(高优先级,全量注入) */
+  core: ChatMemory[];
+  /** Chapter 记忆(已按时间倒序排列,取最近 N 个) */
+  chapter: ChatMemory[];
+  /** Rolling 记忆(最近 1 条) */
+  rolling: ChatMemory[];
+  /** Legacy 记忆(旧数据迁移) */
+  legacy: ChatMemory[];
+}
 
 /**
  * Prompt 构建上下文。
@@ -68,8 +85,14 @@ export interface PromptBuildContext {
   /**
    * 长期记忆摘要(可选,非空时作为 System 消息插入到 DialogueExamples 与 Conversation 之间)。
    * 调用方负责从 MemoryService.getInjectionContext 取得当前 Branch 的有效摘要文本。
+   * v12: 若 memoryLayers 提供,此字段被忽略(优先使用分层注入)。
    */
   memorySummary?: string;
+  /**
+   * v12: 多层记忆注入参数(可选)。
+   * 提供时按 Core/Chapter/Rolling/Legacy 分层注入,优先级高于 memorySummary。
+   */
+  memoryLayers?: MemoryLayersInjection;
   /** 是否启用 Post-History Instructions(默认 true)。
    *  Post-History Instructions 只有在对应提示词功能启用时才注入。
    *  当角色有 postHistoryInstructions 但此 flag 为 false 时不注入。 */
@@ -162,10 +185,12 @@ export class PromptBuilder {
       }
     }
 
-    // 4.5 MemorySummary(长期记忆摘要)
-    // 由调用方从 MemoryService.getInjectionContext 取得当前 Branch 的有效摘要文本
-    // 空字符串或空白不注入
-    if (context.memorySummary !== undefined &&
+    // 4.5 长期记忆注入(v12 多层优先,回退单段)
+    // v12: 若 memoryLayers 提供,按 Core/Chapter/Rolling/Legacy 分层注入
+    // 否则回退到 memorySummary 单段注入(旧路径兼容)
+    if (context.memoryLayers !== undefined) {
+      this.collectMemoryLayerSegments(context.memoryLayers, segments);
+    } else if (context.memorySummary !== undefined &&
       context.memorySummary.trim().length > 0) {
       const memorySeg: PromptSegment = createPromptSegment(
         'memory-summary',
@@ -260,6 +285,96 @@ export class PromptBuilder {
       matchedLorebookEntryIds: matchedIds
     };
     return result;
+  }
+
+  /**
+   * v12: 收集多层记忆 segments(Core/Chapter/Rolling/Legacy)。
+   * - Core:全量注入,作为 System 消息插入 MemoryCore 位置
+   * - Chapter:按时间正序(早→晚)注入,每章一条 System 消息
+   * - Rolling:最近 1 条,作为 System 消息插入 MemoryRolling 位置
+   * - Legacy:旧数据迁移摘要,作为 System 消息插入 MemoryLegacy 位置
+   * - 空内容(或纯空白)的 memory 跳过
+   * - 同位置内 priority 按时间顺序(早的 priority 更高,保持正序)
+   */
+  private collectMemoryLayerSegments(
+    layers: MemoryLayersInjection,
+    segments: PromptSegment[]
+  ): void {
+    // Core:全量注入(高优先级)
+    for (let i = 0; i < layers.core.length; i++) {
+      const m: ChatMemory = layers.core[i];
+      const content: string = m.summary.trim();
+      if (content.length === 0) {
+        continue;
+      }
+      const seg: PromptSegment = createPromptSegment(
+        'memory-core-' + m.id,
+        PromptSegmentPosition.MemoryCore,
+        ChatRole.System,
+        '【核心长期记忆】\n' + content,
+        100 - i, // Core 之间按顺序优先级递减
+        ChatMessageSource.MemoryCore
+      );
+      segments.push(seg);
+    }
+
+    // Chapter:按时间正序注入(传入时已按 endPosition DESC,需反转为 ASC)
+    const sortedChapter: ChatMemory[] = layers.chapter.slice().sort(
+      (a: ChatMemory, b: ChatMemory): number => a.endPosition - b.endPosition
+    );
+    for (let i = 0; i < sortedChapter.length; i++) {
+      const m: ChatMemory = sortedChapter[i];
+      const content: string = m.summary.trim();
+      if (content.length === 0) {
+        continue;
+      }
+      const title: string = m.title.length > 0 ? m.title : ('章节 ' + (i + 1));
+      const seg: PromptSegment = createPromptSegment(
+        'memory-chapter-' + m.id,
+        PromptSegmentPosition.MemoryChapter,
+        ChatRole.System,
+        '【' + title + '】\n' + content,
+        sortedChapter.length - i, // 早期章节 priority 略高,保持正序展示
+        ChatMessageSource.MemoryChapter
+      );
+      segments.push(seg);
+    }
+
+    // Rolling:最近 1 条
+    for (let i = 0; i < layers.rolling.length; i++) {
+      const m: ChatMemory = layers.rolling[i];
+      const content: string = m.summary.trim();
+      if (content.length === 0) {
+        continue;
+      }
+      const seg: PromptSegment = createPromptSegment(
+        'memory-rolling-' + m.id,
+        PromptSegmentPosition.MemoryRolling,
+        ChatRole.System,
+        '【近期记忆】\n' + content,
+        0,
+        ChatMessageSource.MemoryRolling
+      );
+      segments.push(seg);
+    }
+
+    // Legacy:旧数据迁移摘要
+    for (let i = 0; i < layers.legacy.length; i++) {
+      const m: ChatMemory = layers.legacy[i];
+      const content: string = m.summary.trim();
+      if (content.length === 0) {
+        continue;
+      }
+      const seg: PromptSegment = createPromptSegment(
+        'memory-legacy-' + m.id,
+        PromptSegmentPosition.MemoryLegacy,
+        ChatRole.System,
+        '【早期记忆】\n' + content,
+        0,
+        ChatMessageSource.MemoryLegacy
+      );
+      segments.push(seg);
+    }
   }
 
   /**

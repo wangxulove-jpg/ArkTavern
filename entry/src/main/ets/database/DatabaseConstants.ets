@@ -6,7 +6,7 @@
  */
 
 export const DATABASE_NAME: string = 'arktavern.db';
-export const DATABASE_VERSION: number = 11;
+export const DATABASE_VERSION: number = 12;
 
 export const TABLE_CHARACTERS: string = 'characters';
 export const TABLE_CHATS: string = 'chats';
@@ -169,9 +169,27 @@ export const COLUMN_MEMORY_ENABLED: string = 'enabled';
 export const COLUMN_MEMORY_SUMMARY_VERSION: string = 'summary_version';
 export const COLUMN_MEMORY_INHERITED_FROM_MEMORY_ID: string = 'inherited_from_memory_id';
 
+// ===== v12: Chat Memory 多层记忆扩展字段 =====
+/** 记忆类型:core / chapter / rolling / legacy */
+export const COLUMN_MEMORY_TYPE: string = 'memory_type';
+/** 记忆标题(章节标题或核心记忆标签) */
+export const COLUMN_MEMORY_TITLE: string = 'title';
+/** 详细内容(章节摘要的详细描述,比 summary 更丰富) */
+export const COLUMN_MEMORY_DETAIL: string = 'detail';
+/** 重要度(0-100,用于注入优先级排序) */
+export const COLUMN_MEMORY_IMPORTANCE: string = 'importance';
+/** 关键词 JSON 数组(用于相关记忆匹配) */
+export const COLUMN_MEMORY_KEYWORDS_JSON: string = 'keywords_json';
+/** 源内容哈希(用于检测源消息变化) */
+export const COLUMN_MEMORY_SOURCE_HASH: string = 'source_hash';
+/** 是否已失效(编辑/删除/Swipe 切换后标记,不再注入 Prompt) */
+export const COLUMN_MEMORY_INVALIDATED: string = 'invalidated';
+
 export const INDEX_CHAT_MEMORIES_CHAT_ID: string = 'idx_chat_memories_chat_id';
 export const INDEX_CHAT_MEMORIES_BRANCH_ID: string = 'idx_chat_memories_branch_id';
 export const INDEX_CHAT_MEMORIES_BRANCH_END_POSITION: string = 'idx_chat_memories_branch_end_position';
+/** v12: 按 Branch + Type + Invalidated 查询有效记忆 */
+export const INDEX_CHAT_MEMORIES_BRANCH_TYPE: string = 'idx_chat_memories_branch_type';
 
 // ===== v10: Multi-Person World =====
 export const TABLE_WORLDS: string = 'worlds';
