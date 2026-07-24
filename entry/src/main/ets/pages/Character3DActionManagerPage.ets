@@ -21,6 +21,7 @@
  */
 
 import { router, promptAction } from '@kit.ArkUI';
+import { common } from '@kit.AbilityKit';
 import { picker } from '@kit.CoreFileKit';
 import { Scene, Animation, Camera, Light, LightType, Position3, SceneNodeParameters, SceneResourceFactory, Node } from '@kit.ArkGraphics3D';
 import { AppServices } from '../services/AppServices';
@@ -158,6 +159,8 @@ struct Character3DActionManagerPage {
   @State private previewAvatarName: string = '';
   /** T-4.2D: 预览弹窗 ViewModel(复用 ActionAvatarPreviewViewModel 的 bounds 驱动取景) */
   private previewVm: ActionAvatarPreviewViewModel | null = null;
+  /** T-4.2E: 预览弹窗 ViewModel 状态(用于按钮文案与启用判断) */
+  @State private previewVmState: ActionPreview3DState = ActionPreview3DState.Idle;
 
   // ========== 避让高度 ==========
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
@@ -228,6 +231,7 @@ struct Character3DActionManagerPage {
     this.previewPlaying = false;
     this.previewNotice = '';
     this.previewAvatarName = '';
+    this.previewVmState = ActionPreview3DState.Idle;
   }
 
   /**
@@ -257,6 +261,8 @@ struct Character3DActionManagerPage {
     if (char3DService !== null) {
       vm.setCharacter3DService(char3DService);
     }
+    // T-4.2E: 注入 AppContext 用于读取 rawfile 动作包
+    vm.setAppContext(getContext(this) as common.Context);
     vm.onStateChanged = (state: ActionPreview3DState): void => {
       this.detailsPreviewState = state;
     };
@@ -268,6 +274,9 @@ struct Character3DActionManagerPage {
     };
     vm.onAvatarInfo = (displayName: string, _hasAnimation: boolean): void => {
       this.detailsPreviewAvatarName = displayName;
+    };
+    vm.onPrepareProgress = (message: string): void => {
+      this.detailsPreviewError = message;
     };
 
     this.detailsPreviewVm = vm;
@@ -1123,11 +1132,15 @@ struct Character3DActionManagerPage {
 
         // 控制按钮
         Row() {
-          Button(this.previewPlaying ? '暂停' : '播放')
+          Button(this.previewVm !== null
+            ? (this.previewVmState === ActionPreview3DState.Playing ? '暂停' : '播放')
+            : (this.previewPlaying ? '暂停' : '播放'))
             .fontSize(13)
             .height(36)
             .layoutWeight(1)
-            .backgroundColor(this.previewPlaying ? '#ff9800' : '#007DFF')
+            .backgroundColor(this.previewVm !== null
+              ? (this.previewVmState === ActionPreview3DState.Playing ? '#ff9800' : '#007DFF')
+              : (this.previewPlaying ? '#ff9800' : '#007DFF'))
             .fontColor('#ffffff')
             .margin({ right: 4 })
             .enabled(this.previewScene !== null)
@@ -1166,6 +1179,45 @@ struct Character3DActionManagerPage {
             .enabled(this.canApplyActionToCurrentModel())
             .onClick(() => {
               this.onClickApplyAction();
+            });
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16 });
+
+        // T-4.2E 阶段0: 单骨骼运行时写入测试按钮(临时,验证通过后删除)
+        Row() {
+          Button('测试骨骼旋转(5s)')
+            .fontSize(13)
+            .height(36)
+            .layoutWeight(1)
+            .backgroundColor('#ff5722')
+            .fontColor('#ffffff')
+            .enabled(this.previewScene !== null && this.previewVm !== null)
+            .onClick(() => {
+              if (this.previewVm !== null) {
+                const testStarted: boolean = this.previewVm.runSingleBoneTest();
+                if (!testStarted) {
+                  this.previewNotice = '未找到测试骨骼,请检查模型';
+                  promptAction.showToast({ message: '未找到 UpperArm 骨骼', duration: 2000 });
+                } else {
+                  this.previewNotice = '骨骼旋转测试中(5秒)...';
+                  promptAction.showToast({ message: '测试已启动,观察上臂是否摆动', duration: 2000 });
+                }
+              }
+            });
+          Button('停止测试')
+            .fontSize(13)
+            .height(36)
+            .layoutWeight(1)
+            .backgroundColor('#607d8b')
+            .fontColor('#ffffff')
+            .margin({ left: 8 })
+            .enabled(this.previewScene !== null && this.previewVm !== null)
+            .onClick(() => {
+              if (this.previewVm !== null) {
+                this.previewVm.stopSingleBoneTest();
+                this.previewNotice = '测试已停止';
+              }
             });
         }
         .width('100%')
@@ -1967,8 +2019,33 @@ struct Character3DActionManagerPage {
     if (char3DService !== null) {
       vm.setCharacter3DService(char3DService);
     }
+    // T-4.2E: 注入 AppContext 用于读取 rawfile 动作包
+    vm.setAppContext(getContext(this) as common.Context);
     vm.onStateChanged = (state: ActionPreview3DState): void => {
       Logger.info(LOG_TAG, 'loadPreviewScene: state=' + state);
+      this.previewVmState = state;
+      // T-4.2E: 根据状态更新提示文案
+      switch (state) {
+        case ActionPreview3DState.LoadingAvatar:
+        case ActionPreview3DState.LoadingMotion:
+        case ActionPreview3DState.PreparingRetarget:
+          this.previewNotice = '正在准备动作……';
+          break;
+        case ActionPreview3DState.Ready:
+          this.previewNotice = '就绪：' + card.displayName;
+          break;
+        case ActionPreview3DState.Playing:
+          this.previewNotice = '正在播放：' + card.displayName;
+          break;
+        case ActionPreview3DState.Paused:
+          this.previewNotice = '已暂停：' + card.displayName;
+          break;
+        case ActionPreview3DState.Failed:
+          // 错误信息由 onError 回调设置
+          break;
+        default:
+          break;
+      }
     };
     vm.onError = (message: string): void => {
       this.previewNotice = message;
@@ -1981,9 +2058,12 @@ struct Character3DActionManagerPage {
     vm.onAvatarInfo = (displayName: string, _hasAnimation: boolean): void => {
       this.previewAvatarName = displayName;
     };
+    vm.onPrepareProgress = (message: string): void => {
+      this.previewNotice = message;
+    };
 
     this.previewVm = vm;
-    this.previewNotice = '当前运行时尚未接通跨模型动作重定向,仅显示静态 Avatar';
+    this.previewNotice = '正在准备动作……';
 
     const actionInfo: PreviewActionInfo = {
       actionId: card.id,
@@ -2007,6 +2087,16 @@ struct Character3DActionManagerPage {
    * 切换预览播放/暂停。
    */
   private togglePreviewPlay(): void {
+    // T-4.2E: 优先通过 ViewModel 调用 Retarget Controller
+    if (this.previewVm !== null) {
+      if (this.previewVmState === ActionPreview3DState.Playing) {
+        this.previewVm.pause();
+      } else {
+        this.previewVm.play();
+      }
+      return;
+    }
+    // 回退:ArkGraphics3D 内置动画
     if (this.previewAnimation === null) {
       return;
     }
@@ -2027,6 +2117,11 @@ struct Character3DActionManagerPage {
    * 重新播放预览。
    */
   private replayPreview(): void {
+    // T-4.2E: 优先通过 ViewModel 调用 Retarget Controller
+    if (this.previewVm !== null) {
+      this.previewVm.replay();
+      return;
+    }
     if (this.previewAnimation === null || this.previewScene === null) {
       return;
     }
@@ -2043,6 +2138,11 @@ struct Character3DActionManagerPage {
    * 停止预览。
    */
   private stopPreview(): void {
+    // T-4.2E: 优先通过 ViewModel 调用 Retarget Controller
+    if (this.previewVm !== null) {
+      this.previewVm.stop();
+      return;
+    }
     if (this.previewAnimation === null) {
       return;
     }

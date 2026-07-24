@@ -5942,6 +5942,88 @@ PoC 页面 Slider、聊天页 ChatMoreMenuSheet Slider、GestureHandler clamp �
    - 新增 `handleTouchEvent` / `touchTypeToPhase`,转发完整 TouchEvent
    - `onAreaChange` 同步 viewport 到 GestureHandler
    - Slider 改为 zoomFactor(0.10~20.0)
+
+## T-4.2E VRM Humanoid 动作重定向 MVP — 完成 (2026-07-24)
+
+### 原因
+
+- 当前 VRM Scene animations=0;
+- 内置动作位于外部动作包 default_ai_action_pack.glb;
+- 当前仅显示静态 Avatar;
+- 尚未实现外部动作 → VRM 骨骼重定向。
+
+### 实现
+
+1. **GLB 动画数据解析** (`parser/GltfAnimationDataParser.ets`)
+   - 复用 GlbContainerValidator / GltfVertexAccessor
+   - 解析 input time accessor (SCALAR/FLOAT)
+   - 解析 output rotation accessor (VEC4/FLOAT)
+   - 解析 output translation accessor (VEC3/FLOAT)
+   - 支持 LINEAR / STEP 插值
+   - CUBICSPLINE 检测并警告
+
+2. **HumanoidMotionClip 中间格式** (`models/character3d/HumanoidMotionClip.ets`)
+   - QuaternionKeyframe / Vector3Keyframe / HumanoidBoneTrack / HumanoidMotionClip
+   - 运行时只依赖 HumanoidBone,与源模型节点解耦
+
+3. **SceneNode 收集器** (`services/SceneNodeCollector.ets`)
+   - 递归遍历 Scene 节点树,建立 name→Node 映射
+   - 解决 ArkGraphics3D SceneNode 与 glTF nodeIndex 桥接
+
+4. **TargetRestPose 收集器** (`services/TargetRestPoseCollector.ets`)
+   - 从 Avatar SceneNode 提取目标 Rest Pose
+   - 用于重定向算法和姿态恢复
+
+5. **HumanoidRetargetor** (`services/HumanoidRetargetor.ets`)
+   - 最小重定向算法:sourceDelta = inverse(sourceRestLocalRotation) × sourceAnimatedLocalRotation
+   - targetAnimatedLocalRotation = targetRestLocalRotation × sourceDelta
+   - 验证不变量:source==rest 时 target==rest
+
+6. **QuaternionUtil** (`utils/QuaternionUtil.ets`)
+   - 四元数乘法、逆、slerp、归一化、最短路径插值
+
+7. **HumanoidRetargetPlaybackController** (`services/HumanoidRetargetPlaybackController.ets`)
+   - 状态:Idle / Preparing / Ready / Playing / Paused / Stopped / Failed / Disposed
+   - 16ms timer 调度,使用真实 elapsed time 修正漂移
+   - 播放/暂停/重播/停止 + Rest Pose 恢复
+
+8. **ActionAvatarPreviewViewModel 接入**
+   - 新增 retargetController 字段
+   - prepareRetargetController:加载动作包→解析 MotionClip→建立映射→创建 Controller
+   - parseVrmFromGlbBuffer:直接从 GLB 缓冲区解析 VRM(不依赖 sourceSha256)
+   - play/pause/replay/stop 优先调用 RetargetController
+
+9. **Character3DActionManagerPage 接入**
+   - loadPreviewScene:注入 appContext、onPrepareProgress 回调
+   - 按钮(播放/暂停/重播/停止)优先调用 previewVm(previewVmState 驱动文案)
+   - 删除静态文案"当前运行时尚未接通跨模型动作重定向,仅显示静态 Avatar"
+   - 状态文案:准备中→就绪→正在播放→已暂停→失败
+
+### 验收
+
+- **AT_Wave**: 右臂挥手,duration=2.000s,66 channels,22 tracks,RightUpperArm 旋转从 (0,-0.071,0.998) → (-0.663,-0.066,0.168,0.727),播放/重播/停止均有效,Rest Pose 恢复正常
+- **AT_Thinking**: 右臂思考姿势,duration=2.048s,loop=true,循环 7s+ 无姿态漂移,RightUpperArm 旋转稳定在 (-0.495,-0.114,0.325,0.798)
+- **AT_Idle**: 轻微手臂摆动,duration≈4s,loop=true,循环 8s+ 无姿态漂移,左右 UpperArm 对称微动
+- **播放控制**: replay→stop 验证通过(restoreTargetRestPose: restored=23)
+- **截图**: wave_t0.png / wave_t05.png / wave_t10.png / thinking.png / idle.png 已保存至 automation/screenshots/t4_2e/
+
+### 限制
+
+- 暂不支持 IK
+- 暂不支持手指精细动作
+- 暂不支持动画混合 / CrossFade
+- 暂不支持 Expression
+- 暂不支持 SpringBone 与动作联动
+- 暂不支持 LookAt
+- Hips 位移策略:HipsOnly(仅旋转,不应用位移)
+- CUBICSPLINE 插值未实现(检测并警告)
+
+### 最终结论
+
+**T-4.2E VRM Humanoid 动作重定向 MVP 完成。从外部动作包 default_ai_action_pack.glb 解析 AT_Wave/AT_Thinking/AT_Idle 动画关键帧,通过 HumanoidBone 标准映射重定向到当前激活 VRM Avatar,CPU 采样 + 16ms timer 调度,SceneNode.rotation 运行时写入经单骨骼测试验证有效。三个动作均实机验收通过(右臂挥手可见、思考姿势稳定循环、Idle 轻微摆动无漂移),播放/暂停/重播/停止 + Rest Pose 恢复全部有效。BUILD SUCCESSFUL,HAP 覆盖安装成功。**
+
+按任务要求停止,不开始 IK、动作混合、手指动作、Expression 或 SpringBone。
+
    - 接入 `Character3DGestureHandlerTest.runAllTests()` 测试入口
 8. `entry/src/main/ets/pages/ChatPage.ets`
    - `chat3DModelScale` → `chat3DModelZoomFactor`

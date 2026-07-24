@@ -37,6 +37,8 @@ import {
   SceneNodeParameters,
   SceneResourceFactory
 } from '@kit.ArkGraphics3D';
+import { common } from '@kit.AbilityKit';
+import { fileIo } from '@kit.CoreFileKit';
 import { AvatarLibraryService } from '../services/AvatarLibraryService';
 import { AvatarRecord } from '../storage/AvatarLibraryStore';
 import { Character3DService } from '../services/Character3DService';
@@ -44,6 +46,17 @@ import { GltfModelInfo } from '../parser/GltfValidator';
 import { ModelBounds, computeBoundsFromGltf, computeAutoFitDisplayConfig } from '../models/character3d/ModelBounds';
 import { Character3DDisplayConfig } from '../models/character3d/Character3DDisplayConfig';
 import { Logger } from '../utils/Logger';
+import { HumanoidRetargetPlaybackController, RetargetPlaybackState, RetargetPlaybackConfig } from '../services/HumanoidRetargetPlaybackController';
+import { collectSceneNodes, SceneNodeCollectResult } from '../services/SceneNodeCollector';
+import { collectTargetRestPose, TargetRestPoseCollectResult } from '../services/TargetRestPoseCollector';
+import { HumanoidProvider, HumanoidProviderInput } from '../services/HumanoidProvider';
+import { parseAnimationByName, parseSourceRestPose, AnimationDataParseResult, SourceRestPoseParseResult } from '../parser/GltfAnimationDataParser';
+import { HumanoidMotionClip, RootMotionMode } from '../models/character3d/HumanoidMotionClip';
+import { VrmAsset } from '../models/character3d/vrm/VrmAsset';
+import { BUILTIN_ACTION_RAWFILE_DIR, BUILTIN_PACK_FILE_NAME } from '../models/character3d/BuiltInActionManifest';
+import { detectVrm } from '../parser/VrmDetector';
+import { importVrm } from '../parser/VRMImporter';
+import { GltfValidator } from '../parser/GltfValidator';
 
 const LOG_TAG: string = 'ActionAvatarPreviewVM';
 
@@ -64,6 +77,10 @@ export enum ActionPreview3DState {
   Idle = 'Idle',
   /** 正在加载 Avatar Scene */
   LoadingAvatar = 'LoadingAvatar',
+  /** 正在加载动作资产 */
+  LoadingMotion = 'LoadingMotion',
+  /** 正在准备重定向(建立骨骼映射) */
+  PreparingRetarget = 'PreparingRetarget',
   /** Avatar Scene 加载完成,可播放 */
   Ready = 'Ready',
   /** 动画播放中 */
@@ -72,7 +89,7 @@ export enum ActionPreview3DState {
   Paused = 'Paused',
   /** 加载或播放失败 */
   Failed = 'Failed',
-  /** 当前 Avatar 无内置动画,仅静态显示 */
+  /** 当前 Avatar 无内置动画,仅静态显示(保留向后兼容,T-4.2E 后不再使用) */
   StaticOnly = 'StaticOnly'
 }
 
@@ -102,9 +119,11 @@ export class ActionAvatarPreviewViewModel {
   private avatarLibraryService: AvatarLibraryService | null = null;
   /** T-4.2D: Character3DService(用于 getModelInfoByUri 计算 bounds) */
   private character3DService: Character3DService | null = null;
+  /** T-4.2E: App context(用于读取 rawfile 动作包) */
+  private appContext: common.Context | null = null;
   /** 当前 Scene 实例 */
   private sceneValue: Scene | null = null;
-  /** 当前播放的动画 */
+  /** 当前播放的动画(ArkGraphics3D 内置动画模式) */
   private currentAnimation: Animation | null = null;
   /** 当前预览状态 */
   private stateValue: ActionPreview3DState = ActionPreview3DState.Idle;
@@ -123,6 +142,17 @@ export class ActionAvatarPreviewViewModel {
   /** T-4.2D: 当前自适应显示配置 */
   private currentDisplayConfig: Character3DDisplayConfig | null = null;
 
+  // ==================== T-4.2E: Humanoid Retarget Runtime ====================
+
+  /** T-4.2E: 重定向播放控制器 */
+  private retargetController: HumanoidRetargetPlaybackController | null = null;
+  /** T-4.2E: 动作包 GLB ArrayBuffer(缓存,避免重复读取) */
+  private actionPackBuffer: ArrayBuffer | null = null;
+  /** T-4.2E: Avatar GLB ArrayBuffer(用于建立 nodeIndex→SceneNode 映射) */
+  private avatarGlbBuffer: ArrayBuffer | null = null;
+  /** T-4.2E: 当前播放模式(true=Retarget Controller,false=ArkGraphics3D 内置动画) */
+  private useRetargetMode: boolean = false;
+
   /** 状态变更回调 */
   onStateChanged: ((state: ActionPreview3DState) => void) | null = null;
   /** 错误信息回调 */
@@ -131,6 +161,8 @@ export class ActionAvatarPreviewViewModel {
   onSceneReady: ((scene: Scene | null) => void) | null = null;
   /** Avatar 信息回调(显示名 + 是否有动画) */
   onAvatarInfo: ((displayName: string, hasAnimation: boolean) => void) | null = null;
+  /** T-4.2E: 准备进度回调(显示"正在准备动作..."等) */
+  onPrepareProgress: ((message: string) => void) | null = null;
 
   /**
    * 注入 AvatarLibraryService。
@@ -144,6 +176,13 @@ export class ActionAvatarPreviewViewModel {
    */
   setCharacter3DService(service: Character3DService): void {
     this.character3DService = service;
+  }
+
+  /**
+   * T-4.2E: 注入 App context(用于读取 rawfile 动作包)。
+   */
+  setAppContext(context: common.Context): void {
+    this.appContext = context;
   }
 
   /**
@@ -163,8 +202,8 @@ export class ActionAvatarPreviewViewModel {
   /**
    * 切换动作(不重新加载 Avatar Scene)。
    *
-   * 若新动作的 clipIndex 与当前播放的 animation 索引一致,仅更新 currentAction;
-   * 否则尝试切换到 Avatar Scene 中对应索引的 animation。
+   * T-4.2E: 优先使用 Retarget 模式重新准备新动作;
+   * 回退到 Avatar 自带动画模式。
    */
   async switchAction(action: PreviewActionInfo): Promise<void> {
     if (this.disposed) {
@@ -175,14 +214,44 @@ export class ActionAvatarPreviewViewModel {
       // Scene 尚未加载完成,等待 initialize 完成后会自动播放
       return;
     }
-    // 停止当前动画
-    this.stopInternal();
-    // 尝试切换到新 Clip
-    this.tryPlayActionClip();
+    // 停止当前动画/重定向
+    if (this.useRetargetMode && this.retargetController !== null) {
+      this.retargetController.stop();
+    } else {
+      this.stopInternal();
+    }
+
+    // T-4.2E: 优先重新准备 Retarget Controller(新动作)
+    if (this.avatarLibraryService !== null) {
+      const activeAvatar: AvatarRecord | null = await this.avatarLibraryService.getActiveAvatar();
+      if (activeAvatar !== null) {
+        const retargetOk: boolean = await this.prepareRetargetController(activeAvatar, this.sceneLoadGeneration);
+        if (retargetOk) {
+          this.useRetargetMode = true;
+          if (this.retargetController !== null) {
+            this.retargetController.play();
+          }
+          if (this.onAvatarInfo !== null) {
+            this.onAvatarInfo(this.avatarDisplayName, true);
+          }
+          return;
+        }
+      }
+    }
+
+    // 回退:尝试 Avatar 自带动画
+    this.useRetargetMode = false;
+    const hasAnimation: boolean = this.tryPlayActionClip();
+    if (this.onAvatarInfo !== null) {
+      this.onAvatarInfo(this.avatarDisplayName, hasAnimation);
+    }
   }
 
   /**
    * 播放(从 Ready/Paused/StaticOnly 进入 Playing)。
+   *
+   * T-4.2E: 优先使用 HumanoidRetargetPlaybackController(外部动作重定向);
+   * 仅当目标模型自带动画时才调用 ArkGraphics3D Animation。
    */
   play(): void {
     if (this.disposed || this.sceneValue === null) {
@@ -191,6 +260,12 @@ export class ActionAvatarPreviewViewModel {
     if (this.stateValue === ActionPreview3DState.Playing) {
       return;
     }
+    // T-4.2E: 优先使用 Retarget Controller
+    if (this.useRetargetMode && this.retargetController !== null) {
+      this.retargetController.play();
+      return;
+    }
+    // 回退:ArkGraphics3D 内置动画
     if (this.currentAnimation === null) {
       Logger.warn(LOG_TAG, 'play: no animation available');
       return;
@@ -212,6 +287,11 @@ export class ActionAvatarPreviewViewModel {
     if (this.disposed || this.stateValue !== ActionPreview3DState.Playing) {
       return;
     }
+    // T-4.2E: 优先使用 Retarget Controller
+    if (this.useRetargetMode && this.retargetController !== null) {
+      this.retargetController.pause();
+      return;
+    }
     if (this.currentAnimation === null) {
       return;
     }
@@ -227,7 +307,15 @@ export class ActionAvatarPreviewViewModel {
    * 重播(回到 0 秒并播放)。
    */
   replay(): void {
-    if (this.disposed || this.sceneValue === null || this.currentAnimation === null) {
+    if (this.disposed || this.sceneValue === null) {
+      return;
+    }
+    // T-4.2E: 优先使用 Retarget Controller
+    if (this.useRetargetMode && this.retargetController !== null) {
+      this.retargetController.replay();
+      return;
+    }
+    if (this.currentAnimation === null) {
       return;
     }
     try {
@@ -245,6 +333,14 @@ export class ActionAvatarPreviewViewModel {
    * 停止(回到 rest pose)。
    */
   stop(): void {
+    // T-4.2E: 优先使用 Retarget Controller
+    if (this.useRetargetMode && this.retargetController !== null) {
+      this.retargetController.stop();
+      if (this.stateValue !== ActionPreview3DState.Failed) {
+        this.setState(ActionPreview3DState.Ready);
+      }
+      return;
+    }
     this.stopInternal();
     if (this.stateValue !== ActionPreview3DState.Failed) {
       this.setState(ActionPreview3DState.Ready);
@@ -273,6 +369,20 @@ export class ActionAvatarPreviewViewModel {
     }
     this.disposed = true;
     Logger.info(LOG_TAG, 'dispose: releasing scene');
+    // T-4.2E 阶段0: 停止单骨骼测试定时器
+    this.stopSingleBoneTest();
+    // T-4.2E: 释放 Retarget Controller(恢复 Rest Pose + 取消定时器)
+    if (this.retargetController !== null) {
+      try {
+        this.retargetController.dispose();
+      } catch (_e) {
+        // ignore
+      }
+      this.retargetController = null;
+    }
+    this.useRetargetMode = false;
+    this.actionPackBuffer = null;
+    this.avatarGlbBuffer = null;
     this.stopInternal();
     this.currentAnimation = null;
     if (this.sceneValue !== null) {
@@ -373,17 +483,42 @@ export class ActionAvatarPreviewViewModel {
       if (generation !== this.sceneLoadGeneration) {
         return;
       }
+      // T-4.2E: 读取 Avatar GLB ArrayBuffer(用于建立 nodeIndex→SceneNode 映射)
+      try {
+        this.avatarGlbBuffer = await this.readAvatarGlbBuffer(activeAvatar.modelUri);
+        Logger.info(LOG_TAG, 'loadActiveAvatarScene: avatarGlbBuffer loaded, size='
+          + (this.avatarGlbBuffer !== null ? this.avatarGlbBuffer.byteLength : 0));
+      } catch (e) {
+        Logger.warn(LOG_TAG, 'loadActiveAvatarScene: readAvatarGlbBuffer failed: ' + (e as Error)?.message);
+      }
       // 通知 UI Scene 就绪
       Logger.info(LOG_TAG, 'stateMachine: →onSceneReady, sceneValue=' + (this.sceneValue !== null));
       if (this.onSceneReady !== null) {
         this.onSceneReady(scene);
       }
-      // 尝试播放动作 Clip
-      const hasAnimation: boolean = this.tryPlayActionClip();
+      // T-4.2E: 优先准备 Retarget Controller(外部动作重定向)
+      // 若 Avatar 无内置动画,这是唯一播放路径
+      const retargetOk: boolean = await this.prepareRetargetController(activeAvatar, generation);
+      if (generation !== this.sceneLoadGeneration) {
+        return;
+      }
+      let hasAnimation: boolean = false;
+      if (retargetOk) {
+        // Retarget 模式:自动开始播放
+        this.useRetargetMode = true;
+        hasAnimation = true;
+        if (this.retargetController !== null) {
+          this.retargetController.play();
+        }
+      } else {
+        // 回退:尝试 Avatar 自带动画
+        hasAnimation = this.tryPlayActionClip();
+      }
       if (this.onAvatarInfo !== null) {
         this.onAvatarInfo(this.avatarDisplayName, hasAnimation);
       }
-      Logger.info(LOG_TAG, 'stateMachine: loadActiveAvatarScene done, hasAnimation=' + hasAnimation);
+      Logger.info(LOG_TAG, 'stateMachine: loadActiveAvatarScene done, hasAnimation=' + hasAnimation
+        + ', useRetargetMode=' + this.useRetargetMode);
     } catch (e) {
       if (generation !== this.sceneLoadGeneration) {
         return;
@@ -648,6 +783,543 @@ export class ActionAvatarPreviewViewModel {
   private fireError(message: string): void {
     if (this.onError !== null) {
       this.onError(message);
+    }
+  }
+
+  // ==================== T-4.2E: Retarget Controller 准备 ====================
+
+  /**
+   * T-4.2E: 读取 Avatar GLB 文件为 ArrayBuffer(用于建立 nodeIndex→SceneNode 映射)。
+   *
+   * @param modelUri 模型 URI(file:// 开头)
+   * @returns ArrayBuffer 或 null
+   */
+  private async readAvatarGlbBuffer(modelUri: string): Promise<ArrayBuffer | null> {
+    try {
+      let path: string = modelUri;
+      if (path.startsWith('file://')) {
+        path = path.substring('file://'.length);
+      }
+      const file: fileIo.File = fileIo.openSync(path, fileIo.OpenMode.READ_ONLY);
+      try {
+        const stat: fileIo.Stat = fileIo.statSync(file.fd);
+        const size: number = stat.size;
+        const buffer: ArrayBuffer = new ArrayBuffer(size);
+        fileIo.readSync(file.fd, buffer);
+        return buffer;
+      } finally {
+        fileIo.closeSync(file);
+      }
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'readAvatarGlbBuffer failed: ' + (e as Error)?.message);
+      return null;
+    }
+  }
+
+  /**
+   * T-4.2E: 读取内置动作包 GLB 为 ArrayBuffer(带缓存)。
+   *
+   * @returns ArrayBuffer 或 null
+   */
+  private async readActionPackBuffer(): Promise<ArrayBuffer | null> {
+    if (this.actionPackBuffer !== null) {
+      return this.actionPackBuffer;
+    }
+    if (this.appContext === null) {
+      Logger.error(LOG_TAG, 'readActionPackBuffer: appContext null');
+      return null;
+    }
+    try {
+      const rawfilePath: string = BUILTIN_ACTION_RAWFILE_DIR + '/' + BUILTIN_PACK_FILE_NAME;
+      Logger.info(LOG_TAG, 'readActionPackBuffer: reading rawfile: ' + rawfilePath);
+      const data: Uint8Array = await this.appContext.resourceManager.getRawFileContent(rawfilePath);
+      const ab: ArrayBuffer = new ArrayBuffer(data.byteLength);
+      const view: Uint8Array = new Uint8Array(ab);
+      view.set(data);
+      this.actionPackBuffer = ab;
+      Logger.info(LOG_TAG, 'readActionPackBuffer: ok, size=' + ab.byteLength);
+      return ab;
+    } catch (e) {
+      Logger.error(LOG_TAG, 'readActionPackBuffer failed: ' + (e as Error)?.message);
+      return null;
+    }
+  }
+
+  /**
+   * T-4.2E: 直接从 GLB Buffer 解析 VRM 资产(不依赖 sourceSha256 持久化)。
+   *
+   * 流程:
+   * 1. parseGlb 获取 glTF JSON + BIN chunk
+   * 2. GltfValidator 提取 nodeNames 等 modelInfo
+   * 3. detectVrm 检测 VRM 扩展
+   * 4. importVrm 解析 VRM 资产(meta/humanoid/expressions/lookAt/springBone)
+   *
+   * @param glbBuffer Avatar GLB ArrayBuffer
+   * @returns VrmAsset 或 null(非 VRM 或解析失败)
+   */
+  private parseVrmFromGlbBuffer(glbBuffer: ArrayBuffer): VrmAsset | null {
+    try {
+      // 1. 验证 GLB 并提取 modelInfo(含 nodeNames)
+      const validationResult = GltfValidator.validate(glbBuffer);
+      if (!validationResult.valid || validationResult.gltfJson === null) {
+        Logger.warn(LOG_TAG, 'parseVrmFromGlbBuffer: GLB validation failed: ' + validationResult.errorMessage);
+        return null;
+      }
+      const gltfJson: Record<string, Object> = validationResult.gltfJson;
+      const modelInfo = validationResult.modelInfo;
+
+      // 2. 检测 VRM 扩展
+      const detection = detectVrm(gltfJson);
+      if (!detection.isVrm) {
+        Logger.warn(LOG_TAG, 'parseVrmFromGlbBuffer: not a VRM file');
+        return null;
+      }
+      Logger.info(LOG_TAG, 'parseVrmFromGlbBuffer: VRM detected, version=' + detection.version
+        + ', specVersion=' + detection.specVersion);
+
+      // 3. 导入 VRM 资产
+      const vrmResult = importVrm({
+        gltfJson: gltfJson,
+        sourceSha256: '',
+        nodeNames: modelInfo.nodeNames,
+        nodeCount: modelInfo.nodeCount,
+        meshCount: modelInfo.meshCount,
+        materialCount: modelInfo.materialCount,
+        imageCount: 0
+      });
+      if (!vrmResult.isVrm || !vrmResult.asset.valid) {
+        Logger.warn(LOG_TAG, 'parseVrmFromGlbBuffer: VRM import failed: ' + vrmResult.error);
+        return null;
+      }
+      Logger.info(LOG_TAG, 'parseVrmFromGlbBuffer: VRM parsed ok, humanoid.bones='
+        + vrmResult.asset.humanoid.bones.length
+        + ', valid=' + vrmResult.asset.humanoid.valid);
+      return vrmResult.asset;
+    } catch (e) {
+      Logger.error(LOG_TAG, 'parseVrmFromGlbBuffer exception: ' + (e as Error)?.message);
+      return null;
+    }
+  }
+
+  /**
+   * T-4.2E: 准备 Retarget Controller(外部动作重定向)。
+   *
+   * 流程:
+   * 1. 读取动作包 GLB → ArrayBuffer
+   * 2. 解析指定名称的动画 → HumanoidMotionClip
+   * 3. 解析源 Rest Pose(动作包 nodes 默认 TRS)
+   * 4. 直接从 avatarGlbBuffer 解析 VRM 资产(不依赖 sourceSha256 持久化)
+   *    - parseGlb + detectVrm + importVrm → VrmAsset.humanoid
+   * 5. 建立 nodeIndex→SceneNode 映射(collectSceneNodes)
+   * 6. 收集目标 Rest Pose(collectTargetRestPose)
+   * 7. 创建 RetargetPlaybackConfig 并 prepare
+   *
+   * @param activeAvatar 当前激活 Avatar
+   * @param generation 加载代际(防止旧回调)
+   * @returns true 表示准备成功;false 表示失败(已设置 Failed 状态)
+   */
+  private async prepareRetargetController(
+    activeAvatar: AvatarRecord,
+    generation: number
+  ): Promise<boolean> {
+    if (this.sceneValue === null) {
+      Logger.warn(LOG_TAG, 'prepareRetargetController: scene is null');
+      return false;
+    }
+    if (this.currentAction === null) {
+      Logger.warn(LOG_TAG, 'prepareRetargetController: currentAction is null');
+      return false;
+    }
+
+    this.setState(ActionPreview3DState.LoadingMotion);
+    if (this.onPrepareProgress !== null) {
+      this.onPrepareProgress('正在加载动作资源……');
+    }
+
+    // 1. 读取动作包
+    const actionPackBuf: ArrayBuffer | null = await this.readActionPackBuffer();
+    if (generation !== this.sceneLoadGeneration) {
+      return false;
+    }
+    if (actionPackBuf === null) {
+      this.fireError('动作包不存在或读取失败');
+      this.setState(ActionPreview3DState.Failed);
+      return false;
+    }
+
+    // 2. 解析动画 Clip
+    const clipName: string = this.currentAction.clipName;
+    const clipId: string = this.currentAction.actionId;
+    const loop: boolean = this.currentAction.loop;
+    Logger.info(LOG_TAG, 'prepareRetargetController: parsing clip="' + clipName + '", loop=' + loop);
+    const parseResult: AnimationDataParseResult = parseAnimationByName(actionPackBuf, clipName, clipId, loop);
+    if (!parseResult.success || parseResult.clip === null) {
+      this.fireError('动作解析失败: ' + parseResult.errorMessage);
+      this.setState(ActionPreview3DState.Failed);
+      return false;
+    }
+    const clip: HumanoidMotionClip = parseResult.clip;
+    if (generation !== this.sceneLoadGeneration) {
+      return false;
+    }
+
+    // 检查是否有 CUBICSPLINE 警告
+    const hasCubicSpline: boolean = clip.warnings.some((w: string): boolean => w.indexOf('CUBICSPLINE') >= 0);
+    if (hasCubicSpline) {
+      Logger.warn(LOG_TAG, 'prepareRetargetController: clip contains CUBICSPLINE (unsupported), may not animate correctly');
+    }
+
+    // 3. 解析源 Rest Pose
+    if (this.onPrepareProgress !== null) {
+      this.onPrepareProgress('正在解析动作骨架……');
+    }
+    const sourceRestResult: SourceRestPoseParseResult = parseSourceRestPose(actionPackBuf);
+    if (!sourceRestResult.success || sourceRestResult.restPose === null) {
+      this.fireError('源骨架 Rest Pose 解析失败: ' + sourceRestResult.errorMessage);
+      this.setState(ActionPreview3DState.Failed);
+      return false;
+    }
+    if (generation !== this.sceneLoadGeneration) {
+      return false;
+    }
+
+    // 4. 获取目标 VRM HumanoidProvider
+    this.setState(ActionPreview3DState.PreparingRetarget);
+    if (this.onPrepareProgress !== null) {
+      this.onPrepareProgress('正在建立骨骼映射……');
+    }
+    if (!activeAvatar.isVrm) {
+      // 非 VRM 模型暂不支持重定向(需要手动映射)
+      Logger.warn(LOG_TAG, 'prepareRetargetController: non-VRM avatar, retarget not supported');
+      this.fireError('非 VRM 模型暂不支持动作重定向');
+      this.setState(ActionPreview3DState.Failed);
+      return false;
+    }
+
+    // T-4.2E: 直接从 Avatar GLB Buffer 解析 VRM(不依赖 sourceSha256 持久化)
+    // 旧实现:const vrmAsset = await this.character3DService.getVrmAsset(activeAvatar.sourceSha256);
+    // 问题:旧 Avatar 记录可能 sourceSha256 为空,导致 getVrmAsset 返回 null
+    // 新实现:直接读取 avatarGlbBuffer,调用 parseGlb + detectVrm + importVrm
+    if (this.avatarGlbBuffer === null) {
+      this.fireError('Avatar GLB 缓冲区为空,无法解析 VRM');
+      this.setState(ActionPreview3DState.Failed);
+      return false;
+    }
+    const vrmAsset: VrmAsset | null = this.parseVrmFromGlbBuffer(this.avatarGlbBuffer);
+    if (generation !== this.sceneLoadGeneration) {
+      return false;
+    }
+    if (vrmAsset === null) {
+      this.fireError('VRM 资产解析失败(非 VRM 文件或解析错误)');
+      this.setState(ActionPreview3DState.Failed);
+      return false;
+    }
+    if (!vrmAsset.humanoid.valid) {
+      this.fireError('VRM Humanoid 映射无效(声明骨骼数=' + vrmAsset.humanoid.bones.length + ')');
+      this.setState(ActionPreview3DState.Failed);
+      return false;
+    }
+
+    // 构建 HumanoidProvider(VRM 显式映射)
+    const providerInput: HumanoidProviderInput = {
+      vrmHumanoid: vrmAsset.humanoid,
+      manualMapping: null,
+      autoMapping: null
+    };
+    const provider: HumanoidProvider = new HumanoidProvider(providerInput);
+    Logger.info(LOG_TAG, 'prepareRetargetController: HumanoidProvider built, source='
+      + (provider.getPrimarySource())
+      + ', mapped=' + provider.getMappedCount()
+      + ', required=' + provider.getRequiredMappedCount());
+
+    // 5. 建立 nodeIndex→SceneNode 映射(avatarGlbBuffer 已在步骤 4 验证非空)
+    const glbBuf: ArrayBuffer = this.avatarGlbBuffer as ArrayBuffer;
+    const sceneNodeResult: SceneNodeCollectResult = collectSceneNodes(this.sceneValue, glbBuf);
+    if (!sceneNodeResult.success) {
+      this.fireError('SceneNode 索引失败: ' + sceneNodeResult.errorMessage);
+      this.setState(ActionPreview3DState.Failed);
+      return false;
+    }
+    if (generation !== this.sceneLoadGeneration) {
+      return false;
+    }
+    Logger.info(LOG_TAG, 'prepareRetargetController: scene nodes collected, matched='
+      + sceneNodeResult.nodeIndexMap.size + '/' + sceneNodeResult.totalNodes);
+
+    // 6. 收集目标 Rest Pose
+    const targetRestResult: TargetRestPoseCollectResult = collectTargetRestPose(provider, sceneNodeResult.nodeIndexMap);
+    if (targetRestResult.missingRequired.length > 0) {
+      const missingNames: string = targetRestResult.missingRequired.join(', ');
+      this.fireError('目标 VRM 骨架缺失必需骨骼: ' + missingNames);
+      this.setState(ActionPreview3DState.Failed);
+      return false;
+    }
+    if (generation !== this.sceneLoadGeneration) {
+      return false;
+    }
+    Logger.info(LOG_TAG, 'prepareRetargetController: target rest pose collected, bones='
+      + targetRestResult.collectedCount + ', missing=' + targetRestResult.missingBones.length);
+
+    // 7. 创建并准备 Retarget Controller
+    // 释放旧 Controller
+    if (this.retargetController !== null) {
+      try {
+        this.retargetController.dispose();
+      } catch (_e) {
+        // ignore
+      }
+      this.retargetController = null;
+    }
+
+    const config: RetargetPlaybackConfig = {
+      clip: clip,
+      sourceRestPose: sourceRestResult.restPose,
+      targetRestPose: targetRestResult.restPose,
+      boneNodeMap: targetRestResult.boneNodeMap,
+      rootMotionMode: RootMotionMode.HipsOnly,
+      speed: 1.0
+    };
+
+    const controller: HumanoidRetargetPlaybackController = new HumanoidRetargetPlaybackController();
+    // 连接状态回调
+    controller.onStateChanged = (state: RetargetPlaybackState): void => {
+      this.onRetargetStateChanged(state);
+    };
+    controller.onError = (message: string): void => {
+      this.fireError('重定向播放错误: ' + message);
+    };
+
+    const prepareResult = controller.prepare(config);
+    if (!prepareResult.success) {
+      this.fireError('重定向准备失败: ' + prepareResult.errorMessage);
+      this.setState(ActionPreview3DState.Failed);
+      return false;
+    }
+
+    this.retargetController = controller;
+    Logger.info(LOG_TAG, 'prepareRetargetController: success, clip=' + clip.name
+      + ', duration=' + clip.durationSeconds.toFixed(3)
+      + ', tracks=' + clip.tracks.length
+      + ', targetBones=' + targetRestResult.collectedCount);
+    return true;
+  }
+
+  /**
+   * T-4.2E: Retarget Controller 状态变更回调。
+   *
+   * 将 RetargetPlaybackState 映射到 ActionPreview3DState。
+   */
+  private onRetargetStateChanged(retargetState: RetargetPlaybackState): void {
+    if (this.disposed) {
+      return;
+    }
+    switch (retargetState) {
+      case RetargetPlaybackState.Ready:
+        this.setState(ActionPreview3DState.Ready);
+        break;
+      case RetargetPlaybackState.Playing:
+        this.setState(ActionPreview3DState.Playing);
+        break;
+      case RetargetPlaybackState.Paused:
+        this.setState(ActionPreview3DState.Paused);
+        break;
+      case RetargetPlaybackState.Stopped:
+        // 停止后恢复到 Ready(可重新播放)
+        this.setState(ActionPreview3DState.Ready);
+        break;
+      case RetargetPlaybackState.Failed:
+        this.setState(ActionPreview3DState.Failed);
+        break;
+      default:
+        // Idle / Preparing / Disposed 不改变 ViewModel 状态
+        break;
+    }
+  }
+
+  // ==================== T-4.2E 阶段0: 单骨骼运行时写入测试 ====================
+
+  /** 测试定时器 ID(-1 表示未启动) */
+  private testTimerId: number = -1;
+  /** 测试开始时间戳(ms) */
+  private testStartTime: number = 0;
+  /** 测试目标节点(RightUpperArm 或 LeftUpperArm) */
+  private testTargetNode: Node | null = null;
+  /** 测试目标节点名 */
+  private testTargetNodeName: string = '';
+  /** 测试目标节点 Rest Rotation */
+  private testRestRotation: Quaternion = { x: 0, y: 0, z: 0, w: 1 };
+
+  /**
+   * T-4.2E 阶段0: 运行单骨骼运行时写入测试。
+   *
+   * 测试目的:验证 ArkGraphics3D SceneNode.rotation 运行时写入是否能在下一帧可见。
+   *
+   * 流程:
+   * 1. 遍历 Scene 节点树,建立 name→Node 映射
+   * 2. 查找 UpperArm 节点(优先右臂)
+   * 3. 保存 Rest Rotation
+   * 4. 启动定时器(每 33ms 更新一次),将骨骼旋转设置为 sin(time) * 1.0 弧度
+   * 5. 5 秒后自动停止并恢复 Rest Rotation
+   *
+   * @returns true 表示测试已启动;false 表示无法找到测试骨骼
+   */
+  runSingleBoneTest(): boolean {
+    if (this.sceneValue === null) {
+      Logger.warn(LOG_TAG, 'runSingleBoneTest: scene is null');
+      return false;
+    }
+    if (this.testTimerId !== -1) {
+      Logger.warn(LOG_TAG, 'runSingleBoneTest: already running');
+      return false;
+    }
+
+    // 1. 遍历 Scene 节点树,建立 name→Node 映射
+    const sceneRoot: Node | null = this.sceneValue.root;
+    if (sceneRoot === null) {
+      Logger.warn(LOG_TAG, 'runSingleBoneTest: scene.root is null');
+      return false;
+    }
+    const nameMap: Map<string, Node> = new Map();
+    this.collectNodesByName(sceneRoot, nameMap);
+    Logger.info(LOG_TAG, 'runSingleBoneTest: collected nodes, count=' + nameMap.size);
+
+    // 2. 查找 UpperArm 节点(优先右臂)
+    const candidates: string[] = [
+      'J_Bip_R_UpperArm', 'J_Bip_L_UpperArm',
+      'UpperArm_R', 'UpperArm_L',
+      'RightArm', 'LeftArm',
+      'rightUpperArm', 'leftUpperArm'
+    ];
+    let foundNode: Node | null = null;
+    let foundName: string = '';
+    for (let i: number = 0; i < candidates.length; i++) {
+      const n: Node | undefined = nameMap.get(candidates[i]);
+      if (n !== undefined) {
+        foundNode = n;
+        foundName = candidates[i];
+        break;
+      }
+    }
+    // 回退:模糊匹配包含 UpperArm 的节点名
+    if (foundNode === null) {
+      nameMap.forEach((node: Node, name: string) => {
+        if (foundNode === null && name.indexOf('UpperArm') >= 0) {
+          foundNode = node;
+          foundName = name;
+        }
+      });
+    }
+    if (foundNode === null) {
+      Logger.warn(LOG_TAG, 'runSingleBoneTest: no UpperArm node found');
+      return false;
+    }
+
+    this.testTargetNode = foundNode;
+    this.testTargetNodeName = foundName;
+    // 3. 保存 Rest Rotation
+    try {
+      this.testRestRotation = foundNode.rotation;
+      Logger.info(LOG_TAG, 'runSingleBoneTest: target=' + foundName
+        + ', restRotation=(' + this.testRestRotation.x.toFixed(3) + ','
+        + this.testRestRotation.y.toFixed(3) + ','
+        + this.testRestRotation.z.toFixed(3) + ','
+        + this.testRestRotation.w.toFixed(3) + ')');
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'runSingleBoneTest: save rest rotation failed: ' + (e as Error)?.message);
+    }
+
+    // 4. 启动定时器
+    this.testStartTime = Date.now();
+    this.testTimerId = setInterval((): void => {
+      this.onTestTimerTick();
+    }, 33);
+    Logger.info(LOG_TAG, 'runSingleBoneTest: timer started, will run for 5 seconds');
+    return true;
+  }
+
+  /**
+   * 停止单骨骼测试并恢复 Rest Rotation。
+   */
+  stopSingleBoneTest(): void {
+    if (this.testTimerId !== -1) {
+      clearInterval(this.testTimerId);
+      this.testTimerId = -1;
+    }
+    if (this.testTargetNode !== null) {
+      try {
+        this.testTargetNode.rotation = this.testRestRotation;
+        Logger.info(LOG_TAG, 'stopSingleBoneTest: rest rotation restored');
+      } catch (e) {
+        Logger.warn(LOG_TAG, 'stopSingleBoneTest: restore failed: ' + (e as Error)?.message);
+      }
+    }
+    this.testTargetNode = null;
+    this.testTargetNodeName = '';
+  }
+
+  /**
+   * 递归遍历节点树,收集 name→Node 映射。
+   */
+  private collectNodesByName(node: Node, nameMap: Map<string, Node>): void {
+    try {
+      const name: string = node.name;
+      if (name.length > 0 && !nameMap.has(name)) {
+        nameMap.set(name, node);
+      }
+    } catch (_e) {
+      // ignore
+    }
+    try {
+      const children = node.children;
+      const count: number = children.count();
+      for (let i: number = 0; i < count; i++) {
+        const child: Node | null = children.get(i);
+        if (child !== null) {
+          this.collectNodesByName(child, nameMap);
+        }
+      }
+    } catch (_e) {
+      // ignore
+    }
+  }
+
+  /**
+   * 定时器回调:更新测试骨骼旋转。
+   */
+  private onTestTimerTick(): void {
+    if (this.testTargetNode === null) {
+      this.stopSingleBoneTest();
+      return;
+    }
+    const elapsed: number = (Date.now() - this.testStartTime) / 1000;
+    // 5 秒后自动停止
+    if (elapsed >= 5.0) {
+      Logger.info(LOG_TAG, 'onTestTimerTick: 5s elapsed, stopping test');
+      this.stopSingleBoneTest();
+      return;
+    }
+    // 计算 oscillation: sin(elapsed * 2π / 1.5) * 1.0 弧度(约 57度)
+    const angle: number = Math.sin(elapsed * 2 * Math.PI / 1.5) * 1.0;
+    // 构造绕 X 轴旋转的四元数: {sin(θ/2), 0, 0, cos(θ/2)}
+    const half: number = angle / 2;
+    const testRot: Quaternion = {
+      x: Math.sin(half),
+      y: 0,
+      z: 0,
+      w: Math.cos(half)
+    };
+    try {
+      this.testTargetNode.rotation = testRot;
+      // 每 0.5 秒记录一次日志
+      if (Math.floor(elapsed * 2) !== Math.floor((elapsed - 0.033) * 2)) {
+        Logger.info(LOG_TAG, 'onTestTimerTick: t=' + elapsed.toFixed(2)
+          + 's, angle=' + angle.toFixed(3)
+          + ', node=' + this.testTargetNodeName
+          + ', rot=(' + testRot.x.toFixed(3) + ',' + testRot.y.toFixed(3)
+          + ',' + testRot.z.toFixed(3) + ',' + testRot.w.toFixed(3) + ')');
+      }
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'onTestTimerTick: set rotation failed: ' + (e as Error)?.message);
     }
   }
 }
