@@ -1,0 +1,200 @@
+07-25 02:33:56.157  8412  8412 W A00000/ArkTavern: VrmBoneKeyParser | unknown VRM bone key: rightThumbMetacarpal
+07-25 02:33:56.157  8412  8412 W A00000/ArkTavern: VrmBoneKeyParser | unknown VRM bone key: rightThumbProximal
+07-25 02:33:56.157  8412  8412 I A00000/ArkTavern: VRMImporter | Humanoid parsed: bones=21, required=7/7
+07-25 02:33:56.158  8412  8412 I A00000/ArkTavern: VRMImporter | Expressions parsed: 17 (preset=17, custom=0)
+07-25 02:33:56.159  8412  8412 I A00000/ArkTavern: VRMImporter | LookAt parsed: type=expression, valid=true
+07-25 02:33:56.159  8412  8412 I A00000/ArkTavern: VRMImporter | SpringBone parsed: springs=9, joints=28
+07-25 02:33:56.160  8412  8412 I A00000/ArkTavern: VRMImporter | FirstPerson parsed: annotations=5
+07-25 02:33:56.160  8412  8412 I A00000/ArkTavern: ActionAvatarPreviewVM | parseVrmFromGlbBuffer: VRM parsed ok, humanoid.bones=21, valid=true
+07-25 02:33:56.161  8412  8412 I A00000/ArkTavern: ActionAvatarPreviewVM | prepareRetargetController: HumanoidProvider built, source=VrmExplicit, mapped=21, required=7
+07-25 02:33:56.523  8412  8412 I A00000/ArkTavern: SceneNodeCollector | collectSceneNodes: scene nodes=151, glb nodes=147, unique names=151
+07-25 02:33:56.524  8412  8412 I A00000/ArkTavern: SceneNodeCollector | collectSceneNodes: nodeIndexMap built, matched=147/147
+07-25 02:33:56.525  8412  8412 I A00000/ArkTavern: ActionAvatarPreviewVM | prepareRetargetController: scene nodes collected, matched=147/151
+07-25 02:33:56.562  8412  8412 I A00000/ArkTavern: TargetRestPoseCollector | collectTargetRestPose: collected=21, missing=4, missingRequired=0, hipsY=0.796, modelHeight=1.400
+07-25 02:33:56.563  8412  8412 I A00000/ArkTavern: ActionAvatarPreviewVM | prepareRetargetController: target rest pose collected, bones=21, missing=4
+07-25 02:33:56.563  8412  8412 I A00000/ArkTavern: RetargetController | Retarget mapping: sourceBones=22, targetBones=21, mappedBones=21, clip=AT_Idle, duration=4.000, loop=true
+07-25 02:33:56.563  8412  8412 I A00000/ArkTavern: Char3DActionPage | loadPreviewScene: state=Ready
+07-25 02:33:56.564  8412  8412 I A00000/ArkTavern: ActionAvatarPreviewVM | prepareRetargetController: success, clip=AT_Idle, duration=4.000, tracks=22, targetBones=21
+07-25 02:33:56.564  8412  8412 I A00000/ArkTavern: RetargetController | Retarget play: clip=AT_Idle, duration=4.000, loop=true, currentTime=0.000
+07-25 02:33:56.564  8412  8412 I A00000/ArkTavern: Char3DActionPage | loadPreviewScene: state=Playing
+07-25 02:33:56.565  8412  8412 I A00000/ArkTavern: ActionAvatarPreviewVM | stateMachine: loadActiveAvatarScene done, hasAnimation=true, useRetargetMode=true
+07-25 02:33:57.729  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=1.164, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:33:58.807  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=2.242, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:33:59.841  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=3.276, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:00.966  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=0.400, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:02.124  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=1.555, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:03.189  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=2.622, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:04.390  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=3.822, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:05.595  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=1.026, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:06.731  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=2.166, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:07.744  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=3.178, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:08.777  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=0.212, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:09.934  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=1.368, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:10.982  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=2.416, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:12.169  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=3.601, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:13.372  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=0.806, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:14.461  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=1.896, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:15.684  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=3.119, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:16.806  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=0.240, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:17.937  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=1.371, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:19.102  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=2.536, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:20.269  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=3.703, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:21.354  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=0.785, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:22.465  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=1.899, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:23.585  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=3.017, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:24.814  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=0.248, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:25.881  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=1.315, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:27.029  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=2.464, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:28.284  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=3.718, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:29.330  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=0.764, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:30.443  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=1.876, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:31.463  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=2.897, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:32.648  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=0.082, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:33.697  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=1.130, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:34.980  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=2.411, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:36.104  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=3.538, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:37.275  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=0.708, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:38.614  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=2.043, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:39.780  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=3.215, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:40.879  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=0.313, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:41.982  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=1.403, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:42.984  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=2.418, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:44.069  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=3.502, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:45.098  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=0.532, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:46.337  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=1.767, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:47.533  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=2.960, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:48.609  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=0.043, appliedBones=21, changedBones=0, clip=AT_Idle
+07-25 02:34:49.697  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=1.131, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:50.831  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=2.263, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:52.005  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=3.439, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:53.034  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=0.468, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:54.142  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=1.575, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:55.230  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=2.665, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:56.265  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=3.698, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:57.366  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=0.799, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:34:58.557  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=1.991, appliedBones=21, changedBones=2, clip=AT_Idle
+07-25 02:34:59.708  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=3.142, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:35:00.733  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=0.167, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:35:01.871  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=1.306, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:35:03.013  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=2.446, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:35:04.173  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=3.608, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:35:05.217  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=0.648, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:35:06.296  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=1.729, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:35:07.397  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=2.831, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:35:08.490  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=3.923, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:35:09.647  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=1.080, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:35:10.743  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=2.178, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:35:11.800  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=3.234, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:35:12.935  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=0.369, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:35:14.008  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=1.437, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:35:15.055  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=2.478, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:35:16.222  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=3.656, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:35:17.361  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=0.792, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:35:18.384  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=1.819, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:35:19.537  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=2.971, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:35:20.732  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=0.167, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:35:21.875  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=1.309, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:35:22.883  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=2.318, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:35:23.890  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=3.323, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:35:24.920  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=0.355, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:35:26.078  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=1.512, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:35:27.298  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=2.732, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:35:28.403  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=3.837, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:35:29.504  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=0.938, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:35:30.742  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=2.176, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:35:31.934  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=3.369, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:35:32.989  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=0.423, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:35:34.061  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=1.494, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:35:35.105  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=2.539, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:35:36.243  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=3.675, appliedBones=21, changedBones=4, clip=AT_Idle
+07-25 02:35:37.118  8412  8412 I A00000/ArkTavern: RetargetController | restoreTargetRestPose: restored=21
+07-25 02:35:37.125  8412  8412 I A00000/ArkTavern: Char3DActionPage | loadPreviewScene: state=Ready
+07-25 02:35:37.136  8412  8412 I A00000/ArkTavern: RetargetController | Retarget stop: rest pose restored
+07-25 02:35:37.137  8412  8412 I A00000/ArkTavern: Char3DActionPage | loadPreviewScene: state=Ready
+07-25 02:36:36.032  8412  8412 I A00000/ArkTavern: ActionAvatarPreviewVM | dispose: releasing scene
+07-25 02:36:36.034  8412  8412 I A00000/ArkTavern: RetargetController | restoreTargetRestPose: restored=21
+07-25 02:36:36.035  8412  8412 I A00000/ArkTavern: RetargetController | Retarget dispose: resources released
+07-25 02:36:36.405  8412  8412 I A00000/ArkTavern: Char3DActionPage | loadPreviewScene: onSceneReady, scene=false
+07-25 02:36:36.405  8412  8412 I A00000/ArkTavern: Char3DActionPage | loadPreviewScene: state=Idle
+07-25 02:36:54.233  8412  8412 I A00000/ArkTavern: ActionAvatarPreviewVM | stateMachine: Idle→LoadingAvatar, action=AT_Wave, clipIndex=5
+07-25 02:36:54.234  8412  8412 I A00000/ArkTavern: Char3DActionPage | loadPreviewScene: state=LoadingAvatar
+07-25 02:36:54.235  8412  8412 I A00000/ArkTavern: ActionAvatarPreviewVM | loadActiveAvatarScene: generation=1
+07-25 02:36:54.446  8412  8412 I A00000/ArkTavern: ActionAvatarPreviewVM | loadActiveAvatarScene: avatarId=3ab05f5f, name=Seed-san, isVrm=true, vrmVersion=Vrm1, modelUri=file:///data/storage/el2/base/haps/entry/files/models3d/model3d_1784914067003.glb, sourceSha256=Yk0NVUvC
+07-25 02:36:54.448  8412  8412 I A00000/ArkTavern: ActionAvatarPreviewVM | stateMachine: LoadingAvatar→Scene.load start, uri=file:///data/storage/el2/base/haps/entry/files/models3d/model3d_1784914067003.glb
+07-25 02:36:55.338  8412  8412 I A00000/ArkTavern: ActionAvatarPreviewVM | Scene.load returned ok, animations=0
+07-25 02:36:55.374  8412  8412 I A00000/ArkTavern: Character3DService | getModelInfoByUri ok: meshes=5, animations=0, hasBounds=true
+07-25 02:36:55.374  8412  8412 I A00000/ArkTavern: ActionAvatarPreviewVM | supplementScene: bounds computed, center=(0.304,0.790,-0.145) size=(1.819,1.580,0.676) radius=1.251, autoFit scale=1.2657, camDist=4.966
+07-25 02:36:55.377  8412  8412 I A00000/ArkTavern: ActionAvatarPreviewVM | supplementScene: sceneRoot childrenCount=1, modelRootNodes=1, meshCount=5, nodeCount=147, hasSkins=true
+07-25 02:36:55.377  8412  8412 I A00000/ArkTavern: ActionAvatarPreviewVM | supplementScene: creating camera
+07-25 02:36:55.674  8412  8412 I A00000/ArkTavern: ActionAvatarPreviewVM | supplementScene: camera configured, enabled=true, pos=(0,0,4.966), fov=45, near=2.590, far=11.300
+07-25 02:36:55.675  8412  8412 I A00000/ArkTavern: ActionAvatarPreviewVM | supplementScene: camera appended to sceneRoot
+07-25 02:36:55.675  8412  8412 I A00000/ArkTavern: ActionAvatarPreviewVM | supplementScene: creating light
+07-25 02:36:55.948  8412  8412 I A00000/ArkTavern: ActionAvatarPreviewVM | supplementScene: light appended to sceneRoot
+07-25 02:36:55.951  8412  8412 I A00000/ArkTavern: ActionAvatarPreviewVM | supplementScene: transform applied, count=1/1, scale=1.2657, pos=(-0.385,-1.000,0.184)
+07-25 02:36:55.951  8412  8412 I A00000/ArkTavern: ActionAvatarPreviewVM | supplementScene: done
+07-25 02:36:55.984  8412  8412 I A00000/ArkTavern: ActionAvatarPreviewVM | loadActiveAvatarScene: avatarGlbBuffer loaded, size=10917800
+07-25 02:36:55.984  8412  8412 I A00000/ArkTavern: ActionAvatarPreviewVM | stateMachine: →onSceneReady, sceneValue=true
+07-25 02:36:55.984  8412  8412 I A00000/ArkTavern: Char3DActionPage | loadPreviewScene: onSceneReady, scene=true
+07-25 02:36:55.985  8412  8412 I A00000/ArkTavern: Char3DActionPage | loadPreviewScene: state=LoadingMotion
+07-25 02:36:55.985  8412  8412 I A00000/ArkTavern: ActionAvatarPreviewVM | readActionPackBuffer: reading rawfile: actions/default_ai/default_ai_action_pack.glb
+07-25 02:36:56.007  8412  8412 I A00000/ArkTavern: ActionAvatarPreviewVM | readActionPackBuffer: ok, size=213324
+07-25 02:36:56.007  8412  8412 I A00000/ArkTavern: ActionAvatarPreviewVM | prepareRetargetController: parsing clip="AT_Wave", loop=false
+07-25 02:36:56.017  8412  8412 I A00000/ArkTavern: GltfAnimDataParser | parseAnimationByName: found "AT_Wave" at index 14
+07-25 02:36:56.030  8412  8412 I A00000/ArkTavern: GltfAnimDataParser | MotionClip parsed: name=AT_Wave, duration=2.000, channels=66, tracks=22, rotationTracks=22, translationTracks=22, sourceHeight=1.020, warnings=0
+07-25 02:36:56.038  8412  8412 I A00000/ArkTavern: GltfAnimDataParser | parseSourceRestPose: bones=22, hipsY=0.900, modelHeight=1.020
+07-25 02:36:56.038  8412  8412 I A00000/ArkTavern: Char3DActionPage | loadPreviewScene: state=PreparingRetarget
+07-25 02:36:56.061  8412  8412 I A00000/ArkTavern: VrmDetector | detectVrm: isVrm=true, version=Vrm1, hasVrm0=false, hasVrm1=true, specVersion=1.0, exporter=, warnings=0
+07-25 02:36:56.061  8412  8412 I A00000/ArkTavern: ActionAvatarPreviewVM | parseVrmFromGlbBuffer: VRM detected, version=Vrm1, specVersion=1.0
+07-25 02:36:56.062  8412  8412 I A00000/ArkTavern: VRMImporter | VRM detected: version=Vrm1
+07-25 02:36:56.063  8412  8412 I A00000/ArkTavern: VRMImporter | Meta parsed: name=Seed-san, authors=1
+07-25 02:36:56.064  8412  8412 W A00000/ArkTavern: VrmBoneKeyParser | unknown VRM bone key: leftIndexDistal
+07-25 02:36:56.064  8412  8412 W A00000/ArkTavern: VrmBoneKeyParser | unknown VRM bone key: leftIndexIntermediate
+07-25 02:36:56.065  8412  8412 W A00000/ArkTavern: VrmBoneKeyParser | unknown VRM bone key: leftIndexProximal
+07-25 02:36:56.065  8412  8412 W A00000/ArkTavern: VrmBoneKeyParser | unknown VRM bone key: leftLittleDistal
+07-25 02:36:56.066  8412  8412 W A00000/ArkTavern: VrmBoneKeyParser | unknown VRM bone key: leftLittleIntermediate
+07-25 02:36:56.066  8412  8412 W A00000/ArkTavern: VrmBoneKeyParser | unknown VRM bone key: leftLittleProximal
+07-25 02:36:56.067  8412  8412 W A00000/ArkTavern: VrmBoneKeyParser | unknown VRM bone key: leftMiddleDistal
+07-25 02:36:56.067  8412  8412 W A00000/ArkTavern: VrmBoneKeyParser | unknown VRM bone key: leftMiddleIntermediate
+07-25 02:36:56.067  8412  8412 W A00000/ArkTavern: VrmBoneKeyParser | unknown VRM bone key: leftMiddleProximal
+07-25 02:36:56.069  8412  8412 W A00000/ArkTavern: VrmBoneKeyParser | unknown VRM bone key: leftRingDistal
+07-25 02:36:56.069  8412  8412 W A00000/ArkTavern: VrmBoneKeyParser | unknown VRM bone key: leftRingIntermediate
+07-25 02:36:56.069  8412  8412 W A00000/ArkTavern: VrmBoneKeyParser | unknown VRM bone key: leftRingProximal
+07-25 02:36:56.069  8412  8412 W A00000/ArkTavern: VrmBoneKeyParser | unknown VRM bone key: leftThumbDistal
+07-25 02:36:56.070  8412  8412 W A00000/ArkTavern: VrmBoneKeyParser | unknown VRM bone key: leftThumbMetacarpal
+07-25 02:36:56.070  8412  8412 W A00000/ArkTavern: VrmBoneKeyParser | unknown VRM bone key: leftThumbProximal
+07-25 02:36:56.071  8412  8412 W A00000/ArkTavern: VrmBoneKeyParser | unknown VRM bone key: rightIndexDistal
+07-25 02:36:56.071  8412  8412 W A00000/ArkTavern: VrmBoneKeyParser | unknown VRM bone key: rightIndexIntermediate
+07-25 02:36:56.072  8412  8412 W A00000/ArkTavern: VrmBoneKeyParser | unknown VRM bone key: rightIndexProximal
+07-25 02:36:56.072  8412  8412 W A00000/ArkTavern: VrmBoneKeyParser | unknown VRM bone key: rightLittleDistal
+07-25 02:36:56.073  8412  8412 W A00000/ArkTavern: VrmBoneKeyParser | unknown VRM bone key: rightLittleIntermediate
+07-25 02:36:56.073  8412  8412 W A00000/ArkTavern: VrmBoneKeyParser | unknown VRM bone key: rightLittleProximal
+07-25 02:36:56.073  8412  8412 W A00000/ArkTavern: VrmBoneKeyParser | unknown VRM bone key: rightMiddleDistal
+07-25 02:36:56.073  8412  8412 W A00000/ArkTavern: VrmBoneKeyParser | unknown VRM bone key: rightMiddleIntermediate
+07-25 02:36:56.073  8412  8412 W A00000/ArkTavern: VrmBoneKeyParser | unknown VRM bone key: rightMiddleProximal
+07-25 02:36:56.074  8412  8412 W A00000/ArkTavern: VrmBoneKeyParser | unknown VRM bone key: rightRingDistal
+07-25 02:36:56.074  8412  8412 W A00000/ArkTavern: VrmBoneKeyParser | unknown VRM bone key: rightRingIntermediate
+07-25 02:36:56.075  8412  8412 W A00000/ArkTavern: VrmBoneKeyParser | unknown VRM bone key: rightRingProximal
+07-25 02:36:56.075  8412  8412 W A00000/ArkTavern: VrmBoneKeyParser | unknown VRM bone key: rightThumbDistal
+07-25 02:36:56.078  8412  8412 W A00000/ArkTavern: VrmBoneKeyParser | unknown VRM bone key: rightThumbMetacarpal
+07-25 02:36:56.079  8412  8412 W A00000/ArkTavern: VrmBoneKeyParser | unknown VRM bone key: rightThumbProximal
+07-25 02:36:56.080  8412  8412 I A00000/ArkTavern: VRMImporter | Humanoid parsed: bones=21, required=7/7
+07-25 02:36:56.080  8412  8412 I A00000/ArkTavern: VRMImporter | Expressions parsed: 17 (preset=17, custom=0)
+07-25 02:36:56.081  8412  8412 I A00000/ArkTavern: VRMImporter | LookAt parsed: type=expression, valid=true
+07-25 02:36:56.081  8412  8412 I A00000/ArkTavern: VRMImporter | SpringBone parsed: springs=9, joints=28
+07-25 02:36:56.082  8412  8412 I A00000/ArkTavern: VRMImporter | FirstPerson parsed: annotations=5
+07-25 02:36:56.082  8412  8412 I A00000/ArkTavern: ActionAvatarPreviewVM | parseVrmFromGlbBuffer: VRM parsed ok, humanoid.bones=21, valid=true
+07-25 02:36:56.091  8412  8412 I A00000/ArkTavern: ActionAvatarPreviewVM | prepareRetargetController: HumanoidProvider built, source=VrmExplicit, mapped=21, required=7
+07-25 02:36:56.572  8412  8412 I A00000/ArkTavern: SceneNodeCollector | collectSceneNodes: scene nodes=151, glb nodes=147, unique names=151
+07-25 02:36:56.573  8412  8412 I A00000/ArkTavern: SceneNodeCollector | collectSceneNodes: nodeIndexMap built, matched=147/147
+07-25 02:36:56.573  8412  8412 I A00000/ArkTavern: ActionAvatarPreviewVM | prepareRetargetController: scene nodes collected, matched=147/151
+07-25 02:36:56.613  8412  8412 I A00000/ArkTavern: TargetRestPoseCollector | collectTargetRestPose: collected=21, missing=4, missingRequired=0, hipsY=0.796, modelHeight=1.400
+07-25 02:36:56.614  8412  8412 I A00000/ArkTavern: ActionAvatarPreviewVM | prepareRetargetController: target rest pose collected, bones=21, missing=4
+07-25 02:36:56.614  8412  8412 I A00000/ArkTavern: RetargetController | Retarget mapping: sourceBones=22, targetBones=21, mappedBones=21, clip=AT_Wave, duration=2.000, loop=false
+07-25 02:36:56.614  8412  8412 I A00000/ArkTavern: Char3DActionPage | loadPreviewScene: state=Ready
+07-25 02:36:56.615  8412  8412 I A00000/ArkTavern: ActionAvatarPreviewVM | prepareRetargetController: success, clip=AT_Wave, duration=2.000, tracks=22, targetBones=21
+07-25 02:36:56.615  8412  8412 I A00000/ArkTavern: RetargetController | Retarget play: clip=AT_Wave, duration=2.000, loop=false, currentTime=0.000
+07-25 02:36:56.615  8412  8412 I A00000/ArkTavern: Char3DActionPage | loadPreviewScene: state=Playing
+07-25 02:36:56.616  8412  8412 I A00000/ArkTavern: ActionAvatarPreviewVM | stateMachine: loadActiveAvatarScene done, hasAnimation=true, useRetargetMode=true
+07-25 02:36:57.666  8412  8412 I A00000/ArkTavern: RetargetController | Retarget tick: time=1.047, appliedBones=21, changedBones=3, clip=AT_Wave
+07-25 02:36:58.700  8412  8412 I A00000/ArkTavern: Char3DActionPage | loadPreviewScene: state=Ready
+07-25 02:36:58.701  8412  8412 I A00000/ArkTavern: RetargetController | Retarget once finished: clip=AT_Wave
