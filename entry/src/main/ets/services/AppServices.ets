@@ -440,6 +440,16 @@ export class AppServices {
             services.appPreferences,
             services.character3DService
           );
+          // T-4.2E-Closeout: 启动时修复历史空 SHA 记录(异步,不阻塞初始化)
+          services.avatarLibraryService.repairEmptySha256().then((shaReport): void => {
+            if (shaReport.repairedCount > 0 || shaReport.missingFileCount > 0) {
+              Logger.info(LOG_TAG, 'repairEmptySha256: repaired=' + shaReport.repairedCount
+                + ', missing=' + shaReport.missingFileCount
+                + ', failed=' + shaReport.failedCount);
+            }
+          }).catch((e: Object): void => {
+            Logger.warn(LOG_TAG, 'repairEmptySha256 failed: ' + (e as Error)?.message);
+          });
         } else {
           Logger.warn(LOG_TAG, 'avatarLibraryService not created (context or character3DService null)');
         }

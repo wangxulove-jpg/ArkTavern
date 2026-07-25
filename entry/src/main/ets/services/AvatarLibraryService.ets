@@ -25,6 +25,7 @@
  */
 
 import { common } from '@kit.AbilityKit';
+import { fileIo } from '@kit.CoreFileKit';
 import { AvatarLibraryStore, AvatarRecord } from '../storage/AvatarLibraryStore';
 import { Character3DService, Character3DImportResult, Character3DModelConfig } from './Character3DService';
 import { Model3DAssetStore } from '../storage/Model3DAssetStore';
@@ -32,6 +33,7 @@ import { AppPreferences } from '../storage/AppPreferences';
 import { generateUuid } from '../utils/Uuid';
 import { Logger } from '../utils/Logger';
 import { ModelConversionProgress } from '../models/character3d/ModelCompatibility';
+import { computeSha256Base64 } from '../utils/ShaUtil';
 import {
   AvatarChangeDispatcher,
   AvatarChangeSource,
@@ -522,11 +524,25 @@ export class AvatarLibraryService {
    * 失败时返回 0。
    */
   private async getFileSize(modelUri: string): Promise<number> {
-    // Model3DAssetStore 内部已校验文件大小,这里仅从 URI 读取
-    // 简化实现:从 importResult 中没有 fileSize 字段,直接通过 assetStore.exists 间接验证
-    // 实际文件大小可由 fileIo.statSync 获取,但为避免引入额外依赖,这里返回 0
-    // (fileSize 是非关键字段,UI 可不显示)
-    return 0;
+    if (modelUri.length === 0 || !this.assetStore.exists(modelUri)) {
+      return 0;
+    }
+    try {
+      let path: string = modelUri;
+      if (path.startsWith('file://')) {
+        path = path.substring('file://'.length);
+      }
+      const file: fileIo.File = fileIo.openSync(path, fileIo.OpenMode.READ_ONLY);
+      try {
+        const stat: fileIo.Stat = fileIo.statSync(file.fd);
+        return stat.size;
+      } finally {
+        fileIo.closeSync(file);
+      }
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'getFileSize failed: ' + (e as Error)?.message);
+      return 0;
+    }
   }
 
   /**
@@ -662,4 +678,172 @@ export class AvatarLibraryService {
       + ', migrated=' + report.migratedLegacyAvatarId.length);
     return report;
   }
+
+  /**
+   * T-4.2E-Closeout: 修复 sourceSha256 为空的 AvatarRecord。
+   *
+   * 历史问题:
+   * - importFromRawfileByName 曾硬编码返回 sourceSha256=''
+   * - 旧单模型迁移(repairLibrary)创建的记录 sourceSha256=''
+   * - 导致 VRM asset cache / bone mapping cache / capability report 无法按 SHA 隔离
+   * - duplicate detection 对空 SHA 记录失效(findDuplicateBySha256 在 sha 为空时返回 null)
+   *
+   * 修复流程:
+   * 1. listAll 获取全部记录
+   * 2. 过滤 sourceSha256 为空的记录
+   * 3. 对每条记录:
+   *    a. 校验模型文件存在(assetStore.exists)
+   *    b. 读取模型二进制
+   *    c. 重新计算 SHA-256
+   *    d. 更新 AvatarRecord 并保存
+   *    e. 不修改 displayName/tags/favorite/activeAvatarId
+   * 4. 文件缺失的记录标记 stale(不伪造 SHA)
+   *
+   * 调用时机: AppServices 初始化完成后(repairLibrary 之后)。
+   *
+   * @returns 迁移报告
+   */
+  async repairEmptySha256(): Promise<ShaMigrationReport> {
+    const report: ShaMigrationReport = {
+      scannedCount: 0,
+      emptyShaCount: 0,
+      repairedCount: 0,
+      missingFileCount: 0,
+      failedCount: 0,
+      details: []
+    };
+
+    const records: AvatarRecord[] = await this.store.listAll();
+    report.scannedCount = records.length;
+    Logger.info(LOG_TAG, 'repairEmptySha256: start, scanned=' + records.length);
+
+    for (let i: number = 0; i < records.length; i++) {
+      const rec: AvatarRecord = records[i];
+      if (rec.sourceSha256.length > 0) {
+        // SHA 已存在,跳过
+        continue;
+      }
+      report.emptyShaCount++;
+
+      // 校验模型文件存在
+      if (!this.assetStore.exists(rec.modelUri)) {
+        report.missingFileCount++;
+        report.details.push({
+          avatarId: rec.avatarId,
+          displayName: rec.displayName,
+          success: false,
+          reason: '模型文件缺失,无法计算 SHA'
+        });
+        Logger.warn(LOG_TAG, 'repairEmptySha256: file missing, id='
+          + rec.avatarId.substring(0, AVATAR_ID_LOG_LEN));
+        continue;
+      }
+
+      // 读取模型二进制并计算 SHA
+      try {
+        const buffer: ArrayBuffer = this.readModelFileToBuffer(rec.modelUri);
+        const sha: string = computeSha256Base64(buffer);
+        if (sha.length === 0) {
+          report.failedCount++;
+          report.details.push({
+            avatarId: rec.avatarId,
+            displayName: rec.displayName,
+            success: false,
+            reason: 'SHA 计算返回空'
+          });
+          Logger.warn(LOG_TAG, 'repairEmptySha256: sha empty, id='
+            + rec.avatarId.substring(0, AVATAR_ID_LOG_LEN));
+          continue;
+        }
+
+        // 更新 record 并保存(不修改其他字段)
+        rec.sourceSha256 = sha;
+        await this.store.save(rec);
+        report.repairedCount++;
+        report.details.push({
+          avatarId: rec.avatarId,
+          displayName: rec.displayName,
+          success: true,
+          reason: ''
+        });
+        Logger.info(LOG_TAG, 'repairEmptySha256: repaired, id='
+          + rec.avatarId.substring(0, AVATAR_ID_LOG_LEN)
+          + ', name=' + rec.displayName
+          + ', sha=' + sha.substring(0, 8));
+      } catch (e) {
+        report.failedCount++;
+        report.details.push({
+          avatarId: rec.avatarId,
+          displayName: rec.displayName,
+          success: false,
+          reason: (e as Error)?.message ?? 'unknown'
+        });
+        Logger.warn(LOG_TAG, 'repairEmptySha256: failed, id='
+          + rec.avatarId.substring(0, AVATAR_ID_LOG_LEN)
+          + ', err=' + (e as Error)?.message);
+      }
+    }
+
+    Logger.info(LOG_TAG, 'repairEmptySha256: done, scanned=' + report.scannedCount
+      + ', empty=' + report.emptyShaCount
+      + ', repaired=' + report.repairedCount
+      + ', missing=' + report.missingFileCount
+      + ', failed=' + report.failedCount);
+    return report;
+  }
+
+  /**
+   * T-4.2E-Closeout: 读取模型文件为 ArrayBuffer(用于 SHA 计算)。
+   *
+   * @param modelUri file:// URI 或绝对路径
+   * @returns 文件二进制内容
+   */
+  private readModelFileToBuffer(modelUri: string): ArrayBuffer {
+    let path: string = modelUri;
+    if (path.startsWith('file://')) {
+      path = path.substring('file://'.length);
+    }
+    const file: fileIo.File = fileIo.openSync(path, fileIo.OpenMode.READ_ONLY);
+    try {
+      const stat: fileIo.Stat = fileIo.statSync(file.fd);
+      const size: number = stat.size;
+      const buffer: ArrayBuffer = new ArrayBuffer(size);
+      fileIo.readSync(file.fd, buffer);
+      return buffer;
+    } finally {
+      fileIo.closeSync(file);
+    }
+  }
+}
+
+/**
+ * T-4.2E-Closeout: SHA 迁移报告。
+ */
+export interface ShaMigrationReport {
+  /** 扫描的记录总数 */
+  scannedCount: number;
+  /** SHA 为空的记录数 */
+  emptyShaCount: number;
+  /** 成功修复的记录数 */
+  repairedCount: number;
+  /** 模型文件缺失的记录数 */
+  missingFileCount: number;
+  /** 修复失败的记录数(非文件缺失) */
+  failedCount: number;
+  /** 每条记录的修复详情 */
+  details: ShaMigrationDetail[];
+}
+
+/**
+ * T-4.2E-Closeout: 单条记录的 SHA 迁移详情。
+ */
+export interface ShaMigrationDetail {
+  /** avatarId */
+  avatarId: string;
+  /** 显示名 */
+  displayName: string;
+  /** 是否成功 */
+  success: boolean;
+  /** 失败原因(成功时为空) */
+  reason: string;
 }

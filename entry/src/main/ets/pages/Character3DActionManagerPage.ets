@@ -1184,44 +1184,7 @@ struct Character3DActionManagerPage {
         .width('100%')
         .padding({ left: 16, right: 16 });
 
-        // T-4.2E 阶段0: 单骨骼运行时写入测试按钮(临时,验证通过后删除)
-        Row() {
-          Button('测试骨骼旋转(5s)')
-            .fontSize(13)
-            .height(36)
-            .layoutWeight(1)
-            .backgroundColor('#ff5722')
-            .fontColor('#ffffff')
-            .enabled(this.previewScene !== null && this.previewVm !== null)
-            .onClick(() => {
-              if (this.previewVm !== null) {
-                const testStarted: boolean = this.previewVm.runSingleBoneTest();
-                if (!testStarted) {
-                  this.previewNotice = '未找到测试骨骼,请检查模型';
-                  promptAction.showToast({ message: '未找到 UpperArm 骨骼', duration: 2000 });
-                } else {
-                  this.previewNotice = '骨骼旋转测试中(5秒)...';
-                  promptAction.showToast({ message: '测试已启动,观察上臂是否摆动', duration: 2000 });
-                }
-              }
-            });
-          Button('停止测试')
-            .fontSize(13)
-            .height(36)
-            .layoutWeight(1)
-            .backgroundColor('#607d8b')
-            .fontColor('#ffffff')
-            .margin({ left: 8 })
-            .enabled(this.previewScene !== null && this.previewVm !== null)
-            .onClick(() => {
-              if (this.previewVm !== null) {
-                this.previewVm.stopSingleBoneTest();
-                this.previewNotice = '测试已停止';
-              }
-            });
-        }
-        .width('100%')
-        .padding({ left: 16, right: 16, bottom: 16 });
+        // T-4.2E-Closeout: 单骨骼测试按钮已删除(SceneNode.rotation 写入已验证有效)
       }
       .width('92%')
       .backgroundColor('#ffffff')

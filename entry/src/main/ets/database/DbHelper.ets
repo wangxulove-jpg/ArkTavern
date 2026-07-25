@@ -22,7 +22,7 @@ import {
   DATABASE_NAME,
   DATABASE_VERSION
 } from './DatabaseConstants';
-import { getSchemaStatements } from './DatabaseSchema';
+import { getSchemaStatements, getCreateTableStatements, getCreateIndexStatements } from './DatabaseSchema';
 import {
   buildMigrationPath,
   createV1ToV2Migration,
@@ -281,7 +281,11 @@ export class DbHelper {
   }
 
   private async ensureSchemaExists(store: relationalStore.RdbStore): Promise<void> {
-    const statements: string[] = getSchemaStatements(DATABASE_VERSION);
+    // T-4.2E-Closeout: 只执行幂等的 CREATE TABLE IF NOT EXISTS / CREATE INDEX IF NOT EXISTS,
+    // 不执行 ALTER TABLE(getSchemaStatements 包含 ALTER,列已存在时会报 code=14800021)
+    const tables: string[] = getCreateTableStatements();
+    const indexes: string[] = getCreateIndexStatements();
+    const statements: string[] = [...tables, ...indexes];
     try {
       for (let i = 0; i < statements.length; i++) {
         await store.executeSql(statements[i]);

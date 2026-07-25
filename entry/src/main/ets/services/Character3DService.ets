@@ -77,6 +77,7 @@ import {
   vrmParseResultToBoneMappingResult,
   VrmHumanoidParseResult
 } from '../parser/VrmHumanoidResolver';
+import { computeSha256Base64 } from '../utils/ShaUtil';
 
 const LOG_TAG: string = 'Character3DService';
 
@@ -1102,7 +1103,10 @@ export class Character3DService {
 
     // 从 rawfile 读取模型
     const buffer: ArrayBuffer = await this.readRawfileToBuffer(fileName);
-    Logger.info(LOG_TAG, 'importFromRawfileByName: rawfile read, size=' + buffer.byteLength);
+    // T-4.2E-Closeout: 计算 SHA-256(修复历史 rawfile 导入返回空 SHA 的问题)
+    const sourceSha256: string = computeSha256Base64(buffer);
+    Logger.info(LOG_TAG, 'importFromRawfileByName: rawfile read, size=' + buffer.byteLength
+      + ', sha=' + (sourceSha256.length > 0 ? sourceSha256.substring(0, 8) : 'empty'));
 
     // T-3D.6D: 严格诊断(GLB 容器 + glTF 语义 + 结构扫描)
     let inspection: ModelInspectionResult | null = null;
@@ -1185,8 +1189,9 @@ export class Character3DService {
     let validHumanBoneCount: number = 0;
     let humanoidProviderSource: string = 'None';
     try {
+      // T-4.2E-Closeout: 使用计算得到的 SHA(而非空字符串)
       const vrmAndBone = this.resolveVrmAndBoneMapping(
-        result.gltfJson, modelInfo, displayName, ''
+        result.gltfJson, modelInfo, displayName, sourceSha256
       );
       boneMapping = vrmAndBone.boneMapping;
       vrmAsset = vrmAndBone.vrmAsset;
@@ -1237,7 +1242,7 @@ export class Character3DService {
       autoFitConfig: autoFitConfig,
       compatibilityAnalysis: null,
       conversionResult: null,
-      sourceSha256: '',
+      sourceSha256: sourceSha256,
       inspection: inspection,
       warnings: importWarnings,
       fromCache: false,

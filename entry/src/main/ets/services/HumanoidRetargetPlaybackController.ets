@@ -118,8 +118,6 @@ export class HumanoidRetargetPlaybackController {
   private timerId: number = -1;
   /** 上次摘要日志时间(ms) */
   private lastSummaryLogTime: number = 0;
-  /** 上次摘要日志时的时间(秒) */
-  private lastSummaryLogCurrentTime: number = -1;
   /** 是否已 dispose */
   private disposed: boolean = false;
   /** generation(用于防止旧回调) */
@@ -145,7 +143,6 @@ export class HumanoidRetargetPlaybackController {
     this.currentTime = 0;
     this.lastFrameTimestamp = 0;
     this.lastSummaryLogTime = 0;
-    this.lastSummaryLogCurrentTime = -1;
 
     // 验证配置
     if (config.clip.tracks.length === 0) {
@@ -193,6 +190,12 @@ export class HumanoidRetargetPlaybackController {
       return;
     }
 
+    // T-4.2E-Closeout: 从 Stopped 状态恢复播放时,currentTime 应重置为 0
+    // (满足"停止后重新播放从 0 开始"语义;Paused 状态保留 currentTime)
+    if (this.stateValue === RetargetPlaybackState.Stopped) {
+      this.currentTime = 0;
+    }
+
     Logger.info(LOG_TAG, 'Retarget play: clip=' + this.config.clip.name
       + ', duration=' + this.config.clip.durationSeconds.toFixed(3)
       + ', loop=' + this.config.clip.loop
@@ -200,7 +203,6 @@ export class HumanoidRetargetPlaybackController {
 
     this.lastFrameTimestamp = Date.now();
     this.lastSummaryLogTime = this.lastFrameTimestamp;
-    this.lastSummaryLogCurrentTime = -1;
     this.setState(RetargetPlaybackState.Playing);
     this.startTimer();
   }
@@ -228,7 +230,6 @@ export class HumanoidRetargetPlaybackController {
     this.currentTime = 0;
     this.lastFrameTimestamp = Date.now();
     this.lastSummaryLogTime = this.lastFrameTimestamp;
-    this.lastSummaryLogCurrentTime = -1;
     if (this.stateValue !== RetargetPlaybackState.Playing) {
       this.setState(RetargetPlaybackState.Playing);
       this.startTimer();
@@ -513,63 +514,6 @@ export class HumanoidRetargetPlaybackController {
       + ', appliedBones=' + retargetResult.appliedBoneCount
       + ', changedBones=' + retargetResult.changedBoneCount
       + ', clip=' + cfg.clip.name);
-
-    // 调试模式:对 UpperArm/LowerArm/Hand 抽样
-    if (this.lastSummaryLogCurrentTime < 0
-      || (this.currentTime >= 0 && this.lastSummaryLogCurrentTime < 0)) {
-      this.logDebugSample(sourcePose);
-    }
-    if (Math.abs(this.currentTime - 0.5) < 0.1 && this.lastSummaryLogCurrentTime < 0.5) {
-      this.logDebugSample(sourcePose);
-    }
-    if (Math.abs(this.currentTime - 1.0) < 0.1 && this.lastSummaryLogCurrentTime < 1.0) {
-      this.logDebugSample(sourcePose);
-    }
-    this.lastSummaryLogCurrentTime = this.currentTime;
-  }
-
-  /**
-   * 调试日志:对关键骨骼抽样。
-   */
-  private logDebugSample(sourcePose: HumanoidPose): void {
-    const cfg: RetargetPlaybackConfig | null = this.config;
-    if (cfg === null) {
-      return;
-    }
-    const sampleBones: HumanoidBone[] = [
-      HumanoidBone.LeftUpperArm,
-      HumanoidBone.RightUpperArm,
-      HumanoidBone.LeftLowerArm,
-      HumanoidBone.RightLowerArm,
-      HumanoidBone.LeftHand,
-      HumanoidBone.RightHand
-    ];
-    for (let i: number = 0; i < sampleBones.length; i++) {
-      const bone: HumanoidBone = sampleBones[i];
-      const bonePose = sourcePose.bones.get(bone);
-      if (bonePose === undefined || bonePose.rotation === null) {
-        continue;
-      }
-      const targetRest: BoneRestTransform | undefined = cfg.targetRestPose.bones.get(bone);
-      if (targetRest === undefined) {
-        continue;
-      }
-      // 计算目标动画旋转
-      const sourceRest: BoneRestTransform | undefined = cfg.sourceRestPose.bones.get(bone);
-      if (sourceRest === undefined) {
-        continue;
-      }
-      Logger.info(LOG_TAG, 'debugSample: t=' + this.currentTime.toFixed(3)
-        + ', bone=' + bone
-        + ', restRot=(' + targetRest.localRotation.x.toFixed(3) + ','
-        + targetRest.localRotation.y.toFixed(3) + ','
-        + targetRest.localRotation.z.toFixed(3) + ','
-        + targetRest.localRotation.w.toFixed(3) + ')'
-        + ', sampleRot=(' + bonePose.rotation.x.toFixed(3) + ','
-        + bonePose.rotation.y.toFixed(3) + ','
-        + bonePose.rotation.z.toFixed(3) + ','
-        + bonePose.rotation.w.toFixed(3) + ')');
-    }
   }
 
   /**

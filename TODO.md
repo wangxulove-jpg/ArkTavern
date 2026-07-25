@@ -5944,6 +5944,7 @@ PoC 页面 Slider、聊天页 ChatMoreMenuSheet Slider、GestureHandler clamp �
    - Slider 改为 zoomFactor(0.10~20.0)
 
 ## T-4.2E VRM Humanoid 动作重定向 MVP — 完成 (2026-07-24)
+## T-4.2E-Closeout 收尾与数据一致性修复 — 完成 (2026-07-25)
 
 ### 原因
 
@@ -5951,6 +5952,24 @@ PoC 页面 Slider、聊天页 ChatMoreMenuSheet Slider、GestureHandler clamp �
 - 内置动作位于外部动作包 default_ai_action_pack.glb;
 - 当前仅显示静态 Avatar;
 - 尚未实现外部动作 → VRM 骨骼重定向。
+- 历史报告将 AT_Wave 的 manifest clipIndex 错写为 0,实际为 5;
+- 历史 AvatarRecord.sourceSha256 为空,影响缓存与去重;
+- 正式 UI 残留"测试骨骼旋转(5s)"调试按钮。
+
+### 动作索引事实(收尾修正)
+
+经 `automation/tmp/inspect_action_pack.js` 解析 GLB 与 manifest 后确认:
+
+| clipName | manifestClipIndex | gltfAnimationIndex | duration | channels | tracks | interpolation |
+|----------|-------------------|--------------------|----------|----------|---------|---------------|
+| AT_Idle | 0 | 6 | 4.000s | 66 | 22 | STEP |
+| AT_Thinking | 2 | 12 | 3.000s | 66 | 22 | STEP |
+| AT_Wave | 5 | 14 | 2.000s | 66 | 22 | STEP |
+
+- manifestClipIndex 用于 UI 排序与动作卡片标识;
+- gltfAnimationIndex 为 GLB animations[] 实际索引;
+- 运行时按 clipName 查找 GLB animation(不依赖 gltfAnimationIndex);
+- 全部动作插值为 STEP(历史报告错写为 LINEAR)。
 
 ### 实现
 
@@ -5960,7 +5979,7 @@ PoC 页面 Slider、聊天页 ChatMoreMenuSheet Slider、GestureHandler clamp �
    - 解析 output rotation accessor (VEC4/FLOAT)
    - 解析 output translation accessor (VEC3/FLOAT)
    - 支持 LINEAR / STEP 插值
-   - CUBICSPLINE 检测并警告
+   - CUBICSPLINE 检测并返回 UnsupportedInterpolation
 
 2. **HumanoidMotionClip 中间格式** (`models/character3d/HumanoidMotionClip.ets`)
    - QuaternionKeyframe / Vector3Keyframe / HumanoidBoneTrack / HumanoidMotionClip
@@ -5986,41 +6005,103 @@ PoC 页面 Slider、聊天页 ChatMoreMenuSheet Slider、GestureHandler clamp �
    - 状态:Idle / Preparing / Ready / Playing / Paused / Stopped / Failed / Disposed
    - 16ms timer 调度,使用真实 elapsed time 修正漂移
    - 播放/暂停/重播/停止 + Rest Pose 恢复
+   - **T-4.2E-Closeout 修复**:从 Stopped 状态调用 play() 时重置 currentTime=0
 
 8. **ActionAvatarPreviewViewModel 接入**
    - 新增 retargetController 字段
    - prepareRetargetController:加载动作包→解析 MotionClip→建立映射→创建 Controller
-   - parseVrmFromGlbBuffer:直接从 GLB 缓冲区解析 VRM(不依赖 sourceSha256)
+   - parseVrmFromGlbBuffer:直接从 GLB 缓冲区解析 VRM(不依赖 sourceSha256 持久化,作为缓存缺失/损坏的回退路径)
    - play/pause/replay/stop 优先调用 RetargetController
+   - **T-4.2E-Closeout**:删除 runSingleBoneTest/stopSingleBoneTest 等单骨骼调试方法
 
 9. **Character3DActionManagerPage 接入**
    - loadPreviewScene:注入 appContext、onPrepareProgress 回调
    - 按钮(播放/暂停/重播/停止)优先调用 previewVm(previewVmState 驱动文案)
-   - 删除静态文案"当前运行时尚未接通跨模型动作重定向,仅显示静态 Avatar"
+   - 删除静态文案"当前运行尚未接通跨模型动作重定向,仅显示静态 Avatar"
    - 状态文案:准备中→就绪→正在播放→已暂停→失败
+   - **T-4.2E-Closeout**:删除"测试骨骼旋转(5s)"按钮及停止测试按钮
 
-### 验收
+### sourceSha256 数据一致性修复(T-4.2E-Closeout)
 
-- **AT_Wave**: 右臂挥手,duration=2.000s,66 channels,22 tracks,RightUpperArm 旋转从 (0,-0.071,0.998) → (-0.663,-0.066,0.168,0.727),播放/重播/停止均有效,Rest Pose 恢复正常
-- **AT_Thinking**: 右臂思考姿势,duration=2.048s,loop=true,循环 7s+ 无姿态漂移,RightUpperArm 旋转稳定在 (-0.495,-0.114,0.325,0.798)
-- **AT_Idle**: 轻微手臂摆动,duration≈4s,loop=true,循环 8s+ 无姿态漂移,左右 UpperArm 对称微动
-- **播放控制**: replay→stop 验证通过(restoreTargetRestPose: restored=23)
-- **截图**: wave_t0.png / wave_t05.png / wave_t10.png / thinking.png / idle.png 已保存至 automation/screenshots/t4_2e/
+1. **新增工具函数** (`utils/ShaUtil.ets`)
+   - `computeSha256Base64(buffer: ArrayBuffer): string` 使用 cryptoFramework 计算 SHA-256 并返回 Base64
+2. **新导入模型修复** (`services/Character3DService.ets`)
+   - `importFromRawfileByName` 计算 rawfile buffer 的 SHA-256 并传入 VRM 解析(原硬编码空字符串)
+3. **旧空 SHA 记录修复** (`services/AvatarLibraryService.ets`)
+   - 新增 `repairEmptySha256(): Promise<ShaMigrationReport>` 方法
+   - 扫描所有 AvatarRecord,对空 SHA 记录读取模型文件重新计算并更新
+   - 文件缺失时标记 stale record,不伪造 SHA
+4. **启动时自动修复** (`services/AppServices.ets`)
+   - 应用初始化后异步调用 `repairEmptySha256()`(不阻塞启动)
+5. **数据库 schema 幂等性修复** (`database/DbHelper.ets`)
+   - `ensureSchemaExists` 仅执行 CREATE TABLE IF NOT EXISTS / CREATE INDEX IF NOT EXISTS
+   - 不执行 ALTER TABLE(避免列已存在时 code=14800021 错误)
+
+### 运行时回退策略
+
+- 正常路径:avatarId → AvatarLibrary → sourceSha256 → VRM asset cache / humanoid mapping cache
+- 回退路径(缓存缺失/损坏/parserVersion 变化/SHA 迁移前):直接从 GLB buffer 解析 VRM
+- 回退路径不影响正常路径,正常路径不长期依赖空 SHA
+
+### SceneNode 写入验证
+
+- 单骨骼测试证明 SceneNode.rotation 运行时写入有效(右臂可见旋转)
+- 正式 release/default HAP 中不保留单骨骼调试入口
+- 验证保留在测试代码中,不暴露到 UI
+
+### 动作解析
+
+- GltfAnimationDataParser:parseAnimationByName 按 clipName 查找,返回 MotionClip
+- HumanoidMotionClip:tracks 按 HumanoidBone 组织,与源节点解耦
+- Source Rest Pose:从 GLB nodes 默认 TRS 读取(非动画第 0 帧)
+- Target Rest Pose:从 Avatar SceneNode 在任何动作应用之前提取
+- LINEAR / STEP 插值支持;CUBICSPLINE 检测并返回 UnsupportedInterpolation
+
+### 重定向
+
+- bone node map:每次打开动作详情都重新建立(不复用旧 map)
+- quaternion delta:sourceDelta = inverse(sourceRest) × sourceAnimated;targetAnimated = targetRest × sourceDelta
+- root motion mode:HipsOnly(仅旋转,不应用位移)
+- playback controller:Idle → Preparing → Ready → Playing ↔ Paused → Stopped → Disposed
+
+### 最终验收(T-4.2E-Closeout,2026-07-25 02:30~02:40)
+
+- **AT_Wave**:manifestClipIndex=5, gltfAnimationIndex=14, duration=2.000s, loop=false
+  - 三时间点截图哈希不同(t0=F1D9C758, t05=2CD91D0A, t10=8BD592C2),右臂姿态明显变化
+  - 暂停:currentTime=0.838 冻结,2s 后姿态保持(哈希 153A3B97)
+  - 重播:currentTime 返回 0,动作重新开始
+  - 停止:timer 取消,Rest Pose 恢复(哈希 0C856D0A)
+- **AT_Thinking**:manifestClipIndex=2, gltfAnimationIndex=12, duration=3.000s, loop=true
+  - 连续播放 47s 跨 15 次循环,changedBones=4 持续变化,appliedBones=21
+  - 停止后 Rest Pose 恢复(restored=21)
+  - 播放/停止截图哈希不同(8C1C2DA8 vs 3B13D8CB)
+- **AT_Idle**:manifestClipIndex=0, gltfAnimationIndex=6, duration=4.000s, loop=true
+  - 连续播放 101s 跨 ~25 次循环,changedBones=4 持续变化
+  - 两张循环截图哈希不同(7D911532 vs C0C195A4)
+  - 停止后 Rest Pose 恢复(restored=21)
+- **切换动作不串状态**:Wave→Thinking→Idle→Wave 三次切换都重新 loadActiveAvatarScene + prepareRetargetController,每次从 currentTime=0.000 开始
+- **关闭弹窗不泄漏 timer**:每次关闭都 `Retarget dispose: resources released`
+- **SHA 修复持久化**:重启应用后 `repairEmptySha256: scanned=1, empty=0, repaired=0, missing=0, failed=0`
+- **hilog 无严重错误**:无 FATAL/SIGSEGV/abort/TypeError/NaN/Infinity/Scene disposed/timer leak/stale generation/invalid quaternion/retarget failed
+- **截图**:automation/screenshots/t4_2e_final/ 下 10 张正式验收截图
+- **日志**:automation/night_runs/t4_2e_closeout/ 下 action_index_facts.md / build_history.txt / hilog_final.txt / hilog_filtered.txt
 
 ### 限制
 
-- 暂不支持 IK
+- 暂不支持 IK / Foot IK
 - 暂不支持手指精细动作
 - 暂不支持动画混合 / CrossFade
-- 暂不支持 Expression
+- 暂不支持动作编辑器 / 时间轴
+- 暂不支持 Expression Runtime
+- 暂不支持 LookAt Runtime
 - 暂不支持 SpringBone 与动作联动
-- 暂不支持 LookAt
+- 暂不支持聊天动作联动
 - Hips 位移策略:HipsOnly(仅旋转,不应用位移)
-- CUBICSPLINE 插值未实现(检测并警告)
+- CUBICSPLINE 插值未实现(检测并返回 UnsupportedInterpolation)
 
 ### 最终结论
 
-**T-4.2E VRM Humanoid 动作重定向 MVP 完成。从外部动作包 default_ai_action_pack.glb 解析 AT_Wave/AT_Thinking/AT_Idle 动画关键帧,通过 HumanoidBone 标准映射重定向到当前激活 VRM Avatar,CPU 采样 + 16ms timer 调度,SceneNode.rotation 运行时写入经单骨骼测试验证有效。三个动作均实机验收通过(右臂挥手可见、思考姿势稳定循环、Idle 轻微摆动无漂移),播放/暂停/重播/停止 + Rest Pose 恢复全部有效。BUILD SUCCESSFUL,HAP 覆盖安装成功。**
+**T-4.2E VRM Humanoid 动作重定向 MVP 完成,经 T-4.2E-Closeout 收尾后数据一致性修复完毕。从外部动作包 default_ai_action_pack.glb 解析 AT_Wave/AT_Thinking/AT_Idle 动画关键帧(全部 STEP 插值),通过 HumanoidBone 标准映射重定向到当前激活 VRM Avatar,CPU 采样 + 16ms timer 调度,SceneNode.rotation 运行时写入经单骨骼测试验证有效(测试入口已从正式 UI 删除)。三个动作均实机验收通过(右臂挥手可见、思考姿势稳定循环 47s、Idle 轻微摆动 101s 无漂移),播放/暂停/重播/停止 + Rest Pose 恢复全部有效。sourceSha256 空值问题已修复,新导入模型计算 SHA,旧记录启动时自动修复,重启后验证 empty=0。BUILD SUCCESSFUL,HAP 覆盖安装成功。**
 
 按任务要求停止,不开始 IK、动作混合、手指动作、Expression 或 SpringBone。
 
