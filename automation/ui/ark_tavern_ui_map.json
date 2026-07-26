@@ -162,17 +162,18 @@
             "containerIdPrefix": "actionManager.card.",
             "nameText": "<displayName>"
           },
-          "note": "动作卡片通过 actionManager.card.<actionId> 定位,单击打开预览弹层,长按打开管理菜单"
+          "note": "动作卡片通过 actionManager.card.<actionId> 定位;T-4.2G-A2: 单击直接打开统一动作详情与管理窗口(合并原 previewDialog+detailsSheet),长按打开轻量管理菜单(仅重命名/绑定槽位/隐藏/删除)"
         }
       },
       "dialogs": {
-        "detailsSheet": {
-          "trigger": "管理菜单 -> 查看详情 / 设置循环方式",
-          "note": "T-4.2: 详情弹窗顶部含 3D 动作预览(ActionAvatarPreview3D),显示当前激活 Avatar 执行该动作",
+        "actionDialog": {
+          "trigger": "单击动作卡片",
+          "note": "T-4.2G-A2: 统一动作详情与管理窗口(合并原 previewDialog + detailsSheet);标题栏含动作名+模型名+来源/槽位状态;3D 预览使用当前激活 Avatar 真实重定向;底部含固定关闭按钮;一次打开只创建一个 ActionAvatarPreviewViewModel 与一次 Scene.load,切换动作复用 Scene 仅切换 Clip",
           "controls": {
             "play": {
               "componentId": "actionDetail.play",
-              "text": "播放/暂停(切换)"
+              "text": "播放/暂停(切换)",
+              "note": "播放中显示'暂停',其他状态显示'播放'"
             },
             "replay": {
               "componentId": "actionDetail.replay",
@@ -180,39 +181,121 @@
             },
             "stop": {
               "componentId": "actionDetail.stop",
-              "text": "停止"
+              "text": "停止",
+              "note": "停止后恢复 Target Rest Pose"
+            },
+            "apply": {
+              "componentId": "actionDetail.apply",
+              "text": "应用",
+              "note": "仅当当前模型可应用动作时显示(canApplyActionToCurrentModel)"
             },
             "close": {
               "componentId": "actionDetail.close",
+              "text": "✕",
+              "note": "标题栏右上角关闭按钮"
+            },
+            "bottomClose": {
+              "componentId": "actionDetail.bottomClose",
               "text": "关闭",
-              "note": "关闭弹窗并释放 3D 预览 Scene"
+              "note": "底部固定关闭按钮,与标题栏 ✕ 等效"
+            },
+            "loopMode": {
+              "componentIdPrefix": "actionDetail.loopMode.",
+              "options": ["UseDefault", "Loop", "PlayOnce"],
+              "labels": ["跟随默认", "循环播放", "播放一次"],
+              "note": "常用设置区循环方式 chip,点击立即生效,不关闭窗口"
+            },
+            "displayMode": {
+              "componentIdPrefix": "actionDetail.displayMode.",
+              "options": ["ModelOnly", "ModelWithSkeleton", "SkeletonOnly", "SourceAction"],
+              "labels": ["仅模型", "模型+骨架", "仅骨架", "源动作示意"],
+              "note": "常用设置区显示模式切换,仅修改可见性,不重建 Scene"
+            },
+            "debugToggle": {
+              "componentId": "actionDetail.debugToggle",
+              "text": "Debug 红绿点",
+              "note": "T-4.2G-A3: 仅 IS_DEV_BUILD 时显示;Toggle 开关,启用后显示 6 个关键骨骼(左右 Shoulder/Elbow/Hand)的诊断几何;红色球=avatarBoneWorld,绿色球=jointWorld,黄色线=误差连线"
+            },
+            "triggerDiagBtn": {
+              "componentId": "actionDetail.triggerDiagBtn",
+              "text": "触发坐标诊断",
+              "note": "T-4.2G-A3: 仅 IS_DEV_BUILD 时显示;手动触发一次三组坐标对齐诊断日志输出(avatarWorld/jointLocal/jointWorld/error);位于骨架信息详情展开区"
+            },
+            "compareToggle": {
+              "componentId": "actionDetail.compareToggle",
+              "text": "Debug 三栏对比",
+              "note": "T-4.2G-A4: 仅 IS_DEV_BUILD 时显示;Toggle 开关,启用后同屏显示三栏骨架对比(左=源 Rest Pose 灰色,中=源动画当前帧 蓝色,右=目标重定向结果 绿色);仅在动作详情窗口骨架信息展开区可见"
+            },
+            "triggerBaselineBtn": {
+              "componentId": "actionDetail.triggerBaselineBtn",
+              "text": "触发基准诊断",
+              "note": "T-4.2G-A4: 仅 IS_DEV_BUILD 时显示;手动触发 Source/Target 重定向基准诊断,输出三套姿态(Source Rest/Source Animated/Target Rest)的旋转和位置快照、第 0 帧 Delta、Rest Pose 分类和重定向基准问题;位于三栏对比开关下方"
+            },
+            "orientationToggle": {
+              "componentId": "actionDetail.orientationToggle",
+              "text": "方向校准",
+              "note": "展开/收起方向校准面板(默认折叠)"
+            },
+            "orientationModeAuto": {
+              "componentId": "actionDetail.orientationMode.Auto",
+              "text": "自动检测",
+              "note": "方向模式选项"
+            },
+            "orientationModeNormal": {
+              "componentId": "actionDetail.orientationMode.Normal",
+              "text": "正常"
+            },
+            "orientationModeRotateY180": {
+              "componentId": "actionDetail.orientationMode.RotateY180",
+              "text": "前后旋转 180°"
+            },
+            "orientationModeMirror": {
+              "componentId": "actionDetail.orientationMode.MirrorLeftRight",
+              "text": "左右镜像"
+            },
+            "orientationModeMirrorAndRotate": {
+              "componentId": "actionDetail.orientationMode.MirrorLeftRightAndRotateY180",
+              "text": "左右镜像并前后旋转"
+            },
+            "orientationModeCustom": {
+              "componentId": "actionDetail.orientationMode.Custom",
+              "text": "自定义"
+            },
+            "orientationApplyCustom": {
+              "componentId": "actionDetail.orientationApplyCustom",
+              "text": "应用自定义校准",
+              "note": "仅 Custom 模式下显示"
+            },
+            "orientationRestoreAuto": {
+              "componentId": "actionDetail.orientationRestoreAuto",
+              "text": "恢复自动检测"
+            },
+            "orientationRestoreDefault": {
+              "componentId": "actionDetail.orientationRestoreDefault",
+              "text": "恢复默认"
             }
           }
         },
-        "previewDialog": {
-          "trigger": "单击动作卡片",
-          "note": "预览弹层使用内置动作包 GLB 预览(非当前 Avatar)"
-        },
         "manageSheet": {
           "trigger": "长按动作卡片",
-          "note": "管理菜单:预览动作/绑定槽位/设置循环方式/查看详情/隐藏/删除"
+          "note": "T-4.2G-A2: 轻量管理菜单,仅含无需 3D Scene 的快速操作:重命名/绑定槽位/隐藏(内置)/删除(导入);不再包含预览动作/查看详情/设置循环(已合并到统一窗口)"
         },
         "renameDialog": {
-          "trigger": "管理菜单 -> 重命名(导入动作)",
+          "trigger": "管理菜单或统一窗口动作管理区 -> 重命名显示名称",
           "controls": {
-            "confirm": { "text": "确定" },
+            "confirm": { "text": "保存" },
             "cancel": { "text": "取消" }
           }
         },
         "deleteConfirmDialog": {
-          "trigger": "管理菜单 -> 删除(导入动作)",
+          "trigger": "管理菜单或统一窗口动作管理区 -> 删除自定义动作(仅导入动作)",
           "controls": {
             "confirm": { "text": "删除" },
             "cancel": { "text": "取消" }
           }
         },
         "bindSlotDialog": {
-          "trigger": "管理菜单 -> 绑定动作槽位"
+          "trigger": "管理菜单或统一窗口 -> 绑定/更改动作槽位"
         }
       }
     },

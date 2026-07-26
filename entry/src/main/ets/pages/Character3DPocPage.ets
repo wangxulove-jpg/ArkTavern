@@ -41,6 +41,10 @@ import { ModelVisibilityTest } from '../test/ModelVisibilityTest';
 import { HumanoidMappingTest } from '../test/HumanoidMappingTest';
 import { runSurfaceBonePickingTests } from '../test/SurfaceBonePickingTest';
 import { runVrmHumanoidPipelineTests } from '../test/VrmHumanoidPipelineTest';
+import { AvatarOrientationCalibrationTest } from '../test/AvatarOrientationCalibrationTest';
+import { RetargetInvariantTest } from '../test/RetargetInvariantTest';
+import { RestPoseClassifierTest } from '../test/RestPoseClassifierTest';
+import { SceneNodeTransformUtilTest } from '../test/SceneNodeTransformUtilTest';
 import {
   Character3DDisplayConfig,
   createDefaultDisplayConfig,
@@ -1396,12 +1400,23 @@ struct Character3DPocPage {
       const r6fa = runSurfaceBonePickingTests();
       // T-4.1 VRM Humanoid 闭环管线测试(10 项)
       const r41 = runVrmHumanoidPipelineTests();
+      // T-4.2G 方向校准测试(15 项)
+      const r42g = AvatarOrientationCalibrationTest.runAllTests();
+      // T-4.2G-A1 重定向不变量测试(4 项)
+      const r42ga1 = RetargetInvariantTest.runAllTests();
+      // T-4.2G-A2 姿态分类器测试(9 项)
+      const r42ga2a = RestPoseClassifierTest.runAllTests();
+      // T-4.2G-A2 向量数学工具测试(10 项)
+      const r42ga2b = SceneNodeTransformUtilTest.runAllTests();
       const totalPassed: number = r4.passed + r5.passed + r5d.passed + r6d.passed
-        + r6e1.passed + r6e2.passed + r6fa.passed + r41.passed;
+        + r6e1.passed + r6e2.passed + r6fa.passed + r41.passed + r42g.passed + r42ga1.passed
+        + r42ga2a.passed + r42ga2b.passed;
       const totalFailed: number = r4.failed + r5.failed + r5d.failed + r6d.failed
-        + r6e1.failed + r6e2.failed + r6fa.failed + r41.failed;
+        + r6e1.failed + r6e2.failed + r6fa.failed + r41.failed + r42g.failed + r42ga1.failed
+        + r42ga2a.failed + r42ga2b.failed;
       const total: number = r4.total + r5.total + r5d.total + r6d.total
-        + r6e1.total + r6e2.total + r6fa.total + r41.total;
+        + r6e1.total + r6e2.total + r6fa.total + r41.total + r42g.total + r42ga1.total
+        + r42ga2a.total + r42ga2b.total;
       const summary: string = '测试完成: ' + totalPassed + '/' + total + ' passed, '
         + totalFailed + ' failed'
         + '\nT-3D.4: ' + r4.passed + '/' + r4.total
@@ -1411,7 +1426,11 @@ struct Character3DPocPage {
         + '\nT-3D.6E-Vis: ' + r6e1.passed + '/' + r6e1.total
         + '\nT-3D.6E-Map: ' + r6e2.passed + '/' + r6e2.total
         + '\nT-3D.6F-A: ' + r6fa.passed + '/' + r6fa.total
-        + '\nT-4.1-VRM: ' + r41.passed + '/' + r41.total;
+        + '\nT-4.1-VRM: ' + r41.passed + '/' + r41.total
+        + '\nT-4.2G-Orient: ' + r42g.passed + '/' + r42g.total
+        + '\nT-4.2G-A1-Retarget: ' + r42ga1.passed + '/' + r42ga1.total
+        + '\nT-4.2G-A2-PoseClass: ' + r42ga2a.passed + '/' + r42ga2a.total
+        + '\nT-4.2G-A2-VecMath: ' + r42ga2b.passed + '/' + r42ga2b.total;
       Logger.info('PoCPage', summary);
       promptAction.showToast({ message: summary, duration: 5000 });
     } catch (e) {

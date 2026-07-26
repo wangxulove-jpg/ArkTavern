@@ -1,19 +1,19 @@
 /**
  * ActionAvatarPreview3D 动作详情 3D 预览组件
  *
- * T-4.2 阶段 5: 动作详情弹窗显示当前 Avatar 的真实 3D 动作预览
+ * T-4.2G-A2: 统一动作详情与管理窗口使用的 3D 预览组件
  *
  * 职责:
  * - 渲染 Component3D(由父页面通过 @Prop scene 传入)
  * - 显示加载中 / 失败 / 无动画等状态覆盖层
- * - 显示当前模型名 + 动作名
- * - 提供播放/暂停/重播/停止按钮(通过回调通知父页面 ViewModel)
+ * - 提供播放/暂停/重播/停止/(可选)应用 按钮
  * - 不直接持有 Scene/ViewModel 生命周期(由父页面管理)
  *
  * 设计说明:
  * - 组件本身无状态业务,仅做 UI 渲染和事件转发
  * - 父页面持有 ActionAvatarPreviewViewModel,负责 Scene 加载和动画控制
  * - Scene 通过 @Prop 传入,组件只负责渲染
+ * - 顶部"模型名/动作名"由父页面标题栏显示,组件不再重复
  *
  * 生命周期:
  * - 父页面打开弹窗:创建 ViewModel + initialize + 绑定回调
@@ -32,15 +32,14 @@ const LOG_TAG: string = 'ActionAvatarPreview3D';
  *
  * 使用方式:
  * ActionAvatarPreview3D({
- *   scene: this.previewScene,
- *   state: this.previewState,
- *   avatarName: this.previewAvatarName,
- *   actionName: this.detailsCard?.displayName || '',
- *   errorMessage: this.previewErrorMessage,
- *   onPlay: () => { this.previewVm?.play(); },
- *   onPause: () => { this.previewVm?.pause(); },
- *   onReplay: () => { this.previewVm?.replay(); },
- *   onStop: () => { this.previewVm?.stop(); }
+ *   scene: this.actionDialogScene,
+ *   state: this.actionDialogState,
+ *   errorMessage: this.actionDialogError,
+ *   onPlay: () => { this.actionDialogVm?.play(); },
+ *   onPause: () => { this.actionDialogVm?.pause(); },
+ *   onReplay: () => { this.actionDialogVm?.replay(); },
+ *   onStop: () => { this.actionDialogVm?.stop(); },
+ *   onApply: () => { this.onClickApplyAction(); } // 可选,传入时显示"应用"按钮
  * })
  */
 @Component
@@ -49,10 +48,6 @@ export struct ActionAvatarPreview3D {
   @Prop scene: Scene | null = null;
   /** 当前预览状态 */
   @Prop state: ActionPreview3DState = ActionPreview3DState.Idle;
-  /** 当前 Avatar 显示名 */
-  @Prop avatarName: string = '';
-  /** 当前动作显示名 */
-  @Prop actionName: string = '';
   /** 错误信息(Failed 状态时非空) */
   @Prop errorMessage: string = '';
 
@@ -66,51 +61,23 @@ export struct ActionAvatarPreview3D {
   onStop: (() => void) | null = null;
   /** 重试回调(加载失败时) */
   onRetry: (() => void) | null = null;
+  /** T-4.2G-A2: 应用动作到当前模型回调(传入时显示"应用"按钮) */
+  onApply: (() => void) | null = null;
 
   build(): void {
     Column() {
-      // 顶部信息栏:当前模型 + 当前动作
-      Row() {
-        Column() {
-          Text('当前模型')
-            .fontSize(11)
-            .fontColor('#999999');
-          Text(this.avatarName.length > 0 ? this.avatarName : '未选择')
-            .fontSize(13)
-            .fontColor('#333333')
-            .fontWeight(FontWeight.Medium)
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis });
-        }
-        .alignItems(HorizontalAlign.Start)
-        .layoutWeight(1);
-
-        Column() {
-          Text('当前动作')
-            .fontSize(11)
-            .fontColor('#999999');
-          Text(this.actionName.length > 0 ? this.actionName : '-')
-            .fontSize(13)
-            .fontColor('#333333')
-            .fontWeight(FontWeight.Medium)
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis });
-        }
-        .alignItems(HorizontalAlign.End);
-      }
-      .width('100%')
-      .padding({ left: 12, right: 12, top: 8, bottom: 8 });
-
       // 3D 预览区域(固定高度,避免灰色空白)
       Stack() {
-        if (this.state === ActionPreview3DState.LoadingAvatar) {
+        if (this.state === ActionPreview3DState.LoadingAvatar
+          || this.state === ActionPreview3DState.LoadingMotion
+          || this.state === ActionPreview3DState.PreparingRetarget) {
           // 加载中
           Column() {
             LoadingProgress()
               .width(36)
               .height(36)
               .color('#007DFF');
-            Text('加载当前 Avatar...')
+            Text('加载中...')
               .fontSize(13)
               .fontColor('#666666')
               .margin({ top: 8 });
@@ -184,11 +151,11 @@ export struct ActionAvatarPreview3D {
         }
       }
       .width('100%')
-      .height(280)
+      .height(380)
       .backgroundColor('#f0f0f0')
       .borderRadius(8);
 
-      // 控制按钮
+      // 控制按钮:播放/暂停 | 重播 | 停止 | (可选)应用
       Row() {
         Button(this.getPlayButtonLabel())
           .fontSize(13)
@@ -222,7 +189,7 @@ export struct ActionAvatarPreview3D {
           .layoutWeight(1)
           .backgroundColor('#cccccc')
           .fontColor('#333333')
-          .margin({ left: 4 })
+          .margin({ left: 4, right: 4 })
           .enabled(this.canControlPlayback())
           .key('actionDetail.stop')
           .onClick(() => {
@@ -230,6 +197,21 @@ export struct ActionAvatarPreview3D {
               this.onStop();
             }
           });
+        if (this.onApply !== null) {
+          Button('应用')
+            .fontSize(13)
+            .height(34)
+            .layoutWeight(1)
+            .backgroundColor('#17a2b8')
+            .fontColor('#ffffff')
+            .margin({ left: 4 })
+            .key('actionDetail.apply')
+            .onClick(() => {
+              if (this.onApply !== null) {
+                this.onApply();
+              }
+            });
+        }
       }
       .width('100%')
       .padding({ left: 12, right: 12, top: 8, bottom: 8 });
@@ -266,6 +248,8 @@ export struct ActionAvatarPreview3D {
   private canControlPlayback(): boolean {
     return this.scene !== null
       && this.state !== ActionPreview3DState.LoadingAvatar
+      && this.state !== ActionPreview3DState.LoadingMotion
+      && this.state !== ActionPreview3DState.PreparingRetarget
       && this.state !== ActionPreview3DState.Failed
       && this.state !== ActionPreview3DState.StaticOnly;
   }

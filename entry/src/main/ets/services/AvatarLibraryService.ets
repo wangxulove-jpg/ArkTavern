@@ -29,6 +29,7 @@ import { fileIo } from '@kit.CoreFileKit';
 import { AvatarLibraryStore, AvatarRecord } from '../storage/AvatarLibraryStore';
 import { Character3DService, Character3DImportResult, Character3DModelConfig } from './Character3DService';
 import { Model3DAssetStore } from '../storage/Model3DAssetStore';
+import { AvatarOrientationCalibrationStore } from '../storage/AvatarOrientationCalibrationStore';
 import { AppPreferences } from '../storage/AppPreferences';
 import { generateUuid } from '../utils/Uuid';
 import { Logger } from '../utils/Logger';
@@ -106,6 +107,8 @@ export class AvatarLibraryService {
   private readonly assetStore: Model3DAssetStore;
   /** T-4.2 阶段 2: Avatar 变更事件分发器(单例,进程内) */
   private readonly dispatcher: AvatarChangeDispatcher = new AvatarChangeDispatcher();
+  /** T-4.2G: 方向校准存储(可选,setter 注入;为 null 时 deleteAvatar 不清理校准) */
+  private calibrationStore: AvatarOrientationCalibrationStore | null = null;
 
   constructor(
     context: common.Context,
@@ -118,6 +121,16 @@ export class AvatarLibraryService {
     // (HarmonyOS 文件 API 进程级安全,文件名带时间戳不会冲突)
     this.assetStore = new Model3DAssetStore();
     this.assetStore.initialize(context);
+  }
+
+  /**
+   * T-4.2G: 注入方向校准存储(用于 deleteAvatar 时联动清理)。
+   *
+   * 由 AppServices 在初始化后调用。若不注入,deleteAvatar 不会清理校准数据
+   * (向后兼容;旧代码不依赖此行为)。
+   */
+  setCalibrationStore(store: AvatarOrientationCalibrationStore): void {
+    this.calibrationStore = store;
   }
 
   /**
@@ -444,6 +457,15 @@ export class AvatarLibraryService {
     }
     // 删除元数据
     await this.store.delete(avatarId);
+
+    // T-4.2G: 删除方向校准数据(若已注入 calibrationStore)
+    if (this.calibrationStore !== null) {
+      try {
+        await this.calibrationStore.delete(avatarId);
+      } catch (e) {
+        Logger.warn(LOG_TAG, 'deleteAvatar: calibration delete failed: ' + (e as Error)?.message);
+      }
+    }
 
     // 若是激活模型,同步清理 Character3DService 全局状态
     if (isActive) {

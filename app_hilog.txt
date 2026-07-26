@@ -1,0 +1,1 @@
+07-26 09:36:30.146 28927 28965 I C03F00/com.example.arktavern/ArkEtsVm: [nodict][a92abb649c9cf6c 0 0]gc: App cold start finished

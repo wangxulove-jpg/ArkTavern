@@ -62,6 +62,7 @@ import { Character3DService } from './Character3DService';
 import { AvatarLibraryService } from './AvatarLibraryService';
 import { Character3DActionService } from './Character3DActionService';
 import { Character3DModelCompatibilityService } from './Character3DModelCompatibilityService';
+import { AvatarOrientationCalibrationStore } from '../storage/AvatarOrientationCalibrationStore';
 import { HumanoidMappingStore } from '../storage/HumanoidMappingStore';
 import { HumanoidMappingViewModel } from '../viewmodels/HumanoidMappingViewModel';
 import { ModelService } from './ModelService';
@@ -183,6 +184,8 @@ export class AppServices {
   private character3DModelCompatibilityService: Character3DModelCompatibilityService | null = null;
   /** AvatarLibraryService Avatar 模型库业务服务(T-4.1 阶段 B)。在 initialize 中创建。 */
   private avatarLibraryService: AvatarLibraryService | null = null;
+  /** T-4.2G: AvatarOrientationCalibrationStore 方向校准存储(懒初始化,需要 AppPreferences) */
+  private avatarOrientationCalibrationStore: AvatarOrientationCalibrationStore | null = null;
   /** 市场服务(Chub 公共只读浏览 + 搜索 + 详情 + 下载) */
   readonly marketService: MarketService;
   /** 市场导入服务(需要 context,在 initialize 中创建) */
@@ -440,6 +443,9 @@ export class AppServices {
             services.appPreferences,
             services.character3DService
           );
+          // T-4.2G: 注入方向校准存储,用于 deleteAvatar 联动清理
+          services.avatarLibraryService.setCalibrationStore(
+            AppServices.getAvatarOrientationCalibrationStore());
           // T-4.2E-Closeout: 启动时修复历史空 SHA 记录(异步,不阻塞初始化)
           services.avatarLibraryService.repairEmptySha256().then((shaReport): void => {
             if (shaReport.repairedCount > 0 || shaReport.missingFileCount > 0) {
@@ -712,6 +718,20 @@ export class AppServices {
    */
   static getAppPreferences(): AppPreferences {
     return AppServices.getInstance().appPreferences;
+  }
+
+  /**
+   * T-4.2G: 获取 AvatarOrientationCalibrationStore 实例(懒初始化)。
+   *
+   * 用于 ActionAvatarPreviewViewModel 持久化方向校准(per-avatar)。
+   * 第一次调用时创建,后续复用。
+   */
+  static getAvatarOrientationCalibrationStore(): AvatarOrientationCalibrationStore {
+    const instance: AppServices = AppServices.getInstance();
+    if (instance.avatarOrientationCalibrationStore === null) {
+      instance.avatarOrientationCalibrationStore = new AvatarOrientationCalibrationStore(instance.appPreferences);
+    }
+    return instance.avatarOrientationCalibrationStore;
   }
 
   /**

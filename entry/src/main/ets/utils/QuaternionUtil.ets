@@ -193,3 +193,40 @@ export function quaternionEqual(q1: QuaternionValue, q2: QuaternionValue, epsilo
     && Math.abs(q1.z - q2.z) <= epsilon
     && Math.abs(q1.w - q2.w) <= epsilon;
 }
+
+/**
+ * 四元数转欧拉角(度),返回 [x, y, z] 即 [pitch, yaw, roll]。
+ *
+ * T-4.2G-A: 用于诊断 Rest Pose 类型(T Pose / A Pose / 双臂下垂)。
+ *
+ * 采用 ZYX 旋转顺序(即 Yaw-Pitch-Roll),与 glTF 默认约定一致:
+ * q = qz * qy * qx (先应用 X,再 Y,再 Z)
+ *
+ * @param q 单位四元数
+ * @returns [x, y, z] 欧拉角(度),范围 x∈[-90,90], y∈[-180,180], z∈[-180,180]
+ */
+export function quaternionToEulerDeg(q: QuaternionValue): number[] {
+  // 归一化以确保数值稳定
+  const len: number = Math.sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
+  const x: number = q.x / len;
+  const y: number = q.y / len;
+  const z: number = q.z / len;
+  const w: number = q.w / len;
+
+  // Pitch (X 轴旋转)
+  const sinPitch: number = 2.0 * (w * x - y * z);
+  const pitchRad: number = Math.asin(Math.max(-1.0, Math.min(1.0, sinPitch)));
+
+  // Yaw (Y 轴旋转)
+  const sinYaw: number = 2.0 * (w * y + x * z);
+  const cosYaw: number = 1.0 - 2.0 * (y * y + x * x);
+  const yawRad: number = Math.atan2(sinYaw, cosYaw);
+
+  // Roll (Z 轴旋转)
+  const sinRoll: number = 2.0 * (w * z + x * y);
+  const cosRoll: number = 1.0 - 2.0 * (z * z + x * x);
+  const rollRad: number = Math.atan2(sinRoll, cosRoll);
+
+  const deg: number = 180.0 / Math.PI;
+  return [pitchRad * deg, yawRad * deg, rollRad * deg];
+}

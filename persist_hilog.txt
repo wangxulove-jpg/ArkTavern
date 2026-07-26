@@ -1,0 +1,1 @@
+07-26 09:27:08.967  1482  1723 I C04619/CollaborationFwk/Detect: [vlink_ble_detect_handler.cpp:556]UpdateRange# rangeRet = 0 

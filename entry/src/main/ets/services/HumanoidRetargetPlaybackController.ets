@@ -24,14 +24,25 @@ import {
   HumanoidPose,
   HumanoidRestPose,
   BoneRestTransform,
+  BonePose,
   QuaternionValue,
   Vector3Value,
   RootMotionMode
 } from '../models/character3d/HumanoidMotionClip';
 import { HumanoidBone } from '../models/character3d/HumanoidBone';
 import { sampleMotionClip } from './HumanoidMotionSampler';
-import { retargetPose, RetargetResult } from './HumanoidRetargetor';
+import { retargetPose, RetargetResult, AxisCorrectionStat } from './HumanoidRetargetor';
+import { AvatarOrientationCalibration } from '../models/character3d/AvatarOrientationCalibration';
 import { Logger } from '../utils/Logger';
+import { quaternionToEulerDeg } from '../utils/QuaternionUtil';
+
+/**
+ * T-4.2G-A: 四元数转欧拉角字符串(用于诊断日志)。
+ */
+function eulerStr(q: QuaternionValue): string {
+  const euler: number[] = quaternionToEulerDeg(q);
+  return '(' + euler[0].toFixed(1) + ',' + euler[1].toFixed(1) + ',' + euler[2].toFixed(1) + ')';
+}
 
 const LOG_TAG: string = 'RetargetController';
 
@@ -80,6 +91,10 @@ export interface RetargetPlaybackConfig {
   rootMotionMode: RootMotionMode;
   /** 播放速度(默认 1.0) */
   speed: number;
+  /** T-4.2F: 源骨架每根骨骼的 rest 世界旋转(用于父空间 delta 转换) */
+  sourceWorldRestMap: Map<HumanoidBone, QuaternionValue>;
+  /** T-4.2G: 方向校准(可选,为 null 时无校正) */
+  calibration: AvatarOrientationCalibration | null;
 }
 
 /**
@@ -103,6 +118,20 @@ export type OnPlaybackStateChanged = (state: RetargetPlaybackState) => void;
 export type OnPlaybackError = (message: string) => void;
 
 /**
+ * T-4.2G-A2: 帧应用后回调(每帧 retarget 写入 SceneNode 之后触发)。
+ *
+ * 用于让 TargetAvatarSkeletonController 同步刷新骨架几何位置。
+ */
+export type OnPlaybackFrameApplied = () => void;
+
+/**
+ * T-4.2G-A2: 停止后回调(Rest Pose 已恢复到 SceneNode 之后触发)。
+ *
+ * 用于让 TargetAvatarSkeletonController 同步恢复骨架到 Rest Pose。
+ */
+export type OnPlaybackStopped = () => void;
+
+/**
  * 人形动作重定向播放控制器。
  */
 export class HumanoidRetargetPlaybackController {
@@ -112,6 +141,8 @@ export class HumanoidRetargetPlaybackController {
   private stateValue: RetargetPlaybackState = RetargetPlaybackState.Idle;
   /** 当前播放时间(秒) */
   private currentTime: number = 0;
+  /** T-4.2G-A: 帧计数器(用于诊断日志频率控制) */
+  private frameCounter: number = 0;
   /** 上一帧时间戳(ms) */
   private lastFrameTimestamp: number = 0;
   /** 定时器 ID(-1 表示未启动) */
@@ -122,11 +153,17 @@ export class HumanoidRetargetPlaybackController {
   private disposed: boolean = false;
   /** generation(用于防止旧回调) */
   private generation: number = 0;
+  /** T-4.2F: 分段日志位掩码(bit0=t=0, bit1=t≈0.5, bit2=t≈1.0) */
+  private segmentLogMask: number = 0;
 
   /** 状态变更回调 */
   onStateChanged: OnPlaybackStateChanged | null = null;
   /** 错误回调 */
   onError: OnPlaybackError | null = null;
+  /** T-4.2G-A2: 帧应用后回调(每帧 retarget 写入 SceneNode 之后触发) */
+  onFrameApplied: OnPlaybackFrameApplied | null = null;
+  /** T-4.2G-A2: 停止后回调(Rest Pose 已恢复到 SceneNode 之后触发) */
+  onStopped: OnPlaybackStopped | null = null;
 
   /**
    * 准备播放(注入配置,进入 Ready 状态)。
@@ -143,6 +180,7 @@ export class HumanoidRetargetPlaybackController {
     this.currentTime = 0;
     this.lastFrameTimestamp = 0;
     this.lastSummaryLogTime = 0;
+    this.segmentLogMask = 0;
 
     // 验证配置
     if (config.clip.tracks.length === 0) {
@@ -194,6 +232,7 @@ export class HumanoidRetargetPlaybackController {
     // (满足"停止后重新播放从 0 开始"语义;Paused 状态保留 currentTime)
     if (this.stateValue === RetargetPlaybackState.Stopped) {
       this.currentTime = 0;
+      this.segmentLogMask = 0;
     }
 
     Logger.info(LOG_TAG, 'Retarget play: clip=' + this.config.clip.name
@@ -230,6 +269,7 @@ export class HumanoidRetargetPlaybackController {
     this.currentTime = 0;
     this.lastFrameTimestamp = Date.now();
     this.lastSummaryLogTime = this.lastFrameTimestamp;
+    this.segmentLogMask = 0;
     if (this.stateValue !== RetargetPlaybackState.Playing) {
       this.setState(RetargetPlaybackState.Playing);
       this.startTimer();
@@ -266,6 +306,7 @@ export class HumanoidRetargetPlaybackController {
     } else {
       this.currentTime = Math.max(0, Math.min(duration, timeSeconds));
     }
+    this.segmentLogMask = 0;
     // 立即应用一帧
     this.applyFrame();
   }
@@ -320,6 +361,38 @@ export class HumanoidRetargetPlaybackController {
    */
   isLoop(): boolean {
     return this.config !== null ? this.config.clip.loop : false;
+  }
+
+  /**
+   * T-4.2G: 更新方向校准(运行时切换,无需重新 prepare)。
+   *
+   * 用于手动校准 UI 切换模式时,立即生效而不重建 Scene/Clip/映射。
+   *
+   * 行为:
+   * - 若控制器未 prepare(config===null):返回 false,但不报错
+   * - 若正在播放:更新后下一帧自动应用新校准
+   * - 若已停止:更新后下次 play 时应用新校准
+   * - 不重置 currentTime(保持播放连续性)
+   *
+   * @param calibration 新的方向校准(可为 null 表示关闭校准)
+   * @returns true 表示已更新;false 表示控制器未准备
+   */
+  updateCalibration(calibration: AvatarOrientationCalibration | null): boolean {
+    if (this.disposed || this.config === null) {
+      return false;
+    }
+    this.config.calibration = calibration;
+    Logger.info(LOG_TAG, 'updateCalibration: updated, mode='
+      + (calibration !== null ? calibration.mode : 'null')
+      + ', isManual=' + (calibration !== null ? calibration.isManualOverride : false)
+      + ', state=' + this.stateValue);
+    // 立即应用一帧,避免状态切换的视觉延迟
+    if (this.stateValue === RetargetPlaybackState.Playing
+      || this.stateValue === RetargetPlaybackState.Paused
+      || this.stateValue === RetargetPlaybackState.Ready) {
+      this.applyFrame();
+    }
+    return true;
   }
 
   // ==================== 内部实现 ====================
@@ -394,6 +467,9 @@ export class HumanoidRetargetPlaybackController {
       this.logSummary();
       this.lastSummaryLogTime = now;
     }
+
+    // 5. T-4.2F: 分段诊断日志(仅 t=0/0.5/1.0 三个关键时刻,每个最多打一次)
+    this.maybeLogSegment();
   }
 
   /**
@@ -408,13 +484,22 @@ export class HumanoidRetargetPlaybackController {
     // 1. 采样 clip
     const sourcePose: HumanoidPose = sampleMotionClip(cfg.clip, this.currentTime);
 
-    // 2. 重定向
+    // 2. 重定向(T-4.2F: 传入 sourceWorldRestMap 用于父空间 delta 转换)
+    //    T-4.2G: 传入 calibration 进行方向校准(Alignment Transform + 左右镜像)
     const retargetResult: RetargetResult = retargetPose(
       sourcePose,
       cfg.sourceRestPose,
       cfg.targetRestPose,
-      cfg.rootMotionMode
+      cfg.sourceWorldRestMap,
+      cfg.rootMotionMode,
+      cfg.calibration
     );
+
+    // T-4.2G-A: 诊断日志(每 30 帧 ≈ 0.5s 输出一次关键骨骼旋转值)
+    this.frameCounter++;
+    if (this.frameCounter % 30 === 1) {
+      this.logRetargetDiagnostics(sourcePose, retargetResult, cfg);
+    }
 
     // 3. 写入 SceneNode
     retargetResult.rotations.forEach((rot: QuaternionValue, bone: HumanoidBone) => {
@@ -444,6 +529,50 @@ export class HumanoidRetargetPlaybackController {
         }
       }
     });
+
+    // T-4.2G-A2: 通知骨架控制器刷新(必须在所有 SceneNode 写入完成后)
+    if (this.onFrameApplied !== null) {
+      try {
+        this.onFrameApplied();
+      } catch (e) {
+        Logger.warn(LOG_TAG, 'onFrameApplied callback failed: ' + (e as Error)?.message);
+      }
+    }
+  }
+
+  /**
+   * T-4.2G-A: 输出重定向诊断日志,对比 source/target/rest 的旋转值。
+   */
+  private logRetargetDiagnostics(
+    sourcePose: HumanoidPose,
+    retargetResult: RetargetResult,
+    cfg: RetargetPlaybackConfig
+  ): void {
+    const bones: HumanoidBone[] = [
+      HumanoidBone.RightUpperArm,
+      HumanoidBone.RightLowerArm,
+      HumanoidBone.LeftUpperArm,
+      HumanoidBone.LeftLowerArm
+    ];
+    Logger.info(LOG_TAG, 'Retarget diag t=' + this.currentTime.toFixed(3)
+      + 's frame=' + this.frameCounter);
+    for (let i: number = 0; i < bones.length; i++) {
+      const bone: HumanoidBone = bones[i];
+      const srcPose: BonePose | undefined = sourcePose.bones.get(bone);
+      const srcRest: BoneRestTransform | undefined = cfg.sourceRestPose.bones.get(bone);
+      const tgtRest: BoneRestTransform | undefined = cfg.targetRestPose.bones.get(bone);
+      const tgtAnim: QuaternionValue | undefined = retargetResult.rotations.get(bone);
+      const srcEuler: string = (srcPose !== undefined && srcPose.rotation !== null)
+        ? eulerStr(srcPose.rotation) : 'null';
+      const srcRestEuler: string = srcRest !== undefined ? eulerStr(srcRest.localRotation) : 'null';
+      const tgtRestEuler: string = tgtRest !== undefined ? eulerStr(tgtRest.localRotation) : 'null';
+      const tgtAnimEuler: string = tgtAnim !== undefined ? eulerStr(tgtAnim) : 'null';
+      Logger.info(LOG_TAG, '  ' + bone
+        + ' srcAnim=' + srcEuler
+        + ' srcRest=' + srcRestEuler
+        + ' tgtRest=' + tgtRestEuler
+        + ' tgtAnim=' + tgtAnimEuler);
+    }
   }
 
   /**
@@ -486,6 +615,15 @@ export class HumanoidRetargetPlaybackController {
       restored++;
     });
     Logger.info(LOG_TAG, 'restoreTargetRestPose: restored=' + restored);
+
+    // T-4.2G-A2: 通知骨架控制器恢复 Rest Pose(必须在所有 SceneNode 写入完成后)
+    if (this.onStopped !== null) {
+      try {
+        this.onStopped();
+      } catch (e) {
+        Logger.warn(LOG_TAG, 'onStopped callback failed: ' + (e as Error)?.message);
+      }
+    }
   }
 
   /**
@@ -508,12 +646,112 @@ export class HumanoidRetargetPlaybackController {
       sourcePose,
       cfg.sourceRestPose,
       cfg.targetRestPose,
-      cfg.rootMotionMode
+      cfg.sourceWorldRestMap,
+      cfg.rootMotionMode,
+      cfg.calibration
     );
-    Logger.info(LOG_TAG, 'Retarget tick: time=' + this.currentTime.toFixed(3)
+    // T-4.2F: 统计手臂链变化(LowerArm/Hand 是否参与)
+    let upperArmChanged: boolean = false;
+    let lowerArmChanged: boolean = false;
+    let handChanged: boolean = false;
+    for (let i: number = 0; i < retargetResult.changedBones.length; i++) {
+      const b: HumanoidBone = retargetResult.changedBones[i];
+      if (b === HumanoidBone.LeftUpperArm || b === HumanoidBone.RightUpperArm) {
+        upperArmChanged = true;
+      } else if (b === HumanoidBone.LeftLowerArm || b === HumanoidBone.RightLowerArm) {
+        lowerArmChanged = true;
+      } else if (b === HumanoidBone.LeftHand || b === HumanoidBone.RightHand) {
+        handChanged = true;
+      }
+    }
+    Logger.info(LOG_TAG, 'Retarget summary: time=' + this.currentTime.toFixed(3)
+      + ', clip=' + cfg.clip.name
       + ', appliedBones=' + retargetResult.appliedBoneCount
       + ', changedBones=' + retargetResult.changedBoneCount
-      + ', clip=' + cfg.clip.name);
+      + ', upperArmChanged=' + upperArmChanged
+      + ', lowerArmChanged=' + lowerArmChanged
+      + ', handChanged=' + handChanged);
+  }
+
+  /**
+   * T-4.2F: 分段诊断日志(仅 t=0/0.5/1.0 三个关键时刻)。
+   *
+   * 每个关键时刻最多打一次,记录:
+   * - sourceDelta 角度
+   * - worldDelta 角度(应与 sourceDelta 相同)
+   * - targetApplied 角度
+   * - targetRest 角度
+   * - changed 标记
+   *
+   * 只对 RightUpperArm / RightLowerArm / RightHand 三根关键手臂骨骼输出。
+   */
+  private maybeLogSegment(): void {
+    const cfg: RetargetPlaybackConfig | null = this.config;
+    if (cfg === null) {
+      return;
+    }
+    const t: number = this.currentTime;
+    // 判断是否到达某个分段点(±0.05s 容差)
+    let segmentBit: number = 0;
+    let segmentLabel: string = '';
+    if ((this.segmentLogMask & 0x1) === 0 && t >= 0.0 && t <= 0.05) {
+      segmentBit = 0x1;
+      segmentLabel = 't=0.0';
+    } else if ((this.segmentLogMask & 0x2) === 0 && t >= 0.45 && t <= 0.55) {
+      segmentBit = 0x2;
+      segmentLabel = 't=0.5';
+    } else if ((this.segmentLogMask & 0x4) === 0 && t >= 0.95 && t <= 1.05) {
+      segmentBit = 0x4;
+      segmentLabel = 't=1.0';
+    }
+    if (segmentBit === 0) {
+      return;
+    }
+    this.segmentLogMask |= segmentBit;
+
+    // 采样并重定向,获取 axisCorrectionStats
+    const sourcePose: HumanoidPose = sampleMotionClip(cfg.clip, t);
+    const retargetResult: RetargetResult = retargetPose(
+      sourcePose,
+      cfg.sourceRestPose,
+      cfg.targetRestPose,
+      cfg.sourceWorldRestMap,
+      cfg.rootMotionMode,
+      cfg.calibration
+    );
+
+    // 关注的手臂骨骼
+    const focusBones: HumanoidBone[] = [
+      HumanoidBone.RightUpperArm,
+      HumanoidBone.RightLowerArm,
+      HumanoidBone.RightHand
+    ];
+    let logLine: string = 'Retarget sample: clip=' + cfg.clip.name
+      + ', time=' + segmentLabel
+      + ' (' + t.toFixed(3) + 's)';
+    Logger.info(LOG_TAG, logLine);
+    for (let i: number = 0; i < focusBones.length; i++) {
+      const focusBone: HumanoidBone = focusBones[i];
+      let stat: AxisCorrectionStat | null = null;
+      for (let j: number = 0; j < retargetResult.axisCorrectionStats.length; j++) {
+        if (retargetResult.axisCorrectionStats[j].bone === focusBone) {
+          stat = retargetResult.axisCorrectionStats[j];
+          break;
+        }
+      }
+      if (stat === null) {
+        Logger.info(LOG_TAG, '  bone=' + focusBone + ' (no stat, skipped)');
+        continue;
+      }
+      const nodeExists: boolean = cfg.boneNodeMap.has(focusBone);
+      Logger.info(LOG_TAG, '  bone=' + focusBone
+        + ', sourceDelta=' + stat.sourceDeltaAngleDeg.toFixed(1) + 'deg'
+        + ', worldDelta=' + stat.worldDeltaAngleDeg.toFixed(1) + 'deg'
+        + ', targetApplied=' + stat.targetAppliedAngleDeg.toFixed(1) + 'deg'
+        + ', targetRest=' + stat.targetRestAngleDeg.toFixed(1) + 'deg'
+        + ', changed=' + stat.changed
+        + ', targetNodeExists=' + nodeExists);
+    }
   }
 
   /**

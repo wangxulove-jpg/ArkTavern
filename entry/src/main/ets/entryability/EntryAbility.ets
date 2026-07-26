@@ -88,7 +88,8 @@ export default class EntryAbility extends UIAbility {
         .then((): void => {
           hilog.info(DOMAIN, 'testTag',
             'setWindowSystemBarProperties succeeded: isDark=%{public}s, contentColor=%{public}s',
-            String(isDark), sysBarProps.statusBarContentColor!);
+            String(isDark), sysBarProps.statusBarContentColor!
+          );
         })
         .catch((e: Object): void => {
           hilog.error(DOMAIN, 'testTag',
