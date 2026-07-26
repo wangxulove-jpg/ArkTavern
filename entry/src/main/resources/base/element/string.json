@@ -85,42 +85,6 @@
       "value": "保存失败"
     },
     {
-      "name": "settings_chat_3d_section",
-      "value": "聊天显示"
-    },
-    {
-      "name": "settings_chat_3d_enable_label",
-      "value": "显示 3D 角色模型"
-    },
-    {
-      "name": "settings_chat_3d_enable_hint",
-      "value": "在单人角色聊天页上半部分显示当前 3D 模型。需先在 3D 模型设置中导入模型。"
-    },
-    {
-      "name": "chat_3d_loading",
-      "value": "正在加载 3D 场景…"
-    },
-    {
-      "name": "chat_3d_load_failed",
-      "value": "3D 模型加载失败"
-    },
-    {
-      "name": "chat_3d_retry",
-      "value": "重试"
-    },
-    {
-      "name": "chat_3d_hide",
-      "value": "隐藏 3D 区域"
-    },
-    {
-      "name": "chat_3d_no_model",
-      "value": "尚未导入 3D 模型"
-    },
-    {
-      "name": "chat_3d_go_settings",
-      "value": "前往 3D 模型设置"
-    },
-    {
       "name": "chat_user_name_override_placeholder",
       "value": "留空时使用角色或全局"
     },

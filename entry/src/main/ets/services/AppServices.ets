@@ -58,13 +58,6 @@ import { ContextBudgetService } from './ContextBudgetService';
 import { ChatService } from './ChatService';
 import { ChatPersistenceService } from './ChatPersistenceService';
 import { ChatBackgroundService } from './ChatBackgroundService';
-import { Character3DService } from './Character3DService';
-import { AvatarLibraryService } from './AvatarLibraryService';
-import { Character3DActionService } from './Character3DActionService';
-import { Character3DModelCompatibilityService } from './Character3DModelCompatibilityService';
-import { AvatarOrientationCalibrationStore } from '../storage/AvatarOrientationCalibrationStore';
-import { HumanoidMappingStore } from '../storage/HumanoidMappingStore';
-import { HumanoidMappingViewModel } from '../viewmodels/HumanoidMappingViewModel';
 import { ModelService } from './ModelService';
 import { DefaultProviderFactory } from './ProviderFactory';
 import { HttpClient } from '../network/core/HttpClient';
@@ -91,7 +84,6 @@ import { MultiPersonPromptBuilder } from './MultiPersonPromptBuilder';
 import { MultiPersonResponseParser } from './MultiPersonResponseParser';
 import { MultiPersonChatService } from './MultiPersonChatService';
 import { ChatTextStyleSettings } from '../utils/ChatTextStyleSettings';
-import { Chat3DDisplaySettings } from '../utils/Chat3DDisplaySettings';
 import { ChatArchiveService } from './ChatArchiveService';
 import { ChatArchiveImportService } from './ChatArchiveImportService';
 import { ChatArchiveViewModel } from '../viewmodels/ChatArchiveViewModel';
@@ -176,16 +168,6 @@ export class AppServices {
   private contextBudgetService: ContextBudgetService | null = null;
   /** ChatBackgroundService 聊天背景图服务(导入图片 + 模糊度 + 暗化)。在 initialize 中创建。 */
   private chatBackgroundService: ChatBackgroundService | null = null;
-  /** Character3DService 3D 模型导入与持久化服务(临时 PoC:T-3D.2)。在 initialize 中创建。 */
-  private character3DService: Character3DService | null = null;
-  /** Character3DActionService 3D 动作资产管理服务(T-3D.6A)。在 initialize 中创建。 */
-  private character3DActionService: Character3DActionService | null = null;
-  /** Character3DModelCompatibilityService 3D 模型兼容性预处理服务(T-3D.6C-C)。在 initialize 中创建。 */
-  private character3DModelCompatibilityService: Character3DModelCompatibilityService | null = null;
-  /** AvatarLibraryService Avatar 模型库业务服务(T-4.1 阶段 B)。在 initialize 中创建。 */
-  private avatarLibraryService: AvatarLibraryService | null = null;
-  /** T-4.2G: AvatarOrientationCalibrationStore 方向校准存储(懒初始化,需要 AppPreferences) */
-  private avatarOrientationCalibrationStore: AvatarOrientationCalibrationStore | null = null;
   /** 市场服务(Chub 公共只读浏览 + 搜索 + 详情 + 下载) */
   readonly marketService: MarketService;
   /** 市场导入服务(需要 context,在 initialize 中创建) */
@@ -210,8 +192,6 @@ export class AppServices {
   private readonly multiPersonResponseParser: MultiPersonResponseParser;
   /** ChatTextStyleSettings 聊天文本样式设置(v11 富文本) */
   readonly chatTextStyleSettings: ChatTextStyleSettings;
-  /** Chat3DDisplaySettings 聊天页 3D 显示开关设置(T-3D.5) */
-  private chat3DDisplaySettings: Chat3DDisplaySettings | null = null;
   /** ChatArchiveService 聊天归档导出服务(T-CHAT.1) */
   private chatArchiveService: ChatArchiveService | null = null;
   /** ChatArchiveImportService 聊天归档导入服务(T-CHAT.1) */
@@ -224,7 +204,6 @@ export class AppServices {
   private constructor() {
     this.appPreferences = new AppPreferences();
     this.chatTextStyleSettings = new ChatTextStyleSettings(this.appPreferences);
-    this.chat3DDisplaySettings = new Chat3DDisplaySettings(this.appPreferences);
     const configStore: ProviderConfigStore = new ProviderConfigStore(this.appPreferences);
     const assetKeyStore: AssetStoreKeyStore = new AssetStoreKeyStore();
     const providerKeyStore: ProviderKeyStore = new ProviderKeyStore(assetKeyStore);
@@ -380,10 +359,6 @@ export class AppServices {
       .then((): Promise<void> => services.appPreferences.initialize(context))
       .then(async (): Promise<void> => {
         await services.chatTextStyleSettings.load();
-        // T-3D.5: 加载 3D 显示开关(默认关闭,读取失败时安全降级)
-        if (services.chat3DDisplaySettings !== null) {
-          await services.chat3DDisplaySettings.load();
-        }
       })
       .then((): Promise<void> => services.dbHelper.initialize(context))
       .then((): Promise<void> => services.characterService.initialize(context))
@@ -404,60 +379,6 @@ export class AppServices {
             services.appContext, services.appPreferences);
         } else {
           Logger.warn(LOG_TAG, 'appContext is null, chatBackgroundService not created');
-        }
-        // 创建 Character3DService(临时 PoC:T-3D.2,需要 appContext + appPreferences)
-        if (services.appContext !== null) {
-          services.character3DService = new Character3DService(
-            services.appContext, services.appPreferences);
-        } else {
-          Logger.warn(LOG_TAG, 'appContext is null, character3DService not created');
-        }
-        // 创建 Character3DActionService(T-3D.6A 动作资产管理,需要 appContext + appPreferences)
-        if (services.appContext !== null) {
-          services.character3DActionService = new Character3DActionService(
-            services.appContext, services.appPreferences);
-          services.character3DActionService.initialize();
-        } else {
-          Logger.warn(LOG_TAG, 'appContext is null, character3DActionService not created');
-        }
-        // 创建 Character3DModelCompatibilityService(T-3D.6C-C 模型兼容转换,需要 appPreferences)
-        services.character3DModelCompatibilityService = new Character3DModelCompatibilityService(
-          services.appPreferences);
-        if (services.appContext !== null) {
-          services.character3DModelCompatibilityService.initialize(services.appContext);
-        } else {
-          Logger.warn(LOG_TAG, 'appContext is null, character3DModelCompatibilityService not initialized');
-        }
-        // T-3D.6C-C: 将兼容性服务注入到 Character3DService(必须在两者都创建后执行)
-        if (services.character3DService !== null
-          && services.character3DModelCompatibilityService !== null) {
-          services.character3DService.setCompatibilityService(
-            services.character3DModelCompatibilityService);
-        } else {
-          Logger.warn(LOG_TAG, 'compatibilityService not injected to character3DService');
-        }
-        // T-4.1 阶段 B: 创建 AvatarLibraryService(需要 appContext + appPreferences + character3DService)
-        if (services.appContext !== null && services.character3DService !== null) {
-          services.avatarLibraryService = new AvatarLibraryService(
-            services.appContext,
-            services.appPreferences,
-            services.character3DService
-          );
-          // T-4.2G: 注入方向校准存储,用于 deleteAvatar 联动清理
-          services.avatarLibraryService.setCalibrationStore(
-            AppServices.getAvatarOrientationCalibrationStore());
-          // T-4.2E-Closeout: 启动时修复历史空 SHA 记录(异步,不阻塞初始化)
-          services.avatarLibraryService.repairEmptySha256().then((shaReport): void => {
-            if (shaReport.repairedCount > 0 || shaReport.missingFileCount > 0) {
-              Logger.info(LOG_TAG, 'repairEmptySha256: repaired=' + shaReport.repairedCount
-                + ', missing=' + shaReport.missingFileCount
-                + ', failed=' + shaReport.failedCount);
-            }
-          }).catch((e: Object): void => {
-            Logger.warn(LOG_TAG, 'repairEmptySha256 failed: ' + (e as Error)?.message);
-          });
-        } else {
-          Logger.warn(LOG_TAG, 'avatarLibraryService not created (context or character3DService null)');
         }
         // 创建 ContextBudgetService(只需 appPreferences)
         services.contextBudgetService = new ContextBudgetService(services.appPreferences);
@@ -639,54 +560,6 @@ export class AppServices {
   }
 
   /**
-   * 获取 Character3DService 实例。
-   * 用于 3D PoC 页面导入/读取/清除 GLB 模型(临时 PoC:T-3D.2)。
-   * 如果初始化时 appContext 不可用,返回 null。
-   */
-  static getCharacter3DService(): Character3DService | null {
-    return AppServices.getInstance().character3DService;
-  }
-
-  /**
-   * 获取 AvatarLibraryService 实例(T-4.1 阶段 B Avatar 模型库)。
-   * 用于模型库管理页面和 Agent 通过 avatarId 调用已保存模型。
-   * 如果初始化时不可用,返回 null。
-   */
-  static getAvatarLibraryService(): AvatarLibraryService | null {
-    return AppServices.getInstance().avatarLibraryService;
-  }
-
-  /**
-   * 获取 Character3DActionService 实例(T-3D.6A 动作资产管理)。
-   * 用于动作管理页面导入/读取/绑定/删除动作资产。
-   * 如果初始化时 appContext 不可用,返回 null。
-   */
-  static getCharacter3DActionService(): Character3DActionService | null {
-    return AppServices.getInstance().character3DActionService;
-  }
-
-  /**
-   * 获取 Character3DModelCompatibilityService 实例(T-3D.6C-C 模型兼容转换)。
-   * 用于模型导入时自动转换压缩网格扩展(EXT_meshopt_compression / KHR_mesh_quantization)。
-   * 如果初始化时不可用,返回 null。
-   */
-  static getCharacter3DModelCompatibilityService(): Character3DModelCompatibilityService | null {
-    return AppServices.getInstance().character3DModelCompatibilityService;
-  }
-
-  /**
-   * 获取 Chat3DDisplaySettings 实例(T-3D.5 聊天页 3D 显示开关)。
-   * 用于 AppSettingsPage 读写开关状态,以及 ChatPage 读取当前开关。
-   */
-  static getChat3DDisplaySettings(): Chat3DDisplaySettings {
-    const settings: Chat3DDisplaySettings | null = AppServices.getInstance().chat3DDisplaySettings;
-    if (settings === null) {
-      throw new Error('Chat3DDisplaySettings not initialized');
-    }
-    return settings;
-  }
-
-  /**
    * 获取 MarketService 实例。
    * 用于市场 Tab 浏览、搜索、详情查看、PNG/JSON 下载。
    */
@@ -718,20 +591,6 @@ export class AppServices {
    */
   static getAppPreferences(): AppPreferences {
     return AppServices.getInstance().appPreferences;
-  }
-
-  /**
-   * T-4.2G: 获取 AvatarOrientationCalibrationStore 实例(懒初始化)。
-   *
-   * 用于 ActionAvatarPreviewViewModel 持久化方向校准(per-avatar)。
-   * 第一次调用时创建,后续复用。
-   */
-  static getAvatarOrientationCalibrationStore(): AvatarOrientationCalibrationStore {
-    const instance: AppServices = AppServices.getInstance();
-    if (instance.avatarOrientationCalibrationStore === null) {
-      instance.avatarOrientationCalibrationStore = new AvatarOrientationCalibrationStore(instance.appPreferences);
-    }
-    return instance.avatarOrientationCalibrationStore;
   }
 
   /**
@@ -896,27 +755,5 @@ export class AppServices {
     const archiveService: ChatArchiveService = AppServices.getChatArchiveService();
     const importService: ChatArchiveImportService = AppServices.getChatArchiveImportService();
     return new ChatArchiveViewModel(archiveService, importService);
-  }
-
-  /**
-   * T-3D.6E: 创建 HumanoidMappingViewModel 实例(手动骨骼映射页面)。
-   *
-   * 内部注入 Character3DService、HumanoidMappingStore 和 AvatarLibraryService。
-   * 每次调用返回新实例,页面 aboutToDisappear 时由页面自行释放。
-   *
-   * @throws Error 当 Character3DService 或 AvatarLibraryService 未初始化时
-   */
-  static createHumanoidMappingViewModel(): HumanoidMappingViewModel {
-    const services: AppServices = AppServices.getInstance();
-    const character3DService: Character3DService | null = services.character3DService;
-    if (character3DService === null) {
-      throw new Error('Character3DService not initialized');
-    }
-    const avatarLibraryService: AvatarLibraryService | null = services.avatarLibraryService;
-    if (avatarLibraryService === null) {
-      throw new Error('AvatarLibraryService not initialized');
-    }
-    const mappingStore: HumanoidMappingStore = new HumanoidMappingStore(services.appPreferences);
-    return new HumanoidMappingViewModel(character3DService, mappingStore, avatarLibraryService);
   }
 }

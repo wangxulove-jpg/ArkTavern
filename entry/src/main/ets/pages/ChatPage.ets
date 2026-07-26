@@ -50,10 +50,8 @@ import {
 } from '../services/ContextBudgetEstimator';
 import { ForkChatMode } from '../models/ForkChatOptions';
 import { ChatSessionListPanel } from '../components/ChatSessionListPanel';
-import { Character3DPanel } from '../components/Character3DPanel';
 import { Character } from '../models/Character';
 import { Logger } from '../utils/Logger';
-import { getZoomFactor } from '../models/character3d/Character3DDisplayConfig';
 
 const LOG_TAG: string = 'ChatPage';
 
@@ -125,29 +123,7 @@ struct ChatPage {
   private lastLoadedBgChatId: string = '';
   /** 键盘弹起延迟滚动定时器 ID(-1 表示无 pending) */
   private keyboardScrollTimerId: number = -1;
-  /** 3D 自动适配后延迟读取模型信息定时器 ID(-1 表示无 pending) */
-  private autoFitTimerId: number = -1;
 
-  /** T-3D.5: 是否显示 3D 角色模型(由 AppSettings 控制,通过 AppStorage 通知刷新) */
-  @StorageProp('chat3dConfigVersion') @Watch('onChat3DConfigVersionChanged') chat3DConfigVersion: number = 0;
-  /** T-3D.5: 3D 显示开关当前值(初始化时从 Chat3DDisplaySettings 读取) */
-  @State chat3DEnabled: boolean = false;
-  /** T-3D.5: 键盘是否弹起(用于压缩 3D 区域) */
-  @State keyboardVisible: boolean = false;
-  /** T-3D.5B: 3D 区域占聊天页可用高度的比例(0.25 ~ 0.65) */
-  @State chat3DPanelRatio: number = 0.40;
-  /** T-3D.5B: 旋转灵敏度(0.2 ~ 2.0,1.0 = 标准) */
-  @State chat3DRotationSensitivity: number = 1.0;
-  /** T-3D.5D: 当前模型缩放倍率 zoomFactor(相对自动适配尺寸,0.10 ~ 20.0,打开菜单时从 Character3DService 读取) */
-  @State chat3DModelZoomFactor: number = 1.0;
-  /** T-3D.5A: 是否有外部模型(打开菜单时从 Character3DService 读取) */
-  @State chat3DHasExternalModel: boolean = false;
-  /** T-3D.5D: zoomFactor 请求计数器(语义改为 zoomFactor,AppStorage key 保留以兼容) */
-  @StorageLink('chat3dScaleRequest') private chat3DScaleRequest: number = -1;
-  /** T-3D.5A: 保存请求计数器 */
-  @StorageLink('chat3dSaveRequest') private chat3DSaveRequest: number = 0;
-  /** T-3D.5A: 自动适配请求计数器 */
-  @StorageLink('chat3dAutoFitRequest') private chat3DAutoFitRequest: number = 0;
   /** T-CHAT.1: 聊天归档 ViewModel(导出当前聊天/角色全部聊天) */
   @State archiveViewModel: ChatArchiveViewModel | null = null;
   /** T-CHAT.1: 导出进行中提示 */
@@ -159,16 +135,6 @@ struct ChatPage {
     const promptPresetService = AppServices.getPromptPresetService();
     const chatService = AppServices.createChatService();
     this.chatTextStyle = AppServices.getInstance().chatTextStyleSettings.get();
-    // T-3D.5: 读取 3D 显示开关初始值
-    try {
-      const settings3D = AppServices.getChat3DDisplaySettings();
-      this.chat3DEnabled = settings3D.isEnabled();
-      // T-3D.5B: 读取 3D 区域占比和旋转灵敏度
-      this.chat3DPanelRatio = settings3D.getPanelRatio();
-      this.chat3DRotationSensitivity = settings3D.getRotationSensitivity();
-    } catch (_e) {
-      // Chat3DDisplaySettings 未初始化时保持默认关闭
-    }
     const vm: ChatViewModel = new ChatViewModel(
       chatService, modelService, characterService, promptPresetService
     );
@@ -303,26 +269,8 @@ struct ChatPage {
             .hitTestBehavior(HitTestMode.Transparent)
         }
 
-        // ===== 底层:3D 区域 + 消息列表 + 浮动按钮 =====
-        // T-3D.5: 3D 开启时,顶部插入 Character3DPanel,消息列表在下方
-        // T-3D.5B: 3D 区域高度基于 panelRatio(用户可调),键盘弹起时折叠到 0
-        //          3D 容器 top 位置固定(不因键盘弹出而上移)
+        // ===== 底层:消息列表 + 浮动按钮 =====
         Column() {
-          // T-3D.5: 3D 展示区域(仅单人角色聊天 + 3D 开启时显示)
-          // T-3D.5A: 键盘弹起时折叠到 0(不渲染 Component3D),收起后恢复
-          // T-3D.5B: 高度基于 panelRatio,键盘弹起时为 0
-          if (this.chat3DEnabled && this.isSingleCharacterChat()) {
-            Character3DPanel({
-              enabled3D: true,
-              collapsed: this.keyboardVisible,
-              onHide3D: (): void => {
-                this.disableChat3D();
-              }
-            })
-              .width('100%')
-              .height(this.keyboardVisible ? 0 : (this.chat3DPanelRatio * 100) + '%')
-          }
-
           // 消息列表 + 浮动按钮
           Stack({ alignContent: Alignment.BottomEnd }) {
             if (this.isInitialLoading()) {
@@ -449,38 +397,6 @@ struct ChatPage {
             busy: this.viewModel!.busy,
             userNameOverride: this.currentUserNameOverride,
             resolvedUserName: this.resolvedUserName,
-            // T-3D.5D: 3D 开关 + zoomFactor 调节
-            isSingleCharacterChat: this.isSingleCharacterChat(),
-            chat3DEnabled: this.chat3DEnabled,
-            modelZoomFactor: this.chat3DModelZoomFactor,
-            hasExternalModel: this.chat3DHasExternalModel,
-            // T-3D.5B: 3D 画面占比 + 旋转灵敏度
-            panelRatio: this.chat3DPanelRatio,
-            rotationSensitivity: this.chat3DRotationSensitivity,
-            onToggleChat3D: (enabled: boolean): void => {
-              this.toggleChat3D(enabled);
-            },
-            onZoomFactorChange: (zoomFactor: number): void => {
-              this.onZoomFactorChange(zoomFactor);
-            },
-            onZoomFactorConfirm: (): void => {
-              this.onZoomFactorConfirm();
-            },
-            onAutoFit: (): void => {
-              this.onAutoFit();
-            },
-            onPanelRatioChange: (ratio: number): void => {
-              this.onPanelRatioChange(ratio);
-            },
-            onPanelRatioConfirm: (): void => {
-              this.onPanelRatioConfirm();
-            },
-            onSensitivityChange: (sensitivity: number): void => {
-              this.onSensitivityChange(sensitivity);
-            },
-            onSensitivityConfirm: (): void => {
-              this.onSensitivityConfirm();
-            },
             onClose: (): void => {
               this.showMoreMenu = false;
               // 关闭菜单时刷新一次当前生效称呼(可能在其他地方被修改)
@@ -594,8 +510,6 @@ struct ChatPage {
       .onClick(() => {
         // 打开菜单前刷新一次当前生效称呼(可能角色或全局设置已变化)
         this.refreshUserNameDisplay();
-        // T-3D.5A: 加载当前 3D 模型信息(scale + hasExternalModel)
-        this.loadChat3DModelInfo();
         this.showMoreMenu = true;
       })
     }
@@ -1333,147 +1247,6 @@ struct ChatPage {
   }
 
   /**
-   * T-3D.5: 是否为单人角色聊天(有当前角色,非普通助手聊天,非群聊)。
-   * ChatPage 本身是单人聊天页,只需判断 character 不为 null。
-   * 群聊在 WorldChatPage,不会进入 ChatPage。
-   * 普通助手聊天时 character 为 null,不显示 3D。
-   */
-  private isSingleCharacterChat(): boolean {
-    return this.character !== null;
-  }
-
-  /**
-   * T-3D.5: 关闭 3D 显示开关(由 Character3DPanel 的"隐藏 3D 区域"按钮调用)。
-   * 写入 Chat3DDisplaySettings 并通过 AppStorage 通知。
-   */
-  private async disableChat3D(): Promise<void> {
-    try {
-      await AppServices.getChat3DDisplaySettings().setEnabled(false);
-      this.chat3DEnabled = false;
-      Logger.info(LOG_TAG, 'disableChat3D: 3D hidden by user');
-    } catch (e) {
-      Logger.warn(LOG_TAG, 'disableChat3D failed: ' + (e as Error).message);
-    }
-  }
-
-  /**
-   * T-3D.5D: 加载当前 3D 模型信息(zoomFactor + hasExternalModel)。
-   * 在打开 ChatMoreMenuSheet 时调用,用于 Slider 初始值。
-   * zoomFactor = scale / baseFitScale,相对自动适配尺寸,跨模型体验一致。
-   */
-  private async loadChat3DModelInfo(): Promise<void> {
-    try {
-      const service = AppServices.getCharacter3DService();
-      if (service === null) {
-        this.chat3DHasExternalModel = false;
-        this.chat3DModelZoomFactor = 1.0;
-        return;
-      }
-      const config = await service.getConfig();
-      if (config.modelUri.length === 0 || !config.fileExists) {
-        this.chat3DHasExternalModel = false;
-        this.chat3DModelZoomFactor = 1.0;
-        return;
-      }
-      this.chat3DHasExternalModel = true;
-      const displayConfig = await service.getDisplayConfig(config.displayName);
-      this.chat3DModelZoomFactor = getZoomFactor(displayConfig);
-    } catch (e) {
-      Logger.warn(LOG_TAG, 'loadChat3DModelInfo failed: ' + (e as Error).message);
-      this.chat3DHasExternalModel = false;
-      this.chat3DModelZoomFactor = 1.0;
-    }
-  }
-
-  /**
-   * T-3D.5A: 切换 3D 显示开关(由 ChatMoreMenuSheet 调用)。
-   * 读写同一 Chat3DDisplaySettings,与全局设置页同步。
-   */
-  private async toggleChat3D(enabled: boolean): Promise<void> {
-    try {
-      await AppServices.getChat3DDisplaySettings().setEnabled(enabled);
-      this.chat3DEnabled = enabled;
-      Logger.info(LOG_TAG, 'toggleChat3D: ' + (enabled ? 'on' : 'off'));
-    } catch (e) {
-      Logger.warn(LOG_TAG, 'toggleChat3D failed: ' + (e as Error).message);
-    }
-  }
-
-  /**
-   * T-3D.5D: zoomFactor 变化(实时预览,不落盘)。
-   * 通过 AppStorage 通知 Character3DPanel 更新 Scene。
-   * AppStorage key 保留 'chat3dScaleRequest' 以兼容,值语义为 zoomFactor。
-   */
-  private onZoomFactorChange(zoomFactor: number): void {
-    this.chat3DModelZoomFactor = zoomFactor;
-    this.chat3DScaleRequest = zoomFactor;
-  }
-
-  /**
-   * T-3D.5D: zoomFactor 确认(落盘)。
-   * 通过 AppStorage 通知 Character3DPanel 保存配置。
-   */
-  private onZoomFactorConfirm(): void {
-    this.chat3DSaveRequest = this.chat3DSaveRequest + 1;
-  }
-
-  /**
-   * T-3D.5A: 自动适配(恢复当前模型 autoFit)。
-   * 通过 AppStorage 通知 Character3DPanel 重置配置。
-   */
-  private onAutoFit(): void {
-    this.chat3DAutoFitRequest = this.chat3DAutoFitRequest + 1;
-    // 自动适配后刷新本地 scale 显示(延迟读取,等 Character3DPanel 处理完)
-    if (this.autoFitTimerId !== -1) {
-      clearTimeout(this.autoFitTimerId);
-    }
-    this.autoFitTimerId = setTimeout((): void => {
-      this.autoFitTimerId = -1;
-      this.loadChat3DModelInfo();
-    }, 500);
-  }
-
-  /**
-   * T-3D.5B: 3D 画面占比变化(实时预览,只改内存)。
-   */
-  private onPanelRatioChange(ratio: number): void {
-    this.chat3DPanelRatio = ratio;
-  }
-
-  /**
-   * T-3D.5B: 3D 画面占比确认(落盘)。
-   */
-  private onPanelRatioConfirm(): void {
-    try {
-      AppServices.getChat3DDisplaySettings().setPanelRatio(this.chat3DPanelRatio).catch((e: Error): void => {
-        Logger.warn(LOG_TAG, 'setPanelRatio failed: ' + e.message);
-      });
-    } catch (e) {
-      Logger.warn(LOG_TAG, 'onPanelRatioConfirm failed: ' + (e as Error).message);
-    }
-  }
-
-  /**
-   * T-3D.5B: 旋转灵敏度变化(实时预览,只改内存)。
-   */
-  private onSensitivityChange(sensitivity: number): void {
-    this.chat3DRotationSensitivity = sensitivity;
-  }
-
-  /**
-   * T-3D.5B: 旋转灵敏度确认(落盘)。
-   */
-  private onSensitivityConfirm(): void {
-    try {
-      AppServices.getChat3DDisplaySettings().setRotationSensitivity(this.chat3DRotationSensitivity).catch((e: Error): void => {
-        Logger.warn(LOG_TAG, 'setRotationSensitivity failed: ' + e.message);
-      });
-    } catch (e) {
-      Logger.warn(LOG_TAG, 'onSensitivityConfirm failed: ' + (e as Error).message);
-    }
-  }
-
-  /**
    * 是否显示"再试一次"悬浮按钮:
    * - ViewModel 就绪
    * - 可重新生成(canRegenerate)
@@ -1532,10 +1305,7 @@ struct ChatPage {
         .then((win: window.Window): void => {
           this.mainWindow = win;
           this.keyboardHeightChangeHandler = (height: number): void => {
-            // T-3D.5: 更新键盘可见状态(用于压缩 3D 区域)
-            this.keyboardVisible = height > 0;
-            Logger.info(LOG_TAG, 'keyboardHeightChange: height=' + height
-              + ', keyboardVisible=' + this.keyboardVisible);
+            Logger.info(LOG_TAG, 'keyboardHeightChange: height=' + height);
             if (height > 0 && this.viewModel !== null && !this.viewModel!.userScrolledUp) {
               // 键盘弹起,延迟一帧确保布局已更新,再滚动到底部
               setTimeout((): void => {
@@ -2011,26 +1781,6 @@ struct ChatPage {
    */
   onChatBgConfigVersionChanged(): void {
     this.loadChatBackground();
-  }
-
-  /**
-   * T-3D.5: 3D 显示开关变更回调。
-   * AppSettingsPage 保存开关后通过 AppStorage.setOrCreate 触发。
-   * 重新读取开关状态,ChatPage 根据新状态决定是否渲染 Character3DPanel。
-   */
-  onChat3DConfigVersionChanged(): void {
-    try {
-      const settings3D = AppServices.getChat3DDisplaySettings();
-      this.chat3DEnabled = settings3D.isEnabled();
-      // T-3D.5B: 同步 3D 区域占比和旋转灵敏度
-      this.chat3DPanelRatio = settings3D.getPanelRatio();
-      this.chat3DRotationSensitivity = settings3D.getRotationSensitivity();
-      Logger.info(LOG_TAG, 'onChat3DConfigVersionChanged: chat3DEnabled=' + this.chat3DEnabled
-        + ', panelRatio=' + this.chat3DPanelRatio
-        + ', rotSens=' + this.chat3DRotationSensitivity);
-    } catch (e) {
-      Logger.warn(LOG_TAG, 'onChat3DConfigVersionChanged failed: ' + (e as Error).message);
-    }
   }
 
   private copyMessage(msg: ChatMessage): void {

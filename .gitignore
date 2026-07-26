@@ -90,3 +90,24 @@ docs/*
 /test_screen18.png
 /test_models/
 /automation/
+
+# Phase 1 cleanup: 根目录诊断日志 / 脚本 / 临时产物(不使用 *.txt 全局忽略)
+/*hilog*.txt
+/live_*.txt
+/diag_*.txt
+/diagnostic_*.txt
+/captures/
+/ui_dumps/
+*.trace
+
+# 根目录一次性分析脚本(parse-*.js / parse_layout.* / gen_glb / loop_5times)
+/parse_layout.ps1
+/parse_layout.py
+/gen_glb.ps1
+/loop_5times.ps1
+/parse-*.js
+
+# 根目录散落截图(与 /screenshots/ 互补)
+/screen.png
+/screen-current.png
+/cur_screen.jpeg

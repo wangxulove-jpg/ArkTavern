@@ -22,10 +22,6 @@
     "pages/WorldCreatePage",
     "pages/WorldChatPage",
     "pages/WorldMembersPage",
-    "pages/WorldCharacterMemoryPage",
-    "pages/Character3DPocPage",
-    "pages/Character3DActionManagerPage",
-    "pages/HumanoidMappingPage",
-    "pages/AvatarLibraryPage"
+    "pages/WorldCharacterMemoryPage"
   ]
 }

@@ -1,1 +1,0 @@
-hilog: option requires an argument: t

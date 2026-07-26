@@ -1,1 +1,0 @@
-07-26 09:39:39.965 28927 28927 I C03933/com.example.arktavern/AceKeyboard: [(100000:100000:scope)] FrameNode(Stack/164) notNeedSoftKeyboard.

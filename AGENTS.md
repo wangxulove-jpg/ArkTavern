@@ -696,11 +696,9 @@ AGENTS.md 前文 "Project Structure" 中的 `Reference/` 段落仅作概念性�
 
 ### 动态列表
 
-- 模型库卡片(AvatarLibraryPage)和动作卡片(Character3DActionManagerPage)位置会随数据数量变化。
+- 角色卡列表等动态列表位置会随数据数量变化。
 - 不要保存每张卡片的固定坐标。
-- 动态列表通过 item id 前缀定位:
-  - 模型库卡片:`avatarLibrary.card.<avatarId>`
-  - 动作卡片:`actionManager.card.<actionId>`
+- 动态列表通过 item id 前缀定位。
 - 卡片内操作按钮通过 id 后缀定位:
   - 设为当前:`.setActive`
   - 更多菜单:`.more`
