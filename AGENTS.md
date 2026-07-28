@@ -671,20 +671,9 @@ AGENTS.md 前文 "Project Structure" 中的 `Reference/` 段落仅作概念性�
 8. 普通任务仅验证受影响链路。
    页面功能的实机验证控制在 3–6 个关键操作，不做全应用巡检。
 
-## UI Automation Map
+## UI 自动化与布局解析规则
 
-本节为 T-4.2 新增,约束所有 Agent 的 UI 自动化行为。
-
-### UI 定位文件
-
-- UI 自动化定位文件:`automation/ui/ark_tavern_ui_map.json`
-- 这是整个项目唯一正式 UI 自动化定位文件。
-
-### 自动化前必须先读取
-
-- 在任何 UI 自动化操作应用前,必须先读取 `automation/ui/ark_tavern_ui_map.json`。
-- 不得仅凭对话记忆、旧截图或临时日志猜测控件位置。
-- 优先使用 `componentId` / `accessibilityText` 定位;坐标只能作为 `referenceDevice` 分辨率下的 fallback。
+本节约束所有 Agent 的 UI 自动化行为。原 T-4.2 的 `automation/ui/ark_tavern_ui_map.json` 固定坐标方案已废弃并删除,改用 `uitest dumpLayout` + `jq` 实时解析方案。
 
 ### 定位优先级
 
@@ -692,7 +681,7 @@ AGENTS.md 前文 "Project Structure" 中的 `Reference/` 段落仅作概念性�
 2. accessibility id / accessibility text
 3. 按钮文字
 4. 页面标题 + 相对区域
-5. fallback bounds/center(仅限 referenceDevice 分辨率)
+5. fallback:实时 `dumpLayout` 后用 `jq` 查询 bounds 中心点
 
 ### 动态列表
 
@@ -703,20 +692,38 @@ AGENTS.md 前文 "Project Structure" 中的 `Reference/` 段落仅作概念性�
   - 设为当前:`.setActive`
   - 更多菜单:`.more`
 
-### 页面改动后必须同步更新
+### 页面改动后的同步要求
 
-- 页面布局或按钮改动时,必须在同一个提交中更新 `automation/ui/ark_tavern_ui_map.json`。
+- 新增固定按钮时,必须在页面代码中添加 `.key('<scope>.<name>')`,便于 `jq` 按 id 查询。
 - 禁止把新的固定坐标只写在临时日志、TODO.md、对话记录或测试脚本常量中。
-- 新增固定按钮时,必须同时:
-  1. 在页面代码中添加 `.key('<scope>.<name>')`
-  2. 在 UI map 文件中登记该 componentId
-
-### 一致性要求
-
-- 如果 UI map 与当前页面不一致:先更新 UI map,再继续自动化。
-- 不得在不更新 UI map 的情况下继续使用失效坐标。
+- 不再维护独立的 UI map JSON 文件;UI 定位一律以设备实时 dump 为准。
 
 ### 清理规则
 
 - UI 自动化完成后必须删除临时 dump 和截图,只保留正式验收截图。
 - 不得在仓库中残留 `layout_*.json`、`snapshot_*.png` 等临时文件(位于 `automation/` 目录外的临时产物)。
+
+### 单行 JSON Dump 解析规则(本节 T-VRM-1 新增)
+
+UI 布局 dump(`hidumper`/`uitest dumpLayout` 等产物)通常是**单行 JSON**,直接 `Read` 会一次性塞满上下文。
+
+强制规则:
+
+1. **禁止**用 `Read` 工具直接打开 `layout_*.json` / `snapshot_*.json` / `*.layout.json` 等布局 dump 文件。
+2. **必须**用 `jq` 解析提取所需字段后再查看输出。可用命令模板:
+   - 按文字查找控件:
+     ```bash
+     jq -r '[.. | objects | select((.text//"") | test("关键字";"i")) | {text,id,bounds}]' layout.json
+     ```
+   - 按 id 查找控件:
+     ```bash
+     jq -r '[.. | objects | select((.id//"") | test("componentId";"i")) | {text,id,bounds}]' layout.json
+     ```
+   - 只看顶层结构:
+     ```bash
+     jq -r 'keys' layout.json
+     ```
+3. **复杂过滤器**应写入 `*.jq` 文件(放在 `screenshots_*/` 或 `automation/tmp/` 下),用 `jq -r -f filter.jq layout.json` 调用,避免命令行转义和中文编码问题。
+4. PowerShell 命令行中**不要**内联中文字面量进 `jq` 表达式,会被 CLIXML 编码破坏;中文关键字一律放 `.jq` 文件。
+5. 解析完成后,临时 `.jq` 文件随 `layout_*.json` 一起清理,不残留。
+6. 若需查看完整结构,先用 `jq -r 'paths(scalars)' layout.json` 列出所有叶子路径,再有针对性提取,而不是全文打印。

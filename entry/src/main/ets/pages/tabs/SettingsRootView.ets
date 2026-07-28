@@ -98,6 +98,17 @@ export struct SettingsRootView {
                 router.pushUrl({ url: 'pages/AppSettingsPage' });
               }
             )
+
+            // ===== VRM 工具 =====
+            this.sectionHeader('VRM 工具')
+
+            this.entryCard(
+              '打开 VRM 查看器',
+              'VRM 模型查看界面(当前为 UI 外壳,3D 功能将在后续阶段启用)',
+              () => {
+                router.pushUrl({ url: 'pages/VrmViewerPage' });
+              }
+            )
           }
           .width('100%')
           .padding({

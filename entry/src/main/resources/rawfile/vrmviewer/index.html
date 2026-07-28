@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>ArkTavern VRM Viewer</title>
+  <link rel="stylesheet" href="styles/viewer.css" />
+
+  <!--
+    MARK: Import Map — Three.js + three-vrm 本地依赖解析
+    Figure 原版使用 CDN (cdn.jsdelivr.net/npm/three@0.176.0 与 @pixiv/three-vrm@3),
+    ArkWeb 环境禁止 CDN,因此将所有运行时依赖本地化:
+
+    - three@0.176.0 → vendor/three/three.module.js (+ three.core.js + controls/ + loaders/ + utils/)
+    - @pixiv/three-vrm@3.5.5 → vendor/pixiv/three-vrm.module.js (esbuild bundle,three 已 external)
+
+    通过 import map 将 bare specifier 映射到本地路径。
+    three-vrm bundle 内部 48 处 `import ... from "three"` 由本 import map 解析到同一份
+    three.module.js,避免出现第二份 Three.js 实例(否则 instanceof / Object3D 类型不一致)。
+
+    three.module.js 内部 import './three.core.js' (相对路径,同目录,无需 import map)。
+    OrbitControls.js / GLTFLoader.js / BufferGeometryUtils.js 内部 import 'three' (bare specifier,由 import map 解析)。
+    three-vrm.module.js 内部 import 'three' (bare specifier,由 import map 解析)。
+
+    本阶段不引入 @pixiv/three-vrm-animation(动画阶段再添加)。
+  -->
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "./vendor/three/three.module.js",
+        "three/addons/": "./vendor/three/",
+        "@pixiv/three-vrm": "./vendor/pixiv/three-vrm.module.js"
+      }
+    }
+  </script>
+</head>
+
+<body>
+  <!--
+    MARK: Viewer Root
+    本文件是 ArkWeb 加载的 VRM Viewer 入口。
+
+    Phase 1A:
+    - 仅显示 Viewer 状态文本,作为 ArkWeb 加载 + 双向 Bridge 通信的最小验证。
+    - 不加载 Three.js / three-vrm / 任何 3D 资源。
+
+    Phase 1B(当前):
+    - 通过 import map 加载本地 three@0.176.0
+    - 在 ViewerStage 容器中挂载 WebGLRenderer / Scene / Camera / Light
+    - 显示测试物体(BoxGeometry)验证渲染管线
+    - 不加载 VRM(Phase 1C)
+
+    后续阶段(规划):
+    - Phase 1C:加载默认 VRM 模型。
+    - Phase 1D:ArkTS 文件导入 → JavaScript loadModel。
+  -->
+
+  <div id="ViewerStage" class="viewer-stage">
+    <!--
+      初始占位:Phase 1A 显示状态文本。
+      Phase 1B 之后 Three.js 的 canvas 会动态挂载到 ViewerStage,
+      此占位在 ViewerCore.initialize 成功后由 app.js 隐藏。
+    -->
+    <div id="ViewerPlaceholder" class="viewer-placeholder">
+      <div class="viewer-placeholder-title">ArkTavern VRM Viewer</div>
+      <div id="ViewerStatusText" class="viewer-placeholder-status">UNINITIALIZED</div>
+      <div id="ViewerDetailText" class="viewer-placeholder-detail">等待初始化...</div>
+    </div>
+
+    <!--
+      错误覆盖层:WebGL 初始化失败等场景显示。
+      由 app.js 在收到 onViewerError 时显示。
+    -->
+    <div id="ViewerErrorOverlay" class="viewer-error-overlay" style="display: none;">
+      <div class="viewer-error-title">3D 场景初始化失败</div>
+      <div id="ViewerErrorSummary" class="viewer-error-summary"></div>
+    </div>
+  </div>
+
+  <!-- Viewer Bridge:负责 ArkTS ↔ JavaScript 双向通信(普通脚本,设置 window 全局对象) -->
+  <script src="scripts/viewer/ViewerBridge.js"></script>
+  <!-- App 入口:ES Module,负责 ViewerCore 生命周期与 Three.js 渲染循环 -->
+  <script type="module" src="scripts/app.js"></script>
+</body>
+
+</html>
