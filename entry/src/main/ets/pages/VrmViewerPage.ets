@@ -64,7 +64,9 @@ import {
   createIdleScreenshotResult,
   ArkWebEnvironmentState,
   ARKWEB_ENVIRONMENT_POLL_INTERVAL_MS,
-  ARKWEB_ENVIRONMENT_POLL_TIMEOUT_MS
+  ARKWEB_ENVIRONMENT_POLL_TIMEOUT_MS,
+  PresentationMode,
+  ArkWebPresentationErrorCode
 } from '../vrmviewer/ArkWebVrmViewerTypes';
 import {
   ArkWebViewerEventListener,
@@ -99,12 +101,6 @@ import {
 import {
   ArkWebScreenshotController
 } from '../vrmviewer/ArkWebScreenshotController';
-
-/** 查看器模式 */
-enum ViewerMode {
-  Normal = 'normal',
-  Presentation = 'presentation'
-}
 
 /** 抽屉状态 */
 enum DrawerState {
@@ -156,7 +152,9 @@ struct VrmViewerPage {
   @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
 
   // ===== UI 状态 =====
-  @State viewerMode: ViewerMode = ViewerMode.Normal;
+  // Phase 2H: 演示模式状态
+  @State presentationMode: PresentationMode = PresentationMode.NORMAL;
+  @State presentationTransitioning: boolean = false;
   @State activeTab: ViewerTab = ViewerTab.Model;
   @State drawerState: DrawerState = DrawerState.Half;
   @State backgroundOption: string = '#1A1A1A';
@@ -347,6 +345,18 @@ struct VrmViewerPage {
   @State cameraControlsSuppressed: boolean = false;
   /** Camera Control 恢复代次(防止页面销毁后异步恢复) */
   private cameraControlGeneration: number = 0;
+
+  // ===== Phase 2H: 演示模式状态保存 =====
+  /** 演示模式切换代次(防止过期异步回调) */
+  private presentationGeneration: number = 0;
+  /** 进入 DEMO 前保存的抽屉状态(-1 表示未保存) */
+  private panelStateBeforeDemo: number = -1;
+  /** 进入 DEMO 前保存的 Tab 索引 */
+  private selectedTabBeforeDemo: number = 0;
+  /** 进入 DEMO 前面板是否可见 */
+  private panelVisibleBeforeDemo: boolean = true;
+  /** 演示模式 warning 信息(如 Camera Controls 恢复失败) */
+  @State presentationWarning: string = '';
 
   // ===== Phase 2A-1: 灯光强度节流 =====
   /** 待提交的灯光强度(0.0-4.0,Slider 拖动期间暂存) */
@@ -589,6 +599,8 @@ struct VrmViewerPage {
     this.panelInteractionDepth = 0;
     this.cameraControlGeneration++; // 使所有待恢复的异步回调过期
     this.cameraControlsSuppressed = false;
+    // Phase 2H: 重置演示模式状态(禁止页面销毁后异步回调修改状态)
+    this.resetPresentationState();
     // Phase 2A-1: 清理灯光节流定时器
     if (this.lightUpdateTimerId !== -1) {
       clearTimeout(this.lightUpdateTimerId);
@@ -762,6 +774,241 @@ struct VrmViewerPage {
     }).catch((e: Object) => {
       console.warn('[VrmViewerPage] restoreCameraControls exception: ' + (e instanceof Error ? e.message : String(e)));
     });
+  }
+
+  // ===== Phase 2H: 演示模式 =====
+
+  /**
+   * Phase 2H: 将 ViewerTab 转换为数字索引(用于保存/恢复)。
+   */
+  private viewerTabToIndex(tab: ViewerTab): number {
+    switch (tab) {
+      case ViewerTab.Model: return 0;
+      case ViewerTab.Pose: return 1;
+      case ViewerTab.Animation: return 2;
+      case ViewerTab.Expression: return 3;
+      case ViewerTab.Physics: return 4;
+      case ViewerTab.Scene: return 5;
+      case ViewerTab.Debug: return 6;
+      default: return 0;
+    }
+  }
+
+  /**
+   * Phase 2H: 将数字索引恢复为 ViewerTab。
+   * 无效索引恢复为 Model,并记录 warning。
+   */
+  private indexToViewerTab(index: number): ViewerTab {
+    switch (index) {
+      case 0: return ViewerTab.Model;
+      case 1: return ViewerTab.Pose;
+      case 2: return ViewerTab.Animation;
+      case 3: return ViewerTab.Expression;
+      case 4: return ViewerTab.Physics;
+      case 5: return ViewerTab.Scene;
+      case 6: return ViewerTab.Debug;
+      default:
+        this.presentationWarning =
+          ArkWebPresentationErrorCode.PANEL_STATE_INVALID + ': invalid tab index ' + index;
+        return ViewerTab.Model;
+    }
+  }
+
+  /**
+   * Phase 2H: 将 DrawerState 转换为数字(用于保存/恢复)。
+   */
+  private drawerStateToIndex(state: DrawerState): number {
+    switch (state) {
+      case DrawerState.Collapsed: return 0;
+      case DrawerState.Half: return 1;
+      case DrawerState.Expanded: return 2;
+      default: return 1;
+    }
+  }
+
+  /**
+   * Phase 2H: 将数字恢复为 DrawerState。
+   * 无效索引恢复为 Half,并记录 warning。
+   */
+  private indexToDrawerState(index: number): DrawerState {
+    switch (index) {
+      case 0: return DrawerState.Collapsed;
+      case 1: return DrawerState.Half;
+      case 2: return DrawerState.Expanded;
+      default:
+        this.presentationWarning =
+          ArkWebPresentationErrorCode.PANEL_STATE_INVALID + ': invalid drawer index ' + index;
+        return DrawerState.Half;
+    }
+  }
+
+  /**
+   * Phase 2H: 进入演示模式。
+   *
+   * 隐藏快捷工具栏和控制面板,保存当前面板状态供退出时恢复。
+   * 进入 DEMO 后恢复 Camera Controls(若被面板触摸抑制)。
+   *
+   * 条件:
+   *   - 页面未销毁
+   *   - presentationMode === NORMAL
+   *   - presentationTransitioning === false
+   *   - ViewerState === READY
+   *
+   * Camera Controls 恢复失败只记录 warning,仍进入 DEMO。
+   */
+  private async enterDemoMode(): Promise<void> {
+    // 1. 条件校验
+    if (this.presentationMode === PresentationMode.DEMO) {
+      console.info('[VrmViewerPage] enterDemoMode skipped: already DEMO');
+      return;
+    }
+    if (this.presentationTransitioning) {
+      console.info('[VrmViewerPage] enterDemoMode skipped: transition in progress');
+      return;
+    }
+    if (this.viewerState !== ArkWebViewerState.READY) {
+      this.presentationWarning = ArkWebPresentationErrorCode.VIEWER_NOT_READY +
+        ': viewer state is ' + this.viewerState;
+      console.warn('[VrmViewerPage] enterDemoMode rejected: viewer not READY');
+      return;
+    }
+
+    // 2. 设置切换中标志
+    this.presentationTransitioning = true;
+    this.presentationGeneration++;
+    const gen: number = this.presentationGeneration;
+    this.presentationWarning = '';
+
+    // 3. 保存当前面板状态
+    this.panelStateBeforeDemo = this.drawerStateToIndex(this.drawerState);
+    this.selectedTabBeforeDemo = this.viewerTabToIndex(this.activeTab);
+    this.panelVisibleBeforeDemo = true; // NORMAL 模式下面板始终可见
+
+    // 4. 清空面板触摸交互状态
+    this.panelInteractionDepth = 0;
+
+    // 5. 恢复 Camera Controls(若被面板触摸抑制)
+    this.cameraControlGeneration++;
+    this.cameraControlsSuppressed = false;
+    this.arkWebController.setCameraControlsEnabled(true).then((resultJson: string) => {
+      if (gen !== this.presentationGeneration) {
+        return; // 过期回调
+      }
+      try {
+        const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
+        if (!obj['success']) {
+          this.presentationWarning =
+            ArkWebPresentationErrorCode.CAMERA_CONTROLS_WARNING +
+            ': setCameraControlsEnabled(true) failed';
+          console.warn('[VrmViewerPage] enterDemoMode camera controls warning: ' + resultJson);
+        }
+      } catch (e) {
+        this.presentationWarning =
+          ArkWebPresentationErrorCode.CAMERA_CONTROLS_WARNING +
+          ': result parse failed';
+        console.warn('[VrmViewerPage] enterDemoMode camera controls parse warning');
+      }
+    }).catch((e: Object) => {
+      if (gen !== this.presentationGeneration) {
+        return;
+      }
+      this.presentationWarning =
+        ArkWebPresentationErrorCode.CAMERA_CONTROLS_WARNING +
+        ': ' + (e instanceof Error ? e.message : String(e));
+      console.warn('[VrmViewerPage] enterDemoMode camera controls exception');
+    });
+
+    // 6. 切换到 DEMO
+    this.presentationMode = PresentationMode.DEMO;
+    this.presentationTransitioning = false;
+    console.info('[VrmViewerPage] enterDemoMode done (gen=' + gen + ')');
+  }
+
+  /**
+   * Phase 2H: 退出演示模式,恢复 NORMAL。
+   *
+   * 恢复进入前保存的面板状态、Tab 和可见性。
+   * 不恢复或覆盖相机位置、Scene 设置、环境设置、模型状态等。
+   */
+  private async exitDemoMode(): Promise<void> {
+    // 1. 条件校验
+    if (this.presentationMode === PresentationMode.NORMAL) {
+      console.info('[VrmViewerPage] exitDemoMode skipped: already NORMAL');
+      return;
+    }
+    if (this.presentationTransitioning) {
+      console.info('[VrmViewerPage] exitDemoMode skipped: transition in progress');
+      return;
+    }
+
+    // 2. 设置切换中标志
+    this.presentationTransitioning = true;
+    this.presentationGeneration++;
+    const gen: number = this.presentationGeneration;
+
+    // 3. 切换到 NORMAL
+    this.presentationMode = PresentationMode.NORMAL;
+
+    // 4. 恢复保存的面板状态
+    if (this.panelStateBeforeDemo >= 0 && this.panelStateBeforeDemo <= 2) {
+      this.drawerState = this.indexToDrawerState(this.panelStateBeforeDemo);
+    } else {
+      this.drawerState = DrawerState.Half;
+      this.presentationWarning =
+        ArkWebPresentationErrorCode.PANEL_STATE_INVALID +
+        ': panelStateBeforeDemo=' + this.panelStateBeforeDemo;
+    }
+
+    // 5. 恢复保存的 Tab
+    this.activeTab = this.indexToViewerTab(this.selectedTabBeforeDemo);
+
+    // 6. 恢复面板可见状态
+    // NORMAL 模式下面板始终可见,panelVisibleBeforeDemo 仅作记录
+
+    // 7. 清除切换中标志
+    this.presentationTransitioning = false;
+    console.info('[VrmViewerPage] exitDemoMode done (gen=' + gen + ')');
+  }
+
+  /**
+   * Phase 2H: 重置演示模式状态(页面销毁时调用)。
+   */
+  private resetPresentationState(): void {
+    this.presentationGeneration++;
+    this.presentationTransitioning = false;
+    this.presentationMode = PresentationMode.NORMAL;
+    this.panelStateBeforeDemo = -1;
+    this.selectedTabBeforeDemo = 0;
+    this.panelVisibleBeforeDemo = true;
+    this.presentationWarning = '';
+  }
+
+  /**
+   * Phase 2H: 返回键处理。
+   *
+   * DEMO 模式下返回键退出 DEMO(不离开页面)。
+   * NORMAL 模式下保持页面原有返回行为(路由返回)。
+   */
+  onBackPress(): boolean {
+    if (this.presentationMode === PresentationMode.DEMO) {
+      // 同步切换回 NORMAL(不等待异步完成,立即消费返回事件)
+      this.presentationMode = PresentationMode.NORMAL;
+      this.presentationTransitioning = false;
+      this.presentationGeneration++;
+
+      // 恢复保存的面板状态
+      if (this.panelStateBeforeDemo >= 0 && this.panelStateBeforeDemo <= 2) {
+        this.drawerState = this.indexToDrawerState(this.panelStateBeforeDemo);
+      } else {
+        this.drawerState = DrawerState.Half;
+      }
+      this.activeTab = this.indexToViewerTab(this.selectedTabBeforeDemo);
+
+      console.info('[VrmViewerPage] onBackPress: exited DEMO mode');
+      return true; // 消费返回事件,不离开页面
+    }
+    // NORMAL 模式:保持原有返回行为(路由返回)
+    return false;
   }
 
   // ===== Phase 2A-1: Scene 设置同步 =====
@@ -3476,12 +3723,12 @@ struct VrmViewerPage {
       this.TopToolbar()
 
       // ===== 3. 右侧快捷工具栏(仅普通模式) =====
-      if (this.viewerMode === ViewerMode.Normal) {
+      if (this.presentationMode === PresentationMode.NORMAL) {
         this.QuickToolbar()
       }
 
       // ===== 4. 底部控制抽屉(仅普通模式,覆盖在预览上) =====
-      if (this.viewerMode === ViewerMode.Normal) {
+      if (this.presentationMode === PresentationMode.NORMAL) {
         this.BottomDrawer()
       }
     }
@@ -3627,16 +3874,20 @@ struct VrmViewerPage {
           .padding({ left: 8, right: 8 })
 
         // 普通 / 演示模式
-        Button(this.viewerMode === ViewerMode.Presentation ? '退出演示' : '演示模式')
+        Button(this.presentationMode === PresentationMode.DEMO ? '退出演示' : '演示模式')
           .fontSize($r('app.float.app_font_caption'))
           .fontColor('#FFFFFF')
           .backgroundColor('#33FFFFFF')
           .borderRadius($r('app.float.app_radius_sm'))
           .height(32)
           .padding({ left: 12, right: 12 })
+          .enabled(!this.presentationTransitioning)
           .onClick(() => {
-            this.viewerMode = this.viewerMode === ViewerMode.Normal
-              ? ViewerMode.Presentation : ViewerMode.Normal;
+            if (this.presentationMode === PresentationMode.NORMAL) {
+              this.enterDemoMode();
+            } else {
+              this.exitDemoMode();
+            }
           })
 
         // 更多
@@ -4610,6 +4861,26 @@ struct VrmViewerPage {
       if (this.environmentErrorCode.length > 0) {
         this.DebugRow('Environment Error',
           this.environmentErrorCode + ': ' + this.environmentErrorMessage)
+      }
+
+      // Phase 2H: 演示模式 Debug 状态
+      this.DebugRow('Presentation Mode', this.presentationMode)
+      this.DebugRow('Presentation Transitioning',
+        this.presentationTransitioning ? 'YES' : 'NO')
+      this.DebugRow('Control Panel Visible',
+        this.presentationMode === PresentationMode.NORMAL ? 'YES' : 'NO')
+      this.DebugRow('Quick Toolbar Visible',
+        this.presentationMode === PresentationMode.NORMAL ? 'YES' : 'NO')
+      this.DebugRow('Saved Panel State',
+        this.panelStateBeforeDemo >= 0
+          ? this.indexToDrawerState(this.panelStateBeforeDemo)
+          : '-')
+      this.DebugRow('Saved Panel Tab',
+        this.panelStateBeforeDemo >= 0
+          ? this.indexToViewerTab(this.selectedTabBeforeDemo)
+          : '-')
+      if (this.presentationWarning.length > 0) {
+        this.DebugRow('Presentation Warning', this.presentationWarning)
       }
 
       // Phase 2A-2: Camera Debug 状态(从 getCameraState 获取,非硬编码)

@@ -1065,3 +1065,39 @@ export function isValidEnvironmentIntensity(intensity: number): boolean {
   return intensity >= ARKWEB_ENVIRONMENT_INTENSITY_MIN &&
          intensity <= ARKWEB_ENVIRONMENT_INTENSITY_MAX;
 }
+
+// ===== Phase 2H: 演示模式 (Presentation Mode) =====
+
+/**
+ * Phase 2H: 演示模式枚举。
+ *
+ * NORMAL — 正常模式,显示全部 ArkUI 覆盖层(快捷工具栏、控制面板)。
+ * DEMO   — 演示模式,隐藏会遮挡 3D 模型的 ArkUI 覆盖层,仅保留顶部导航栏。
+ */
+export enum PresentationMode {
+  NORMAL = 'NORMAL',
+  DEMO = 'DEMO'
+}
+
+/**
+ * Phase 2H: 演示模式错误码。
+ *
+ * 这些错误只影响演示模式状态,不影响 ViewerState / ModelState / CameraState /
+ * EnvironmentState / ScreenshotState。
+ */
+export class ArkWebPresentationErrorCode {
+  /** Viewer 未 READY,拒绝进入 DEMO */
+  static readonly VIEWER_NOT_READY: string = 'PRESENTATION_VIEWER_NOT_READY';
+  /** 切换正在进行,拒绝重复操作 */
+  static readonly TRANSITION_IN_PROGRESS: string = 'PRESENTATION_TRANSITION_IN_PROGRESS';
+  /** 已经处于 DEMO 模式 */
+  static readonly ALREADY_ACTIVE: string = 'PRESENTATION_ALREADY_ACTIVE';
+  /** 已经处于 NORMAL 模式 */
+  static readonly ALREADY_NORMAL: string = 'PRESENTATION_ALREADY_NORMAL';
+  /** Camera Controls 恢复失败(仅 warning,仍进入 DEMO) */
+  static readonly CAMERA_CONTROLS_WARNING: string = 'PRESENTATION_CAMERA_CONTROLS_WARNING';
+  /** 保存的面板状态无效,恢复为默认值 */
+  static readonly PANEL_STATE_INVALID: string = 'PRESENTATION_PANEL_STATE_INVALID';
+  /** 页面已销毁 */
+  static readonly PAGE_DISPOSED: string = 'PRESENTATION_PAGE_DISPOSED';
+}
