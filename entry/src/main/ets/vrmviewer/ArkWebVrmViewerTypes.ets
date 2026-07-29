@@ -280,7 +280,13 @@ export class ArkWebViewerConfig {
     'getSceneSettings',
     // Phase 2A-2: 相机重置、聚焦与状态查询
     'focusCameraOnCurrentModel',
-    'getCameraState'
+    'getCameraState',
+    // Phase 2F: 环境贴图与天空盒
+    'initializeEnvironment',
+    'setEnvironmentEnabled',
+    'setSkyboxVisible',
+    'setEnvironmentIntensity',
+    'getEnvironmentSettings'
   ];
 
   /** Bridge 方法白名单:JavaScript → ArkTS。 */
@@ -871,4 +877,191 @@ export function createIdleScreenshotResult(): ScreenshotResult {
     errorCode: '',
     errorMessage: ''
   };
+}
+
+// ===== Phase 2F: 环境贴图与天空盒类型 =====
+
+/**
+ * Phase 2F: 环境贴图状态机。
+ *
+ * 与 Web 端 ViewerScene.js 中的 EnvironmentState 字符串对齐。
+ *
+ * 状态流转:
+ *   UNINITIALIZED → INITIALIZING → READY
+ *   INITIALIZING → FAILED
+ *   任意 → DISPOSED
+ *
+ * 关键约束:
+ * - Environment 失败不影响 ViewerState(仍为 READY)
+ * - DISPOSED 为终态,重新进入页面后重新初始化
+ */
+export enum ArkWebEnvironmentState {
+  /** 初始状态,环境未初始化 */
+  UNINITIALIZED = 'UNINITIALIZED',
+  /** 正在初始化(PMREM 生成中) */
+  INITIALIZING = 'INITIALIZING',
+  /** 环境就绪,可启用 environment / skybox */
+  READY = 'READY',
+  /** 初始化失败 */
+  FAILED = 'FAILED',
+  /** 已销毁,资源已释放 */
+  DISPOSED = 'DISPOSED'
+}
+
+/**
+ * Phase 2F: 环境来源常量。
+ */
+export class ArkWebEnvironmentSource {
+  /** 本地 HDR 文件(本阶段未使用) */
+  static readonly LOCAL_HDR: string = 'LOCAL_HDR';
+  /** 本地 Cube Map(本阶段未使用) */
+  static readonly LOCAL_CUBE: string = 'LOCAL_CUBE';
+  /** 程序化 RoomEnvironment(本阶段使用) */
+  static readonly ROOM_ENVIRONMENT: string = 'ROOM_ENVIRONMENT';
+  /** 无环境来源 */
+  static readonly NONE: string = 'NONE';
+}
+
+/**
+ * Phase 2F: 环境设置快照(由 getEnvironmentSettings 返回)。
+ *
+ * 用于场景 Tab 控制、Debug 状态显示、轮询同步。
+ *
+ * 安全约束:
+ * - 不含纹理对象、WebGLRenderTarget、Renderer、绝对资源路径
+ * - backgroundColor 为 #RRGGBB 格式
+ * - environmentIntensity 范围 0.0 ~ 2.0
+ */
+export interface ArkWebEnvironmentSettings {
+  /** 环境状态 (EnvironmentState 枚举字符串) */
+  state: string;
+  /** 环境来源 (ROOM_ENVIRONMENT / NONE) */
+  source: string;
+  /** 环境光照是否启用(scene.environment 已设置) */
+  environmentEnabled: boolean;
+  /** 天空盒是否可见(scene.background 指向环境纹理) */
+  skyboxVisible: boolean;
+  /** 环境强度 (0.0 ~ 2.0) */
+  environmentIntensity: number;
+  /** 当前保存的纯色背景 (#RRGGBB) */
+  backgroundColor: string;
+  /** 环境最近错误码(成功时为空字符串) */
+  errorCode: string;
+  /** 环境最近错误信息(成功时为空字符串) */
+  errorMessage: string;
+}
+
+/**
+ * Phase 2F: 环境强度合法范围。
+ */
+export const ARKWEB_ENVIRONMENT_INTENSITY_MIN: number = 0.0;
+export const ARKWEB_ENVIRONMENT_INTENSITY_MAX: number = 2.0;
+/** Phase 2F: 环境强度默认值 */
+export const ARKWEB_ENVIRONMENT_INTENSITY_DEFAULT: number = 1.0;
+
+/**
+ * Phase 2F: 环境状态轮询间隔(ms)。
+ *
+ * Viewer READY 后调用 initializeEnvironment,然后按本间隔轮询
+ * getEnvironmentSettings 直到状态变为 READY 或 FAILED。
+ */
+export const ARKWEB_ENVIRONMENT_POLL_INTERVAL_MS: number = 100;
+
+/**
+ * Phase 2F: 环境状态轮询超时(ms)。
+ *
+ * 超时后停止轮询,EnvironmentState 保持 INITIALIZING(不再推进)。
+ */
+export const ARKWEB_ENVIRONMENT_POLL_TIMEOUT_MS: number = 5000;
+
+/**
+ * Phase 2F: 创建默认的环境设置(UNINITIALIZED 状态)。
+ *
+ * 用于 Controller 在 Viewer 未 READY 时返回受控默认值。
+ */
+export function createDefaultEnvironmentSettings(): ArkWebEnvironmentSettings {
+  return {
+    state: ArkWebEnvironmentState.UNINITIALIZED,
+    source: ArkWebEnvironmentSource.NONE,
+    environmentEnabled: false,
+    skyboxVisible: false,
+    environmentIntensity: ARKWEB_ENVIRONMENT_INTENSITY_DEFAULT,
+    backgroundColor: '#222222',
+    errorCode: '',
+    errorMessage: ''
+  };
+}
+
+/**
+ * Phase 2F: 解析 getEnvironmentSettings 返回的 JSON 字符串。
+ *
+ * @param jsonStr Bridge 返回的 JSON 字符串
+ * @returns 解析成功返回 ArkWebEnvironmentSettings,失败返回 null
+ */
+export function parseEnvironmentSettings(jsonStr: string): ArkWebEnvironmentSettings | null {
+  try {
+    const obj: Record<string, Object> = JSON.parse(jsonStr) as Record<string, Object>;
+    if (!obj['success']) {
+      return null;
+    }
+    const settingsObj = obj['settings'] as Record<string, Object>;
+    if (!settingsObj) {
+      return null;
+    }
+    return {
+      state: (settingsObj['state'] as string) || ArkWebEnvironmentState.UNINITIALIZED,
+      source: (settingsObj['source'] as string) || ArkWebEnvironmentSource.NONE,
+      environmentEnabled: settingsObj['environmentEnabled'] === true,
+      skyboxVisible: settingsObj['skyboxVisible'] === true,
+      environmentIntensity: (settingsObj['environmentIntensity'] as number) ?? ARKWEB_ENVIRONMENT_INTENSITY_DEFAULT,
+      backgroundColor: (settingsObj['backgroundColor'] as string) || '#222222',
+      errorCode: (settingsObj['errorCode'] as string) || '',
+      errorMessage: (settingsObj['errorMessage'] as string) || ''
+    };
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * Phase 2F: 将环境强度百分比(0-200)映射为强度(0.0-2.0)。
+ *
+ * 映射规则:
+ *   0%   → 0.0
+ *   50%  → 0.5
+ *   100% → 1.0
+ *   200% → 2.0
+ *
+ * @param percentage 0-200
+ * @returns 强度值 0.0-2.0
+ */
+export function environmentPercentageToIntensity(percentage: number): number {
+  return percentage / 100.0;
+}
+
+/**
+ * Phase 2F: 将环境强度(0.0-2.0)映射回百分比(0-200)。
+ *
+ * @param intensity 0.0-2.0
+ * @returns 百分比 0-200
+ */
+export function environmentIntensityToPercentage(intensity: number): number {
+  return intensity * 100.0;
+}
+
+/**
+ * Phase 2F: 校验环境强度是否合法。
+ *
+ * @param intensity 强度值
+ * @returns true=合法;false=非法
+ */
+export function isValidEnvironmentIntensity(intensity: number): boolean {
+  if (typeof intensity !== 'number') {
+    return false;
+  }
+  if (!isFinite(intensity)) {
+    return false;
+  }
+  return intensity >= ARKWEB_ENVIRONMENT_INTENSITY_MIN &&
+         intensity <= ARKWEB_ENVIRONMENT_INTENSITY_MAX;
 }

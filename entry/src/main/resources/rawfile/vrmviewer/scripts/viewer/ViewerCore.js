@@ -652,6 +652,162 @@ export class ViewerCore {
     return this.scene.getSettings();
   }
 
+  // ===== Phase 2F: 环境贴图 API =====
+
+  /**
+   * Phase 2F: 初始化环境贴图。
+   *
+   * 使用程序化 RoomEnvironment 生成 PMREM 环境纹理。
+   * 同步执行,由 ViewerScene.initializeEnvironment 完成。
+   *
+   * 初始化失败:
+   *   - 保留现有纯色背景和灯光
+   *   - 不影响 ViewerState(仍为 READY)
+   *
+   * @returns {{success: boolean, state?: string, settings?: object, error?: object}}
+   */
+  initializeEnvironment() {
+    if (this._state !== STATE_READY) {
+      return {
+        success: false,
+        error: makeError(ERR_VIEWER_NOT_READY, 'Viewer state is ' + this._state + ', expected READY', this._state, true)
+      };
+    }
+    if (!this.scene) {
+      return {
+        success: false,
+        error: makeError(ERR_SCENE_INITIALIZATION_FAILED, 'Scene not initialized', this._state, false)
+      };
+    }
+    var result = this.scene.initializeEnvironment();
+    if (result && result.success) {
+      var settingsResult = this.scene.getEnvironmentSettings();
+      return {
+        success: true,
+        state: result.state,
+        settings: settingsResult.settings
+      };
+    }
+    return result;
+  }
+
+  /**
+   * Phase 2F: 启用/禁用环境光照。
+   *
+   * @param {boolean} enabled
+   * @returns {{success: boolean, enabled?: boolean, settings?: object, error?: object}}
+   */
+  setEnvironmentEnabled(enabled) {
+    if (this._state !== STATE_READY) {
+      return {
+        success: false,
+        error: makeError(ERR_VIEWER_NOT_READY, 'Viewer state is ' + this._state + ', expected READY', this._state, true)
+      };
+    }
+    if (!this.scene) {
+      return {
+        success: false,
+        error: makeError(ERR_SCENE_INITIALIZATION_FAILED, 'Scene not initialized', this._state, false)
+      };
+    }
+    var result = this.scene.setEnvironmentEnabled(enabled);
+    if (result && result.success) {
+      var settingsResult = this.scene.getEnvironmentSettings();
+      return {
+        success: true,
+        enabled: result.enabled,
+        settings: settingsResult.settings
+      };
+    }
+    return result;
+  }
+
+  /**
+   * Phase 2F: 显示/隐藏天空盒。
+   *
+   * @param {boolean} visible
+   * @returns {{success: boolean, visible?: boolean, settings?: object, error?: object}}
+   */
+  setSkyboxVisible(visible) {
+    if (this._state !== STATE_READY) {
+      return {
+        success: false,
+        error: makeError(ERR_VIEWER_NOT_READY, 'Viewer state is ' + this._state + ', expected READY', this._state, true)
+      };
+    }
+    if (!this.scene) {
+      return {
+        success: false,
+        error: makeError(ERR_SCENE_INITIALIZATION_FAILED, 'Scene not initialized', this._state, false)
+      };
+    }
+    var result = this.scene.setSkyboxVisible(visible);
+    if (result && result.success) {
+      var settingsResult = this.scene.getEnvironmentSettings();
+      return {
+        success: true,
+        visible: result.visible,
+        settings: settingsResult.settings
+      };
+    }
+    return result;
+  }
+
+  /**
+   * Phase 2F: 设置环境强度。
+   *
+   * @param {number} intensity 0.0 ~ 2.0
+   * @returns {{success: boolean, intensity?: number, settings?: object, error?: object}}
+   */
+  setEnvironmentIntensity(intensity) {
+    if (this._state !== STATE_READY) {
+      return {
+        success: false,
+        error: makeError(ERR_VIEWER_NOT_READY, 'Viewer state is ' + this._state + ', expected READY', this._state, true)
+      };
+    }
+    if (!this.scene) {
+      return {
+        success: false,
+        error: makeError(ERR_SCENE_INITIALIZATION_FAILED, 'Scene not initialized', this._state, false)
+      };
+    }
+    var result = this.scene.setEnvironmentIntensity(intensity);
+    if (result && result.success) {
+      var settingsResult = this.scene.getEnvironmentSettings();
+      return {
+        success: true,
+        intensity: result.intensity,
+        settings: settingsResult.settings
+      };
+    }
+    return result;
+  }
+
+  /**
+   * Phase 2F: 获取环境设置快照。
+   *
+   * @returns {{success: boolean, settings?: object, error?: object}}
+   */
+  getEnvironmentSettings() {
+    if (!this.scene) {
+      return {
+        success: false,
+        settings: {
+          state: 'UNINITIALIZED',
+          source: 'NONE',
+          environmentEnabled: false,
+          skyboxVisible: false,
+          environmentIntensity: 1.0,
+          backgroundColor: '#222222',
+          errorCode: '',
+          errorMessage: ''
+        }
+      };
+    }
+    return this.scene.getEnvironmentSettings();
+  }
+
   /**
    * 销毁 Viewer,释放所有资源。
    *

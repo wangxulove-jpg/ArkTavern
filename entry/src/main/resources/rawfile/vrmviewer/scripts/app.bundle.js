@@ -28100,6 +28100,27 @@ void main() {
   var SCENE_INITIALIZATION_FAILED = "SCENE_INITIALIZATION_FAILED";
   var SCENE_BACKGROUND_INVALID = "SCENE_BACKGROUND_INVALID";
   var SCENE_LIGHT_INTENSITY_INVALID = "SCENE_LIGHT_INTENSITY_INVALID";
+  var ERR_ENVIRONMENT_INITIALIZATION_FAILED = "ENVIRONMENT_INITIALIZATION_FAILED";
+  var ERR_ENVIRONMENT_NOT_READY = "ENVIRONMENT_NOT_READY";
+  var ERR_ENVIRONMENT_NOT_ENABLED = "ENVIRONMENT_NOT_ENABLED";
+  var ERR_ENVIRONMENT_TEXTURE_MISSING = "ENVIRONMENT_TEXTURE_MISSING";
+  var ERR_ENVIRONMENT_ENABLED_INVALID = "ENVIRONMENT_ENABLED_INVALID";
+  var ERR_SKYBOX_VISIBLE_INVALID = "SKYBOX_VISIBLE_INVALID";
+  var ERR_ENVIRONMENT_INTENSITY_INVALID = "ENVIRONMENT_INTENSITY_INVALID";
+  var ERR_ENVIRONMENT_ALREADY_INITIALIZING = "ENVIRONMENT_ALREADY_INITIALIZING";
+  var ERR_ENVIRONMENT_DISPOSED = "ENVIRONMENT_DISPOSED";
+  var EnvironmentState = Object.freeze({
+    UNINITIALIZED: "UNINITIALIZED",
+    INITIALIZING: "INITIALIZING",
+    READY: "READY",
+    FAILED: "FAILED",
+    DISPOSED: "DISPOSED"
+  });
+  var ENVIRONMENT_SOURCE_ROOM = "ROOM_ENVIRONMENT";
+  var ENVIRONMENT_SOURCE_NONE = "NONE";
+  var ENVIRONMENT_INTENSITY_MIN = 0;
+  var ENVIRONMENT_INTENSITY_MAX = 2;
+  var ENVIRONMENT_INTENSITY_DEFAULT = 1;
   function isValidHexColor(color) {
     if (typeof color !== "string") return false;
     return /^#[0-9A-Fa-f]{6}$/.test(color);
@@ -28170,6 +28191,17 @@ void main() {
       this.lightIntensity = 3;
       this.container = null;
       this._disposed = false;
+      this.environmentState = EnvironmentState.UNINITIALIZED;
+      this.environmentSource = ENVIRONMENT_SOURCE_NONE;
+      this.environmentTexture = null;
+      this.environmentRenderTarget = null;
+      this.pmremGenerator = null;
+      this.environmentEnabled = false;
+      this.skyboxVisible = false;
+      this.environmentIntensity = ENVIRONMENT_INTENSITY_DEFAULT;
+      this.environmentErrorCode = "";
+      this.environmentErrorMessage = "";
+      this._savedBackgroundColor = null;
     }
     /**
      * 初始化 Renderer / Scene / Lights / 测试物体。
@@ -28317,7 +28349,15 @@ void main() {
       }
       var normalized = normalizeHexColor(color);
       try {
-        this.scene.background.set(normalized);
+        if (this.skyboxVisible) {
+          if (this._savedBackgroundColor) {
+            this._savedBackgroundColor.set(normalized);
+          } else {
+            this._savedBackgroundColor = new Color(normalized);
+          }
+        } else {
+          this.scene.background.set(normalized);
+        }
       } catch (e) {
         return { success: false, error: SCENE_BACKGROUND_INVALID };
       }
@@ -28451,6 +28491,446 @@ void main() {
      *   6. 移除 Canvas
      *   7. 清空 Scene / 引用
      */
+    // ===== Phase 2F: 环境贴图 API =====
+    /**
+     * Phase 2F: 构建程序化环境场景(作为 PMREMGenerator.fromScene 的输入)。
+     *
+     * 构建 6 个 PlaneGeometry 作为房间内壁,每个面赋予不同亮度的发光材质,
+     * 模拟室内间接光照:天花板最亮,地板中等,墙壁略暗。
+     * 使用 emissive 而非灯光,确保 PMREM 能烘焙亮度。
+     *
+     * 场景尺寸:10x10x10 的立方体房间,相机在中心。
+     * 注意:Plane 默认朝 +Z,需要旋转使法线朝向房间内部。
+     *
+     * @returns {THREE.Scene} 程序化环境场景
+     */
+    _buildProgrammaticEnvironmentScene() {
+      var envScene = new Scene();
+      var size = 10;
+      var ceilingColor = new Color(0.9, 0.9, 0.9);
+      var floorColor = new Color(0.4, 0.4, 0.4);
+      var wallColor = new Color(0.6, 0.6, 0.6);
+      function makePlane(color, position, rotation) {
+        var geometry = new PlaneGeometry(size, size);
+        var material = new MeshBasicMaterial({ color });
+        material.toneMapped = false;
+        var mesh = new Mesh(geometry, material);
+        mesh.position.copy(position);
+        mesh.rotation.copy(rotation);
+        return mesh;
+      }
+      envScene.add(makePlane(
+        ceilingColor,
+        new Vector3(0, size / 2, 0),
+        new Euler(Math.PI / 2, 0, 0)
+      ));
+      envScene.add(makePlane(
+        floorColor,
+        new Vector3(0, -size / 2, 0),
+        new Euler(-Math.PI / 2, 0, 0)
+      ));
+      envScene.add(makePlane(
+        wallColor,
+        new Vector3(0, 0, -size / 2),
+        new Euler(0, 0, 0)
+      ));
+      envScene.add(makePlane(
+        wallColor,
+        new Vector3(0, 0, size / 2),
+        new Euler(0, Math.PI, 0)
+      ));
+      envScene.add(makePlane(
+        wallColor,
+        new Vector3(-size / 2, 0, 0),
+        new Euler(0, Math.PI / 2, 0)
+      ));
+      envScene.add(makePlane(
+        wallColor,
+        new Vector3(size / 2, 0, 0),
+        new Euler(0, -Math.PI / 2, 0)
+      ));
+      return envScene;
+    }
+    /**
+     * Phase 2F: 释放程序化环境场景中的 geometry/material。
+     *
+     * PMREMGenerator.fromScene 烘焙完成后,源场景不再需要,
+     * 应立即释放其 geometry 和 material(不释放 texture,因为没有)。
+     *
+     * @param {THREE.Scene} envScene 程序化环境场景
+     */
+    _disposeProgrammaticEnvironmentScene(envScene) {
+      if (!envScene) return;
+      envScene.traverse(function(obj) {
+        if (obj.isMesh) {
+          if (obj.geometry && typeof obj.geometry.dispose === "function") {
+            try {
+              obj.geometry.dispose();
+            } catch (e) {
+            }
+          }
+          if (obj.material) {
+            if (Array.isArray(obj.material)) {
+              obj.material.forEach(function(m) {
+                if (m && typeof m.dispose === "function") {
+                  try {
+                    m.dispose();
+                  } catch (e) {
+                  }
+                }
+              });
+            } else if (typeof obj.material.dispose === "function") {
+              try {
+                obj.material.dispose();
+              } catch (e) {
+              }
+            }
+          }
+        }
+      });
+    }
+    /**
+     * Phase 2F: 初始化环境贴图。
+     *
+     * 使用程序化 RoomEnvironment 场景作为 PMREM 输入,生成环境纹理。
+     * 同步执行(PMREMGenerator.fromScene 是同步的),但通过状态机管理便于未来扩展。
+     *
+     * 初始化完成后:
+     *   - environmentState = READY
+     *   - environmentTexture 已生成
+     *   - environmentEnabled = false (默认不自动启用)
+     *   - skyboxVisible = false (默认不显示天空盒)
+     *   - environmentIntensity = 1.0 (默认值)
+     *
+     * 重复初始化:
+     *   - READY → 返回当前状态(不重复创建资源)
+     *   - INITIALIZING → 返回 ENVIRONMENT_ALREADY_INITIALIZING
+     *   - DISPOSED → 返回 ENVIRONMENT_DISPOSED
+     *
+     * 失败处理:
+     *   - environmentState = FAILED
+     *   - 保留现有纯色背景和灯光
+     *   - 不影响 ViewerState
+     *
+     * @returns {{success: boolean, state?: string, error?: {code: string, message: string}}}
+     */
+    initializeEnvironment() {
+      if (this._disposed) {
+        return {
+          success: false,
+          error: { code: ERR_ENVIRONMENT_DISPOSED, message: "Scene disposed" }
+        };
+      }
+      if (this.environmentState === EnvironmentState.READY) {
+        return { success: true, state: this.environmentState };
+      }
+      if (this.environmentState === EnvironmentState.INITIALIZING) {
+        return {
+          success: false,
+          error: { code: ERR_ENVIRONMENT_ALREADY_INITIALIZING, message: "Environment already initializing" }
+        };
+      }
+      if (this.environmentState === EnvironmentState.DISPOSED) {
+        return {
+          success: false,
+          error: { code: ERR_ENVIRONMENT_DISPOSED, message: "Environment disposed" }
+        };
+      }
+      if (this.environmentState === EnvironmentState.FAILED) {
+        this.environmentErrorCode = "";
+        this.environmentErrorMessage = "";
+        this._disposeEnvironmentResources();
+      }
+      if (!this.renderer) {
+        this.environmentState = EnvironmentState.FAILED;
+        this.environmentErrorCode = ERR_ENVIRONMENT_INITIALIZATION_FAILED;
+        this.environmentErrorMessage = "Renderer not available";
+        return {
+          success: false,
+          error: { code: ERR_ENVIRONMENT_INITIALIZATION_FAILED, message: "Renderer not available" }
+        };
+      }
+      this.environmentState = EnvironmentState.INITIALIZING;
+      try {
+        this.pmremGenerator = new PMREMGenerator(this.renderer);
+        var envScene = this._buildProgrammaticEnvironmentScene();
+        this.environmentRenderTarget = this.pmremGenerator.fromScene(envScene, 0, 0.1, 100);
+        this.environmentTexture = this.environmentRenderTarget.texture;
+        this._disposeProgrammaticEnvironmentScene(envScene);
+        this.environmentSource = ENVIRONMENT_SOURCE_ROOM;
+        this.environmentEnabled = false;
+        this.skyboxVisible = false;
+        this.environmentIntensity = ENVIRONMENT_INTENSITY_DEFAULT;
+        if (this.scene) {
+          this.scene.environmentIntensity = this.environmentIntensity;
+        }
+        this.environmentState = EnvironmentState.READY;
+        return { success: true, state: this.environmentState };
+      } catch (e) {
+        var msg = e && e.message ? e.message : String(e);
+        this.environmentState = EnvironmentState.FAILED;
+        this.environmentErrorCode = ERR_ENVIRONMENT_INITIALIZATION_FAILED;
+        this.environmentErrorMessage = msg;
+        this._disposeEnvironmentResources();
+        return {
+          success: false,
+          error: { code: ERR_ENVIRONMENT_INITIALIZATION_FAILED, message: msg }
+        };
+      }
+    }
+    /**
+     * Phase 2F: 启用/禁用环境光照。
+     *
+     * 启用:
+     *   - scene.environment = environmentTexture
+     *   - environmentEnabled = true
+     *
+     * 禁用:
+     *   - scene.environment = null
+     *   - environmentEnabled = false
+     *   - 如果 skyboxVisible 为 true,自动关闭天空盒(避免无效组合)
+     *   - 恢复 scene.background 为保存的纯色背景
+     *
+     * @param {boolean} enabled
+     * @returns {{success: boolean, enabled?: boolean, error?: {code: string, message: string}}}
+     */
+    setEnvironmentEnabled(enabled) {
+      if (this._disposed) {
+        return {
+          success: false,
+          error: { code: ERR_ENVIRONMENT_DISPOSED, message: "Scene disposed" }
+        };
+      }
+      if (typeof enabled !== "boolean") {
+        return {
+          success: false,
+          error: { code: ERR_ENVIRONMENT_ENABLED_INVALID, message: "enabled must be a boolean" }
+        };
+      }
+      if (this.environmentState !== EnvironmentState.READY) {
+        return {
+          success: false,
+          error: { code: ERR_ENVIRONMENT_NOT_READY, message: "Environment state is " + this.environmentState + ", expected READY" }
+        };
+      }
+      if (!this.environmentTexture) {
+        return {
+          success: false,
+          error: { code: ERR_ENVIRONMENT_TEXTURE_MISSING, message: "Environment texture not generated" }
+        };
+      }
+      if (!this.scene) {
+        return {
+          success: false,
+          error: { code: SCENE_INITIALIZATION_FAILED, message: "Scene not initialized" }
+        };
+      }
+      if (enabled) {
+        this.scene.environment = this.environmentTexture;
+        this.environmentEnabled = true;
+      } else {
+        if (this.skyboxVisible) {
+          this._restoreSavedBackground();
+          this.skyboxVisible = false;
+        }
+        this.scene.environment = null;
+        this.environmentEnabled = false;
+      }
+      return { success: true, enabled: this.environmentEnabled };
+    }
+    /**
+     * Phase 2F: 显示/隐藏天空盒。
+     *
+     * 显示天空盒的条件:
+     *   - environmentState === READY
+     *   - environmentEnabled === true
+     *   - environmentTexture != null
+     *
+     * 显示:
+     *   - 保存当前 scene.background (THREE.Color) 到 _savedBackgroundColor
+     *   - scene.background = environmentTexture
+     *   - skyboxVisible = true
+     *
+     * 隐藏:
+     *   - 恢复 scene.background 为保存的纯色背景
+     *   - skyboxVisible = false
+     *
+     * @param {boolean} visible
+     * @returns {{success: boolean, visible?: boolean, error?: {code: string, message: string}}}
+     */
+    setSkyboxVisible(visible) {
+      if (this._disposed) {
+        return {
+          success: false,
+          error: { code: ERR_ENVIRONMENT_DISPOSED, message: "Scene disposed" }
+        };
+      }
+      if (typeof visible !== "boolean") {
+        return {
+          success: false,
+          error: { code: ERR_SKYBOX_VISIBLE_INVALID, message: "visible must be a boolean" }
+        };
+      }
+      if (this.environmentState !== EnvironmentState.READY) {
+        return {
+          success: false,
+          error: { code: ERR_ENVIRONMENT_NOT_READY, message: "Environment state is " + this.environmentState + ", expected READY" }
+        };
+      }
+      if (!this.environmentEnabled) {
+        return {
+          success: false,
+          error: { code: ERR_ENVIRONMENT_NOT_ENABLED, message: "Environment not enabled" }
+        };
+      }
+      if (!this.environmentTexture) {
+        return {
+          success: false,
+          error: { code: ERR_ENVIRONMENT_TEXTURE_MISSING, message: "Environment texture not generated" }
+        };
+      }
+      if (!this.scene) {
+        return {
+          success: false,
+          error: { code: SCENE_INITIALIZATION_FAILED, message: "Scene not initialized" }
+        };
+      }
+      if (visible) {
+        if (!this._savedBackgroundColor && this.scene.background instanceof Color) {
+          this._savedBackgroundColor = this.scene.background.clone();
+        }
+        this.scene.background = this.environmentTexture;
+        this.skyboxVisible = true;
+      } else {
+        this._restoreSavedBackground();
+        this.skyboxVisible = false;
+      }
+      return { success: true, visible: this.skyboxVisible };
+    }
+    /**
+     * Phase 2F: 设置环境强度。
+     *
+     * 使用 scene.environmentIntensity (three.module.js 支持,见 line 17121)。
+     *
+     * 范围:0.0 ~ 2.0
+     * 默认:1.0
+     *
+     * @param {number} intensity 0.0 ~ 2.0
+     * @returns {{success: boolean, intensity?: number, error?: {code: string, message: string}}}
+     */
+    setEnvironmentIntensity(intensity) {
+      if (this._disposed) {
+        return {
+          success: false,
+          error: { code: ERR_ENVIRONMENT_DISPOSED, message: "Scene disposed" }
+        };
+      }
+      if (typeof intensity !== "number" || isNaN(intensity) || !isFinite(intensity)) {
+        return {
+          success: false,
+          error: { code: ERR_ENVIRONMENT_INTENSITY_INVALID, message: "intensity must be a finite number" }
+        };
+      }
+      if (intensity < ENVIRONMENT_INTENSITY_MIN || intensity > ENVIRONMENT_INTENSITY_MAX) {
+        return {
+          success: false,
+          error: {
+            code: ERR_ENVIRONMENT_INTENSITY_INVALID,
+            message: "intensity must be in range [" + ENVIRONMENT_INTENSITY_MIN + ", " + ENVIRONMENT_INTENSITY_MAX + "]"
+          }
+        };
+      }
+      if (!this.scene) {
+        return {
+          success: false,
+          error: { code: SCENE_INITIALIZATION_FAILED, message: "Scene not initialized" }
+        };
+      }
+      this.scene.environmentIntensity = intensity;
+      this.environmentIntensity = intensity;
+      return { success: true, intensity: this.environmentIntensity };
+    }
+    /**
+     * Phase 2F: 恢复保存的纯色背景。
+     *
+     * Skybox 关闭时调用,恢复 scene.background 为保存的 THREE.Color。
+     * 如果没有保存的背景,使用当前 backgroundColor 创建新的 Color。
+     */
+    _restoreSavedBackground() {
+      if (!this.scene) return;
+      if (this._savedBackgroundColor) {
+        this.scene.background = this._savedBackgroundColor.clone();
+      } else {
+        this.scene.background = new Color(this.backgroundColor);
+      }
+    }
+    /**
+     * Phase 2F: 获取环境设置快照。
+     *
+     * @returns {{success: boolean, settings?: object, error?: {code: string, message: string}}}
+     */
+    getEnvironmentSettings() {
+      if (this._disposed) {
+        return {
+          success: false,
+          error: { code: ERR_ENVIRONMENT_DISPOSED, message: "Scene disposed" }
+        };
+      }
+      return {
+        success: true,
+        settings: {
+          state: this.environmentState,
+          source: this.environmentSource,
+          environmentEnabled: this.environmentEnabled,
+          skyboxVisible: this.skyboxVisible,
+          environmentIntensity: this.environmentIntensity,
+          backgroundColor: this.backgroundColor,
+          errorCode: this.environmentErrorCode,
+          errorMessage: this.environmentErrorMessage
+        }
+      };
+    }
+    /**
+     * Phase 2F: 释放环境相关 GPU 资源。
+     *
+     * 顺序:
+     *   1. scene.environment = null
+     *   2. 如果 scene.background 指向环境纹理,恢复纯色背景
+     *   3. environmentRenderTarget.dispose()
+     *   4. pmremGenerator.dispose()
+     *   5. environmentTexture = null (不单独 dispose,由 renderTarget 拥有)
+     *
+     * 不得:
+     *   - 重复释放同一纹理
+     *   - dispose 当前纯色背景
+     */
+    _disposeEnvironmentResources() {
+      if (this.scene) {
+        this.scene.environment = null;
+        if (this.scene.background === this.environmentTexture) {
+          this._restoreSavedBackground();
+        }
+        if ("environmentIntensity" in this.scene) {
+          this.scene.environmentIntensity = 1;
+        }
+      }
+      if (this.environmentRenderTarget) {
+        try {
+          this.environmentRenderTarget.dispose();
+        } catch (e) {
+        }
+        this.environmentRenderTarget = null;
+      }
+      this.environmentTexture = null;
+      if (this.pmremGenerator) {
+        try {
+          this.pmremGenerator.dispose();
+        } catch (e) {
+        }
+        this.pmremGenerator = null;
+      }
+      this._savedBackgroundColor = null;
+    }
     dispose() {
       if (this._disposed) return;
       this._disposed = true;
@@ -28494,6 +28974,8 @@ void main() {
         this.scene.remove(this.ambientLight);
       }
       this.ambientLight = null;
+      this._disposeEnvironmentResources();
+      this.environmentState = EnvironmentState.DISPOSED;
       if (this.renderer) {
         try {
           this.renderer.renderLists.dispose();
@@ -40407,6 +40889,156 @@ void main() {
       }
       return this.scene.getSettings();
     }
+    // ===== Phase 2F: 环境贴图 API =====
+    /**
+     * Phase 2F: 初始化环境贴图。
+     *
+     * 使用程序化 RoomEnvironment 生成 PMREM 环境纹理。
+     * 同步执行,由 ViewerScene.initializeEnvironment 完成。
+     *
+     * 初始化失败:
+     *   - 保留现有纯色背景和灯光
+     *   - 不影响 ViewerState(仍为 READY)
+     *
+     * @returns {{success: boolean, state?: string, settings?: object, error?: object}}
+     */
+    initializeEnvironment() {
+      if (this._state !== STATE_READY) {
+        return {
+          success: false,
+          error: makeError2(ERR_VIEWER_NOT_READY, "Viewer state is " + this._state + ", expected READY", this._state, true)
+        };
+      }
+      if (!this.scene) {
+        return {
+          success: false,
+          error: makeError2(ERR_SCENE_INITIALIZATION_FAILED, "Scene not initialized", this._state, false)
+        };
+      }
+      var result = this.scene.initializeEnvironment();
+      if (result && result.success) {
+        var settingsResult = this.scene.getEnvironmentSettings();
+        return {
+          success: true,
+          state: result.state,
+          settings: settingsResult.settings
+        };
+      }
+      return result;
+    }
+    /**
+     * Phase 2F: 启用/禁用环境光照。
+     *
+     * @param {boolean} enabled
+     * @returns {{success: boolean, enabled?: boolean, settings?: object, error?: object}}
+     */
+    setEnvironmentEnabled(enabled) {
+      if (this._state !== STATE_READY) {
+        return {
+          success: false,
+          error: makeError2(ERR_VIEWER_NOT_READY, "Viewer state is " + this._state + ", expected READY", this._state, true)
+        };
+      }
+      if (!this.scene) {
+        return {
+          success: false,
+          error: makeError2(ERR_SCENE_INITIALIZATION_FAILED, "Scene not initialized", this._state, false)
+        };
+      }
+      var result = this.scene.setEnvironmentEnabled(enabled);
+      if (result && result.success) {
+        var settingsResult = this.scene.getEnvironmentSettings();
+        return {
+          success: true,
+          enabled: result.enabled,
+          settings: settingsResult.settings
+        };
+      }
+      return result;
+    }
+    /**
+     * Phase 2F: 显示/隐藏天空盒。
+     *
+     * @param {boolean} visible
+     * @returns {{success: boolean, visible?: boolean, settings?: object, error?: object}}
+     */
+    setSkyboxVisible(visible) {
+      if (this._state !== STATE_READY) {
+        return {
+          success: false,
+          error: makeError2(ERR_VIEWER_NOT_READY, "Viewer state is " + this._state + ", expected READY", this._state, true)
+        };
+      }
+      if (!this.scene) {
+        return {
+          success: false,
+          error: makeError2(ERR_SCENE_INITIALIZATION_FAILED, "Scene not initialized", this._state, false)
+        };
+      }
+      var result = this.scene.setSkyboxVisible(visible);
+      if (result && result.success) {
+        var settingsResult = this.scene.getEnvironmentSettings();
+        return {
+          success: true,
+          visible: result.visible,
+          settings: settingsResult.settings
+        };
+      }
+      return result;
+    }
+    /**
+     * Phase 2F: 设置环境强度。
+     *
+     * @param {number} intensity 0.0 ~ 2.0
+     * @returns {{success: boolean, intensity?: number, settings?: object, error?: object}}
+     */
+    setEnvironmentIntensity(intensity) {
+      if (this._state !== STATE_READY) {
+        return {
+          success: false,
+          error: makeError2(ERR_VIEWER_NOT_READY, "Viewer state is " + this._state + ", expected READY", this._state, true)
+        };
+      }
+      if (!this.scene) {
+        return {
+          success: false,
+          error: makeError2(ERR_SCENE_INITIALIZATION_FAILED, "Scene not initialized", this._state, false)
+        };
+      }
+      var result = this.scene.setEnvironmentIntensity(intensity);
+      if (result && result.success) {
+        var settingsResult = this.scene.getEnvironmentSettings();
+        return {
+          success: true,
+          intensity: result.intensity,
+          settings: settingsResult.settings
+        };
+      }
+      return result;
+    }
+    /**
+     * Phase 2F: 获取环境设置快照。
+     *
+     * @returns {{success: boolean, settings?: object, error?: object}}
+     */
+    getEnvironmentSettings() {
+      if (!this.scene) {
+        return {
+          success: false,
+          settings: {
+            state: "UNINITIALIZED",
+            source: "NONE",
+            environmentEnabled: false,
+            skyboxVisible: false,
+            environmentIntensity: 1,
+            backgroundColor: "#222222",
+            errorCode: "",
+            errorMessage: ""
+          }
+        };
+      }
+      return this.scene.getEnvironmentSettings();
+    }
     /**
      * 销毁 Viewer,释放所有资源。
      *
@@ -42272,6 +42904,186 @@ void main() {
               gridVisible: !!result.gridVisible,
               lightIntensity: result.lightIntensity
             }
+          };
+        });
+      },
+      // ===== Phase 2F: 环境贴图 Bridge =====
+      /**
+       * Phase 2F: 初始化环境贴图。
+       *
+       * 同步执行,使用程序化 RoomEnvironment 生成 PMREM 环境纹理。
+       * 初始化失败不影响 ViewerState(仍为 READY)。
+       *
+       * @returns {string} JSON 结果
+       *   成功:{"success": true, "state": "READY", "settings": {...}}
+       *   失败:{"success": false, "error": {...}, "settings": {...}}
+       */
+      initializeEnvironment: function() {
+        return callViewer(function(v) {
+          var result = v.initializeEnvironment();
+          if (result && result.success) {
+            return {
+              success: true,
+              state: v.getState(),
+              environmentState: result.state,
+              settings: result.settings
+            };
+          }
+          return {
+            success: false,
+            state: v.getState(),
+            error: result && result.error ? result.error : {
+              code: "ENVIRONMENT_INITIALIZATION_FAILED",
+              phase: v.getState(),
+              message: "initializeEnvironment failed",
+              recoverable: false
+            },
+            settings: result && result.settings ? result.settings : void 0
+          };
+        });
+      },
+      /**
+       * Phase 2F: 启用/禁用环境光照。
+       *
+       * @param {boolean} enabled
+       * @returns {string} JSON 结果
+       *   成功:{"success": true, "state": "READY", "settings": {...}}
+       *   失败:{"success": false, "error": {...}}
+       */
+      setEnvironmentEnabled: function(enabled) {
+        return callViewer(function(v) {
+          if (typeof enabled !== "boolean") {
+            return {
+              success: false,
+              state: v.getState(),
+              error: {
+                code: "ENVIRONMENT_ENABLED_INVALID",
+                phase: v.getState(),
+                message: "enabled must be a boolean",
+                recoverable: false
+              }
+            };
+          }
+          var result = v.setEnvironmentEnabled(enabled);
+          if (result && result.success) {
+            return {
+              success: true,
+              state: v.getState(),
+              enabled: result.enabled,
+              settings: result.settings
+            };
+          }
+          return {
+            success: false,
+            state: v.getState(),
+            error: result && result.error ? result.error : {
+              code: "ENVIRONMENT_ENABLE_FAILED",
+              phase: v.getState(),
+              message: "setEnvironmentEnabled failed",
+              recoverable: false
+            }
+          };
+        });
+      },
+      /**
+       * Phase 2F: 显示/隐藏天空盒。
+       *
+       * @param {boolean} visible
+       * @returns {string} JSON 结果
+       *   成功:{"success": true, "state": "READY", "settings": {...}}
+       *   失败:{"success": false, "error": {...}}
+       */
+      setSkyboxVisible: function(visible) {
+        return callViewer(function(v) {
+          if (typeof visible !== "boolean") {
+            return {
+              success: false,
+              state: v.getState(),
+              error: {
+                code: "SKYBOX_VISIBLE_INVALID",
+                phase: v.getState(),
+                message: "visible must be a boolean",
+                recoverable: false
+              }
+            };
+          }
+          var result = v.setSkyboxVisible(visible);
+          if (result && result.success) {
+            return {
+              success: true,
+              state: v.getState(),
+              visible: result.visible,
+              settings: result.settings
+            };
+          }
+          return {
+            success: false,
+            state: v.getState(),
+            error: result && result.error ? result.error : {
+              code: "SKYBOX_VISIBLE_FAILED",
+              phase: v.getState(),
+              message: "setSkyboxVisible failed",
+              recoverable: false
+            }
+          };
+        });
+      },
+      /**
+       * Phase 2F: 设置环境强度。
+       *
+       * @param {number} intensity 0.0 ~ 2.0
+       * @returns {string} JSON 结果
+       *   成功:{"success": true, "state": "READY", "settings": {...}}
+       *   失败:{"success": false, "error": {...}}
+       */
+      setEnvironmentIntensity: function(intensity) {
+        return callViewer(function(v) {
+          if (typeof intensity !== "number" || isNaN(intensity) || !isFinite(intensity)) {
+            return {
+              success: false,
+              state: v.getState(),
+              error: {
+                code: "ENVIRONMENT_INTENSITY_INVALID",
+                phase: v.getState(),
+                message: "intensity must be a finite number",
+                recoverable: false
+              }
+            };
+          }
+          var result = v.setEnvironmentIntensity(intensity);
+          if (result && result.success) {
+            return {
+              success: true,
+              state: v.getState(),
+              intensity: result.intensity,
+              settings: result.settings
+            };
+          }
+          return {
+            success: false,
+            state: v.getState(),
+            error: result && result.error ? result.error : {
+              code: "ENVIRONMENT_INTENSITY_FAILED",
+              phase: v.getState(),
+              message: "setEnvironmentIntensity failed",
+              recoverable: false
+            }
+          };
+        });
+      },
+      /**
+       * Phase 2F: 获取环境设置快照。
+       *
+       * @returns {string} JSON 结果
+       *   {"success": true, "state": "READY", "settings": {...}}
+       */
+      getEnvironmentSettings: function() {
+        return callViewer(function(v) {
+          var result = v.getEnvironmentSettings();
+          return {
+            success: true,
+            state: v.getState(),
+            settings: result.settings
           };
         });
       },

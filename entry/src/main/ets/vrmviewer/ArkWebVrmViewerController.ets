@@ -724,6 +724,151 @@ export class ArkWebVrmViewerController implements ArkWebViewerBridgeListener {
     }
   }
 
+  // ===== Phase 2F: 环境贴图与天空盒 =====
+
+  /**
+   * Phase 2F: 初始化环境贴图。
+   *
+   * 使用程序化 RoomEnvironment + PMREMGenerator 生成环境纹理。
+   * 同步执行,由 ViewerScene.initializeEnvironment 完成。
+   *
+   * 初始化失败:
+   *   - 保留现有纯色背景和灯光
+   *   - 不影响 ViewerState(仍为 READY)
+   *   - EnvironmentState = FAILED
+   *
+   * 初始化成功后默认值:
+   *   - environmentEnabled = false(不自动启用)
+   *   - skyboxVisible = false(不自动显示天空盒)
+   *   - environmentIntensity = 1.0
+   *
+   * @returns JSON 字符串
+   *   成功:{"success": true, "state": "READY", "environmentState": "READY", "settings": {...}}
+   *   失败:{"success": false, "error": {...}, "settings": {...}}
+   */
+  async initializeEnvironment(): Promise<string> {
+    if (this.disposed) {
+      const disposedError: ArkWebBridgeErrorPayload = { code: 'DISPOSED', message: 'controller disposed' };
+      const disposedResponse: ArkWebBridgeFailedResponse = { success: false, error: disposedError };
+      return JSON.stringify(disposedResponse);
+    }
+    try {
+      return await this.jsCaller.initializeEnvironment();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const failedError: ArkWebBridgeErrorPayload = { code: 'ENVIRONMENT_INIT_FAILED', message: msg };
+      const failedResponse: ArkWebBridgeFailedResponse = { success: false, error: failedError };
+      return JSON.stringify(failedResponse);
+    }
+  }
+
+  /**
+   * Phase 2F: 启用/禁用环境光照。
+   *
+   * 启用:scene.environment = environmentTexture
+   * 禁用:scene.environment = null,自动关闭天空盒(如开启),恢复纯色背景
+   *
+   * @param enabled true=启用;false=禁用
+   * @returns JSON 字符串
+   *   成功:{"success": true, "enabled": true|false, "settings": {...}}
+   *   失败:{"success": false, "error": {...}}
+   */
+  async setEnvironmentEnabled(enabled: boolean): Promise<string> {
+    if (this.disposed) {
+      const disposedError: ArkWebBridgeErrorPayload = { code: 'DISPOSED', message: 'controller disposed' };
+      const disposedResponse: ArkWebBridgeFailedResponse = { success: false, error: disposedError };
+      return JSON.stringify(disposedResponse);
+    }
+    try {
+      return await this.jsCaller.setEnvironmentEnabled(enabled);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const failedError: ArkWebBridgeErrorPayload = { code: 'ENVIRONMENT_ENABLE_FAILED', message: msg };
+      const failedResponse: ArkWebBridgeFailedResponse = { success: false, error: failedError };
+      return JSON.stringify(failedResponse);
+    }
+  }
+
+  /**
+   * Phase 2F: 显示/隐藏天空盒。
+   *
+   * 显示:scene.background = environmentTexture(保存当前纯色背景)
+   * 隐藏:scene.background = 保存的纯色背景
+   *
+   * 前置条件:environmentState === READY && environmentEnabled === true
+   * 禁用 Environment 时 Skybox 自动关闭(由 Web 端处理)
+   *
+   * @param visible true=显示天空盒;false=隐藏天空盒
+   * @returns JSON 字符串
+   *   成功:{"success": true, "visible": true|false, "settings": {...}}
+   *   失败:{"success": false, "error": {...}}
+   */
+  async setSkyboxVisible(visible: boolean): Promise<string> {
+    if (this.disposed) {
+      const disposedError: ArkWebBridgeErrorPayload = { code: 'DISPOSED', message: 'controller disposed' };
+      const disposedResponse: ArkWebBridgeFailedResponse = { success: false, error: disposedError };
+      return JSON.stringify(disposedResponse);
+    }
+    try {
+      return await this.jsCaller.setSkyboxVisible(visible);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const failedError: ArkWebBridgeErrorPayload = { code: 'SKYBOX_VISIBLE_FAILED', message: msg };
+      const failedResponse: ArkWebBridgeFailedResponse = { success: false, error: failedError };
+      return JSON.stringify(failedResponse);
+    }
+  }
+
+  /**
+   * Phase 2F: 设置环境强度。
+   *
+   * 使用 scene.environmentIntensity(three.module.js 支持)。
+   * 合法范围 0.0 ~ 2.0。
+   * ArkUI 百分比映射:intensity = percentage / 100.0
+   *
+   * @param intensity 0.0 ~ 2.0
+   * @returns JSON 字符串
+   *   成功:{"success": true, "intensity": <number>, "settings": {...}}
+   *   失败:{"success": false, "error": {...}}
+   */
+  async setEnvironmentIntensity(intensity: number): Promise<string> {
+    if (this.disposed) {
+      const disposedError: ArkWebBridgeErrorPayload = { code: 'DISPOSED', message: 'controller disposed' };
+      const disposedResponse: ArkWebBridgeFailedResponse = { success: false, error: disposedError };
+      return JSON.stringify(disposedResponse);
+    }
+    try {
+      return await this.jsCaller.setEnvironmentIntensity(intensity);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const failedError: ArkWebBridgeErrorPayload = { code: 'ENVIRONMENT_INTENSITY_FAILED', message: msg };
+      const failedResponse: ArkWebBridgeFailedResponse = { success: false, error: failedError };
+      return JSON.stringify(failedResponse);
+    }
+  }
+
+  /**
+   * Phase 2F: 获取环境设置快照。
+   *
+   * @returns JSON 字符串,形如
+   *   {"success": true, "settings": {"state": "...", "source": "...", ...}}
+   */
+  async getEnvironmentSettings(): Promise<string> {
+    if (this.disposed) {
+      const disposedError: ArkWebBridgeErrorPayload = { code: 'DISPOSED', message: 'controller disposed' };
+      const disposedResponse: ArkWebBridgeFailedResponse = { success: false, error: disposedError };
+      return JSON.stringify(disposedResponse);
+    }
+    try {
+      return await this.jsCaller.getEnvironmentSettings();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const failedError: ArkWebBridgeErrorPayload = { code: 'ENVIRONMENT_SETTINGS_FAILED', message: msg };
+      const failedResponse: ArkWebBridgeFailedResponse = { success: false, error: failedError };
+      return JSON.stringify(failedResponse);
+    }
+  }
+
   // ===== Web 组件生命周期回调 =====
 
   /**

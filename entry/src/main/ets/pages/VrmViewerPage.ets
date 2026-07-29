@@ -61,7 +61,10 @@ import {
   ScreenshotState,
   ScreenshotResult,
   ScreenshotErrorCode,
-  createIdleScreenshotResult
+  createIdleScreenshotResult,
+  ArkWebEnvironmentState,
+  ARKWEB_ENVIRONMENT_POLL_INTERVAL_MS,
+  ARKWEB_ENVIRONMENT_POLL_TIMEOUT_MS
 } from '../vrmviewer/ArkWebVrmViewerTypes';
 import {
   ArkWebViewerEventListener,
@@ -365,6 +368,36 @@ struct VrmViewerPage {
   /** 当前灯光强度(0.0-4.0,由 getSceneSettings 同步) */
   @State sceneLightIntensity: number = 3.0;
 
+  // ===== Phase 2F: 环境贴图状态 =====
+  /** 环境状态(UNINITIALIZED / INITIALIZING / READY / FAILED / DISPOSED) */
+  @State environmentState: string = 'UNINITIALIZED';
+  /** 环境来源(ROOM_ENVIRONMENT / NONE) */
+  @State environmentSource: string = 'NONE';
+  /** 环境光照是否启用 */
+  @State environmentEnabled: boolean = false;
+  /** 天空盒是否可见 */
+  @State skyboxVisible: boolean = false;
+  /** 环境强度(0.0-2.0) */
+  @State environmentIntensity: number = 1.0;
+  /** 环境强度百分比显示(0-200) */
+  @State environmentIntensityPercentage: number = 100;
+  /** 环境错误码(空字符串表示无错误) */
+  @State environmentErrorCode: string = '';
+  /** 环境错误消息(空字符串表示无错误) */
+  @State environmentErrorMessage: string = '';
+  /** 环境初始化是否正在轮询(防止重复触发) */
+  private environmentPollInProgress: boolean = false;
+  /** 环境轮询定时器 ID(-1 表示无定时器) */
+  private environmentPollTimerId: number = -1;
+  /** 环境轮询开始时间戳(ms) */
+  private environmentPollStartedAt: number = 0;
+  /** Phase 2F: 环境强度节流 */
+  private pendingEnvironmentIntensity: number = 1.0;
+  private environmentUpdateGeneration: number = 0;
+  private environmentUpdateScheduled: boolean = false;
+  private environmentUpdateTimerId: number = -1;
+  private readonly ENVIRONMENT_UPDATE_THROTTLE_MS: number = 80;
+
   // ===== Phase 2A-1: Debug 场景状态(由 getSceneState 解析) =====
   /** Debug:模型状态字符串 */
   @State debugModelState: string = 'NOT_LOADED';
@@ -476,6 +509,8 @@ struct VrmViewerPage {
         this.refreshDebugSceneState();
         // Phase 2A-2:Viewer READY 后刷新 Camera Debug 状态
         this.refreshCameraDebugState();
+        // Phase 2F:Viewer READY 后启动环境贴图初始化(后台,不阻塞 UI)
+        this.startEnvironmentInitialization();
       }
     };
     this.eventListener.onErrorFn = (code: string, message: string) => {
@@ -561,6 +596,14 @@ struct VrmViewerPage {
     }
     this.lightUpdateScheduled = false;
     this.lightUpdateGeneration++;
+    // Phase 2F: 停止环境状态轮询与节流定时器
+    this.stopEnvironmentPolling();
+    if (this.environmentUpdateTimerId !== -1) {
+      clearTimeout(this.environmentUpdateTimerId);
+      this.environmentUpdateTimerId = -1;
+    }
+    this.environmentUpdateScheduled = false;
+    this.environmentUpdateGeneration++;
     // Phase 2B: 停止相机过渡状态轮询(页面销毁不再调用 JavaScript)
     this.stopCameraTransitionPolling();
     // Phase 1D-2B-2:1. 停止用户模型加载结果轮询
@@ -1019,6 +1062,385 @@ struct VrmViewerPage {
       }
     }).catch((e: Object) => {
       console.warn('[VrmViewerPage] setSceneLightIntensity exception: ' + (e instanceof Error ? e.message : String(e)));
+    });
+  }
+
+  // ===== Phase 2F: 环境贴图与天空盒 =====
+
+  /**
+   * Phase 2F: 启动环境贴图初始化(后台,不阻塞 UI)。
+   *
+   * 流程:
+   * 1. 调用 initializeEnvironment(同步返回 INITIALIZING 或 READY)
+   * 2. 轮询 getEnvironmentSettings 直到 READY / FAILED(每 100ms,最长 5 秒)
+   * 3. 环境就绪后用真实状态初始化 ArkUI(@State)
+   *
+   * 防止:
+   * - 重复触发(environmentPollInProgress)
+   * - 页面销毁后异步回调(generation 检查)
+   * - 阻塞 Viewer READY 状态
+   */
+  private startEnvironmentInitialization(): void {
+    if (this.environmentPollInProgress) {
+      console.info('[VrmViewerPage] Environment initialization already in progress, skip');
+      return;
+    }
+    this.environmentPollInProgress = true;
+    this.environmentState = 'INITIALIZING';
+    console.info('[VrmViewerPage] Starting environment initialization');
+
+    this.arkWebController.initializeEnvironment().then((resultJson: string) => {
+      // 解析立即返回结果(可能直接 READY 或 INITIALIZING)
+      let immediateReady: boolean = false;
+      let immediateFailed: boolean = false;
+      try {
+        const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
+        if (obj['success'] === true) {
+          const envState = (obj['environmentState'] as string) || 'INITIALIZING';
+          if (envState === 'READY') {
+            immediateReady = true;
+          } else if (envState === 'FAILED') {
+            immediateFailed = true;
+          }
+          // 同步 settings(如果有)
+          const settingsObj = obj['settings'] as Record<string, Object>;
+          if (settingsObj) {
+            this.applyEnvironmentSettings(settingsObj);
+          }
+        } else {
+          immediateFailed = true;
+          const errorObj = obj['error'] as Record<string, Object>;
+          if (errorObj) {
+            this.environmentErrorCode = (errorObj['code'] as string) || 'ENVIRONMENT_INIT_FAILED';
+            this.environmentErrorMessage = (errorObj['message'] as string) || '';
+          }
+        }
+      } catch (e) {
+        console.warn('[VrmViewerPage] initializeEnvironment parse failed: ' + (e instanceof Error ? e.message : String(e)));
+      }
+
+      if (immediateReady) {
+        this.environmentPollInProgress = false;
+        console.info('[VrmViewerPage] Environment initialized immediately (READY)');
+        this.refreshEnvironmentSettings();
+        return;
+      }
+      if (immediateFailed) {
+        this.environmentPollInProgress = false;
+        this.environmentState = 'FAILED';
+        console.warn('[VrmViewerPage] Environment initialization failed immediately');
+        return;
+      }
+      // INITIALIZING:启动轮询
+      this.startEnvironmentPolling();
+    }).catch((e: Object) => {
+      this.environmentPollInProgress = false;
+      this.environmentState = 'FAILED';
+      this.environmentErrorCode = 'ENVIRONMENT_INIT_EXCEPTION';
+      this.environmentErrorMessage = e instanceof Error ? e.message : String(e);
+      console.warn('[VrmViewerPage] initializeEnvironment exception: ' + this.environmentErrorMessage);
+    });
+  }
+
+  /**
+   * Phase 2F: 启动环境状态轮询。
+   *
+   * 每 100ms 调用 getEnvironmentSettings,直到状态变为 READY 或 FAILED,
+   * 或超过 5 秒超时。
+   */
+  private startEnvironmentPolling(): void {
+    this.stopEnvironmentPolling();
+    this.environmentPollStartedAt = Date.now();
+    this.environmentPollTimerId = setTimeout(() => {
+      this.environmentPollTimerId = -1;
+      this.pollEnvironmentOnce();
+    }, ARKWEB_ENVIRONMENT_POLL_INTERVAL_MS);
+  }
+
+  /**
+   * Phase 2F: 停止环境状态轮询。
+   */
+  private stopEnvironmentPolling(): void {
+    if (this.environmentPollTimerId !== -1) {
+      clearTimeout(this.environmentPollTimerId);
+      this.environmentPollTimerId = -1;
+    }
+    this.environmentPollInProgress = false;
+  }
+
+  /**
+   * Phase 2F: 轮询一次环境状态。
+   */
+  private pollEnvironmentOnce(): void {
+    if (this.viewerState !== ArkWebViewerState.READY) {
+      this.environmentPollInProgress = false;
+      return;
+    }
+    // 超时检查
+    const elapsed: number = Date.now() - this.environmentPollStartedAt;
+    if (elapsed > ARKWEB_ENVIRONMENT_POLL_TIMEOUT_MS) {
+      this.environmentPollInProgress = false;
+      this.environmentState = 'FAILED';
+      this.environmentErrorCode = 'ENVIRONMENT_INIT_TIMEOUT';
+      this.environmentErrorMessage = 'Environment initialization timed out after 5000ms';
+      console.warn('[VrmViewerPage] Environment polling timed out');
+      return;
+    }
+
+    this.arkWebController.getEnvironmentSettings().then((resultJson: string) => {
+      try {
+        const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
+        if (obj['success'] === true) {
+          const settingsObj = obj['settings'] as Record<string, Object>;
+          if (settingsObj) {
+            this.applyEnvironmentSettings(settingsObj);
+            const currentState: string = (settingsObj['state'] as string) || 'INITIALIZING';
+            if (currentState === 'READY' || currentState === 'FAILED' || currentState === 'DISPOSED') {
+              this.environmentPollInProgress = false;
+              console.info('[VrmViewerPage] Environment polling stopped, state=' + currentState);
+              return;
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('[VrmViewerPage] pollEnvironmentOnce parse failed');
+      }
+      // 继续轮询
+      this.environmentPollTimerId = setTimeout(() => {
+        this.environmentPollTimerId = -1;
+        this.pollEnvironmentOnce();
+      }, ARKWEB_ENVIRONMENT_POLL_INTERVAL_MS);
+    }).catch((e: Object) => {
+      console.warn('[VrmViewerPage] pollEnvironmentOnce exception: ' + (e instanceof Error ? e.message : String(e)));
+      // 异常不停止轮询,继续尝试直到超时
+      this.environmentPollTimerId = setTimeout(() => {
+        this.environmentPollTimerId = -1;
+        this.pollEnvironmentOnce();
+      }, ARKWEB_ENVIRONMENT_POLL_INTERVAL_MS);
+    });
+  }
+
+  /**
+   * Phase 2F: 应用环境设置到 ArkUI @State。
+   *
+   * @param settingsObj 从 Bridge 返回的 settings 对象
+   */
+  private applyEnvironmentSettings(settingsObj: Record<string, Object>): void {
+    const state: string = (settingsObj['state'] as string) || 'UNINITIALIZED';
+    const source: string = (settingsObj['source'] as string) || 'NONE';
+    const enabled: boolean = settingsObj['environmentEnabled'] === true;
+    const visible: boolean = settingsObj['skyboxVisible'] === true;
+    const intensity: number = (settingsObj['environmentIntensity'] as number) ?? 1.0;
+    const errorCode: string = (settingsObj['errorCode'] as string) || '';
+    const errorMessage: string = (settingsObj['errorMessage'] as string) || '';
+
+    this.environmentState = state;
+    this.environmentSource = source;
+    this.environmentEnabled = enabled;
+    this.skyboxVisible = visible;
+    this.environmentIntensity = intensity;
+    this.environmentIntensityPercentage = Math.round(intensity * 100.0);
+    this.pendingEnvironmentIntensity = intensity;
+    this.environmentErrorCode = errorCode;
+    this.environmentErrorMessage = errorMessage;
+  }
+
+  /**
+   * Phase 2F: 主动刷新环境设置(从 Bridge 拉取最新状态)。
+   *
+   * 用于 Debug Tab "刷新" 按钮或环境状态可能变化的场景。
+   */
+  private refreshEnvironmentSettings(): void {
+    if (this.viewerState !== ArkWebViewerState.READY) {
+      return;
+    }
+    this.arkWebController.getEnvironmentSettings().then((resultJson: string) => {
+      try {
+        const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
+        if (obj['success'] === true) {
+          const settingsObj = obj['settings'] as Record<string, Object>;
+          if (settingsObj) {
+            this.applyEnvironmentSettings(settingsObj);
+          }
+        }
+      } catch (e) {
+        console.warn('[VrmViewerPage] refreshEnvironmentSettings parse failed');
+      }
+    }).catch((e: Object) => {
+      console.warn('[VrmViewerPage] refreshEnvironmentSettings exception: ' + (e instanceof Error ? e.message : String(e)));
+    });
+  }
+
+  /**
+   * Phase 2F: 用户切换环境光照开关。
+   *
+   * 流程:
+   * 1. 调用 setEnvironmentEnabled
+   * 2. 成功后更新 ArkUI @State
+   * 3. 失败时恢复 Switch
+   * 4. 显示具体错误
+   *
+   * @param enabled 用户选择是否启用环境光照
+   */
+  private onEnvironmentToggleChanged(enabled: boolean): void {
+    const previousEnabled: boolean = this.environmentEnabled;
+    this.arkWebController.setEnvironmentEnabled(enabled).then((resultJson: string) => {
+      try {
+        const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
+        if (obj['success'] === true) {
+          const actualEnabled = obj['enabled'] === true;
+          this.environmentEnabled = actualEnabled;
+          // 同步设置(禁用环境时 Skybox 自动关闭)
+          const settingsObj = obj['settings'] as Record<string, Object>;
+          if (settingsObj) {
+            this.applyEnvironmentSettings(settingsObj);
+          }
+          console.info('[VrmViewerPage] Environment enabled set to ' + actualEnabled);
+        } else {
+          // 失败时恢复 Switch
+          this.environmentEnabled = previousEnabled;
+          const errorObj = obj['error'] as Record<string, Object>;
+          const code = errorObj ? (errorObj['code'] as string) : 'UNKNOWN';
+          const message = errorObj ? (errorObj['message'] as string) : '';
+          console.warn('[VrmViewerPage] setEnvironmentEnabled failed: ' + code);
+          promptAction.showToast({
+            message: `环境光照设置失败: ${code}${message.length > 0 ? ' - ' + message : ''}`,
+            duration: 2000
+          });
+        }
+      } catch (e) {
+        this.environmentEnabled = previousEnabled;
+        console.warn('[VrmViewerPage] setEnvironmentEnabled parse failed');
+      }
+    }).catch((e: Object) => {
+      this.environmentEnabled = previousEnabled;
+      console.warn('[VrmViewerPage] setEnvironmentEnabled exception: ' + (e instanceof Error ? e.message : String(e)));
+    });
+  }
+
+  /**
+   * Phase 2F: 用户切换天空盒开关。
+   *
+   * 前置条件:environmentState === READY && environmentEnabled === true
+   * 失败时恢复 Switch。
+   *
+   * @param visible 用户选择是否显示天空盒
+   */
+  private onSkyboxToggleChanged(visible: boolean): void {
+    const previousVisible: boolean = this.skyboxVisible;
+    this.arkWebController.setSkyboxVisible(visible).then((resultJson: string) => {
+      try {
+        const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
+        if (obj['success'] === true) {
+          const actualVisible = obj['visible'] === true;
+          this.skyboxVisible = actualVisible;
+          // 同步设置
+          const settingsObj = obj['settings'] as Record<string, Object>;
+          if (settingsObj) {
+            this.applyEnvironmentSettings(settingsObj);
+          }
+          console.info('[VrmViewerPage] Skybox visible set to ' + actualVisible);
+        } else {
+          // 失败时恢复 Switch
+          this.skyboxVisible = previousVisible;
+          const errorObj = obj['error'] as Record<string, Object>;
+          const code = errorObj ? (errorObj['code'] as string) : 'UNKNOWN';
+          const message = errorObj ? (errorObj['message'] as string) : '';
+          console.warn('[VrmViewerPage] setSkyboxVisible failed: ' + code);
+          promptAction.showToast({
+            message: `天空盒设置失败: ${code}${message.length > 0 ? ' - ' + message : ''}`,
+            duration: 2000
+          });
+        }
+      } catch (e) {
+        this.skyboxVisible = previousVisible;
+        console.warn('[VrmViewerPage] setSkyboxVisible parse failed');
+      }
+    }).catch((e: Object) => {
+      this.skyboxVisible = previousVisible;
+      console.warn('[VrmViewerPage] setSkyboxVisible exception: ' + (e instanceof Error ? e.message : String(e)));
+    });
+  }
+
+  /**
+   * Phase 2F: 环境强度 Slider 值变化(拖动中)。
+   *
+   * 本地更新百分比显示,但 Bridge 调用需节流。
+   * 滑动结束必须提交最后一个值。
+   *
+   * @param percentage 0-200
+   */
+  private onEnvironmentIntensitySliderChange(percentage: number): void {
+    this.environmentIntensityPercentage = Math.round(percentage);
+    const intensity: number = percentage / 100.0;
+    this.pendingEnvironmentIntensity = intensity;
+    this.scheduleEnvironmentUpdate();
+  }
+
+  /**
+   * Phase 2F: 环境强度 Slider 拖动结束。
+   *
+   * @param percentage 0-200
+   */
+  private onEnvironmentIntensitySliderChangeEnd(percentage: number): void {
+    this.environmentIntensityPercentage = Math.round(percentage);
+    const intensity: number = percentage / 100.0;
+    this.pendingEnvironmentIntensity = intensity;
+    if (this.environmentUpdateTimerId !== -1) {
+      clearTimeout(this.environmentUpdateTimerId);
+      this.environmentUpdateTimerId = -1;
+    }
+    this.environmentUpdateScheduled = false;
+    this.commitEnvironmentUpdate();
+  }
+
+  /**
+   * Phase 2F: 调度环境强度节流更新。
+   */
+  private scheduleEnvironmentUpdate(): void {
+    if (this.environmentUpdateScheduled) {
+      return;
+    }
+    this.environmentUpdateScheduled = true;
+    const generation: number = this.environmentUpdateGeneration;
+    this.environmentUpdateTimerId = setTimeout(() => {
+      this.environmentUpdateTimerId = -1;
+      this.environmentUpdateScheduled = false;
+      if (generation !== this.environmentUpdateGeneration) {
+        return;
+      }
+      this.commitEnvironmentUpdate();
+    }, this.ENVIRONMENT_UPDATE_THROTTLE_MS);
+  }
+
+  /**
+   * Phase 2F: 实际提交环境强度到 Bridge。
+   */
+  private commitEnvironmentUpdate(): void {
+    if (this.viewerState !== ArkWebViewerState.READY) {
+      return;
+    }
+    if (this.environmentState !== 'READY') {
+      return;
+    }
+    const intensity: number = this.pendingEnvironmentIntensity;
+    this.arkWebController.setEnvironmentIntensity(intensity).then((resultJson: string) => {
+      try {
+        const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
+        if (obj['success'] === true) {
+          const actualIntensity = (obj['intensity'] as number) ?? intensity;
+          this.environmentIntensity = actualIntensity;
+          this.environmentIntensityPercentage = Math.round(actualIntensity * 100.0);
+        } else {
+          const errorObj = obj['error'] as Record<string, Object>;
+          const code = errorObj ? (errorObj['code'] as string) : 'UNKNOWN';
+          console.warn('[VrmViewerPage] setEnvironmentIntensity failed: ' + code);
+        }
+      } catch (e) {
+        console.warn('[VrmViewerPage] setEnvironmentIntensity parse failed');
+      }
+    }).catch((e: Object) => {
+      console.warn('[VrmViewerPage] setEnvironmentIntensity exception: ' + (e instanceof Error ? e.message : String(e)));
     });
   }
 
@@ -4028,6 +4450,99 @@ struct VrmViewerPage {
           })
       }
       .width('100%')
+      .margin({ bottom: 16 })
+
+      // Phase 2F: 环境贴图与天空盒
+      Text('环境贴图')
+        .fontSize($r('app.float.app_font_subtitle'))
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.app_text_primary'))
+        .margin({ bottom: 8 })
+
+      // 环境光照开关
+      Row() {
+        Text('环境光照')
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor($r('app.color.app_text_primary'))
+          .layoutWeight(1)
+        // 环境未 READY 时禁用 Switch
+        Toggle({
+          type: ToggleType.Switch,
+          isOn: this.environmentEnabled
+        })
+          .enabled(this.environmentState === 'READY')
+          .onChange((on: boolean) => {
+            this.onEnvironmentToggleChanged(on);
+          })
+      }
+      .width('100%')
+      .padding({
+        top: $r('app.float.app_spacing_12'),
+        bottom: $r('app.float.app_spacing_12')
+      })
+      .margin({ bottom: 8 })
+
+      // 环境状态显示(未就绪或失败时显示状态)
+      if (this.environmentState !== 'READY') {
+        Text(`环境状态: ${this.environmentState}${this.environmentErrorMessage.length > 0 ? ' - ' + this.environmentErrorMessage : ''}`)
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor(this.environmentState === 'FAILED' ? $r('app.color.app_danger') : $r('app.color.app_text_tertiary'))
+          .width('100%')
+          .margin({ bottom: 8 })
+      }
+
+      // 天空盒开关(仅当环境 READY 且启用时才可用)
+      Row() {
+        Text('天空盒')
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor($r('app.color.app_text_primary'))
+          .layoutWeight(1)
+        Toggle({
+          type: ToggleType.Switch,
+          isOn: this.skyboxVisible
+        })
+          .enabled(this.environmentState === 'READY' && this.environmentEnabled)
+          .onChange((on: boolean) => {
+            this.onSkyboxToggleChanged(on);
+          })
+      }
+      .width('100%')
+      .padding({
+        top: $r('app.float.app_spacing_12'),
+        bottom: $r('app.float.app_spacing_12')
+      })
+      .margin({ bottom: 8 })
+
+      // 环境强度滑块(仅当环境 READY 时可用)
+      Column() {
+        Row() {
+          Text('环境强度')
+            .fontSize($r('app.float.app_font_body'))
+            .fontColor($r('app.color.app_text_primary'))
+            .layoutWeight(1)
+          Text(`${this.environmentIntensityPercentage}%`)
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_tertiary'))
+        }
+        .width('100%')
+        .margin({ bottom: 8 })
+
+        Slider({
+          value: this.environmentIntensityPercentage,
+          min: 0,
+          max: 200,
+          style: SliderStyle.OutSet
+        })
+          .enabled(this.environmentState === 'READY')
+          .width('100%')
+          .onChange((value: number, mode: SliderChangeMode) => {
+            this.onEnvironmentIntensitySliderChange(value);
+            if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+              this.onEnvironmentIntensitySliderChangeEnd(value);
+            }
+          })
+      }
+      .width('100%')
 
       Text('当前: 背景 ' + this.sceneBackgroundColor + ' | 灯光 ' + this.sceneLightIntensity.toFixed(2))
         .fontSize($r('app.float.app_font_caption'))
@@ -4085,6 +4600,17 @@ struct VrmViewerPage {
       this.DebugRow('Grid', this.sceneGridVisible ? 'ON' : 'OFF')
       this.DebugRow('Light Intensity', this.sceneLightIntensity.toFixed(2))
       this.DebugRow('Camera Controls', this.debugCameraControlsEnabled ? 'ENABLED' : 'DISABLED')
+
+      // Phase 2F: Environment Debug 状态
+      this.DebugRow('Environment State', this.environmentState)
+      this.DebugRow('Environment Source', this.environmentSource)
+      this.DebugRow('Environment Enabled', this.environmentEnabled ? 'YES' : 'NO')
+      this.DebugRow('Skybox Visible', this.skyboxVisible ? 'YES' : 'NO')
+      this.DebugRow('Environment Intensity', this.environmentIntensity.toFixed(2))
+      if (this.environmentErrorCode.length > 0) {
+        this.DebugRow('Environment Error',
+          this.environmentErrorCode + ': ' + this.environmentErrorMessage)
+      }
 
       // Phase 2A-2: Camera Debug 状态(从 getCameraState 获取,非硬编码)
       this.DebugRow('Camera Position',

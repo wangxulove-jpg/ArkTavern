@@ -572,6 +572,88 @@ export class ArkWebViewerJsCaller {
     return this.call('getSceneSettings');
   }
 
+  // ===== Phase 2F: 环境贴图与天空盒 =====
+
+  /**
+   * Phase 2F: 调用 window.arkTavernViewerBridge.initializeEnvironment()
+   *
+   * 初始化环境贴图(程序化 RoomEnvironment + PMREMGenerator)。
+   * 同步执行,由 ViewerScene.initializeEnvironment 完成。
+   *
+   * 初始化失败:
+   *   - 保留现有纯色背景和灯光
+   *   - 不影响 ViewerState(仍为 READY)
+   *
+   * @returns JSON 字符串
+   *   成功:{"success": true, "state": "READY", "environmentState": "READY", "settings": {...}}
+   *   失败:{"success": false, "error": {...}, "settings": {...}}
+   */
+  async initializeEnvironment(): Promise<string> {
+    return this.call('initializeEnvironment');
+  }
+
+  /**
+   * Phase 2F: 调用 window.arkTavernViewerBridge.setEnvironmentEnabled(enabled)
+   *
+   * 启用/禁用环境光照。
+   * 启用:scene.environment = environmentTexture
+   * 禁用:scene.environment = null,自动关闭天空盒(如开启)
+   *
+   * @param enabled true=启用;false=禁用
+   * @returns JSON 字符串
+   *   成功:{"success": true, "enabled": true|false, "settings": {...}}
+   *   失败:{"success": false, "error": {...}}
+   */
+  async setEnvironmentEnabled(enabled: boolean): Promise<string> {
+    return this.callWithBooleanArg('setEnvironmentEnabled', enabled);
+  }
+
+  /**
+   * Phase 2F: 调用 window.arkTavernViewerBridge.setSkyboxVisible(visible)
+   *
+   * 显示/隐藏天空盒。
+   * 显示:scene.background = environmentTexture(保存当前纯色背景)
+   * 隐藏:scene.background = 保存的纯色背景
+   *
+   * 前置条件:environmentState === READY && environmentEnabled === true
+   *
+   * @param visible true=显示天空盒;false=隐藏天空盒
+   * @returns JSON 字符串
+   *   成功:{"success": true, "visible": true|false, "settings": {...}}
+   *   失败:{"success": false, "error": {...}}
+   */
+  async setSkyboxVisible(visible: boolean): Promise<string> {
+    return this.callWithBooleanArg('setSkyboxVisible', visible);
+  }
+
+  /**
+   * Phase 2F: 调用 window.arkTavernViewerBridge.setEnvironmentIntensity(intensity)
+   *
+   * 设置环境强度(使用 scene.environmentIntensity)。
+   * 合法范围 0.0 ~ 2.0。
+   * ArkUI 百分比映射:intensity = percentage / 100.0
+   *
+   * @param intensity 0.0 ~ 2.0
+   * @returns JSON 字符串
+   *   成功:{"success": true, "intensity": <number>, "settings": {...}}
+   *   失败:{"success": false, "error": {...}}
+   */
+  async setEnvironmentIntensity(intensity: number): Promise<string> {
+    return this.callWithNumberArg('setEnvironmentIntensity', intensity);
+  }
+
+  /**
+   * Phase 2F: 调用 window.arkTavernViewerBridge.getEnvironmentSettings()
+   *
+   * 获取环境设置快照。
+   *
+   * @returns JSON 字符串,形如
+   *   {"success": true, "settings": {"state": "...", "source": "...", ...}}
+   */
+  async getEnvironmentSettings(): Promise<string> {
+    return this.call('getEnvironmentSettings');
+  }
+
   private async call(methodName: string): Promise<string> {
     const fn = this.runJs;
     if (fn === null) {

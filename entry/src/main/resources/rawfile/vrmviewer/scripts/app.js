@@ -714,6 +714,192 @@ if (window.__arkTavernBootstrapState) {
       });
     },
 
+    // ===== Phase 2F: 环境贴图 Bridge =====
+
+    /**
+     * Phase 2F: 初始化环境贴图。
+     *
+     * 同步执行,使用程序化 RoomEnvironment 生成 PMREM 环境纹理。
+     * 初始化失败不影响 ViewerState(仍为 READY)。
+     *
+     * @returns {string} JSON 结果
+     *   成功:{"success": true, "state": "READY", "settings": {...}}
+     *   失败:{"success": false, "error": {...}, "settings": {...}}
+     */
+    initializeEnvironment: function () {
+      return callViewer(function (v) {
+        var result = v.initializeEnvironment();
+        if (result && result.success) {
+          return {
+            success: true,
+            state: v.getState(),
+            environmentState: result.state,
+            settings: result.settings
+          };
+        }
+        return {
+          success: false,
+          state: v.getState(),
+          error: result && result.error ? result.error : {
+            code: 'ENVIRONMENT_INITIALIZATION_FAILED',
+            phase: v.getState(),
+            message: 'initializeEnvironment failed',
+            recoverable: false
+          },
+          settings: result && result.settings ? result.settings : undefined
+        };
+      });
+    },
+
+    /**
+     * Phase 2F: 启用/禁用环境光照。
+     *
+     * @param {boolean} enabled
+     * @returns {string} JSON 结果
+     *   成功:{"success": true, "state": "READY", "settings": {...}}
+     *   失败:{"success": false, "error": {...}}
+     */
+    setEnvironmentEnabled: function (enabled) {
+      return callViewer(function (v) {
+        if (typeof enabled !== 'boolean') {
+          return {
+            success: false,
+            state: v.getState(),
+            error: {
+              code: 'ENVIRONMENT_ENABLED_INVALID',
+              phase: v.getState(),
+              message: 'enabled must be a boolean',
+              recoverable: false
+            }
+          };
+        }
+        var result = v.setEnvironmentEnabled(enabled);
+        if (result && result.success) {
+          return {
+            success: true,
+            state: v.getState(),
+            enabled: result.enabled,
+            settings: result.settings
+          };
+        }
+        return {
+          success: false,
+          state: v.getState(),
+          error: result && result.error ? result.error : {
+            code: 'ENVIRONMENT_ENABLE_FAILED',
+            phase: v.getState(),
+            message: 'setEnvironmentEnabled failed',
+            recoverable: false
+          }
+        };
+      });
+    },
+
+    /**
+     * Phase 2F: 显示/隐藏天空盒。
+     *
+     * @param {boolean} visible
+     * @returns {string} JSON 结果
+     *   成功:{"success": true, "state": "READY", "settings": {...}}
+     *   失败:{"success": false, "error": {...}}
+     */
+    setSkyboxVisible: function (visible) {
+      return callViewer(function (v) {
+        if (typeof visible !== 'boolean') {
+          return {
+            success: false,
+            state: v.getState(),
+            error: {
+              code: 'SKYBOX_VISIBLE_INVALID',
+              phase: v.getState(),
+              message: 'visible must be a boolean',
+              recoverable: false
+            }
+          };
+        }
+        var result = v.setSkyboxVisible(visible);
+        if (result && result.success) {
+          return {
+            success: true,
+            state: v.getState(),
+            visible: result.visible,
+            settings: result.settings
+          };
+        }
+        return {
+          success: false,
+          state: v.getState(),
+          error: result && result.error ? result.error : {
+            code: 'SKYBOX_VISIBLE_FAILED',
+            phase: v.getState(),
+            message: 'setSkyboxVisible failed',
+            recoverable: false
+          }
+        };
+      });
+    },
+
+    /**
+     * Phase 2F: 设置环境强度。
+     *
+     * @param {number} intensity 0.0 ~ 2.0
+     * @returns {string} JSON 结果
+     *   成功:{"success": true, "state": "READY", "settings": {...}}
+     *   失败:{"success": false, "error": {...}}
+     */
+    setEnvironmentIntensity: function (intensity) {
+      return callViewer(function (v) {
+        if (typeof intensity !== 'number' || isNaN(intensity) || !isFinite(intensity)) {
+          return {
+            success: false,
+            state: v.getState(),
+            error: {
+              code: 'ENVIRONMENT_INTENSITY_INVALID',
+              phase: v.getState(),
+              message: 'intensity must be a finite number',
+              recoverable: false
+            }
+          };
+        }
+        var result = v.setEnvironmentIntensity(intensity);
+        if (result && result.success) {
+          return {
+            success: true,
+            state: v.getState(),
+            intensity: result.intensity,
+            settings: result.settings
+          };
+        }
+        return {
+          success: false,
+          state: v.getState(),
+          error: result && result.error ? result.error : {
+            code: 'ENVIRONMENT_INTENSITY_FAILED',
+            phase: v.getState(),
+            message: 'setEnvironmentIntensity failed',
+            recoverable: false
+          }
+        };
+      });
+    },
+
+    /**
+     * Phase 2F: 获取环境设置快照。
+     *
+     * @returns {string} JSON 结果
+     *   {"success": true, "state": "READY", "settings": {...}}
+     */
+    getEnvironmentSettings: function () {
+      return callViewer(function (v) {
+        var result = v.getEnvironmentSettings();
+        return {
+          success: true,
+          state: v.getState(),
+          settings: result.settings
+        };
+      });
+    },
+
     // ===== Phase 1D-2A: 缓存模型资源协议骨架(不触发加载) =====
     // 委托 window.ViewerBridge.preparedResource keeper,仅保存元数据。
     // 严禁调用 viewer.loadModel() / viewer.replaceModel() / GLTFLoader.load()。
