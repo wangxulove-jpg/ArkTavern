@@ -139,7 +139,9 @@ import {
   PersistentAnimationErrorCode,
   AnimationManagementErrorCode,
   PersistentPoseErrorCode,
-  PoseImportErrorCode
+  PoseImportErrorCode,
+  DefaultPoseErrorCode,
+  DefaultPoseRestoreState
 } from '../vrmviewer/ArkWebAvatarAssetTypes';
 
 /**
@@ -627,6 +629,27 @@ struct VrmViewerPage {
   @State poseLastErrorCode: string = '';
   /** Phase 3D-2: 最近一次姿势错误消息。 */
   @State poseLastErrorMessage: string = '';
+  // ===== Phase 3D-3 — 默认姿势与模型加载后自动恢复 =====
+  /** 默认姿势 poseId (空字符串表示无默认)。 */
+  @State defaultPoseId: string = '';
+  /** 默认姿势显示名 (从 poseAssets 中匹配, 无匹配时为空)。 */
+  @State defaultPoseDisplayName: string = '';
+  /** 默认姿势恢复状态机 (DefaultPoseRestoreState)。 */
+  @State defaultPoseRestoreState: DefaultPoseRestoreState = DefaultPoseRestoreState.IDLE;
+  /** 默认姿势恢复错误码 (空字符串表示无错误)。 */
+  @State defaultPoseRestoreErrorCode: string = '';
+  /** 默认姿势恢复错误消息。 */
+  @State defaultPoseRestoreErrorMessage: string = '';
+  /** 默认姿势恢复是否正在执行中 (防止重复触发)。 */
+  @State defaultPoseRestoreInProgress: boolean = false;
+  /** 默认姿势恢复代次 (每次启动恢复递增, 用于过期判断)。 */
+  private defaultPoseRestoreGeneration: number = 0;
+  /** 默认姿势恢复绑定的模型 generation (同一模型最多自动应用一次)。 */
+  private defaultPoseRestoreModelGeneration: number = -1;
+  /** 最近一次成功恢复的 poseId (用于避免重复恢复同一姿势)。 */
+  private lastRestoredDefaultPoseId: string = '';
+  /** 页面销毁后阻止异步恢复回调。 */
+  private defaultPoseRestoreDisposed: boolean = false;
   /** 删除确认对话框是否显示 (Phase 3C-2, 页面内确认状态, 不引入新 API)。 */
   @State animationDeleteConfirmVisible: boolean = false;
   /** 删除确认对话框待删除的 actionId。 */
@@ -983,6 +1006,16 @@ struct VrmViewerPage {
     this.poseIgnoredBoneCount = 0;
     this.poseLastErrorCode = '';
     this.poseLastErrorMessage = '';
+    // Phase 3D-3: 默认姿势恢复状态清理 (不删除默认姿势文件 / library.json / defaultPoseId)
+    this.defaultPoseRestoreDisposed = true;
+    this.defaultPoseRestoreInProgress = false;
+    this.defaultPoseRestoreGeneration++;
+    this.defaultPoseRestoreState = DefaultPoseRestoreState.DISPOSED;
+    this.defaultPoseId = '';
+    this.defaultPoseDisplayName = '';
+    this.defaultPoseRestoreErrorCode = '';
+    this.defaultPoseRestoreErrorMessage = '';
+    this.lastRestoredDefaultPoseId = '';
     // Phase 3B:13. 销毁 Phase 3B 持久化资源(不删除 filesDir 下的模型文件与 library.json)
     // 标记 restoreDisposed 阻止异步恢复回调
     this.restoreDisposed = true;
@@ -1426,6 +1459,9 @@ struct VrmViewerPage {
         this.refreshCameraDebugState();
         // Phase 3A: 模型 READY 后也刷新动画 Debug(绑定可能刚刚完成)
         this.refreshAnimationDebugState();
+        // Phase 3D-3: 模型 READY 后调度默认姿势自动恢复
+        // (内部有 generation + inProgress 双重保护, 重复调用安全)
+        this.scheduleDefaultPoseRestore();
       }
       // Scene 设置
       this.debugCameraControlsEnabled = scene['cameraControlsEnabled'] === true;
@@ -1669,6 +1705,8 @@ struct VrmViewerPage {
    * 仅恢复元数据, 不在启动时解析姿势 JSON 内容。
    * 不自动选中 poseId, 不自动应用姿势到模型骨骼。
    * 失败时不清空已有列表 (保留上次状态)。
+   *
+   * Phase 3D-3: 同时读取 defaultPoseId (仅元数据, 不自动应用)。
    */
   private async loadPoseAssetsFromLibrary(): Promise<void> {
     if (this.assetLibrary === null) {
@@ -1677,10 +1715,35 @@ struct VrmViewerPage {
     try {
       const poses: ArkWebAvatarPoseAsset[] = await this.assetLibrary.readPoses();
       this.poseAssets = poses;
-      console.info(`[VrmViewerPage] loaded ${poses.length} pose assets from library`);
+      // Phase 3D-3: 同步默认姿势标记 (仅元数据, 不触发自动应用, 由模型 READY 回调统一编排)
+      this.defaultPoseId = await this.assetLibrary.getDefaultPoseId();
+      this.refreshDefaultPoseDisplayName();
+      console.info(`[VrmViewerPage] loaded ${poses.length} pose assets from library, defaultPoseId=${this.defaultPoseId}`);
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
       console.warn(`[VrmViewerPage] loadPoseAssetsFromLibrary failed: ${msg}`);
+    }
+  }
+
+  /**
+   * Phase 3D-3: 根据 defaultPoseId 从 poseAssets 匹配显示名。
+   * 无匹配时清空显示名。
+   */
+  private refreshDefaultPoseDisplayName(): void {
+    if (this.defaultPoseId.length === 0) {
+      this.defaultPoseDisplayName = '';
+      return;
+    }
+    let found: boolean = false;
+    for (let i = 0; i < this.poseAssets.length; i++) {
+      if (this.poseAssets[i].poseId === this.defaultPoseId) {
+        this.defaultPoseDisplayName = this.poseAssets[i].displayName;
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      this.defaultPoseDisplayName = '';
     }
   }
 
@@ -1903,6 +1966,229 @@ struct VrmViewerPage {
       this.poseLastErrorMessage = `姿势恢复异常: ${msg}`;
       promptAction.showToast({ message: this.poseLastErrorMessage });
     }
+  }
+
+  // ===== Phase 3D-3 — 默认姿势与模型加载后自动恢复 =====
+
+  /**
+   * Phase 3D-3: 设为默认姿势 / 取消默认姿势。
+   *
+   * - 当前已是默认: 点击取消 (传入空字符串)
+   * - 当前不是默认: 点击设为默认
+   *
+   * 仅保存元数据, 不强制立即应用姿势。
+   * 用户可以再点击"应用姿势"按钮测试效果。
+   */
+  private async onPoseToggleDefaultButton(poseId: string): Promise<void> {
+    if (poseId.length === 0) {
+      return;
+    }
+    if (this.assetLibrary === null) {
+      this.poseLibraryErrorCode = PersistentPoseErrorCode.POSE_STORE_LIBRARY_INVALID;
+      this.poseLibraryErrorMessage = '资产库未初始化';
+      promptAction.showToast({ message: '资产库未初始化' });
+      return;
+    }
+    // 已是默认 → 取消; 否则 → 设为默认
+    const target: string = this.defaultPoseId === poseId ? '' : poseId;
+    const ok: boolean = await this.assetLibrary.setDefaultPose(target);
+    if (!ok) {
+      this.poseLibraryErrorCode = DefaultPoseErrorCode.POSE_DEFAULT_WRITE_FAILED;
+      this.poseLibraryErrorMessage = '默认姿势标记更新失败 (清单写入失败)';
+      promptAction.showToast({ message: '设置失败' });
+      return;
+    }
+    this.defaultPoseId = target;
+    this.refreshDefaultPoseDisplayName();
+    promptAction.showToast({
+      message: target.length > 0 ? '已设为默认姿势' : '已取消默认姿势'
+    });
+  }
+
+  /**
+   * Phase 3D-3: 模型 READY 后调度默认姿势自动恢复。
+   *
+   * 只在以下条件全部成立后执行:
+   *   - 页面未销毁
+   *   - Viewer READY
+   *   - ModelState READY
+   *   - active model 已完成加载
+   *   - AssetLibrary READY
+   *   - defaultPoseId 非空
+   *   - 对应姿势记录存在
+   *   - 当前没有姿势导入或姿势应用任务
+   *
+   * 同一模型 generation 最多自动应用一次。
+   * 重复 READY 回调不得重复应用。
+   * 模型替换或重新加载: generation++ 允许对新模型重新应用一次默认姿势。
+   *
+   * 失败策略: 不修改 ViewerState / ModelState, 不进入无限重试,
+   * 不反复弹出 Toast, 只显示一次非阻塞提示并写入 Debug。
+   */
+  private async scheduleDefaultPoseRestore(): Promise<void> {
+    // 1. 页面未销毁
+    if (this.defaultPoseRestoreDisposed) {
+      console.info('[VrmViewerPage] scheduleDefaultPoseRestore: disposed, skip');
+      return;
+    }
+    // 2. Viewer READY
+    if (this.viewerState !== ArkWebViewerState.READY) {
+      console.info(`[VrmViewerPage] scheduleDefaultPoseRestore: viewer not ready (${this.viewerState}), skip`);
+      return;
+    }
+    // 3. ModelState READY
+    if (this.debugModelState !== 'READY') {
+      console.info(`[VrmViewerPage] scheduleDefaultPoseRestore: model not ready (${this.debugModelState}), skip`);
+      return;
+    }
+    // 4. active model 已完成加载 (loadState === 'READY')
+    if (this.loadState !== 'READY') {
+      console.info(`[VrmViewerPage] scheduleDefaultPoseRestore: loadState=${this.loadState}, skip`);
+      return;
+    }
+    // 5. AssetLibrary READY
+    if (this.assetLibrary === null || this.assetLibrary.isDisposed()) {
+      console.info('[VrmViewerPage] scheduleDefaultPoseRestore: assetLibrary null, skip');
+      return;
+    }
+    // 6. 当前没有姿势导入或姿势应用任务
+    if (this.poseImporting || this.poseApplying) {
+      console.info(`[VrmViewerPage] scheduleDefaultPoseRestore: poseImporting=${this.poseImporting}, poseApplying=${this.poseApplying}, skip`);
+      return;
+    }
+    // 7. 并发保护
+    if (this.defaultPoseRestoreInProgress) {
+      console.info('[VrmViewerPage] scheduleDefaultPoseRestore: in progress, skip');
+      return;
+    }
+    // 8. 同一模型 generation 最多自动应用一次
+    const currentModelGen: number = this.modelRestoreGeneration;
+    if (this.defaultPoseRestoreModelGeneration === currentModelGen
+        && this.lastRestoredDefaultPoseId.length > 0) {
+      console.info(`[VrmViewerPage] scheduleDefaultPoseRestore: already restored for modelGen=${currentModelGen}, skip`);
+      return;
+    }
+
+    this.defaultPoseRestoreInProgress = true;
+    this.defaultPoseRestoreGeneration++;
+    const generation: number = this.defaultPoseRestoreGeneration;
+    this.defaultPoseRestoreState = DefaultPoseRestoreState.WAITING_MODEL;
+    this.defaultPoseRestoreErrorCode = '';
+    this.defaultPoseRestoreErrorMessage = '';
+
+    try {
+      // 读取 defaultPoseId
+      const poseId: string = await this.assetLibrary.getDefaultPoseId();
+      if (generation !== this.defaultPoseRestoreGeneration || this.defaultPoseRestoreDisposed) {
+        this.failDefaultPoseRestore(DefaultPoseErrorCode.POSE_DEFAULT_RESTORE_STALE, 'stale generation before read poseId');
+        return;
+      }
+      // defaultPoseId 为空: 进入 EMPTY 状态 (非错误)
+      if (poseId.length === 0) {
+        this.defaultPoseRestoreState = DefaultPoseRestoreState.EMPTY;
+        console.info('[VrmViewerPage] scheduleDefaultPoseRestore: defaultPoseId empty, EMPTY state');
+        return;
+      }
+      // 同步 @State (确保 UI 显示与持久数据一致)
+      this.defaultPoseId = poseId;
+
+      // 验证对应姿势记录存在
+      const poseAsset: ArkWebAvatarPoseAsset | null = await this.assetLibrary.findPose(poseId);
+      if (generation !== this.defaultPoseRestoreGeneration || this.defaultPoseRestoreDisposed) {
+        this.failDefaultPoseRestore(DefaultPoseErrorCode.POSE_DEFAULT_RESTORE_STALE, 'stale generation before findPose');
+        return;
+      }
+      if (poseAsset === null) {
+        this.failDefaultPoseRestore(DefaultPoseErrorCode.POSE_DEFAULT_NOT_FOUND, `poseId not found: ${poseId}`);
+        return;
+      }
+
+      // 读取并转换持久姿势 JSON
+      this.defaultPoseRestoreState = DefaultPoseRestoreState.LOADING;
+      if (this.persistentPoseStore === null) {
+        this.failDefaultPoseRestore(DefaultPoseErrorCode.POSE_DEFAULT_PARSE_FAILED, 'persistentPoseStore null');
+        return;
+      }
+      const poseJson: string = await this.persistentPoseStore.readPoseDataAsJson(poseId);
+      if (generation !== this.defaultPoseRestoreGeneration || this.defaultPoseRestoreDisposed) {
+        this.failDefaultPoseRestore(DefaultPoseErrorCode.POSE_DEFAULT_RESTORE_STALE, 'stale generation before readPoseDataAsJson');
+        return;
+      }
+      if (poseJson.length === 0) {
+        const storeErr: string = this.persistentPoseStore.getLastError();
+        // 区分文件不存在和解析失败
+        if (storeErr.indexOf('not found') >= 0 || storeErr.indexOf('POSE_JSON_PARSE_FAILED') >= 0) {
+          this.failDefaultPoseRestore(DefaultPoseErrorCode.POSE_DEFAULT_PARSE_FAILED, `parse failed: ${storeErr}`);
+        } else {
+          this.failDefaultPoseRestore(DefaultPoseErrorCode.POSE_DEFAULT_FILE_MISSING, `read failed: ${storeErr}`);
+        }
+        return;
+      }
+
+      // 调用现有 viewerController.applyPose
+      this.defaultPoseRestoreState = DefaultPoseRestoreState.APPLYING;
+      if (this.arkWebController === null) {
+        this.failDefaultPoseRestore(DefaultPoseErrorCode.POSE_DEFAULT_APPLY_FAILED, 'arkWebController null');
+        return;
+      }
+      const resultJson: string = await this.arkWebController.applyPose(poseJson);
+      if (generation !== this.defaultPoseRestoreGeneration || this.defaultPoseRestoreDisposed) {
+        this.failDefaultPoseRestore(DefaultPoseErrorCode.POSE_DEFAULT_RESTORE_STALE, 'stale generation before applyPose result');
+        return;
+      }
+      const resultObj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
+      const success: boolean = !!resultObj['success'];
+      if (!success) {
+        const errObj: Record<string, Object> = (resultObj['error'] as Record<string, Object>) || {} as Record<string, Object>;
+        const errCode: string = (errObj['code'] as string) || '';
+        const errMsg: string = (errObj['message'] as string) || 'applyPose failed';
+        this.failDefaultPoseRestore(DefaultPoseErrorCode.POSE_DEFAULT_APPLY_FAILED, `${errCode}: ${errMsg}`);
+        return;
+      }
+
+      // 成功: 更新当前姿势状态 (与手动应用保持一致)
+      this.appliedPoseId = (resultObj['poseId'] as string) || poseId;
+      this.appliedPoseDisplayName = (resultObj['displayName'] as string) || poseAsset.displayName;
+      this.poseSystemState = (resultObj['state'] as string) || 'APPLIED';
+      this.poseAppliedBoneCount = (resultObj['appliedBoneCount'] as number) || 0;
+      this.poseIgnoredBoneCount = (resultObj['ignoredBoneCount'] as number) || 0;
+      this.poseLastErrorCode = '';
+      this.poseLastErrorMessage = '';
+      this.defaultPoseRestoreState = DefaultPoseRestoreState.READY;
+      this.defaultPoseRestoreModelGeneration = currentModelGen;
+      this.lastRestoredDefaultPoseId = poseId;
+      console.info(`[VrmViewerPage] scheduleDefaultPoseRestore ok: poseId=${poseId}, modelGen=${currentModelGen}`);
+      // 非阻塞提示 (只显示一次)
+      promptAction.showToast({
+        message: `已自动应用默认姿势: ${this.appliedPoseDisplayName}`
+      });
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      this.failDefaultPoseRestore(DefaultPoseErrorCode.POSE_DEFAULT_APPLY_FAILED, `exception: ${msg}`);
+    } finally {
+      this.defaultPoseRestoreInProgress = false;
+    }
+  }
+
+  /**
+   * Phase 3D-3: 默认姿势恢复失败处理。
+   *
+   * 策略:
+   * - 不修改 ViewerState / ModelState
+   * - 不进入无限重试
+   * - 不反复弹出 Toast (同一错误只显示一次)
+   * - 保留手动选择和应用姿势功能
+   * - 写入 Debug 状态供 UI 显示
+   */
+  private failDefaultPoseRestore(code: string, message: string): void {
+    this.defaultPoseRestoreState = DefaultPoseRestoreState.FAILED;
+    this.defaultPoseRestoreErrorCode = code;
+    this.defaultPoseRestoreErrorMessage = message;
+    console.warn(`[VrmViewerPage] defaultPoseRestore failed: ${code} ${message}`);
+    // 非阻塞提示 (只显示一次)
+    promptAction.showToast({
+      message: `默认姿势恢复失败: ${code}`
+    });
   }
 
   /**
@@ -3483,6 +3769,8 @@ struct VrmViewerPage {
     this.modelRestoreState = ArkWebModelRestoreState.READY;
     this.modelRestoreErrorCode = '';
     this.modelRestoreErrorMessage = '';
+    // Phase 3D-3: 新模型导入 → generation++ 允许对新模型重新应用一次默认姿势
+    this.modelRestoreGeneration++;
     console.info(`[VrmViewerPage] model persisted: id=${asset.modelId} size=${asset.byteLength}`);
 
     // 2. 注册到 Provider (使用 filesDir 绝对路径)
@@ -5242,6 +5530,8 @@ struct VrmViewerPage {
     if (this.preparedResource !== null) {
       this.loadDisplayName = this.preparedResource.displayName;
     }
+    // Phase 3D-3: 手动加载模型 → generation++ 允许重新应用一次默认姿势
+    this.modelRestoreGeneration++;
 
     try {
       // 1. 启动加载(同步返回 LOADING 或 FAILED 结果)
@@ -6730,6 +7020,27 @@ struct VrmViewerPage {
       if (this.poseLibraryErrorCode.length > 0) {
         this.DebugRow('库错误码', this.poseLibraryErrorCode)
       }
+
+      // Phase 3D-3: 默认姿势恢复 Debug 字段
+      // 禁止显示 absolutePath / relativePath / filesDir / 原始 URI
+      Text('默认姿势')
+        .fontSize($r('app.float.app_font_subtitle'))
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.app_text_primary'))
+        .margin({ top: 8, bottom: 8 })
+
+      this.DebugRow('Default Pose ID', this.defaultPoseId.length > 0 ? this.defaultPoseId : '无')
+      this.DebugRow('Default Pose Name', this.defaultPoseDisplayName.length > 0 ? this.defaultPoseDisplayName : '无')
+      this.DebugRow('Default Pose Restore State', this.defaultPoseRestoreState)
+      this.DebugRow('Default Pose Applied To Current Model',
+        this.defaultPoseRestoreModelGeneration === this.modelRestoreGeneration
+          && this.lastRestoredDefaultPoseId.length > 0 ? '是' : '否')
+      this.DebugRow('Default Pose Restore Generation', String(this.defaultPoseRestoreGeneration))
+
+      if (this.defaultPoseRestoreErrorCode.length > 0) {
+        this.DebugRow('Default Pose Restore Error',
+          `${this.defaultPoseRestoreErrorCode}: ${this.defaultPoseRestoreErrorMessage}`)
+      }
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)
@@ -6738,18 +7049,31 @@ struct VrmViewerPage {
   /**
    * Phase 3D-1: 姿势列表项。
    *
-   * 显示: displayName / 文件大小 / 格式 / 选中标记。
+   * 显示: displayName / 文件大小 / 格式 / 选中标记 / 默认姿势标记。
    * 点击: 仅更新 selectedPoseId (Phase 3D-2 起需点击"应用姿势"按钮才会实际应用)。
+   * Phase 3D-3: 新增"设为默认"/"取消默认"按钮, 当前默认姿势显示"默认姿势"标记。
    * 不显示: absolutePath / relativePath / filesDir / 原始 URI。
    */
   @Builder
   PoseListItem(asset: ArkWebAvatarPoseAsset) {
     Row() {
       Column() {
-        Text(asset.displayName)
-          .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_primary'))
-          .width('100%')
+        Row() {
+          Text(asset.displayName)
+            .fontSize($r('app.float.app_font_body'))
+            .fontColor($r('app.color.app_text_primary'))
+          // Phase 3D-3: 当前默认姿势标记
+          if (this.defaultPoseId === asset.poseId) {
+            Text('默认姿势')
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_text_primary'))
+              .backgroundColor($r('app.color.app_surface_2'))
+              .borderRadius($r('app.float.app_radius_sm'))
+              .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+              .margin({ left: 6 })
+          }
+        }
+        .width('100%')
         Row() {
           Text(this.formatPoseByteLength(asset.byteLength))
             .fontSize($r('app.float.app_font_caption'))
@@ -6774,7 +7098,23 @@ struct VrmViewerPage {
           .backgroundColor($r('app.color.app_surface_2'))
           .borderRadius($r('app.float.app_radius_sm'))
           .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+          .margin({ right: 6 })
       }
+
+      // Phase 3D-3: 设为默认 / 取消默认 按钮
+      // (不强制立即应用姿势, 只更新清单元数据)
+      Button(this.defaultPoseId === asset.poseId ? '取消默认' : '设为默认')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_primary'))
+        .backgroundColor($r('app.color.app_surface_2'))
+        .borderRadius($r('app.float.app_radius_sm'))
+        .height(28)
+        .enabled(this.assetLibrary !== null
+          && !this.poseImporting
+          && !this.poseApplying)
+        .onClick(() => {
+          this.onPoseToggleDefaultButton(asset.poseId);
+        })
     }
     .width('100%')
     .padding({ left: 12, right: 12, top: 8, bottom: 8 })

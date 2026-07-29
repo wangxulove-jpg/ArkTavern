@@ -410,7 +410,8 @@ export class ArkWebAvatarAssetLibrary {
       models: newModels,
       animations: data.animations,
       defaultIdleActionId: data.defaultIdleActionId,
-      poses: data.poses
+      poses: data.poses,
+      defaultPoseId: data.defaultPoseId
     };
 
     const writeOk: boolean = await this.atomicWriteLibrary(newData);
@@ -460,7 +461,8 @@ export class ArkWebAvatarAssetLibrary {
       models: data.models,
       animations: data.animations,
       defaultIdleActionId: data.defaultIdleActionId,
-      poses: data.poses
+      poses: data.poses,
+      defaultPoseId: data.defaultPoseId
     };
     const writeOk: boolean = await this.atomicWriteLibrary(newData);
     if (!writeOk) {
@@ -553,7 +555,8 @@ export class ArkWebAvatarAssetLibrary {
       models: data.models,
       animations: newAnimations,
       defaultIdleActionId: data.defaultIdleActionId,
-      poses: data.poses
+      poses: data.poses,
+      defaultPoseId: data.defaultPoseId
     };
     const writeOk: boolean = await this.atomicWriteLibrary(newData);
     if (!writeOk) {
@@ -620,7 +623,8 @@ export class ArkWebAvatarAssetLibrary {
       models: data.models,
       animations: newAnimations,
       defaultIdleActionId: data.defaultIdleActionId,
-      poses: data.poses
+      poses: data.poses,
+      defaultPoseId: data.defaultPoseId
     };
     const writeOk: boolean = await this.atomicWriteLibrary(newData);
     if (!writeOk) {
@@ -671,7 +675,8 @@ export class ArkWebAvatarAssetLibrary {
       models: data.models,
       animations: newAnimations,
       defaultIdleActionId: newDefaultIdle,
-      poses: data.poses
+      poses: data.poses,
+      defaultPoseId: data.defaultPoseId
     };
     const writeOk: boolean = await this.atomicWriteLibrary(newData);
     if (!writeOk) {
@@ -722,7 +727,8 @@ export class ArkWebAvatarAssetLibrary {
       models: data.models,
       animations: data.animations,
       defaultIdleActionId: actionId,
-      poses: data.poses
+      poses: data.poses,
+      defaultPoseId: data.defaultPoseId
     };
     const writeOk: boolean = await this.atomicWriteLibrary(newData);
     if (!writeOk) {
@@ -830,7 +836,8 @@ export class ArkWebAvatarAssetLibrary {
       models: data.models,
       animations: data.animations,
       defaultIdleActionId: data.defaultIdleActionId,
-      poses: newPoses
+      poses: newPoses,
+      defaultPoseId: data.defaultPoseId
     };
     const writeOk: boolean = await this.atomicWriteLibrary(newData);
     if (!writeOk) {
@@ -857,6 +864,77 @@ export class ArkWebAvatarAssetLibrary {
     this.initPromise = null;
   }
 
+  // ===== Phase 3D-3: 默认姿势标记操作 =====
+
+  /**
+   * 获取当前默认姿势 poseId (Phase 3D-3)。
+   * 失败或未设置返回空字符串。
+   */
+  async getDefaultPoseId(): Promise<string> {
+    if (this.disposed) {
+      return '';
+    }
+    const data: ArkWebAvatarAssetLibraryData | null = await this.readLibrary();
+    if (data === null) {
+      return '';
+    }
+    return data.defaultPoseId;
+  }
+
+  /**
+   * 设置或取消默认姿势 (Phase 3D-3)。
+   *
+   * - poseId 为空字符串: 取消默认姿势
+   * - poseId 非空: 必须存在于 poses 中 (设置前验证 poseId 存在)
+   *
+   * 不强制立即应用姿势, 只更新清单元数据。
+   *
+   * @returns 成功返回 true; 失败返回 false
+   */
+  async setDefaultPose(poseId: string): Promise<boolean> {
+    if (this.disposed) {
+      return false;
+    }
+    const data: ArkWebAvatarAssetLibraryData | null = await this.readLibrary();
+    if (data === null) {
+      return false;
+    }
+    // 非空 poseId 必须存在于 poses 中
+    if (poseId.length > 0) {
+      let found: boolean = false;
+      for (let i = 0; i < data.poses.length; i++) {
+        if (data.poses[i].poseId === poseId) {
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        console.warn(`[ArkWebAvatarAssetLibrary] setDefaultPose: poseId not found: ${poseId}`);
+        return false;
+      }
+    }
+    // 相同值不重复写入
+    if (data.defaultPoseId === poseId) {
+      return true;
+    }
+    const newData: ArkWebAvatarAssetLibraryData = {
+      schemaVersion: ASSET_LIBRARY_SCHEMA_VERSION,
+      activeModelId: data.activeModelId,
+      models: data.models,
+      animations: data.animations,
+      defaultIdleActionId: data.defaultIdleActionId,
+      poses: data.poses,
+      defaultPoseId: poseId
+    };
+    const writeOk: boolean = await this.atomicWriteLibrary(newData);
+    if (!writeOk) {
+      return false;
+    }
+    this.inMemoryData = newData;
+    console.info(`[ArkWebAvatarAssetLibrary] setDefaultPose ok poseId=${poseId}`);
+    return true;
+  }
+
   /** 是否已销毁。 */
   isDisposed(): boolean {
     return this.disposed;
@@ -875,7 +953,8 @@ export class ArkWebAvatarAssetLibrary {
       models: [],
       animations: emptyAnimations,
       defaultIdleActionId: '',
-      poses: []
+      poses: [],
+      defaultPoseId: ''
     };
   }
 
@@ -1121,13 +1200,25 @@ export class ArkWebAvatarAssetLibrary {
       defaultIdleActionId = defaultIdleObj;
     }
 
+    // defaultPoseId (Phase 3D-3 起支持默认姿势标记)
+    // 向后兼容: 缺失字段视为空字符串 (无默认姿势), 旧清单 schemaVersion 仍为 1
+    const defaultPoseIdObj: Object | undefined = o['defaultPoseId'];
+    let defaultPoseId: string = '';
+    if (defaultPoseIdObj !== undefined) {
+      if (typeof defaultPoseIdObj !== 'string') {
+        return null;
+      }
+      defaultPoseId = defaultPoseIdObj;
+    }
+
     return {
       schemaVersion: schemaVersion,
       activeModelId: activeModelIdObj as string,
       models: models,
       animations: animations,
       defaultIdleActionId: defaultIdleActionId,
-      poses: poses
+      poses: poses,
+      defaultPoseId: defaultPoseId
     };
   }
 

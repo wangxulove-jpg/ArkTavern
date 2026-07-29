@@ -65,6 +65,9 @@ export interface ArkWebAvatarModelAsset {
  * - animations 数组 (Phase 3C-1 起支持多 VRMA 持久化)
  * - defaultIdleActionId (Phase 3C-2 起支持默认待机标记, 空字符串表示无默认)
  * - poses 数组 (Phase 3D-1 起支持 JSON 姿势持久化)
+ * - defaultPoseId (Phase 3D-3 起支持默认姿势标记, 空字符串表示无默认)
+ *
+ * schemaVersion 保持 1: defaultPoseId 字段向后兼容, 旧清单缺失该字段时视为空字符串。
  */
 export interface ArkWebAvatarAssetLibraryData {
   schemaVersion: number;
@@ -73,6 +76,8 @@ export interface ArkWebAvatarAssetLibraryData {
   animations: ArkWebAvatarAnimationAsset[];
   defaultIdleActionId: string;
   poses: ArkWebAvatarPoseAsset[];
+  /** Phase 3D-3: 默认姿势 poseId (空字符串表示无默认, 旧清单缺失时兼容为空)。 */
+  defaultPoseId: string;
 }
 
 /**
@@ -344,4 +349,49 @@ export class PoseImportErrorCode {
   static readonly POSE_IMPORT_JSON_PARSE_FAILED: string = 'POSE_IMPORT_JSON_PARSE_FAILED';
   /** JSON 结构不支持。 */
   static readonly POSE_IMPORT_JSON_UNSUPPORTED: string = 'POSE_IMPORT_JSON_UNSUPPORTED';
+}
+
+/**
+ * 默认姿势管理错误码 (Phase 3D-3)。
+ *
+ * 覆盖:
+ * - 设置/取消默认姿势时的清单写入失败
+ * - 默认姿势自动恢复流程中的各阶段失败
+ *
+ * 失败策略: 默认姿势恢复失败不修改 ViewerState / ModelState,
+ * 保留手动选择和应用姿势功能, 只显示一次非阻塞提示。
+ */
+export class DefaultPoseErrorCode {
+  /** 默认姿势 poseId 在清单 poses 中找不到 (POSE_DEFAULT_NOT_FOUND)。 */
+  static readonly POSE_DEFAULT_NOT_FOUND: string = 'POSE_DEFAULT_NOT_FOUND';
+  /** 默认姿势文件不存在 (POSE_DEFAULT_FILE_MISSING)。 */
+  static readonly POSE_DEFAULT_FILE_MISSING: string = 'POSE_DEFAULT_FILE_MISSING';
+  /** 默认姿势 JSON 解析失败 (POSE_DEFAULT_PARSE_FAILED)。 */
+  static readonly POSE_DEFAULT_PARSE_FAILED: string = 'POSE_DEFAULT_PARSE_FAILED';
+  /** 默认姿势应用失败 (POSE_DEFAULT_APPLY_FAILED)。 */
+  static readonly POSE_DEFAULT_APPLY_FAILED: string = 'POSE_DEFAULT_APPLY_FAILED';
+  /** 默认姿势恢复代次过期 (POSE_DEFAULT_RESTORE_STALE)。 */
+  static readonly POSE_DEFAULT_RESTORE_STALE: string = 'POSE_DEFAULT_RESTORE_STALE';
+  /** 默认姿势标记更新时清单写入失败。 */
+  static readonly POSE_DEFAULT_WRITE_FAILED: string = 'POSE_DEFAULT_WRITE_FAILED';
+}
+
+/**
+ * 默认姿势恢复状态机 (Phase 3D-3)。
+ *
+ * 状态流转:
+ *   IDLE → WAITING_MODEL → LOADING → APPLYING → READY
+ *   IDLE → EMPTY (defaultPoseId 为空)
+ *   任意 → FAILED (恢复失败, 不影响 ViewerState / ModelState)
+ *   任意 → DISPOSED (页面销毁)
+ */
+export enum DefaultPoseRestoreState {
+  IDLE = 'IDLE',
+  WAITING_MODEL = 'WAITING_MODEL',
+  LOADING = 'LOADING',
+  APPLYING = 'APPLYING',
+  READY = 'READY',
+  EMPTY = 'EMPTY',
+  FAILED = 'FAILED',
+  DISPOSED = 'DISPOSED'
 }
