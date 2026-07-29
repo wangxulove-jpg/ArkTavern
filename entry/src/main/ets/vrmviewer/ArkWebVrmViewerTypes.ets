@@ -416,7 +416,12 @@ export class ArkWebViewerConfig {
     'loadAnimationResource',
     'playAnimation',
     'pauseAnimation',
-    'stopAnimation'
+    'stopAnimation',
+    // Phase 3D-2 — JSON 姿势解析、应用与恢复
+    'applyPose',
+    'resetPose',
+    'getPoseState',
+    'getPoseDebugState'
   ];
 
   /** Bridge 方法白名单:JavaScript → ArkTS。 */
@@ -1230,4 +1235,234 @@ export class ArkWebPresentationErrorCode {
   static readonly PANEL_STATE_INVALID: string = 'PRESENTATION_PANEL_STATE_INVALID';
   /** 页面已销毁 */
   static readonly PAGE_DISPOSED: string = 'PRESENTATION_PAGE_DISPOSED';
+}
+
+// ===== Phase 3D-2: JSON 姿势系统类型 =====
+
+/**
+ * Phase 3D-2: 姿势系统状态机(与 Web 端 ViewerPoseController.PoseState 对齐)。
+ *
+ * 状态流转:
+ *   IDLE → APPLIED (applyPose 成功)
+ *   IDLE → FAILED  (applyPose 失败,可重新应用)
+ *   APPLIED → APPLIED (重复应用,直接替换)
+ *   APPLIED → IDLE (resetPose 成功)
+ *   APPLIED → FAILED (applyPose 失败)
+ *   任意 → DISPOSED (dispose)
+ *
+ * 姿势错误不得导致 ViewerState = FAILED / ModelState = FAILED / AnimationState = FAILED。
+ */
+export enum ArkWebPoseState {
+  /** 初始状态或已恢复 */
+  IDLE = 'IDLE',
+  /** 已应用姿势 */
+  APPLIED = 'APPLIED',
+  /** 应用失败 (可重试) */
+  FAILED = 'FAILED',
+  /** 已销毁 */
+  DISPOSED = 'DISPOSED'
+}
+
+/**
+ * Phase 3D-2: 姿势系统错误代码(与 Web 端 ViewerPoseController.PoseErrorCode 对齐)。
+ *
+ * 姿势错误只影响 PoseState,不影响 ViewerState / ModelState / AnimationState。
+ */
+export class ArkWebPoseErrorCode {
+  /** 控制器已销毁 */
+  static readonly CONTROLLER_DISPOSED: string = 'POSE_CONTROLLER_DISPOSED';
+  /** 当前未绑定 VRM */
+  static readonly VRM_MISSING: string = 'POSE_VRM_MISSING';
+  /** VRM 对象无效 */
+  static readonly VRM_INVALID: string = 'POSE_VRM_INVALID';
+  /** 姿势数据非法 (非对象 / 缺字段 / 含禁止字段) */
+  static readonly POSE_DATA_INVALID: string = 'POSE_DATA_INVALID';
+  /** 未找到 bones/humanBones/pose 任一入口 */
+  static readonly POSE_BONES_MISSING: string = 'POSE_BONES_MISSING';
+  /** rotation 字段非法 (非数组/对象,长度错误,非有限数,长度接近 0) */
+  static readonly POSE_ROTATION_INVALID: string = 'POSE_ROTATION_INVALID';
+  /** 没有有效骨骼可应用 (全部被过滤) */
+  static readonly POSE_NO_VALID_BONES: string = 'POSE_NO_VALID_BONES';
+  /** humanoid 缺失或 API 不完整 */
+  static readonly HUMANOID_MISSING: string = 'POSE_HUMANOID_MISSING';
+  /** Phase 3D-2R: 旋转顺序不支持 */
+  static readonly POSE_ROTATION_ORDER_UNSUPPORTED: string = 'POSE_ROTATION_ORDER_UNSUPPORTED';
+  /** Phase 3D-2R: 坐标空间不支持 */
+  static readonly POSE_COORDINATE_SPACE_UNSUPPORTED: string = 'POSE_COORDINATE_SPACE_UNSUPPORTED';
+  /** Phase 3D-2R: position 字段非法 */
+  static readonly POSE_POSITION_INVALID: string = 'POSE_POSITION_INVALID';
+  /** Phase 3D-2R: 姿势转换失败 */
+  static readonly POSE_CONVERSION_FAILED: string = 'POSE_CONVERSION_FAILED';
+}
+
+/**
+ * Phase 3D-2: 姿势系统状态快照 (getPoseState 返回值)。
+ *
+ * 不暴露路径、文件描述符或 VRM 对象引用。
+ */
+export interface ArkWebPoseStatePayload {
+  /** 当前姿势状态 */
+  state: ArkWebPoseState;
+  /** 当前已应用的 poseId (空字符串表示无应用) */
+  poseId: string;
+  /** 当前已应用的 displayName */
+  displayName: string;
+  /** 最近一次应用的有效骨骼数 */
+  appliedBoneCount: number;
+  /** 最近一次应用的忽略骨骼数 */
+  ignoredBoneCount: number;
+}
+
+/**
+ * Phase 3D-2: 姿势系统调试状态快照 (getPoseDebugState 返回值)。
+ *
+ * 比 ArkWebPoseStatePayload 多出 lastIgnoredBones / lastErrorCode / lastErrorMessage,
+ * 供 Debug Tab 显示。
+ */
+export interface ArkWebPoseDebugState {
+  /** 当前姿势状态 */
+  state: ArkWebPoseState;
+  /** 是否已绑定 VRM */
+  vrmBound: boolean;
+  /** 当前已应用的 poseId */
+  currentPoseId: string;
+  /** 当前已应用的 displayName */
+  currentDisplayName: string;
+  /** 最近一次应用的有效骨骼数 */
+  appliedBoneCount: number;
+  /** 最近一次应用的忽略骨骼数 */
+  ignoredBoneCount: number;
+  /** 最近一次忽略的骨骼名列表 (前 20 条) */
+  lastIgnoredBones: string[];
+  /** 最近一次错误码 (空字符串表示无错误) */
+  lastErrorCode: string;
+  /** 最近一次错误消息 */
+  lastErrorMessage: string;
+  /** Phase 3D-2R: 版本同步转换的骨骼数 */
+  convertedBoneCount: number;
+  /** Phase 3D-2R: 来源格式 (bones/humanBones/pose/data) */
+  sourceFormat: string;
+  /** Phase 3D-2R: 坐标空间 */
+  coordinateSpace: string;
+  /** Phase 3D-2R: 旋转顺序 */
+  rotationOrder: string;
+  /** Phase 3D-2R: 是否存在 position */
+  positionPresent: boolean;
+  /** Phase 3D-2R: 是否应用了 position */
+  positionApplied: boolean;
+}
+
+/**
+ * Phase 3D-2: 传给 JavaScript applyPose 的受控姿势数据。
+ *
+ * ArkTS 从持久 JSON 文件读取后,必须构造此对象再序列化为 JSON 字符串传给 Web。
+ * 不得包含 absolutePath / relativePath / filesDir / 文件描述符 / 原始 URI。
+ */
+export interface ArkWebPoseData {
+  /** 姿势 ID (与持久资产 poseId 一致) */
+  poseId: string;
+  /** 显示名 */
+  displayName: string;
+  /** 骨骼映射 (key=骨骼名, value=骨骼条目) */
+  bones: Record<string, ArkWebPoseBoneEntry>;
+  /** Phase 3D-2R: 来源姿势 JSON 的 vrmVersion (空字符串表示未指定) */
+  vrmVersion: string;
+}
+
+/**
+ * Phase 3D-2: 单个骨骼的姿势条目 (本阶段只处理 rotation)。
+ */
+export interface ArkWebPoseBoneEntry {
+  /** 旋转四元数 [x, y, z, w] */
+  rotation: number[];
+}
+
+/**
+ * Phase 3D-2: 解析 getPoseState 返回的 JSON 字符串。
+ * 解析失败时返回 null。
+ */
+export function parsePoseState(jsonStr: string): ArkWebPoseStatePayload | null {
+  try {
+    const obj: Record<string, Object> = JSON.parse(jsonStr) as Record<string, Object>;
+    const stateStr: string = (obj['state'] as string) || 'IDLE';
+    let state: ArkWebPoseState = ArkWebPoseState.IDLE;
+    switch (stateStr) {
+      case 'IDLE':
+        state = ArkWebPoseState.IDLE;
+        break;
+      case 'APPLIED':
+        state = ArkWebPoseState.APPLIED;
+        break;
+      case 'FAILED':
+        state = ArkWebPoseState.FAILED;
+        break;
+      case 'DISPOSED':
+        state = ArkWebPoseState.DISPOSED;
+        break;
+      default:
+        state = ArkWebPoseState.IDLE;
+    }
+    return {
+      state: state,
+      poseId: (obj['poseId'] as string) || '',
+      displayName: (obj['displayName'] as string) || '',
+      appliedBoneCount: (obj['appliedBoneCount'] as number) || 0,
+      ignoredBoneCount: (obj['ignoredBoneCount'] as number) || 0
+    };
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * Phase 3D-2: 解析 getPoseDebugState 返回的 JSON 字符串。
+ * 解析失败时返回 null。
+ */
+export function parsePoseDebugState(jsonStr: string): ArkWebPoseDebugState | null {
+  try {
+    const obj: Record<string, Object> = JSON.parse(jsonStr) as Record<string, Object>;
+    const debugObj: Record<string, Object> = (obj['debugState'] as Record<string, Object>) || {} as Record<string, Object>;
+    const stateStr: string = (debugObj['state'] as string) || 'IDLE';
+    let state: ArkWebPoseState = ArkWebPoseState.IDLE;
+    switch (stateStr) {
+      case 'IDLE':
+        state = ArkWebPoseState.IDLE;
+        break;
+      case 'APPLIED':
+        state = ArkWebPoseState.APPLIED;
+        break;
+      case 'FAILED':
+        state = ArkWebPoseState.FAILED;
+        break;
+      case 'DISPOSED':
+        state = ArkWebPoseState.DISPOSED;
+        break;
+      default:
+        state = ArkWebPoseState.IDLE;
+    }
+    const ignoredBonesRaw: Object = debugObj['lastIgnoredBones'];
+    let ignoredBones: string[] = [];
+    if (Array.isArray(ignoredBonesRaw)) {
+      ignoredBones = (ignoredBonesRaw as Object[]).map((v: Object): string => String(v));
+    }
+    return {
+      state: state,
+      vrmBound: !!debugObj['vrmBound'],
+      currentPoseId: (debugObj['currentPoseId'] as string) || '',
+      currentDisplayName: (debugObj['currentDisplayName'] as string) || '',
+      appliedBoneCount: (debugObj['appliedBoneCount'] as number) || 0,
+      ignoredBoneCount: (debugObj['ignoredBoneCount'] as number) || 0,
+      lastIgnoredBones: ignoredBones,
+      lastErrorCode: (debugObj['lastErrorCode'] as string) || '',
+      lastErrorMessage: (debugObj['lastErrorMessage'] as string) || '',
+      convertedBoneCount: (debugObj['convertedBoneCount'] as number) || 0,
+      sourceFormat: (debugObj['sourceFormat'] as string) || '',
+      coordinateSpace: (debugObj['coordinateSpace'] as string) || '',
+      rotationOrder: (debugObj['rotationOrder'] as string) || '',
+      positionPresent: !!debugObj['positionPresent'],
+      positionApplied: !!debugObj['positionApplied']
+    };
+  } catch (e) {
+    return null;
+  }
 }

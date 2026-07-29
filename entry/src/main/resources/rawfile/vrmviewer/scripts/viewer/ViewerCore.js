@@ -45,6 +45,7 @@ import { ViewerCamera } from './ViewerCamera.js';
 import { ViewerFrameLoop } from './ViewerFrameLoop.js';
 import { ViewerModelLoader, ModelState } from './ViewerModelLoader.js';
 import { ViewerAnimationController, AnimationState } from './ViewerAnimationController.js';
+import { ViewerPoseController, PoseState } from './ViewerPoseController.js';
 
 // ===== 状态枚举 =====
 var STATE_UNINITIALIZED = 'UNINITIALIZED';
@@ -95,6 +96,8 @@ export class ViewerCore {
     this.modelLoader = null;
     /** @type {ViewerAnimationController|null} Phase 3A: 动画运行时控制器 */
     this.animationController = null;
+    /** @type {ViewerPoseController|null} Phase 3D-2: 静态姿势控制器 */
+    this.poseController = null;
     /** @type {HTMLElement|null} */
     this._container = null;
     /** @type {ResizeObserver|null} */
@@ -203,6 +206,20 @@ export class ViewerCore {
       });
       this.animationController.initialize();
       this._emitStartupDiagnostic('VIEWER_ANIMATION_CONTROLLER_READY', '', 'ViewerAnimationController initialized');
+
+      // ===== Phase 3D-2: Pose Controller =====
+      // 创建静态姿势控制器,注入 getCurrentVrm 回调(由 ModelLoader 提供)
+      // 姿势控制器独立于 ModelLoader / AnimationController,
+      // 仅持有 currentVrm / currentPoseId / 状态计数。
+      // 不阻塞 Viewer READY,失败仅记录,不改 ViewerState / ModelState / AnimationState。
+      // 不做姿势动画过渡 / CrossFade / 骨骼插值 (本阶段范围外)。
+      this.poseController = new ViewerPoseController({
+        getCurrentVrm: () => {
+          return this.modelLoader ? this.modelLoader.getCurrentVrm() : null;
+        }
+      });
+      this.poseController.initialize();
+      this._emitStartupDiagnostic('VIEWER_POSE_CONTROLLER_READY', '', 'ViewerPoseController initialized');
 
       // 启动渲染循环
       // 顺序(与 Figure animate() 行 2860-2906 一致,Phase 3A 新增 animationController.update):
@@ -756,6 +773,139 @@ export class ViewerCore {
     return this.animationController.stop(options);
   }
 
+  // ===== Phase 3D-2: Pose System (静态姿势应用与恢复) =====
+
+  /**
+   * Phase 3D-2: 应用静态姿势到当前 VRM Humanoid normalized bones。
+   *
+   * 执行顺序 (与 ViewerPoseController.applyPose 一致):
+   *   1. 前置条件检查 (未 dispose / currentVrm / humanoid / poseData 合法)
+   *   2. resetNormalizedPose()
+   *   3. 遍历有效骨骼,设置 quaternion + normalize + updateMatrix
+   *   4. 记录 currentPoseId
+   *   5. state = APPLIED
+   *
+   * 应用前会先调用 stopAnimation(),确保动画不再覆盖骨骼旋转。
+   * 应用失败不影响 ViewerState / ModelState / AnimationState。
+   *
+   * 同一姿势可以重复应用。
+   * 应用新姿势时直接替换旧姿势 (先 resetNormalizedPose 再应用),不叠加旧骨骼旋转。
+   *
+   * 未知骨骼策略: 忽略 + warning (不让整个姿势失败)
+   * 非法 rotation 策略: 拒绝该骨骼 (跳过),记录 warning
+   *
+   * @param {object} poseData 姿势数据对象
+   *   { poseId, displayName, bones | humanBones | pose }
+   * @returns {{success: boolean, state?: string, poseId?: string, displayName?: string, appliedBoneCount?: number, ignoredBoneCount?: number, error?: {code: string, message: string}}}
+   */
+  applyPose(poseData) {
+    if (this._state !== STATE_READY) {
+      return {
+        success: false,
+        error: { code: 'VIEWER_NOT_READY', message: 'Viewer not ready (state=' + this._state + ')' }
+      };
+    }
+    if (!this.poseController) {
+      return {
+        success: false,
+        error: { code: 'POSE_NOT_INITIALIZED', message: 'PoseController not initialized' }
+      };
+    }
+    // Phase 3D-2: 应用静态姿势前先停止当前动画,避免动画覆盖骨骼旋转
+    // - stopAnimation 失败仅记录,不阻塞姿势应用
+    // - stopAnimation 使用默认 resetPose=true,会调用 resetNormalizedPose
+    //   (applyPose 内部会再次 resetNormalizedPose,确保骨骼从 rest pose 开始)
+    if (this.animationController) {
+      try {
+        var animState = this.animationController.getState();
+        if (animState === 'PLAYING' || animState === 'PAUSED' || animState === 'READY') {
+          var stopResult = this.animationController.stop({ resetPose: true });
+          if (!stopResult.success) {
+            console.warn('[ViewerCore] stopAnimation before applyPose failed: ' +
+              (stopResult.error ? stopResult.error.code + ' ' + stopResult.error.message : 'unknown'));
+          }
+        }
+      } catch (e) {
+        console.warn('[ViewerCore] stopAnimation before applyPose threw: ' + (e && e.message ? e.message : String(e)));
+      }
+    }
+    return this.poseController.applyPose(poseData);
+  }
+
+  /**
+   * Phase 3D-2: 恢复 VRM Humanoid 到 normalized rest pose。
+   *
+   * 执行:
+   *   currentVrm.humanoid.resetNormalizedPose()
+   *   currentPoseId = ''
+   *   state = IDLE
+   *
+   * 恢复失败不影响 ViewerState / ModelState / AnimationState。
+   *
+   * @returns {{success: boolean, state?: string, error?: {code: string, message: string}}}
+   */
+  resetPose() {
+    if (this._state !== STATE_READY) {
+      return {
+        success: false,
+        error: { code: 'VIEWER_NOT_READY', message: 'Viewer not ready (state=' + this._state + ')' }
+      };
+    }
+    if (!this.poseController) {
+      return {
+        success: false,
+        error: { code: 'POSE_NOT_INITIALIZED', message: 'PoseController not initialized' }
+      };
+    }
+    return this.poseController.resetPose();
+  }
+
+  /**
+   * Phase 3D-2: 获取姿势系统状态(只读)。
+   *
+   * @returns {{success: boolean, state?: string, poseId?: string, displayName?: string, appliedBoneCount?: number, ignoredBoneCount?: number}}
+   */
+  getPoseState() {
+    if (!this.poseController) {
+      return {
+        success: true,
+        state: PoseState.IDLE,
+        poseId: '',
+        displayName: '',
+        appliedBoneCount: 0,
+        ignoredBoneCount: 0
+      };
+    }
+    return this.poseController.getPoseState();
+  }
+
+  /**
+   * Phase 3D-2: 获取姿势系统调试状态快照(只读)。
+   *
+   * 供 Bridge getPoseDebugState 使用,字段与 ArkWebPoseDebugState 对齐。
+   *
+   * @returns {{success: boolean, debugState?: object}}
+   */
+  getPoseDebugState() {
+    if (!this.poseController) {
+      return {
+        success: true,
+        debugState: {
+          state: PoseState.IDLE,
+          vrmBound: false,
+          currentPoseId: '',
+          currentDisplayName: '',
+          appliedBoneCount: 0,
+          ignoredBoneCount: 0,
+          lastIgnoredBones: [],
+          lastErrorCode: '',
+          lastErrorMessage: ''
+        }
+      };
+    }
+    return this.poseController.getPoseDebugState();
+  }
+
   // ===== Phase 2A-1: Camera Controls enable/disable =====
 
   /**
@@ -1230,6 +1380,25 @@ export class ViewerCore {
         }
       }
 
+      // Phase 3D-2: 模型 READY 后绑定 VRM 到姿势控制器
+      // - 绑定失败仅记录,不改 ModelState / ViewerState / AnimationState
+      // - 不自动应用旧姿势 (Phase 3D-2 不实现启动后自动应用)
+      // - 模型替换时清除姿势状态由 _replaceModelInScene 调用 unbindVrm 完成
+      if (this.poseController && this.modelLoader) {
+        var vrmForPose = this.modelLoader.getCurrentVrm();
+        if (vrmForPose) {
+          try {
+            var poseBindResult = this.poseController.bindVrm(vrmForPose);
+            if (!poseBindResult.success) {
+              console.warn('[ViewerCore] poseController.bindVrm failed: ' +
+                (poseBindResult.error ? poseBindResult.error.code + ' ' + poseBindResult.error.message : 'unknown'));
+            }
+          } catch (e) {
+            console.warn('[ViewerCore] poseController.bindVrm threw: ' + (e && e.message ? e.message : String(e)));
+          }
+        }
+      }
+
       // 通知 ArkTS 模型状态变化
       if (window.ViewerBridge && typeof window.ViewerBridge.notifyModelStateChanged === 'function') {
         window.ViewerBridge.notifyModelStateChanged(state);
@@ -1285,6 +1454,17 @@ export class ViewerCore {
         this.animationController.unbindVrm();
       } catch (e) {
         console.warn('[ViewerCore] animationController.unbindVrm threw: ' + (e && e.message ? e.message : String(e)));
+      }
+    }
+    // Phase 3D-2: 替换前先解绑旧 VRM 的姿势状态
+    // - 清除 currentPoseId / state=IDLE / 计数归零
+    // - 不自动重新应用旧姿势 (新模型由 _onModelStateChanged 重新 bindVrm,但不应用)
+    // - 不把旧模型的骨骼节点保存给新模型使用
+    if (this.poseController && previousVrm) {
+      try {
+        this.poseController.unbindVrm();
+      } catch (e) {
+        console.warn('[ViewerCore] poseController.unbindVrm threw: ' + (e && e.message ? e.message : String(e)));
       }
     }
     // 1. 新模型加入 Scene

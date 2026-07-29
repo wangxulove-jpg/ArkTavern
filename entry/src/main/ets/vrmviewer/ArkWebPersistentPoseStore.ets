@@ -75,6 +75,10 @@ import {
   ArkWebAvatarAssetLibrary,
   POSES_SUBDIR_NAME
 } from './ArkWebAvatarAssetLibrary';
+import {
+  ArkWebPoseData,
+  ArkWebPoseBoneEntry
+} from './ArkWebVrmViewerTypes';
 
 /**
  * 复制缓冲区大小: 64 KiB。
@@ -93,8 +97,9 @@ export const POSE_FORMAT_JSON: string = 'json';
 
 /**
  * 可识别的骨骼或姿势数据字段名 (任一存在且为非空对象即视为姿势 JSON)。
+ * 'data' 用于兼容 VRoid Studio 导出格式 (顶层 data 字段封装骨骼 map)。
  */
-const RECOGNIZED_POSE_FIELDS: string[] = ['bones', 'humanBones', 'pose'];
+const RECOGNIZED_POSE_FIELDS: string[] = ['bones', 'humanBones', 'pose', 'data'];
 
 /**
  * 持久化姿势存储。
@@ -175,6 +180,33 @@ export class ArkWebPersistentPoseStore {
       return null;
     }
 
+    // 确保 posesDir 目录存在 (由 AssetLibrary.ensureInitialized 创建)。
+    // 页面 aboutToAppear 的 ensureInitialized 是 fire-and-forget, 此处补一次 await 防竞态。
+    // ensureInitialized 幂等且有并发保护 (复用 initPromise), 重复调用安全。
+    const dirOk: boolean = await this.assetLibrary.ensureInitialized();
+    console.warn(`[PoseStore] importPose: ensureInitialized=${dirOk}, posesDir=${this.posesDir}`);
+    if (!dirOk) {
+      this.lastError = `${PersistentPoseErrorCode.POSE_TARGET_CREATE_FAILED}: posesDir unavailable`;
+      return null;
+    }
+
+    // 强制确保 posesDir 物理存在 (不依赖 fileIo.access, 它在 sandbox 下可能误报)。
+    // fileIo.mkdir(path, true) 递归创建, 目录已存在时 HarmonyOS 不会抛错。
+    // 但旧版本可能抛 "File exists", 用 try/catch 忽略该错误。
+    try {
+      await fileIo.mkdir(this.posesDir, true);
+      console.warn(`[PoseStore] importPose: mkdir posesDir OK (forced)`);
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      // "File exists" 视为成功,其他错误才真正失败
+      if (!/exists|Exist/i.test(msg)) {
+        console.warn(`[PoseStore] importPose: mkdir posesDir FAILED: ${msg}`);
+        this.lastError = `${PersistentPoseErrorCode.POSE_TARGET_CREATE_FAILED}: mkdir posesDir failed: ${msg}`;
+        return null;
+      }
+      console.warn(`[PoseStore] importPose: mkdir posesDir returned exists, continue`);
+    }
+
     const poseId: string = this.generatePoseId();
     const fileName: string = `${poseId}.json`;
     const finalPath: string = `${this.posesDir}/${fileName}`;
@@ -213,6 +245,7 @@ export class ArkWebPersistentPoseStore {
       }
 
       // 4. 创建 .part 文件
+      console.warn(`[PoseStore] importPose: creating partFile=${partPath}`);
       try {
         targetFile = await fileIo.open(
           partPath,
@@ -220,6 +253,7 @@ export class ArkWebPersistentPoseStore {
         );
       } catch (e) {
         const msg: string = e instanceof Error ? e.message : String(e);
+        console.warn(`[PoseStore] importPose: partFile CREATE FAILED: ${msg}, posesDir=${this.posesDir}`);
         this.lastError = `${PersistentPoseErrorCode.POSE_TARGET_CREATE_FAILED}: ${msg}`;
         return null;
       }
@@ -447,6 +481,238 @@ export class ArkWebPersistentPoseStore {
       return;
     }
     this.disposed = true;
+  }
+
+  // ===== Phase 3D-2: 读取姿势 JSON 并构造受控 ArkWebPoseData =====
+
+  /**
+   * Phase 3D-2: 根据 poseId 读取持久姿势 JSON 文件,构造受控 ArkWebPoseData。
+   *
+   * 流程:
+   * 1. 校验状态(disposed / library)
+   * 2. 从 AssetLibrary.poses 查找匹配 poseId 的 ArkWebAvatarPoseAsset
+   * 3. resolveAbsolutePath 解析绝对路径 (安全校验)
+   * 4. 读取 JSON 文件 (fileIo.open + stat + read + TextDecoder)
+   * 5. JSON.parse 解析
+   * 6. 抽取 bones/humanBones/pose 任一入口 (与 Phase 3D-1 入口一致)
+   * 7. 规范化为 ArkWebPoseData.bones map
+   *    - 每个骨骼条目必须有 rotation (数组或对象)
+   *    - rotation 必须有 4 个有限数字
+   *    - 不合法的骨骼条目被跳过(忽略),不让整个读取失败
+   * 8. 构造 ArkWebPoseData { poseId, displayName, bones }
+   * 9. 序列化为 JSON 字符串
+   *
+   * 不暴露:
+   *   - absolutePath / relativePath / filesDir
+   *   - 文件描述符
+   *   - 原始 URI
+   *
+   * @param poseId 姿势 ID
+   * @returns 受控姿势数据 JSON 字符串; 失败返回空字符串 (查看 lastError)
+   */
+  async readPoseDataAsJson(poseId: string): Promise<string> {
+    if (this.disposed) {
+      this.lastError = PersistentPoseErrorCode.POSE_STORE_DISPOSED;
+      return '';
+    }
+    if (this.assetLibrary.isDisposed()) {
+      this.lastError = PersistentPoseErrorCode.POSE_STORE_LIBRARY_INVALID;
+      return '';
+    }
+    if (poseId.length === 0) {
+      this.lastError = PersistentPoseErrorCode.POSE_JSON_PARSE_FAILED + ': poseId is empty';
+      return '';
+    }
+
+    // 查找 PoseAsset (使用 AssetLibrary.findPose,内部读取 library.json)
+    const targetAsset: ArkWebAvatarPoseAsset | null = await this.assetLibrary.findPose(poseId);
+    if (targetAsset === null) {
+      this.lastError = PersistentPoseErrorCode.POSE_JSON_PARSE_FAILED + ': poseId not found in library';
+      return '';
+    }
+
+    // 解析绝对路径
+    const absolutePath: string = this.resolveAbsolutePath(targetAsset.relativePath);
+    if (absolutePath.length === 0) {
+      this.lastError = PersistentPoseErrorCode.POSE_JSON_PARSE_FAILED + ': invalid relativePath';
+      return '';
+    }
+
+    // 读取文件
+    let file: fileIo.File | null = null;
+    try {
+      file = await fileIo.open(absolutePath, fileIo.OpenMode.READ_ONLY);
+      const stat: fileIo.Stat = await fileIo.stat(file.fd);
+      const size: number = stat.size;
+      if (size <= 0) {
+        this.lastError = PersistentPoseErrorCode.POSE_FILE_EMPTY;
+        return '';
+      }
+      const buffer: ArrayBuffer = new ArrayBuffer(size);
+      const bytesRead: number = await fileIo.read(file.fd, buffer, { length: size });
+      if (bytesRead !== size) {
+        this.lastError = PersistentPoseErrorCode.POSE_FILE_READ_FAILED + ': read incomplete';
+        return '';
+      }
+      const decoder: util.TextDecoder = util.TextDecoder.create('utf-8');
+      const text: string = decoder.decodeToString(new Uint8Array(buffer));
+
+      let parsed: object;
+      try {
+        parsed = JSON.parse(text);
+      } catch (e) {
+        const msg: string = e instanceof Error ? e.message : String(e);
+        this.lastError = `${PersistentPoseErrorCode.POSE_JSON_PARSE_FAILED}: ${msg}`;
+        return '';
+      }
+
+      // 根节点必须是对象
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        this.lastError = PersistentPoseErrorCode.POSE_JSON_ROOT_NOT_OBJECT;
+        return '';
+      }
+
+      // 抽取 bones/humanBones/pose 任一入口 (与 Phase 3D-1 一致)
+      const root: Record<string, Object> = parsed as Record<string, Object>;
+      let sourceBonesMap: Record<string, Object> | null = null;
+      for (let i = 0; i < RECOGNIZED_POSE_FIELDS.length; i++) {
+        const field: string = RECOGNIZED_POSE_FIELDS[i];
+        const v: Object | undefined = root[field];
+        if (v !== undefined && typeof v === 'object' && v !== null && !Array.isArray(v)) {
+          const fieldObj: Record<string, Object> = v as Record<string, Object>;
+          if (Object.keys(fieldObj).length > 0) {
+            sourceBonesMap = fieldObj;
+            break;
+          }
+        }
+      }
+      if (sourceBonesMap === null) {
+        this.lastError = PersistentPoseErrorCode.POSE_JSON_SCHEMA_UNSUPPORTED;
+        return '';
+      }
+
+      // 规范化为 ArkWebPoseData.bones
+      // - 每个骨骼条目必须有 rotation (数组或对象)
+      // - rotation 必须有 4 个有限数字
+      // - 不合法的骨骼条目被跳过 (忽略), 不让整个读取失败
+      // - 至少存在一个有效骨骼条目, 否则返回错误
+      const normalizedBones: Record<string, ArkWebPoseBoneEntry> = {};
+      const boneNames: string[] = Object.keys(sourceBonesMap);
+      let validCount: number = 0;
+      for (let j = 0; j < boneNames.length; j++) {
+        const boneName: string = boneNames[j];
+        if (boneName.length === 0) {
+          continue;
+        }
+        const entry: Object | undefined = sourceBonesMap[boneName];
+        if (entry === undefined || entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
+          continue;
+        }
+        const entryObj: Record<string, Object> = entry as Record<string, Object>;
+        const rotation: Object | undefined = entryObj['rotation'];
+        if (rotation === undefined || rotation === null) {
+          continue;
+        }
+        const quat: number[] | null = this.parseRotationToArray(rotation);
+        if (quat === null) {
+          continue;
+        }
+        normalizedBones[boneName] = { rotation: quat };
+        validCount++;
+      }
+      if (validCount === 0) {
+        this.lastError = PersistentPoseErrorCode.POSE_JSON_SCHEMA_UNSUPPORTED + ': no valid bone entries';
+        return '';
+      }
+
+      // Phase 3D-2R: 提取来源 JSON 的 vrmVersion (用于 Web 端版本同步)
+      let poseVrmVersion: string = '';
+      const vrmVersionRaw: Object | undefined = root['vrmVersion'];
+      if (vrmVersionRaw !== undefined && vrmVersionRaw !== null) {
+        poseVrmVersion = String(vrmVersionRaw);
+      }
+
+      // 构造 ArkWebPoseData (不暴露 absolutePath / relativePath / filesDir)
+      const poseData: ArkWebPoseData = {
+        poseId: targetAsset.poseId,
+        displayName: targetAsset.displayName,
+        bones: normalizedBones,
+        vrmVersion: poseVrmVersion
+      };
+      this.lastError = '';
+      return JSON.stringify(poseData);
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      this.lastError = `${PersistentPoseErrorCode.POSE_FILE_READ_FAILED}: ${msg}`;
+      return '';
+    } finally {
+      if (file !== null) {
+        try {
+          await fileIo.close(file);
+        } catch (_e) {
+          // 忽略
+        }
+      }
+    }
+  }
+
+  /**
+   * Phase 3D-2: 解析 rotation 字段为 [x, y, z, w] 数组。
+   *
+   * 支持格式:
+   *   - 数组 [x, y, z, w]
+   *   - 对象 { x, y, z, w }
+   *
+   * 验证:
+   *   - 必须有 4 个有限数字
+   *
+   * 注意: 此处只做有限值校验,四元数长度校验在 Web 端 ViewerPoseController 中执行。
+   * (避免 ArkTS 与 Web 端重复实现长度校验,Web 端是单一真理来源)
+   *
+   * @returns [x, y, z, w] 或 null (无效)
+   */
+  private parseRotationToArray(rotation: Object): number[] | null {
+    let x: number;
+    let y: number;
+    let z: number;
+    let w: number;
+    if (Array.isArray(rotation)) {
+      if (rotation.length !== 4) {
+        return null;
+      }
+      const arr: Object[] = rotation as Object[];
+      x = this.toFiniteNumber(arr[0]);
+      y = this.toFiniteNumber(arr[1]);
+      z = this.toFiniteNumber(arr[2]);
+      w = this.toFiniteNumber(arr[3]);
+    } else if (typeof rotation === 'object') {
+      const rObj: Record<string, Object> = rotation as Record<string, Object>;
+      x = this.toFiniteNumber(rObj['x']);
+      y = this.toFiniteNumber(rObj['y']);
+      z = this.toFiniteNumber(rObj['z']);
+      w = this.toFiniteNumber(rObj['w']);
+    } else {
+      return null;
+    }
+    if (!isFinite(x) || !isFinite(y) || !isFinite(z) || !isFinite(w)) {
+      return null;
+    }
+    return [x, y, z, w];
+  }
+
+  /**
+   * Phase 3D-2: 安全转换为有限 number。
+   * 非数字 / NaN / Infinity 返回 NaN。
+   */
+  private toFiniteNumber(v: Object): number {
+    if (typeof v === 'number') {
+      return v;
+    }
+    if (typeof v === 'string') {
+      const n: number = Number(v);
+      return n;
+    }
+    return NaN;
   }
 
   // ===== 内部方法 =====

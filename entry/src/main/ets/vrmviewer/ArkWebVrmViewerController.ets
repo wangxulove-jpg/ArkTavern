@@ -1052,6 +1052,108 @@ export class ArkWebVrmViewerController implements ArkWebViewerBridgeListener {
     }
   }
 
+  // ===== Phase 3D-2 — JSON 姿势解析、应用与恢复 =====
+
+  /**
+   * Phase 3D-2: 应用静态 JSON 姿势到当前 VRM Humanoid。
+   *
+   * ArkTS 从持久 JSON 文件读取后,必须构造受控 ArkWebPoseData 后再序列化为 JSON 字符串。
+   * 不得直接把 absolutePath / relativePath / filesDir 传给 Web。
+   *
+   * Web 端会先 stopAnimation 再 resetNormalizedPose + 应用骨骼旋转。
+   *
+   * @param poseJson 受控姿势数据 JSON 字符串
+   *   { poseId, displayName, bones | humanBones | pose }
+   * @returns JSON 字符串
+   *   成功:{"success": true, "state": "APPLIED", "poseId": "...", "displayName": "...", "appliedBoneCount": N, "ignoredBoneCount": M}
+   *   失败:{"success": false, "error": {"code": "POSE_*", "message": "..."}}
+   */
+  async applyPose(poseJson: string): Promise<string> {
+    if (this.disposed) {
+      const disposedError: ArkWebBridgeErrorPayload = { code: 'DISPOSED', message: 'controller disposed' };
+      const disposedResponse: ArkWebBridgeFailedResponse = { success: false, error: disposedError };
+      return JSON.stringify(disposedResponse);
+    }
+    try {
+      return await this.jsCaller.applyPose(poseJson);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const failedError: ArkWebBridgeErrorPayload = { code: 'POSE_APPLY_FAILED', message: msg };
+      const failedResponse: ArkWebBridgeFailedResponse = { success: false, error: failedError };
+      return JSON.stringify(failedResponse);
+    }
+  }
+
+  /**
+   * Phase 3D-2: 恢复 VRM Humanoid 到 normalized rest pose。
+   *
+   * 清空 currentPoseId, state=IDLE。
+   * 恢复失败不影响 ViewerState / ModelState / AnimationState。
+   *
+   * @returns JSON 字符串
+   *   {"success": true, "state": "IDLE"}
+   *   {"success": false, "error": {"code": "POSE_*", "message": "..."}}
+   */
+  async resetPose(): Promise<string> {
+    if (this.disposed) {
+      const disposedError: ArkWebBridgeErrorPayload = { code: 'DISPOSED', message: 'controller disposed' };
+      const disposedResponse: ArkWebBridgeFailedResponse = { success: false, error: disposedError };
+      return JSON.stringify(disposedResponse);
+    }
+    try {
+      return await this.jsCaller.resetPose();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const failedError: ArkWebBridgeErrorPayload = { code: 'POSE_RESET_FAILED', message: msg };
+      const failedResponse: ArkWebBridgeFailedResponse = { success: false, error: failedError };
+      return JSON.stringify(failedResponse);
+    }
+  }
+
+  /**
+   * Phase 3D-2: 获取姿势系统只读状态快照。
+   *
+   * @returns JSON 字符串
+   *   {"success": true, "state": "IDLE|APPLIED|FAILED|DISPOSED", "poseId": "...", "displayName": "...", "appliedBoneCount": N, "ignoredBoneCount": M}
+   */
+  async getPoseState(): Promise<string> {
+    if (this.disposed) {
+      const disposedError: ArkWebBridgeErrorPayload = { code: 'DISPOSED', message: 'controller disposed' };
+      const disposedResponse: ArkWebBridgeFailedResponse = { success: false, error: disposedError };
+      return JSON.stringify(disposedResponse);
+    }
+    try {
+      return await this.jsCaller.getPoseState();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const failedError: ArkWebBridgeErrorPayload = { code: 'POSE_STATE_QUERY_FAILED', message: msg };
+      const failedResponse: ArkWebBridgeFailedResponse = { success: false, error: failedError };
+      return JSON.stringify(failedResponse);
+    }
+  }
+
+  /**
+   * Phase 3D-2: 获取姿势系统调试状态快照(包含 lastIgnoredBones / lastErrorCode)。
+   *
+   * @returns JSON 字符串
+   *   {"success": true, "debugState": {state, vrmBound, currentPoseId, currentDisplayName, appliedBoneCount, ignoredBoneCount, lastIgnoredBones, lastErrorCode, lastErrorMessage}}
+   */
+  async getPoseDebugState(): Promise<string> {
+    if (this.disposed) {
+      const disposedError: ArkWebBridgeErrorPayload = { code: 'DISPOSED', message: 'controller disposed' };
+      const disposedResponse: ArkWebBridgeFailedResponse = { success: false, error: disposedError };
+      return JSON.stringify(disposedResponse);
+    }
+    try {
+      return await this.jsCaller.getPoseDebugState();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const failedError: ArkWebBridgeErrorPayload = { code: 'POSE_DEBUG_STATE_QUERY_FAILED', message: msg };
+      const failedResponse: ArkWebBridgeFailedResponse = { success: false, error: failedError };
+      return JSON.stringify(failedResponse);
+    }
+  }
+
   // ===== Web 组件生命周期回调 =====
 
   /**

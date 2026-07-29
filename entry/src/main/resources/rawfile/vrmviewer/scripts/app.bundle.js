@@ -44420,6 +44420,690 @@ void main() {
     }
   };
 
+  // scripts/viewer/ViewerPoseController.js
+  var PoseState = {
+    IDLE: "IDLE",
+    APPLIED: "APPLIED",
+    FAILED: "FAILED",
+    DISPOSED: "DISPOSED"
+  };
+  var PoseErrorCode = {
+    CONTROLLER_DISPOSED: "POSE_CONTROLLER_DISPOSED",
+    VRM_MISSING: "POSE_VRM_MISSING",
+    VRM_INVALID: "POSE_VRM_INVALID",
+    POSE_DATA_INVALID: "POSE_DATA_INVALID",
+    POSE_BONES_MISSING: "POSE_BONES_MISSING",
+    POSE_ROTATION_INVALID: "POSE_ROTATION_INVALID",
+    POSE_NO_VALID_BONES: "POSE_NO_VALID_BONES",
+    POSE_HUMANOID_MISSING: "POSE_HUMANOID_MISSING",
+    POSE_ROTATION_ORDER_UNSUPPORTED: "POSE_ROTATION_ORDER_UNSUPPORTED",
+    POSE_COORDINATE_SPACE_UNSUPPORTED: "POSE_COORDINATE_SPACE_UNSUPPORTED",
+    POSE_POSITION_INVALID: "POSE_POSITION_INVALID",
+    POSE_CONVERSION_FAILED: "POSE_CONVERSION_FAILED"
+  };
+  var MIN_QUATERNION_LENGTH = 1e-6;
+  var RECOGNIZED_POSE_ENTRY_FIELDS = ["bones", "humanBones", "pose", "data"];
+  var MAX_HIPS_POSITION_MAGNITUDE = 10;
+  function makeError2(code, message) {
+    return { code, message };
+  }
+  var ViewerPoseController = class {
+    constructor(options) {
+      this._state = PoseState.IDLE;
+      this.currentVrm = null;
+      this.currentPoseId = "";
+      this.currentDisplayName = "";
+      this.appliedBoneCount = 0;
+      this.ignoredBoneCount = 0;
+      this.convertedBoneCount = 0;
+      this.lastErrorCode = "";
+      this.lastErrorMessage = "";
+      this.lastIgnoredBones = [];
+      this.sourceFormat = "";
+      this.coordinateSpace = "";
+      this.rotationOrder = "XYZW";
+      this.positionPresent = false;
+      this.positionApplied = false;
+      this._vrm0HipsRotated = false;
+      this._getCurrentVrm = options && typeof options.getCurrentVrm === "function" ? options.getCurrentVrm : function() {
+        return null;
+      };
+      this._disposed = false;
+      this._tmpQuat = new Quaternion();
+      this._tmpEuler = new Euler();
+    }
+    /**
+     * 初始化控制器。幂等。
+     * @returns {{success: boolean, state: PoseState}}
+     */
+    initialize() {
+      if (this._disposed) {
+        return { success: false, state: PoseState.DISPOSED };
+      }
+      if (this._state === PoseState.IDLE || this._state === PoseState.FAILED) {
+        this._state = PoseState.IDLE;
+        this.lastErrorCode = "";
+        this.lastErrorMessage = "";
+      }
+      return { success: true, state: this._state };
+    }
+    /**
+     * 绑定 VRM。
+     *
+     * 对 VRM 0.x 模型 (metaVersion === "0"), 将 hips raw bone 的 parent 旋转 PI (绕 Y 轴),
+     * 与 OWNverse setInitPose 行为一致。
+     *
+     * @param {object} vrm
+     * @returns {{success: boolean, state: PoseState, error?: object}}
+     */
+    bindVrm(vrm) {
+      if (this._disposed) {
+        return {
+          success: false,
+          state: PoseState.DISPOSED,
+          error: makeError2(PoseErrorCode.CONTROLLER_DISPOSED, "controller disposed")
+        };
+      }
+      if (!vrm) {
+        return {
+          success: false,
+          state: this._state,
+          error: makeError2(PoseErrorCode.VRM_INVALID, "vrm is null")
+        };
+      }
+      if (this.currentVrm && this.currentVrm !== vrm) {
+        this._clearInternalState();
+      }
+      this.currentVrm = vrm;
+      this._applyVrm0HipsRotation(vrm);
+      this._state = PoseState.IDLE;
+      this.currentPoseId = "";
+      this.currentDisplayName = "";
+      this.appliedBoneCount = 0;
+      this.ignoredBoneCount = 0;
+      this.convertedBoneCount = 0;
+      this.lastIgnoredBones = [];
+      this.lastErrorCode = "";
+      this.lastErrorMessage = "";
+      return { success: true, state: this._state };
+    }
+    /**
+     * 解绑当前 VRM。
+     *
+     * 对 VRM 0.x 模型, 复位 hips parent Y 旋转为 0 (与 OWNverse resetInitPose 一致)。
+     *
+     * @returns {{success: boolean, state: PoseState}}
+     */
+    unbindVrm() {
+      if (this._disposed) {
+        return { success: false, state: PoseState.DISPOSED };
+      }
+      this._clearInternalState();
+      return { success: true, state: this._state };
+    }
+    /**
+     * 应用静态姿势。
+     *
+     * 前置条件:
+     *   - Controller 未 dispose
+     *   - currentVrm 存在
+     *   - currentVrm.humanoid 存在
+     *   - poseData 合法 (经 adaptPoseDocument 适配后)
+     *
+     * 应用顺序:
+     *   1. adaptPoseDocument (格式识别 + 版本同步)
+     *   2. resetNormalizedPose()
+     *   3. setNormalizedPose(adaptedPose)
+     *   4. (可选) 应用 hips position
+     *   5. 记录 currentPoseId / state = APPLIED
+     *
+     * 同一姿势可以重复应用, 不会产生漂移 (每次先 resetNormalizedPose)。
+     *
+     * @param {object} poseData 姿势数据对象
+     * @returns {{success: boolean, state: PoseState, poseId?: string, appliedBoneCount?: number, ignoredBoneCount?: number, error?: object}}
+     */
+    applyPose(poseData) {
+      if (this._disposed) {
+        return {
+          success: false,
+          state: PoseState.DISPOSED,
+          error: makeError2(PoseErrorCode.CONTROLLER_DISPOSED, "controller disposed")
+        };
+      }
+      if (!this.currentVrm) {
+        this._recordFailure(PoseErrorCode.VRM_MISSING, "currentVrm is null");
+        return {
+          success: false,
+          state: this._state,
+          error: makeError2(PoseErrorCode.VRM_MISSING, "currentVrm is null")
+        };
+      }
+      var humanoid = this.currentVrm.humanoid;
+      if (!humanoid || typeof humanoid.getNormalizedBoneNode !== "function" || typeof humanoid.resetNormalizedPose !== "function" || typeof humanoid.setNormalizedPose !== "function") {
+        this._recordFailure(PoseErrorCode.POSE_HUMANOID_MISSING, "humanoid missing or API incomplete");
+        return {
+          success: false,
+          state: this._state,
+          error: makeError2(PoseErrorCode.POSE_HUMANOID_MISSING, "humanoid missing or API incomplete")
+        };
+      }
+      var adapted;
+      try {
+        adapted = this.adaptPoseDocument(poseData, this.currentVrm);
+      } catch (e) {
+        var adaptMsg = e && e.message ? e.message : String(e);
+        this._recordFailure(PoseErrorCode.POSE_CONVERSION_FAILED, "adaptPoseDocument threw: " + adaptMsg);
+        return {
+          success: false,
+          state: this._state,
+          error: makeError2(PoseErrorCode.POSE_CONVERSION_FAILED, "adaptPoseDocument threw: " + adaptMsg)
+        };
+      }
+      if (!adapted.success) {
+        this._recordFailure(adapted.error.code, adapted.error.message);
+        return {
+          success: false,
+          state: this._state,
+          error: adapted.error
+        };
+      }
+      var poseId = adapted.poseId;
+      var displayName = adapted.displayName;
+      var vrmPose = adapted.vrmPose;
+      var validBoneCount = adapted.validBoneCount;
+      var ignoredCount = adapted.ignoredBoneCount;
+      var convertedCount = adapted.convertedBoneCount;
+      var hipsPosition = adapted.hipsPosition;
+      if (validBoneCount === 0) {
+        this._recordFailure(PoseErrorCode.POSE_NO_VALID_BONES, "no valid bones after adaptation");
+        return {
+          success: false,
+          state: this._state,
+          error: makeError2(PoseErrorCode.POSE_NO_VALID_BONES, "no valid bones after adaptation")
+        };
+      }
+      try {
+        humanoid.resetNormalizedPose();
+      } catch (e) {
+        var msg = e && e.message ? e.message : String(e);
+        this._recordFailure(PoseErrorCode.POSE_HUMANOID_MISSING, "resetNormalizedPose threw: " + msg);
+        return {
+          success: false,
+          state: this._state,
+          error: makeError2(PoseErrorCode.POSE_HUMANOID_MISSING, "resetNormalizedPose threw: " + msg)
+        };
+      }
+      try {
+        humanoid.setNormalizedPose(vrmPose);
+      } catch (e) {
+        var setMsg = e && e.message ? e.message : String(e);
+        this._recordFailure(PoseErrorCode.POSE_HUMANOID_MISSING, "setNormalizedPose threw: " + setMsg);
+        return {
+          success: false,
+          state: this._state,
+          error: makeError2(PoseErrorCode.POSE_HUMANOID_MISSING, "setNormalizedPose threw: " + setMsg)
+        };
+      }
+      var posApplied = false;
+      if (hipsPosition && hipsPosition.length === 3) {
+        var hipsNode = null;
+        try {
+          hipsNode = humanoid.getNormalizedBoneNode("hips");
+        } catch (_e) {
+          hipsNode = null;
+        }
+        if (hipsNode && hipsNode.position) {
+          try {
+            hipsNode.position.set(hipsPosition[0], hipsPosition[1], hipsPosition[2]);
+            if (typeof hipsNode.updateMatrix === "function") {
+              hipsNode.updateMatrix();
+            }
+            posApplied = true;
+          } catch (e) {
+            console.warn("[ViewerPoseController] apply hips.position threw: " + (e && e.message ? e.message : String(e)));
+          }
+        }
+      }
+      this.currentPoseId = poseId;
+      this.currentDisplayName = displayName;
+      this.appliedBoneCount = validBoneCount;
+      this.ignoredBoneCount = ignoredCount;
+      this.convertedBoneCount = convertedCount;
+      this.lastIgnoredBones = adapted.ignoredBones.slice(0, 20);
+      this.sourceFormat = adapted.sourceFormat;
+      this.coordinateSpace = adapted.coordinateSpace;
+      this.rotationOrder = adapted.rotationOrder;
+      this.positionPresent = adapted.positionPresent;
+      this.positionApplied = posApplied;
+      this.lastErrorCode = "";
+      this.lastErrorMessage = "";
+      this._state = PoseState.APPLIED;
+      return {
+        success: true,
+        state: this._state,
+        poseId,
+        displayName,
+        appliedBoneCount: validBoneCount,
+        ignoredBoneCount: ignoredCount,
+        convertedBoneCount: convertedCount
+      };
+    }
+    /**
+     * 恢复 VRM Humanoid 到 normalized rest pose。
+     *
+     * 执行:
+     *   currentVrm.humanoid.resetNormalizedPose()
+     *   currentPoseId = ''
+     *   state = IDLE
+     *
+     * 恢复失败不影响 ViewerState / ModelState / AnimationState。
+     *
+     * @returns {{success: boolean, state: PoseState, error?: object}}
+     */
+    resetPose() {
+      if (this._disposed) {
+        return {
+          success: false,
+          state: PoseState.DISPOSED,
+          error: makeError2(PoseErrorCode.CONTROLLER_DISPOSED, "controller disposed")
+        };
+      }
+      if (!this.currentVrm) {
+        this._resetPoseStateOnly();
+        return { success: true, state: this._state };
+      }
+      var humanoid = this.currentVrm.humanoid;
+      if (!humanoid || typeof humanoid.resetNormalizedPose !== "function") {
+        this._recordFailure(PoseErrorCode.POSE_HUMANOID_MISSING, "humanoid missing or resetNormalizedPose unavailable");
+        return {
+          success: false,
+          state: this._state,
+          error: makeError2(PoseErrorCode.POSE_HUMANOID_MISSING, "humanoid missing or resetNormalizedPose unavailable")
+        };
+      }
+      try {
+        humanoid.resetNormalizedPose();
+      } catch (e) {
+        var msg = e && e.message ? e.message : String(e);
+        this._recordFailure(PoseErrorCode.POSE_HUMANOID_MISSING, "resetNormalizedPose threw: " + msg);
+        return {
+          success: false,
+          state: this._state,
+          error: makeError2(PoseErrorCode.POSE_HUMANOID_MISSING, "resetNormalizedPose threw: " + msg)
+        };
+      }
+      this._resetPoseStateOnly();
+      return { success: true, state: this._state };
+    }
+    /**
+     * 姿势适配器: 识别来源格式, 执行版本同步, 输出统一 VRMPose。
+     *
+     * @param {object} sourceDocument 原始姿势文档 (含 poseId/displayName/bones 或 data 等)
+     * @param {object} currentVrm 当前 VRM
+     * @returns {{success: boolean, poseId?: string, displayName?: string, sourceFormat?: string,
+     *           coordinateSpace?: string, rotationOrder?: string, positionPresent?: boolean,
+     *           vrmPose?: object, validBoneCount?: number, ignoredBoneCount?: number,
+     *           convertedBoneCount?: number, hipsPosition?: number[]|null, ignoredBones?: string[],
+     *           error?: object}}
+     */
+    adaptPoseDocument(sourceDocument, currentVrm) {
+      if (!sourceDocument || typeof sourceDocument !== "object") {
+        return {
+          success: false,
+          error: makeError2(PoseErrorCode.POSE_DATA_INVALID, "sourceDocument is not an object")
+        };
+      }
+      var poseId = String(sourceDocument.poseId || "");
+      var displayName = String(sourceDocument.displayName || "");
+      var bonesMap = null;
+      var sourceFormat = "";
+      for (var i = 0; i < RECOGNIZED_POSE_ENTRY_FIELDS.length; i++) {
+        var field = RECOGNIZED_POSE_ENTRY_FIELDS[i];
+        var v = sourceDocument[field];
+        if (v && typeof v === "object" && !Array.isArray(v)) {
+          var keys = Object.keys(v);
+          if (keys.length > 0) {
+            bonesMap = v;
+            sourceFormat = field;
+            break;
+          }
+        }
+      }
+      if (!bonesMap) {
+        return {
+          success: false,
+          error: makeError2(PoseErrorCode.POSE_BONES_MISSING, "no recognized bones/humanBones/pose/data field")
+        };
+      }
+      var modelMetaVersion = "";
+      if (currentVrm && currentVrm.meta && currentVrm.meta.metaVersion) {
+        modelMetaVersion = String(currentVrm.meta.metaVersion);
+      }
+      var poseVrmVersion = String(sourceDocument.vrmVersion || "");
+      var needVersionSync = modelMetaVersion.length > 0 && poseVrmVersion.length > 0 && modelMetaVersion !== poseVrmVersion;
+      var vrmPose = {};
+      var validBoneCount = 0;
+      var ignoredCount = 0;
+      var convertedCount = 0;
+      var ignoredBones = [];
+      var hipsPosition = null;
+      var positionPresent = false;
+      var boneNames = Object.keys(bonesMap);
+      for (var j = 0; j < boneNames.length; j++) {
+        var boneName = boneNames[j];
+        if (typeof boneName !== "string" || boneName.length === 0) {
+          console.warn("[ViewerPoseController] bone name empty, skipped");
+          continue;
+        }
+        var boneEntry = bonesMap[boneName];
+        if (!boneEntry || typeof boneEntry !== "object") {
+          console.warn('[ViewerPoseController] bone "' + boneName + '" entry not an object, skipped');
+          ignoredCount++;
+          if (ignoredBones.length < 20) ignoredBones.push(boneName);
+          continue;
+        }
+        var quat = this._parseRotation(boneEntry.rotation);
+        if (!quat) {
+          console.warn('[ViewerPoseController] bone "' + boneName + '" rotation invalid, skipped');
+          ignoredCount++;
+          if (ignoredBones.length < 20) ignoredBones.push(boneName);
+          continue;
+        }
+        if (needVersionSync) {
+          quat = this._syncQuaternionVersion(quat);
+          convertedCount++;
+        }
+        var poseEntry = { rotation: quat };
+        if (boneEntry.position !== void 0 && boneEntry.position !== null) {
+          positionPresent = true;
+          var pos = this._parsePosition(boneEntry.position);
+          if (pos && boneName === "hips") {
+            hipsPosition = pos;
+            poseEntry.position = pos;
+          } else if (pos && boneName !== "hips") {
+            console.warn('[ViewerPoseController] bone "' + boneName + '" has position but only hips is supported, position ignored');
+          }
+        }
+        vrmPose[boneName] = poseEntry;
+        validBoneCount++;
+      }
+      return {
+        success: true,
+        poseId,
+        displayName,
+        sourceFormat,
+        coordinateSpace: "normalized-local",
+        rotationOrder: "XYZW",
+        positionPresent,
+        vrmPose,
+        validBoneCount,
+        ignoredBoneCount: ignoredCount,
+        convertedBoneCount: convertedCount,
+        hipsPosition,
+        ignoredBones
+      };
+    }
+    /**
+     * 获取当前姿势状态。
+     */
+    getPoseState() {
+      return {
+        success: true,
+        state: this._state,
+        poseId: this.currentPoseId,
+        displayName: this.currentDisplayName,
+        appliedBoneCount: this.appliedBoneCount,
+        ignoredBoneCount: this.ignoredBoneCount
+      };
+    }
+    /**
+     * 获取姿势系统调试状态快照。
+     */
+    getPoseDebugState() {
+      return {
+        success: true,
+        debugState: {
+          state: this._state,
+          vrmBound: !!this.currentVrm,
+          currentPoseId: this.currentPoseId,
+          currentDisplayName: this.currentDisplayName,
+          appliedBoneCount: this.appliedBoneCount,
+          ignoredBoneCount: this.ignoredBoneCount,
+          convertedBoneCount: this.convertedBoneCount,
+          lastIgnoredBones: this.lastIgnoredBones.slice(),
+          sourceFormat: this.sourceFormat,
+          coordinateSpace: this.coordinateSpace,
+          rotationOrder: this.rotationOrder,
+          positionPresent: this.positionPresent,
+          positionApplied: this.positionApplied,
+          lastErrorCode: this.lastErrorCode,
+          lastErrorMessage: this.lastErrorMessage
+        }
+      };
+    }
+    /**
+     * 销毁控制器。
+     */
+    dispose() {
+      if (this._disposed) return;
+      this._disposed = true;
+      this._clearInternalState();
+      this._state = PoseState.DISPOSED;
+    }
+    /** @returns {PoseState} */
+    getState() {
+      return this._state;
+    }
+    // ===== 内部方法 =====
+    /**
+     * VRM 0.x: 将 hips raw bone parent 旋转 PI (绕 Y 轴)。
+     * 与 OWNverse setInitPose 一致。
+     */
+    _applyVrm0HipsRotation(vrm) {
+      if (!vrm || !vrm.humanoid || typeof vrm.humanoid.getRawBoneNode !== "function") {
+        return;
+      }
+      var metaVersion = "";
+      if (vrm.meta && vrm.meta.metaVersion) {
+        metaVersion = String(vrm.meta.metaVersion);
+      }
+      if (metaVersion !== "0") {
+        return;
+      }
+      try {
+        var hipsNode = vrm.humanoid.getRawBoneNode("hips");
+        if (hipsNode && hipsNode.parent) {
+          hipsNode.parent.rotation.y = Math.PI;
+          if (typeof hipsNode.parent.updateWorldMatrix === "function") {
+            hipsNode.parent.updateWorldMatrix(true, true);
+          }
+          if (typeof hipsNode.parent.updateMatrixWorld === "function") {
+            hipsNode.parent.updateMatrixWorld(true);
+          }
+          this._vrm0HipsRotated = true;
+        }
+      } catch (e) {
+        console.warn("[ViewerPoseController] _applyVrm0HipsRotation threw: " + (e && e.message ? e.message : String(e)));
+      }
+    }
+    /**
+     * VRM 0.x: 复位 hips raw bone parent Y 旋转为 0。
+     * 与 OWNverse resetInitPose 一致。
+     */
+    _resetVrm0HipsRotation() {
+      if (!this._vrm0HipsRotated || !this.currentVrm) {
+        return;
+      }
+      try {
+        var humanoid = this.currentVrm.humanoid;
+        if (humanoid && typeof humanoid.getRawBoneNode === "function") {
+          var hipsNode = humanoid.getRawBoneNode("hips");
+          if (hipsNode && hipsNode.parent) {
+            hipsNode.parent.rotation.y = 0;
+            if (typeof humanoid.resetRawPose === "function") {
+              humanoid.resetRawPose();
+            }
+            if (typeof hipsNode.parent.updateWorldMatrix === "function") {
+              hipsNode.parent.updateWorldMatrix(true, true);
+            }
+            if (typeof hipsNode.parent.updateMatrixWorld === "function") {
+              hipsNode.parent.updateMatrixWorld(true);
+            }
+          }
+        }
+      } catch (e) {
+        console.warn("[ViewerPoseController] _resetVrm0HipsRotation threw: " + (e && e.message ? e.message : String(e)));
+      }
+      this._vrm0HipsRotated = false;
+    }
+    /**
+     * 版本同步: 对四元数转换为 Euler, 对 X 和 Z 取反, 再转回四元数。
+     * 与 OWNverse syncPoseDataBetweenVrmVersion 一致。
+     *
+     * @param {number[]} quat [x, y, z, w]
+     * @returns {number[]} 转换后的 [x, y, z, w]
+     */
+    _syncQuaternionVersion(quat) {
+      this._tmpQuat.set(quat[0], quat[1], quat[2], quat[3]);
+      this._tmpEuler.setFromQuaternion(this._tmpQuat, "XYZ");
+      this._tmpEuler.x *= -1;
+      this._tmpEuler.z *= -1;
+      this._tmpQuat.setFromEuler(this._tmpEuler);
+      return [this._tmpQuat.x, this._tmpQuat.y, this._tmpQuat.z, this._tmpQuat.w];
+    }
+    /**
+     * 解析 rotation 为 [x, y, z, w] 数组。
+     *
+     * 支持格式:
+     *   - [x, y, z, w] 数组
+     *   - { x, y, z, w } 对象
+     *
+     * 验证:
+     *   - 必须有 4 个有限数字
+     *   - 四元数长度不能接近 0
+     */
+    _parseRotation(rotation) {
+      if (rotation === null || rotation === void 0) {
+        return null;
+      }
+      var x, y, z, w;
+      if (Array.isArray(rotation)) {
+        if (rotation.length !== 4) return null;
+        x = rotation[0];
+        y = rotation[1];
+        z = rotation[2];
+        w = rotation[3];
+      } else if (typeof rotation === "object") {
+        x = rotation.x;
+        y = rotation.y;
+        z = rotation.z;
+        w = rotation.w;
+      } else {
+        return null;
+      }
+      if (typeof x !== "number" || typeof y !== "number" || typeof z !== "number" || typeof w !== "number") {
+        return null;
+      }
+      if (!isFinite(x) || !isFinite(y) || !isFinite(z) || !isFinite(w)) {
+        return null;
+      }
+      var lengthSq = x * x + y * y + z * z + w * w;
+      if (lengthSq < MIN_QUATERNION_LENGTH * MIN_QUATERNION_LENGTH) {
+        return null;
+      }
+      return [x, y, z, w];
+    }
+    /**
+     * 解析 position 为 [x, y, z] 数组。
+     *
+     * 支持格式:
+     *   - [x, y, z] 数组
+     *   - { x, y, z } 对象
+     *
+     * 验证:
+     *   - 必须有 3 个有限数字
+     *   - 位移幅度不能超过 MAX_HIPS_POSITION_MAGNITUDE
+     */
+    _parsePosition(position) {
+      if (position === null || position === void 0) {
+        return null;
+      }
+      var x, y, z;
+      if (Array.isArray(position)) {
+        if (position.length !== 3) return null;
+        x = position[0];
+        y = position[1];
+        z = position[2];
+      } else if (typeof position === "object") {
+        x = position.x;
+        y = position.y;
+        z = position.z;
+      } else {
+        return null;
+      }
+      if (typeof x !== "number" || typeof y !== "number" || typeof z !== "number") {
+        return null;
+      }
+      if (!isFinite(x) || !isFinite(y) || !isFinite(z)) {
+        return null;
+      }
+      var mag = Math.sqrt(x * x + y * y + z * z);
+      if (mag > MAX_HIPS_POSITION_MAGNITUDE) {
+        console.warn("[ViewerPoseController] hips position magnitude too large: " + mag);
+        return null;
+      }
+      return [x, y, z];
+    }
+    /**
+     * 清空内部姿势状态, 含 VRM 0.x hips parent 复位。
+     */
+    _clearInternalState() {
+      if (this._vrm0HipsRotated) {
+        this._resetVrm0HipsRotation();
+      }
+      this.currentVrm = null;
+      this.currentPoseId = "";
+      this.currentDisplayName = "";
+      this.appliedBoneCount = 0;
+      this.ignoredBoneCount = 0;
+      this.convertedBoneCount = 0;
+      this.lastIgnoredBones = [];
+      this.sourceFormat = "";
+      this.coordinateSpace = "";
+      this.positionPresent = false;
+      this.positionApplied = false;
+      if (this._state !== PoseState.DISPOSED) {
+        this._state = PoseState.IDLE;
+      }
+    }
+    /**
+     * 仅重置姿势状态字段 (不触碰 VRM)。
+     */
+    _resetPoseStateOnly() {
+      this.currentPoseId = "";
+      this.currentDisplayName = "";
+      this.appliedBoneCount = 0;
+      this.ignoredBoneCount = 0;
+      this.convertedBoneCount = 0;
+      this.lastIgnoredBones = [];
+      this.sourceFormat = "";
+      this.coordinateSpace = "";
+      this.positionPresent = false;
+      this.positionApplied = false;
+      this.lastErrorCode = "";
+      this.lastErrorMessage = "";
+      this._state = PoseState.IDLE;
+    }
+    /**
+     * 记录失败 (更新 state=FAILED + lastError)。
+     */
+    _recordFailure(code, message) {
+      this._state = PoseState.FAILED;
+      this.lastErrorCode = code;
+      this.lastErrorMessage = String(message || "");
+    }
+  };
+
   // scripts/viewer/ViewerCore.js
   var STATE_UNINITIALIZED = "UNINITIALIZED";
   var STATE_INITIALIZING = "INITIALIZING";
@@ -44433,7 +45117,7 @@ void main() {
   var ERR_CAMERA_INITIALIZATION_FAILED = "CAMERA_INITIALIZATION_FAILED";
   var ERR_VIEWER_ALREADY_DISPOSED = "VIEWER_ALREADY_DISPOSED";
   var ERR_VIEWER_NOT_READY = "VIEWER_NOT_READY";
-  function makeError2(code, message, phase, recoverable) {
+  function makeError3(code, message, phase, recoverable) {
     return {
       code,
       message,
@@ -44449,6 +45133,7 @@ void main() {
       this.frameLoop = null;
       this.modelLoader = null;
       this.animationController = null;
+      this.poseController = null;
       this._container = null;
       this._resizeObserver = null;
       this._boundWindowResize = this._onWindowResize.bind(this);
@@ -44474,10 +45159,10 @@ void main() {
      */
     async initialize(container) {
       if (this._state === STATE_DISPOSED) {
-        return { success: false, error: makeError2(ERR_VIEWER_ALREADY_DISPOSED, "Viewer already disposed", this._state, false) };
+        return { success: false, error: makeError3(ERR_VIEWER_ALREADY_DISPOSED, "Viewer already disposed", this._state, false) };
       }
       if (this._state === STATE_INITIALIZING) {
-        return { success: false, error: makeError2(ERR_SCENE_INITIALIZATION_FAILED, "initialize already in progress", this._state, true) };
+        return { success: false, error: makeError3(ERR_SCENE_INITIALIZATION_FAILED, "initialize already in progress", this._state, true) };
       }
       if (this._state === STATE_READY) {
         return { success: true, state: this._state };
@@ -44489,13 +45174,13 @@ void main() {
         this.scene = new ViewerScene();
         await this.scene.initialize(container);
         if (token !== this._initToken) {
-          return { success: false, error: makeError2(ERR_VIEWER_ALREADY_DISPOSED, "Viewer disposed during initialization", STATE_DISPOSING, false) };
+          return { success: false, error: makeError3(ERR_VIEWER_ALREADY_DISPOSED, "Viewer disposed during initialization", STATE_DISPOSING, false) };
         }
         this._emitStartupDiagnostic("VIEWER_SCENE_READY", "", "ViewerScene initialized");
         this.camera = new ViewerCamera();
         this.camera.initialize(this.scene.getRenderer().domElement);
         if (token !== this._initToken) {
-          return { success: false, error: makeError2(ERR_VIEWER_ALREADY_DISPOSED, "Viewer disposed during initialization", STATE_DISPOSING, false) };
+          return { success: false, error: makeError3(ERR_VIEWER_ALREADY_DISPOSED, "Viewer disposed during initialization", STATE_DISPOSING, false) };
         }
         this._emitStartupDiagnostic("VIEWER_CAMERA_READY", "", "ViewerCamera initialized");
         this.frameLoop = new ViewerFrameLoop();
@@ -44524,6 +45209,13 @@ void main() {
         });
         this.animationController.initialize();
         this._emitStartupDiagnostic("VIEWER_ANIMATION_CONTROLLER_READY", "", "ViewerAnimationController initialized");
+        this.poseController = new ViewerPoseController({
+          getCurrentVrm: () => {
+            return this.modelLoader ? this.modelLoader.getCurrentVrm() : null;
+          }
+        });
+        this.poseController.initialize();
+        this._emitStartupDiagnostic("VIEWER_POSE_CONTROLLER_READY", "", "ViewerPoseController initialized");
         this.frameLoop.start((deltaSeconds) => {
           if (this.modelLoader) {
             this.modelLoader.update(deltaSeconds);
@@ -44536,7 +45228,7 @@ void main() {
         });
         this._emitStartupDiagnostic("VIEWER_FRAME_LOOP_READY", "", "ViewerFrameLoop started");
         if (token !== this._initToken) {
-          return { success: false, error: makeError2(ERR_VIEWER_ALREADY_DISPOSED, "Viewer disposed during initialization", STATE_DISPOSING, false) };
+          return { success: false, error: makeError3(ERR_VIEWER_ALREADY_DISPOSED, "Viewer disposed during initialization", STATE_DISPOSING, false) };
         }
         this._state = STATE_READY;
         this._notifyReady();
@@ -44555,7 +45247,7 @@ void main() {
           code = ERR_THREE_IMPORT_FAILED;
         }
         this._state = STATE_FAILED;
-        var err = makeError2(code, msg, STATE_INITIALIZING, false);
+        var err = makeError3(code, msg, STATE_INITIALIZING, false);
         this._notifyError(err);
         this._cleanupAfterFailure();
         return { success: false, error: err };
@@ -44574,13 +45266,13 @@ void main() {
       if (this._state !== STATE_READY) {
         return {
           success: false,
-          error: makeError2(ERR_VIEWER_NOT_READY, "Viewer state is " + this._state + ", expected READY", this._state, true)
+          error: makeError3(ERR_VIEWER_NOT_READY, "Viewer state is " + this._state + ", expected READY", this._state, true)
         };
       }
       if (!this.camera) {
         return {
           success: false,
-          error: makeError2(ERR_CAMERA_INITIALIZATION_FAILED, "Camera not initialized", this._state, true)
+          error: makeError3(ERR_CAMERA_INITIALIZATION_FAILED, "Camera not initialized", this._state, true)
         };
       }
       var result = this.camera.reset({ preserveControlsEnabled: true });
@@ -44601,26 +45293,26 @@ void main() {
       if (this._state !== STATE_READY) {
         return {
           success: false,
-          error: makeError2(ERR_VIEWER_NOT_READY, "Viewer state is " + this._state + ", expected READY", this._state, true)
+          error: makeError3(ERR_VIEWER_NOT_READY, "Viewer state is " + this._state + ", expected READY", this._state, true)
         };
       }
       if (!this.camera) {
         return {
           success: false,
-          error: makeError2(ERR_CAMERA_INITIALIZATION_FAILED, "Camera not initialized", this._state, true)
+          error: makeError3(ERR_CAMERA_INITIALIZATION_FAILED, "Camera not initialized", this._state, true)
         };
       }
       if (!this.modelLoader) {
         return {
           success: false,
-          error: makeError2("MODEL_LOADER_NOT_INITIALIZED", "ModelLoader not initialized", this._state, false)
+          error: makeError3("MODEL_LOADER_NOT_INITIALIZED", "ModelLoader not initialized", this._state, false)
         };
       }
       var currentVrm = this.modelLoader.getCurrentVrm();
       if (!currentVrm || !currentVrm.scene) {
         return {
           success: false,
-          error: makeError2("CAMERA_FOCUS_MODEL_NOT_LOADED", "No current VRM loaded", this._state, false)
+          error: makeError3("CAMERA_FOCUS_MODEL_NOT_LOADED", "No current VRM loaded", this._state, false)
         };
       }
       var result = this.camera.focusOnObject(currentVrm.scene, options || {});
@@ -44635,13 +45327,13 @@ void main() {
       if (this._state !== STATE_READY) {
         return {
           success: false,
-          error: makeError2(ERR_VIEWER_NOT_READY, "Viewer state is " + this._state + ", expected READY", this._state, true)
+          error: makeError3(ERR_VIEWER_NOT_READY, "Viewer state is " + this._state + ", expected READY", this._state, true)
         };
       }
       if (!this.camera) {
         return {
           success: false,
-          error: makeError2(ERR_CAMERA_INITIALIZATION_FAILED, "Camera not initialized", this._state, true)
+          error: makeError3(ERR_CAMERA_INITIALIZATION_FAILED, "Camera not initialized", this._state, true)
         };
       }
       return this.camera.getCameraState();
@@ -44667,13 +45359,13 @@ void main() {
       if (this._state !== STATE_READY) {
         return {
           success: false,
-          error: makeError2(ERR_VIEWER_NOT_READY, "Viewer state is " + this._state + ", expected READY", this._state, true)
+          error: makeError3(ERR_VIEWER_NOT_READY, "Viewer state is " + this._state + ", expected READY", this._state, true)
         };
       }
       if (!this.camera) {
         return {
           success: false,
-          error: makeError2(ERR_CAMERA_INITIALIZATION_FAILED, "Camera not initialized", this._state, true)
+          error: makeError3(ERR_CAMERA_INITIALIZATION_FAILED, "Camera not initialized", this._state, true)
         };
       }
       return this.camera.smoothReset(options);
@@ -45007,6 +45699,129 @@ void main() {
       }
       return this.animationController.stop(options);
     }
+    // ===== Phase 3D-2: Pose System (静态姿势应用与恢复) =====
+    /**
+     * Phase 3D-2: 应用静态姿势到当前 VRM Humanoid normalized bones。
+     *
+     * 执行顺序 (与 ViewerPoseController.applyPose 一致):
+     *   1. 前置条件检查 (未 dispose / currentVrm / humanoid / poseData 合法)
+     *   2. resetNormalizedPose()
+     *   3. 遍历有效骨骼,设置 quaternion + normalize + updateMatrix
+     *   4. 记录 currentPoseId
+     *   5. state = APPLIED
+     *
+     * 应用前会先调用 stopAnimation(),确保动画不再覆盖骨骼旋转。
+     * 应用失败不影响 ViewerState / ModelState / AnimationState。
+     *
+     * 同一姿势可以重复应用。
+     * 应用新姿势时直接替换旧姿势 (先 resetNormalizedPose 再应用),不叠加旧骨骼旋转。
+     *
+     * 未知骨骼策略: 忽略 + warning (不让整个姿势失败)
+     * 非法 rotation 策略: 拒绝该骨骼 (跳过),记录 warning
+     *
+     * @param {object} poseData 姿势数据对象
+     *   { poseId, displayName, bones | humanBones | pose }
+     * @returns {{success: boolean, state?: string, poseId?: string, displayName?: string, appliedBoneCount?: number, ignoredBoneCount?: number, error?: {code: string, message: string}}}
+     */
+    applyPose(poseData) {
+      if (this._state !== STATE_READY) {
+        return {
+          success: false,
+          error: { code: "VIEWER_NOT_READY", message: "Viewer not ready (state=" + this._state + ")" }
+        };
+      }
+      if (!this.poseController) {
+        return {
+          success: false,
+          error: { code: "POSE_NOT_INITIALIZED", message: "PoseController not initialized" }
+        };
+      }
+      if (this.animationController) {
+        try {
+          var animState = this.animationController.getState();
+          if (animState === "PLAYING" || animState === "PAUSED" || animState === "READY") {
+            var stopResult = this.animationController.stop({ resetPose: true });
+            if (!stopResult.success) {
+              console.warn("[ViewerCore] stopAnimation before applyPose failed: " + (stopResult.error ? stopResult.error.code + " " + stopResult.error.message : "unknown"));
+            }
+          }
+        } catch (e) {
+          console.warn("[ViewerCore] stopAnimation before applyPose threw: " + (e && e.message ? e.message : String(e)));
+        }
+      }
+      return this.poseController.applyPose(poseData);
+    }
+    /**
+     * Phase 3D-2: 恢复 VRM Humanoid 到 normalized rest pose。
+     *
+     * 执行:
+     *   currentVrm.humanoid.resetNormalizedPose()
+     *   currentPoseId = ''
+     *   state = IDLE
+     *
+     * 恢复失败不影响 ViewerState / ModelState / AnimationState。
+     *
+     * @returns {{success: boolean, state?: string, error?: {code: string, message: string}}}
+     */
+    resetPose() {
+      if (this._state !== STATE_READY) {
+        return {
+          success: false,
+          error: { code: "VIEWER_NOT_READY", message: "Viewer not ready (state=" + this._state + ")" }
+        };
+      }
+      if (!this.poseController) {
+        return {
+          success: false,
+          error: { code: "POSE_NOT_INITIALIZED", message: "PoseController not initialized" }
+        };
+      }
+      return this.poseController.resetPose();
+    }
+    /**
+     * Phase 3D-2: 获取姿势系统状态(只读)。
+     *
+     * @returns {{success: boolean, state?: string, poseId?: string, displayName?: string, appliedBoneCount?: number, ignoredBoneCount?: number}}
+     */
+    getPoseState() {
+      if (!this.poseController) {
+        return {
+          success: true,
+          state: PoseState.IDLE,
+          poseId: "",
+          displayName: "",
+          appliedBoneCount: 0,
+          ignoredBoneCount: 0
+        };
+      }
+      return this.poseController.getPoseState();
+    }
+    /**
+     * Phase 3D-2: 获取姿势系统调试状态快照(只读)。
+     *
+     * 供 Bridge getPoseDebugState 使用,字段与 ArkWebPoseDebugState 对齐。
+     *
+     * @returns {{success: boolean, debugState?: object}}
+     */
+    getPoseDebugState() {
+      if (!this.poseController) {
+        return {
+          success: true,
+          debugState: {
+            state: PoseState.IDLE,
+            vrmBound: false,
+            currentPoseId: "",
+            currentDisplayName: "",
+            appliedBoneCount: 0,
+            ignoredBoneCount: 0,
+            lastIgnoredBones: [],
+            lastErrorCode: "",
+            lastErrorMessage: ""
+          }
+        };
+      }
+      return this.poseController.getPoseDebugState();
+    }
     // ===== Phase 2A-1: Camera Controls enable/disable =====
     /**
      * Phase 2A-1: 启用/禁用 OrbitControls。
@@ -45020,19 +45835,19 @@ void main() {
       if (this._state !== STATE_READY) {
         return {
           success: false,
-          error: makeError2(ERR_VIEWER_NOT_READY, "Viewer state is " + this._state + ", expected READY", this._state, true)
+          error: makeError3(ERR_VIEWER_NOT_READY, "Viewer state is " + this._state + ", expected READY", this._state, true)
         };
       }
       if (typeof enabled !== "boolean") {
         return {
           success: false,
-          error: makeError2("INVALID_ARGUMENT", "enabled must be a boolean", this._state, false)
+          error: makeError3("INVALID_ARGUMENT", "enabled must be a boolean", this._state, false)
         };
       }
       if (!this.camera) {
         return {
           success: false,
-          error: makeError2(ERR_CAMERA_INITIALIZATION_FAILED, "Camera not initialized", this._state, false)
+          error: makeError3(ERR_CAMERA_INITIALIZATION_FAILED, "Camera not initialized", this._state, false)
         };
       }
       return this.camera.setControlsEnabled(enabled);
@@ -45046,13 +45861,13 @@ void main() {
       if (this._state !== STATE_READY) {
         return {
           success: false,
-          error: makeError2(ERR_VIEWER_NOT_READY, "Viewer state is " + this._state + ", expected READY", this._state, true)
+          error: makeError3(ERR_VIEWER_NOT_READY, "Viewer state is " + this._state + ", expected READY", this._state, true)
         };
       }
       if (!this.camera) {
         return {
           success: false,
-          error: makeError2(ERR_CAMERA_INITIALIZATION_FAILED, "Camera not initialized", this._state, false)
+          error: makeError3(ERR_CAMERA_INITIALIZATION_FAILED, "Camera not initialized", this._state, false)
         };
       }
       return this.camera.getControlsEnabled();
@@ -45068,13 +45883,13 @@ void main() {
       if (this._state !== STATE_READY) {
         return {
           success: false,
-          error: makeError2(ERR_VIEWER_NOT_READY, "Viewer state is " + this._state + ", expected READY", this._state, true)
+          error: makeError3(ERR_VIEWER_NOT_READY, "Viewer state is " + this._state + ", expected READY", this._state, true)
         };
       }
       if (!this.scene) {
         return {
           success: false,
-          error: makeError2(ERR_SCENE_INITIALIZATION_FAILED, "Scene not initialized", this._state, false)
+          error: makeError3(ERR_SCENE_INITIALIZATION_FAILED, "Scene not initialized", this._state, false)
         };
       }
       return this.scene.setBackgroundColor(color);
@@ -45089,13 +45904,13 @@ void main() {
       if (this._state !== STATE_READY) {
         return {
           success: false,
-          error: makeError2(ERR_VIEWER_NOT_READY, "Viewer state is " + this._state + ", expected READY", this._state, true)
+          error: makeError3(ERR_VIEWER_NOT_READY, "Viewer state is " + this._state + ", expected READY", this._state, true)
         };
       }
       if (!this.scene) {
         return {
           success: false,
-          error: makeError2(ERR_SCENE_INITIALIZATION_FAILED, "Scene not initialized", this._state, false)
+          error: makeError3(ERR_SCENE_INITIALIZATION_FAILED, "Scene not initialized", this._state, false)
         };
       }
       return this.scene.setGridVisible(visible);
@@ -45110,13 +45925,13 @@ void main() {
       if (this._state !== STATE_READY) {
         return {
           success: false,
-          error: makeError2(ERR_VIEWER_NOT_READY, "Viewer state is " + this._state + ", expected READY", this._state, true)
+          error: makeError3(ERR_VIEWER_NOT_READY, "Viewer state is " + this._state + ", expected READY", this._state, true)
         };
       }
       if (!this.scene) {
         return {
           success: false,
-          error: makeError2(ERR_SCENE_INITIALIZATION_FAILED, "Scene not initialized", this._state, false)
+          error: makeError3(ERR_SCENE_INITIALIZATION_FAILED, "Scene not initialized", this._state, false)
         };
       }
       return this.scene.setLightIntensity(intensity);
@@ -45130,13 +45945,13 @@ void main() {
       if (this._state !== STATE_READY) {
         return {
           success: false,
-          error: makeError2(ERR_VIEWER_NOT_READY, "Viewer state is " + this._state + ", expected READY", this._state, true)
+          error: makeError3(ERR_VIEWER_NOT_READY, "Viewer state is " + this._state + ", expected READY", this._state, true)
         };
       }
       if (!this.scene) {
         return {
           success: false,
-          error: makeError2(ERR_SCENE_INITIALIZATION_FAILED, "Scene not initialized", this._state, false)
+          error: makeError3(ERR_SCENE_INITIALIZATION_FAILED, "Scene not initialized", this._state, false)
         };
       }
       return this.scene.getSettings();
@@ -45158,13 +45973,13 @@ void main() {
       if (this._state !== STATE_READY) {
         return {
           success: false,
-          error: makeError2(ERR_VIEWER_NOT_READY, "Viewer state is " + this._state + ", expected READY", this._state, true)
+          error: makeError3(ERR_VIEWER_NOT_READY, "Viewer state is " + this._state + ", expected READY", this._state, true)
         };
       }
       if (!this.scene) {
         return {
           success: false,
-          error: makeError2(ERR_SCENE_INITIALIZATION_FAILED, "Scene not initialized", this._state, false)
+          error: makeError3(ERR_SCENE_INITIALIZATION_FAILED, "Scene not initialized", this._state, false)
         };
       }
       var result = this.scene.initializeEnvironment();
@@ -45188,13 +46003,13 @@ void main() {
       if (this._state !== STATE_READY) {
         return {
           success: false,
-          error: makeError2(ERR_VIEWER_NOT_READY, "Viewer state is " + this._state + ", expected READY", this._state, true)
+          error: makeError3(ERR_VIEWER_NOT_READY, "Viewer state is " + this._state + ", expected READY", this._state, true)
         };
       }
       if (!this.scene) {
         return {
           success: false,
-          error: makeError2(ERR_SCENE_INITIALIZATION_FAILED, "Scene not initialized", this._state, false)
+          error: makeError3(ERR_SCENE_INITIALIZATION_FAILED, "Scene not initialized", this._state, false)
         };
       }
       var result = this.scene.setEnvironmentEnabled(enabled);
@@ -45218,13 +46033,13 @@ void main() {
       if (this._state !== STATE_READY) {
         return {
           success: false,
-          error: makeError2(ERR_VIEWER_NOT_READY, "Viewer state is " + this._state + ", expected READY", this._state, true)
+          error: makeError3(ERR_VIEWER_NOT_READY, "Viewer state is " + this._state + ", expected READY", this._state, true)
         };
       }
       if (!this.scene) {
         return {
           success: false,
-          error: makeError2(ERR_SCENE_INITIALIZATION_FAILED, "Scene not initialized", this._state, false)
+          error: makeError3(ERR_SCENE_INITIALIZATION_FAILED, "Scene not initialized", this._state, false)
         };
       }
       var result = this.scene.setSkyboxVisible(visible);
@@ -45248,13 +46063,13 @@ void main() {
       if (this._state !== STATE_READY) {
         return {
           success: false,
-          error: makeError2(ERR_VIEWER_NOT_READY, "Viewer state is " + this._state + ", expected READY", this._state, true)
+          error: makeError3(ERR_VIEWER_NOT_READY, "Viewer state is " + this._state + ", expected READY", this._state, true)
         };
       }
       if (!this.scene) {
         return {
           success: false,
-          error: makeError2(ERR_SCENE_INITIALIZATION_FAILED, "Scene not initialized", this._state, false)
+          error: makeError3(ERR_SCENE_INITIALIZATION_FAILED, "Scene not initialized", this._state, false)
         };
       }
       var result = this.scene.setEnvironmentIntensity(intensity);
@@ -45442,6 +46257,19 @@ void main() {
             }
           }
         }
+        if (this.poseController && this.modelLoader) {
+          var vrmForPose = this.modelLoader.getCurrentVrm();
+          if (vrmForPose) {
+            try {
+              var poseBindResult = this.poseController.bindVrm(vrmForPose);
+              if (!poseBindResult.success) {
+                console.warn("[ViewerCore] poseController.bindVrm failed: " + (poseBindResult.error ? poseBindResult.error.code + " " + poseBindResult.error.message : "unknown"));
+              }
+            } catch (e) {
+              console.warn("[ViewerCore] poseController.bindVrm threw: " + (e && e.message ? e.message : String(e)));
+            }
+          }
+        }
         if (window.ViewerBridge && typeof window.ViewerBridge.notifyModelStateChanged === "function") {
           window.ViewerBridge.notifyModelStateChanged(state);
         }
@@ -45490,6 +46318,13 @@ void main() {
           console.warn("[ViewerCore] animationController.unbindVrm threw: " + (e && e.message ? e.message : String(e)));
         }
       }
+      if (this.poseController && previousVrm) {
+        try {
+          this.poseController.unbindVrm();
+        } catch (e) {
+          console.warn("[ViewerCore] poseController.unbindVrm threw: " + (e && e.message ? e.message : String(e)));
+        }
+      }
       this.scene.addModel(nextVrm.scene);
       if (previousVrm && previousVrm.scene) {
         this.scene.removeModel(previousVrm.scene);
@@ -45519,32 +46354,32 @@ void main() {
       if (this._state !== STATE_READY) {
         return {
           success: false,
-          error: makeError2("VIEWER_NOT_READY", "Viewer state is " + this._state + ", expected READY", this._state, true)
+          error: makeError3("VIEWER_NOT_READY", "Viewer state is " + this._state + ", expected READY", this._state, true)
         };
       }
       if (!this.modelLoader) {
         return {
           success: false,
-          error: makeError2("MODEL_LOADER_NOT_INITIALIZED", "ModelLoader not initialized", this._state, false)
+          error: makeError3("MODEL_LOADER_NOT_INITIALIZED", "ModelLoader not initialized", this._state, false)
         };
       }
       if (!resource || typeof resource !== "object") {
         return {
           success: false,
-          error: makeError2("INVALID_RESOURCE", "resource is null or not an object", this._state, true)
+          error: makeError3("INVALID_RESOURCE", "resource is null or not an object", this._state, true)
         };
       }
       if (typeof resource.resourceUrl !== "string" || resource.resourceUrl.length === 0) {
         return {
           success: false,
-          error: makeError2("INVALID_RESOURCE", "resourceUrl missing or empty", this._state, true)
+          error: makeError3("INVALID_RESOURCE", "resourceUrl missing or empty", this._state, true)
         };
       }
       var CONTROLLED_URL_PREFIX2 = "https://ark-tavern.local/model/";
       if (resource.resourceUrl.indexOf(CONTROLLED_URL_PREFIX2) !== 0) {
         return {
           success: false,
-          error: makeError2(
+          error: makeError3(
             "INVALID_RESOURCE",
             "resourceUrl is not a controlled URL (must start with " + CONTROLLED_URL_PREFIX2 + ")",
             this._state,
@@ -45555,7 +46390,7 @@ void main() {
       if (typeof resource.displayName !== "string" || resource.displayName.length === 0) {
         return {
           success: false,
-          error: makeError2("INVALID_RESOURCE", "displayName missing or empty", this._state, true)
+          error: makeError3("INVALID_RESOURCE", "displayName missing or empty", this._state, true)
         };
       }
       this._lastCameraFocusWarning = null;
@@ -45569,7 +46404,7 @@ void main() {
         var msg = e && e.message ? e.message : String(e);
         return {
           success: false,
-          error: makeError2("MODEL_LOAD_FAILED", msg, this._state, true)
+          error: makeError3("MODEL_LOAD_FAILED", msg, this._state, true)
         };
       }
     }
@@ -47940,9 +48775,97 @@ void main() {
           var result = v.stopAnimation(options);
           return result;
         });
+      },
+      // ===== Phase 3D-2 — JSON 姿势解析、应用与恢复 (规范 §三十一) =====
+      /**
+       * Phase 3D-2: 应用静态 JSON 姿势到当前 VRM Humanoid。
+       *
+       * ArkTS 从持久 JSON 文件读取后,只发送受控字段:
+       *   { poseId, displayName, bones | humanBones | pose }
+       * 不得包含 absolutePath / relativePath / filesDir / 文件描述符 / 原始 URI。
+       *
+       * 应用前 ViewerCore 会先 stopAnimation,避免动画覆盖骨骼旋转。
+       *
+       * @param {string} poseJson 姿势数据 JSON 字符串
+       * @returns {string} JSON 结果
+       *   成功:{"success": true, "state": "APPLIED", "poseId": "...", "displayName": "...", "appliedBoneCount": N, "ignoredBoneCount": M}
+       *   失败:{"success": false, "error": {"code": "POSE_*", "message": "..."}}
+       */
+      applyPose: function(poseJson) {
+        if (typeof poseJson !== "string" || poseJson.length === 0) {
+          return jsonResult({
+            success: false,
+            error: { code: "POSE_DATA_INVALID", message: "poseJson must be a non-empty string" }
+          });
+        }
+        var poseData;
+        try {
+          poseData = JSON.parse(poseJson);
+        } catch (e) {
+          return jsonResult({
+            success: false,
+            error: { code: "POSE_DATA_INVALID", message: "poseJson is not valid JSON: " + (e && e.message ? e.message : String(e)) }
+          });
+        }
+        if (!poseData || typeof poseData !== "object" || Array.isArray(poseData)) {
+          return jsonResult({
+            success: false,
+            error: { code: "POSE_DATA_INVALID", message: "poseJson parsed to non-object" }
+          });
+        }
+        var forbiddenPose = ["absolutePath", "relativePath", "filesDir", "fileDescriptor", "sourceUri", "cachePath"];
+        for (var i = 0; i < forbiddenPose.length; i++) {
+          if (Object.prototype.hasOwnProperty.call(poseData, forbiddenPose[i])) {
+            return jsonResult({
+              success: false,
+              error: { code: "POSE_DATA_INVALID", message: "Forbidden field present: " + forbiddenPose[i] }
+            });
+          }
+        }
+        return callViewer(function(v) {
+          var result = v.applyPose(poseData);
+          return result;
+        });
+      },
+      /**
+       * Phase 3D-2: 恢复 VRM Humanoid 到 normalized rest pose。
+       *
+       * @returns {string} JSON 结果
+       *   {"success": true, "state": "IDLE"}
+       *   {"success": false, "error": {"code": "POSE_*", "message": "..."}}
+       */
+      resetPose: function() {
+        return callViewer(function(v) {
+          var result = v.resetPose();
+          return result;
+        });
+      },
+      /**
+       * Phase 3D-2: 获取姿势系统状态(只读)。
+       *
+       * @returns {string} JSON 结果
+       *   {"success": true, "state": "IDLE|APPLIED|FAILED|DISPOSED", "poseId": "...", "displayName": "...", "appliedBoneCount": N, "ignoredBoneCount": M}
+       */
+      getPoseState: function() {
+        return callViewer(function(v) {
+          var result = v.getPoseState();
+          return result;
+        });
+      },
+      /**
+       * Phase 3D-2: 获取姿势系统调试状态快照(只读)。
+       *
+       * @returns {string} JSON 结果
+       *   {"success": true, "debugState": {state, vrmBound, currentPoseId, currentDisplayName, appliedBoneCount, ignoredBoneCount, lastIgnoredBones, lastErrorCode, lastErrorMessage}}
+       */
+      getPoseDebugState: function() {
+        return callViewer(function(v) {
+          var result = v.getPoseDebugState();
+          return { success: true, debugState: result.debugState };
+        });
       }
     };
-    console.log("[App] arkTavernViewerBridge registered (Phase 1B + 1D-2A + 1D-2B-1 + 1D-2B-2 + 1D-2C-1 + 1D-2C-2A + 2A-1 + 2F + 3A, delegates to ViewerCore + preparedResource keeper + probe + userModelLoadCoordinator + runtimeDiagnostics keeper + cameraControls + sceneSettings + animationController)");
+    console.log("[App] arkTavernViewerBridge registered (Phase 1B + 1D-2A + 1D-2B-1 + 1D-2B-2 + 1D-2C-1 + 1D-2C-2A + 2A-1 + 2F + 3A + 3D-2, delegates to ViewerCore + preparedResource keeper + probe + userModelLoadCoordinator + runtimeDiagnostics keeper + cameraControls + sceneSettings + animationController + poseController)");
     emitStartupDiagnostic("JS_BRIDGE_BOUND", "", "arkTavernViewerBridge registered");
     async function onDomReady() {
       emitStartupDiagnostic("ARKWEB_PAGE_END", "", "DOM ready, page loaded");

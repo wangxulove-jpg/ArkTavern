@@ -611,6 +611,22 @@ struct VrmViewerPage {
   @State poseLibraryErrorCode: string = '';
   /** 姿势库错误消息。 */
   @State poseLibraryErrorMessage: string = '';
+  /** Phase 3D-2: 姿势应用是否进行中 (applyPose 调用期间)。 */
+  @State poseApplying: boolean = false;
+  /** Phase 3D-2: 当前已应用的 poseId (空字符串表示无应用)。 */
+  @State appliedPoseId: string = '';
+  /** Phase 3D-2: 当前已应用的姿势显示名。 */
+  @State appliedPoseDisplayName: string = '';
+  /** Phase 3D-2: 姿势系统状态文本 (IDLE/APPLIED/FAILED/DISPOSED)。 */
+  @State poseSystemState: string = 'IDLE';
+  /** Phase 3D-2: 最近一次应用的有效骨骼数。 */
+  @State poseAppliedBoneCount: number = 0;
+  /** Phase 3D-2: 最近一次应用的忽略骨骼数。 */
+  @State poseIgnoredBoneCount: number = 0;
+  /** Phase 3D-2: 最近一次姿势错误码 (空字符串表示无错误)。 */
+  @State poseLastErrorCode: string = '';
+  /** Phase 3D-2: 最近一次姿势错误消息。 */
+  @State poseLastErrorMessage: string = '';
   /** 删除确认对话框是否显示 (Phase 3C-2, 页面内确认状态, 不引入新 API)。 */
   @State animationDeleteConfirmVisible: boolean = false;
   /** 删除确认对话框待删除的 actionId。 */
@@ -958,6 +974,15 @@ struct VrmViewerPage {
     this.poseImporting = false;
     this.poseLibraryErrorCode = '';
     this.poseLibraryErrorMessage = '';
+    // Phase 3D-2: 清空姿势应用状态 (不调用 resetPose, Viewer 已 dispose)
+    this.poseApplying = false;
+    this.appliedPoseId = '';
+    this.appliedPoseDisplayName = '';
+    this.poseSystemState = 'IDLE';
+    this.poseAppliedBoneCount = 0;
+    this.poseIgnoredBoneCount = 0;
+    this.poseLastErrorCode = '';
+    this.poseLastErrorMessage = '';
     // Phase 3B:13. 销毁 Phase 3B 持久化资源(不删除 filesDir 下的模型文件与 library.json)
     // 标记 restoreDisposed 阻止异步恢复回调
     this.restoreDisposed = true;
@@ -1708,15 +1733,176 @@ struct VrmViewerPage {
   /**
    * Phase 3D-1: 点击姿势列表项处理。
    *
-   * 本阶段仅更新 selectedPoseId, 不应用姿势到模型骨骼。
-   * 姿势应用将在 Phase 3D-2 接入。
+   * Phase 3D-2: 仍仅更新 selectedPoseId, 不直接应用姿势。
+   * 用户需点击"应用姿势"按钮才会触发实际应用。
    */
   private onPoseListItemClick(poseId: string): void {
     if (poseId.length === 0) {
       return;
     }
     this.selectedPoseId = poseId;
-    promptAction.showToast({ message: '姿势应用将在下一项接入' });
+  }
+
+  /**
+   * Phase 3D-2: 点击"应用姿势"按钮处理。
+   *
+   * 启用条件:
+   *   - selectedPoseId 非空
+   *   - 模型 READY (debugModelState === 'READY')
+   *   - 当前没有姿势导入任务 (!poseImporting)
+   *   - 当前没有姿势应用任务 (!poseApplying)
+   *
+   * 流程:
+   *   1. 停止当前动画 (Web 端 applyPose 内部会调用 stopAnimation)
+   *   2. 从 PersistentPoseStore 读取姿势 JSON 文件,构造受控 ArkWebPoseData
+   *   3. 调用 Controller.applyPose(poseJson)
+   *   4. 解析返回结果,更新 appliedPoseId / poseSystemState / 计数 / 错误
+   *   5. 显示实际成功或错误码
+   */
+  private async onApplyPoseClick(): Promise<void> {
+    if (this.selectedPoseId.length === 0) {
+      this.poseLastErrorCode = 'POSE_NO_SELECTION';
+      this.poseLastErrorMessage = '请先选择一个姿势';
+      promptAction.showToast({ message: '请先选择一个姿势' });
+      return;
+    }
+    if (this.poseImporting) {
+      this.poseLastErrorCode = 'POSE_IMPORT_IN_PROGRESS';
+      this.poseLastErrorMessage = '姿势导入进行中,请稍后';
+      promptAction.showToast({ message: '姿势导入进行中,请稍后' });
+      return;
+    }
+    if (this.poseApplying) {
+      this.poseLastErrorCode = 'POSE_APPLY_IN_PROGRESS';
+      this.poseLastErrorMessage = '姿势应用进行中,请稍后';
+      promptAction.showToast({ message: '姿势应用进行中,请稍后' });
+      return;
+    }
+    if (this.arkWebController === null) {
+      this.poseLastErrorCode = 'POSE_VIEWER_CONTROLLER_NULL';
+      this.poseLastErrorMessage = 'Viewer 控制器未初始化';
+      promptAction.showToast({ message: this.poseLastErrorMessage });
+      return;
+    }
+    if (this.persistentPoseStore === null) {
+      this.poseLastErrorCode = 'POSE_STORE_NULL';
+      this.poseLastErrorMessage = '姿势存储未初始化';
+      promptAction.showToast({ message: this.poseLastErrorMessage });
+      return;
+    }
+    if (this.debugModelState !== 'READY') {
+      this.poseLastErrorCode = 'POSE_MODEL_NOT_READY';
+      this.poseLastErrorMessage = `模型未就绪 (state=${this.debugModelState})`;
+      promptAction.showToast({ message: this.poseLastErrorMessage });
+      return;
+    }
+
+    this.poseApplying = true;
+    this.poseLastErrorCode = '';
+    this.poseLastErrorMessage = '';
+    try {
+      // 1. 从持久存储读取姿势 JSON,构造受控 ArkWebPoseData
+      console.warn(`[PoseUI] onApplyPoseClick: poseId=${this.selectedPoseId}, modelState=${this.debugModelState}`);
+      const poseJson: string = await this.persistentPoseStore.readPoseDataAsJson(this.selectedPoseId);
+      console.warn(`[PoseUI] onApplyPoseClick: poseJson length=${poseJson.length}, lastError=${this.persistentPoseStore.getLastError()}`);
+      if (poseJson.length === 0) {
+        this.poseLastErrorCode = this.persistentPoseStore.getLastError() || 'POSE_READ_FAILED';
+        this.poseLastErrorMessage = `读取姿势失败: ${this.poseLastErrorCode}`;
+        this.poseSystemState = 'FAILED';
+        promptAction.showToast({ message: this.poseLastErrorMessage });
+        return;
+      }
+
+      // 2. 调用 Controller.applyPose (Web 端会先 stopAnimation 再 resetNormalizedPose + 应用)
+      console.warn(`[PoseUI] onApplyPoseClick: calling arkWebController.applyPose`);
+      const resultJson: string = await this.arkWebController.applyPose(poseJson);
+      console.warn(`[PoseUI] onApplyPoseClick: applyPose result length=${resultJson.length}`);
+      const resultObj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
+      const success: boolean = !!resultObj['success'];
+      if (success) {
+        this.appliedPoseId = (resultObj['poseId'] as string) || this.selectedPoseId;
+        this.appliedPoseDisplayName = (resultObj['displayName'] as string) || '';
+        this.poseSystemState = (resultObj['state'] as string) || 'APPLIED';
+        this.poseAppliedBoneCount = (resultObj['appliedBoneCount'] as number) || 0;
+        this.poseIgnoredBoneCount = (resultObj['ignoredBoneCount'] as number) || 0;
+        this.poseLastErrorCode = '';
+        this.poseLastErrorMessage = '';
+        promptAction.showToast({
+          message: `姿势已应用: ${this.appliedPoseDisplayName} (有效 ${this.poseAppliedBoneCount} 骨骼, 忽略 ${this.poseIgnoredBoneCount})`
+        });
+      } else {
+        const errObj: Record<string, Object> = (resultObj['error'] as Record<string, Object>) || {} as Record<string, Object>;
+        this.poseLastErrorCode = (errObj['code'] as string) || 'POSE_APPLY_FAILED';
+        this.poseLastErrorMessage = (errObj['message'] as string) || '姿势应用失败';
+        this.poseSystemState = 'FAILED';
+        promptAction.showToast({ message: `姿势应用失败: ${this.poseLastErrorCode}` });
+      }
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      this.poseLastErrorCode = 'POSE_APPLY_EXCEPTION';
+      this.poseLastErrorMessage = `姿势应用异常: ${msg}`;
+      this.poseSystemState = 'FAILED';
+      promptAction.showToast({ message: this.poseLastErrorMessage });
+    } finally {
+      this.poseApplying = false;
+    }
+  }
+
+  /**
+   * Phase 3D-2: 点击"恢复姿势"按钮处理。
+   *
+   * 流程:
+   *   1. 调用 Controller.resetPose() (Web 端会 resetNormalizedPose + 清空 currentPoseId)
+   *   2. 解析返回结果,更新 appliedPoseId / poseSystemState
+   *   3. 显示实际成功或错误码
+   *
+   * 恢复失败不影响 ViewerState / ModelState / AnimationState。
+   */
+  private async onResetPoseClick(): Promise<void> {
+    if (this.poseApplying) {
+      this.poseLastErrorCode = 'POSE_APPLY_IN_PROGRESS';
+      this.poseLastErrorMessage = '姿势应用进行中,请稍后';
+      promptAction.showToast({ message: '姿势应用进行中,请稍后' });
+      return;
+    }
+    if (this.arkWebController === null) {
+      this.poseLastErrorCode = 'POSE_VIEWER_CONTROLLER_NULL';
+      this.poseLastErrorMessage = 'Viewer 控制器未初始化';
+      promptAction.showToast({ message: this.poseLastErrorMessage });
+      return;
+    }
+    if (this.debugModelState !== 'READY') {
+      this.poseLastErrorCode = 'POSE_MODEL_NOT_READY';
+      this.poseLastErrorMessage = `模型未就绪 (state=${this.debugModelState})`;
+      promptAction.showToast({ message: this.poseLastErrorMessage });
+      return;
+    }
+
+    try {
+      const resultJson: string = await this.arkWebController.resetPose();
+      const resultObj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
+      const success: boolean = !!resultObj['success'];
+      if (success) {
+        this.appliedPoseId = '';
+        this.appliedPoseDisplayName = '';
+        this.poseSystemState = (resultObj['state'] as string) || 'IDLE';
+        this.poseAppliedBoneCount = 0;
+        this.poseIgnoredBoneCount = 0;
+        this.poseLastErrorCode = '';
+        this.poseLastErrorMessage = '';
+        promptAction.showToast({ message: '已恢复标准姿势' });
+      } else {
+        const errObj: Record<string, Object> = (resultObj['error'] as Record<string, Object>) || {} as Record<string, Object>;
+        this.poseLastErrorCode = (errObj['code'] as string) || 'POSE_RESET_FAILED';
+        this.poseLastErrorMessage = (errObj['message'] as string) || '姿势恢复失败';
+        promptAction.showToast({ message: `姿势恢复失败: ${this.poseLastErrorCode}` });
+      }
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      this.poseLastErrorCode = 'POSE_RESET_EXCEPTION';
+      this.poseLastErrorMessage = `姿势恢复异常: ${msg}`;
+      promptAction.showToast({ message: this.poseLastErrorMessage });
+    }
   }
 
   /**
@@ -5178,6 +5364,9 @@ struct VrmViewerPage {
       this.loadInProgress = false;
       if (this.loadState === 'READY') {
         promptAction.showToast({ message: '用户模型加载成功' });
+        // Phase 3D-2:模型加载成功后刷新 Debug 场景状态,同步 debugModelState='READY'
+        // 否则姿势/动画等依赖 debugModelState==='READY' 的按钮会一直保持禁用
+        this.refreshDebugSceneState();
       } else if (this.loadState === 'FAILED') {
         promptAction.showToast({ message: '模型加载失败,当前模型已保留' });
       }
@@ -6481,6 +6670,41 @@ struct VrmViewerPage {
         .alignListItem(ListItemAlign.Center)
       }
 
+      // Phase 3D-2: 应用 / 恢复 按钮
+      Row() {
+        Button('应用姿势')
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor($r('app.color.app_text_primary'))
+          .backgroundColor($r('app.color.app_surface_2'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(36)
+          .layoutWeight(1)
+          .enabled(this.selectedPoseId.length > 0
+            && this.debugModelState === 'READY'
+            && !this.poseImporting
+            && !this.poseApplying)
+          .onClick(() => {
+            this.onApplyPoseClick();
+          })
+
+        Button('恢复姿势')
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor($r('app.color.app_text_primary'))
+          .backgroundColor($r('app.color.app_surface_2'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(36)
+          .layoutWeight(1)
+          .margin({ left: 8 })
+          .enabled(this.appliedPoseId.length > 0
+            && this.debugModelState === 'READY'
+            && !this.poseApplying)
+          .onClick(() => {
+            this.onResetPoseClick();
+          })
+      }
+      .width('100%')
+      .margin({ bottom: 16 })
+
       // 状态显示区
       Text('姿势状态')
         .fontSize($r('app.float.app_font_subtitle'))
@@ -6491,16 +6715,21 @@ struct VrmViewerPage {
       this.DebugRow('姿势数量', this.poseAssets.length > 0 ? String(this.poseAssets.length) : '0')
       this.DebugRow('选中姿势', this.selectedPoseId.length > 0 ? this.selectedPoseId : '未选中')
       this.DebugRow('导入中', this.poseImporting ? '是' : '否')
+      this.DebugRow('应用中', this.poseApplying ? '是' : '否')
+      this.DebugRow('姿势状态', this.poseSystemState)
+      this.DebugRow('已应用姿势', this.appliedPoseId.length > 0
+        ? `${this.appliedPoseDisplayName} (${this.appliedPoseId})`
+        : '无')
+      this.DebugRow('有效骨骼数', this.poseAppliedBoneCount > 0 ? String(this.poseAppliedBoneCount) : '0')
+      this.DebugRow('忽略骨骼数', this.poseIgnoredBoneCount > 0 ? String(this.poseIgnoredBoneCount) : '0')
 
-      if (this.poseLibraryErrorCode.length > 0) {
-        this.DebugRow('错误码', this.poseLibraryErrorCode)
+      if (this.poseLastErrorCode.length > 0) {
+        this.DebugRow('姿势错误码', this.poseLastErrorCode)
       }
 
-      // Phase 3D-1: 提示本阶段不应用姿势
-      Text('本阶段仅管理姿势资产,姿势应用将在下一项接入')
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
-        .margin({ top: 8 })
+      if (this.poseLibraryErrorCode.length > 0) {
+        this.DebugRow('库错误码', this.poseLibraryErrorCode)
+      }
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)
@@ -6510,7 +6739,7 @@ struct VrmViewerPage {
    * Phase 3D-1: 姿势列表项。
    *
    * 显示: displayName / 文件大小 / 格式 / 选中标记。
-   * 点击: 仅更新 selectedPoseId (本阶段不应用姿势)。
+   * 点击: 仅更新 selectedPoseId (Phase 3D-2 起需点击"应用姿势"按钮才会实际应用)。
    * 不显示: absolutePath / relativePath / filesDir / 原始 URI。
    */
   @Builder

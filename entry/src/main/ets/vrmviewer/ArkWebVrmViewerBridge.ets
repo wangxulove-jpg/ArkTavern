@@ -755,6 +755,69 @@ export class ArkWebViewerJsCaller {
     return this.callWithStringArg('stopAnimation', optionsJson);
   }
 
+  // ===== Phase 3D-2 — JSON 姿势解析、应用与恢复 =====
+
+  /**
+   * Phase 3D-2: 调用 window.arkTavernViewerBridge.applyPose(poseJson)
+   *
+   * 将 ArkTS 从持久 JSON 文件读取并构造的受控姿势数据传给 Web 端,
+   * 应用到当前 VRM Humanoid 的 normalized bones。
+   *
+   * Web 端会:
+   *   1. 字段白名单校验(禁止 absolutePath / relativePath / filesDir 等)
+   *   2. 应用前 stopAnimation
+   *   3. resetNormalizedPose
+   *   4. 遍历有效骨骼,设置 quaternion + normalize + updateMatrix
+   *   5. 记录 currentPoseId, state=APPLIED
+   *
+   * @param poseJson 受控姿势数据 JSON 字符串
+   *   { poseId, displayName, bones | humanBones | pose }
+   * @returns JSON 字符串
+   *   成功:{"success": true, "state": "APPLIED", "poseId": "...", "displayName": "...", "appliedBoneCount": N, "ignoredBoneCount": M}
+   *   失败:{"success": false, "error": {"code": "POSE_*", "message": "..."}}
+   */
+  async applyPose(poseJson: string): Promise<string> {
+    return this.callWithStringArg('applyPose', poseJson);
+  }
+
+  /**
+   * Phase 3D-2: 调用 window.arkTavernViewerBridge.resetPose()
+   *
+   * 恢复 VRM Humanoid 到 normalized rest pose,清空 currentPoseId。
+   * 恢复失败不影响 ViewerState / ModelState / AnimationState。
+   *
+   * @returns JSON 字符串
+   *   {"success": true, "state": "IDLE"}
+   *   {"success": false, "error": {"code": "POSE_*", "message": "..."}}
+   */
+  async resetPose(): Promise<string> {
+    return this.call('resetPose');
+  }
+
+  /**
+   * Phase 3D-2: 调用 window.arkTavernViewerBridge.getPoseState()
+   *
+   * 获取姿势系统只读状态快照。
+   *
+   * @returns JSON 字符串
+   *   {"success": true, "state": "IDLE|APPLIED|FAILED|DISPOSED", "poseId": "...", "displayName": "...", "appliedBoneCount": N, "ignoredBoneCount": M}
+   */
+  async getPoseState(): Promise<string> {
+    return this.call('getPoseState');
+  }
+
+  /**
+   * Phase 3D-2: 调用 window.arkTavernViewerBridge.getPoseDebugState()
+   *
+   * 获取姿势系统调试状态快照(包含 lastIgnoredBones / lastErrorCode / lastErrorMessage)。
+   *
+   * @returns JSON 字符串
+   *   {"success": true, "debugState": {state, vrmBound, currentPoseId, currentDisplayName, appliedBoneCount, ignoredBoneCount, lastIgnoredBones, lastErrorCode, lastErrorMessage}}
+   */
+  async getPoseDebugState(): Promise<string> {
+    return this.call('getPoseDebugState');
+  }
+
   private async call(methodName: string): Promise<string> {
     const fn = this.runJs;
     if (fn === null) {

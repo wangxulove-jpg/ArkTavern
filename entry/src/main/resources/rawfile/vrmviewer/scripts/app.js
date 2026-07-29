@@ -1504,10 +1504,104 @@ if (window.__arkTavernBootstrapState) {
         var result = v.stopAnimation(options);
         return result;
       });
+    },
+
+    // ===== Phase 3D-2 — JSON 姿势解析、应用与恢复 (规范 §三十一) =====
+
+    /**
+     * Phase 3D-2: 应用静态 JSON 姿势到当前 VRM Humanoid。
+     *
+     * ArkTS 从持久 JSON 文件读取后,只发送受控字段:
+     *   { poseId, displayName, bones | humanBones | pose }
+     * 不得包含 absolutePath / relativePath / filesDir / 文件描述符 / 原始 URI。
+     *
+     * 应用前 ViewerCore 会先 stopAnimation,避免动画覆盖骨骼旋转。
+     *
+     * @param {string} poseJson 姿势数据 JSON 字符串
+     * @returns {string} JSON 结果
+     *   成功:{"success": true, "state": "APPLIED", "poseId": "...", "displayName": "...", "appliedBoneCount": N, "ignoredBoneCount": M}
+     *   失败:{"success": false, "error": {"code": "POSE_*", "message": "..."}}
+     */
+    applyPose: function (poseJson) {
+      if (typeof poseJson !== 'string' || poseJson.length === 0) {
+        return jsonResult({
+          success: false,
+          error: { code: 'POSE_DATA_INVALID', message: 'poseJson must be a non-empty string' }
+        });
+      }
+      var poseData;
+      try {
+        poseData = JSON.parse(poseJson);
+      } catch (e) {
+        return jsonResult({
+          success: false,
+          error: { code: 'POSE_DATA_INVALID', message: 'poseJson is not valid JSON: ' + (e && e.message ? e.message : String(e)) }
+        });
+      }
+      if (!poseData || typeof poseData !== 'object' || Array.isArray(poseData)) {
+        return jsonResult({
+          success: false,
+          error: { code: 'POSE_DATA_INVALID', message: 'poseJson parsed to non-object' }
+        });
+      }
+      // 字段白名单校验 (禁止路径相关字段)
+      var forbiddenPose = ['absolutePath', 'relativePath', 'filesDir', 'fileDescriptor', 'sourceUri', 'cachePath'];
+      for (var i = 0; i < forbiddenPose.length; i++) {
+        if (Object.prototype.hasOwnProperty.call(poseData, forbiddenPose[i])) {
+          return jsonResult({
+            success: false,
+            error: { code: 'POSE_DATA_INVALID', message: 'Forbidden field present: ' + forbiddenPose[i] }
+          });
+        }
+      }
+      return callViewer(function (v) {
+        var result = v.applyPose(poseData);
+        return result;
+      });
+    },
+
+    /**
+     * Phase 3D-2: 恢复 VRM Humanoid 到 normalized rest pose。
+     *
+     * @returns {string} JSON 结果
+     *   {"success": true, "state": "IDLE"}
+     *   {"success": false, "error": {"code": "POSE_*", "message": "..."}}
+     */
+    resetPose: function () {
+      return callViewer(function (v) {
+        var result = v.resetPose();
+        return result;
+      });
+    },
+
+    /**
+     * Phase 3D-2: 获取姿势系统状态(只读)。
+     *
+     * @returns {string} JSON 结果
+     *   {"success": true, "state": "IDLE|APPLIED|FAILED|DISPOSED", "poseId": "...", "displayName": "...", "appliedBoneCount": N, "ignoredBoneCount": M}
+     */
+    getPoseState: function () {
+      return callViewer(function (v) {
+        var result = v.getPoseState();
+        return result;
+      });
+    },
+
+    /**
+     * Phase 3D-2: 获取姿势系统调试状态快照(只读)。
+     *
+     * @returns {string} JSON 结果
+     *   {"success": true, "debugState": {state, vrmBound, currentPoseId, currentDisplayName, appliedBoneCount, ignoredBoneCount, lastIgnoredBones, lastErrorCode, lastErrorMessage}}
+     */
+    getPoseDebugState: function () {
+      return callViewer(function (v) {
+        var result = v.getPoseDebugState();
+        return { success: true, debugState: result.debugState };
+      });
     }
   };
 
-  console.log('[App] arkTavernViewerBridge registered (Phase 1B + 1D-2A + 1D-2B-1 + 1D-2B-2 + 1D-2C-1 + 1D-2C-2A + 2A-1 + 2F + 3A, delegates to ViewerCore + preparedResource keeper + probe + userModelLoadCoordinator + runtimeDiagnostics keeper + cameraControls + sceneSettings + animationController)');
+  console.log('[App] arkTavernViewerBridge registered (Phase 1B + 1D-2A + 1D-2B-1 + 1D-2B-2 + 1D-2C-1 + 1D-2C-2A + 2A-1 + 2F + 3A + 3D-2, delegates to ViewerCore + preparedResource keeper + probe + userModelLoadCoordinator + runtimeDiagnostics keeper + cameraControls + sceneSettings + animationController + poseController)');
 
   // Phase 1D-2C-2A: 记录 JS_BRIDGE_BOUND(Bridge 已注册到 window)
   emitStartupDiagnostic('JS_BRIDGE_BOUND', '', 'arkTavernViewerBridge registered');
