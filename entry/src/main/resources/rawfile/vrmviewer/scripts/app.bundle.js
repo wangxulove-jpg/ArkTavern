@@ -29366,11 +29366,22 @@ void main() {
   var DEFAULT_CAMERA_POSITION = { x: 0, y: 1.25, z: 2 };
   var DEFAULT_CONTROLS_TARGET = { x: 0, y: 1.25, z: 0 };
   var CAMERA_INITIALIZATION_FAILED = "CAMERA_INITIALIZATION_FAILED";
+  var CAMERA_NOT_INITIALIZED = "CAMERA_NOT_INITIALIZED";
+  var CAMERA_DISPOSED = "CAMERA_DISPOSED";
+  var CAMERA_FOCUS_MODEL_MISSING = "CAMERA_FOCUS_MODEL_MISSING";
+  var CAMERA_FOCUS_BOUNDS_EMPTY = "CAMERA_FOCUS_BOUNDS_EMPTY";
+  var CAMERA_FOCUS_BOUNDS_INVALID = "CAMERA_FOCUS_BOUNDS_INVALID";
+  var CAMERA_FOCUS_FOV_INVALID = "CAMERA_FOCUS_FOV_INVALID";
+  var CAMERA_FOCUS_MARGIN = 1.2;
+  var ACTION_INITIALIZE = "INITIALIZE";
+  var ACTION_RESET = "RESET";
+  var ACTION_FOCUS = "FOCUS";
   var ViewerCamera = class {
     constructor() {
       this.camera = null;
       this.controls = null;
       this._disposed = false;
+      this.lastAction = ACTION_INITIALIZE;
     }
     /**
      * 初始化 Camera 与 OrbitControls。
@@ -29405,6 +29416,7 @@ void main() {
       );
       this.controls.enableDamping = false;
       this.controls.update();
+      this.lastAction = ACTION_INITIALIZE;
     }
     /**
      * 每帧更新。
@@ -29428,13 +29440,39 @@ void main() {
       this.camera.updateProjectionMatrix();
     }
     /**
-     * 重置相机到默认位置与目标点。
-     * 本阶段仅实现 immediate reset。
-     * Phase 2B 将实现 smoothResetCamera(duration) 平滑过渡。
-     * @param {boolean} [immediate=true] 是否立即重置(本阶段忽略,始终立即)
+     * Phase 2A-2: 重置相机到 Figure 基准位置与目标点。
+     *
+     * Figure 基准(精确,不依赖当前模型大小):
+     *   FOV=30, near=0.1, far=20
+     *   position=(0, 1.25, 2)
+     *   target=(0, 1.25, 0)
+     *
+     * 完成后:
+     *   camera.updateProjectionMatrix()
+     *   controls.update()
+     *
+     * preserveControlsEnabled:
+     *   重置发生时若 controls.enabled === false(控制面板正在触摸),
+     *   重置结束仍保持 enabled === false,等待控制面板触摸结束后
+     *   由现有手势隔离逻辑恢复。
+     *
+     * @param {object} [options]
+     * @param {boolean} [options.preserveControlsEnabled=true] 是否保持 controls.enabled 状态
+     * @returns {{success: boolean, state?: object, error?: string}}
      */
-    reset(immediate) {
-      if (this._disposed || !this.camera || !this.controls) return;
+    reset(options) {
+      if (this._disposed) {
+        return { success: false, error: CAMERA_DISPOSED };
+      }
+      if (!this.camera || !this.controls) {
+        return { success: false, error: CAMERA_NOT_INITIALIZED };
+      }
+      var opts = options || {};
+      var preserveEnabled = opts.preserveControlsEnabled !== false;
+      var savedEnabled = this.controls.enabled;
+      this.camera.fov = DEFAULT_FOV;
+      this.camera.near = DEFAULT_NEAR;
+      this.camera.far = DEFAULT_FAR;
       this.camera.position.set(
         DEFAULT_CAMERA_POSITION.x,
         DEFAULT_CAMERA_POSITION.y,
@@ -29445,7 +29483,13 @@ void main() {
         DEFAULT_CONTROLS_TARGET.y,
         DEFAULT_CONTROLS_TARGET.z
       );
+      this.camera.updateProjectionMatrix();
       this.controls.update();
+      if (preserveEnabled) {
+        this.controls.enabled = savedEnabled;
+      }
+      this.lastAction = ACTION_RESET;
+      return { success: true, state: this._buildCameraState() };
     }
     /** @returns {THREE.PerspectiveCamera|null} */
     getCamera() {
@@ -29495,6 +29539,162 @@ void main() {
         return { success: false, error: "CAMERA_NOT_INITIALIZED" };
       }
       return { success: true, enabled: !!this.controls.enabled };
+    }
+    /**
+     * Phase 2A-2: 聚焦到指定模型根节点。
+     *
+     * 算法:
+     *   1. 对 modelRoot 调用 updateWorldMatrix(true, true)
+     *   2. 使用 new THREE.Box3().setFromObject(modelRoot) 计算世界空间包围盒
+     *   3. 验证包围盒非空、center/size 有限、sphere.radius 有限正数
+     *   4. 计算垂直/水平半 FOV,取较小者作为限制半 FOV
+     *   5. distance = sphere.radius / sin(limitingHalfFov) * CAMERA_FOCUS_MARGIN
+     *   6. 保留当前观察方向(camera.position - controls.target),无效则用 (0,0,1)
+     *   7. 新相机位置 = sphere.center + direction * distance
+     *   8. 新目标 = sphere.center
+     *   9. 更新 near/far 避免裁剪
+     *  10. camera.updateProjectionMatrix() + controls.update()
+     *
+     * 安全约束:
+     *   - 失败不得修改现有 Camera position/target/near/far
+     *   - 因此先完整计算和验证,再一次性提交相机状态
+     *   - preserveControlsEnabled 与 reset 一致
+     *
+     * @param {THREE.Object3D} modelRoot 模型根节点(通常为 currentVrm.scene)
+     * @param {object} [options]
+     * @param {number} [options.margin=1.2] 聚焦边距
+     * @param {boolean} [options.preserveDirection=true] 是否保留当前观察方向
+     * @param {boolean} [options.preserveControlsEnabled=true] 是否保持 controls.enabled
+     * @param {string} [options.action='FOCUS'] lastAction 标记
+     * @returns {{success: boolean, state?: object, error?: string, bounds?: object}}
+     */
+    focusOnObject(modelRoot, options) {
+      if (this._disposed) {
+        return { success: false, error: CAMERA_DISPOSED };
+      }
+      if (!this.camera || !this.controls) {
+        return { success: false, error: CAMERA_NOT_INITIALIZED };
+      }
+      if (!modelRoot) {
+        return { success: false, error: CAMERA_FOCUS_MODEL_MISSING };
+      }
+      var opts = options || {};
+      var margin = typeof opts.margin === "number" && opts.margin > 0 ? opts.margin : CAMERA_FOCUS_MARGIN;
+      var preserveDirection = opts.preserveDirection !== false;
+      var preserveEnabled = opts.preserveControlsEnabled !== false;
+      var action = typeof opts.action === "string" && opts.action.length > 0 ? opts.action : ACTION_FOCUS;
+      modelRoot.updateWorldMatrix(true, true);
+      var box = new Box3().setFromObject(modelRoot);
+      if (!box || box.isEmpty()) {
+        return { success: false, error: CAMERA_FOCUS_BOUNDS_EMPTY };
+      }
+      var center = box.getCenter(new Vector3());
+      var size = box.getSize(new Vector3());
+      var sphere = box.getBoundingSphere(new Sphere());
+      if (!isFinite(center.x) || !isFinite(center.y) || !isFinite(center.z) || !isFinite(size.x) || !isFinite(size.y) || !isFinite(size.z)) {
+        return { success: false, error: CAMERA_FOCUS_BOUNDS_INVALID };
+      }
+      if (!isFinite(sphere.radius) || sphere.radius <= 0) {
+        return { success: false, error: CAMERA_FOCUS_BOUNDS_INVALID };
+      }
+      var fov2 = this.camera.fov;
+      if (!isFinite(fov2) || fov2 <= 0 || fov2 >= 180) {
+        return { success: false, error: CAMERA_FOCUS_FOV_INVALID };
+      }
+      var verticalHalfFov = MathUtils.degToRad(fov2 * 0.5);
+      var aspect2 = this.camera.aspect;
+      if (!isFinite(aspect2) || aspect2 <= 0) {
+        aspect2 = 1;
+      }
+      var horizontalHalfFov = Math.atan(Math.tan(verticalHalfFov) * aspect2);
+      var limitingHalfFov = Math.min(verticalHalfFov, horizontalHalfFov);
+      if (limitingHalfFov <= 0) {
+        return { success: false, error: CAMERA_FOCUS_FOV_INVALID };
+      }
+      var distance = sphere.radius / Math.sin(limitingHalfFov);
+      distance *= margin;
+      if (!isFinite(distance) || distance <= 0) {
+        return { success: false, error: CAMERA_FOCUS_BOUNDS_INVALID };
+      }
+      var direction;
+      if (preserveDirection) {
+        direction = new Vector3().subVectors(this.camera.position, this.controls.target);
+        if (direction.lengthSq() < 1e-10) {
+          direction = new Vector3(0, 0, 1);
+        }
+        direction.normalize();
+      } else {
+        direction = new Vector3(0, 0, 1);
+      }
+      var newPosition = new Vector3().copy(sphere.center).addScaledVector(direction, distance);
+      var newTarget = new Vector3().copy(sphere.center);
+      var nearCandidate = distance - sphere.radius * 2.5;
+      var farCandidate = distance + sphere.radius * 4;
+      var newNear = Math.max(0.01, nearCandidate);
+      var newFar = Math.max(20, farCandidate);
+      if (!isFinite(newNear) || !isFinite(newFar) || newFar <= newNear || newFar - newNear < 1) {
+        newNear = DEFAULT_NEAR;
+        newFar = DEFAULT_FAR;
+      }
+      var savedEnabled = this.controls.enabled;
+      this.camera.position.copy(newPosition);
+      this.controls.target.copy(newTarget);
+      this.camera.near = newNear;
+      this.camera.far = newFar;
+      this.camera.updateProjectionMatrix();
+      this.controls.update();
+      if (preserveEnabled) {
+        this.controls.enabled = savedEnabled;
+      }
+      this.lastAction = action;
+      return {
+        success: true,
+        state: this._buildCameraState(),
+        bounds: {
+          center: { x: center.x, y: center.y, z: center.z },
+          size: { x: size.x, y: size.y, z: size.z },
+          radius: sphere.radius
+        }
+      };
+    }
+    /**
+     * Phase 2A-2: 获取当前 Camera 状态。
+     *
+     * @returns {{success: boolean, state?: object, error?: string}}
+     */
+    getCameraState() {
+      if (this._disposed) {
+        return { success: false, error: CAMERA_DISPOSED };
+      }
+      if (!this.camera || !this.controls) {
+        return { success: false, error: CAMERA_NOT_INITIALIZED };
+      }
+      return { success: true, state: this._buildCameraState() };
+    }
+    /**
+     * Phase 2A-2: 构造 CameraState 对象。
+     *
+     * @returns {object} CameraState
+     * @private
+     */
+    _buildCameraState() {
+      var pos = this.camera.position;
+      var target = this.controls.target;
+      var dx = pos.x - target.x;
+      var dy = pos.y - target.y;
+      var dz = pos.z - target.z;
+      var distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      return {
+        position: { x: pos.x, y: pos.y, z: pos.z },
+        target: { x: target.x, y: target.y, z: target.z },
+        fov: this.camera.fov,
+        near: this.camera.near,
+        far: this.camera.far,
+        aspect: this.camera.aspect,
+        distance,
+        controlsEnabled: !!this.controls.enabled,
+        lastAction: this.lastAction
+      };
     }
     dispose() {
       if (this._disposed) return;
@@ -39401,6 +39601,7 @@ void main() {
       this._initToken = 0;
       this._lastResizeWidth = 0;
       this._lastResizeHeight = 0;
+      this._lastCameraFocusWarning = null;
     }
     /**
      * 初始化 Viewer。
@@ -39497,15 +39698,89 @@ void main() {
       }
     }
     /**
-     * 重置相机到默认位置。
-     * Phase 1B:immediate reset
-     * Phase 2B:将增加 smoothResetCamera(duration)
+     * Phase 2A-2: 重置相机到 Figure 基准位置。
+     *
+     * Figure 基准: FOV=30, near=0.1, far=20, position=(0,1.25,2), target=(0,1.25,0)
+     *
+     * 不依赖当前模型大小。preserveControlsEnabled 保持控制面板触摸隔离状态。
+     *
+     * @returns {{success: boolean, state?: object, error?: object}}
      */
     resetCamera() {
-      if (this._state !== STATE_READY) return;
-      if (this.camera) {
-        this.camera.reset(true);
+      if (this._state !== STATE_READY) {
+        return {
+          success: false,
+          error: makeError2(ERR_VIEWER_NOT_READY, "Viewer state is " + this._state + ", expected READY", this._state, true)
+        };
       }
+      if (!this.camera) {
+        return {
+          success: false,
+          error: makeError2(ERR_CAMERA_INITIALIZATION_FAILED, "Camera not initialized", this._state, true)
+        };
+      }
+      var result = this.camera.reset({ preserveControlsEnabled: true });
+      return result;
+    }
+    /**
+     * Phase 2A-2: 聚焦到当前已加载模型。
+     *
+     * 从 ViewerModelLoader.currentVrm 获取真实模型对象,
+     * 调用 ViewerCamera.focusOnObject 计算包围盒并调整相机。
+     *
+     * 自动取景失败不得让模型加载失败:返回 cameraFocusWarning 但 success 仍为 true。
+     *
+     * @param {object} [options] 传递给 focusOnObject 的选项
+     * @returns {{success: boolean, state?: object, bounds?: object, error?: object}}
+     */
+    focusCameraOnCurrentModel(options) {
+      if (this._state !== STATE_READY) {
+        return {
+          success: false,
+          error: makeError2(ERR_VIEWER_NOT_READY, "Viewer state is " + this._state + ", expected READY", this._state, true)
+        };
+      }
+      if (!this.camera) {
+        return {
+          success: false,
+          error: makeError2(ERR_CAMERA_INITIALIZATION_FAILED, "Camera not initialized", this._state, true)
+        };
+      }
+      if (!this.modelLoader) {
+        return {
+          success: false,
+          error: makeError2("MODEL_LOADER_NOT_INITIALIZED", "ModelLoader not initialized", this._state, false)
+        };
+      }
+      var currentVrm = this.modelLoader.getCurrentVrm();
+      if (!currentVrm || !currentVrm.scene) {
+        return {
+          success: false,
+          error: makeError2("CAMERA_FOCUS_MODEL_NOT_LOADED", "No current VRM loaded", this._state, false)
+        };
+      }
+      var result = this.camera.focusOnObject(currentVrm.scene, options || {});
+      return result;
+    }
+    /**
+     * Phase 2A-2: 获取当前 Camera 状态。
+     *
+     * @returns {{success: boolean, state?: object, error?: object}}
+     */
+    getCameraState() {
+      if (this._state !== STATE_READY) {
+        return {
+          success: false,
+          error: makeError2(ERR_VIEWER_NOT_READY, "Viewer state is " + this._state + ", expected READY", this._state, true)
+        };
+      }
+      if (!this.camera) {
+        return {
+          success: false,
+          error: makeError2(ERR_CAMERA_INITIALIZATION_FAILED, "Camera not initialized", this._state, true)
+        };
+      }
+      return this.camera.getCameraState();
     }
     /**
      * 调整 Viewer 尺寸。
@@ -39592,7 +39867,7 @@ void main() {
         // 保留旧字段供向后兼容
         sceneReady: !!this.scene,
         cameraReady: !!this.camera,
-        phase: "PHASE_2A_1"
+        phase: "PHASE_2A_2"
       };
     }
     // ===== Phase 2A-1: Camera Controls enable/disable =====
@@ -39829,9 +40104,30 @@ void main() {
     _onModelStateChanged(state, detail) {
       if (this._state !== STATE_READY) return;
       if (state === ModelState.READY) {
-        if (this.camera) {
-          this.camera.reset(true);
+        var cameraFocusWarning = null;
+        if (this.camera && this.modelLoader) {
+          var currentVrm = this.modelLoader.getCurrentVrm();
+          if (currentVrm && currentVrm.scene) {
+            var focusResult = this.camera.focusOnObject(currentVrm.scene, {
+              action: "MODEL_REPLACED_FOCUS",
+              preserveControlsEnabled: true
+            });
+            if (!focusResult.success) {
+              cameraFocusWarning = {
+                success: false,
+                errorCode: focusResult.error || "UNKNOWN",
+                errorMessage: "Auto focus after model replace failed"
+              };
+            } else {
+              cameraFocusWarning = {
+                success: true,
+                errorCode: "",
+                errorMessage: ""
+              };
+            }
+          }
         }
+        this._lastCameraFocusWarning = cameraFocusWarning;
         if (window.ViewerBridge && typeof window.ViewerBridge.notifyModelStateChanged === "function") {
           window.ViewerBridge.notifyModelStateChanged(state);
         }
@@ -39936,8 +40232,12 @@ void main() {
           error: makeError2("INVALID_RESOURCE", "displayName missing or empty", this._state, true)
         };
       }
+      this._lastCameraFocusWarning = null;
       try {
         var result = await this.modelLoader.loadModel(resource.resourceUrl, resource.displayName);
+        if (result && result.success) {
+          result.cameraFocus = this._lastCameraFocusWarning || { success: true, errorCode: "", errorMessage: "" };
+        }
         return result;
       } catch (e) {
         var msg = e && e.message ? e.message : String(e);
@@ -41196,11 +41496,55 @@ void main() {
           };
         });
       },
-      /** 重置相机到默认位置 */
+      /**
+       * Phase 2A-2: 重置相机到 Figure 基准位置。
+       * Figure 基准: FOV=30, near=0.1, far=20, position=(0,1.25,2), target=(0,1.25,0)
+       * 不依赖当前模型大小。preserveControlsEnabled 保持控制面板触摸隔离状态。
+       */
       resetCamera: function() {
         return callViewer(function(v) {
-          v.resetCamera();
-          return { success: true, state: v.getState() };
+          var result = v.resetCamera();
+          if (result && result.success) {
+            return { success: true, state: v.getState(), cameraState: result.state };
+          }
+          return {
+            success: false,
+            state: v.getState(),
+            error: result && result.error ? result.error : { code: "RESET_FAILED", message: "resetCamera failed" }
+          };
+        });
+      },
+      /**
+       * Phase 2A-2: 聚焦到当前已加载模型。
+       * 从 ViewerModelLoader.currentVrm 获取真实模型,计算包围盒并调整相机。
+       */
+      focusCameraOnCurrentModel: function() {
+        return callViewer(function(v) {
+          var result = v.focusCameraOnCurrentModel({ action: "FOCUS", preserveControlsEnabled: true });
+          if (result && result.success) {
+            return { success: true, state: v.getState(), cameraState: result.state, bounds: result.bounds };
+          }
+          return {
+            success: false,
+            state: v.getState(),
+            error: result && result.error ? result.error : { code: "FOCUS_FAILED", message: "focusCameraOnCurrentModel failed" }
+          };
+        });
+      },
+      /**
+       * Phase 2A-2: 获取当前 Camera 状态(供 Debug Tab 使用)。
+       */
+      getCameraState: function() {
+        return callViewer(function(v) {
+          var result = v.getCameraState();
+          if (result && result.success) {
+            return { success: true, state: v.getState(), cameraState: result.state };
+          }
+          return {
+            success: false,
+            state: v.getState(),
+            error: result && result.error ? result.error : { code: "CAMERA_STATE_FAILED", message: "getCameraState failed" }
+          };
         });
       },
       /** 调整 Viewer 尺寸(ArkTS 主动通知容器尺寸变化时调用) */

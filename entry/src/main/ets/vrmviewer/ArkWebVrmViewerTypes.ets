@@ -277,7 +277,10 @@ export class ArkWebViewerConfig {
     'setSceneBackgroundColor',
     'setSceneGridVisible',
     'setSceneLightIntensity',
-    'getSceneSettings'
+    'getSceneSettings',
+    // Phase 2A-2: 相机重置、聚焦与状态查询
+    'focusCameraOnCurrentModel',
+    'getCameraState'
   ];
 
   /** Bridge 方法白名单:JavaScript → ArkTS。 */
@@ -386,6 +389,40 @@ export interface ArkWebViewerSceneState {
 }
 
 /**
+ * Phase 2A-2: 三维向量。
+ */
+export interface ArkWebCameraVector3 {
+  x: number;
+  y: number;
+  z: number;
+}
+
+/**
+ * Phase 2A-2: 相机状态。
+ * 用于 Debug Tab 显示和相机操作返回值。
+ */
+export interface ArkWebCameraState {
+  /** 相机位置 */
+  position: ArkWebCameraVector3;
+  /** OrbitControls 目标点 */
+  target: ArkWebCameraVector3;
+  /** 视场角(度) */
+  fov: number;
+  /** 近裁剪面 */
+  near: number;
+  /** 远裁剪面 */
+  far: number;
+  /** 宽高比 */
+  aspect: number;
+  /** 相机到目标的距离 */
+  distance: number;
+  /** OrbitControls 是否启用 */
+  controlsEnabled: boolean;
+  /** 最近一次相机操作: INITIALIZE / RESET / FOCUS / MODEL_REPLACED_FOCUS */
+  lastAction: string;
+}
+
+/**
  * Phase 2A-1: 模型来源类型。
  * - USER:用户导入的模型
  * - DEFAULT:默认 VRM
@@ -436,6 +473,51 @@ export function isValidHexColor(color: string): boolean {
     return false;
   }
   return /^#[0-9A-Fa-f]{6}$/.test(color);
+}
+
+/**
+ * Phase 2A-2: 解析 getCameraState / resetCamera / focusCameraOnCurrentModel 返回的 JSON 字符串。
+ *
+ * @param jsonStr Bridge 返回的 JSON 字符串
+ * @returns 解析成功返回 ArkWebCameraState,失败返回 null
+ */
+export function parseCameraState(jsonStr: string): ArkWebCameraState | null {
+  try {
+    const obj: Record<string, Object> = JSON.parse(jsonStr) as Record<string, Object>;
+    if (!obj['success']) {
+      return null;
+    }
+    const cameraStateObj = obj['cameraState'] as Record<string, Object>;
+    if (!cameraStateObj) {
+      return null;
+    }
+    const positionObj = cameraStateObj['position'] as Record<string, Object>;
+    const targetObj = cameraStateObj['target'] as Record<string, Object>;
+    if (!positionObj || !targetObj) {
+      return null;
+    }
+    return {
+      position: {
+        x: (positionObj['x'] as number) ?? 0,
+        y: (positionObj['y'] as number) ?? 0,
+        z: (positionObj['z'] as number) ?? 0
+      },
+      target: {
+        x: (targetObj['x'] as number) ?? 0,
+        y: (targetObj['y'] as number) ?? 0,
+        z: (targetObj['z'] as number) ?? 0
+      },
+      fov: (cameraStateObj['fov'] as number) ?? 30,
+      near: (cameraStateObj['near'] as number) ?? 0.1,
+      far: (cameraStateObj['far'] as number) ?? 20,
+      aspect: (cameraStateObj['aspect'] as number) ?? 1,
+      distance: (cameraStateObj['distance'] as number) ?? 0,
+      controlsEnabled: cameraStateObj['controlsEnabled'] === true,
+      lastAction: (cameraStateObj['lastAction'] as string) || 'INITIALIZE'
+    };
+  } catch (e) {
+    return null;
+  }
 }
 
 /**

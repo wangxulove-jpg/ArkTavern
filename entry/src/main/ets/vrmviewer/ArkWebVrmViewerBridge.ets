@@ -242,6 +242,24 @@ export class ArkWebViewerJsCaller {
     return this.call('resetCamera');
   }
 
+  /**
+   * Phase 2A-2: 调用 window.arkTavernViewerBridge.focusCameraOnCurrentModel()
+   *
+   * 聚焦到当前已加载模型,计算包围盒并调整相机位置和目标。
+   */
+  async focusCameraOnCurrentModel(): Promise<string> {
+    return this.call('focusCameraOnCurrentModel');
+  }
+
+  /**
+   * Phase 2A-2: 调用 window.arkTavernViewerBridge.getCameraState()
+   *
+   * 获取当前 Camera 状态(供 Debug Tab 显示)。
+   */
+  async getCameraState(): Promise<string> {
+    return this.call('getCameraState');
+  }
+
   /** 调用 window.arkTavernViewerBridge.resizeViewer(width, height) */
   async resizeViewer(width: number, height: number): Promise<string> {
     return this.callWithArgs('resizeViewer', [width, height]);

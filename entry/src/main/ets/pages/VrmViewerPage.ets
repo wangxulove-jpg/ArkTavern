@@ -48,7 +48,9 @@ import {
   ArkWebViewerConfig,
   ArkWebViewerState,
   WebPreparedResourceErrorCode,
-  WebPreparedResourceState
+  WebPreparedResourceState,
+  ArkWebCameraState,
+  parseCameraState
 } from '../vrmviewer/ArkWebVrmViewerTypes';
 import {
   ArkWebViewerEventListener,
@@ -358,6 +360,19 @@ struct VrmViewerPage {
   @State debugModelSource: string = 'NONE';
   /** Debug:Camera Controls 是否启用 */
   @State debugCameraControlsEnabled: boolean = true;
+  // Phase 2A-2: Camera Debug 状态(从 getCameraState 获取,非硬编码)
+  @State debugCameraPositionX: number = 0;
+  @State debugCameraPositionY: number = 0;
+  @State debugCameraPositionZ: number = 0;
+  @State debugCameraTargetX: number = 0;
+  @State debugCameraTargetY: number = 0;
+  @State debugCameraTargetZ: number = 0;
+  @State debugCameraDistance: number = 0;
+  @State debugCameraFov: number = 30;
+  @State debugCameraNear: number = 0.1;
+  @State debugCameraFar: number = 20;
+  @State debugCameraAspect: number = 1;
+  @State debugCameraLastAction: string = 'INITIALIZE';
 
   aboutToAppear(): void {
     // 注入闭包:Controller 回调 → 更新 @State
@@ -397,6 +412,8 @@ struct VrmViewerPage {
       if (state === ArkWebViewerState.READY) {
         this.syncInitialSceneSettings();
         this.refreshDebugSceneState();
+        // Phase 2A-2:Viewer READY 后刷新 Camera Debug 状态
+        this.refreshCameraDebugState();
       }
     };
     this.eventListener.onErrorFn = (code: string, message: string) => {
@@ -695,6 +712,10 @@ struct VrmViewerPage {
       this.debugModelLoaded = scene['modelLoaded'] === true;
       this.debugModelDisplayName = (scene['modelDisplayName'] as string) || '';
       this.debugModelSource = (scene['modelSource'] as string) || 'NONE';
+      // Phase 2A-2: 模型 READY 后(自动取景已完成)刷新 Camera Debug
+      if (this.debugModelState === 'READY') {
+        this.refreshCameraDebugState();
+      }
       // Scene 设置
       this.debugCameraControlsEnabled = scene['cameraControlsEnabled'] === true;
       // 同步 Scene 设置状态(如果 Viewer 端有变化)
@@ -716,6 +737,52 @@ struct VrmViewerPage {
   }
 
   // ===== Phase 2A-1: ArkUI 场景控件接入 =====
+
+  /**
+   * Phase 2A-2: 用 ArkWebCameraState 更新 Camera Debug 状态变量。
+   *
+   * @param cameraState 解析后的 CameraState
+   */
+  private updateCameraDebugState(cameraState: ArkWebCameraState): void {
+    this.debugCameraPositionX = cameraState.position.x;
+    this.debugCameraPositionY = cameraState.position.y;
+    this.debugCameraPositionZ = cameraState.position.z;
+    this.debugCameraTargetX = cameraState.target.x;
+    this.debugCameraTargetY = cameraState.target.y;
+    this.debugCameraTargetZ = cameraState.target.z;
+    this.debugCameraDistance = cameraState.distance;
+    this.debugCameraFov = cameraState.fov;
+    this.debugCameraNear = cameraState.near;
+    this.debugCameraFar = cameraState.far;
+    this.debugCameraAspect = cameraState.aspect;
+    this.debugCameraControlsEnabled = cameraState.controlsEnabled;
+    this.debugCameraLastAction = cameraState.lastAction;
+  }
+
+  /**
+   * Phase 2A-2: 主动刷新 Camera Debug 状态(调用 getCameraState)。
+   *
+   * 只在以下时机刷新:
+   *   - Viewer READY
+   *   - 聚焦完成
+   *   - 重置完成
+   *   - 模型替换完成
+   *   - 用户手动刷新 Debug
+   *
+   * 避免每帧轮询。
+   */
+  private refreshCameraDebugState(): void {
+    this.arkWebController.getCameraState().then((resultJson: string) => {
+      if (resultJson && resultJson.length > 0) {
+        const cameraState: ArkWebCameraState | null = parseCameraState(resultJson);
+        if (cameraState) {
+          this.updateCameraDebugState(cameraState);
+        }
+      }
+    }).catch((e: Object) => {
+      console.warn('[VrmViewerPage] refreshCameraDebugState exception: ' + (e instanceof Error ? e.message : String(e)));
+    });
+  }
 
   /**
    * Phase 2A-1: 用户点击背景颜色按钮。
@@ -919,16 +986,56 @@ struct VrmViewerPage {
     promptAction.showToast({ message: '该功能将在后续阶段启用' });
   }
 
-  /** 聚焦按钮:重置相机到默认位置(Phase 1B) */
-  private onFocusButton(): void {
-    this.arkWebController.resetCamera();
-    promptAction.showToast({ message: '已聚焦' });
+  /**
+   * Phase 2A-2: 聚焦按钮。
+   *
+   * 聚焦到当前已加载模型,计算包围盒并调整相机位置和目标。
+   * 成功后刷新 Camera Debug,失败显示具体错误。
+   */
+  private async onFocusButton(): Promise<void> {
+    try {
+      const resultJson: string = await this.arkWebController.focusCameraOnCurrentModel();
+      if (resultJson && resultJson.length > 0) {
+        const cameraState: ArkWebCameraState | null = parseCameraState(resultJson);
+        if (cameraState) {
+          this.updateCameraDebugState(cameraState);
+          promptAction.showToast({ message: '已聚焦' });
+        } else {
+          promptAction.showToast({ message: '聚焦失败:状态解析失败' });
+        }
+      } else {
+        promptAction.showToast({ message: '聚焦失败:Viewer 未就绪或无模型' });
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      promptAction.showToast({ message: '聚焦失败:' + msg });
+    }
   }
 
-  /** 重置按钮:重置相机到默认位置(Phase 1B,与聚焦行为相同) */
-  private onResetButton(): void {
-    this.arkWebController.resetCamera();
-    promptAction.showToast({ message: '已重置' });
+  /**
+   * Phase 2A-2: 重置按钮。
+   *
+   * 重置相机到 Figure 基准位置(FOV=30, near=0.1, far=20, position=(0,1.25,2), target=(0,1.25,0))。
+   * 不依赖当前模型大小。成功后刷新 Camera Debug。
+   */
+  private async onResetButton(): Promise<void> {
+    try {
+      const resultJson: string = await this.arkWebController.resetCamera();
+      if (resultJson && resultJson.length > 0) {
+        const cameraState: ArkWebCameraState | null = parseCameraState(resultJson);
+        if (cameraState) {
+          this.updateCameraDebugState(cameraState);
+          promptAction.showToast({ message: '已重置' });
+        } else {
+          promptAction.showToast({ message: '重置失败:状态解析失败' });
+        }
+      } else {
+        promptAction.showToast({ message: '重置失败:Viewer 未就绪' });
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      promptAction.showToast({ message: '重置失败:' + msg });
+    }
   }
 
   /**
@@ -3668,6 +3775,22 @@ struct VrmViewerPage {
       this.DebugRow('Light Intensity', this.sceneLightIntensity.toFixed(2))
       this.DebugRow('Camera Controls', this.debugCameraControlsEnabled ? 'ENABLED' : 'DISABLED')
 
+      // Phase 2A-2: Camera Debug 状态(从 getCameraState 获取,非硬编码)
+      this.DebugRow('Camera Position',
+        this.debugCameraPositionX.toFixed(3) + ', ' +
+        this.debugCameraPositionY.toFixed(3) + ', ' +
+        this.debugCameraPositionZ.toFixed(3))
+      this.DebugRow('Camera Target',
+        this.debugCameraTargetX.toFixed(3) + ', ' +
+        this.debugCameraTargetY.toFixed(3) + ', ' +
+        this.debugCameraTargetZ.toFixed(3))
+      this.DebugRow('Camera Distance', this.debugCameraDistance.toFixed(3))
+      this.DebugRow('Camera FOV', this.debugCameraFov.toFixed(2))
+      this.DebugRow('Camera Near/Far',
+        this.debugCameraNear.toFixed(3) + ' / ' + this.debugCameraFar.toFixed(3))
+      this.DebugRow('Camera Aspect', this.debugCameraAspect.toFixed(3))
+      this.DebugRow('Camera Last Action', this.debugCameraLastAction)
+
       this.DebugRow('Animation', 'NOT INITIALIZED')
       this.DebugRow('Humanoid', 'NOT INITIALIZED')
       this.DebugRow('Spring Bone', 'NOT INITIALIZED')
@@ -3681,7 +3804,7 @@ struct VrmViewerPage {
           .width('100%')
       }
 
-      // Phase 2A-1: 刷新 Debug 状态按钮(手动触发 getSceneState)
+      // Phase 2A-1: 刷新 Debug 状态按钮(手动触发 getSceneState + getCameraState)
       Button('刷新 Debug 状态')
         .fontSize($r('app.float.app_font_body'))
         .fontColor($r('app.color.app_text_primary'))
@@ -3691,6 +3814,7 @@ struct VrmViewerPage {
         .margin({ top: 12 })
         .onClick(() => {
           this.refreshDebugSceneState();
+          this.refreshCameraDebugState();
         })
     }
     .width('100%')

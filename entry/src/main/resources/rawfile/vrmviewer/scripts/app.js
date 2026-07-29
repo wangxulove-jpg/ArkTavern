@@ -317,11 +317,58 @@ if (window.__arkTavernBootstrapState) {
       });
     },
 
-    /** 重置相机到默认位置 */
+    /**
+     * Phase 2A-2: 重置相机到 Figure 基准位置。
+     * Figure 基准: FOV=30, near=0.1, far=20, position=(0,1.25,2), target=(0,1.25,0)
+     * 不依赖当前模型大小。preserveControlsEnabled 保持控制面板触摸隔离状态。
+     */
     resetCamera: function () {
       return callViewer(function (v) {
-        v.resetCamera();
-        return { success: true, state: v.getState() };
+        var result = v.resetCamera();
+        // 规范化返回:确保始终有 success 字段
+        if (result && result.success) {
+          return { success: true, state: v.getState(), cameraState: result.state };
+        }
+        return {
+          success: false,
+          state: v.getState(),
+          error: result && result.error ? result.error : { code: 'RESET_FAILED', message: 'resetCamera failed' }
+        };
+      });
+    },
+
+    /**
+     * Phase 2A-2: 聚焦到当前已加载模型。
+     * 从 ViewerModelLoader.currentVrm 获取真实模型,计算包围盒并调整相机。
+     */
+    focusCameraOnCurrentModel: function () {
+      return callViewer(function (v) {
+        var result = v.focusCameraOnCurrentModel({ action: 'FOCUS', preserveControlsEnabled: true });
+        if (result && result.success) {
+          return { success: true, state: v.getState(), cameraState: result.state, bounds: result.bounds };
+        }
+        return {
+          success: false,
+          state: v.getState(),
+          error: result && result.error ? result.error : { code: 'FOCUS_FAILED', message: 'focusCameraOnCurrentModel failed' }
+        };
+      });
+    },
+
+    /**
+     * Phase 2A-2: 获取当前 Camera 状态(供 Debug Tab 使用)。
+     */
+    getCameraState: function () {
+      return callViewer(function (v) {
+        var result = v.getCameraState();
+        if (result && result.success) {
+          return { success: true, state: v.getState(), cameraState: result.state };
+        }
+        return {
+          success: false,
+          state: v.getState(),
+          error: result && result.error ? result.error : { code: 'CAMERA_STATE_FAILED', message: 'getCameraState failed' }
+        };
       });
     },
 

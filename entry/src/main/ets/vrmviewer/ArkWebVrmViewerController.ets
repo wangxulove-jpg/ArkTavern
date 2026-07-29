@@ -128,17 +128,71 @@ export class ArkWebVrmViewerController implements ArkWebViewerBridgeListener {
    * 由页面"聚焦" / "重置"按钮调用。
    * 内部通过 Bridge 调用 Web 端 ViewerCore.resetCamera()。
    */
-  async resetCamera(): Promise<void> {
+  /**
+   * Phase 2A-2: 重置相机到 Figure 基准位置。
+   *
+   * Figure 基准: FOV=30, near=0.1, far=20, position=(0,1.25,2), target=(0,1.25,0)
+   * 不依赖当前模型大小。preserveControlsEnabled 保持控制面板触摸隔离状态。
+   *
+   * @returns CameraState JSON 字符串(失败时返回空字符串)
+   */
+  async resetCamera(): Promise<string> {
     if (this.disposed) {
       console.warn('[ArkWebVrmViewerController] resetCamera ignored: disposed');
-      return;
+      return '';
     }
     try {
       const resultJson: string = await this.jsCaller.resetCamera();
       console.info('[ArkWebVrmViewerController] resetCamera result: ' + resultJson);
+      return resultJson;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.warn('[ArkWebVrmViewerController] resetCamera failed: ' + msg);
+      return '';
+    }
+  }
+
+  /**
+   * Phase 2A-2: 聚焦到当前已加载模型。
+   *
+   * 从 ViewerModelLoader.currentVrm 获取真实模型,计算包围盒并调整相机。
+   *
+   * @returns CameraState JSON 字符串(失败时返回空字符串)
+   */
+  async focusCameraOnCurrentModel(): Promise<string> {
+    if (this.disposed) {
+      console.warn('[ArkWebVrmViewerController] focusCameraOnCurrentModel ignored: disposed');
+      return '';
+    }
+    try {
+      const resultJson: string = await this.jsCaller.focusCameraOnCurrentModel();
+      console.info('[ArkWebVrmViewerController] focusCameraOnCurrentModel result: ' + resultJson);
+      return resultJson;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.warn('[ArkWebVrmViewerController] focusCameraOnCurrentModel failed: ' + msg);
+      return '';
+    }
+  }
+
+  /**
+   * Phase 2A-2: 获取当前 Camera 状态(供 Debug Tab 显示)。
+   *
+   * @returns CameraState JSON 字符串(失败时返回空字符串)
+   */
+  async getCameraState(): Promise<string> {
+    if (this.disposed) {
+      console.warn('[ArkWebVrmViewerController] getCameraState ignored: disposed');
+      return '';
+    }
+    try {
+      const resultJson: string = await this.jsCaller.getCameraState();
+      console.info('[ArkWebVrmViewerController] getCameraState result: ' + resultJson);
+      return resultJson;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.warn('[ArkWebVrmViewerController] getCameraState failed: ' + msg);
+      return '';
     }
   }
 

@@ -103,6 +103,8 @@ export class ViewerCore {
     /** 上一帧 resize 的尺寸,避免重复无意义 resize */
     this._lastResizeWidth = 0;
     this._lastResizeHeight = 0;
+    /** Phase 2A-2: 模型替换后自动取景的最近一次警告(供 loadUserModelResource 读取) */
+    this._lastCameraFocusWarning = null;
   }
 
   /**
@@ -240,15 +242,91 @@ export class ViewerCore {
   }
 
   /**
-   * 重置相机到默认位置。
-   * Phase 1B:immediate reset
-   * Phase 2B:将增加 smoothResetCamera(duration)
+   * Phase 2A-2: 重置相机到 Figure 基准位置。
+   *
+   * Figure 基准: FOV=30, near=0.1, far=20, position=(0,1.25,2), target=(0,1.25,0)
+   *
+   * 不依赖当前模型大小。preserveControlsEnabled 保持控制面板触摸隔离状态。
+   *
+   * @returns {{success: boolean, state?: object, error?: object}}
    */
   resetCamera() {
-    if (this._state !== STATE_READY) return;
-    if (this.camera) {
-      this.camera.reset(true);
+    if (this._state !== STATE_READY) {
+      return {
+        success: false,
+        error: makeError(ERR_VIEWER_NOT_READY, 'Viewer state is ' + this._state + ', expected READY', this._state, true)
+      };
     }
+    if (!this.camera) {
+      return {
+        success: false,
+        error: makeError(ERR_CAMERA_INITIALIZATION_FAILED, 'Camera not initialized', this._state, true)
+      };
+    }
+    var result = this.camera.reset({ preserveControlsEnabled: true });
+    return result;
+  }
+
+  /**
+   * Phase 2A-2: 聚焦到当前已加载模型。
+   *
+   * 从 ViewerModelLoader.currentVrm 获取真实模型对象,
+   * 调用 ViewerCamera.focusOnObject 计算包围盒并调整相机。
+   *
+   * 自动取景失败不得让模型加载失败:返回 cameraFocusWarning 但 success 仍为 true。
+   *
+   * @param {object} [options] 传递给 focusOnObject 的选项
+   * @returns {{success: boolean, state?: object, bounds?: object, error?: object}}
+   */
+  focusCameraOnCurrentModel(options) {
+    if (this._state !== STATE_READY) {
+      return {
+        success: false,
+        error: makeError(ERR_VIEWER_NOT_READY, 'Viewer state is ' + this._state + ', expected READY', this._state, true)
+      };
+    }
+    if (!this.camera) {
+      return {
+        success: false,
+        error: makeError(ERR_CAMERA_INITIALIZATION_FAILED, 'Camera not initialized', this._state, true)
+      };
+    }
+    if (!this.modelLoader) {
+      return {
+        success: false,
+        error: makeError('MODEL_LOADER_NOT_INITIALIZED', 'ModelLoader not initialized', this._state, false)
+      };
+    }
+    var currentVrm = this.modelLoader.getCurrentVrm();
+    if (!currentVrm || !currentVrm.scene) {
+      return {
+        success: false,
+        error: makeError('CAMERA_FOCUS_MODEL_NOT_LOADED', 'No current VRM loaded', this._state, false)
+      };
+    }
+    var result = this.camera.focusOnObject(currentVrm.scene, options || {});
+    return result;
+  }
+
+  /**
+   * Phase 2A-2: 获取当前 Camera 状态。
+   *
+   * @returns {{success: boolean, state?: object, error?: object}}
+   */
+  getCameraState() {
+    if (this._state !== STATE_READY) {
+      return {
+        success: false,
+        error: makeError(ERR_VIEWER_NOT_READY, 'Viewer state is ' + this._state + ', expected READY', this._state, true)
+      };
+    }
+    if (!this.camera) {
+      return {
+        success: false,
+        error: makeError(ERR_CAMERA_INITIALIZATION_FAILED, 'Camera not initialized', this._state, true)
+      };
+    }
+    return this.camera.getCameraState();
   }
 
   /**
@@ -353,7 +431,7 @@ export class ViewerCore {
       // 保留旧字段供向后兼容
       sceneReady: !!this.scene,
       cameraReady: !!this.camera,
-      phase: 'PHASE_2A_1'
+      phase: 'PHASE_2A_2'
     };
   }
 
@@ -611,11 +689,36 @@ export class ViewerCore {
     if (this._state !== STATE_READY) return;
 
     if (state === ModelState.READY) {
-      // Phase 1D-2B-2:Scene 替换已由 onReplaceModel 同步完成,
-      // 此处仅重置相机到默认位置(不实现自动取景,留到 Phase 2C)
-      if (this.camera) {
-        this.camera.reset(true);
+      // Phase 2A-2: 模型替换成功后自动取景(MODEL_REPLACED_FOCUS)
+      // - 自动取景失败不得让模型加载失败:只记录警告,不回滚模型
+      // - 默认模型首次加载时也走此路径(若当前代码已这样做的源码证据:Phase 1B 即如此)
+      var cameraFocusWarning = null;
+      if (this.camera && this.modelLoader) {
+        var currentVrm = this.modelLoader.getCurrentVrm();
+        if (currentVrm && currentVrm.scene) {
+          var focusResult = this.camera.focusOnObject(currentVrm.scene, {
+            action: 'MODEL_REPLACED_FOCUS',
+            preserveControlsEnabled: true
+          });
+          if (!focusResult.success) {
+            // 自动取景失败:记录警告,不回滚模型,相机保持原状态
+            cameraFocusWarning = {
+              success: false,
+              errorCode: focusResult.error || 'UNKNOWN',
+              errorMessage: 'Auto focus after model replace failed'
+            };
+          } else {
+            cameraFocusWarning = {
+              success: true,
+              errorCode: '',
+              errorMessage: ''
+            };
+          }
+        }
       }
+      // 保存最近的 cameraFocusWarning 供 loadUserModelResource 读取
+      this._lastCameraFocusWarning = cameraFocusWarning;
+
       // 通知 ArkTS 模型状态变化
       if (window.ViewerBridge && typeof window.ViewerBridge.notifyModelStateChanged === 'function') {
         window.ViewerBridge.notifyModelStateChanged(state);
@@ -736,8 +839,15 @@ export class ViewerCore {
     // 6. 委托 modelLoader.loadModel 执行 GLTFLoader 加载
     //    ViewerModelLoader 内部会通过 onReplaceModel 同步完成 Scene 替换,
     //    并在成功后提交 currentVrm / displayName,失败时保留旧模型。
+    //    Phase 2A-2: 模型 READY 后 _onModelStateChanged 会自动取景,
+    //    此处将 _lastCameraFocusWarning 附加到返回结果。
+    this._lastCameraFocusWarning = null;
     try {
       var result = await this.modelLoader.loadModel(resource.resourceUrl, resource.displayName);
+      // Phase 2A-2: 附加 cameraFocusWarning(成功或失败都附加,不改变 success)
+      if (result && result.success) {
+        result.cameraFocus = this._lastCameraFocusWarning || { success: true, errorCode: '', errorMessage: '' };
+      }
       return result;
     } catch (e) {
       var msg = e && e.message ? e.message : String(e);
