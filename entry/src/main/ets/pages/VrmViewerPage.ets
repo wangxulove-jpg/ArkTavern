@@ -111,6 +111,20 @@ import {
   AnimationResourceState,
   WebAnimationResource
 } from '../vrmviewer/ArkWebAnimationResourceProvider';
+import {
+  ArkWebAvatarAssetLibrary,
+  AVATAR_ASSETS_DIR_NAME
+} from '../vrmviewer/ArkWebAvatarAssetLibrary';
+import {
+  ArkWebPersistentModelStore
+} from '../vrmviewer/ArkWebPersistentModelStore';
+import {
+  ArkWebAvatarModelAsset,
+  ArkWebModelRestoreState,
+  ArkWebModelRestoreResult,
+  ASSET_LIBRARY_SCHEMA_VERSION,
+  ModelRestoreErrorCode
+} from '../vrmviewer/ArkWebAvatarAssetTypes';
 
 /**
  * 传给 JavaScript loadVrmaResource 的资源 JSON 载荷。
@@ -553,6 +567,42 @@ struct VrmViewerPage {
   /** 动画加载轮询最大次数(300 × 100ms = 30s 超时) */
   private readonly ANIMATION_LOAD_POLL_MAX_COUNT: number = 300;
 
+  // ===== Phase 3B — 模型自动恢复与持久化资产目录 =====
+  /** 资产库状态(READY / EMPTY / FAILED / DISPOSED) */
+  @State assetLibraryState: string = 'IDLE';
+  /** 资产库 schema 版本(固定 1) */
+  @State assetLibraryVersion: number = 0;
+  /** 当前 activeModelId(空字符串表示无) */
+  @State activeModelId: string = '';
+  /** 当前 activeModel 显示名 */
+  @State activeModelDisplayName: string = '';
+  /** 当前 activeModel 文件大小(字节) */
+  @State activeModelByteLength: number = 0;
+  /** 模型存储类型(固定 PERSISTENT) */
+  @State modelStorageKind: string = 'PERSISTENT';
+  /** 模型恢复状态机(ArkWebModelRestoreState) */
+  @State modelRestoreState: ArkWebModelRestoreState = ArkWebModelRestoreState.IDLE;
+  /** 模型恢复错误码(成功时为空字符串) */
+  @State modelRestoreErrorCode: string = '';
+  /** 模型恢复错误消息(成功时为空字符串) */
+  @State modelRestoreErrorMessage: string = '';
+  /** 旧缓存模型是否已迁移 */
+  @State legacyModelMigrated: boolean = false;
+  /** Debug: 测试立方体开关状态 */
+  @State debugTestCubeEnabled: boolean = false;
+  /** 持久化资产库(单一所有者,在 aboutToAppear 中创建) */
+  private assetLibrary: ArkWebAvatarAssetLibrary | null = null;
+  /** 持久化模型存储(在 aboutToAppear 中创建) */
+  private persistentModelStore: ArkWebPersistentModelStore | null = null;
+  /** 恢复是否已启动(单次触发保护) */
+  private restoreStarted: boolean = false;
+  /** 恢复是否已销毁(页面销毁后阻止异步回调) */
+  private restoreDisposed: boolean = false;
+  /** 恢复代次(每次启动恢复递增,用于过期判断) */
+  private modelRestoreGeneration: number = 0;
+  /** 恢复是否正在执行中(防止重复触发) */
+  private modelRestoreInProgress: boolean = false;
+
   aboutToAppear(): void {
     // Phase 2A-3A: 启用 Web 全绘制能力(webPageSnapshot 前置条件)
     // 必须在 aboutToAppear 中调用(Web 组件初始化前),官方文档明确要求
@@ -610,6 +660,10 @@ struct VrmViewerPage {
         this.refreshAnimationDebugState();
         // Phase 2F:Viewer READY 后启动环境贴图初始化(后台,不阻塞 UI)
         this.startEnvironmentInitialization();
+        // Phase 3B:Viewer READY 后启动 activeModel 自动恢复(单次触发)
+        // 读取 library.json → 验证持久化模型 → 注册 Provider → 加载模型
+        // 失败不抛出,仅更新 modelRestoreState 供 UI 显示
+        this.startActiveModelRestore();
       }
     };
     this.eventListener.onErrorFn = (code: string, message: string) => {
@@ -632,11 +686,39 @@ struct VrmViewerPage {
       this.resourceProvider = new ArkWebModelResourceProvider(ctx.cacheDir);
     }
 
-    // Phase 1D-2C-1:创建导入元数据持久化存储,并启动恢复
+    // Phase 3B:创建持久化资产库与模型存储(单次创建,页面重入复用)
+    // 必须在 resourceProvider 创建之后,在 importStateStore 之前
+    if (this.assetLibrary === null) {
+      this.assetLibrary = new ArkWebAvatarAssetLibrary(ctx);
+      // 异步初始化目录与清单,不阻塞页面构建
+      // Viewer READY 后 startActiveModelRestore 会 await ensureInitialized
+      this.assetLibrary.ensureInitialized().then((ok: boolean) => {
+        if (ok) {
+          this.assetLibraryState = 'READY';
+          this.assetLibraryVersion = ASSET_LIBRARY_SCHEMA_VERSION;
+          console.info('[VrmViewerPage] AssetLibrary initialized');
+        } else {
+          this.assetLibraryState = 'FAILED';
+          console.warn('[VrmViewerPage] AssetLibrary ensureInitialized failed');
+        }
+      }).catch((e: Object) => {
+        const msg: string = e instanceof Error ? e.message : String(e);
+        this.assetLibraryState = 'FAILED';
+        console.warn(`[VrmViewerPage] AssetLibrary init exception: ${msg}`);
+      });
+    }
+    if (this.persistentModelStore === null && this.assetLibrary !== null) {
+      this.persistentModelStore = new ArkWebPersistentModelStore(ctx, this.assetLibrary);
+    }
+    // Phase 3B:配置 Provider 接受 filesDir/avatar-assets/ 下的持久化模型
+    if (this.resourceProvider !== null && this.assetLibrary !== null) {
+      this.resourceProvider.setPersistentRootDir(this.assetLibrary.getAssetsRootDir());
+    }
+
+    // Phase 1D-2C-1:创建导入元数据持久化存储(Phase 3B 起仅用于旧缓存迁移)
+    // 恢复由 startActiveModelRestore 统一编排,不再在 aboutToAppear 中自动触发
     if (this.importStateStore === null) {
       this.importStateStore = new ArkWebModelImportStateStore(ctx);
-      // 异步启动恢复,不阻塞页面构建
-      this.startRestoreFromStateStore();
     }
 
     // Phase 2A-3A:创建截图控制器(Route A: Native ArkWeb Snapshot)
@@ -763,6 +845,21 @@ struct VrmViewerPage {
     if (this.animationImportController !== null) {
       this.animationImportController.dispose();
       this.animationImportController = null;
+    }
+    // Phase 3B:13. 销毁 Phase 3B 持久化资源(不删除 filesDir 下的模型文件与 library.json)
+    // 标记 restoreDisposed 阻止异步恢复回调
+    this.restoreDisposed = true;
+    this.restoreStarted = false;
+    this.modelRestoreInProgress = false;
+    this.modelRestoreGeneration++;
+    this.modelRestoreState = ArkWebModelRestoreState.DISPOSED;
+    if (this.persistentModelStore !== null) {
+      this.persistentModelStore.dispose();
+      this.persistentModelStore = null;
+    }
+    if (this.assetLibrary !== null) {
+      this.assetLibrary.dispose();
+      this.assetLibrary = null;
     }
     // 清空恢复状态
     this.pendingRestoredFile = null;
@@ -2590,14 +2687,13 @@ struct VrmViewerPage {
         // STALE_IMPORT_RESULT / DISPOSED 静默处理
       } else {
         // Phase 1D-2A:导入成功后注册资源(生成受控 URL)
-        // Phase 1D-2C-2E-1:await 确保 prepare + readback 完成后再继续
-        await this.registerImportedResource(result);
-        // Phase 1D-2C-1:导入成功后持久化元数据到 StateStore
+        // Phase 3B:使用 PersistentModelStore 持久化到 filesDir
+        // 不再走 registerImportedResource 的 cacheDir 路径
+        await this.persistAndRegisterImportedModel(result);
+        // Phase 1D-2C-1:导入成功后持久化元数据到 StateStore(legacy,供旧版回退)
         // 保存失败不影响当前导入,只显示提示
         this.saveImportStateToStore(result);
-        // 不调用 loadModel(Phase 1D-2B)
-        // 不替换默认 VRM
-        promptAction.showToast({ message: '模型文件已准备,等待加载' });
+        promptAction.showToast({ message: '模型已导入并加载' });
       }
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
@@ -2606,6 +2702,110 @@ struct VrmViewerPage {
       promptAction.showToast({ message: `导入异常: ${msg}` });
     } finally {
       this.importInProgress = false;
+    }
+  }
+
+  /**
+   * Phase 3B: 持久化导入的模型到 filesDir 并注册到 Provider。
+   *
+   * 流程 (AGENTS.md Phase 3B §十八):
+   * 1. PersistentModelStore.importModel(sourceUri, displayName, extension)
+   *    - 原子复制到 <filesDir>/avatar-assets/models/<modelId>.vrm
+   *    - 更新 library.json (设置 activeModelId)
+   * 2. 验证持久化文件
+   * 3. 注册到 Provider (registerPersistentAsset,使用 filesDir 绝对路径)
+   * 4. ensurePreparedModelResource + tryAutoProbeResource
+   * 5. autoLoadCurrentModel (自动加载,无需用户点击)
+   *
+   * 失败处理:
+   * - PersistentModelStore 失败:保留 ImportController 的 cacheDir 文件(legacy 行为)
+   * - Provider 注册失败:保留持久化文件与 library.json 记录
+   * - 加载失败:保留持久化文件与 library.json 记录,允许稍后重新加载
+   *
+   * @param file ImportController 产出的导入文件(含 sourceUri)
+   */
+  private async persistAndRegisterImportedModel(file: ImportedModelFile): Promise<void> {
+    if (this.persistentModelStore === null || this.resourceProvider === null || this.assetLibrary === null) {
+      // Phase 3B 未初始化,回退到 Phase 1D-2A 的 cacheDir 路径
+      console.warn('[VrmViewerPage] Phase 3B store not ready, fallback to registerImportedResource');
+      await this.registerImportedResource(file);
+      return;
+    }
+
+    // 1. 持久化到 filesDir
+    const asset: ArkWebAvatarModelAsset | null = await this.persistentModelStore.importModel(
+      file.sourceUri,
+      file.displayName,
+      file.extension
+    );
+    if (asset === null) {
+      const err: string = this.persistentModelStore.getLastError();
+      this.preparedResource = null;
+      this.resourceState = ModelResourceState.EMPTY;
+      this.resourceLastError = `持久化失败: ${err}`;
+      promptAction.showToast({ message: `模型持久化失败: ${err}` });
+      return;
+    }
+
+    // 更新 Phase 3B @State
+    this.activeModelId = asset.modelId;
+    this.activeModelDisplayName = asset.displayName;
+    this.activeModelByteLength = asset.byteLength;
+    this.legacyModelMigrated = false;
+    this.modelRestoreState = ArkWebModelRestoreState.READY;
+    this.modelRestoreErrorCode = '';
+    this.modelRestoreErrorMessage = '';
+    console.info(`[VrmViewerPage] model persisted: id=${asset.modelId} size=${asset.byteLength}`);
+
+    // 2. 注册到 Provider (使用 filesDir 绝对路径)
+    const absolutePath: string = this.persistentModelStore.resolveAbsolutePath(asset.relativePath);
+    if (absolutePath.length === 0) {
+      this.resourceLastError = 'resolveAbsolutePath empty';
+      promptAction.showToast({ message: '模型路径解析失败' });
+      return;
+    }
+    let resource: WebModelResource;
+    try {
+      resource = this.resourceProvider.registerPersistentAsset(
+        absolutePath,
+        asset,
+        file.gltfDependencyState
+      );
+      this.preparedResource = resource;
+      this.resourceState = this.resourceProvider.getState();
+      this.resourceLastError = '';
+      console.info(`[VrmViewerPage] persistent resource ready: url=${resource.resourceUrl}`);
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      this.preparedResource = null;
+      this.resourceState = this.resourceProvider.getState();
+      this.resourceLastError = msg;
+      promptAction.showToast({ message: `资源注册失败: ${msg}` });
+      return;
+    }
+
+    // 3. ensurePreparedModelResource (Viewer 未 READY 时静默失败,等待 READY 后重试)
+    if (this.viewerState !== ArkWebViewerState.READY) {
+      console.info('[VrmViewerPage] Viewer not ready, prepare will retry on READY');
+      return;
+    }
+    const prepared: boolean = await this.ensurePreparedModelResource(resource, false);
+    if (!prepared) {
+      console.warn(`[VrmViewerPage] import ensurePreparedModelResource failed: ${this.webPreparedErrorCode}`);
+      return;
+    }
+
+    // 4. 自动探测 + 自动加载
+    this.tryAutoProbeResource();
+    const probeOk: boolean = await this.waitForProbeVerified(4500);
+    if (!probeOk) {
+      console.warn(`[VrmViewerPage] import probe not verified: ${this.probeErrorCode}`);
+      return;
+    }
+    const loadOk: boolean = await this.autoLoadCurrentModel();
+    if (!loadOk) {
+      console.warn(`[VrmViewerPage] import auto load failed: ${this.loadErrorCode}`);
+      promptAction.showToast({ message: '模型加载失败,可点击"重新加载"重试' });
     }
   }
 
@@ -3074,6 +3274,461 @@ struct VrmViewerPage {
     }
     // 自动探测(满足条件时执行一次)
     this.tryAutoProbeResource();
+  }
+
+  // ===== Phase 3B: 模型自动恢复与持久化资产目录 =====
+
+  /**
+   * Phase 3B: 启动 activeModel 自动恢复。
+   *
+   * 触发时机:Viewer READY 后(由 onStateChangedFn 调用)。
+   * 单次触发保护:restoreStarted 标志,重复 READY 回调不再启动。
+   * 代次保护:modelRestoreGeneration,页面销毁后异步回调过期。
+   *
+   * 流程 (AGENTS.md Phase 3B §二十):
+   * 1. 检查单次触发保护(restoreStarted / restoreDisposed)
+   * 2. 检查 Viewer READY
+   * 3. 等待 AssetLibrary 初始化完成
+   * 4. 读取 library.json
+   * 5. 查找 activeModelId
+   * 6. 有 active model:验证文件 → 注册 Provider → loadPreparedModelResource → 自动取景
+   * 7. 无 active model:尝试旧缓存迁移(StateStore) → 失败则进入 EMPTY
+   *
+   * 失败处理:
+   * - 不崩溃,不无限重试,不反复弹 Toast
+   * - 更新 modelRestoreState / modelRestoreErrorCode 供 UI 显示
+   * - 保留 Viewer 现有状态(不强制 FAILED)
+   */
+  private async startActiveModelRestore(): Promise<void> {
+    // 1. 单次触发保护
+    if (this.restoreDisposed) {
+      console.info('[VrmViewerPage] startActiveModelRestore: disposed, skip');
+      return;
+    }
+    if (this.restoreStarted) {
+      console.info('[VrmViewerPage] startActiveModelRestore: already started, skip');
+      return;
+    }
+    // 2. Viewer 必须为 READY
+    if (this.viewerState !== ArkWebViewerState.READY) {
+      console.info(`[VrmViewerPage] startActiveModelRestore: viewer not ready (${this.viewerState}), skip`);
+      return;
+    }
+    // 3. 并发保护
+    if (this.modelRestoreInProgress) {
+      console.info('[VrmViewerPage] startActiveModelRestore: in progress, skip');
+      return;
+    }
+
+    this.restoreStarted = true;
+    this.modelRestoreInProgress = true;
+    this.modelRestoreGeneration++;
+    const generation: number = this.modelRestoreGeneration;
+    this.modelRestoreState = ArkWebModelRestoreState.READING_LIBRARY;
+    this.modelRestoreErrorCode = '';
+    this.modelRestoreErrorMessage = '';
+
+    try {
+      // 等待 AssetLibrary 初始化
+      if (this.assetLibrary === null) {
+        this.failModelRestore(ModelRestoreErrorCode.MODEL_RESTORE_LIBRARY_MISSING, 'AssetLibrary not created');
+        return;
+      }
+      const initOk: boolean = await this.assetLibrary.ensureInitialized();
+      if (generation !== this.modelRestoreGeneration || this.restoreDisposed) {
+        return; // 过期
+      }
+      if (!initOk) {
+        this.failModelRestore(ModelRestoreErrorCode.MODEL_RESTORE_LIBRARY_MISSING, 'AssetLibrary init failed');
+        return;
+      }
+
+      // 读取清单并查找 active model
+      const activeAsset: ArkWebAvatarModelAsset | null = await this.assetLibrary.findActiveModel();
+      if (generation !== this.modelRestoreGeneration || this.restoreDisposed) {
+        return;
+      }
+
+      if (activeAsset === null) {
+        // 无 active model,尝试旧缓存迁移
+        console.info('[VrmViewerPage] no active model, try legacy migration');
+        this.modelRestoreState = ArkWebModelRestoreState.MIGRATING;
+        const migrated: boolean = await this.tryLegacyCacheMigration();
+        if (generation !== this.modelRestoreGeneration || this.restoreDisposed) {
+          return;
+        }
+        if (!migrated) {
+          // 无旧缓存,进入空状态
+          this.modelRestoreState = ArkWebModelRestoreState.EMPTY;
+          this.activeModelId = '';
+          this.activeModelDisplayName = '';
+          this.activeModelByteLength = 0;
+          console.info('[VrmViewerPage] no model to restore, entering EMPTY state');
+        }
+        return;
+      }
+
+      // 有 active model,验证并加载
+      this.activeModelId = activeAsset.modelId;
+      this.activeModelDisplayName = activeAsset.displayName;
+      this.activeModelByteLength = activeAsset.byteLength;
+      console.info(`[VrmViewerPage] active model found: id=${activeAsset.modelId} name=${activeAsset.displayName}`);
+
+      const loaded: boolean = await this.validateRegisterAndLoadPersistentAsset(activeAsset, generation);
+      if (generation !== this.modelRestoreGeneration || this.restoreDisposed) {
+        return;
+      }
+      if (loaded) {
+        this.modelRestoreState = ArkWebModelRestoreState.READY;
+        console.info('[VrmViewerPage] active model restored successfully');
+      }
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      this.failModelRestore(ModelRestoreErrorCode.MODEL_RESTORE_LOAD_FAILED, `restore exception: ${msg}`);
+    } finally {
+      this.modelRestoreInProgress = false;
+    }
+  }
+
+  /**
+   * Phase 3B: 尝试旧缓存迁移(从 StateStore 恢复 cacheDir 模型到 filesDir)。
+   *
+   * 仅在新清单无 active model 时执行一次。
+   * 成功后通过 PersistentModelStore 写入 filesDir + library.json,后续不再走此路径。
+   *
+   * @returns true 表示迁移成功并已加载模型;false 表示无旧缓存或迁移失败
+   */
+  private async tryLegacyCacheMigration(): Promise<boolean> {
+    if (this.importStateStore === null || this.persistentModelStore === null || this.assetLibrary === null) {
+      return false;
+    }
+    try {
+      const result: ImportStateRestoreResult = await this.importStateStore.restore();
+      if (result.file === null) {
+        // 无记录或损坏记录
+        if (result.errorCode.length > 0) {
+          console.warn(`[VrmViewerPage] legacy StateStore restore failed: ${result.errorCode} ${result.errorMessage}`);
+        }
+        return false;
+      }
+
+      const file: ImportedModelFile = result.file;
+      console.info(`[VrmViewerPage] legacy cache found: ${file.displayName} size=${file.size}, migrating`);
+
+      // 迁移到 filesDir 持久目录
+      const asset: ArkWebAvatarModelAsset | null = await this.persistentModelStore.migrateFromLegacyCache(
+        file.cachePath,
+        file.displayName,
+        file.extension,
+        file.size
+      );
+      if (asset === null) {
+        const err: string = this.persistentModelStore.getLastError();
+        console.warn(`[VrmViewerPage] legacy migrate failed: ${err}`);
+        // 迁移失败不删除旧缓存
+        this.failModelRestore(ModelRestoreErrorCode.MODEL_RESTORE_LOAD_FAILED, `migrate failed: ${err}`);
+        return false;
+      }
+
+      // 迁移成功,标记并加载
+      this.legacyModelMigrated = true;
+      this.activeModelId = asset.modelId;
+      this.activeModelDisplayName = asset.displayName;
+      this.activeModelByteLength = asset.byteLength;
+      console.info(`[VrmViewerPage] legacy migration ok: id=${asset.modelId}`);
+
+      const generation: number = this.modelRestoreGeneration;
+      const loaded: boolean = await this.validateRegisterAndLoadPersistentAsset(asset, generation);
+      return loaded;
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      console.warn(`[VrmViewerPage] tryLegacyCacheMigration exception: ${msg}`);
+      return false;
+    }
+  }
+
+  /**
+   * Phase 3B: 验证、注册并加载持久化模型资产。
+   *
+   * 流程:
+   * 1. 验证文件存在与大小(VALIDATING)
+   * 2. 注册到 Provider(REGISTERING)
+   * 3. ensurePreparedModelResource + tryAutoProbeResource(LOADING)
+   * 4. loadPreparedModelResource(自动加载,无需用户点击)
+   *
+   * @param asset 持久化模型资产
+   * @param generation 调用时的恢复代次(用于过期判断)
+   * @returns true 表示加载成功;false 表示失败(错误码已更新)
+   */
+  private async validateRegisterAndLoadPersistentAsset(
+    asset: ArkWebAvatarModelAsset,
+    generation: number
+  ): Promise<boolean> {
+    if (this.persistentModelStore === null || this.resourceProvider === null) {
+      this.failModelRestore(ModelRestoreErrorCode.MODEL_RESTORE_PROVIDER_FAILED, 'store/provider null');
+      return false;
+    }
+
+    // 1. VALIDATING: 验证文件
+    this.modelRestoreState = ArkWebModelRestoreState.VALIDATING;
+    const validateOk: boolean = await this.persistentModelStore.validateModelFile(
+      asset.relativePath,
+      asset.byteLength
+    );
+    if (generation !== this.modelRestoreGeneration || this.restoreDisposed) {
+      return false;
+    }
+    if (!validateOk) {
+      const err: string = this.persistentModelStore.getLastError();
+      this.failModelRestore(ModelRestoreErrorCode.MODEL_RESTORE_FILE_MISSING, `validate failed: ${err}`);
+      return false;
+    }
+
+    // 2. REGISTERING: 注册到 Provider
+    this.modelRestoreState = ArkWebModelRestoreState.REGISTERING;
+    const absolutePath: string = this.persistentModelStore.resolveAbsolutePath(asset.relativePath);
+    if (absolutePath.length === 0) {
+      this.failModelRestore(ModelRestoreErrorCode.MODEL_RESTORE_PATH_INVALID, 'resolveAbsolutePath empty');
+      return false;
+    }
+    let resource: WebModelResource;
+    try {
+      resource = this.resourceProvider.registerPersistentAsset(
+        absolutePath,
+        asset,
+        GltfDependencyState.NOT_APPLICABLE
+      );
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      this.failModelRestore(ModelRestoreErrorCode.MODEL_RESTORE_PROVIDER_FAILED, `register failed: ${msg}`);
+      return false;
+    }
+    if (generation !== this.modelRestoreGeneration || this.restoreDisposed) {
+      return false;
+    }
+    this.preparedResource = resource;
+    this.resourceState = this.resourceProvider.getState();
+    this.resourceLastError = '';
+    console.info(`[VrmViewerPage] persistent asset registered: url=${resource.resourceUrl}`);
+
+    // 3. LOADING: ensurePreparedModelResource + probe + load
+    this.modelRestoreState = ArkWebModelRestoreState.LOADING;
+    const prepared: boolean = await this.ensurePreparedModelResource(resource, false);
+    if (generation !== this.modelRestoreGeneration || this.restoreDisposed) {
+      return false;
+    }
+    if (!prepared) {
+      this.failModelRestore(
+        ModelRestoreErrorCode.MODEL_RESTORE_LOAD_FAILED,
+        `prepare failed: ${this.webPreparedErrorCode} ${this.webPreparedErrorMessage}`
+      );
+      return false;
+    }
+
+    // 自动探测
+    this.tryAutoProbeResource();
+
+    // 等待探测完成(最多 4.5s),VERIFIED 后自动加载
+    const probeOk: boolean = await this.waitForProbeVerified(4500);
+    if (generation !== this.modelRestoreGeneration || this.restoreDisposed) {
+      return false;
+    }
+    if (!probeOk) {
+      this.failModelRestore(
+        ModelRestoreErrorCode.MODEL_RESTORE_LOAD_FAILED,
+        `probe not verified: ${this.probeErrorCode} ${this.probeErrorMessage}`
+      );
+      return false;
+    }
+
+    // 自动加载模型(无需用户点击)
+    const loadOk: boolean = await this.autoLoadCurrentModel();
+    if (generation !== this.modelRestoreGeneration || this.restoreDisposed) {
+      return false;
+    }
+    if (!loadOk) {
+      this.failModelRestore(
+        ModelRestoreErrorCode.MODEL_RESTORE_LOAD_FAILED,
+        `load failed: ${this.loadErrorCode} ${this.loadErrorMessage}`
+      );
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Phase 3B: 等待资源探测达到 VERIFIED 状态(或 FAILED/超时)。
+   *
+   * 简单轮询:每 200ms 检查 probeState,最长等待 timeoutMs。
+   * 注意:实际探测由 tryAutoProbeResource 启动,本方法只等待结果。
+   *
+   * @param timeoutMs 最大等待时间
+   * @returns true 表示 VERIFIED;false 表示 FAILED / 超时 / 未启动
+   */
+  private async waitForProbeVerified(timeoutMs: number): Promise<boolean> {
+    const startTime: number = Date.now();
+    const intervalMs: number = 200;
+    while (Date.now() - startTime < timeoutMs) {
+      if (this.probeState === ModelResourceProbeState.VERIFIED) {
+        return true;
+      }
+      if (this.probeState === ModelResourceProbeState.FAILED) {
+        return false;
+      }
+      // 未探测或探测中,继续等待
+      await this.delay(intervalMs);
+    }
+    return false;
+  }
+
+  /**
+   * Phase 3B: 自动加载当前已准备的模型(无需用户点击)。
+   *
+   * 复用 onLoadModelButton 的核心流程,但不显示前置条件 Toast。
+   * 失败时不弹 Toast(由调用方决定如何提示)。
+   *
+   * @returns true 表示加载成功;false 表示失败
+   */
+  private async autoLoadCurrentModel(): Promise<boolean> {
+    if (this.preparedResource === null) {
+      return false;
+    }
+    if (this.viewerState !== ArkWebViewerState.READY) {
+      return false;
+    }
+    if (this.probeState !== ModelResourceProbeState.VERIFIED) {
+      return false;
+    }
+    if (this.loadInProgress) {
+      return false;
+    }
+
+    this.resetLoadState();
+    this.loadInProgress = true;
+    this.loadState = 'LOADING';
+    this.loadStartedAt = Date.now();
+    this.loadPollCount = 0;
+    this.loadDisplayName = this.preparedResource.displayName;
+
+    try {
+      const startResult: string = await this.arkWebController.loadPreparedModelResource();
+      if (startResult.indexOf('"success":true') < 0 && startResult.indexOf('"success": true') < 0) {
+        this.loadState = 'FAILED';
+        this.loadErrorCode = 'LOAD_START_FAILED';
+        const errorMatch: RegExpMatchArray | null = startResult.match(/"message"\s*:\s*"([^"]*)"/);
+        this.loadErrorMessage = errorMatch !== null && errorMatch.length >= 2 ? errorMatch[1] : startResult;
+        this.loadCompletedAt = Date.now();
+        this.loadInProgress = false;
+        return false;
+      }
+      // 启动轮询
+      this.startLoadPolling();
+      // 等待加载完成(最多 60s)
+      const loaded: boolean = await this.waitForLoadReady(60000);
+      return loaded;
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      this.loadState = 'FAILED';
+      this.loadErrorCode = 'LOAD_START_FAILED';
+      this.loadErrorMessage = msg;
+      this.loadCompletedAt = Date.now();
+      this.loadInProgress = false;
+      return false;
+    }
+  }
+
+  /**
+   * Phase 3B: 等待模型加载达到 READY 状态(或 FAILED/超时)。
+   *
+   * @param timeoutMs 最大等待时间
+   * @returns true 表示 READY;false 表示 FAILED / 超时
+   */
+  private async waitForLoadReady(timeoutMs: number): Promise<boolean> {
+    const startTime: number = Date.now();
+    const intervalMs: number = 250;
+    while (Date.now() - startTime < timeoutMs) {
+      if (this.loadState === 'READY') {
+        this.loadInProgress = false;
+        return true;
+      }
+      if (this.loadState === 'FAILED' || this.loadState === 'DISPOSED') {
+        this.loadInProgress = false;
+        return false;
+      }
+      await this.delay(intervalMs);
+    }
+    this.loadState = 'FAILED';
+    this.loadErrorCode = 'LOAD_TIMEOUT';
+    this.loadErrorMessage = `auto load timeout after ${timeoutMs}ms`;
+    this.loadCompletedAt = Date.now();
+    this.loadInProgress = false;
+    return false;
+  }
+
+  /**
+   * Phase 3B: 重新加载当前 activeModel(手动触发)。
+   *
+   * 用户点击"重新加载模型"按钮时调用。
+   * 不重新选择文件,不复制模型,不修改 library.json。
+   * 仅重新注册 Provider 并调用 loadPreparedModelResource。
+   */
+  private async onReloadModelButton(): Promise<void> {
+    if (this.modelRestoreInProgress) {
+      promptAction.showToast({ message: '模型恢复进行中' });
+      return;
+    }
+    if (this.loadInProgress) {
+      promptAction.showToast({ message: '模型加载中,请稍候' });
+      return;
+    }
+    if (this.assetLibrary === null || this.persistentModelStore === null || this.resourceProvider === null) {
+      promptAction.showToast({ message: '资产库未初始化' });
+      return;
+    }
+    const activeAsset: ArkWebAvatarModelAsset | null = await this.assetLibrary.findActiveModel();
+    if (activeAsset === null) {
+      promptAction.showToast({ message: '无 activeModel,请导入模型' });
+      return;
+    }
+    this.modelRestoreInProgress = true;
+    this.modelRestoreGeneration++;
+    const generation: number = this.modelRestoreGeneration;
+    this.modelRestoreState = ArkWebModelRestoreState.LOADING;
+    this.modelRestoreErrorCode = '';
+    this.modelRestoreErrorMessage = '';
+    try {
+      const loaded: boolean = await this.validateRegisterAndLoadPersistentAsset(activeAsset, generation);
+      if (generation !== this.modelRestoreGeneration || this.restoreDisposed) {
+        return;
+      }
+      if (loaded) {
+        this.modelRestoreState = ArkWebModelRestoreState.READY;
+        promptAction.showToast({ message: '模型重新加载成功' });
+      }
+    } finally {
+      this.modelRestoreInProgress = false;
+    }
+  }
+
+  /**
+   * Phase 3B: 记录模型恢复失败状态。
+   */
+  private failModelRestore(code: string, message: string): void {
+    this.modelRestoreState = ArkWebModelRestoreState.FAILED;
+    this.modelRestoreErrorCode = code;
+    this.modelRestoreErrorMessage = message;
+    console.warn(`[VrmViewerPage] model restore failed: ${code} ${message}`);
+  }
+
+  /**
+   * Phase 3B: 延迟工具(供 waitForProbeVerified / waitForLoadReady 使用)。
+   */
+  private delay(ms: number): Promise<void> {
+    return new Promise<void>((resolve: () => void) => {
+      setTimeout(() => {
+        resolve();
+      }, ms);
+    });
   }
 
   /**
@@ -4379,6 +5034,108 @@ struct VrmViewerPage {
         .alignItems(HorizontalAlign.Center)
         .backgroundColor('#CC000000')
       }
+
+      // Phase 3B: 模型恢复中覆盖层(READING_LIBRARY/MIGRATING/VALIDATING/REGISTERING/LOADING)
+      if (this.viewerState === ArkWebViewerState.READY &&
+          this.modelRestoreState !== ArkWebModelRestoreState.READY &&
+          this.modelRestoreState !== ArkWebModelRestoreState.EMPTY &&
+          this.modelRestoreState !== ArkWebModelRestoreState.FAILED &&
+          this.modelRestoreState !== ArkWebModelRestoreState.IDLE &&
+          this.modelRestoreState !== ArkWebModelRestoreState.DISPOSED &&
+          this.loadState !== 'READY') {
+        Column() {
+          Text('正在恢复角色模型…')
+            .fontSize($r('app.float.app_font_subtitle'))
+            .fontWeight(FontWeight.Bold)
+            .fontColor('#FFFFFF')
+            .margin({ bottom: 8 })
+          Text(this.modelRestoreState)
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor('#BFFFFFFF')
+        }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+        .backgroundColor('#80000000')
+      }
+
+      // Phase 3B: 空状态覆盖层(无 activeModel)
+      // 不遮挡顶部导航与导入按钮,仅覆盖预览区域中心
+      if (this.viewerState === ArkWebViewerState.READY &&
+          this.modelRestoreState === ArkWebModelRestoreState.EMPTY &&
+          this.loadState !== 'READY') {
+        Column() {
+          Text('尚未选择角色模型')
+            .fontSize($r('app.float.app_font_subtitle'))
+            .fontWeight(FontWeight.Bold)
+            .fontColor('#FFFFFF')
+            .margin({ bottom: 8 })
+          Text('点击"导入模型"开始使用')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor('#BFFFFFFF')
+        }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+        .backgroundColor('#80000000')
+      }
+
+      // Phase 3B: 恢复失败覆盖层(保留重新加载与导入按钮)
+      if (this.viewerState === ArkWebViewerState.READY &&
+          this.modelRestoreState === ArkWebModelRestoreState.FAILED &&
+          this.loadState !== 'READY') {
+        Column() {
+          Text('模型自动恢复失败')
+            .fontSize($r('app.float.app_font_subtitle'))
+            .fontWeight(FontWeight.Bold)
+            .fontColor('#FF6B6B')
+            .margin({ bottom: 8 })
+          Text(this.modelRestoreErrorCode)
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor('#BFFFFFFF')
+            .margin({ bottom: 4 })
+          if (this.modelRestoreErrorMessage.length > 0) {
+            Text(this.modelRestoreErrorMessage)
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor('#99FFFFFF')
+              .maxLines(2)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .textAlign(TextAlign.Center)
+          }
+          Row() {
+            Button('重新加载')
+              .fontSize($r('app.float.app_font_body'))
+              .fontColor('#FFFFFF')
+              .backgroundColor($r('app.color.app_accent'))
+              .borderRadius($r('app.float.app_radius_sm'))
+              .height(40)
+              .margin({ right: 8 })
+              .enabled(!this.modelRestoreInProgress && !this.loadInProgress)
+              .onClick(() => {
+                this.onReloadModelButton();
+              })
+            Button('导入模型')
+              .fontSize($r('app.float.app_font_body'))
+              .fontColor('#FFFFFF')
+              .backgroundColor('#33FFFFFF')
+              .borderRadius($r('app.float.app_radius_sm'))
+              .height(40)
+              .margin({ left: 8 })
+              .enabled(!this.importInProgress && !this.loadInProgress)
+              .onClick(() => {
+                this.onImportModelButton();
+              })
+          }
+          .margin({ top: 16 })
+        }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+        .backgroundColor('#CC000000')
+      }
     }
     .width('100%')
     .height('100%')
@@ -4693,7 +5450,7 @@ struct VrmViewerPage {
         .fontColor($r('app.color.app_text_primary'))
         .margin({ bottom: 8 })
 
-      // 导入按钮 + 清除按钮
+      // 导入按钮 + 重新加载 + 清除按钮
       Row() {
         Button(this.importInProgress ? '导入中...' : '导入模型')
           .fontSize($r('app.float.app_font_body'))
@@ -4705,6 +5462,19 @@ struct VrmViewerPage {
           .enabled(!this.importInProgress && this.importState !== ModelImportState.DISPOSED && !this.loadInProgress)
           .onClick(() => {
             this.onImportModelButton();
+          })
+
+        // Phase 3B: 重新加载当前 activeModel(不重新选择文件)
+        Button('重新加载')
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor('#FFFFFF')
+          .backgroundColor('#33FFFFFF')
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(40)
+          .margin({ left: 8 })
+          .enabled(this.activeModelId.length > 0 && !this.modelRestoreInProgress && !this.loadInProgress && !this.importInProgress)
+          .onClick(() => {
+            this.onReloadModelButton();
           })
 
         Button('清除缓存')
@@ -5490,6 +6260,26 @@ struct VrmViewerPage {
       this.DebugRow('Model Name', this.debugModelDisplayName.length > 0 ? this.debugModelDisplayName : '-')
       this.DebugRow('Model Source', this.debugModelSource)
       this.DebugRow('Model Loaded', this.debugModelLoaded ? 'TRUE' : 'FALSE')
+
+      // Phase 3B: 资产目录 / 模型恢复 Debug 状态
+      // 禁止显示 filesDir / absolutePath / relativePath / cachePath
+      this.DebugRow('Asset Library State',
+        this.assetLibrary !== null && !this.assetLibrary.isDisposed() ? 'READY' : 'NOT_INITIALIZED')
+      this.DebugRow('Asset Library Version', '1')
+      this.DebugRow('Active Model ID',
+        this.activeModelId.length > 0 ? this.activeModelId : '-')
+      this.DebugRow('Active Model Name',
+        this.activeModelDisplayName.length > 0 ? this.activeModelDisplayName : '-')
+      this.DebugRow('Active Model Size',
+        this.activeModelByteLength > 0 ? this.formatByteLength(this.activeModelByteLength) : '-')
+      this.DebugRow('Model Storage', 'PERSISTENT')
+      this.DebugRow('Model Restore State', this.modelRestoreState)
+      if (this.modelRestoreErrorCode.length > 0) {
+        this.DebugRow('Model Restore Error',
+          this.modelRestoreErrorCode + ': ' + this.modelRestoreErrorMessage)
+      }
+      this.DebugRow('Legacy Model Migrated', this.legacyModelMigrated ? 'YES' : 'NO')
+      this.DebugRow('Debug Test Cube', 'DISABLED')
 
       // Phase 2A-1: Scene 与 Camera Controls Debug 状态
       this.DebugRow('Background', this.sceneBackgroundColor)

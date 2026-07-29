@@ -29214,6 +29214,7 @@ void main() {
   var ERR_ENVIRONMENT_NOT_ENABLED = "ENVIRONMENT_NOT_ENABLED";
   var ERR_ENVIRONMENT_TEXTURE_MISSING = "ENVIRONMENT_TEXTURE_MISSING";
   var ERR_ENVIRONMENT_ENABLED_INVALID = "ENVIRONMENT_ENABLED_INVALID";
+  var ENABLE_DEBUG_TEST_CUBE = false;
   var ERR_SKYBOX_VISIBLE_INVALID = "SKYBOX_VISIBLE_INVALID";
   var ERR_ENVIRONMENT_INTENSITY_INVALID = "ENVIRONMENT_INTENSITY_INVALID";
   var ERR_ENVIRONMENT_ALREADY_INITIALIZING = "ENVIRONMENT_ALREADY_INITIALIZING";
@@ -29350,11 +29351,15 @@ void main() {
       this.scene.add(this.directionalLight);
       this.ambientLight = new AmbientLight(16777215, 0);
       this.scene.add(this.ambientLight);
-      var geometry = new BoxGeometry(0.5, 0.5, 0.5);
-      var material = new MeshStandardMaterial({ color: 5227511 });
-      this.testObject = new Mesh(geometry, material);
-      this.testObject.position.set(0, 1, 0);
-      this.scene.add(this.testObject);
+      if (ENABLE_DEBUG_TEST_CUBE) {
+        var geometry = new BoxGeometry(0.5, 0.5, 0.5);
+        var material = new MeshStandardMaterial({ color: 5227511 });
+        this.testObject = new Mesh(geometry, material);
+        this.testObject.position.set(0, 1, 0);
+        this.scene.add(this.testObject);
+      } else {
+        this.testObject = null;
+      }
       this.gridHelper = new GridHelper(10, 10, 8947848, 4473924);
       this.gridHelper.visible = false;
       this.gridHelper.position.set(0, 0, 0);

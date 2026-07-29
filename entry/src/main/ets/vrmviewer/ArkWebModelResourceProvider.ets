@@ -43,7 +43,7 @@
 
 import { fileIo } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
-import { ImportedModelFile, CACHE_SUBDIR } from './ArkWebModelImportTypes';
+import { ImportedModelFile, CACHE_SUBDIR, GltfDependencyState } from './ArkWebModelImportTypes';
 import {
   ModelResourceState,
   WebModelResource,
@@ -58,6 +58,7 @@ import {
   VrmRuntimeDiagnostic,
   VrmRuntimeStage
 } from './ArkWebVrmRuntimeDiagnosticsTypes';
+import { ArkWebAvatarModelAsset } from './ArkWebAvatarAssetTypes';
 
 /**
  * 资源响应构造结果(内部使用)。
@@ -97,6 +98,8 @@ export class ArkWebModelResourceProvider {
   private disposed: boolean = false;
   /** 受控缓存目录(规范化后的绝对路径)。 */
   private readonly importDirectory: string;
+  /** Phase 3B: 持久化模型根目录 (规范化后的绝对路径,如 <filesDir>/avatar-assets)。 */
+  private persistentRootDir: string = '';
   /**
    * Phase 1D-2C-1: 诊断回调。
    *
@@ -120,6 +123,17 @@ export class ArkWebModelResourceProvider {
     // importDirectory 形如 /data/storage/el2/cache/vrm-imports
     const rawDir: string = `${cacheDir}/${CACHE_SUBDIR}`;
     this.importDirectory = normalizePath(rawDir);
+  }
+
+  /**
+   * Phase 3B: 配置持久化模型根目录。
+   *
+   * 启用 registerPersistentAsset 方法,允许注册 filesDir 下的模型文件。
+   *
+   * @param persistentRoot 持久化根目录绝对路径 (如 <filesDir>/avatar-assets)
+   */
+  setPersistentRootDir(persistentRoot: string): void {
+    this.persistentRootDir = normalizePath(persistentRoot);
   }
 
   /**
@@ -254,6 +268,117 @@ export class ArkWebModelResourceProvider {
     );
 
     return publicResource;
+  }
+
+  /**
+   * Phase 3B: 注册持久化模型资产为受控资源。
+   *
+   * 与 registerFile 不同:
+   * - 接受 filesDir 下的绝对路径 (而非 cacheDir/vrm-imports)
+   * - 使用 asset.resourceId 作为 opaqueId (稳定,重启后 URL 不变)
+   * - 路径校验针对 persistentRootDir (构造时传入)
+   *
+   * 步骤:
+   * 1. 检查 Provider 未销毁
+   * 2. 验证 absolutePath 位于 persistentRootDir 下
+   * 3. 验证文件存在且为普通文件
+   * 4. 验证文件大小与 asset.byteLength 一致
+   * 5. 使用 asset.resourceId 作为 opaqueId 构造 URL
+   * 6. 构造 WebModelResource (不含 cachePath)
+   * 7. 原子替换 currentResource
+   *
+   * @param absolutePath filesDir 下的绝对路径
+   * @param asset 持久化模型资产记录
+   * @param gltfDependencyState glTF 依赖预检状态 (持久化时不保存,运行时由调用方提供)
+   * @returns 公共资源接口 (可安全传给 JavaScript);失败抛出 Error
+   */
+  registerPersistentAsset(
+    absolutePath: string,
+    asset: ArkWebAvatarModelAsset,
+    gltfDependencyState: GltfDependencyState
+  ): WebModelResource {
+    if (this.disposed || this.state === ModelResourceState.DISPOSED) {
+      throw new Error(ModelResourceErrorCode.RESOURCE_PROVIDER_DISPOSED);
+    }
+    if (this.persistentRootDir.length === 0) {
+      throw new Error(`${ModelResourceErrorCode.RESOURCE_PATH_INVALID}: persistentRootDir not configured`);
+    }
+
+    // 路径安全验证 (针对 persistentRootDir)
+    const normalizedPath: string = normalizePath(absolutePath);
+    if (!isPathUnderDirectory(normalizedPath, this.persistentRootDir)) {
+      throw new Error(`${ModelResourceErrorCode.RESOURCE_PATH_INVALID}: path not under persistentRootDir`);
+    }
+    if (containsTraversalSegments(normalizedPath)) {
+      throw new Error(`${ModelResourceErrorCode.RESOURCE_PATH_INVALID}: path contains '..' segment`);
+    }
+
+    // 文件存在性 + 大小校验
+    let stat: fileIo.Stat;
+    try {
+      stat = fileIo.statSync(normalizedPath);
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      throw new Error(`${ModelResourceErrorCode.RESOURCE_OPEN_FAILED}: stat failed: ${msg}`);
+    }
+    if (!stat.isFile) {
+      throw new Error(`${ModelResourceErrorCode.RESOURCE_PATH_INVALID}: not a regular file`);
+    }
+    if (stat.size !== asset.byteLength) {
+      throw new Error(
+        `${ModelResourceErrorCode.RESOURCE_PATH_INVALID}: size mismatch (expected ${asset.byteLength}, actual ${stat.size})`
+      );
+    }
+
+    // 使用 asset.resourceId 作为 opaqueId (稳定)
+    const opaqueId: string = asset.resourceId;
+    const resourceUrl: string = buildModelResourceUrl(opaqueId);
+
+    // 从 relativePath 提取扩展名 (models/<modelId>.<ext>)
+    const extension: string = this.extractExtensionFromRelativePath(asset.relativePath);
+
+    // 构造公共资源 (不含 cachePath / sourceUri)
+    const publicResource: WebModelResource = {
+      id: opaqueId,
+      resourceUrl: resourceUrl,
+      displayName: asset.displayName,
+      mimeType: asset.mimeType,
+      size: asset.byteLength,
+      extension: extension,
+      createdAt: asset.createdAt,
+      gltfDependencyState: gltfDependencyState
+    };
+
+    // 原子替换当前资源
+    const internalResource: InternalModelResource = {
+      publicResource: publicResource,
+      cachePath: normalizedPath
+    };
+    this.currentResource = internalResource;
+    this.state = ModelResourceState.READY;
+
+    console.info(
+      `[ArkWebModelResourceProvider] registerPersistentAsset: id=${opaqueId}, size=${asset.byteLength}, mimeType=${asset.mimeType}`
+    );
+
+    return publicResource;
+  }
+
+  /**
+   * Phase 3B: 从 relativePath 提取小写扩展名。
+   * relativePath 格式: models/<modelId>.<ext>
+   * @returns 小写扩展名 (如 'vrm');失败返回 'vrm' (默认)
+   */
+  private extractExtensionFromRelativePath(relativePath: string): string {
+    const lastDot: number = relativePath.lastIndexOf('.');
+    if (lastDot < 0 || lastDot === relativePath.length - 1) {
+      return 'vrm'; // 默认
+    }
+    const ext: string = relativePath.substring(lastDot + 1).toLowerCase();
+    if (ext === 'vrm' || ext === 'glb' || ext === 'gltf') {
+      return ext;
+    }
+    return 'vrm';
   }
 
   /**

@@ -53,6 +53,19 @@ export var ERR_ENVIRONMENT_NOT_ENABLED = 'ENVIRONMENT_NOT_ENABLED';
 export var ERR_ENVIRONMENT_TEXTURE_MISSING = 'ENVIRONMENT_TEXTURE_MISSING';
 /** 环境启用参数无效 */
 export var ERR_ENVIRONMENT_ENABLED_INVALID = 'ENVIRONMENT_ENABLED_INVALID';
+
+/**
+ * Phase 3B: 测试立方体 Debug 开关。
+ *
+ * - false (默认,生产模式): 不创建测试立方体,正式页面显示空场景或真实模型
+ * - true (仅 Debug): 创建 BoxGeometry 测试立方体用于 Three.js Scene 验证
+ *
+ * 历史背景:
+ * - Phase 1B 时无条件创建测试立方体用于验证 WebGL 渲染管线
+ * - Phase 3B 起,模型持久化与自动恢复完成后,正式页面不再需要测试立方体
+ * - 保留开关以便 Debug 场景下快速验证 Scene/Camera/Renderer 是否正常
+ */
+var ENABLE_DEBUG_TEST_CUBE = false;
 /** 天空盒可见参数无效 */
 export var ERR_SKYBOX_VISIBLE_INVALID = 'SKYBOX_VISIBLE_INVALID';
 /** 环境强度参数无效 */
@@ -293,13 +306,18 @@ export class ViewerScene {
     this.ambientLight = new THREE.AmbientLight(0xffffff, 0.0);
     this.scene.add(this.ambientLight);
 
-    // ===== 测试物体(Phase 1B 验证用) =====
-    // 位置 (0, 1.0, 0) 在默认相机视野内(camera at (0, 1.25, 2) target (0, 1.25, 0))
-    var geometry = new THREE.BoxGeometry(0.5, 0.5, 0.5);
-    var material = new THREE.MeshStandardMaterial({ color: 0x4fc3f7 });
-    this.testObject = new THREE.Mesh(geometry, material);
-    this.testObject.position.set(0, 1.0, 0);
-    this.scene.add(this.testObject);
+    // ===== 测试物体(Phase 1B 验证用,Phase 3B 默认关闭) =====
+    // Phase 3B: 正式模式默认不创建测试立方体 (ENABLE_DEBUG_TEST_CUBE = false)
+    // 仅在 Debug 场景下手动开启开关时创建,用于验证 Scene/Camera/Renderer
+    if (ENABLE_DEBUG_TEST_CUBE) {
+      var geometry = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+      var material = new THREE.MeshStandardMaterial({ color: 0x4fc3f7 });
+      this.testObject = new THREE.Mesh(geometry, material);
+      this.testObject.position.set(0, 1.0, 0);
+      this.scene.add(this.testObject);
+    } else {
+      this.testObject = null;
+    }
 
     // ===== Phase 2A-1: GridHelper =====
     // 只创建一次,默认 visible=false。切换网格显示只修改 gridHelper.visible。
