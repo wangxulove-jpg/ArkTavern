@@ -66,7 +66,14 @@ import {
   ARKWEB_ENVIRONMENT_POLL_INTERVAL_MS,
   ARKWEB_ENVIRONMENT_POLL_TIMEOUT_MS,
   PresentationMode,
-  ArkWebPresentationErrorCode
+  ArkWebPresentationErrorCode,
+  ArkWebAvailableExpression,
+  ArkWebExpressionState,
+  ArkWebExpressionErrorCode,
+  ArkWebSetExpressionParams,
+  parseAvailableExpressions,
+  parseExpressionState,
+  parseExpressionDebugState
 } from '../vrmviewer/ArkWebVrmViewerTypes';
 import {
   ArkWebViewerEventListener,
@@ -663,6 +670,30 @@ struct VrmViewerPage {
   /** 重命名对话框输入的新名称。 */
   @State pendingRenameDisplayName: string = '';
 
+  // ===== Phase 3E-1 — VRM 表情系统 =====
+  /** 当前 VRM 可用表情列表 (从 expressionManager 真实枚举)。 */
+  @State availableExpressions: ArkWebAvailableExpression[] = [];
+  /** 当前选中的表情名 (用户点击列表项后设置, 空字符串表示未选中)。 */
+  @State selectedExpressionName: string = '';
+  /** 当前选中的目标权重 (0/0.25/0.5/0.75/1, 默认 1)。 */
+  @State selectedExpressionWeight: number = 1;
+  /** 表情系统状态 (UNBOUND/READY/APPLIED/FAILED/DISPOSED)。 */
+  @State expressionState: string = 'UNBOUND';
+  /** expressionManager 是否就绪 (VRM 已绑定且 API 完整)。 */
+  @State expressionManagerReady: boolean = false;
+  /** 表情系统错误码 (空字符串表示无错误)。 */
+  @State expressionErrorCode: string = '';
+  /** 表情系统错误消息。 */
+  @State expressionErrorMessage: string = '';
+  /** 表情操作是否进行中 (setExpression / resetExpression 调用期间)。 */
+  @State expressionLoading: boolean = false;
+  /** 当前已应用的业务表情名 (空字符串表示无应用)。 */
+  @State appliedExpressionName: string = '';
+  /** 当前已应用的业务表情权重。 */
+  @State appliedExpressionWeight: number = 0;
+  /** 口型通道是否保留 (true=YES / false=NO)。 */
+  @State expressionLipSyncPreserved: boolean = true;
+
   // ===== Phase 3B — 模型自动恢复与持久化资产目录 =====
   /** 资产库状态(READY / EMPTY / FAILED / DISPOSED) */
   @State assetLibraryState: string = 'IDLE';
@@ -1016,6 +1047,19 @@ struct VrmViewerPage {
     this.defaultPoseRestoreErrorCode = '';
     this.defaultPoseRestoreErrorMessage = '';
     this.lastRestoredDefaultPoseId = '';
+    // Phase 3E-1: 清空表情系统运行时状态 (不调用 resetExpression, Viewer 已 dispose)
+    // 不跨模型缓存 Expression 实例, 仅清空 ArkTS 侧镜像
+    this.availableExpressions = [];
+    this.selectedExpressionName = '';
+    this.selectedExpressionWeight = 1;
+    this.expressionState = ArkWebExpressionState.DISPOSED;
+    this.expressionManagerReady = false;
+    this.expressionErrorCode = '';
+    this.expressionErrorMessage = '';
+    this.expressionLoading = false;
+    this.appliedExpressionName = '';
+    this.appliedExpressionWeight = 0;
+    this.expressionLipSyncPreserved = true;
     // Phase 3B:13. 销毁 Phase 3B 持久化资源(不删除 filesDir 下的模型文件与 library.json)
     // 标记 restoreDisposed 阻止异步恢复回调
     this.restoreDisposed = true;
@@ -1462,6 +1506,8 @@ struct VrmViewerPage {
         // Phase 3D-3: 模型 READY 后调度默认姿势自动恢复
         // (内部有 generation + inProgress 双重保护, 重复调用安全)
         this.scheduleDefaultPoseRestore();
+        // Phase 3E-1: 模型 READY 后自动读取表情列表 (不自动设置任何表情)
+        this.refreshAvailableExpressions();
       }
       // Scene 设置
       this.debugCameraControlsEnabled = scene['cameraControlsEnabled'] === true;
@@ -1503,6 +1549,229 @@ struct VrmViewerPage {
     }).catch((e: Object) => {
       console.warn('[VrmViewerPage] getAnimationDependencyState exception: ' + (e instanceof Error ? e.message : String(e)));
     });
+  }
+
+  // ===== Phase 3E-1 — VRM 表情系统辅助方法 =====
+
+  /**
+   * Phase 3E-1: 刷新当前 VRM 可用表情列表。
+   *
+   * 模型 READY 后自动调用 (不自动设置任何表情)。
+   * 用户也可通过"刷新列表"按钮手动触发。
+   *
+   * 从 expressionManager 真实枚举,不假定固定预设一定存在。
+   */
+  private refreshAvailableExpressions(): void {
+    this.arkWebController.getAvailableExpressions().then((resultJson: string) => {
+      const expressions: ArkWebAvailableExpression[] | null =
+        parseAvailableExpressions(resultJson);
+      if (expressions === null) {
+        // 查询失败 (模型未 READY / expressionManager 缺失)
+        try {
+          const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
+          const errObj: Record<string, Object> = (obj['error'] as Record<string, Object>) ||
+            {} as Record<string, Object>;
+          this.expressionErrorCode = (errObj['code'] as string) || '';
+          this.expressionErrorMessage = (errObj['message'] as string) || '';
+        } catch (e) {
+          // ignore parse error
+        }
+        this.availableExpressions = [];
+        this.expressionManagerReady = false;
+        // 清空选中状态 (模型替换后旧选中表情可能不存在)
+        this.selectedExpressionName = '';
+        this.appliedExpressionName = '';
+        this.appliedExpressionWeight = 0;
+        this.expressionState = ArkWebExpressionState.UNBOUND;
+        return;
+      }
+      this.availableExpressions = expressions;
+      // 查询成功后清除错误 (但保留 expressionManagerReady 的判定)
+      this.expressionErrorCode = '';
+      this.expressionErrorMessage = '';
+      // 同步表情系统状态 (确认 expressionManagerReady)
+      this.refreshExpressionState();
+      // 若当前选中的表情已不在新列表中,清空选中
+      if (this.selectedExpressionName.length > 0) {
+        let found: boolean = false;
+        for (let i = 0; i < expressions.length; i++) {
+          if (expressions[i].name === this.selectedExpressionName) {
+            found = true;
+            break;
+          }
+        }
+        if (!found) {
+          this.selectedExpressionName = '';
+        }
+      }
+      // 若当前已应用的表情已不在新列表中,清空应用记录
+      if (this.appliedExpressionName.length > 0) {
+        let foundApplied: boolean = false;
+        for (let i = 0; i < expressions.length; i++) {
+          if (expressions[i].name === this.appliedExpressionName) {
+            foundApplied = true;
+            break;
+          }
+        }
+        if (!foundApplied) {
+          this.appliedExpressionName = '';
+          this.appliedExpressionWeight = 0;
+        }
+      }
+    }).catch((e: Object) => {
+      console.warn('[VrmViewerPage] refreshAvailableExpressions exception: ' +
+        (e instanceof Error ? e.message : String(e)));
+      this.expressionErrorCode = 'EXPRESSION_LIST_QUERY_FAILED';
+      this.expressionErrorMessage = e instanceof Error ? e.message : String(e);
+    });
+  }
+
+  /**
+   * Phase 3E-1: 刷新表情系统状态 (从 getExpressionState 解析)。
+   */
+  private refreshExpressionState(): void {
+    this.arkWebController.getExpressionState().then((resultJson: string) => {
+      const payload = parseExpressionState(resultJson);
+      if (payload === null) {
+        return;
+      }
+      this.expressionState = payload.state;
+      this.expressionManagerReady = payload.expressionManagerReady;
+      // 同步当前已应用表情 (模型替换后由 Web 端清空)
+      this.appliedExpressionName = payload.currentExpressionName;
+      this.appliedExpressionWeight = payload.currentExpressionWeight;
+    }).catch((e: Object) => {
+      console.warn('[VrmViewerPage] refreshExpressionState exception: ' +
+        (e instanceof Error ? e.message : String(e)));
+    });
+  }
+
+  /**
+   * Phase 3E-1: 点击"设置表情"按钮。
+   *
+   * 验证:
+   *   - 模型 READY
+   *   - 已选择真实存在的表情
+   *   - 当前没有请求执行
+   *
+   * 参数序列化为 JSON 字符串后通过 Bridge 传给 Web,
+   * 不向 JavaScript 传文件路径或模型内部对象。
+   */
+  private async onSetExpressionClick(): Promise<void> {
+    if (this.expressionLoading) {
+      return;
+    }
+    if (this.debugModelState !== 'READY') {
+      this.expressionErrorCode = ArkWebExpressionErrorCode.VRM_MISSING;
+      this.expressionErrorMessage = `模型未就绪 (state=${this.debugModelState})`;
+      promptAction.showToast({ message: '模型未就绪' });
+      return;
+    }
+    if (this.selectedExpressionName.length === 0) {
+      this.expressionErrorCode = ArkWebExpressionErrorCode.NAME_INVALID;
+      this.expressionErrorMessage = '未选择表情';
+      promptAction.showToast({ message: '请先选择表情' });
+      return;
+    }
+    if (!this.expressionManagerReady) {
+      this.expressionErrorCode = ArkWebExpressionErrorCode.MANAGER_MISSING;
+      this.expressionErrorMessage = 'Expression Manager 未就绪';
+      promptAction.showToast({ message: 'Expression Manager 未就绪' });
+      return;
+    }
+
+    this.expressionLoading = true;
+    this.expressionErrorCode = '';
+    this.expressionErrorMessage = '';
+    try {
+      const params: ArkWebSetExpressionParams = {
+        name: this.selectedExpressionName,
+        weight: this.selectedExpressionWeight
+      };
+      const paramsJson: string = JSON.stringify(params);
+      console.info(`[ExpressionUI] onSetExpressionClick: name=${this.selectedExpressionName}, weight=${this.selectedExpressionWeight}`);
+      const resultJson: string = await this.arkWebController.setExpression(paramsJson);
+      const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
+      if (obj['success'] === true) {
+        this.appliedExpressionName = this.selectedExpressionName;
+        this.appliedExpressionWeight = this.selectedExpressionWeight;
+        this.expressionState = (obj['state'] as string) || ArkWebExpressionState.APPLIED;
+        promptAction.showToast({ message: `已设置表情: ${this.selectedExpressionName}` });
+        // 刷新表情列表 (更新权重显示)
+        this.refreshAvailableExpressions();
+      } else {
+        const errObj: Record<string, Object> = (obj['error'] as Record<string, Object>) ||
+          {} as Record<string, Object>;
+        this.expressionErrorCode = (errObj['code'] as string) || 'EXPRESSION_APPLY_FAILED';
+        this.expressionErrorMessage = (errObj['message'] as string) || '';
+        this.expressionState = ArkWebExpressionState.FAILED;
+        promptAction.showToast({ message: `设置表情失败: ${this.expressionErrorCode}` });
+        // 表情错误不改变 ViewerState / ModelState / AnimationState / PoseState
+        // 仅刷新表情系统状态
+        this.refreshExpressionState();
+      }
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      this.expressionErrorCode = 'EXPRESSION_SET_FAILED';
+      this.expressionErrorMessage = msg;
+      this.expressionState = ArkWebExpressionState.FAILED;
+      promptAction.showToast({ message: `设置表情异常: ${msg}` });
+    } finally {
+      this.expressionLoading = false;
+    }
+  }
+
+  /**
+   * Phase 3E-1: 点击"清除表情"按钮。
+   *
+   * 验证:
+   *   - 当前存在已应用表情
+   *   - 当前没有请求执行
+   *
+   * 清除后 currentExpressionName = '', state = READY。
+   * 不强制把 neutral 设置为 1。
+   * 保留口型通道 aa/ee/ih/oh/ou (LIP_SYNC_CHANNELS_PRESERVED: YES)。
+   */
+  private async onResetExpressionClick(): Promise<void> {
+    if (this.expressionLoading) {
+      return;
+    }
+    if (this.appliedExpressionName.length === 0) {
+      return;
+    }
+
+    this.expressionLoading = true;
+    this.expressionErrorCode = '';
+    this.expressionErrorMessage = '';
+    try {
+      console.info(`[ExpressionUI] onResetExpressionClick: clearing ${this.appliedExpressionName}`);
+      const resultJson: string = await this.arkWebController.resetExpression();
+      const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
+      if (obj['success'] === true) {
+        this.appliedExpressionName = '';
+        this.appliedExpressionWeight = 0;
+        this.expressionState = (obj['state'] as string) || ArkWebExpressionState.READY;
+        promptAction.showToast({ message: '已清除表情' });
+        // 刷新表情列表 (更新权重显示)
+        this.refreshAvailableExpressions();
+      } else {
+        const errObj: Record<string, Object> = (obj['error'] as Record<string, Object>) ||
+          {} as Record<string, Object>;
+        this.expressionErrorCode = (errObj['code'] as string) || 'EXPRESSION_RESET_FAILED';
+        this.expressionErrorMessage = (errObj['message'] as string) || '';
+        this.expressionState = ArkWebExpressionState.FAILED;
+        promptAction.showToast({ message: `清除表情失败: ${this.expressionErrorCode}` });
+        this.refreshExpressionState();
+      }
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      this.expressionErrorCode = 'EXPRESSION_RESET_FAILED';
+      this.expressionErrorMessage = msg;
+      this.expressionState = ArkWebExpressionState.FAILED;
+      promptAction.showToast({ message: `清除表情异常: ${msg}` });
+    } finally {
+      this.expressionLoading = false;
+    }
   }
 
   /**
@@ -7517,10 +7786,227 @@ struct VrmViewerPage {
 
   @Builder
   TabExpressionContent() {
-    Text('表情功能尚未启用')
-      .fontSize($r('app.float.app_font_body'))
-      .fontColor($r('app.color.app_text_secondary'))
+    Column() {
+      // Phase 3E-1 — VRM 表情系统
+      Text('表情系统')
+        .fontSize($r('app.float.app_font_subtitle'))
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.app_text_primary'))
+        .margin({ bottom: 8 })
+
+      // Expression Manager 就绪状态
+      Row() {
+        Text('Expression Manager:')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+        Text(this.expressionManagerReady ? '就绪' : '未就绪')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor(this.expressionManagerReady
+            ? $r('app.color.app_text_primary')
+            : $r('app.color.app_text_tertiary'))
+          .margin({ left: 8 })
+      }
       .width('100%')
+      .margin({ bottom: 8 })
+
+      // 当前已应用表情
+      Row() {
+        Text('当前表情:')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+        Text(this.appliedExpressionName.length > 0
+          ? `${this.appliedExpressionName} (${this.appliedExpressionWeight.toFixed(2)})`
+          : '无')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_primary'))
+          .margin({ left: 8 })
+      }
+      .width('100%')
+      .margin({ bottom: 8 })
+
+      // 最近错误
+      if (this.expressionErrorCode.length > 0) {
+        Row() {
+          Text(`错误: ${this.expressionErrorCode}`)
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_tertiary'))
+            .layoutWeight(1)
+        }
+        .width('100%')
+        .margin({ bottom: 4 })
+        if (this.expressionErrorMessage.length > 0) {
+          Text(this.expressionErrorMessage)
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_tertiary'))
+            .width('100%')
+            .margin({ bottom: 8 })
+        }
+      }
+
+      // 表情列表
+      Text('可用表情')
+        .fontSize($r('app.float.app_font_subtitle'))
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.app_text_primary'))
+        .margin({ bottom: 8 })
+
+      if (!this.expressionManagerReady) {
+        Text('模型不支持表情或未绑定 Expression Manager')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .width('100%')
+          .margin({ bottom: 16 })
+      } else if (this.availableExpressions.length === 0) {
+        Text('当前模型无可用表情')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .width('100%')
+          .margin({ bottom: 16 })
+      } else {
+        List({ space: 4 }) {
+          ForEach(this.availableExpressions, (exp: ArkWebAvailableExpression) => {
+            ListItem() {
+              this.ExpressionListItem(exp)
+            }
+          }, (exp: ArkWebAvailableExpression) => exp.name)
+        }
+        .width('100%')
+        .margin({ bottom: 16 })
+        .alignListItem(ListItemAlign.Center)
+      }
+
+      // 权重选择
+      Text('目标权重')
+        .fontSize($r('app.float.app_font_subtitle'))
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.app_text_primary'))
+        .margin({ bottom: 8 })
+
+      Row({ space: 8 }) {
+        ForEach([0, 0.25, 0.5, 0.75, 1], (w: number) => {
+          Button(w === 0 ? '0' : w.toFixed(2))
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor(this.selectedExpressionWeight === w
+              ? $r('app.color.app_text_primary')
+              : $r('app.color.app_text_secondary'))
+            .backgroundColor(this.selectedExpressionWeight === w
+              ? $r('app.color.app_surface_2')
+              : $r('app.color.app_surface_1'))
+            .borderRadius($r('app.float.app_radius_sm'))
+            .height(32)
+            .layoutWeight(1)
+            .onClick(() => {
+              this.selectedExpressionWeight = w;
+            })
+        })
+      }
+      .width('100%')
+      .margin({ bottom: 16 })
+
+      // 操作按钮
+      Row() {
+        Button('设置表情')
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor($r('app.color.app_text_primary'))
+          .backgroundColor($r('app.color.app_surface_2'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(36)
+          .layoutWeight(1)
+          .enabled(this.debugModelState === 'READY'
+            && this.selectedExpressionName.length > 0
+            && this.expressionManagerReady
+            && !this.expressionLoading)
+          .onClick(() => {
+            this.onSetExpressionClick();
+          })
+
+        Button('清除表情')
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor($r('app.color.app_text_primary'))
+          .backgroundColor($r('app.color.app_surface_2'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(36)
+          .layoutWeight(1)
+          .margin({ left: 8 })
+          .enabled(this.appliedExpressionName.length > 0
+            && !this.expressionLoading)
+          .onClick(() => {
+            this.onResetExpressionClick();
+          })
+      }
+      .width('100%')
+      .margin({ bottom: 8 })
+
+      Row() {
+        Button('刷新列表')
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor($r('app.color.app_text_primary'))
+          .backgroundColor($r('app.color.app_surface_2'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(36)
+          .layoutWeight(1)
+          .enabled(this.debugModelState === 'READY'
+            && !this.expressionLoading)
+          .onClick(() => {
+            this.refreshAvailableExpressions();
+          })
+      }
+      .width('100%')
+    }
+    .width('100%')
+  }
+
+  /**
+   * Phase 3E-1: 表情列表项 Builder。
+   */
+  @Builder
+  ExpressionListItem(exp: ArkWebAvailableExpression) {
+    Row() {
+      Column() {
+        Row() {
+          Text(exp.name)
+            .fontSize($r('app.float.app_font_body'))
+            .fontColor($r('app.color.app_text_primary'))
+            .layoutWeight(1)
+          if (exp.isPreset) {
+            Text('预设')
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_text_tertiary'))
+              .margin({ left: 4 })
+          }
+        }
+        .width('100%')
+        Text(`权重: ${exp.weight.toFixed(2)}`)
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .width('100%')
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+
+      // 选中指示
+      Text(this.selectedExpressionName === exp.name ? '✓' : '')
+        .fontSize($r('app.float.app_font_body'))
+        .fontColor($r('app.color.app_text_primary'))
+        .width(24)
+        .textAlign(TextAlign.Center)
+
+      // 选择按钮
+      Button('选择')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_primary'))
+        .backgroundColor(this.selectedExpressionName === exp.name
+          ? $r('app.color.app_surface_2')
+          : $r('app.color.app_surface_1'))
+        .borderRadius($r('app.float.app_radius_sm'))
+        .height(28)
+        .enabled(!this.expressionLoading)
+        .onClick(() => {
+          this.selectedExpressionName = exp.name;
+        })
+    }
+    .width('100%')
+    .padding({ top: 6, bottom: 6, left: 8, right: 8 })
   }
 
   @Builder
@@ -7878,6 +8364,19 @@ struct VrmViewerPage {
       this.DebugRow('Spring Bone', 'NOT INITIALIZED')
       this.DebugRow('Detail', this.viewerDetail)
 
+      // Phase 3E-1: 表情系统 Debug 字段
+      this.DebugRow('Expression State', this.expressionState)
+      this.DebugRow('Expression Manager Ready', this.expressionManagerReady ? 'YES' : 'NO')
+      this.DebugRow('Available Expression Count', String(this.availableExpressions.length))
+      this.DebugRow('Current Expression Name',
+        this.appliedExpressionName.length > 0 ? this.appliedExpressionName : '-')
+      this.DebugRow('Current Expression Weight', this.appliedExpressionWeight.toFixed(2))
+      if (this.expressionErrorCode.length > 0) {
+        this.DebugRow('Expression Error Code', this.expressionErrorCode)
+        this.DebugRow('Expression Error Message', this.expressionErrorMessage)
+      }
+      this.DebugRow('Lip Sync Channels Preserved', this.expressionLipSyncPreserved ? 'YES' : 'NO')
+
       if (this.lastError.length > 0) {
         Text(`Error [${this.lastErrorCode}]: ${this.lastError}`)
           .fontSize($r('app.float.app_font_caption'))
@@ -7898,6 +8397,8 @@ struct VrmViewerPage {
           this.refreshDebugSceneState();
           this.refreshCameraDebugState();
           this.refreshAnimationDebugState();
+          // Phase 3E-1: 同时刷新表情系统 Debug 状态
+          this.refreshAvailableExpressions();
         })
     }
     .width('100%')

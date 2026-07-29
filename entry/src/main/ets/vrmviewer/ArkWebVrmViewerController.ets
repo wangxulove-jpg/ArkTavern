@@ -1154,6 +1154,141 @@ export class ArkWebVrmViewerController implements ArkWebViewerBridgeListener {
     }
   }
 
+  // ===== Phase 3E-1 — VRM 表情系统 =====
+
+  /**
+   * Phase 3E-1: 获取当前 VRM 真实可用 Expression 列表。
+   *
+   * ArkTS 不直接访问 vrm.expressionManager / VRMExpression / Three.js 对象,
+   * 通过 Bridge 调用 Web 端 ViewerCore.getAvailableExpressions()。
+   *
+   * 模型 READY 后只读取列表,不自动设置任何表情。
+   * 不得假定所有模型都支持 happy/angry/sad/relaxed/surprised/neutral。
+   *
+   * @returns JSON 字符串
+   *   成功: {"success": true, "expressions": [{"name":"happy","weight":0,"isPreset":true}, ...]}
+   *   失败: {"success": false, "error": {"code": "EXPRESSION_VRM_MISSING|...", "message": "..."}}
+   */
+  async getAvailableExpressions(): Promise<string> {
+    if (this.disposed) {
+      const disposedError: ArkWebBridgeErrorPayload = { code: 'DISPOSED', message: 'controller disposed' };
+      const disposedResponse: ArkWebBridgeFailedResponse = { success: false, error: disposedError };
+      return JSON.stringify(disposedResponse);
+    }
+    try {
+      return await this.jsCaller.getAvailableExpressions();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const failedError: ArkWebBridgeErrorPayload = { code: 'EXPRESSION_LIST_QUERY_FAILED', message: msg };
+      const failedResponse: ArkWebBridgeFailedResponse = { success: false, error: failedError };
+      return JSON.stringify(failedResponse);
+    }
+  }
+
+  /**
+   * Phase 3E-1: 设置单个业务表情权重。
+   *
+   * ArkTS 不直接访问 vrm.expressionManager / VRMExpression / Three.js 对象,
+   * 通过 Bridge 调用 Web 端 ViewerCore.setExpression(name, weight)。
+   *
+   * 参数序列化为 JSON 字符串后传给 Web,避免向 JavaScript 传文件路径或模型内部对象。
+   *
+   * 表情错误不得改变 ViewerState / ModelState / AnimationState / PoseState。
+   *
+   * @param paramsJson JSON 字符串 {name: string, weight: number}
+   * @returns JSON 字符串
+   *   成功: {"success": true, "state": "APPLIED", "name": "happy", "weight": 1}
+   *   失败: {"success": false, "error": {"code": "EXPRESSION_*", "message": "..."}}
+   */
+  async setExpression(paramsJson: string): Promise<string> {
+    if (this.disposed) {
+      const disposedError: ArkWebBridgeErrorPayload = { code: 'DISPOSED', message: 'controller disposed' };
+      const disposedResponse: ArkWebBridgeFailedResponse = { success: false, error: disposedError };
+      return JSON.stringify(disposedResponse);
+    }
+    try {
+      return await this.jsCaller.setExpression(paramsJson);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const failedError: ArkWebBridgeErrorPayload = { code: 'EXPRESSION_SET_FAILED', message: msg };
+      const failedResponse: ArkWebBridgeFailedResponse = { success: false, error: failedError };
+      return JSON.stringify(failedResponse);
+    }
+  }
+
+  /**
+   * Phase 3E-1: 清除业务表情,恢复 neutral。
+   *
+   * 不强制把 neutral 设置为 1。
+   * 保留口型通道 aa/ee/ih/oh/ou (LIP_SYNC_CHANNELS_PRESERVED: YES)。
+   *
+   * @returns JSON 字符串
+   *   成功: {"success": true, "state": "READY"}
+   *   失败: {"success": false, "error": {"code": "EXPRESSION_*", "message": "..."}}
+   */
+  async resetExpression(): Promise<string> {
+    if (this.disposed) {
+      const disposedError: ArkWebBridgeErrorPayload = { code: 'DISPOSED', message: 'controller disposed' };
+      const disposedResponse: ArkWebBridgeFailedResponse = { success: false, error: disposedError };
+      return JSON.stringify(disposedResponse);
+    }
+    try {
+      return await this.jsCaller.resetExpression();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const failedError: ArkWebBridgeErrorPayload = { code: 'EXPRESSION_RESET_FAILED', message: msg };
+      const failedResponse: ArkWebBridgeFailedResponse = { success: false, error: failedError };
+      return JSON.stringify(failedResponse);
+    }
+  }
+
+  /**
+   * Phase 3E-1: 获取表情系统状态(只读)。
+   *
+   * @returns JSON 字符串
+   *   {"success": true, "state": "UNBOUND|READY|APPLIED|FAILED|DISPOSED",
+   *    "currentExpressionName": "...", "currentExpressionWeight": N, "expressionManagerReady": bool}
+   */
+  async getExpressionState(): Promise<string> {
+    if (this.disposed) {
+      const disposedError: ArkWebBridgeErrorPayload = { code: 'DISPOSED', message: 'controller disposed' };
+      const disposedResponse: ArkWebBridgeFailedResponse = { success: false, error: disposedError };
+      return JSON.stringify(disposedResponse);
+    }
+    try {
+      return await this.jsCaller.getExpressionState();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const failedError: ArkWebBridgeErrorPayload = { code: 'EXPRESSION_STATE_QUERY_FAILED', message: msg };
+      const failedResponse: ArkWebBridgeFailedResponse = { success: false, error: failedError };
+      return JSON.stringify(failedResponse);
+    }
+  }
+
+  /**
+   * Phase 3E-1: 获取表情系统调试状态快照(只读)。
+   *
+   * @returns JSON 字符串
+   *   {"success": true, "debugState": {state, vrmBound, expressionManagerReady,
+   *    availableExpressionCount, currentExpressionName, currentExpressionWeight,
+   *    lastErrorCode, lastErrorMessage, lipSyncChannelsPreserved}}
+   */
+  async getExpressionDebugState(): Promise<string> {
+    if (this.disposed) {
+      const disposedError: ArkWebBridgeErrorPayload = { code: 'DISPOSED', message: 'controller disposed' };
+      const disposedResponse: ArkWebBridgeFailedResponse = { success: false, error: disposedError };
+      return JSON.stringify(disposedResponse);
+    }
+    try {
+      return await this.jsCaller.getExpressionDebugState();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const failedError: ArkWebBridgeErrorPayload = { code: 'EXPRESSION_DEBUG_STATE_QUERY_FAILED', message: msg };
+      const failedResponse: ArkWebBridgeFailedResponse = { success: false, error: failedError };
+      return JSON.stringify(failedResponse);
+    }
+  }
+
   // ===== Web 组件生命周期回调 =====
 
   /**

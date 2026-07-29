@@ -46,6 +46,7 @@ import { ViewerFrameLoop } from './ViewerFrameLoop.js';
 import { ViewerModelLoader, ModelState } from './ViewerModelLoader.js';
 import { ViewerAnimationController, AnimationState } from './ViewerAnimationController.js';
 import { ViewerPoseController, PoseState } from './ViewerPoseController.js';
+import { ViewerExpressionController, ExpressionState } from './ViewerExpressionController.js';
 
 // ===== 状态枚举 =====
 var STATE_UNINITIALIZED = 'UNINITIALIZED';
@@ -98,6 +99,8 @@ export class ViewerCore {
     this.animationController = null;
     /** @type {ViewerPoseController|null} Phase 3D-2: 静态姿势控制器 */
     this.poseController = null;
+    /** @type {ViewerExpressionController|null} Phase 3E-1: 表情控制器 */
+    this.expressionController = null;
     /** @type {HTMLElement|null} */
     this._container = null;
     /** @type {ResizeObserver|null} */
@@ -220,6 +223,20 @@ export class ViewerCore {
       });
       this.poseController.initialize();
       this._emitStartupDiagnostic('VIEWER_POSE_CONTROLLER_READY', '', 'ViewerPoseController initialized');
+
+      // ===== Phase 3E-1: Expression Controller =====
+      // 创建表情控制器,注入 getCurrentVrm 回调(由 ModelLoader 提供)
+      // 表情控制器独立于 ModelLoader / AnimationController / PoseController,
+      // 仅持有 currentVrm / currentExpressionName / currentExpressionWeight / 状态枚举。
+      // 不阻塞 Viewer READY,失败仅记录,不改 ViewerState / ModelState / AnimationState / PoseState。
+      // 不做 AI 自动选择表情 / 语音口型同步 / Blink 自动眨眼 / 多表情混合 (本阶段范围外)。
+      this.expressionController = new ViewerExpressionController({
+        getCurrentVrm: () => {
+          return this.modelLoader ? this.modelLoader.getCurrentVrm() : null;
+        }
+      });
+      this.expressionController.initialize();
+      this._emitStartupDiagnostic('VIEWER_EXPRESSION_CONTROLLER_READY', '', 'ViewerExpressionController initialized');
 
       // 启动渲染循环
       // 顺序(与 Figure animate() 行 2860-2906 一致,Phase 3A 新增 animationController.update):
@@ -906,6 +923,137 @@ export class ViewerCore {
     return this.poseController.getPoseDebugState();
   }
 
+  // ===== Phase 3E-1 — VRM 表情系统 =====
+
+  /**
+   * Phase 3E-1: 获取当前 VRM 真实可用 Expression 列表。
+   *
+   * 模型未 READY 时返回 EXPRESSION_VRM_MISSING。
+   * 不得假定所有模型都支持 happy/angry/sad/relaxed/surprised/neutral。
+   *
+   * @returns {{success: boolean, expressions?: Array<{name:string,weight:number,isPreset:boolean}>, error?: {code: string, message: string}}}
+   */
+  getAvailableExpressions() {
+    if (this._state !== STATE_READY) {
+      return {
+        success: false,
+        error: { code: 'VIEWER_NOT_READY', message: 'Viewer not ready (state=' + this._state + ')' }
+      };
+    }
+    if (!this.expressionController) {
+      return {
+        success: false,
+        error: { code: 'EXPRESSION_NOT_INITIALIZED', message: 'ExpressionController not initialized' }
+      };
+    }
+    // 检查 VRM 是否已绑定 (expressionManagerReady 隐含 VRM 已绑定且 manager 存在)
+    if (!this.expressionController.expressionManagerReady) {
+      return {
+        success: false,
+        error: { code: 'EXPRESSION_VRM_MISSING', message: 'VRM not bound or expressionManager missing' }
+      };
+    }
+    return {
+      success: true,
+      expressions: this.expressionController.getAvailableExpressions()
+    };
+  }
+
+  /**
+   * Phase 3E-1: 设置单个业务表情权重。
+   *
+   * 表情错误不得改变 ViewerState / ModelState / AnimationState / PoseState。
+   *
+   * @param {string} name 表情名 (必须真实存在于 expressionManager)
+   * @param {number} weight 权重 (0~1)
+   * @returns {{success: boolean, state?: string, name?: string, weight?: number, error?: {code: string, message: string}}}
+   */
+  setExpression(name, weight) {
+    if (this._state !== STATE_READY) {
+      return {
+        success: false,
+        error: { code: 'VIEWER_NOT_READY', message: 'Viewer not ready (state=' + this._state + ')' }
+      };
+    }
+    if (!this.expressionController) {
+      return {
+        success: false,
+        error: { code: 'EXPRESSION_NOT_INITIALIZED', message: 'ExpressionController not initialized' }
+      };
+    }
+    return this.expressionController.setExpression(name, weight);
+  }
+
+  /**
+   * Phase 3E-1: 清除业务表情,恢复 neutral。
+   *
+   * 不强制把 neutral 设置为 1。
+   * 保留口型通道 aa/ee/ih/oh/ou。
+   * 表情错误不得改变 ViewerState / ModelState / AnimationState / PoseState。
+   *
+   * @returns {{success: boolean, state?: string, error?: {code: string, message: string}}}
+   */
+  resetExpression() {
+    if (this._state !== STATE_READY) {
+      return {
+        success: false,
+        error: { code: 'VIEWER_NOT_READY', message: 'Viewer not ready (state=' + this._state + ')' }
+      };
+    }
+    if (!this.expressionController) {
+      return {
+        success: false,
+        error: { code: 'EXPRESSION_NOT_INITIALIZED', message: 'ExpressionController not initialized' }
+      };
+    }
+    return this.expressionController.resetExpression();
+  }
+
+  /**
+   * Phase 3E-1: 获取表情系统状态 (只读)。
+   *
+   * @returns {{success: boolean, state?: string, currentExpressionName?: string, currentExpressionWeight?: number, expressionManagerReady?: boolean}}
+   */
+  getExpressionState() {
+    if (!this.expressionController) {
+      return {
+        success: true,
+        state: ExpressionState.UNBOUND,
+        currentExpressionName: '',
+        currentExpressionWeight: 0,
+        expressionManagerReady: false
+      };
+    }
+    return this.expressionController.getExpressionState();
+  }
+
+  /**
+   * Phase 3E-1: 获取表情系统调试状态快照 (只读)。
+   *
+   * 供 Bridge getExpressionDebugState 使用,字段与 ArkWebExpressionDebugState 对齐。
+   *
+   * @returns {{success: boolean, debugState?: object}}
+   */
+  getExpressionDebugState() {
+    if (!this.expressionController) {
+      return {
+        success: true,
+        debugState: {
+          state: ExpressionState.UNBOUND,
+          vrmBound: false,
+          expressionManagerReady: false,
+          availableExpressionCount: 0,
+          currentExpressionName: '',
+          currentExpressionWeight: 0,
+          lastErrorCode: '',
+          lastErrorMessage: '',
+          lipSyncChannelsPreserved: true
+        }
+      };
+    }
+    return this.expressionController.getExpressionDebugState();
+  }
+
   // ===== Phase 2A-1: Camera Controls enable/disable =====
 
   /**
@@ -1399,6 +1547,26 @@ export class ViewerCore {
         }
       }
 
+      // Phase 3E-1: 模型 READY 后绑定 VRM 到表情控制器
+      // - 绑定失败仅记录,不改 ModelState / ViewerState / AnimationState / PoseState
+      // - 不自动设置任何表情 (bindVrm 仅枚举可用 Expression 列表)
+      // - 模型替换时清除表情状态由 _replaceModelInScene 调用 unbindVrm 完成
+      // - 不跨模型缓存 Expression 实例
+      if (this.expressionController && this.modelLoader) {
+        var vrmForExpression = this.modelLoader.getCurrentVrm();
+        if (vrmForExpression) {
+          try {
+            var expBindResult = this.expressionController.bindVrm(vrmForExpression);
+            if (!expBindResult.success) {
+              console.warn('[ViewerCore] expressionController.bindVrm failed: ' +
+                (expBindResult.error ? expBindResult.error.code + ' ' + expBindResult.error.message : 'unknown'));
+            }
+          } catch (e) {
+            console.warn('[ViewerCore] expressionController.bindVrm threw: ' + (e && e.message ? e.message : String(e)));
+          }
+        }
+      }
+
       // 通知 ArkTS 模型状态变化
       if (window.ViewerBridge && typeof window.ViewerBridge.notifyModelStateChanged === 'function') {
         window.ViewerBridge.notifyModelStateChanged(state);
@@ -1465,6 +1633,17 @@ export class ViewerCore {
         this.poseController.unbindVrm();
       } catch (e) {
         console.warn('[ViewerCore] poseController.unbindVrm threw: ' + (e && e.message ? e.message : String(e)));
+      }
+    }
+    // Phase 3E-1: 替换前先解绑旧 VRM 的表情状态
+    // - 清除 currentExpressionName / currentExpressionWeight / state=UNBOUND
+    // - 不保存旧 Expression 实例 (不跨模型缓存)
+    // - 新模型由 _onModelStateChanged 重新 bindVrm, 但不自动设置任何表情
+    if (this.expressionController && previousVrm) {
+      try {
+        this.expressionController.unbindVrm();
+      } catch (e) {
+        console.warn('[ViewerCore] expressionController.unbindVrm threw: ' + (e && e.message ? e.message : String(e)));
       }
     }
     // 1. 新模型加入 Scene

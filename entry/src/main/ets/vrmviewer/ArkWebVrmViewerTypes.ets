@@ -421,7 +421,13 @@ export class ArkWebViewerConfig {
     'applyPose',
     'resetPose',
     'getPoseState',
-    'getPoseDebugState'
+    'getPoseDebugState',
+    // Phase 3E-1 — VRM 表情系统(枚举 / 设置 / 清除 / 状态查询)
+    'getAvailableExpressions',
+    'setExpression',
+    'resetExpression',
+    'getExpressionState',
+    'getExpressionDebugState'
   ];
 
   /** Bridge 方法白名单:JavaScript → ArkTS。 */
@@ -1461,6 +1467,243 @@ export function parsePoseDebugState(jsonStr: string): ArkWebPoseDebugState | nul
       rotationOrder: (debugObj['rotationOrder'] as string) || '',
       positionPresent: !!debugObj['positionPresent'],
       positionApplied: !!debugObj['positionApplied']
+    };
+  } catch (e) {
+    return null;
+  }
+}
+
+// ===== Phase 3E-1: VRM 表情系统类型 =====
+
+/**
+ * Phase 3E-1: 表情系统状态机(与 Web 端 ViewerExpressionController.ExpressionState 对齐)。
+ *
+ * 状态流转:
+ *   UNBOUND → READY (bindVrm 成功且 expressionManager 存在)
+ *   UNBOUND → UNBOUND (bindVrm 成功但 expressionManager 缺失)
+ *   READY → APPLIED (setExpression 成功)
+ *   READY → FAILED (setExpression 失败,可重试)
+ *   APPLIED → READY (resetExpression 成功)
+ *   APPLIED → APPLIED (重复 setExpression,直接替换)
+ *   APPLIED → FAILED (setExpression 失败)
+ *   任意 → DISPOSED (dispose)
+ *
+ * 表情错误不得导致 ViewerState = FAILED / ModelState = FAILED / AnimationState = FAILED / PoseState = FAILED。
+ */
+export enum ArkWebExpressionState {
+  /** 未绑定 VRM (初始状态或 expressionManager 缺失) */
+  UNBOUND = 'UNBOUND',
+  /** 已绑定 VRM 且 expressionManager 就绪,可设置表情 */
+  READY = 'READY',
+  /** 已应用单个业务表情 */
+  APPLIED = 'APPLIED',
+  /** 应用失败 (可重试) */
+  FAILED = 'FAILED',
+  /** 已销毁 */
+  DISPOSED = 'DISPOSED'
+}
+
+/**
+ * Phase 3E-1: 表情系统错误代码(与 Web 端 ViewerExpressionController.ExpressionErrorCode 对齐)。
+ *
+ * 表情错误只影响 ExpressionState,不影响 ViewerState / ModelState / AnimationState / PoseState。
+ */
+export class ArkWebExpressionErrorCode {
+  /** 控制器已销毁 */
+  static readonly CONTROLLER_DISPOSED: string = 'EXPRESSION_CONTROLLER_DISPOSED';
+  /** 当前未绑定 VRM */
+  static readonly VRM_MISSING: string = 'EXPRESSION_VRM_MISSING';
+  /** expressionManager 缺失或 API 不完整 */
+  static readonly MANAGER_MISSING: string = 'EXPRESSION_MANAGER_MISSING';
+  /** name 字段非法 (非字符串 / 空字符串 / 含禁止字段) */
+  static readonly NAME_INVALID: string = 'EXPRESSION_NAME_INVALID';
+  /** 表情名在当前模型中不存在 */
+  static readonly NOT_FOUND: string = 'EXPRESSION_NOT_FOUND';
+  /** weight 字段非法 (非有限数 / 超出 0..1) */
+  static readonly WEIGHT_INVALID: string = 'EXPRESSION_WEIGHT_INVALID';
+  /** 应用表情失败 (setValue / update 抛出异常) */
+  static readonly APPLY_FAILED: string = 'EXPRESSION_APPLY_FAILED';
+}
+
+/**
+ * Phase 3E-1: 单个可用表情项 (getAvailableExpressions 返回值元素)。
+ *
+ * 不暴露 VRMExpression 对象引用或 Three.js 对象。
+ */
+export interface ArkWebAvailableExpression {
+  /** 表情名 (与 expressionManager 中的 expressionName 一致) */
+  name: string;
+  /** 当前权重 (0..1,读取自 expression.weight) */
+  weight: number;
+  /** 是否为 VRM 预设表情 (aa/ih/ou/ee/oh/blink/happy/angry/sad/relaxed/lookUp/surprised/lookDown/lookLeft/lookRight/blinkLeft/blinkRight/neutral) */
+  isPreset: boolean;
+}
+
+/**
+ * Phase 3E-1: 表情系统状态快照 (getExpressionState 返回值)。
+ */
+export interface ArkWebExpressionStatePayload {
+  /** 当前表情状态 */
+  state: ArkWebExpressionState;
+  /** 当前已应用的业务表情名 (空字符串表示无应用) */
+  currentExpressionName: string;
+  /** 当前已应用的业务表情权重 */
+  currentExpressionWeight: number;
+  /** expressionManager 是否就绪 (VRM 已绑定且 API 完整) */
+  expressionManagerReady: boolean;
+}
+
+/**
+ * Phase 3E-1: 表情系统调试状态快照 (getExpressionDebugState 返回值)。
+ *
+ * 供 Debug Tab 显示。
+ */
+export interface ArkWebExpressionDebugState {
+  /** 当前表情状态 */
+  state: ArkWebExpressionState;
+  /** 是否已绑定 VRM */
+  vrmBound: boolean;
+  /** expressionManager 是否就绪 */
+  expressionManagerReady: boolean;
+  /** 可用表情数量 */
+  availableExpressionCount: number;
+  /** 当前已应用的业务表情名 */
+  currentExpressionName: string;
+  /** 当前已应用的业务表情权重 */
+  currentExpressionWeight: number;
+  /** 最近一次错误码 (空字符串表示无错误) */
+  lastErrorCode: string;
+  /** 最近一次错误消息 */
+  lastErrorMessage: string;
+  /** 口型通道是否保留 (YES=true / NO=false) */
+  lipSyncChannelsPreserved: boolean;
+}
+
+/**
+ * Phase 3E-1: 传给 JavaScript setExpression 的受控参数。
+ *
+ * 序列化为 JSON 字符串后传给 Web 端。
+ * 不得包含 absolutePath / relativePath / filesDir / 文件描述符 / 原始 URI。
+ */
+export interface ArkWebSetExpressionParams {
+  /** 表情名 (必须真实存在于 expressionManager) */
+  name: string;
+  /** 权重 (0..1) */
+  weight: number;
+}
+
+/**
+ * Phase 3E-1: 解析 getAvailableExpressions 返回的 JSON 字符串。
+ * 解析失败时返回 null。
+ */
+export function parseAvailableExpressions(jsonStr: string): ArkWebAvailableExpression[] | null {
+  try {
+    const obj: Record<string, Object> = JSON.parse(jsonStr) as Record<string, Object>;
+    if (!obj['success']) {
+      return null;
+    }
+    const expressionsRaw: Object = obj['expressions'];
+    if (!Array.isArray(expressionsRaw)) {
+      return [];
+    }
+    const result: ArkWebAvailableExpression[] = [];
+    const arr: Object[] = expressionsRaw as Object[];
+    for (let i = 0; i < arr.length; i++) {
+      const item: Record<string, Object> = arr[i] as Record<string, Object>;
+      result.push({
+        name: (item['name'] as string) || '',
+        weight: typeof item['weight'] === 'number' ? (item['weight'] as number) : 0,
+        isPreset: !!item['isPreset']
+      });
+    }
+    return result;
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * Phase 3E-1: 解析 getExpressionState 返回的 JSON 字符串。
+ * 解析失败时返回 null。
+ */
+export function parseExpressionState(jsonStr: string): ArkWebExpressionStatePayload | null {
+  try {
+    const obj: Record<string, Object> = JSON.parse(jsonStr) as Record<string, Object>;
+    const stateStr: string = (obj['state'] as string) || 'UNBOUND';
+    let state: ArkWebExpressionState = ArkWebExpressionState.UNBOUND;
+    switch (stateStr) {
+      case 'UNBOUND':
+        state = ArkWebExpressionState.UNBOUND;
+        break;
+      case 'READY':
+        state = ArkWebExpressionState.READY;
+        break;
+      case 'APPLIED':
+        state = ArkWebExpressionState.APPLIED;
+        break;
+      case 'FAILED':
+        state = ArkWebExpressionState.FAILED;
+        break;
+      case 'DISPOSED':
+        state = ArkWebExpressionState.DISPOSED;
+        break;
+      default:
+        state = ArkWebExpressionState.UNBOUND;
+    }
+    return {
+      state: state,
+      currentExpressionName: (obj['currentExpressionName'] as string) || '',
+      currentExpressionWeight: typeof obj['currentExpressionWeight'] === 'number'
+        ? (obj['currentExpressionWeight'] as number) : 0,
+      expressionManagerReady: !!obj['expressionManagerReady']
+    };
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * Phase 3E-1: 解析 getExpressionDebugState 返回的 JSON 字符串。
+ * 解析失败时返回 null。
+ */
+export function parseExpressionDebugState(jsonStr: string): ArkWebExpressionDebugState | null {
+  try {
+    const obj: Record<string, Object> = JSON.parse(jsonStr) as Record<string, Object>;
+    const debugObj: Record<string, Object> = (obj['debugState'] as Record<string, Object>) ||
+      {} as Record<string, Object>;
+    const stateStr: string = (debugObj['state'] as string) || 'UNBOUND';
+    let state: ArkWebExpressionState = ArkWebExpressionState.UNBOUND;
+    switch (stateStr) {
+      case 'UNBOUND':
+        state = ArkWebExpressionState.UNBOUND;
+        break;
+      case 'READY':
+        state = ArkWebExpressionState.READY;
+        break;
+      case 'APPLIED':
+        state = ArkWebExpressionState.APPLIED;
+        break;
+      case 'FAILED':
+        state = ArkWebExpressionState.FAILED;
+        break;
+      case 'DISPOSED':
+        state = ArkWebExpressionState.DISPOSED;
+        break;
+      default:
+        state = ArkWebExpressionState.UNBOUND;
+    }
+    return {
+      state: state,
+      vrmBound: !!debugObj['vrmBound'],
+      expressionManagerReady: !!debugObj['expressionManagerReady'],
+      availableExpressionCount: typeof debugObj['availableExpressionCount'] === 'number'
+        ? (debugObj['availableExpressionCount'] as number) : 0,
+      currentExpressionName: (debugObj['currentExpressionName'] as string) || '',
+      currentExpressionWeight: typeof debugObj['currentExpressionWeight'] === 'number'
+        ? (debugObj['currentExpressionWeight'] as number) : 0,
+      lastErrorCode: (debugObj['lastErrorCode'] as string) || '',
+      lastErrorMessage: (debugObj['lastErrorMessage'] as string) || '',
+      lipSyncChannelsPreserved: debugObj['lipSyncChannelsPreserved'] !== false
     };
   } catch (e) {
     return null;

@@ -1598,10 +1598,148 @@ if (window.__arkTavernBootstrapState) {
         var result = v.getPoseDebugState();
         return { success: true, debugState: result.debugState };
       });
+    },
+
+    // ===== Phase 3E-1 — VRM 表情系统 (规范 §三十二) =====
+
+    /**
+     * Phase 3E-1: 获取当前 VRM 真实可用 Expression 列表。
+     *
+     * 模型未 READY 时返回 EXPRESSION_VRM_MISSING。
+     * 不得假定所有模型都支持 happy/angry/sad/relaxed/surprised/neutral。
+     * 模型 READY 后只读取列表,不自动设置任何表情。
+     *
+     * @returns {string} JSON 结果
+     *   成功: {"success": true, "expressions": [{"name":"happy","weight":0,"isPreset":true}, ...]}
+     *   失败: {"success": false, "error": {"code": "EXPRESSION_VRM_MISSING|...", "message": "..."}}
+     */
+    getAvailableExpressions: function () {
+      return callViewer(function (v) {
+        var result = v.getAvailableExpressions();
+        return result;
+      });
+    },
+
+    /**
+     * Phase 3E-1: 设置单个业务表情权重。
+     *
+     * 参数为 JSON 字符串,避免向 JavaScript 传文件路径或模型内部对象:
+     *   {"name": "happy", "weight": 1}
+     *
+     * 验证:
+     *   - name 非空字符串
+     *   - 表达式真实存在
+     *   - weight 是有限数字,范围为 0~1
+     *
+     * 表情错误不得改变 ViewerState / ModelState / AnimationState / PoseState。
+     *
+     * @param {string} paramsJson JSON 字符串 {name: string, weight: number}
+     * @returns {string} JSON 结果
+     *   成功: {"success": true, "state": "APPLIED", "name": "happy", "weight": 1}
+     *   失败: {"success": false, "error": {"code": "EXPRESSION_*", "message": "..."}}
+     */
+    setExpression: function (paramsJson) {
+      if (typeof paramsJson !== 'string' || paramsJson.length === 0) {
+        return jsonResult({
+          success: false,
+          error: { code: 'EXPRESSION_NAME_INVALID', message: 'paramsJson must be a non-empty string' }
+        });
+      }
+      var params;
+      try {
+        params = JSON.parse(paramsJson);
+      } catch (e) {
+        return jsonResult({
+          success: false,
+          error: { code: 'EXPRESSION_NAME_INVALID', message: 'paramsJson is not valid JSON: ' + (e && e.message ? e.message : String(e)) }
+        });
+      }
+      if (!params || typeof params !== 'object' || Array.isArray(params)) {
+        return jsonResult({
+          success: false,
+          error: { code: 'EXPRESSION_NAME_INVALID', message: 'paramsJson parsed to non-object' }
+        });
+      }
+      // 字段白名单校验 (禁止路径相关字段)
+      var forbiddenExp = ['absolutePath', 'relativePath', 'filesDir', 'fileDescriptor', 'sourceUri', 'cachePath'];
+      for (var i = 0; i < forbiddenExp.length; i++) {
+        if (Object.prototype.hasOwnProperty.call(params, forbiddenExp[i])) {
+          return jsonResult({
+            success: false,
+            error: { code: 'EXPRESSION_NAME_INVALID', message: 'Forbidden field present: ' + forbiddenExp[i] }
+          });
+        }
+      }
+      if (typeof params.name !== 'string' || params.name.length === 0) {
+        return jsonResult({
+          success: false,
+          error: { code: 'EXPRESSION_NAME_INVALID', message: 'params.name must be a non-empty string' }
+        });
+      }
+      if (typeof params.weight !== 'number' || !isFinite(params.weight)) {
+        return jsonResult({
+          success: false,
+          error: { code: 'EXPRESSION_WEIGHT_INVALID', message: 'params.weight must be a finite number' }
+        });
+      }
+      if (params.weight < 0 || params.weight > 1) {
+        return jsonResult({
+          success: false,
+          error: { code: 'EXPRESSION_WEIGHT_INVALID', message: 'params.weight must be in [0, 1], got ' + params.weight }
+        });
+      }
+      return callViewer(function (v) {
+        var result = v.setExpression(params.name, params.weight);
+        return result;
+      });
+    },
+
+    /**
+     * Phase 3E-1: 清除业务表情,恢复 neutral。
+     *
+     * 不强制把 neutral 设置为 1。
+     * 保留口型通道 aa/ee/ih/oh/ou (LIP_SYNC_CHANNELS_PRESERVED: YES)。
+     * 表情错误不得改变 ViewerState / ModelState / AnimationState / PoseState。
+     *
+     * @returns {string} JSON 结果
+     *   成功: {"success": true, "state": "READY"}
+     *   失败: {"success": false, "error": {"code": "EXPRESSION_*", "message": "..."}}
+     */
+    resetExpression: function () {
+      return callViewer(function (v) {
+        var result = v.resetExpression();
+        return result;
+      });
+    },
+
+    /**
+     * Phase 3E-1: 获取表情系统状态 (只读)。
+     *
+     * @returns {string} JSON 结果
+     *   {"success": true, "state": "UNBOUND|READY|APPLIED|FAILED|DISPOSED", "currentExpressionName": "...", "currentExpressionWeight": N, "expressionManagerReady": bool}
+     */
+    getExpressionState: function () {
+      return callViewer(function (v) {
+        var result = v.getExpressionState();
+        return result;
+      });
+    },
+
+    /**
+     * Phase 3E-1: 获取表情系统调试状态快照 (只读)。
+     *
+     * @returns {string} JSON 结果
+     *   {"success": true, "debugState": {state, vrmBound, expressionManagerReady, availableExpressionCount, currentExpressionName, currentExpressionWeight, lastErrorCode, lastErrorMessage, lipSyncChannelsPreserved}}
+     */
+    getExpressionDebugState: function () {
+      return callViewer(function (v) {
+        var result = v.getExpressionDebugState();
+        return { success: true, debugState: result.debugState };
+      });
     }
   };
 
-  console.log('[App] arkTavernViewerBridge registered (Phase 1B + 1D-2A + 1D-2B-1 + 1D-2B-2 + 1D-2C-1 + 1D-2C-2A + 2A-1 + 2F + 3A + 3D-2, delegates to ViewerCore + preparedResource keeper + probe + userModelLoadCoordinator + runtimeDiagnostics keeper + cameraControls + sceneSettings + animationController + poseController)');
+  console.log('[App] arkTavernViewerBridge registered (Phase 1B + 1D-2A + 1D-2B-1 + 1D-2B-2 + 1D-2C-1 + 1D-2C-2A + 2A-1 + 2F + 3A + 3D-2 + 3E-1, delegates to ViewerCore + preparedResource keeper + probe + userModelLoadCoordinator + runtimeDiagnostics keeper + cameraControls + sceneSettings + animationController + poseController + expressionController)');
 
   // Phase 1D-2C-2A: 记录 JS_BRIDGE_BOUND(Bridge 已注册到 window)
   emitStartupDiagnostic('JS_BRIDGE_BOUND', '', 'arkTavernViewerBridge registered');
