@@ -63,6 +63,7 @@ export interface ArkWebAvatarModelAsset {
  * - schemaVersion = 1
  * - models 数组 (可含 0..N 条记录)
  * - animations 数组 (Phase 3C-1 起支持多 VRMA 持久化)
+ * - defaultIdleActionId (Phase 3C-2 起支持默认待机标记, 空字符串表示无默认)
  * - poses 固定为空数组 (Phase 3C 后续阶段实现)
  */
 export interface ArkWebAvatarAssetLibraryData {
@@ -70,6 +71,7 @@ export interface ArkWebAvatarAssetLibraryData {
   activeModelId: string;
   models: ArkWebAvatarModelAsset[];
   animations: ArkWebAvatarAnimationAsset[];
+  defaultIdleActionId: string;
   poses: Object[];
 }
 
@@ -239,4 +241,25 @@ export class PersistentAnimationErrorCode {
   static readonly ANIMATION_RENAME_FAILED: string = 'ANIMATION_RENAME_FAILED';
   /** 清单写入失败 (回滚: 删除新动画文件)。 */
   static readonly ANIMATION_LIBRARY_WRITE_FAILED: string = 'ANIMATION_LIBRARY_WRITE_FAILED';
+}
+
+/**
+ * 动画管理操作错误码 (Phase 3C-2)。
+ * 覆盖重命名 / 删除 / 默认待机标记操作。
+ */
+export class AnimationManagementErrorCode {
+  /** 动作不存在 (actionId 在清单中找不到)。 */
+  static readonly ANIMATION_NOT_FOUND: string = 'ANIMATION_NOT_FOUND';
+  /** 重命名名称无效 (trim 后为空或长度超过 64)。 */
+  static readonly ANIMATION_RENAME_NAME_INVALID: string = 'ANIMATION_RENAME_NAME_INVALID';
+  /** 删除时文件 rename 到 .deleting 失败。 */
+  static readonly ANIMATION_DELETE_RENAME_FAILED: string = 'ANIMATION_DELETE_RENAME_FAILED';
+  /** 删除时清单写入失败 (回滚: 将 .deleting rename 回原文件)。 */
+  static readonly ANIMATION_DELETE_LIBRARY_WRITE_FAILED: string = 'ANIMATION_DELETE_LIBRARY_WRITE_FAILED';
+  /** 删除后清理 .deleting 文件失败 (清单已更新, 文件残留)。 */
+  static readonly ANIMATION_DELETE_CLEANUP_FAILED: string = 'ANIMATION_DELETE_CLEANUP_FAILED';
+  /** 默认待机 actionId 无效 (不在 animations 中且非空字符串)。 */
+  static readonly ANIMATION_DEFAULT_IDLE_INVALID: string = 'ANIMATION_DEFAULT_IDLE_INVALID';
+  /** 默认待机标记更新时清单写入失败。 */
+  static readonly ANIMATION_DEFAULT_IDLE_WRITE_FAILED: string = 'ANIMATION_DEFAULT_IDLE_WRITE_FAILED';
 }

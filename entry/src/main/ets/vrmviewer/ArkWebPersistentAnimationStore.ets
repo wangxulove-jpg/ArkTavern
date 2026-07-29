@@ -53,7 +53,8 @@ import { util } from '@kit.ArkTS';
 import { common } from '@kit.AbilityKit';
 import {
   ArkWebAvatarAnimationAsset,
-  PersistentAnimationErrorCode
+  PersistentAnimationErrorCode,
+  AnimationManagementErrorCode
 } from './ArkWebAvatarAssetTypes';
 import {
   ArkWebAvatarAssetLibrary,
@@ -320,6 +321,80 @@ export class ArkWebPersistentAnimationStore {
       return '';
     }
     return `${this.assetLibrary.getAssetsRootDir()}/${relativePath}`;
+  }
+
+  /**
+   * 删除持久化动画文件并从清单移除记录 (Phase 3C-2)。
+   *
+   * 原子删除流程 (规范 §删除):
+   * 1. 查找资产记录, 获取 finalPath
+   * 2. rename <actionId>.vrma → <actionId>.vrma.deleting
+   * 3. 从清单删除记录 (removeAnimationRecord, 若是默认待机则清空)
+   * 4. 清单写入失败 → rename .deleting 回原文件 (回滚)
+   * 5. 删除 .deleting 文件
+   *
+   * @returns 成功返回 true; 失败返回 false (查看 lastError)
+   */
+  async deleteAnimation(actionId: string): Promise<boolean> {
+    if (this.disposed) {
+      this.lastError = PersistentAnimationErrorCode.ANIMATION_STORE_DISPOSED;
+      return false;
+    }
+    if (this.assetLibrary.isDisposed()) {
+      this.lastError = PersistentAnimationErrorCode.ANIMATION_STORE_LIBRARY_INVALID;
+      return false;
+    }
+
+    // 1. 查找资产记录
+    const asset: ArkWebAvatarAnimationAsset | null = await this.assetLibrary.findAnimation(actionId);
+    if (asset === null) {
+      this.lastError = AnimationManagementErrorCode.ANIMATION_NOT_FOUND;
+      return false;
+    }
+    const finalPath: string = this.resolveAbsolutePath(asset.relativePath);
+    if (finalPath.length === 0) {
+      this.lastError = AnimationManagementErrorCode.ANIMATION_NOT_FOUND;
+      return false;
+    }
+    const deletingPath: string = `${finalPath}.deleting`;
+
+    // 2. rename .vrma → .vrma.deleting
+    try {
+      await fileIo.rename(finalPath, deletingPath);
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      this.lastError = `${AnimationManagementErrorCode.ANIMATION_DELETE_RENAME_FAILED}: ${msg}`;
+      return false;
+    }
+
+    // 3. 从清单删除记录 (若是默认待机, AssetLibrary 自动清空 defaultIdleActionId)
+    const removeOk: boolean = await this.assetLibrary.removeAnimationRecord(actionId);
+    if (!removeOk) {
+      // 4. 回滚: rename .deleting 回原文件
+      try {
+        await fileIo.rename(deletingPath, finalPath);
+      } catch (_e) {
+        // 回滚失败: 文件停留在 .deleting 状态, 下次可手动清理
+        // 不影响数据一致性 (清单未变更)
+      }
+      this.lastError = AnimationManagementErrorCode.ANIMATION_DELETE_LIBRARY_WRITE_FAILED;
+      return false;
+    }
+
+    // 5. 删除 .deleting 文件
+    try {
+      await fileIo.unlink(deletingPath);
+    } catch (e) {
+      // 清单已更新, 文件残留 .deleting 不影响数据一致性, 仅记录警告
+      const msg: string = e instanceof Error ? e.message : String(e);
+      console.warn(`[ArkWebPersistentAnimationStore] deleteAnimation cleanup failed: ${msg}`);
+      this.lastError = AnimationManagementErrorCode.ANIMATION_DELETE_CLEANUP_FAILED;
+      // 仍视为删除成功 (清单已更新, 文件残留)
+    }
+
+    this.lastError = '';
+    console.info(`[ArkWebPersistentAnimationStore] deleteAnimation ok actionId=${actionId}`);
+    return true;
   }
 
   /**

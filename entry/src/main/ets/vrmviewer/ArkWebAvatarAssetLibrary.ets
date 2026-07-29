@@ -384,6 +384,7 @@ export class ArkWebAvatarAssetLibrary {
       activeModelId: asset.modelId,
       models: newModels,
       animations: data.animations,
+      defaultIdleActionId: data.defaultIdleActionId,
       poses: []
     };
 
@@ -433,6 +434,7 @@ export class ArkWebAvatarAssetLibrary {
       activeModelId: modelId,
       models: data.models,
       animations: data.animations,
+      defaultIdleActionId: data.defaultIdleActionId,
       poses: []
     };
     const writeOk: boolean = await this.atomicWriteLibrary(newData);
@@ -525,6 +527,7 @@ export class ArkWebAvatarAssetLibrary {
       activeModelId: data.activeModelId,
       models: data.models,
       animations: newAnimations,
+      defaultIdleActionId: data.defaultIdleActionId,
       poses: []
     };
     const writeOk: boolean = await this.atomicWriteLibrary(newData);
@@ -534,6 +537,190 @@ export class ArkWebAvatarAssetLibrary {
     this.inMemoryData = newData;
     console.info(`[ArkWebAvatarAssetLibrary] appendAnimation ok actionId=${asset.actionId} count=${newAnimations.length}`);
     return true;
+  }
+
+  // ===== Phase 3C-2: 动画管理操作 (重命名 / 删除 / 默认待机) =====
+
+  /**
+   * 重命名动画资产 (Phase 3C-2)。
+   *
+   * 只修改 displayName 和 updatedAt, 保持 actionId / resourceId / relativePath / 文件名不变。
+   *
+   * 名称要求:
+   * - trim 后非空
+   * - 长度不超过 64
+   *
+   * @returns 成功返回新的 asset; 失败返回 null (查看 console)
+   */
+  async renameAnimation(actionId: string, newDisplayName: string): Promise<ArkWebAvatarAnimationAsset | null> {
+    if (this.disposed) {
+      return null;
+    }
+    const trimmed: string = newDisplayName.trim();
+    if (trimmed.length === 0 || trimmed.length > 64) {
+      console.warn(`[ArkWebAvatarAssetLibrary] renameAnimation invalid name length=${trimmed.length}`);
+      return null;
+    }
+    const data: ArkWebAvatarAssetLibraryData | null = await this.readLibrary();
+    if (data === null) {
+      return null;
+    }
+    let foundIdx: number = -1;
+    for (let i = 0; i < data.animations.length; i++) {
+      if (data.animations[i].actionId === actionId) {
+        foundIdx = i;
+        break;
+      }
+    }
+    if (foundIdx < 0) {
+      console.warn(`[ArkWebAvatarAssetLibrary] renameAnimation: actionId not found: ${actionId}`);
+      return null;
+    }
+    const oldAsset: ArkWebAvatarAnimationAsset = data.animations[foundIdx];
+    const updatedAsset: ArkWebAvatarAnimationAsset = {
+      actionId: oldAsset.actionId,
+      resourceId: oldAsset.resourceId,
+      displayName: trimmed,
+      relativePath: oldAsset.relativePath,
+      mimeType: oldAsset.mimeType,
+      byteLength: oldAsset.byteLength,
+      createdAt: oldAsset.createdAt,
+      updatedAt: Date.now()
+    };
+    const newAnimations: ArkWebAvatarAnimationAsset[] = data.animations.slice();
+    newAnimations[foundIdx] = updatedAsset;
+    const newData: ArkWebAvatarAssetLibraryData = {
+      schemaVersion: ASSET_LIBRARY_SCHEMA_VERSION,
+      activeModelId: data.activeModelId,
+      models: data.models,
+      animations: newAnimations,
+      defaultIdleActionId: data.defaultIdleActionId,
+      poses: data.poses
+    };
+    const writeOk: boolean = await this.atomicWriteLibrary(newData);
+    if (!writeOk) {
+      return null;
+    }
+    this.inMemoryData = newData;
+    console.info(`[ArkWebAvatarAssetLibrary] renameAnimation ok actionId=${actionId}`);
+    return updatedAsset;
+  }
+
+  /**
+   * 从清单删除动画资产记录 (Phase 3C-2)。
+   *
+   * 仅修改清单, 不操作文件 (文件由 PersistentAnimationStore 负责 rename .deleting / 清理)。
+   *
+   * 副作用:
+   * - 若被删除的是 defaultIdleActionId, 清空 defaultIdleActionId
+   *
+   * @returns 成功返回 true; 失败返回 false
+   */
+  async removeAnimationRecord(actionId: string): Promise<boolean> {
+    if (this.disposed) {
+      return false;
+    }
+    const data: ArkWebAvatarAssetLibraryData | null = await this.readLibrary();
+    if (data === null) {
+      return false;
+    }
+    let foundIdx: number = -1;
+    for (let i = 0; i < data.animations.length; i++) {
+      if (data.animations[i].actionId === actionId) {
+        foundIdx = i;
+        break;
+      }
+    }
+    if (foundIdx < 0) {
+      console.warn(`[ArkWebAvatarAssetLibrary] removeAnimationRecord: actionId not found: ${actionId}`);
+      return false;
+    }
+    const newAnimations: ArkWebAvatarAnimationAsset[] = data.animations.slice();
+    newAnimations.splice(foundIdx, 1);
+    // 若删除的是默认待机, 清空 defaultIdleActionId
+    const newDefaultIdle: string = data.defaultIdleActionId === actionId
+      ? '' : data.defaultIdleActionId;
+    const newData: ArkWebAvatarAssetLibraryData = {
+      schemaVersion: ASSET_LIBRARY_SCHEMA_VERSION,
+      activeModelId: data.activeModelId,
+      models: data.models,
+      animations: newAnimations,
+      defaultIdleActionId: newDefaultIdle,
+      poses: data.poses
+    };
+    const writeOk: boolean = await this.atomicWriteLibrary(newData);
+    if (!writeOk) {
+      return false;
+    }
+    this.inMemoryData = newData;
+    console.info(`[ArkWebAvatarAssetLibrary] removeAnimationRecord ok actionId=${actionId}`);
+    return true;
+  }
+
+  /**
+   * 设置或取消默认待机动作 (Phase 3C-2)。
+   *
+   * - actionId 为空字符串: 取消默认待机
+   * - actionId 非空: 必须存在于 animations 中
+   *
+   * @returns 成功返回 true; 失败返回 false
+   */
+  async setDefaultIdleAction(actionId: string): Promise<boolean> {
+    if (this.disposed) {
+      return false;
+    }
+    const data: ArkWebAvatarAssetLibraryData | null = await this.readLibrary();
+    if (data === null) {
+      return false;
+    }
+    // 非空 actionId 必须存在于 animations 中
+    if (actionId.length > 0) {
+      let found: boolean = false;
+      for (let i = 0; i < data.animations.length; i++) {
+        if (data.animations[i].actionId === actionId) {
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        console.warn(`[ArkWebAvatarAssetLibrary] setDefaultIdleAction: actionId not found: ${actionId}`);
+        return false;
+      }
+    }
+    // 相同值不重复写入
+    if (data.defaultIdleActionId === actionId) {
+      return true;
+    }
+    const newData: ArkWebAvatarAssetLibraryData = {
+      schemaVersion: ASSET_LIBRARY_SCHEMA_VERSION,
+      activeModelId: data.activeModelId,
+      models: data.models,
+      animations: data.animations,
+      defaultIdleActionId: actionId,
+      poses: data.poses
+    };
+    const writeOk: boolean = await this.atomicWriteLibrary(newData);
+    if (!writeOk) {
+      return false;
+    }
+    this.inMemoryData = newData;
+    console.info(`[ArkWebAvatarAssetLibrary] setDefaultIdleAction ok actionId=${actionId}`);
+    return true;
+  }
+
+  /**
+   * 获取当前默认待机 actionId (Phase 3C-2)。
+   * 失败返回空字符串。
+   */
+  async getDefaultIdleActionId(): Promise<string> {
+    if (this.disposed) {
+      return '';
+    }
+    const data: ArkWebAvatarAssetLibraryData | null = await this.readLibrary();
+    if (data === null) {
+      return '';
+    }
+    return data.defaultIdleActionId;
   }
 
   /**
@@ -569,6 +756,7 @@ export class ArkWebAvatarAssetLibrary {
       activeModelId: '',
       models: [],
       animations: emptyAnimations,
+      defaultIdleActionId: '',
       poses: []
     };
   }
@@ -797,12 +985,23 @@ export class ArkWebAvatarAssetLibrary {
       }
       poses.push(...(posesObj as Object[]));
     }
+    // defaultIdleActionId (Phase 3C-2 起支持默认待机标记)
+    // 向后兼容: 缺失字段视为空字符串 (无默认待机)
+    const defaultIdleObj: Object | undefined = o['defaultIdleActionId'];
+    let defaultIdleActionId: string = '';
+    if (defaultIdleObj !== undefined) {
+      if (typeof defaultIdleObj !== 'string') {
+        return null;
+      }
+      defaultIdleActionId = defaultIdleObj;
+    }
 
     return {
       schemaVersion: schemaVersion,
       activeModelId: activeModelIdObj as string,
       models: models,
       animations: animations,
+      defaultIdleActionId: defaultIdleActionId,
       poses: poses
     };
   }

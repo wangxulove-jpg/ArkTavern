@@ -128,7 +128,8 @@ import {
   ArkWebModelRestoreResult,
   ASSET_LIBRARY_SCHEMA_VERSION,
   ModelRestoreErrorCode,
-  PersistentAnimationErrorCode
+  PersistentAnimationErrorCode,
+  AnimationManagementErrorCode
 } from '../vrmviewer/ArkWebAvatarAssetTypes';
 
 /**
@@ -583,6 +584,20 @@ struct VrmViewerPage {
   @State animationLibraryErrorCode: string = '';
   /** 动画库错误消息。 */
   @State animationLibraryErrorMessage: string = '';
+  /** 默认待机 actionId (Phase 3C-2, 仅元数据, 不自动加载/播放)。 */
+  @State defaultIdleActionId: string = '';
+  /** 删除确认对话框是否显示 (Phase 3C-2, 页面内确认状态, 不引入新 API)。 */
+  @State animationDeleteConfirmVisible: boolean = false;
+  /** 删除确认对话框待删除的 actionId。 */
+  @State pendingDeleteActionId: string = '';
+  /** 删除确认对话框待删除的动作显示名。 */
+  @State pendingDeleteActionName: string = '';
+  /** 重命名对话框是否显示 (Phase 3C-2)。 */
+  @State animationRenameDialogVisible: boolean = false;
+  /** 重命名对话框待编辑的 actionId。 */
+  @State pendingRenameActionId: string = '';
+  /** 重命名对话框输入的新名称。 */
+  @State pendingRenameDisplayName: string = '';
 
   // ===== Phase 3B — 模型自动恢复与持久化资产目录 =====
   /** 资产库状态(READY / EMPTY / FAILED / DISPOSED) */
@@ -883,6 +898,14 @@ struct VrmViewerPage {
     this.selectedActionId = '';
     this.animationLibraryErrorCode = '';
     this.animationLibraryErrorMessage = '';
+    // Phase 3C-2: 清空管理对话框运行时状态 (不删除持久数据)
+    this.defaultIdleActionId = '';
+    this.animationDeleteConfirmVisible = false;
+    this.pendingDeleteActionId = '';
+    this.pendingDeleteActionName = '';
+    this.animationRenameDialogVisible = false;
+    this.pendingRenameActionId = '';
+    this.pendingRenameDisplayName = '';
     // Phase 3B:13. 销毁 Phase 3B 持久化资源(不删除 filesDir 下的模型文件与 library.json)
     // 标记 restoreDisposed 阻止异步恢复回调
     this.restoreDisposed = true;
@@ -1542,6 +1565,8 @@ struct VrmViewerPage {
    *
    * 仅恢复元数据,不在启动时解析所有 VRMA。
    * 失败时不清空已有列表 (保留上次状态)。
+   *
+   * Phase 3C-2: 同时读取 defaultIdleActionId (仅元数据, 不自动加载/播放)。
    */
   private async loadAnimationAssetsFromLibrary(): Promise<void> {
     if (this.assetLibrary === null) {
@@ -1550,6 +1575,8 @@ struct VrmViewerPage {
     try {
       const animations: ArkWebAvatarAnimationAsset[] = await this.assetLibrary.readAnimations();
       this.animationAssets = animations;
+      // 同步默认待机标记 (仅元数据, 不触发加载)
+      this.defaultIdleActionId = await this.assetLibrary.getDefaultIdleActionId();
       console.info(`[VrmViewerPage] loaded ${animations.length} animation assets from library`);
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
@@ -1683,6 +1710,187 @@ struct VrmViewerPage {
     }
     this.refreshAnimationDebugState();
     this.startAnimationLoadPolling();
+  }
+
+  // ===== Phase 3C-2 — 动作重命名 / 删除 / 默认待机标记 =====
+
+  /**
+   * Phase 3C-2: 打开重命名对话框。
+   */
+  private onAnimationRenameButton(actionId: string, currentName: string): void {
+    if (actionId.length === 0) {
+      return;
+    }
+    this.pendingRenameActionId = actionId;
+    this.pendingRenameDisplayName = currentName;
+    this.animationRenameDialogVisible = true;
+  }
+
+  /**
+   * Phase 3C-2: 取消重命名对话框。
+   */
+  private onAnimationRenameCancel(): void {
+    this.animationRenameDialogVisible = false;
+    this.pendingRenameActionId = '';
+    this.pendingRenameDisplayName = '';
+  }
+
+  /**
+   * Phase 3C-2: 确认重命名 (trim 后非空, 长度 <= 64)。
+   *
+   * 保持 actionId / resourceId / relativePath / 文件名不变, 只修改 displayName + updatedAt。
+   */
+  private async onAnimationRenameConfirm(): Promise<void> {
+    const actionId: string = this.pendingRenameActionId;
+    const newName: string = this.pendingRenameDisplayName.trim();
+    if (actionId.length === 0) {
+      return;
+    }
+    if (newName.length === 0 || newName.length > 64) {
+      this.animationLibraryErrorCode = AnimationManagementErrorCode.ANIMATION_RENAME_NAME_INVALID;
+      this.animationLibraryErrorMessage = '名称无效 (trim 后非空, 长度不超过 64)';
+      promptAction.showToast({ message: '名称无效' });
+      return;
+    }
+    if (this.assetLibrary === null) {
+      this.animationLibraryErrorCode = PersistentAnimationErrorCode.ANIMATION_STORE_LIBRARY_INVALID;
+      this.animationLibraryErrorMessage = '资产库未初始化';
+      promptAction.showToast({ message: '资产库未初始化' });
+      return;
+    }
+    const updatedAsset: ArkWebAvatarAnimationAsset | null =
+      await this.assetLibrary.renameAnimation(actionId, newName);
+    if (updatedAsset === null) {
+      this.animationLibraryErrorCode = AnimationManagementErrorCode.ANIMATION_RENAME_NAME_INVALID;
+      this.animationLibraryErrorMessage = '重命名失败 (清单写入失败或 actionId 不存在)';
+      promptAction.showToast({ message: '重命名失败' });
+      return;
+    }
+    // 关闭对话框
+    this.animationRenameDialogVisible = false;
+    this.pendingRenameActionId = '';
+    this.pendingRenameDisplayName = '';
+    // 刷新列表
+    await this.loadAnimationAssetsFromLibrary();
+    promptAction.showToast({ message: '已重命名' });
+  }
+
+  /**
+   * Phase 3C-2: 打开删除确认对话框。
+   */
+  private onAnimationDeleteButton(actionId: string, displayName: string): void {
+    if (actionId.length === 0) {
+      return;
+    }
+    this.pendingDeleteActionId = actionId;
+    this.pendingDeleteActionName = displayName;
+    this.animationDeleteConfirmVisible = true;
+  }
+
+  /**
+   * Phase 3C-2: 取消删除。
+   */
+  private onAnimationDeleteCancel(): void {
+    this.animationDeleteConfirmVisible = false;
+    this.pendingDeleteActionId = '';
+    this.pendingDeleteActionName = '';
+  }
+
+  /**
+   * Phase 3C-2: 确认删除。
+   *
+   * 流程 (规范 §删除):
+   * 1. 停止当前动画加载轮询
+   * 2. 若删除的是 selectedActionId, 调用现有 stopAnimation()
+   * 3. PersistentAnimationStore.deleteAnimation (rename .deleting → 移除清单 → 删除 .deleting)
+   * 4. 清单写入失败: 文件 rename 回原文件 (回滚)
+   * 5. 删除当前选中动作后: selectedActionId='', 清除选择状态, 禁用播放按钮
+   */
+  private async onAnimationDeleteConfirm(): Promise<void> {
+    const actionId: string = this.pendingDeleteActionId;
+    if (actionId.length === 0) {
+      this.onAnimationDeleteCancel();
+      return;
+    }
+    if (this.persistentAnimationStore === null || this.assetLibrary === null) {
+      this.animationLibraryErrorCode = PersistentAnimationErrorCode.ANIMATION_STORE_LIBRARY_INVALID;
+      this.animationLibraryErrorMessage = '动画存储/资产库未初始化';
+      promptAction.showToast({ message: '删除失败: 存储未初始化' });
+      this.onAnimationDeleteCancel();
+      return;
+    }
+
+    // 1. 停止加载轮询
+    this.stopAnimationLoadPolling();
+
+    // 2. 若删除的是当前选中动作, 调用 stopAnimation 停止播放
+    const wasSelected: boolean = this.selectedActionId === actionId;
+    if (wasSelected && this.viewerState === ArkWebViewerState.READY) {
+      try {
+        await this.arkWebController.stopAnimation('');
+      } catch (_e) {
+        // 忽略停止失败, 继续删除流程
+      }
+    }
+
+    // 3. 删除持久化文件 + 移除清单记录 (含 .deleting 回滚)
+    const ok: boolean = await this.persistentAnimationStore.deleteAnimation(actionId);
+    if (!ok) {
+      const err: string = this.persistentAnimationStore.getLastError();
+      // 解析错误码前缀
+      const code: string = err.indexOf(':') > 0 ? err.split(':')[0] : err;
+      this.animationLibraryErrorCode = code;
+      this.animationLibraryErrorMessage = err;
+      promptAction.showToast({ message: `删除失败: ${err}` });
+      this.onAnimationDeleteCancel();
+      return;
+    }
+
+    // 5. 删除选中动作后清除选择状态 (禁用播放按钮由 isAnimationPlayButtonEnabled 自然处理)
+    if (wasSelected) {
+      this.selectedActionId = '';
+    }
+
+    // 关闭对话框 + 刷新列表
+    this.animationDeleteConfirmVisible = false;
+    this.pendingDeleteActionId = '';
+    this.pendingDeleteActionName = '';
+    await this.loadAnimationAssetsFromLibrary();
+    this.refreshAnimationDebugState();
+    promptAction.showToast({ message: '已删除' });
+  }
+
+  /**
+   * Phase 3C-2: 设为默认待机 / 取消默认待机。
+   *
+   * - 当前已是默认: 点击取消 (传入空字符串)
+   * - 当前不是默认: 点击设为默认
+   *
+   * 仅保存元数据, 不自动加载/播放。
+   */
+  private async onAnimationToggleIdleButton(actionId: string): Promise<void> {
+    if (actionId.length === 0) {
+      return;
+    }
+    if (this.assetLibrary === null) {
+      this.animationLibraryErrorCode = PersistentAnimationErrorCode.ANIMATION_STORE_LIBRARY_INVALID;
+      this.animationLibraryErrorMessage = '资产库未初始化';
+      promptAction.showToast({ message: '资产库未初始化' });
+      return;
+    }
+    // 已是默认 → 取消; 否则 → 设为默认
+    const target: string = this.defaultIdleActionId === actionId ? '' : actionId;
+    const ok: boolean = await this.assetLibrary.setDefaultIdleAction(target);
+    if (!ok) {
+      this.animationLibraryErrorCode = AnimationManagementErrorCode.ANIMATION_DEFAULT_IDLE_WRITE_FAILED;
+      this.animationLibraryErrorMessage = '默认待机标记更新失败 (清单写入失败)';
+      promptAction.showToast({ message: '设置失败' });
+      return;
+    }
+    this.defaultIdleActionId = target;
+    promptAction.showToast({
+      message: target.length > 0 ? '已设为默认待机' : '已取消默认待机'
+    });
   }
 
   /**
@@ -6101,6 +6309,7 @@ struct VrmViewerPage {
 
   @Builder
   TabAnimationContent() {
+    Stack() {
     Column() {
       // Phase 3A — VRMA 文件导入与最小播放闭环
       Text('动画系统')
@@ -6245,38 +6454,114 @@ struct VrmViewerPage {
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)
+
+    this.AnimationDeleteConfirmDialog()
+    this.AnimationRenameDialog()
+    }
+    .width('100%')
+    .alignContent(Alignment.Center)
   }
 
   /**
-   * Phase 3C-1: 动作列表项 (显示动作名/大小/选中状态)。
+   * Phase 3C-1 / 3C-2: 动作列表项 (显示动作名/大小/选中状态 + 管理按钮)。
    *
-   * 不显示: absolutePath / relativePath / filesDir / 原始 URI。
+   * 不显示: absolutePath / relativePath / filesDir / resourceId / 原始 URI。
+   *
+   * 操作:
+   * - 点击列表项主体: 加载该动作
+   * - 重命名按钮: 打开重命名对话框
+   * - 设为待机 / 取消待机按钮: 切换默认待机标记
+   * - 删除按钮: 打开删除确认对话框
    */
   @Builder
   AnimationListItem(asset: ArkWebAvatarAnimationAsset) {
-    Row() {
-      Column() {
-        Text(asset.displayName)
-          .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_primary'))
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
+    Column() {
+      // 主行: 名称 + 大小 + 选中状态
+      Row() {
+        Column() {
+          Row() {
+            Text(asset.displayName)
+              .fontSize($r('app.float.app_font_body'))
+              .fontColor($r('app.color.app_text_primary'))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .layoutWeight(1)
+            // 默认待机标记
+            if (this.defaultIdleActionId === asset.actionId) {
+              Text('默认待机')
+                .fontSize($r('app.float.app_font_caption'))
+                .fontColor($r('app.color.app_text_primary'))
+                .backgroundColor($r('app.color.app_surface_2'))
+                .borderRadius($r('app.float.app_radius_sm'))
+                .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+                .margin({ left: 6 })
+            }
+          }
           .width('100%')
-        Text(this.formatAnimationByteLength(asset.byteLength))
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_secondary'))
-          .width('100%')
-          .margin({ top: 2 })
-      }
-      .alignItems(HorizontalAlign.Start)
-      .layoutWeight(1)
+          Text(this.formatAnimationByteLength(asset.byteLength))
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_secondary'))
+            .width('100%')
+            .margin({ top: 2 })
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
 
-      Text(this.selectedActionId === asset.actionId ? '已选中' : '点击加载')
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor(this.selectedActionId === asset.actionId
-          ? $r('app.color.app_text_primary')
-          : $r('app.color.app_text_secondary'))
-        .margin({ left: 8 })
+        Text(this.selectedActionId === asset.actionId ? '已选中' : '点击加载')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor(this.selectedActionId === asset.actionId
+            ? $r('app.color.app_text_primary')
+            : $r('app.color.app_text_secondary'))
+          .margin({ left: 8 })
+      }
+      .width('100%')
+      .onClick(() => {
+        this.onAnimationListItemClick(asset.actionId);
+      })
+
+      // 管理按钮行 (Phase 3C-2)
+      Row() {
+        Button('重命名')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_primary'))
+          .backgroundColor($r('app.color.app_surface_2'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(28)
+          .layoutWeight(1)
+          .margin({ right: 4 })
+          .enabled(this.debugAnimationState !== 'LOADING')
+          .onClick(() => {
+            this.onAnimationRenameButton(asset.actionId, asset.displayName);
+          })
+
+        Button(this.defaultIdleActionId === asset.actionId ? '取消待机' : '设为待机')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_primary'))
+          .backgroundColor($r('app.color.app_surface_2'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(28)
+          .layoutWeight(1)
+          .margin({ left: 4, right: 4 })
+          .enabled(this.debugAnimationState !== 'LOADING')
+          .onClick(() => {
+            this.onAnimationToggleIdleButton(asset.actionId);
+          })
+
+        Button('删除')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_danger'))
+          .backgroundColor($r('app.color.app_surface_2'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(28)
+          .layoutWeight(1)
+          .margin({ left: 4 })
+          .enabled(this.debugAnimationState !== 'LOADING')
+          .onClick(() => {
+            this.onAnimationDeleteButton(asset.actionId, asset.displayName);
+          })
+      }
+      .width('100%')
+      .margin({ top: 6 })
     }
     .width('100%')
     .padding({ left: 12, right: 12, top: 8, bottom: 8 })
@@ -6284,9 +6569,114 @@ struct VrmViewerPage {
       ? $r('app.color.app_surface_2')
       : $r('app.color.app_surface_1'))
     .borderRadius($r('app.float.app_radius_sm'))
-    .onClick(() => {
-      this.onAnimationListItemClick(asset.actionId);
-    })
+  }
+
+  /**
+   * Phase 3C-2: 删除确认对话框 (页面内确认状态, 不引入新 API)。
+   */
+  @Builder
+  AnimationDeleteConfirmDialog() {
+    if (this.animationDeleteConfirmVisible) {
+      Column() {
+        Text('确认删除动作')
+          .fontSize($r('app.float.app_font_subtitle'))
+          .fontColor($r('app.color.app_text_primary'))
+          .margin({ bottom: 8 })
+        Text(`将永久删除 "${this.pendingDeleteActionName}" 及其文件`)
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .margin({ bottom: 16 })
+
+        Row() {
+          Button('取消')
+            .fontSize($r('app.float.app_font_body'))
+            .fontColor($r('app.color.app_text_primary'))
+            .backgroundColor($r('app.color.app_surface_2'))
+            .borderRadius($r('app.float.app_radius_sm'))
+            .height(36)
+            .layoutWeight(1)
+            .margin({ right: 4 })
+            .onClick(() => {
+              this.onAnimationDeleteCancel();
+            })
+
+          Button('删除')
+            .fontSize($r('app.float.app_font_body'))
+            .fontColor($r('app.color.app_danger'))
+            .backgroundColor($r('app.color.app_surface_2'))
+            .borderRadius($r('app.float.app_radius_sm'))
+            .height(36)
+            .layoutWeight(1)
+            .margin({ left: 4 })
+            .onClick(() => {
+              this.onAnimationDeleteConfirm();
+            })
+        }
+        .width('100%')
+      }
+      .width('80%')
+      .padding(16)
+      .backgroundColor($r('app.color.app_bg'))
+      .borderRadius($r('app.float.app_radius_md'))
+    }
+  }
+
+  /**
+   * Phase 3C-2: 重命名对话框 (页面内输入 + 确认/取消)。
+   */
+  @Builder
+  AnimationRenameDialog() {
+    if (this.animationRenameDialogVisible) {
+      Column() {
+        Text('重命名动作')
+          .fontSize($r('app.float.app_font_subtitle'))
+          .fontColor($r('app.color.app_text_primary'))
+          .margin({ bottom: 8 })
+        TextInput({ text: this.pendingRenameDisplayName, placeholder: '输入新名称 (1-64 字符)' })
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor($r('app.color.app_text_primary'))
+          .backgroundColor($r('app.color.app_surface_1'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(40)
+          .width('100%')
+          .margin({ bottom: 16 })
+          .maxLength(64)
+          .onChange((value: string) => {
+            this.pendingRenameDisplayName = value;
+          })
+
+        Row() {
+          Button('取消')
+            .fontSize($r('app.float.app_font_body'))
+            .fontColor($r('app.color.app_text_primary'))
+            .backgroundColor($r('app.color.app_surface_2'))
+            .borderRadius($r('app.float.app_radius_sm'))
+            .height(36)
+            .layoutWeight(1)
+            .margin({ right: 4 })
+            .onClick(() => {
+              this.onAnimationRenameCancel();
+            })
+
+          Button('确定')
+            .fontSize($r('app.float.app_font_body'))
+            .fontColor($r('app.color.app_text_primary'))
+            .backgroundColor($r('app.color.app_surface_2'))
+            .borderRadius($r('app.float.app_radius_sm'))
+            .height(36)
+            .layoutWeight(1)
+            .margin({ left: 4 })
+            .onClick(() => {
+              this.onAnimationRenameConfirm();
+            })
+        }
+        .width('100%')
+      }
+      .width('80%')
+      .padding(16)
+      .backgroundColor($r('app.color.app_bg'))
+      .borderRadius($r('app.float.app_radius_md'))
+    }
   }
 
   /**
