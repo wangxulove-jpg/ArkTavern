@@ -717,10 +717,15 @@ export class ViewerAnimationController {
           makeAnimError(ANIMATION_ERR_CLIP_CREATION_FAILED, 'createVRMAnimationClip returned null'));
         return;
       }
-      if (clip.isAnimationClip !== true) {
-        self._handleLoadFailure(generation, pendingResource,
-          makeAnimError(ANIMATION_ERR_CLIP_INVALID, 'clip.isAnimationClip !== true'));
-        return;
+      // 校验 Clip 类型: three.js 0.176.0 AnimationClip 无 isAnimationClip 属性,
+      // 使用 instanceof THREE.AnimationClip 校验 (更严格且符合规范意图)。
+      // 若 instanceof 失败 (THREE 实例不一致的边界情况), 降级为结构校验。
+      if (!(clip instanceof THREE.AnimationClip)) {
+        if (typeof clip.duration !== 'number' || !Array.isArray(clip.tracks)) {
+          self._handleLoadFailure(generation, pendingResource,
+            makeAnimError(ANIMATION_ERR_CLIP_INVALID, 'clip is not an AnimationClip instance and lacks duration/tracks'));
+          return;
+        }
       }
       if (typeof clip.duration !== 'number' || !isFinite(clip.duration) || clip.duration <= 0) {
         self._handleLoadFailure(generation, pendingResource,

@@ -44037,13 +44037,15 @@ void main() {
           );
           return;
         }
-        if (clip.isAnimationClip !== true) {
-          self2._handleLoadFailure(
-            generation,
-            pendingResource,
-            makeAnimError(ANIMATION_ERR_CLIP_INVALID, "clip.isAnimationClip !== true")
-          );
-          return;
+        if (!(clip instanceof AnimationClip)) {
+          if (typeof clip.duration !== "number" || !Array.isArray(clip.tracks)) {
+            self2._handleLoadFailure(
+              generation,
+              pendingResource,
+              makeAnimError(ANIMATION_ERR_CLIP_INVALID, "clip is not an AnimationClip instance and lacks duration/tracks")
+            );
+            return;
+          }
         }
         if (typeof clip.duration !== "number" || !isFinite(clip.duration) || clip.duration <= 0) {
           self2._handleLoadFailure(
