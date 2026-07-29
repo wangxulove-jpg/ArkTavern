@@ -153,6 +153,49 @@ export class ViewerCamera {
   /** @returns {OrbitControls|null} */
   getControls() { return this.controls; }
 
+  /**
+   * Phase 2A-1: 启用/禁用 OrbitControls。
+   *
+   * 用于控制面板触摸隔离:ArkUI 控制面板发生触摸时禁用 controls,
+   * 触摸结束或取消时恢复 controls,避免手势穿透到 Three.js Canvas。
+   *
+   * 安全约束:
+   * - enabled 必须为布尔值(由 Bridge 层校验,此处仅做 typeof 检查)
+   * - Camera 尚未初始化时返回受控失败,不抛到全局
+   * - 已 dispose 时返回受控失败
+   *
+   * @param {boolean} enabled true=启用 controls.enabled;false=禁用
+   * @returns {{success: boolean, enabled?: boolean, error?: string}}
+   */
+  setControlsEnabled(enabled) {
+    if (this._disposed) {
+      return { success: false, error: 'CAMERA_DISPOSED' };
+    }
+    if (typeof enabled !== 'boolean') {
+      return { success: false, error: 'INVALID_ARGUMENT' };
+    }
+    if (!this.controls) {
+      return { success: false, error: 'CAMERA_NOT_INITIALIZED' };
+    }
+    this.controls.enabled = enabled;
+    return { success: true, enabled: this.controls.enabled };
+  }
+
+  /**
+   * Phase 2A-1: 查询 OrbitControls 当前启用状态。
+   *
+   * @returns {{success: boolean, enabled?: boolean, error?: string}}
+   */
+  getControlsEnabled() {
+    if (this._disposed) {
+      return { success: false, error: 'CAMERA_DISPOSED' };
+    }
+    if (!this.controls) {
+      return { success: false, error: 'CAMERA_NOT_INITIALIZED' };
+    }
+    return { success: true, enabled: !!this.controls.enabled };
+  }
+
   dispose() {
     if (this._disposed) return;
     this._disposed = true;

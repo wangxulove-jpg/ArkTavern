@@ -269,7 +269,15 @@ export class ArkWebViewerConfig {
     'clearPreparedModelLoadResult',
     // Phase 1D-2C-1: 运行时诊断(获取/清除最近一条诊断记录)
     'getVrmRuntimeDiagnostic',
-    'clearVrmRuntimeDiagnostic'
+    'clearVrmRuntimeDiagnostic',
+    // Phase 2A-1: Camera Controls enable/disable(控制面板触摸隔离)
+    'setCameraControlsEnabled',
+    'getCameraControlsEnabled',
+    // Phase 2A-1: Scene 设置(背景颜色 / 网格 / 灯光)
+    'setSceneBackgroundColor',
+    'setSceneGridVisible',
+    'setSceneLightIntensity',
+    'getSceneSettings'
   ];
 
   /** Bridge 方法白名单:JavaScript → ArkTS。 */
@@ -339,4 +347,120 @@ export function parseViewerState(stateStr: string): ArkWebViewerState {
     default:
       return ArkWebViewerState.FAILED;
   }
+}
+
+// ===== Phase 2A-1: Scene 设置与状态类型 =====
+
+/**
+ * Phase 2A-1: 场景设置(背景颜色 / 网格 / 灯光)。
+ *
+ * 用于 setSceneBackgroundColor / setSceneGridVisible / setSceneLightIntensity
+ * 的参数传递与 getSceneSettings 的返回值解析。
+ *
+ * 背景颜色格式:仅允许 #RRGGBB(6 位十六进制),禁止 rgba / url(...) / 脚本字符串。
+ * 灯光强度范围:0.0 ~ 4.0(ArkUI 百分比 0-100% 映射:intensity = percentage / 25.0)。
+ */
+export interface ArkWebViewerSceneSettings {
+  /** 背景颜色,#RRGGBB 格式(大写或小写,由 Bridge 规范化) */
+  backgroundColor: string;
+  /** 网格是否可见 */
+  gridVisible: boolean;
+  /** 主方向光强度(0.0 ~ 4.0) */
+  lightIntensity: number;
+}
+
+/**
+ * Phase 2A-1: 场景状态快照(包含设置 + Camera Controls 状态)。
+ *
+ * 用于 getSceneState 返回值的解析,供 Debug Tab 显示。
+ */
+export interface ArkWebViewerSceneState {
+  /** 背景颜色,#RRGGBB 格式 */
+  backgroundColor: string;
+  /** 网格是否可见 */
+  gridVisible: boolean;
+  /** 主方向光强度(0.0 ~ 4.0) */
+  lightIntensity: number;
+  /** OrbitControls 是否启用(控制面板触摸隔离期间为 false) */
+  cameraControlsEnabled: boolean;
+}
+
+/**
+ * Phase 2A-1: 模型来源类型。
+ * - USER:用户导入的模型
+ * - DEFAULT:默认 VRM
+ * - NONE:无模型
+ */
+export type ArkWebViewerModelSource = 'USER' | 'DEFAULT' | 'NONE';
+
+/**
+ * Phase 2A-1: 解析 getSceneSettings 返回的 JSON 字符串。
+ *
+ * @param jsonStr Bridge 返回的 JSON 字符串
+ * @returns 解析成功返回 ArkWebViewerSceneSettings,失败返回 null
+ */
+export function parseSceneSettings(jsonStr: string): ArkWebViewerSceneSettings | null {
+  try {
+    const obj: Record<string, Object> = JSON.parse(jsonStr) as Record<string, Object>;
+    if (!obj['success']) {
+      return null;
+    }
+    const settingsObj = obj['settings'] as Record<string, Object>;
+    if (!settingsObj) {
+      return null;
+    }
+    return {
+      backgroundColor: (settingsObj['backgroundColor'] as string) || '#222222',
+      gridVisible: settingsObj['gridVisible'] === true,
+      lightIntensity: (settingsObj['lightIntensity'] as number) ?? 3.0
+    };
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * Phase 2A-1: 校验 #RRGGBB 颜色格式。
+ *
+ * 只允许 6 位十六进制(大写或小写),禁止:
+ * - 3 位简写(#FFF)
+ * - 带透明度(#RRGGBBAA)
+ * - 任意 CSS(rgba / hsl / url(...))
+ * - 脚本字符串
+ *
+ * @param color 待校验的颜色字符串
+ * @returns true=合法;false=非法
+ */
+export function isValidHexColor(color: string): boolean {
+  if (typeof color !== 'string') {
+    return false;
+  }
+  return /^#[0-9A-Fa-f]{6}$/.test(color);
+}
+
+/**
+ * Phase 2A-1: 将灯光百分比(0-100)映射为强度(0.0-4.0)。
+ *
+ * 映射规则:
+ *   0%   → 0.0
+ *   25%  → 1.0
+ *   50%  → 2.0
+ *   75%  → 3.0
+ *   100% → 4.0
+ *
+ * @param percentage 0-100
+ * @returns 强度值 0.0-4.0
+ */
+export function lightPercentageToIntensity(percentage: number): number {
+  return percentage / 25.0;
+}
+
+/**
+ * Phase 2A-1: 将灯光强度(0.0-4.0)映射回百分比(0-100)。
+ *
+ * @param intensity 0.0-4.0
+ * @returns 百分比 0-100
+ */
+export function lightIntensityToPercentage(intensity: number): number {
+  return intensity * 25.0;
 }

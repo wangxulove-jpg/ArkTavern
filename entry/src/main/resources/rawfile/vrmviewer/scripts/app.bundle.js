@@ -17787,6 +17787,51 @@
       return new this.constructor().copy(this);
     }
   };
+  var GridHelper = class extends LineSegments {
+    /**
+     * Constructs a new grid helper.
+     *
+     * @param {number} [size=10] - The size of the grid.
+     * @param {number} [divisions=10] - The number of divisions across the grid.
+     * @param {number|Color|string} [color1=0x444444] - The color of the center line.
+     * @param {number|Color|string} [color2=0x888888] - The color of the lines of the grid.
+     */
+    constructor(size = 10, divisions = 10, color1 = 4473924, color2 = 8947848) {
+      color1 = new Color(color1);
+      color2 = new Color(color2);
+      const center = divisions / 2;
+      const step = size / divisions;
+      const halfSize = size / 2;
+      const vertices = [], colors = [];
+      for (let i = 0, j = 0, k = -halfSize; i <= divisions; i++, k += step) {
+        vertices.push(-halfSize, 0, k, halfSize, 0, k);
+        vertices.push(k, 0, -halfSize, k, 0, halfSize);
+        const color = i === center ? color1 : color2;
+        color.toArray(colors, j);
+        j += 3;
+        color.toArray(colors, j);
+        j += 3;
+        color.toArray(colors, j);
+        j += 3;
+        color.toArray(colors, j);
+        j += 3;
+      }
+      const geometry = new BufferGeometry();
+      geometry.setAttribute("position", new Float32BufferAttribute(vertices, 3));
+      geometry.setAttribute("color", new Float32BufferAttribute(colors, 3));
+      const material = new LineBasicMaterial({ vertexColors: true, toneMapped: false });
+      super(geometry, material);
+      this.type = "GridHelper";
+    }
+    /**
+     * Frees the GPU-related resources allocated by this instance. Call this
+     * method whenever this instance is no longer used in your app.
+     */
+    dispose() {
+      this.geometry.dispose();
+      this.material.dispose();
+    }
+  };
   var AxesHelper = class extends LineSegments {
     /**
      * Constructs a new axes helper.
@@ -28053,6 +28098,15 @@ void main() {
   // scripts/viewer/ViewerScene.js
   var WEBGL_NOT_SUPPORTED = "WEBGL_NOT_SUPPORTED";
   var SCENE_INITIALIZATION_FAILED = "SCENE_INITIALIZATION_FAILED";
+  var SCENE_BACKGROUND_INVALID = "SCENE_BACKGROUND_INVALID";
+  var SCENE_LIGHT_INTENSITY_INVALID = "SCENE_LIGHT_INTENSITY_INVALID";
+  function isValidHexColor(color) {
+    if (typeof color !== "string") return false;
+    return /^#[0-9A-Fa-f]{6}$/.test(color);
+  }
+  function normalizeHexColor(color) {
+    return color.toUpperCase();
+  }
   function disposeMaterial(material) {
     if (!material) return;
     var textureKeys = [
@@ -28111,6 +28165,9 @@ void main() {
       this.directionalLight = null;
       this.ambientLight = null;
       this.testObject = null;
+      this.gridHelper = null;
+      this.backgroundColor = "#222222";
+      this.lightIntensity = 3;
       this.container = null;
       this._disposed = false;
     }
@@ -28157,6 +28214,10 @@ void main() {
       this.testObject = new Mesh(geometry, material);
       this.testObject.position.set(0, 1, 0);
       this.scene.add(this.testObject);
+      this.gridHelper = new GridHelper(10, 10, 8947848, 4473924);
+      this.gridHelper.visible = false;
+      this.gridHelper.position.set(0, 0, 0);
+      this.scene.add(this.gridHelper);
     }
     /**
      * 调整 Renderer 尺寸。
@@ -28229,6 +28290,155 @@ void main() {
         this.testObject = null;
       }
     }
+    // ===== Phase 2A-1: Scene 设置 API =====
+    /**
+     * Phase 2A-1: 设置场景背景颜色。
+     *
+     * 只接受 #RRGGBB 格式(6 位十六进制)。
+     * 无效颜色返回受控失败 { success: false, error: SCENE_BACKGROUND_INVALID },
+     * 不抛到全局。
+     *
+     * 成功后:
+     * - scene.background.set(color)
+     * - this.backgroundColor 更新为规范化后的大写 #RRGGBB
+     *
+     * @param {string} color #RRGGBB 格式
+     * @returns {{success: boolean, color?: string, error?: string}}
+     */
+    setBackgroundColor(color) {
+      if (this._disposed) {
+        return { success: false, error: "SCENE_DISPOSED" };
+      }
+      if (!isValidHexColor(color)) {
+        return { success: false, error: SCENE_BACKGROUND_INVALID };
+      }
+      if (!this.scene || !this.scene.background) {
+        return { success: false, error: SCENE_INITIALIZATION_FAILED };
+      }
+      var normalized = normalizeHexColor(color);
+      try {
+        this.scene.background.set(normalized);
+      } catch (e) {
+        return { success: false, error: SCENE_BACKGROUND_INVALID };
+      }
+      this.backgroundColor = normalized;
+      return { success: true, color: normalized };
+    }
+    /**
+     * Phase 2A-1: 查询当前背景颜色。
+     *
+     * @returns {{success: boolean, color?: string, error?: string}}
+     */
+    getBackgroundColor() {
+      if (this._disposed) {
+        return { success: false, error: "SCENE_DISPOSED" };
+      }
+      if (!this.scene) {
+        return { success: false, error: SCENE_INITIALIZATION_FAILED };
+      }
+      return { success: true, color: this.backgroundColor };
+    }
+    /**
+     * Phase 2A-1: 设置网格显示。
+     *
+     * GridHelper 在 initialize 中已创建一次,此处只切换 visible。
+     * 禁止每次切换时重复创建新的 GridHelper。
+     *
+     * @param {boolean} visible
+     * @returns {{success: boolean, visible?: boolean, error?: string}}
+     */
+    setGridVisible(visible) {
+      if (this._disposed) {
+        return { success: false, error: "SCENE_DISPOSED" };
+      }
+      if (typeof visible !== "boolean") {
+        return { success: false, error: "INVALID_ARGUMENT" };
+      }
+      if (!this.gridHelper) {
+        return { success: false, error: SCENE_INITIALIZATION_FAILED };
+      }
+      this.gridHelper.visible = visible;
+      return { success: true, visible: this.gridHelper.visible };
+    }
+    /**
+     * Phase 2A-1: 查询网格显示状态。
+     *
+     * @returns {{success: boolean, visible?: boolean, error?: string}}
+     */
+    getGridVisible() {
+      if (this._disposed) {
+        return { success: false, error: "SCENE_DISPOSED" };
+      }
+      if (!this.gridHelper) {
+        return { success: false, error: SCENE_INITIALIZATION_FAILED };
+      }
+      return { success: true, visible: !!this.gridHelper.visible };
+    }
+    /**
+     * Phase 2A-1: 设置主方向光强度。
+     *
+     * 合法范围:0.0 ~ 4.0
+     * 无效值返回 { success: false, error: SCENE_LIGHT_INTENSITY_INVALID }。
+     *
+     * ArkUI 百分比映射(由 ArkTS 端完成):
+     *   0% → 0.0, 25% → 1.0, 50% → 2.0, 75% → 3.0, 100% → 4.0
+     * 换算:intensity = percentage / 25.0
+     *
+     * @param {number} intensity 0.0 ~ 4.0
+     * @returns {{success: boolean, intensity?: number, error?: string}}
+     */
+    setLightIntensity(intensity) {
+      if (this._disposed) {
+        return { success: false, error: "SCENE_DISPOSED" };
+      }
+      if (typeof intensity !== "number" || isNaN(intensity)) {
+        return { success: false, error: SCENE_LIGHT_INTENSITY_INVALID };
+      }
+      if (intensity < 0 || intensity > 4) {
+        return { success: false, error: SCENE_LIGHT_INTENSITY_INVALID };
+      }
+      if (!this.directionalLight) {
+        return { success: false, error: SCENE_INITIALIZATION_FAILED };
+      }
+      this.directionalLight.intensity = intensity;
+      this.lightIntensity = intensity;
+      return { success: true, intensity: this.directionalLight.intensity };
+    }
+    /**
+     * Phase 2A-1: 查询主方向光强度。
+     *
+     * @returns {{success: boolean, intensity?: number, error?: string}}
+     */
+    getLightIntensity() {
+      if (this._disposed) {
+        return { success: false, error: "SCENE_DISPOSED" };
+      }
+      if (!this.directionalLight) {
+        return { success: false, error: SCENE_INITIALIZATION_FAILED };
+      }
+      return { success: true, intensity: this.lightIntensity };
+    }
+    /**
+     * Phase 2A-1: 获取场景设置快照(背景颜色 / 网格 / 灯光)。
+     *
+     * 供 ViewerCore.getSceneState() 和 Bridge getSceneSettings() 使用。
+     *
+     * @returns {{success: boolean, backgroundColor?: string, gridVisible?: boolean, lightIntensity?: number, error?: string}}
+     */
+    getSettings() {
+      if (this._disposed) {
+        return { success: false, error: "SCENE_DISPOSED" };
+      }
+      if (!this.scene) {
+        return { success: false, error: SCENE_INITIALIZATION_FAILED };
+      }
+      return {
+        success: true,
+        backgroundColor: this.backgroundColor,
+        gridVisible: this.gridHelper ? !!this.gridHelper.visible : false,
+        lightIntensity: this.lightIntensity
+      };
+    }
     /**
      * 释放所有 GPU 资源。
      *
@@ -28248,6 +28458,33 @@ void main() {
         disposeObject3D(this.testObject);
         if (this.scene) this.scene.remove(this.testObject);
         this.testObject = null;
+      }
+      if (this.gridHelper) {
+        if (this.gridHelper.geometry && typeof this.gridHelper.geometry.dispose === "function") {
+          try {
+            this.gridHelper.geometry.dispose();
+          } catch (e) {
+          }
+        }
+        if (this.gridHelper.material) {
+          if (Array.isArray(this.gridHelper.material)) {
+            this.gridHelper.material.forEach(function(m) {
+              if (m && typeof m.dispose === "function") {
+                try {
+                  m.dispose();
+                } catch (e) {
+                }
+              }
+            });
+          } else if (typeof this.gridHelper.material.dispose === "function") {
+            try {
+              this.gridHelper.material.dispose();
+            } catch (e) {
+            }
+          }
+        }
+        if (this.scene) this.scene.remove(this.gridHelper);
+        this.gridHelper = null;
       }
       if (this.directionalLight && this.scene) {
         this.scene.remove(this.directionalLight);
@@ -29217,6 +29454,47 @@ void main() {
     /** @returns {OrbitControls|null} */
     getControls() {
       return this.controls;
+    }
+    /**
+     * Phase 2A-1: 启用/禁用 OrbitControls。
+     *
+     * 用于控制面板触摸隔离:ArkUI 控制面板发生触摸时禁用 controls,
+     * 触摸结束或取消时恢复 controls,避免手势穿透到 Three.js Canvas。
+     *
+     * 安全约束:
+     * - enabled 必须为布尔值(由 Bridge 层校验,此处仅做 typeof 检查)
+     * - Camera 尚未初始化时返回受控失败,不抛到全局
+     * - 已 dispose 时返回受控失败
+     *
+     * @param {boolean} enabled true=启用 controls.enabled;false=禁用
+     * @returns {{success: boolean, enabled?: boolean, error?: string}}
+     */
+    setControlsEnabled(enabled) {
+      if (this._disposed) {
+        return { success: false, error: "CAMERA_DISPOSED" };
+      }
+      if (typeof enabled !== "boolean") {
+        return { success: false, error: "INVALID_ARGUMENT" };
+      }
+      if (!this.controls) {
+        return { success: false, error: "CAMERA_NOT_INITIALIZED" };
+      }
+      this.controls.enabled = enabled;
+      return { success: true, enabled: this.controls.enabled };
+    }
+    /**
+     * Phase 2A-1: 查询 OrbitControls 当前启用状态。
+     *
+     * @returns {{success: boolean, enabled?: boolean, error?: string}}
+     */
+    getControlsEnabled() {
+      if (this._disposed) {
+        return { success: false, error: "CAMERA_DISPOSED" };
+      }
+      if (!this.controls) {
+        return { success: false, error: "CAMERA_NOT_INITIALIZED" };
+      }
+      return { success: true, enabled: !!this.controls.enabled };
     }
     dispose() {
       if (this._disposed) return;
@@ -39101,6 +39379,7 @@ void main() {
   var ERR_SCENE_INITIALIZATION_FAILED = "SCENE_INITIALIZATION_FAILED";
   var ERR_CAMERA_INITIALIZATION_FAILED = "CAMERA_INITIALIZATION_FAILED";
   var ERR_VIEWER_ALREADY_DISPOSED = "VIEWER_ALREADY_DISPOSED";
+  var ERR_VIEWER_NOT_READY = "VIEWER_NOT_READY";
   function makeError2(code, message, phase, recoverable) {
     return {
       code,
@@ -39264,25 +39543,191 @@ void main() {
     }
     /**
      * 获取场景状态(供 Bridge getSceneState 使用)。
+     *
+     * Phase 2A-1 扩展:
+     * - 增加 modelSource 字段(USER / DEFAULT / NONE)
+     * - 增加 modelLoaded 字段(基于 currentVrm != null)
+     * - 增加 backgroundColor / gridVisible / lightIntensity / cameraControlsEnabled 字段
+     * - sceneReady / cameraReady / frameLoopRunning 重命名为 threeLoaded / sceneInitialized /
+     *   cameraInitialized / frameLoopRunning(保留旧字段供向后兼容)
+     *
      * @returns {object}
      */
     getSceneState() {
       var modelState = this.modelLoader ? this.modelLoader.getState() : ModelState.NOT_LOADED;
       var modelDisplayName = this.modelLoader ? this.modelLoader.getDisplayName() : "";
       var modelError = this.modelLoader && this.modelLoader.getLastError() ? this.modelLoader.getLastError().message : "";
+      var currentVrm = this.modelLoader ? this.modelLoader.getCurrentVrm() : null;
+      var modelLoaded = !!currentVrm;
+      var modelSource = "NONE";
+      if (modelLoaded) {
+        if (modelDisplayName === "Default VRM") {
+          modelSource = "DEFAULT";
+        } else {
+          modelSource = "USER";
+        }
+      }
+      var sceneSettings = this.scene ? this.scene.getSettings() : null;
+      var cameraControls = this.camera ? this.camera.getControlsEnabled() : { success: false, error: "CAMERA_NOT_INITIALIZED" };
       return {
         viewerState: this._state,
+        // Phase 2A-1: 模型状态扩展
         modelState,
+        modelLoaded,
         modelDisplayName,
+        modelSource,
         modelError,
         animationState: "NOT_INITIALIZED",
         humanoidState: "NOT_INITIALIZED",
         springBoneState: "NOT_INITIALIZED",
+        // Phase 2A-1: Scene 与 Camera 状态扩展
+        threeLoaded: !!this.scene,
+        sceneInitialized: !!this.scene,
+        cameraInitialized: !!this.camera,
+        frameLoopRunning: !!(this.frameLoop && this.frameLoop.isRunning()),
+        backgroundColor: sceneSettings ? sceneSettings.backgroundColor : "#222222",
+        gridVisible: sceneSettings ? sceneSettings.gridVisible : false,
+        lightIntensity: sceneSettings ? sceneSettings.lightIntensity : 3,
+        cameraControlsEnabled: cameraControls.success ? !!cameraControls.enabled : false,
+        // 保留旧字段供向后兼容
         sceneReady: !!this.scene,
         cameraReady: !!this.camera,
-        frameLoopRunning: !!(this.frameLoop && this.frameLoop.isRunning()),
-        phase: "PHASE_1C_2"
+        phase: "PHASE_2A_1"
       };
+    }
+    // ===== Phase 2A-1: Camera Controls enable/disable =====
+    /**
+     * Phase 2A-1: 启用/禁用 OrbitControls。
+     *
+     * 用于控制面板触摸隔离。Viewer 不为 READY 时返回 VIEWER_NOT_READY。
+     *
+     * @param {boolean} enabled
+     * @returns {{success: boolean, enabled?: boolean, error?: {code: string, message: string}}}
+     */
+    setCameraControlsEnabled(enabled) {
+      if (this._state !== STATE_READY) {
+        return {
+          success: false,
+          error: makeError2(ERR_VIEWER_NOT_READY, "Viewer state is " + this._state + ", expected READY", this._state, true)
+        };
+      }
+      if (typeof enabled !== "boolean") {
+        return {
+          success: false,
+          error: makeError2("INVALID_ARGUMENT", "enabled must be a boolean", this._state, false)
+        };
+      }
+      if (!this.camera) {
+        return {
+          success: false,
+          error: makeError2(ERR_CAMERA_INITIALIZATION_FAILED, "Camera not initialized", this._state, false)
+        };
+      }
+      return this.camera.setControlsEnabled(enabled);
+    }
+    /**
+     * Phase 2A-1: 查询 OrbitControls 当前启用状态。
+     *
+     * @returns {{success: boolean, enabled?: boolean, error?: {code: string, message: string}}}
+     */
+    getCameraControlsEnabled() {
+      if (this._state !== STATE_READY) {
+        return {
+          success: false,
+          error: makeError2(ERR_VIEWER_NOT_READY, "Viewer state is " + this._state + ", expected READY", this._state, true)
+        };
+      }
+      if (!this.camera) {
+        return {
+          success: false,
+          error: makeError2(ERR_CAMERA_INITIALIZATION_FAILED, "Camera not initialized", this._state, false)
+        };
+      }
+      return this.camera.getControlsEnabled();
+    }
+    // ===== Phase 2A-1: Scene 设置 =====
+    /**
+     * Phase 2A-1: 设置场景背景颜色。
+     *
+     * @param {string} color #RRGGBB 格式
+     * @returns {{success: boolean, color?: string, error?: {code: string, message: string}}}
+     */
+    setSceneBackgroundColor(color) {
+      if (this._state !== STATE_READY) {
+        return {
+          success: false,
+          error: makeError2(ERR_VIEWER_NOT_READY, "Viewer state is " + this._state + ", expected READY", this._state, true)
+        };
+      }
+      if (!this.scene) {
+        return {
+          success: false,
+          error: makeError2(ERR_SCENE_INITIALIZATION_FAILED, "Scene not initialized", this._state, false)
+        };
+      }
+      return this.scene.setBackgroundColor(color);
+    }
+    /**
+     * Phase 2A-1: 设置网格显示。
+     *
+     * @param {boolean} visible
+     * @returns {{success: boolean, visible?: boolean, error?: {code: string, message: string}}}
+     */
+    setSceneGridVisible(visible) {
+      if (this._state !== STATE_READY) {
+        return {
+          success: false,
+          error: makeError2(ERR_VIEWER_NOT_READY, "Viewer state is " + this._state + ", expected READY", this._state, true)
+        };
+      }
+      if (!this.scene) {
+        return {
+          success: false,
+          error: makeError2(ERR_SCENE_INITIALIZATION_FAILED, "Scene not initialized", this._state, false)
+        };
+      }
+      return this.scene.setGridVisible(visible);
+    }
+    /**
+     * Phase 2A-1: 设置主方向光强度。
+     *
+     * @param {number} intensity 0.0 ~ 4.0
+     * @returns {{success: boolean, intensity?: number, error?: {code: string, message: string}}}
+     */
+    setSceneLightIntensity(intensity) {
+      if (this._state !== STATE_READY) {
+        return {
+          success: false,
+          error: makeError2(ERR_VIEWER_NOT_READY, "Viewer state is " + this._state + ", expected READY", this._state, true)
+        };
+      }
+      if (!this.scene) {
+        return {
+          success: false,
+          error: makeError2(ERR_SCENE_INITIALIZATION_FAILED, "Scene not initialized", this._state, false)
+        };
+      }
+      return this.scene.setLightIntensity(intensity);
+    }
+    /**
+     * Phase 2A-1: 获取场景设置(背景颜色 / 网格 / 灯光)。
+     *
+     * @returns {{success: boolean, settings?: object, error?: {code: string, message: string}}}
+     */
+    getSceneSettings() {
+      if (this._state !== STATE_READY) {
+        return {
+          success: false,
+          error: makeError2(ERR_VIEWER_NOT_READY, "Viewer state is " + this._state + ", expected READY", this._state, true)
+        };
+      }
+      if (!this.scene) {
+        return {
+          success: false,
+          error: makeError2(ERR_SCENE_INITIALIZATION_FAILED, "Scene not initialized", this._state, false)
+        };
+      }
+      return this.scene.getSettings();
     }
     /**
      * 销毁 Viewer,释放所有资源。
@@ -40779,6 +41224,203 @@ void main() {
           return { success: true, state: v.getState(), scene: v.getSceneState() };
         });
       },
+      // ===== Phase 2A-1: Camera Controls enable/disable =====
+      // 用于控制面板触摸隔离:ArkUI 控制面板发生触摸时禁用 OrbitControls,
+      // 触摸结束或取消时恢复 OrbitControls。
+      /**
+       * 启用/禁用 OrbitControls。
+       * @param {boolean} enabled true=启用;false=禁用
+       * @returns {string} JSON 结果
+       *   成功:{"success": true, "enabled": true|false}
+       *   失败:{"success": false, "error": {"code": "...", "message": "..."}}
+       */
+      setCameraControlsEnabled: function(enabled) {
+        return callViewer(function(v) {
+          if (typeof enabled !== "boolean") {
+            return {
+              success: false,
+              error: {
+                code: "INVALID_ARGUMENT",
+                phase: v.getState(),
+                message: "enabled must be a boolean",
+                recoverable: false
+              }
+            };
+          }
+          var result = v.setCameraControlsEnabled(enabled);
+          if (!result.success) {
+            return {
+              success: false,
+              error: {
+                code: result.error.code,
+                phase: v.getState(),
+                message: result.error.message,
+                recoverable: !!result.error.recoverable
+              }
+            };
+          }
+          return { success: true, enabled: !!result.enabled };
+        });
+      },
+      /**
+       * 查询 OrbitControls 当前启用状态。
+       * @returns {string} JSON 结果
+       *   成功:{"success": true, "enabled": true|false}
+       *   失败:{"success": false, "error": {"code": "...", "message": "..."}}
+       */
+      getCameraControlsEnabled: function() {
+        return callViewer(function(v) {
+          var result = v.getCameraControlsEnabled();
+          if (!result.success) {
+            return {
+              success: false,
+              error: {
+                code: result.error.code,
+                phase: v.getState(),
+                message: result.error.message,
+                recoverable: !!result.error.recoverable
+              }
+            };
+          }
+          return { success: true, enabled: !!result.enabled };
+        });
+      },
+      // ===== Phase 2A-1: Scene 设置(背景 / 网格 / 灯光) =====
+      /**
+       * 设置场景背景颜色。
+       * @param {string} color #RRGGBB 格式(6 位十六进制)
+       * @returns {string} JSON 结果
+       *   成功:{"success": true, "color": "#RRGGBB"}
+       *   失败:{"success": false, "error": {"code": "SCENE_BACKGROUND_INVALID", ...}}
+       */
+      setSceneBackgroundColor: function(color) {
+        return callViewer(function(v) {
+          if (typeof color !== "string") {
+            return {
+              success: false,
+              error: {
+                code: "SCENE_BACKGROUND_INVALID",
+                phase: v.getState(),
+                message: "color must be a string",
+                recoverable: false
+              }
+            };
+          }
+          var result = v.setSceneBackgroundColor(color);
+          if (!result.success) {
+            return {
+              success: false,
+              error: {
+                code: result.error,
+                phase: v.getState(),
+                message: "setSceneBackgroundColor failed: " + result.error,
+                recoverable: false
+              }
+            };
+          }
+          return { success: true, color: result.color };
+        });
+      },
+      /**
+       * 设置网格显示。
+       * @param {boolean} visible
+       * @returns {string} JSON 结果
+       *   成功:{"success": true, "visible": true|false}
+       *   失败:{"success": false, "error": {"code": "...", ...}}
+       */
+      setSceneGridVisible: function(visible) {
+        return callViewer(function(v) {
+          if (typeof visible !== "boolean") {
+            return {
+              success: false,
+              error: {
+                code: "INVALID_ARGUMENT",
+                phase: v.getState(),
+                message: "visible must be a boolean",
+                recoverable: false
+              }
+            };
+          }
+          var result = v.setSceneGridVisible(visible);
+          if (!result.success) {
+            return {
+              success: false,
+              error: {
+                code: result.error,
+                phase: v.getState(),
+                message: "setSceneGridVisible failed: " + result.error,
+                recoverable: false
+              }
+            };
+          }
+          return { success: true, visible: !!result.visible };
+        });
+      },
+      /**
+       * 设置主方向光强度。
+       * @param {number} intensity 0.0 ~ 4.0
+       * @returns {string} JSON 结果
+       *   成功:{"success": true, "intensity": <number>}
+       *   失败:{"success": false, "error": {"code": "SCENE_LIGHT_INTENSITY_INVALID", ...}}
+       */
+      setSceneLightIntensity: function(intensity) {
+        return callViewer(function(v) {
+          if (typeof intensity !== "number" || isNaN(intensity)) {
+            return {
+              success: false,
+              error: {
+                code: "SCENE_LIGHT_INTENSITY_INVALID",
+                phase: v.getState(),
+                message: "intensity must be a number",
+                recoverable: false
+              }
+            };
+          }
+          var result = v.setSceneLightIntensity(intensity);
+          if (!result.success) {
+            return {
+              success: false,
+              error: {
+                code: result.error,
+                phase: v.getState(),
+                message: "setSceneLightIntensity failed: " + result.error,
+                recoverable: false
+              }
+            };
+          }
+          return { success: true, intensity: result.intensity };
+        });
+      },
+      /**
+       * 获取场景设置(背景颜色 / 网格 / 灯光)。
+       * @returns {string} JSON 结果
+       *   成功:{"success": true, "settings": {"backgroundColor": "...", "gridVisible": ..., "lightIntensity": ...}}
+       *   失败:{"success": false, "error": {"code": "...", ...}}
+       */
+      getSceneSettings: function() {
+        return callViewer(function(v) {
+          var result = v.getSceneSettings();
+          if (!result.success) {
+            return {
+              success: false,
+              error: {
+                code: result.error,
+                phase: v.getState(),
+                message: "getSceneSettings failed: " + result.error,
+                recoverable: false
+              }
+            };
+          }
+          return {
+            success: true,
+            settings: {
+              backgroundColor: result.backgroundColor,
+              gridVisible: !!result.gridVisible,
+              lightIntensity: result.lightIntensity
+            }
+          };
+        });
+      },
       // ===== Phase 1D-2A: 缓存模型资源协议骨架(不触发加载) =====
       // 委托 window.ViewerBridge.preparedResource keeper,仅保存元数据。
       // 严禁调用 viewer.loadModel() / viewer.replaceModel() / GLTFLoader.load()。
@@ -41204,7 +41846,7 @@ void main() {
         }
       }
     };
-    console.log("[App] arkTavernViewerBridge registered (Phase 1B + 1D-2A + 1D-2B-1 + 1D-2B-2 + 1D-2C-1 + 1D-2C-2A, delegates to ViewerCore + preparedResource keeper + probe + userModelLoadCoordinator + runtimeDiagnostics keeper)");
+    console.log("[App] arkTavernViewerBridge registered (Phase 1B + 1D-2A + 1D-2B-1 + 1D-2B-2 + 1D-2C-1 + 1D-2C-2A + 2A-1, delegates to ViewerCore + preparedResource keeper + probe + userModelLoadCoordinator + runtimeDiagnostics keeper + cameraControls + sceneSettings)");
     emitStartupDiagnostic("JS_BRIDGE_BOUND", "", "arkTavernViewerBridge registered");
     async function onDomReady() {
       emitStartupDiagnostic("ARKWEB_PAGE_END", "", "DOM ready, page loaded");

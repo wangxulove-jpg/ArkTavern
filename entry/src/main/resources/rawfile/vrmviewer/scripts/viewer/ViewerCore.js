@@ -60,6 +60,8 @@ export var ERR_SCENE_INITIALIZATION_FAILED = 'SCENE_INITIALIZATION_FAILED';
 export var ERR_CAMERA_INITIALIZATION_FAILED = 'CAMERA_INITIALIZATION_FAILED';
 export var ERR_RENDER_LOOP_FAILED = 'RENDER_LOOP_FAILED';
 export var ERR_VIEWER_ALREADY_DISPOSED = 'VIEWER_ALREADY_DISPOSED';
+/** Phase 2A-1: Viewer 未就绪(状态机非 READY) */
+export var ERR_VIEWER_NOT_READY = 'VIEWER_NOT_READY';
 
 /**
  * 构造错误对象。
@@ -293,6 +295,14 @@ export class ViewerCore {
 
   /**
    * 获取场景状态(供 Bridge getSceneState 使用)。
+   *
+   * Phase 2A-1 扩展:
+   * - 增加 modelSource 字段(USER / DEFAULT / NONE)
+   * - 增加 modelLoaded 字段(基于 currentVrm != null)
+   * - 增加 backgroundColor / gridVisible / lightIntensity / cameraControlsEnabled 字段
+   * - sceneReady / cameraReady / frameLoopRunning 重命名为 threeLoaded / sceneInitialized /
+   *   cameraInitialized / frameLoopRunning(保留旧字段供向后兼容)
+   *
    * @returns {object}
    */
   getSceneState() {
@@ -300,19 +310,193 @@ export class ViewerCore {
     var modelDisplayName = this.modelLoader ? this.modelLoader.getDisplayName() : '';
     var modelError = this.modelLoader && this.modelLoader.getLastError()
       ? this.modelLoader.getLastError().message : '';
+
+    // Phase 2A-1: modelSource 推导
+    // - 默认 VRM:displayName === 'Default VRM' 且 currentVrm 非空 → DEFAULT
+    // - 用户模型:currentVrm 非空且 displayName !== 'Default VRM' → USER
+    // - 无模型:currentVrm 为 null → NONE
+    var currentVrm = this.modelLoader ? this.modelLoader.getCurrentVrm() : null;
+    var modelLoaded = !!currentVrm;
+    var modelSource = 'NONE';
+    if (modelLoaded) {
+      if (modelDisplayName === 'Default VRM') {
+        modelSource = 'DEFAULT';
+      } else {
+        modelSource = 'USER';
+      }
+    }
+
+    // Phase 2A-1: Scene 设置与 Camera Controls 状态
+    var sceneSettings = this.scene ? this.scene.getSettings() : null;
+    var cameraControls = this.camera ? this.camera.getControlsEnabled() : { success: false, error: 'CAMERA_NOT_INITIALIZED' };
+
     return {
       viewerState: this._state,
+      // Phase 2A-1: 模型状态扩展
       modelState: modelState,
+      modelLoaded: modelLoaded,
       modelDisplayName: modelDisplayName,
+      modelSource: modelSource,
       modelError: modelError,
       animationState: 'NOT_INITIALIZED',
       humanoidState: 'NOT_INITIALIZED',
       springBoneState: 'NOT_INITIALIZED',
+      // Phase 2A-1: Scene 与 Camera 状态扩展
+      threeLoaded: !!this.scene,
+      sceneInitialized: !!this.scene,
+      cameraInitialized: !!this.camera,
+      frameLoopRunning: !!(this.frameLoop && this.frameLoop.isRunning()),
+      backgroundColor: sceneSettings ? sceneSettings.backgroundColor : '#222222',
+      gridVisible: sceneSettings ? sceneSettings.gridVisible : false,
+      lightIntensity: sceneSettings ? sceneSettings.lightIntensity : 3.0,
+      cameraControlsEnabled: cameraControls.success ? !!cameraControls.enabled : false,
+      // 保留旧字段供向后兼容
       sceneReady: !!this.scene,
       cameraReady: !!this.camera,
-      frameLoopRunning: !!(this.frameLoop && this.frameLoop.isRunning()),
-      phase: 'PHASE_1C_2'
+      phase: 'PHASE_2A_1'
     };
+  }
+
+  // ===== Phase 2A-1: Camera Controls enable/disable =====
+
+  /**
+   * Phase 2A-1: 启用/禁用 OrbitControls。
+   *
+   * 用于控制面板触摸隔离。Viewer 不为 READY 时返回 VIEWER_NOT_READY。
+   *
+   * @param {boolean} enabled
+   * @returns {{success: boolean, enabled?: boolean, error?: {code: string, message: string}}}
+   */
+  setCameraControlsEnabled(enabled) {
+    if (this._state !== STATE_READY) {
+      return {
+        success: false,
+        error: makeError(ERR_VIEWER_NOT_READY, 'Viewer state is ' + this._state + ', expected READY', this._state, true)
+      };
+    }
+    if (typeof enabled !== 'boolean') {
+      return {
+        success: false,
+        error: makeError('INVALID_ARGUMENT', 'enabled must be a boolean', this._state, false)
+      };
+    }
+    if (!this.camera) {
+      return {
+        success: false,
+        error: makeError(ERR_CAMERA_INITIALIZATION_FAILED, 'Camera not initialized', this._state, false)
+      };
+    }
+    return this.camera.setControlsEnabled(enabled);
+  }
+
+  /**
+   * Phase 2A-1: 查询 OrbitControls 当前启用状态。
+   *
+   * @returns {{success: boolean, enabled?: boolean, error?: {code: string, message: string}}}
+   */
+  getCameraControlsEnabled() {
+    if (this._state !== STATE_READY) {
+      return {
+        success: false,
+        error: makeError(ERR_VIEWER_NOT_READY, 'Viewer state is ' + this._state + ', expected READY', this._state, true)
+      };
+    }
+    if (!this.camera) {
+      return {
+        success: false,
+        error: makeError(ERR_CAMERA_INITIALIZATION_FAILED, 'Camera not initialized', this._state, false)
+      };
+    }
+    return this.camera.getControlsEnabled();
+  }
+
+  // ===== Phase 2A-1: Scene 设置 =====
+
+  /**
+   * Phase 2A-1: 设置场景背景颜色。
+   *
+   * @param {string} color #RRGGBB 格式
+   * @returns {{success: boolean, color?: string, error?: {code: string, message: string}}}
+   */
+  setSceneBackgroundColor(color) {
+    if (this._state !== STATE_READY) {
+      return {
+        success: false,
+        error: makeError(ERR_VIEWER_NOT_READY, 'Viewer state is ' + this._state + ', expected READY', this._state, true)
+      };
+    }
+    if (!this.scene) {
+      return {
+        success: false,
+        error: makeError(ERR_SCENE_INITIALIZATION_FAILED, 'Scene not initialized', this._state, false)
+      };
+    }
+    return this.scene.setBackgroundColor(color);
+  }
+
+  /**
+   * Phase 2A-1: 设置网格显示。
+   *
+   * @param {boolean} visible
+   * @returns {{success: boolean, visible?: boolean, error?: {code: string, message: string}}}
+   */
+  setSceneGridVisible(visible) {
+    if (this._state !== STATE_READY) {
+      return {
+        success: false,
+        error: makeError(ERR_VIEWER_NOT_READY, 'Viewer state is ' + this._state + ', expected READY', this._state, true)
+      };
+    }
+    if (!this.scene) {
+      return {
+        success: false,
+        error: makeError(ERR_SCENE_INITIALIZATION_FAILED, 'Scene not initialized', this._state, false)
+      };
+    }
+    return this.scene.setGridVisible(visible);
+  }
+
+  /**
+   * Phase 2A-1: 设置主方向光强度。
+   *
+   * @param {number} intensity 0.0 ~ 4.0
+   * @returns {{success: boolean, intensity?: number, error?: {code: string, message: string}}}
+   */
+  setSceneLightIntensity(intensity) {
+    if (this._state !== STATE_READY) {
+      return {
+        success: false,
+        error: makeError(ERR_VIEWER_NOT_READY, 'Viewer state is ' + this._state + ', expected READY', this._state, true)
+      };
+    }
+    if (!this.scene) {
+      return {
+        success: false,
+        error: makeError(ERR_SCENE_INITIALIZATION_FAILED, 'Scene not initialized', this._state, false)
+      };
+    }
+    return this.scene.setLightIntensity(intensity);
+  }
+
+  /**
+   * Phase 2A-1: 获取场景设置(背景颜色 / 网格 / 灯光)。
+   *
+   * @returns {{success: boolean, settings?: object, error?: {code: string, message: string}}}
+   */
+  getSceneSettings() {
+    if (this._state !== STATE_READY) {
+      return {
+        success: false,
+        error: makeError(ERR_VIEWER_NOT_READY, 'Viewer state is ' + this._state + ', expected READY', this._state, true)
+      };
+    }
+    if (!this.scene) {
+      return {
+        success: false,
+        error: makeError(ERR_SCENE_INITIALIZATION_FAILED, 'Scene not initialized', this._state, false)
+      };
+    }
+    return this.scene.getSettings();
   }
 
   /**

@@ -348,6 +348,212 @@ if (window.__arkTavernBootstrapState) {
       });
     },
 
+    // ===== Phase 2A-1: Camera Controls enable/disable =====
+    // 用于控制面板触摸隔离:ArkUI 控制面板发生触摸时禁用 OrbitControls,
+    // 触摸结束或取消时恢复 OrbitControls。
+
+    /**
+     * 启用/禁用 OrbitControls。
+     * @param {boolean} enabled true=启用;false=禁用
+     * @returns {string} JSON 结果
+     *   成功:{"success": true, "enabled": true|false}
+     *   失败:{"success": false, "error": {"code": "...", "message": "..."}}
+     */
+    setCameraControlsEnabled: function (enabled) {
+      return callViewer(function (v) {
+        // 严格布尔校验:拒绝字符串 "true" / 数字 1 / 任意对象
+        if (typeof enabled !== 'boolean') {
+          return {
+            success: false,
+            error: {
+              code: 'INVALID_ARGUMENT',
+              phase: v.getState(),
+              message: 'enabled must be a boolean',
+              recoverable: false
+            }
+          };
+        }
+        var result = v.setCameraControlsEnabled(enabled);
+        if (!result.success) {
+          return {
+            success: false,
+            error: {
+              code: result.error.code,
+              phase: v.getState(),
+              message: result.error.message,
+              recoverable: !!result.error.recoverable
+            }
+          };
+        }
+        return { success: true, enabled: !!result.enabled };
+      });
+    },
+
+    /**
+     * 查询 OrbitControls 当前启用状态。
+     * @returns {string} JSON 结果
+     *   成功:{"success": true, "enabled": true|false}
+     *   失败:{"success": false, "error": {"code": "...", "message": "..."}}
+     */
+    getCameraControlsEnabled: function () {
+      return callViewer(function (v) {
+        var result = v.getCameraControlsEnabled();
+        if (!result.success) {
+          return {
+            success: false,
+            error: {
+              code: result.error.code,
+              phase: v.getState(),
+              message: result.error.message,
+              recoverable: !!result.error.recoverable
+            }
+          };
+        }
+        return { success: true, enabled: !!result.enabled };
+      });
+    },
+
+    // ===== Phase 2A-1: Scene 设置(背景 / 网格 / 灯光) =====
+
+    /**
+     * 设置场景背景颜色。
+     * @param {string} color #RRGGBB 格式(6 位十六进制)
+     * @returns {string} JSON 结果
+     *   成功:{"success": true, "color": "#RRGGBB"}
+     *   失败:{"success": false, "error": {"code": "SCENE_BACKGROUND_INVALID", ...}}
+     */
+    setSceneBackgroundColor: function (color) {
+      return callViewer(function (v) {
+        if (typeof color !== 'string') {
+          return {
+            success: false,
+            error: {
+              code: 'SCENE_BACKGROUND_INVALID',
+              phase: v.getState(),
+              message: 'color must be a string',
+              recoverable: false
+            }
+          };
+        }
+        var result = v.setSceneBackgroundColor(color);
+        if (!result.success) {
+          return {
+            success: false,
+            error: {
+              code: result.error,
+              phase: v.getState(),
+              message: 'setSceneBackgroundColor failed: ' + result.error,
+              recoverable: false
+            }
+          };
+        }
+        return { success: true, color: result.color };
+      });
+    },
+
+    /**
+     * 设置网格显示。
+     * @param {boolean} visible
+     * @returns {string} JSON 结果
+     *   成功:{"success": true, "visible": true|false}
+     *   失败:{"success": false, "error": {"code": "...", ...}}
+     */
+    setSceneGridVisible: function (visible) {
+      return callViewer(function (v) {
+        if (typeof visible !== 'boolean') {
+          return {
+            success: false,
+            error: {
+              code: 'INVALID_ARGUMENT',
+              phase: v.getState(),
+              message: 'visible must be a boolean',
+              recoverable: false
+            }
+          };
+        }
+        var result = v.setSceneGridVisible(visible);
+        if (!result.success) {
+          return {
+            success: false,
+            error: {
+              code: result.error,
+              phase: v.getState(),
+              message: 'setSceneGridVisible failed: ' + result.error,
+              recoverable: false
+            }
+          };
+        }
+        return { success: true, visible: !!result.visible };
+      });
+    },
+
+    /**
+     * 设置主方向光强度。
+     * @param {number} intensity 0.0 ~ 4.0
+     * @returns {string} JSON 结果
+     *   成功:{"success": true, "intensity": <number>}
+     *   失败:{"success": false, "error": {"code": "SCENE_LIGHT_INTENSITY_INVALID", ...}}
+     */
+    setSceneLightIntensity: function (intensity) {
+      return callViewer(function (v) {
+        if (typeof intensity !== 'number' || isNaN(intensity)) {
+          return {
+            success: false,
+            error: {
+              code: 'SCENE_LIGHT_INTENSITY_INVALID',
+              phase: v.getState(),
+              message: 'intensity must be a number',
+              recoverable: false
+            }
+          };
+        }
+        var result = v.setSceneLightIntensity(intensity);
+        if (!result.success) {
+          return {
+            success: false,
+            error: {
+              code: result.error,
+              phase: v.getState(),
+              message: 'setSceneLightIntensity failed: ' + result.error,
+              recoverable: false
+            }
+          };
+        }
+        return { success: true, intensity: result.intensity };
+      });
+    },
+
+    /**
+     * 获取场景设置(背景颜色 / 网格 / 灯光)。
+     * @returns {string} JSON 结果
+     *   成功:{"success": true, "settings": {"backgroundColor": "...", "gridVisible": ..., "lightIntensity": ...}}
+     *   失败:{"success": false, "error": {"code": "...", ...}}
+     */
+    getSceneSettings: function () {
+      return callViewer(function (v) {
+        var result = v.getSceneSettings();
+        if (!result.success) {
+          return {
+            success: false,
+            error: {
+              code: result.error,
+              phase: v.getState(),
+              message: 'getSceneSettings failed: ' + result.error,
+              recoverable: false
+            }
+          };
+        }
+        return {
+          success: true,
+          settings: {
+            backgroundColor: result.backgroundColor,
+            gridVisible: !!result.gridVisible,
+            lightIntensity: result.lightIntensity
+          }
+        };
+      });
+    },
+
     // ===== Phase 1D-2A: 缓存模型资源协议骨架(不触发加载) =====
     // 委托 window.ViewerBridge.preparedResource keeper,仅保存元数据。
     // 严禁调用 viewer.loadModel() / viewer.replaceModel() / GLTFLoader.load()。
@@ -806,7 +1012,7 @@ if (window.__arkTavernBootstrapState) {
     }
   };
 
-  console.log('[App] arkTavernViewerBridge registered (Phase 1B + 1D-2A + 1D-2B-1 + 1D-2B-2 + 1D-2C-1 + 1D-2C-2A, delegates to ViewerCore + preparedResource keeper + probe + userModelLoadCoordinator + runtimeDiagnostics keeper)');
+  console.log('[App] arkTavernViewerBridge registered (Phase 1B + 1D-2A + 1D-2B-1 + 1D-2B-2 + 1D-2C-1 + 1D-2C-2A + 2A-1, delegates to ViewerCore + preparedResource keeper + probe + userModelLoadCoordinator + runtimeDiagnostics keeper + cameraControls + sceneSettings)');
 
   // Phase 1D-2C-2A: 记录 JS_BRIDGE_BOUND(Bridge 已注册到 window)
   emitStartupDiagnostic('JS_BRIDGE_BOUND', '', 'arkTavernViewerBridge registered');

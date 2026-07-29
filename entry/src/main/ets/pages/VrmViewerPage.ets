@@ -306,6 +306,59 @@ struct VrmViewerPage {
   /** 恢复结果简短提示(用于 UI 显示) */
   @State restoreHint: string = '';
 
+  // ===== Phase 2A-1: 控制面板触摸隔离 =====
+  /**
+   * 控制面板交互深度计数。
+   *
+   * - DOWN: depth++
+   * - UP / CANCEL: depth--
+   * - depth === 1 时禁用 OrbitControls(第一次进入交互)
+   * - depth === 0 时恢复 OrbitControls(所有交互结束)
+   *
+   * 防止:
+   * - 一次 MOVE 触发多次 disable
+   * - 一次子控件事件导致提前恢复
+   * - CANCEL 后永远不恢复
+   * - 页面销毁后异步恢复 controls
+   */
+  private panelInteractionDepth: number = 0;
+  /** OrbitControls 当前是否被抑制(供 Debug 显示) */
+  @State cameraControlsSuppressed: boolean = false;
+  /** Camera Control 恢复代次(防止页面销毁后异步恢复) */
+  private cameraControlGeneration: number = 0;
+
+  // ===== Phase 2A-1: 灯光强度节流 =====
+  /** 待提交的灯光强度(0.0-4.0,Slider 拖动期间暂存) */
+  private pendingLightIntensity: number = 3.0;
+  /** 灯光更新代次(防止过期异步调用覆盖最新值) */
+  private lightUpdateGeneration: number = 0;
+  /** 是否已调度灯光节流定时器 */
+  private lightUpdateScheduled: boolean = false;
+  /** 灯光节流定时器 ID(-1 表示无定时器) */
+  private lightUpdateTimerId: number = -1;
+  /** 灯光节流间隔(ms) */
+  private readonly LIGHT_UPDATE_THROTTLE_MS: number = 80;
+
+  // ===== Phase 2A-1: Scene 设置状态(由 Viewer 实际状态初始化) =====
+  /** 当前场景背景颜色(由 getSceneSettings 同步,而非 ArkUI 默认值) */
+  @State sceneBackgroundColor: string = '#222222';
+  /** 当前网格显示状态(由 getSceneSettings 同步) */
+  @State sceneGridVisible: boolean = false;
+  /** 当前灯光强度(0.0-4.0,由 getSceneSettings 同步) */
+  @State sceneLightIntensity: number = 3.0;
+
+  // ===== Phase 2A-1: Debug 场景状态(由 getSceneState 解析) =====
+  /** Debug:模型状态字符串 */
+  @State debugModelState: string = 'NOT_LOADED';
+  /** Debug:模型是否已加载 */
+  @State debugModelLoaded: boolean = false;
+  /** Debug:模型显示名 */
+  @State debugModelDisplayName: string = '';
+  /** Debug:模型来源(USER / DEFAULT / NONE) */
+  @State debugModelSource: string = 'NONE';
+  /** Debug:Camera Controls 是否启用 */
+  @State debugCameraControlsEnabled: boolean = true;
+
   aboutToAppear(): void {
     // 注入闭包:Controller 回调 → 更新 @State
     this.eventListener.onStateChangedFn = (state: ArkWebViewerState, detail: string) => {
@@ -338,6 +391,12 @@ struct VrmViewerPage {
             this.tryAutoProbeResource();
           }
         });
+      }
+      // Phase 2A-1:Viewer READY 后同步初始 Scene 设置与 Debug 状态
+      // 不假设 ArkUI 默认值就是 Three.js 当前值,从 Viewer 实际状态初始化
+      if (state === ArkWebViewerState.READY) {
+        this.syncInitialSceneSettings();
+        this.refreshDebugSceneState();
       }
     };
     this.eventListener.onErrorFn = (code: string, message: string) => {
@@ -403,6 +462,17 @@ struct VrmViewerPage {
    * - AGENTS.md Phase 1D-2B-2 §二十二 页面销毁顺序
    */
   private disposeViewer(): void {
+    // Phase 2A-1: 清空控制面板触摸交互状态(禁止页面销毁后异步恢复 controls)
+    this.panelInteractionDepth = 0;
+    this.cameraControlGeneration++; // 使所有待恢复的异步回调过期
+    this.cameraControlsSuppressed = false;
+    // Phase 2A-1: 清理灯光节流定时器
+    if (this.lightUpdateTimerId !== -1) {
+      clearTimeout(this.lightUpdateTimerId);
+      this.lightUpdateTimerId = -1;
+    }
+    this.lightUpdateScheduled = false;
+    this.lightUpdateGeneration++;
     // Phase 1D-2B-2:1. 停止用户模型加载结果轮询
     this.stopLoadPolling();
     this.resetLoadState();
@@ -446,6 +516,365 @@ struct VrmViewerPage {
     // 最后销毁 Web Viewer
     this.arkWebController.destroy();
     this.webLoaded = false;
+  }
+
+  // ===== Phase 2A-1: 控制面板触摸隔离 =====
+
+  /**
+   * Phase 2A-1: 控制面板触摸事件处理。
+   *
+   * 绑定在控制面板(抽屉面板)最外层容器上,覆盖:
+   * - Scroll 滚动
+   * - Slider 拖动
+   * - Tab 横向切换
+   * - 面板拖动
+   * - Button 点击
+   * - 颜色按钮点击
+   * - Switch 切换
+   *
+   * 行为:
+   * - DOWN: interactionDepth++,第一次进入时 disable controls
+   * - UP / CANCEL: interactionDepth--,归零时 enable controls
+   *
+   * 防止:
+   * - 一次 MOVE 触发多次 disable(只在 depth 0→1 时 disable)
+   * - 一次子控件事件导致提前恢复(深度计数,不提前归零)
+   * - CANCEL 后永远不恢复(CANCEL 与 UP 同等处理,递减 depth)
+   * - 页面销毁后异步恢复 controls(generation 检查)
+   */
+  onPanelTouch(event: TouchEvent): void {
+    // 页面已销毁时不处理
+    if (this.viewerState === ArkWebViewerState.DISPOSED) {
+      return;
+    }
+    switch (event.type) {
+      case TouchType.Down:
+        this.panelInteractionDepth++;
+        if (this.panelInteractionDepth === 1) {
+          // 第一次进入交互,禁用 OrbitControls
+          this.suppressCameraControls();
+        }
+        break;
+      case TouchType.Up:
+      case TouchType.Cancel:
+        this.panelInteractionDepth--;
+        if (this.panelInteractionDepth <= 0) {
+          // 所有交互结束,恢复 OrbitControls
+          this.panelInteractionDepth = 0;
+          this.restoreCameraControls();
+        }
+        break;
+      case TouchType.Move:
+      default:
+        // Move 不改变 depth(已在 Down 时禁用,避免重复 disable)
+        break;
+    }
+  }
+
+  /**
+   * Phase 2A-1: 禁用 OrbitControls。
+   *
+   * 调用 Bridge setCameraControlsEnabled(false)。
+   * Viewer 不为 READY 时静默跳过(不报错)。
+   */
+  private suppressCameraControls(): void {
+    if (this.viewerState !== ArkWebViewerState.READY) {
+      return;
+    }
+    this.cameraControlsSuppressed = true;
+    this.arkWebController.setCameraControlsEnabled(false).then((resultJson: string) => {
+      // 异步回调,检查结果(失败仅日志,不影响交互)
+      try {
+        const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
+        if (!obj['success']) {
+          console.warn('[VrmViewerPage] suppressCameraControls failed: ' + resultJson);
+        }
+      } catch (e) {
+        // 忽略解析错误
+      }
+    }).catch((e: Object) => {
+      console.warn('[VrmViewerPage] suppressCameraControls exception: ' + (e instanceof Error ? e.message : String(e)));
+    });
+  }
+
+  /**
+   * Phase 2A-1: 恢复 OrbitControls。
+   *
+   * 使用 generation 检查,防止页面销毁后异步恢复。
+   */
+  private restoreCameraControls(): void {
+    if (this.viewerState !== ArkWebViewerState.READY) {
+      return;
+    }
+    const generation: number = this.cameraControlGeneration;
+    this.cameraControlsSuppressed = false;
+    this.arkWebController.setCameraControlsEnabled(true).then((resultJson: string) => {
+      // generation 检查:页面销毁后 cameraControlGeneration 已递增,此回调过期
+      if (generation !== this.cameraControlGeneration) {
+        return;
+      }
+      try {
+        const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
+        if (!obj['success']) {
+          console.warn('[VrmViewerPage] restoreCameraControls failed: ' + resultJson);
+        }
+      } catch (e) {
+        // 忽略解析错误
+      }
+    }).catch((e: Object) => {
+      console.warn('[VrmViewerPage] restoreCameraControls exception: ' + (e instanceof Error ? e.message : String(e)));
+    });
+  }
+
+  // ===== Phase 2A-1: Scene 设置同步 =====
+
+  /**
+   * Phase 2A-1: Viewer READY 后同步初始 Scene 设置。
+   *
+   * 调用 getSceneSettings 获取 Viewer 实际的背景/网格/灯光状态,
+   * 用实际值初始化 ArkUI @State,不假设 ArkUI 默认值就是 Three.js 当前值。
+   */
+  private syncInitialSceneSettings(): void {
+    this.arkWebController.getSceneSettings().then((resultJson: string) => {
+      try {
+        const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
+        if (obj['success'] === true) {
+          const settings = obj['settings'] as Record<string, Object>;
+          if (settings) {
+            const bgColor = (settings['backgroundColor'] as string) || '#222222';
+            const gridVisible = settings['gridVisible'] === true;
+            const lightIntensity = (settings['lightIntensity'] as number) ?? 3.0;
+            this.sceneBackgroundColor = bgColor;
+            this.sceneGridVisible = gridVisible;
+            this.sceneLightIntensity = lightIntensity;
+            this.backgroundOption = bgColor;
+            this.showGrid = gridVisible;
+            this.lightIntensity = Math.round(lightIntensity * 25.0);
+            this.pendingLightIntensity = lightIntensity;
+            console.info('[VrmViewerPage] Initial scene settings synced: bg=' + bgColor +
+              ' grid=' + gridVisible + ' light=' + lightIntensity);
+          }
+        }
+      } catch (e) {
+        console.warn('[VrmViewerPage] syncInitialSceneSettings parse failed: ' + (e instanceof Error ? e.message : String(e)));
+      }
+    }).catch((e: Object) => {
+      console.warn('[VrmViewerPage] syncInitialSceneSettings exception: ' + (e instanceof Error ? e.message : String(e)));
+    });
+  }
+
+  /**
+   * Phase 2A-1: 刷新 Debug 场景状态(从 getSceneState 解析)。
+   *
+   * 获取 Viewer 实际的模型状态、Scene 设置、Camera Controls 状态,
+   * 更新 Debug Tab 显示。
+   */
+  private refreshDebugSceneState(): void {
+    this.arkWebController.getSceneState().then((resultJson: string) => {
+      this.parseDebugSceneState(resultJson);
+    }).catch((e: Object) => {
+      console.warn('[VrmViewerPage] refreshDebugSceneState exception: ' + (e instanceof Error ? e.message : String(e)));
+    });
+  }
+
+  /**
+   * Phase 2A-1: 解析 getSceneState 返回的 JSON,更新 Debug 状态。
+   */
+  private parseDebugSceneState(resultJson: string): void {
+    try {
+      const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
+      if (obj['success'] !== true) {
+        return;
+      }
+      const scene = obj['scene'] as Record<string, Object>;
+      if (!scene) {
+        return;
+      }
+      // 模型状态
+      this.debugModelState = (scene['modelState'] as string) || 'NOT_LOADED';
+      this.debugModelLoaded = scene['modelLoaded'] === true;
+      this.debugModelDisplayName = (scene['modelDisplayName'] as string) || '';
+      this.debugModelSource = (scene['modelSource'] as string) || 'NONE';
+      // Scene 设置
+      this.debugCameraControlsEnabled = scene['cameraControlsEnabled'] === true;
+      // 同步 Scene 设置状态(如果 Viewer 端有变化)
+      const bgColor = (scene['backgroundColor'] as string);
+      if (bgColor) {
+        this.sceneBackgroundColor = bgColor;
+      }
+      const gridVisible = scene['gridVisible'];
+      if (gridVisible !== undefined) {
+        this.sceneGridVisible = gridVisible === true;
+      }
+      const lightIntensity = scene['lightIntensity'];
+      if (lightIntensity !== undefined) {
+        this.sceneLightIntensity = lightIntensity as number;
+      }
+    } catch (e) {
+      console.warn('[VrmViewerPage] parseDebugSceneState failed: ' + (e instanceof Error ? e.message : String(e)));
+    }
+  }
+
+  // ===== Phase 2A-1: ArkUI 场景控件接入 =====
+
+  /**
+   * Phase 2A-1: 用户点击背景颜色按钮。
+   *
+   * 流程:
+   * 1. 先调用 setSceneBackgroundColor
+   * 2. success=true 后更新 ArkUI @State
+   * 3. 失败时恢复之前选中颜色
+   * 4. 显示具体错误码
+   *
+   * @param color 用户选择的 #RRGGBB 颜色
+   */
+  private onBackgroundColorSelected(color: string): void {
+    const previousColor: string = this.backgroundOption;
+    this.arkWebController.setSceneBackgroundColor(color).then((resultJson: string) => {
+      try {
+        const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
+        if (obj['success'] === true) {
+          const actualColor = (obj['color'] as string) || color;
+          this.backgroundOption = actualColor;
+          this.sceneBackgroundColor = actualColor;
+          console.info('[VrmViewerPage] Background color set to ' + actualColor);
+        } else {
+          // 失败时恢复之前选中颜色
+          this.backgroundOption = previousColor;
+          const errorObj = obj['error'] as Record<string, Object>;
+          const code = errorObj ? (errorObj['code'] as string) : 'UNKNOWN';
+          console.warn('[VrmViewerPage] setSceneBackgroundColor failed: ' + code);
+          promptAction.showToast({
+            message: `背景颜色设置失败: ${code}`,
+            duration: 2000
+          });
+        }
+      } catch (e) {
+        this.backgroundOption = previousColor;
+        console.warn('[VrmViewerPage] setSceneBackgroundColor parse failed');
+      }
+    }).catch((e: Object) => {
+      this.backgroundOption = previousColor;
+      console.warn('[VrmViewerPage] setSceneBackgroundColor exception: ' + (e instanceof Error ? e.message : String(e)));
+    });
+  }
+
+  /**
+   * Phase 2A-1: 用户切换网格显示开关。
+   *
+   * @param visible 用户选择是否显示网格
+   */
+  private onGridToggleChanged(visible: boolean): void {
+    this.arkWebController.setSceneGridVisible(visible).then((resultJson: string) => {
+      try {
+        const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
+        if (obj['success'] === true) {
+          const actualVisible = obj['visible'] === true;
+          this.showGrid = actualVisible;
+          this.sceneGridVisible = actualVisible;
+          console.info('[VrmViewerPage] Grid visible set to ' + actualVisible);
+        } else {
+          // 失败时恢复 Switch
+          this.showGrid = !visible;
+          const errorObj = obj['error'] as Record<string, Object>;
+          const code = errorObj ? (errorObj['code'] as string) : 'UNKNOWN';
+          console.warn('[VrmViewerPage] setSceneGridVisible failed: ' + code);
+          promptAction.showToast({
+            message: `网格设置失败: ${code}`,
+            duration: 2000
+          });
+        }
+      } catch (e) {
+        this.showGrid = !visible;
+        console.warn('[VrmViewerPage] setSceneGridVisible parse failed');
+      }
+    }).catch((e: Object) => {
+      this.showGrid = !visible;
+      console.warn('[VrmViewerPage] setSceneGridVisible exception: ' + (e instanceof Error ? e.message : String(e)));
+    });
+  }
+
+  /**
+   * Phase 2A-1: 灯光强度 Slider 值变化(拖动中)。
+   *
+   * 本地更新百分比显示,但 Bridge 调用需节流。
+   * 滑动结束必须提交最后一个值。
+   *
+   * @param percentage 0-100
+   */
+  private onLightIntensitySliderChange(percentage: number): void {
+    this.lightIntensity = Math.round(percentage);
+    const intensity: number = percentage / 25.0;
+    this.pendingLightIntensity = intensity;
+    this.scheduleLightUpdate();
+  }
+
+  /**
+   * Phase 2A-1: 灯光强度 Slider 拖动结束。
+   *
+   * 立即提交最终值,取消待执行的节流定时器。
+   * @param percentage 0-100
+   */
+  private onLightIntensitySliderChangeEnd(percentage: number): void {
+    this.lightIntensity = Math.round(percentage);
+    const intensity: number = percentage / 25.0;
+    this.pendingLightIntensity = intensity;
+    // 取消节流定时器,立即提交
+    if (this.lightUpdateTimerId !== -1) {
+      clearTimeout(this.lightUpdateTimerId);
+      this.lightUpdateTimerId = -1;
+    }
+    this.lightUpdateScheduled = false;
+    this.commitLightUpdate();
+  }
+
+  /**
+   * Phase 2A-1: 调度灯光节流更新。
+   *
+   * 最大每 LIGHT_UPDATE_THROTTLE_MS 一次,避免每个像素移动都调用 runJavaScript()。
+   */
+  private scheduleLightUpdate(): void {
+    if (this.lightUpdateScheduled) {
+      return; // 已有定时器在等待
+    }
+    this.lightUpdateScheduled = true;
+    const generation: number = this.lightUpdateGeneration;
+    this.lightUpdateTimerId = setTimeout(() => {
+      this.lightUpdateTimerId = -1;
+      this.lightUpdateScheduled = false;
+      // generation 检查:页面销毁后 lightUpdateGeneration 已递增
+      if (generation !== this.lightUpdateGeneration) {
+        return;
+      }
+      this.commitLightUpdate();
+    }, this.LIGHT_UPDATE_THROTTLE_MS);
+  }
+
+  /**
+   * Phase 2A-1: 实际提交灯光强度到 Bridge。
+   */
+  private commitLightUpdate(): void {
+    if (this.viewerState !== ArkWebViewerState.READY) {
+      return;
+    }
+    const intensity: number = this.pendingLightIntensity;
+    this.arkWebController.setSceneLightIntensity(intensity).then((resultJson: string) => {
+      try {
+        const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
+        if (obj['success'] === true) {
+          const actualIntensity = (obj['intensity'] as number) ?? intensity;
+          this.sceneLightIntensity = actualIntensity;
+        } else {
+          const errorObj = obj['error'] as Record<string, Object>;
+          const code = errorObj ? (errorObj['code'] as string) : 'UNKNOWN';
+          console.warn('[VrmViewerPage] setSceneLightIntensity failed: ' + code);
+        }
+      } catch (e) {
+        console.warn('[VrmViewerPage] setSceneLightIntensity parse failed');
+      }
+    }).catch((e: Object) => {
+      console.warn('[VrmViewerPage] setSceneLightIntensity exception: ' + (e instanceof Error ? e.message : String(e)));
+    });
   }
 
   /** 计算抽屉高度 */
@@ -2500,6 +2929,12 @@ struct VrmViewerPage {
       .height(this.getDrawerHeight())
       .backgroundColor($r('app.color.app_surface_1'))
       .borderRadius({ topLeft: $r('app.float.app_radius_lg'), topRight: $r('app.float.app_radius_lg') })
+      // Phase 2A-1: 控制面板触摸隔离
+      // 在控制面板最外层容器接入 onTouch,覆盖 Scroll/Slider/Tab/Button/Switch 等所有子控件
+      // 触摸期间禁用 OrbitControls,触摸结束或取消时恢复
+      .onTouch((event: TouchEvent) => {
+        this.onPanelTouch(event);
+      })
     }
     .width('100%')
     .height('100%')
@@ -3138,7 +3573,8 @@ struct VrmViewerPage {
           .layoutWeight(1)
         Toggle({ type: ToggleType.Switch, isOn: this.showGrid })
           .onChange((on: boolean) => {
-            this.showGrid = on;
+            // Phase 2A-1: 调用 Bridge,成功后更新状态,失败时恢复 Switch
+            this.onGridToggleChanged(on);
           })
       }
       .width('100%')
@@ -3164,13 +3600,18 @@ struct VrmViewerPage {
 
         Slider({ value: this.lightIntensity, min: 0, max: 100, style: SliderStyle.OutSet })
           .width('100%')
-          .onChange((value: number) => {
-            this.lightIntensity = Math.round(value);
+          .onChange((value: number, mode: SliderChangeMode) => {
+            // Phase 2A-1: 拖动期间本地更新百分比显示,Bridge 调用节流
+            this.onLightIntensitySliderChange(value);
+            // 滑动结束(End)或点击(Click)时立即提交最终值
+            if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+              this.onLightIntensitySliderChangeEnd(value);
+            }
           })
       }
       .width('100%')
 
-      Text('本阶段控件仅保存页面状态,不驱动 3D')
+      Text('当前: 背景 ' + this.sceneBackgroundColor + ' | 灯光 ' + this.sceneLightIntensity.toFixed(2))
         .fontSize($r('app.float.app_font_caption'))
         .fontColor($r('app.color.app_text_tertiary'))
         .margin({ top: 16 })
@@ -3200,7 +3641,8 @@ struct VrmViewerPage {
     })
     .margin({ right: 8 })
     .onClick(() => {
-      this.backgroundOption = color;
+      // Phase 2A-1: 先调用 Bridge,成功后更新状态,失败时恢复之前选中颜色
+      this.onBackgroundColorSelected(color);
     })
   }
 
@@ -3213,7 +3655,19 @@ struct VrmViewerPage {
       this.DebugRow('Scene', this.viewerState === ArkWebViewerState.READY ? 'READY' : 'NOT INITIALIZED')
       this.DebugRow('Camera', this.viewerState === ArkWebViewerState.READY ? 'READY' : 'NOT INITIALIZED')
       this.DebugRow('Frame Loop', this.viewerState === ArkWebViewerState.READY ? 'RUNNING' : 'STOPPED')
-      this.DebugRow('Model', 'NOT LOADED')
+
+      // Phase 2A-1: Model Debug 状态(来自 ViewerModelLoader 真实状态,不再硬编码 NOT LOADED)
+      this.DebugRow('Model', this.debugModelState)
+      this.DebugRow('Model Name', this.debugModelDisplayName.length > 0 ? this.debugModelDisplayName : '-')
+      this.DebugRow('Model Source', this.debugModelSource)
+      this.DebugRow('Model Loaded', this.debugModelLoaded ? 'TRUE' : 'FALSE')
+
+      // Phase 2A-1: Scene 与 Camera Controls Debug 状态
+      this.DebugRow('Background', this.sceneBackgroundColor)
+      this.DebugRow('Grid', this.sceneGridVisible ? 'ON' : 'OFF')
+      this.DebugRow('Light Intensity', this.sceneLightIntensity.toFixed(2))
+      this.DebugRow('Camera Controls', this.debugCameraControlsEnabled ? 'ENABLED' : 'DISABLED')
+
       this.DebugRow('Animation', 'NOT INITIALIZED')
       this.DebugRow('Humanoid', 'NOT INITIALIZED')
       this.DebugRow('Spring Bone', 'NOT INITIALIZED')
@@ -3226,6 +3680,18 @@ struct VrmViewerPage {
           .margin({ top: 12 })
           .width('100%')
       }
+
+      // Phase 2A-1: 刷新 Debug 状态按钮(手动触发 getSceneState)
+      Button('刷新 Debug 状态')
+        .fontSize($r('app.float.app_font_body'))
+        .fontColor($r('app.color.app_text_primary'))
+        .backgroundColor($r('app.color.app_surface_2'))
+        .borderRadius($r('app.float.app_radius_sm'))
+        .width('100%')
+        .margin({ top: 12 })
+        .onClick(() => {
+          this.refreshDebugSceneState();
+        })
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)

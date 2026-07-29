@@ -433,6 +433,83 @@ export class ArkWebViewerJsCaller {
     return this.call('clearVrmRuntimeDiagnostic');
   }
 
+  // ===== Phase 2A-1: Camera Controls enable/disable =====
+
+  /**
+   * 调用 window.arkTavernViewerBridge.setCameraControlsEnabled(enabled)
+   *
+   * 用于控制面板触摸隔离:控制面板发生触摸时禁用 OrbitControls,
+   * 触摸结束或取消时恢复 OrbitControls。
+   *
+   * Bridge 参数必须是布尔值,禁止字符串 "true" / 数字 1 / 任意对象。
+   *
+   * @param enabled true=启用;false=禁用
+   * @returns JSON 字符串,形如 {"success": true, "enabled": true|false}
+   */
+  async setCameraControlsEnabled(enabled: boolean): Promise<string> {
+    return this.callWithBooleanArg('setCameraControlsEnabled', enabled);
+  }
+
+  /**
+   * 调用 window.arkTavernViewerBridge.getCameraControlsEnabled()
+   *
+   * @returns JSON 字符串,形如 {"success": true, "enabled": true|false}
+   */
+  async getCameraControlsEnabled(): Promise<string> {
+    return this.call('getCameraControlsEnabled');
+  }
+
+  // ===== Phase 2A-1: Scene 设置(背景 / 网格 / 灯光) =====
+
+  /**
+   * 调用 window.arkTavernViewerBridge.setSceneBackgroundColor(color)
+   *
+   * 设置场景背景颜色。只允许 #RRGGBB 格式(6 位十六进制)。
+   *
+   * @param color #RRGGBB 格式
+   * @returns JSON 字符串,形如 {"success": true, "color": "#RRGGBB"}
+   */
+  async setSceneBackgroundColor(color: string): Promise<string> {
+    return this.callWithStringArg('setSceneBackgroundColor', color);
+  }
+
+  /**
+   * 调用 window.arkTavernViewerBridge.setSceneGridVisible(visible)
+   *
+   * 设置网格显示。GridHelper 只创建一次,切换只修改 visible。
+   *
+   * @param visible true=显示网格;false=隐藏网格
+   * @returns JSON 字符串,形如 {"success": true, "visible": true|false}
+   */
+  async setSceneGridVisible(visible: boolean): Promise<string> {
+    return this.callWithBooleanArg('setSceneGridVisible', visible);
+  }
+
+  /**
+   * 调用 window.arkTavernViewerBridge.setSceneLightIntensity(intensity)
+   *
+   * 设置主方向光强度。合法范围 0.0 ~ 4.0。
+   * ArkUI 百分比映射:intensity = percentage / 25.0
+   *
+   * @param intensity 0.0 ~ 4.0
+   * @returns JSON 字符串,形如 {"success": true, "intensity": <number>}
+   */
+  async setSceneLightIntensity(intensity: number): Promise<string> {
+    return this.callWithNumberArg('setSceneLightIntensity', intensity);
+  }
+
+  /**
+   * 调用 window.arkTavernViewerBridge.getSceneSettings()
+   *
+   * 获取场景设置快照(背景颜色 / 网格 / 灯光)。
+   *
+   * @returns JSON 字符串,形如
+   *   {"success": true, "settings": {"backgroundColor": "...", "gridVisible": ..., "lightIntensity": ...}}
+   */
+  async getSceneSettings(): Promise<string> {
+    return this.call('getSceneSettings');
+  }
+
   private async call(methodName: string): Promise<string> {
     const fn = this.runJs;
     if (fn === null) {
@@ -477,6 +554,50 @@ export class ArkWebViewerJsCaller {
     // JSON.stringify 输出形如 "..."(含双引号),可直接作为 JS 字符串字面量
     // 自动转义单引号 / 双引号 / 反斜杠 / 换行 / Unicode 分隔符,防止 JavaScript 注入
     const argLiteral: string = JSON.stringify(strArg);
+    const script: string = this.buildBridgeCallScript(methodName, argLiteral);
+    const raw: string = await fn(script);
+    return this.normalizeRunJavaScriptResult(raw);
+  }
+
+  /**
+   * Phase 2A-1: 调用需要单个 boolean 参数的 Bridge 方法。
+   *
+   * 用于 setCameraControlsEnabled / setSceneGridVisible。
+   * 严格布尔校验:确保参数为 JS 原生 true / false,拒绝字符串 "true" / 数字 1 / 任意对象。
+   *
+   * @param methodName Bridge 方法名
+   * @param boolArg 布尔参数
+   */
+  private async callWithBooleanArg(methodName: string, boolArg: boolean): Promise<string> {
+    const fn = this.runJs;
+    if (fn === null) {
+      throw new Error(`JsCaller not bound: cannot call ${methodName}`);
+    }
+    // 严格布尔字面量:只能为 true 或 false
+    const argLiteral: string = boolArg ? 'true' : 'false';
+    const script: string = this.buildBridgeCallScript(methodName, argLiteral);
+    const raw: string = await fn(script);
+    return this.normalizeRunJavaScriptResult(raw);
+  }
+
+  /**
+   * Phase 2A-1: 调用需要单个 number 参数的 Bridge 方法。
+   *
+   * 用于 setSceneLightIntensity。
+   * 数字参数必须 isFinite,禁止 NaN/Infinity 注入。
+   *
+   * @param methodName Bridge 方法名
+   * @param numArg 数字参数
+   */
+  private async callWithNumberArg(methodName: string, numArg: number): Promise<string> {
+    const fn = this.runJs;
+    if (fn === null) {
+      throw new Error(`JsCaller not bound: cannot call ${methodName}`);
+    }
+    if (!isFinite(numArg)) {
+      throw new Error(`JsCaller.callWithNumberArg(${methodName}): argument is not finite (n=${numArg})`);
+    }
+    const argLiteral: string = String(numArg);
     const script: string = this.buildBridgeCallScript(methodName, argLiteral);
     const raw: string = await fn(script);
     return this.normalizeRunJavaScriptResult(raw);

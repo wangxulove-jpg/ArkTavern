@@ -35,6 +35,40 @@ import * as THREE from 'three';
 export var WEBGL_NOT_SUPPORTED = 'WEBGL_NOT_SUPPORTED';
 /** 错误代码:Scene 初始化失败 */
 export var SCENE_INITIALIZATION_FAILED = 'SCENE_INITIALIZATION_FAILED';
+/** Phase 2A-1: 错误代码:背景颜色无效 */
+export var SCENE_BACKGROUND_INVALID = 'SCENE_BACKGROUND_INVALID';
+/** Phase 2A-1: 错误代码:灯光强度无效 */
+export var SCENE_LIGHT_INTENSITY_INVALID = 'SCENE_LIGHT_INTENSITY_INVALID';
+
+/**
+ * Phase 2A-1: 校验 #RRGGBB 颜色格式。
+ *
+ * 只允许:
+ * - #RRGGBB(6 位十六进制)
+ *
+ * 禁止:
+ * - 任意 CSS(rgba / hsl / url(...) 等)
+ * - 脚本字符串
+ * - 3 位简写(#FFF)
+ * - 带透明度(#RRGGBBAA)
+ *
+ * @param {string} color
+ * @returns {boolean}
+ */
+function isValidHexColor(color) {
+  if (typeof color !== 'string') return false;
+  return /^#[0-9A-Fa-f]{6}$/.test(color);
+}
+
+/**
+ * Phase 2A-1: 将颜色规范化为大写 #RRGGBB。
+ *
+ * @param {string} color 已通过 isValidHexColor 校验的颜色
+ * @returns {string}
+ */
+function normalizeHexColor(color) {
+  return color.toUpperCase();
+}
 
 /**
  * 递归释放 THREE.Material 及其关联的 Texture。
@@ -95,6 +129,34 @@ export class ViewerScene {
     this.ambientLight = null;
     /** @type {THREE.Mesh|null} Phase 1B 测试物体 */
     this.testObject = null;
+    /**
+     * Phase 2A-1: 网格助手(GridHelper)。
+     *
+     * 在 initialize 中创建一次,默认 visible=false。
+     * 切换网格显示只修改 gridHelper.visible,不重复创建。
+     * dispose 时释放其 geometry 和 material。
+     *
+     * @type {THREE.GridHelper|null}
+     */
+    this.gridHelper = null;
+    /**
+     * Phase 2A-1: 当前背景颜色(规范化为大写 #RRGGBB)。
+     *
+     * 与 scene.background 的实际值保持同步,供 getSettings 返回。
+     * 默认 '#222222'(与 Figure 一致)。
+     *
+     * @type {string}
+     */
+    this.backgroundColor = '#222222';
+    /**
+     * Phase 2A-1: 当前主方向光强度(0.0 ~ 4.0)。
+     *
+     * 与 directionalLight.intensity 保持同步,供 getSettings 返回。
+     * 默认 3.0(与 Figure 一致)。
+     *
+     * @type {number}
+     */
+    this.lightIntensity = 3.0;
     /** @type {HTMLElement|null} */
     this.container = null;
     /** 标记是否已销毁,防止 dispose 后继续 render */
@@ -163,6 +225,15 @@ export class ViewerScene {
     this.testObject = new THREE.Mesh(geometry, material);
     this.testObject.position.set(0, 1.0, 0);
     this.scene.add(this.testObject);
+
+    // ===== Phase 2A-1: GridHelper =====
+    // 只创建一次,默认 visible=false。切换网格显示只修改 gridHelper.visible。
+    // 网格位置与角色脚底基准合理:y=0 平面,尺寸 10,每格 1 单位。
+    // 颜色:中心线 0x888888 / 网格线 0x444444(暗色,不遮挡模型)。
+    this.gridHelper = new THREE.GridHelper(10, 10, 0x888888, 0x444444);
+    this.gridHelper.visible = false;
+    this.gridHelper.position.set(0, 0, 0);
+    this.scene.add(this.gridHelper);
   }
 
   /**
@@ -237,6 +308,163 @@ export class ViewerScene {
     }
   }
 
+  // ===== Phase 2A-1: Scene 设置 API =====
+
+  /**
+   * Phase 2A-1: 设置场景背景颜色。
+   *
+   * 只接受 #RRGGBB 格式(6 位十六进制)。
+   * 无效颜色返回受控失败 { success: false, error: SCENE_BACKGROUND_INVALID },
+   * 不抛到全局。
+   *
+   * 成功后:
+   * - scene.background.set(color)
+   * - this.backgroundColor 更新为规范化后的大写 #RRGGBB
+   *
+   * @param {string} color #RRGGBB 格式
+   * @returns {{success: boolean, color?: string, error?: string}}
+   */
+  setBackgroundColor(color) {
+    if (this._disposed) {
+      return { success: false, error: 'SCENE_DISPOSED' };
+    }
+    if (!isValidHexColor(color)) {
+      return { success: false, error: SCENE_BACKGROUND_INVALID };
+    }
+    if (!this.scene || !this.scene.background) {
+      return { success: false, error: SCENE_INITIALIZATION_FAILED };
+    }
+    var normalized = normalizeHexColor(color);
+    try {
+      this.scene.background.set(normalized);
+    } catch (e) {
+      return { success: false, error: SCENE_BACKGROUND_INVALID };
+    }
+    this.backgroundColor = normalized;
+    return { success: true, color: normalized };
+  }
+
+  /**
+   * Phase 2A-1: 查询当前背景颜色。
+   *
+   * @returns {{success: boolean, color?: string, error?: string}}
+   */
+  getBackgroundColor() {
+    if (this._disposed) {
+      return { success: false, error: 'SCENE_DISPOSED' };
+    }
+    if (!this.scene) {
+      return { success: false, error: SCENE_INITIALIZATION_FAILED };
+    }
+    return { success: true, color: this.backgroundColor };
+  }
+
+  /**
+   * Phase 2A-1: 设置网格显示。
+   *
+   * GridHelper 在 initialize 中已创建一次,此处只切换 visible。
+   * 禁止每次切换时重复创建新的 GridHelper。
+   *
+   * @param {boolean} visible
+   * @returns {{success: boolean, visible?: boolean, error?: string}}
+   */
+  setGridVisible(visible) {
+    if (this._disposed) {
+      return { success: false, error: 'SCENE_DISPOSED' };
+    }
+    if (typeof visible !== 'boolean') {
+      return { success: false, error: 'INVALID_ARGUMENT' };
+    }
+    if (!this.gridHelper) {
+      return { success: false, error: SCENE_INITIALIZATION_FAILED };
+    }
+    this.gridHelper.visible = visible;
+    return { success: true, visible: this.gridHelper.visible };
+  }
+
+  /**
+   * Phase 2A-1: 查询网格显示状态。
+   *
+   * @returns {{success: boolean, visible?: boolean, error?: string}}
+   */
+  getGridVisible() {
+    if (this._disposed) {
+      return { success: false, error: 'SCENE_DISPOSED' };
+    }
+    if (!this.gridHelper) {
+      return { success: false, error: SCENE_INITIALIZATION_FAILED };
+    }
+    return { success: true, visible: !!this.gridHelper.visible };
+  }
+
+  /**
+   * Phase 2A-1: 设置主方向光强度。
+   *
+   * 合法范围:0.0 ~ 4.0
+   * 无效值返回 { success: false, error: SCENE_LIGHT_INTENSITY_INVALID }。
+   *
+   * ArkUI 百分比映射(由 ArkTS 端完成):
+   *   0% → 0.0, 25% → 1.0, 50% → 2.0, 75% → 3.0, 100% → 4.0
+   * 换算:intensity = percentage / 25.0
+   *
+   * @param {number} intensity 0.0 ~ 4.0
+   * @returns {{success: boolean, intensity?: number, error?: string}}
+   */
+  setLightIntensity(intensity) {
+    if (this._disposed) {
+      return { success: false, error: 'SCENE_DISPOSED' };
+    }
+    if (typeof intensity !== 'number' || isNaN(intensity)) {
+      return { success: false, error: SCENE_LIGHT_INTENSITY_INVALID };
+    }
+    if (intensity < 0.0 || intensity > 4.0) {
+      return { success: false, error: SCENE_LIGHT_INTENSITY_INVALID };
+    }
+    if (!this.directionalLight) {
+      return { success: false, error: SCENE_INITIALIZATION_FAILED };
+    }
+    this.directionalLight.intensity = intensity;
+    this.lightIntensity = intensity;
+    return { success: true, intensity: this.directionalLight.intensity };
+  }
+
+  /**
+   * Phase 2A-1: 查询主方向光强度。
+   *
+   * @returns {{success: boolean, intensity?: number, error?: string}}
+   */
+  getLightIntensity() {
+    if (this._disposed) {
+      return { success: false, error: 'SCENE_DISPOSED' };
+    }
+    if (!this.directionalLight) {
+      return { success: false, error: SCENE_INITIALIZATION_FAILED };
+    }
+    return { success: true, intensity: this.lightIntensity };
+  }
+
+  /**
+   * Phase 2A-1: 获取场景设置快照(背景颜色 / 网格 / 灯光)。
+   *
+   * 供 ViewerCore.getSceneState() 和 Bridge getSceneSettings() 使用。
+   *
+   * @returns {{success: boolean, backgroundColor?: string, gridVisible?: boolean, lightIntensity?: number, error?: string}}
+   */
+  getSettings() {
+    if (this._disposed) {
+      return { success: false, error: 'SCENE_DISPOSED' };
+    }
+    if (!this.scene) {
+      return { success: false, error: SCENE_INITIALIZATION_FAILED };
+    }
+    return {
+      success: true,
+      backgroundColor: this.backgroundColor,
+      gridVisible: this.gridHelper ? !!this.gridHelper.visible : false,
+      lightIntensity: this.lightIntensity
+    };
+  }
+
   /**
    * 释放所有 GPU 资源。
    *
@@ -258,6 +486,26 @@ export class ViewerScene {
       disposeObject3D(this.testObject);
       if (this.scene) this.scene.remove(this.testObject);
       this.testObject = null;
+    }
+
+    // Phase 2A-1: 释放 GridHelper(geometry + material)
+    if (this.gridHelper) {
+      if (this.gridHelper.geometry && typeof this.gridHelper.geometry.dispose === 'function') {
+        try { this.gridHelper.geometry.dispose(); } catch (e) { /* ignore */ }
+      }
+      if (this.gridHelper.material) {
+        if (Array.isArray(this.gridHelper.material)) {
+          this.gridHelper.material.forEach(function (m) {
+            if (m && typeof m.dispose === 'function') {
+              try { m.dispose(); } catch (e) { /* ignore */ }
+            }
+          });
+        } else if (typeof this.gridHelper.material.dispose === 'function') {
+          try { this.gridHelper.material.dispose(); } catch (e) { /* ignore */ }
+        }
+      }
+      if (this.scene) this.scene.remove(this.gridHelper);
+      this.gridHelper = null;
     }
 
     // 2. 移除灯光

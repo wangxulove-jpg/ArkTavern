@@ -445,6 +445,120 @@ export class ArkWebVrmViewerController implements ArkWebViewerBridgeListener {
     }
   }
 
+  // ===== Phase 2A-1: Camera Controls enable/disable =====
+
+  /**
+   * 启用/禁用 OrbitControls。
+   *
+   * 用于控制面板触摸隔离:控制面板发生触摸时禁用 controls,
+   * 触摸结束或取消时恢复 controls。
+   *
+   * @param enabled true=启用;false=禁用
+   * @returns JSON 字符串,形如 {"success": true, "enabled": true|false}
+   */
+  async setCameraControlsEnabled(enabled: boolean): Promise<string> {
+    if (this.disposed) {
+      return JSON.stringify({ success: false, error: 'disposed' });
+    }
+    try {
+      return await this.jsCaller.setCameraControlsEnabled(enabled);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return JSON.stringify({ success: false, error: msg });
+    }
+  }
+
+  /**
+   * 查询 OrbitControls 当前启用状态。
+   *
+   * @returns JSON 字符串,形如 {"success": true, "enabled": true|false}
+   */
+  async getCameraControlsEnabled(): Promise<string> {
+    if (this.disposed) {
+      return JSON.stringify({ success: false, error: 'disposed' });
+    }
+    try {
+      return await this.jsCaller.getCameraControlsEnabled();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return JSON.stringify({ success: false, error: msg });
+    }
+  }
+
+  // ===== Phase 2A-1: Scene 设置(背景 / 网格 / 灯光) =====
+
+  /**
+   * 设置场景背景颜色。
+   *
+   * @param color #RRGGBB 格式(6 位十六进制)
+   * @returns JSON 字符串,形如 {"success": true, "color": "#RRGGBB"}
+   */
+  async setSceneBackgroundColor(color: string): Promise<string> {
+    if (this.disposed) {
+      return JSON.stringify({ success: false, error: 'disposed' });
+    }
+    try {
+      return await this.jsCaller.setSceneBackgroundColor(color);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return JSON.stringify({ success: false, error: msg });
+    }
+  }
+
+  /**
+   * 设置网格显示。
+   *
+   * @param visible true=显示网格;false=隐藏网格
+   * @returns JSON 字符串,形如 {"success": true, "visible": true|false}
+   */
+  async setSceneGridVisible(visible: boolean): Promise<string> {
+    if (this.disposed) {
+      return JSON.stringify({ success: false, error: 'disposed' });
+    }
+    try {
+      return await this.jsCaller.setSceneGridVisible(visible);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return JSON.stringify({ success: false, error: msg });
+    }
+  }
+
+  /**
+   * 设置主方向光强度。
+   *
+   * @param intensity 0.0 ~ 4.0
+   * @returns JSON 字符串,形如 {"success": true, "intensity": <number>}
+   */
+  async setSceneLightIntensity(intensity: number): Promise<string> {
+    if (this.disposed) {
+      return JSON.stringify({ success: false, error: 'disposed' });
+    }
+    try {
+      return await this.jsCaller.setSceneLightIntensity(intensity);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return JSON.stringify({ success: false, error: msg });
+    }
+  }
+
+  /**
+   * 获取场景设置快照(背景颜色 / 网格 / 灯光)。
+   *
+   * @returns JSON 字符串,形如
+   *   {"success": true, "settings": {"backgroundColor": "...", "gridVisible": ..., "lightIntensity": ...}}
+   */
+  async getSceneSettings(): Promise<string> {
+    if (this.disposed) {
+      return JSON.stringify({ success: false, error: 'disposed' });
+    }
+    try {
+      return await this.jsCaller.getSceneSettings();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return JSON.stringify({ success: false, error: msg });
+    }
+  }
+
   // ===== Web 组件生命周期回调 =====
 
   /**
