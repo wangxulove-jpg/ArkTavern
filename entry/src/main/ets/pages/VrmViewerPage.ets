@@ -101,6 +101,29 @@ import {
 import {
   ArkWebScreenshotController
 } from '../vrmviewer/ArkWebScreenshotController';
+import {
+  ArkWebAnimationImportController,
+  AnimationImportState,
+  ImportedAnimationFile
+} from '../vrmviewer/ArkWebAnimationImportController';
+import {
+  ArkWebAnimationResourceProvider,
+  AnimationResourceState,
+  WebAnimationResource
+} from '../vrmviewer/ArkWebAnimationResourceProvider';
+
+/**
+ * 传给 JavaScript loadVrmaResource 的资源 JSON 载荷。
+ * 字段名与 JS 端期望一致(Phase 3A-2 第十五章)。
+ * 仅包含可暴露给 JS 的字段(不含 cachePath/原始 URI/绝对路径)。
+ */
+interface AnimationResourceBridgePayload {
+  resourceUrl: string;
+  resourceId: string;
+  displayName: string;
+  mimeType: string;
+  size: number;
+}
 
 /** 抽屉状态 */
 enum DrawerState {
@@ -297,6 +320,10 @@ struct VrmViewerPage {
   private importStateStore: ArkWebModelImportStateStore | null = null;
   /** 3D 视口截图控制器(Phase 2A-3A,在 aboutToAppear 中创建) */
   private screenshotController: ArkWebScreenshotController | null = null;
+  /** VRMA 动画导入控制器(Phase 3A,在 aboutToAppear 中创建) */
+  private animationImportController: ArkWebAnimationImportController | null = null;
+  /** VRMA 动画资源提供者(Phase 3A,在 aboutToAppear 中创建) */
+  private animationResourceProvider: ArkWebAnimationResourceProvider | null = null;
   /** 事件监听器包装器(注入闭包更新 @State) */
   private eventListener: ViewerEventListener = new ViewerEventListener();
 
@@ -504,6 +531,28 @@ struct VrmViewerPage {
   /** Debug:动画依赖是否需要运行时网络 (Phase 3A 依赖补齐) */
   @State debugAnimationRuntimeNetworkRequired: boolean = false;
 
+  // ===== Phase 3A — VRMA 文件导入与最小播放闭环 =====
+  /** Debug:动画资源 ID */
+  @State debugAnimationResourceId: string = '';
+  /** Debug:动画加载代次 */
+  @State debugAnimationLoadGeneration: number = 0;
+  /** 动画导入状态 */
+  @State animationImportState: AnimationImportState = AnimationImportState.IDLE;
+  /** 动画资源状态 */
+  @State animationResourceState: AnimationResourceState = AnimationResourceState.EMPTY;
+  /** 动画导入错误消息 */
+  @State animationImportError: string = '';
+  /** 动画操作错误消息 (play/pause/stop/load) */
+  @State animationActionError: string = '';
+  /** 动画加载轮询定时器 ID */
+  private animationLoadPollTimerId: number = -1;
+  /** 动画加载轮询次数 */
+  private animationLoadPollCount: number = 0;
+  /** 动画加载轮询间隔(ms) */
+  private readonly ANIMATION_LOAD_POLL_INTERVAL_MS: number = 100;
+  /** 动画加载轮询最大次数(300 × 100ms = 30s 超时) */
+  private readonly ANIMATION_LOAD_POLL_MAX_COUNT: number = 300;
+
   aboutToAppear(): void {
     // Phase 2A-3A: 启用 Web 全绘制能力(webPageSnapshot 前置条件)
     // 必须在 aboutToAppear 中调用(Web 组件初始化前),官方文档明确要求
@@ -597,6 +646,12 @@ struct VrmViewerPage {
         ctx.cacheDir,
         () => this.arkWebController.getState()
       );
+    }
+
+    // Phase 3A:创建 VRMA 动画导入控制器和资源 Provider
+    if (this.animationImportController === null) {
+      this.animationImportController = new ArkWebAnimationImportController(ctx);
+      this.animationResourceProvider = new ArkWebAnimationResourceProvider(ctx.cacheDir);
     }
 
     // Web 组件加载由 build() 触发,初始化在 onPageEnd 回调中完成
@@ -696,6 +751,18 @@ struct VrmViewerPage {
     if (this.screenshotController !== null) {
       this.screenshotController.dispose();
       this.screenshotController = null;
+    }
+    // Phase 3A:10. 停止动画加载轮询
+    this.stopAnimationLoadPolling();
+    // Phase 3A:11. 销毁动画资源 Provider(停止响应拦截请求)
+    if (this.animationResourceProvider !== null) {
+      this.animationResourceProvider.dispose();
+      this.animationResourceProvider = null;
+    }
+    // Phase 3A:12. 销毁动画导入控制器(不删除已缓存文件)
+    if (this.animationImportController !== null) {
+      this.animationImportController.dispose();
+      this.animationImportController = null;
     }
     // 清空恢复状态
     this.pendingRestoredFile = null;
@@ -1215,11 +1282,353 @@ struct VrmViewerPage {
       this.debugAnimationCurrentTime = (debugState['currentTime'] as number) || 0;
       this.debugAnimationPlaybackSpeed = (debugState['playbackSpeed'] as number) || 1;
       this.debugAnimationLoop = debugState['loop'] === true;
+      this.debugAnimationResourceId = (debugState['resourceId'] as string) || '';
+      this.debugAnimationLoadGeneration = (debugState['loadGeneration'] as number) || 0;
       this.debugAnimationErrorCode = (debugState['errorCode'] as string) || '';
       this.debugAnimationErrorMessage = (debugState['errorMessage'] as string) || '';
     } catch (e) {
       console.warn('[VrmViewerPage] parseAnimationDebugState failed: ' + (e instanceof Error ? e.message : String(e)));
     }
+  }
+
+  // ===== Phase 3A — VRMA 文件导入与最小播放闭环 =====
+
+  /**
+   * Phase 3A: 用户点击"选择 VRMA"按钮。
+   *
+   * 流程 (AGENTS.md Phase 3A §三十二):
+   * 1. 选择 .vrma (DocumentViewPicker, 仅 .vrma 后缀)
+   * 2. 原子缓存到 <cacheDir>/vrm-animations/<resourceId>.vrma
+   * 3. 注册 Provider (生成受控 URL)
+   * 4. 调用 loadAnimationResource() (同步返回 LOADING + generation)
+   * 5. 启动轮询 (每 100ms, 最长 30s)
+   * 6. READY/FAILED 后停止轮询
+   *
+   * 加载中禁用选择/播放/暂停/停止 (由 animationImportState / debugAnimationState 控制)。
+   */
+  private async onAnimationImportButton(): Promise<void> {
+    if (this.animationImportController === null) {
+      promptAction.showToast({ message: '动画导入控制器未初始化' });
+      return;
+    }
+    if (this.animationResourceProvider === null) {
+      promptAction.showToast({ message: '动画资源 Provider 未初始化' });
+      return;
+    }
+    // Viewer 必须 READY (Bridge 可用)
+    if (this.viewerState !== ArkWebViewerState.READY) {
+      promptAction.showToast({ message: 'Viewer 尚未就绪' });
+      return;
+    }
+    // 动画加载中禁止重复选择
+    if (this.debugAnimationState === 'LOADING') {
+      promptAction.showToast({ message: '动画加载中,请稍候' });
+      return;
+    }
+
+    this.animationImportState = AnimationImportState.PICKING;
+    this.animationImportError = '';
+    this.animationActionError = '';
+
+    try {
+      const file: ImportedAnimationFile | null =
+        await this.animationImportController.pickAnimationFile();
+      this.animationImportState = this.animationImportController.getState();
+      this.animationImportError = this.animationImportController.getLastError();
+
+      if (file === null) {
+        // 用户取消或失败
+        if (this.animationImportState === AnimationImportState.CANCELLED) {
+          promptAction.showToast({ message: '已取消选择' });
+        } else if (this.animationImportState === AnimationImportState.FAILED) {
+          promptAction.showToast({ message: `导入失败: ${this.animationImportError}` });
+        }
+        // 恢复到 IDLE 以便再次选择
+        if (this.animationImportState !== AnimationImportState.READY) {
+          this.animationImportState = AnimationImportState.IDLE;
+        }
+        return;
+      }
+
+      // 注册到 Provider (生成受控 URL)
+      let publicResource: WebAnimationResource;
+      try {
+        publicResource = this.animationResourceProvider.registerFile(file);
+        this.animationResourceState = this.animationResourceProvider.getState();
+      } catch (e) {
+        const msg: string = e instanceof Error ? e.message : String(e);
+        this.animationImportError = `资源注册失败: ${msg}`;
+        this.animationImportState = AnimationImportState.FAILED;
+        promptAction.showToast({ message: this.animationImportError });
+        return;
+      }
+
+      // 构造传给 JavaScript 的资源 JSON (只含 resourceUrl/displayName/size/mimeType/resourceId)
+      const resourceJsonObj: AnimationResourceBridgePayload = {
+        resourceUrl: publicResource.resourceUrl,
+        resourceId: publicResource.resourceId,
+        displayName: publicResource.displayName,
+        mimeType: publicResource.mimeType,
+        size: publicResource.size
+      };
+      const resourceJson: string = JSON.stringify(resourceJsonObj);
+
+      // 调用 Bridge loadAnimationResource (同步返回 LOADING + generation)
+      const resultJson: string = await this.arkWebController.loadAnimationResource(resourceJson);
+      const parsed: Record<string, Object> | null = this.parseAnimationLoadResponse(resultJson);
+      if (parsed === null) {
+        this.animationImportError = 'loadAnimationResource 返回非法 JSON';
+        this.animationImportState = AnimationImportState.FAILED;
+        promptAction.showToast({ message: this.animationImportError });
+        return;
+      }
+      if (parsed['success'] !== true) {
+        const errObj = parsed['error'] as Record<string, Object>;
+        const errorCode: string = errObj ? (errObj['code'] as string) || 'UNKNOWN' : 'UNKNOWN';
+        const msg: string = errObj ? (errObj['message'] as string) || '' : '';
+        this.animationImportError = `加载启动失败: ${errorCode}${msg.length > 0 ? ' - ' + msg : ''}`;
+        this.animationImportState = AnimationImportState.FAILED;
+        promptAction.showToast({ message: this.animationImportError });
+        return;
+      }
+
+      // 加载已启动, 状态显示 LOADING
+      this.animationImportState = AnimationImportState.READY;
+      this.animationActionError = '';
+      // 立即刷新 Debug 状态 (获取 generation)
+      this.refreshAnimationDebugState();
+      // 启动轮询
+      this.startAnimationLoadPolling();
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      this.animationImportError = `导入异常: ${msg}`;
+      this.animationImportState = AnimationImportState.FAILED;
+      promptAction.showToast({ message: this.animationImportError });
+    }
+  }
+
+  /**
+   * Phase 3A: 解析 loadAnimationResource 返回的 JSON。
+   *
+   * 合法返回:
+   *   {"success": true, "state": "LOADING", "generation": <number>}
+   *   {"success": false, "error": {"code": "...", "message": "..."}}
+   *
+   * @returns 解析后的对象; 非法 JSON 返回 null
+   */
+  private parseAnimationLoadResponse(resultJson: string): Record<string, Object> | null {
+    if (resultJson.length === 0) {
+      return null;
+    }
+    try {
+      return JSON.parse(resultJson) as Record<string, Object>;
+    } catch (e) {
+      console.warn('[VrmViewerPage] parseAnimationLoadResponse failed: ' +
+        (e instanceof Error ? e.message : String(e)));
+      return null;
+    }
+  }
+
+  /**
+   * Phase 3A: 启动动画加载状态轮询。
+   *
+   * 每 100ms 查询 getAnimationDebugState, 直到状态离开 LOADING 或超时 (30s)。
+   * 页面销毁时停止 (disposeViewer 调用 stopAnimationLoadPolling)。
+   */
+  private startAnimationLoadPolling(): void {
+    this.stopAnimationLoadPolling();
+    this.animationLoadPollCount = 0;
+    this.animationLoadPollTimerId = setInterval(() => {
+      this.animationLoadPollCount++;
+      if (this.animationLoadPollCount > this.ANIMATION_LOAD_POLL_MAX_COUNT) {
+        // 超时 (30s)
+        console.warn('[VrmViewerPage] animation load poll timeout');
+        this.stopAnimationLoadPolling();
+        this.animationActionError = '动画加载超时 (30s)';
+        return;
+      }
+      this.arkWebController.getAnimationDebugState().then((resultJson: string) => {
+        this.parseAnimationDebugState(resultJson);
+        // 状态离开 LOADING → 停止轮询
+        if (this.debugAnimationState !== 'LOADING') {
+          this.stopAnimationLoadPolling();
+          if (this.debugAnimationState === 'READY') {
+            promptAction.showToast({ message: 'VRMA 已加载，可以播放' });
+          } else if (this.debugAnimationState === 'FAILED') {
+            const errorCode: string = this.debugAnimationErrorCode;
+            const msg: string = this.debugAnimationErrorMessage;
+            this.animationActionError = `加载失败: ${errorCode}${msg.length > 0 ? ' - ' + msg : ''}`;
+            promptAction.showToast({ message: this.animationActionError });
+          }
+        }
+      }).catch((e: Object) => {
+        console.warn('[VrmViewerPage] animation poll getAnimationDebugState failed: ' +
+          (e instanceof Error ? e.message : String(e)));
+      });
+    }, this.ANIMATION_LOAD_POLL_INTERVAL_MS);
+  }
+
+  /**
+   * Phase 3A: 停止动画加载状态轮询。
+   */
+  private stopAnimationLoadPolling(): void {
+    if (this.animationLoadPollTimerId !== -1) {
+      clearInterval(this.animationLoadPollTimerId);
+      this.animationLoadPollTimerId = -1;
+    }
+    this.animationLoadPollCount = 0;
+  }
+
+  /**
+   * Phase 3A: 用户点击"播放"按钮。
+   *
+   * 合法状态: READY / PAUSED / STOPPED
+   */
+  private async onAnimationPlayButton(): Promise<void> {
+    if (this.viewerState !== ArkWebViewerState.READY) {
+      promptAction.showToast({ message: 'Viewer 尚未就绪' });
+      return;
+    }
+    this.animationActionError = '';
+    try {
+      const resultJson: string = await this.arkWebController.playAnimation();
+      const parsed: Record<string, Object> | null = this.parseAnimationLoadResponse(resultJson);
+      if (parsed === null || parsed['success'] !== true) {
+        const errObj = parsed ? (parsed['error'] as Record<string, Object>) : null;
+        const code: string = errObj ? (errObj['code'] as string) || 'UNKNOWN' : 'UNKNOWN';
+        const msg: string = errObj ? (errObj['message'] as string) || '' : '';
+        this.animationActionError = `播放失败: ${code}${msg.length > 0 ? ' - ' + msg : ''}`;
+        promptAction.showToast({ message: this.animationActionError });
+        return;
+      }
+      this.refreshAnimationDebugState();
+      promptAction.showToast({ message: '动画播放中' });
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      this.animationActionError = `播放异常: ${msg}`;
+      promptAction.showToast({ message: this.animationActionError });
+    }
+  }
+
+  /**
+   * Phase 3A: 用户点击"暂停"按钮。
+   *
+   * 只允许 PLAYING 状态。
+   */
+  private async onAnimationPauseButton(): Promise<void> {
+    if (this.viewerState !== ArkWebViewerState.READY) {
+      promptAction.showToast({ message: 'Viewer 尚未就绪' });
+      return;
+    }
+    this.animationActionError = '';
+    try {
+      const resultJson: string = await this.arkWebController.pauseAnimation();
+      const parsed: Record<string, Object> | null = this.parseAnimationLoadResponse(resultJson);
+      if (parsed === null || parsed['success'] !== true) {
+        const errObj = parsed ? (parsed['error'] as Record<string, Object>) : null;
+        const code: string = errObj ? (errObj['code'] as string) || 'UNKNOWN' : 'UNKNOWN';
+        const msg: string = errObj ? (errObj['message'] as string) || '' : '';
+        this.animationActionError = `暂停失败: ${code}${msg.length > 0 ? ' - ' + msg : ''}`;
+        promptAction.showToast({ message: this.animationActionError });
+        return;
+      }
+      this.refreshAnimationDebugState();
+      promptAction.showToast({ message: '动画已暂停' });
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      this.animationActionError = `暂停异常: ${msg}`;
+      promptAction.showToast({ message: this.animationActionError });
+    }
+  }
+
+  /**
+   * Phase 3A: 用户点击"停止"按钮。
+   *
+   * 允许 PLAYING / PAUSED 状态。默认 resetPose=true。
+   */
+  private async onAnimationStopButton(): Promise<void> {
+    if (this.viewerState !== ArkWebViewerState.READY) {
+      promptAction.showToast({ message: 'Viewer 尚未就绪' });
+      return;
+    }
+    this.animationActionError = '';
+    try {
+      // 默认 resetPose=true (传空字符串表示使用默认选项)
+      const resultJson: string = await this.arkWebController.stopAnimation('');
+      const parsed: Record<string, Object> | null = this.parseAnimationLoadResponse(resultJson);
+      if (parsed === null || parsed['success'] !== true) {
+        const errObj = parsed ? (parsed['error'] as Record<string, Object>) : null;
+        const code: string = errObj ? (errObj['code'] as string) || 'UNKNOWN' : 'UNKNOWN';
+        const msg: string = errObj ? (errObj['message'] as string) || '' : '';
+        this.animationActionError = `停止失败: ${code}${msg.length > 0 ? ' - ' + msg : ''}`;
+        promptAction.showToast({ message: this.animationActionError });
+        return;
+      }
+      this.refreshAnimationDebugState();
+      promptAction.showToast({ message: '动画已停止' });
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      this.animationActionError = `停止异常: ${msg}`;
+      promptAction.showToast({ message: this.animationActionError });
+    }
+  }
+
+  /**
+   * Phase 3A: 判断"选择 VRMA"按钮是否可点击。
+   *
+   * 加载中禁用。
+   */
+  private isAnimationImportButtonEnabled(): boolean {
+    if (this.viewerState !== ArkWebViewerState.READY) {
+      return false;
+    }
+    if (this.debugAnimationState === 'LOADING') {
+      return false;
+    }
+    if (this.animationImportState === AnimationImportState.PICKING ||
+        this.animationImportState === AnimationImportState.COPYING) {
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Phase 3A: 判断"播放"按钮是否可点击。
+   *
+   * 启用条件: READY / PAUSED / STOPPED
+   */
+  private isAnimationPlayButtonEnabled(): boolean {
+    if (this.viewerState !== ArkWebViewerState.READY) {
+      return false;
+    }
+    return this.debugAnimationState === 'READY' ||
+           this.debugAnimationState === 'PAUSED' ||
+           this.debugAnimationState === 'STOPPED';
+  }
+
+  /**
+   * Phase 3A: 判断"暂停"按钮是否可点击。
+   *
+   * 启用条件: PLAYING
+   */
+  private isAnimationPauseButtonEnabled(): boolean {
+    if (this.viewerState !== ArkWebViewerState.READY) {
+      return false;
+    }
+    return this.debugAnimationState === 'PLAYING';
+  }
+
+  /**
+   * Phase 3A: 判断"停止"按钮是否可点击。
+   *
+   * 启用条件: PLAYING / PAUSED
+   */
+  private isAnimationStopButtonEnabled(): boolean {
+    if (this.viewerState !== ArkWebViewerState.READY) {
+      return false;
+    }
+    return this.debugAnimationState === 'PLAYING' ||
+           this.debugAnimationState === 'PAUSED';
   }
 
   // ===== Phase 2A-1: ArkUI 场景控件接入 =====
@@ -3908,24 +4317,33 @@ struct VrmViewerPage {
         // 拦截 ark-tavern.local 资源请求,通过 FD 返回缓存文件内容
         // 其他请求返回 null(放行,交由 Web 默认处理)
         .onInterceptRequest((event: OnInterceptRequestEvent) => {
-          if (this.resourceProvider === null) {
-            return null;
-          }
           const request: WebResourceRequest = event.request;
           const url: string = request.getRequestUrl();
-          // 仅处理当前注册资源的 URL,其他一律放行
-          if (!this.resourceProvider.matchesRequest(url)) {
-            return null;
-          }
           const requestHeaders: Array<Header> = request.getRequestHeader();
           const method: string = request.getRequestMethod();
-          const result = this.resourceProvider.handleRequest(url, method, requestHeaders);
-          if (result.response === null) {
-            // 资源处理失败但不应阻塞 Web,放行让 Web 自行处理(通常 404)
-            console.warn(`[VrmViewerPage] resource handleRequest returned null: ${result.errorCode} ${result.errorMessage}`);
+
+          // Phase 1D-2A: 模型资源拦截
+          if (this.resourceProvider !== null && this.resourceProvider.matchesRequest(url)) {
+            const modelResult = this.resourceProvider.handleRequest(url, method, requestHeaders);
+            if (modelResult.response !== null) {
+              return modelResult.response;
+            }
+            console.warn(`[VrmViewerPage] model resource handleRequest returned null: ${modelResult.errorCode} ${modelResult.errorMessage}`);
             return null;
           }
-          return result.response;
+
+          // Phase 3A: 动画资源拦截 (独立于模型 Provider)
+          if (this.animationResourceProvider !== null && this.animationResourceProvider.matchesRequest(url)) {
+            const animResult = this.animationResourceProvider.handleRequest(url, method, requestHeaders);
+            if (animResult.response !== null) {
+              return animResult.response;
+            }
+            console.warn(`[VrmViewerPage] animation resource handleRequest returned null: ${animResult.errorCode} ${animResult.errorMessage}`);
+            return null;
+          }
+
+          // 其他请求放行
+          return null;
         })
 
       // 错误覆盖层(FAILED 状态)
@@ -4733,27 +5151,115 @@ struct VrmViewerPage {
   @Builder
   TabAnimationContent() {
     Column() {
-      // Phase 3A: 动画系统状态显示(只读,无播放控件)
+      // Phase 3A — VRMA 文件导入与最小播放闭环
       Text('动画系统')
         .fontSize($r('app.float.app_font_subtitle'))
         .fontWeight(FontWeight.Medium)
         .fontColor($r('app.color.app_text_primary'))
         .margin({ bottom: 8 })
 
-      this.DebugRow('动画状态', this.debugAnimationState)
+      // 控件区
+      Row() {
+        Button('选择 VRMA')
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor($r('app.color.app_text_primary'))
+          .backgroundColor($r('app.color.app_surface_2'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(36)
+          .layoutWeight(1)
+          .margin({ right: 4 })
+          .enabled(this.isAnimationImportButtonEnabled())
+          .onClick(() => {
+            this.onAnimationImportButton();
+          })
+      }
+      .width('100%')
+      .margin({ bottom: 8 })
+
+      Row() {
+        Button('播放')
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor($r('app.color.app_text_primary'))
+          .backgroundColor($r('app.color.app_surface_2'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(36)
+          .layoutWeight(1)
+          .margin({ right: 4 })
+          .enabled(this.isAnimationPlayButtonEnabled())
+          .onClick(() => {
+            this.onAnimationPlayButton();
+          })
+
+        Button('暂停')
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor($r('app.color.app_text_primary'))
+          .backgroundColor($r('app.color.app_surface_2'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(36)
+          .layoutWeight(1)
+          .margin({ left: 4, right: 4 })
+          .enabled(this.isAnimationPauseButtonEnabled())
+          .onClick(() => {
+            this.onAnimationPauseButton();
+          })
+
+        Button('停止')
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor($r('app.color.app_text_primary'))
+          .backgroundColor($r('app.color.app_surface_2'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(36)
+          .layoutWeight(1)
+          .margin({ left: 4 })
+          .enabled(this.isAnimationStopButtonEnabled())
+          .onClick(() => {
+            this.onAnimationStopButton();
+          })
+      }
+      .width('100%')
+      .margin({ bottom: 16 })
+
+      // 状态显示区
+      Text('动画状态')
+        .fontSize($r('app.float.app_font_subtitle'))
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.app_text_primary'))
+        .margin({ bottom: 8 })
+
+      this.DebugRow('状态', this.debugAnimationState)
+      this.DebugRow('动画文件', this.debugAnimationName.length > 0 ? this.debugAnimationName : '未导入')
       this.DebugRow('VRM 绑定', this.debugAnimationVrmBound ? '已绑定' : '未绑定')
       this.DebugRow('Mixer', this.debugAnimationMixerReady ? 'READY' : 'NOT READY')
-      this.DebugRow('动画文件', this.debugAnimationClipReady ? this.debugAnimationName : '未导入')
+      this.DebugRow('Clip', this.debugAnimationClipReady ? 'READY' : 'NOT READY')
+      this.DebugRow('Action', this.debugAnimationActionReady ? 'READY' : 'NOT READY')
+      this.DebugRow('时长', this.debugAnimationDuration > 0 ? `${this.debugAnimationDuration.toFixed(2)}s` : '-')
+      this.DebugRow('当前时间', this.debugAnimationDuration > 0 ? `${this.debugAnimationCurrentTime.toFixed(2)}s` : '-')
+      this.DebugRow('加载代次', this.debugAnimationLoadGeneration > 0 ? String(this.debugAnimationLoadGeneration) : '-')
 
-      if (this.debugAnimationErrorCode.length > 0) {
-        this.DebugRow('动画错误', `${this.debugAnimationErrorCode}: ${this.debugAnimationErrorMessage}`)
+      if (this.debugAnimationResourceId.length > 0) {
+        this.DebugRow('资源 ID', this.debugAnimationResourceId)
       }
 
-      Text('VRMA 文件导入与播放将在下一项接入')
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_secondary'))
-        .margin({ top: 16 })
-        .width('100%')
+      if (this.debugAnimationErrorCode.length > 0) {
+        this.DebugRow('错误码', this.debugAnimationErrorCode)
+        this.DebugRow('错误信息', this.debugAnimationErrorMessage)
+      }
+
+      if (this.animationImportError.length > 0) {
+        Text(this.animationImportError)
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_danger'))
+          .width('100%')
+          .margin({ top: 8 })
+      }
+
+      if (this.animationActionError.length > 0) {
+        Text(this.animationActionError)
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_danger'))
+          .width('100%')
+          .margin({ top: 8 })
+      }
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)
@@ -5084,6 +5590,10 @@ struct VrmViewerPage {
       this.DebugRow('Animation Time', this.debugAnimationCurrentTime > 0 ? `${this.debugAnimationCurrentTime.toFixed(3)}s` : '-')
       this.DebugRow('Animation Speed', this.debugAnimationPlaybackSpeed.toFixed(2))
       this.DebugRow('Animation Loop', this.debugAnimationLoop ? 'YES' : 'NO')
+      this.DebugRow('Animation Resource ID',
+        this.debugAnimationResourceId.length > 0 ? this.debugAnimationResourceId : '-')
+      this.DebugRow('Animation Load Gen',
+        this.debugAnimationLoadGeneration > 0 ? String(this.debugAnimationLoadGeneration) : '-')
       if (this.debugAnimationErrorCode.length > 0) {
         this.DebugRow('Animation Error', `${this.debugAnimationErrorCode}: ${this.debugAnimationErrorMessage}`)
       }

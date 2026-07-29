@@ -43491,6 +43491,23 @@ void main() {
   var ANIMATION_ERR_DEPENDENCY_EXPORT_MISSING = "ANIMATION_DEPENDENCY_EXPORT_MISSING";
   var ANIMATION_ERR_DEPENDENCY_BUILD_FAILED = "ANIMATION_DEPENDENCY_BUILD_FAILED";
   var ANIMATION_ERR_DEPENDENCY_LICENSE_MISSING = "ANIMATION_DEPENDENCY_LICENSE_MISSING";
+  var ANIMATION_ERR_RESOURCE_INVALID = "ANIMATION_RESOURCE_INVALID";
+  var ANIMATION_ERR_RESOURCE_URL_INVALID = "ANIMATION_RESOURCE_URL_INVALID";
+  var ANIMATION_ERR_RESOURCE_SIZE_INVALID = "ANIMATION_RESOURCE_SIZE_INVALID";
+  var ANIMATION_ERR_LOAD_IN_PROGRESS = "ANIMATION_LOAD_IN_PROGRESS";
+  var ANIMATION_ERR_DATA_MISSING = "ANIMATION_DATA_MISSING";
+  var ANIMATION_ERR_CLIP_CREATION_FAILED = "ANIMATION_CLIP_CREATION_FAILED";
+  var ANIMATION_ERR_CLIP_INVALID = "ANIMATION_CLIP_INVALID";
+  var ANIMATION_ERR_CLIP_EMPTY = "ANIMATION_CLIP_EMPTY";
+  var ANIMATION_ERR_NOT_READY = "ANIMATION_NOT_READY";
+  var ANIMATION_ERR_ALREADY_PLAYING = "ANIMATION_ALREADY_PLAYING";
+  var ANIMATION_ERR_ACTION_MISSING = "ANIMATION_ACTION_MISSING";
+  var ANIMATION_ERR_PAUSE_INVALID_STATE = "ANIMATION_PAUSE_INVALID_STATE";
+  var ANIMATION_ERR_STOP_INVALID_STATE = "ANIMATION_STOP_INVALID_STATE";
+  var ANIMATION_ERR_POSE_RESET_WARNING = "ANIMATION_POSE_RESET_WARNING";
+  var ANIMATION_ERR_STALE_RESULT = "ANIMATION_STALE_RESULT";
+  var ANIMATION_ERR_LOAD_FAILED = "ANIMATION_LOAD_FAILED";
+  var ANIMATION_RESOURCE_URL_PREFIX = "https://ark-tavern.local/animation/";
   var ANIMATION_DEPENDENCY_PACKAGE_NAME = "@pixiv/three-vrm-animation";
   var ANIMATION_DEPENDENCY_VERSION = "3.5.5";
   function makeAnimError(code, message) {
@@ -43517,6 +43534,11 @@ void main() {
       this._getCurrentVrm = options && typeof options.getCurrentVrm === "function" ? options.getCurrentVrm : function() {
         return null;
       };
+      this.loadGeneration = 0;
+      this.activeLoadGeneration = 0;
+      this.pendingResource = null;
+      this.currentResource = null;
+      this.lastSuccessfulState = AnimationState.IDLE;
     }
     /**
      * 初始化动画控制器。
@@ -43705,6 +43727,8 @@ void main() {
     /**
      * 获取调试状态快照(只读,供 Bridge getAnimationDebugState 使用)。
      *
+     * Phase 3A — VRMA 文件导入与最小播放闭环:新增 resourceId / loadGeneration 字段。
+     *
      * @returns {object} ArkWebAnimationDebugState 兼容对象
      */
     getDebugState() {
@@ -43715,10 +43739,12 @@ void main() {
         clipReady: !!this.currentClip,
         actionReady: !!this.currentAction,
         animationName: this.currentAnimationName,
+        resourceId: this.currentResource ? this.currentResource.resourceId : "",
         duration: this.duration,
         currentTime: this.currentTime,
         playbackSpeed: this.playbackSpeed,
         loop: this.loop,
+        loadGeneration: this.loadGeneration,
         errorCode: this.lastError ? this.lastError.code : "",
         errorMessage: this.lastError ? this.lastError.message : ""
       };
@@ -43756,7 +43782,24 @@ void main() {
           ANIMATION_ERR_DEPENDENCY_VERSION_MISMATCH,
           ANIMATION_ERR_DEPENDENCY_EXPORT_MISSING,
           ANIMATION_ERR_DEPENDENCY_BUILD_FAILED,
-          ANIMATION_ERR_DEPENDENCY_LICENSE_MISSING
+          ANIMATION_ERR_DEPENDENCY_LICENSE_MISSING,
+          // Phase 3A — VRMA 文件导入与最小播放闭环 新增错误码
+          ANIMATION_ERR_RESOURCE_INVALID,
+          ANIMATION_ERR_RESOURCE_URL_INVALID,
+          ANIMATION_ERR_RESOURCE_SIZE_INVALID,
+          ANIMATION_ERR_LOAD_IN_PROGRESS,
+          ANIMATION_ERR_DATA_MISSING,
+          ANIMATION_ERR_CLIP_CREATION_FAILED,
+          ANIMATION_ERR_CLIP_INVALID,
+          ANIMATION_ERR_CLIP_EMPTY,
+          ANIMATION_ERR_NOT_READY,
+          ANIMATION_ERR_ALREADY_PLAYING,
+          ANIMATION_ERR_ACTION_MISSING,
+          ANIMATION_ERR_PAUSE_INVALID_STATE,
+          ANIMATION_ERR_STOP_INVALID_STATE,
+          ANIMATION_ERR_POSE_RESET_WARNING,
+          ANIMATION_ERR_STALE_RESULT,
+          ANIMATION_ERR_LOAD_FAILED
         ]
       };
     }
@@ -43780,6 +43823,533 @@ void main() {
         clipFactoryAvailable: typeof createVRMAnimationClip === "function",
         runtimeNetworkRequired: false
       };
+    }
+    // ===== Phase 3A — VRMA 文件导入与最小播放闭环 =====
+    /**
+     * 异步加载 VRMA 资源 (规范 §十五~§二十)。
+     *
+     * 同步返回加载启动结果,异步结果通过 getState() / getDebugState() 查询。
+     * 不通过 Bridge 返回 Promise。
+     *
+     * 输入 resource:
+     *   {
+     *     resourceUrl: string,    // 受控 URL https://ark-tavern.local/animation/<id>
+     *     resourceId: string,     // 资源 ID
+     *     displayName: string,    // 显示名
+     *     mimeType: string,       // MIME
+     *     size: number            // 字节数
+     *   }
+     *
+     * 同步返回:
+     *   { success: true, state: 'LOADING', generation: <number> }
+     *   { success: false, error: { code, message } }
+     *
+     * 加载前置条件 (规范 §十六):
+     *   - Controller 未 dispose
+     *   - Animation system 已 initialize
+     *   - currentVrm 存在
+     *   - currentVrm.scene 存在
+     *   - resourceUrl 是受控 animation URL
+     *   - resourceId 合法
+     *   - displayName 非空
+     *   - size > 0
+     *   - 当前没有其他加载正在进行
+     *
+     * 加载失败不得改变当前动画 (规范 §二十)。
+     *
+     * @param {object} resource
+     * @returns {{success: boolean, state?: string, generation?: number, error?: {code: string, message: string}}}
+     */
+    loadVrmaResource(resource) {
+      if (this.disposed) {
+        return {
+          success: false,
+          error: makeAnimError(ANIMATION_ERR_DISPOSED, "AnimationController already disposed")
+        };
+      }
+      if (this._state === AnimationState.UNINITIALIZED) {
+        return {
+          success: false,
+          error: makeAnimError(ANIMATION_ERR_NOT_INITIALIZED, "AnimationController not initialized")
+        };
+      }
+      if (this._state === AnimationState.LOADING) {
+        return {
+          success: false,
+          error: makeAnimError(ANIMATION_ERR_LOAD_IN_PROGRESS, "Another animation load is in progress")
+        };
+      }
+      var vrm = this._getCurrentVrm();
+      if (!vrm) {
+        return {
+          success: false,
+          error: makeAnimError(ANIMATION_ERR_VRM_MISSING, "currentVrm is null or undefined")
+        };
+      }
+      if (!vrm.scene) {
+        return {
+          success: false,
+          error: makeAnimError(ANIMATION_ERR_VRM_INVALID, "currentVrm.scene is missing")
+        };
+      }
+      if (!resource || typeof resource !== "object") {
+        return {
+          success: false,
+          error: makeAnimError(ANIMATION_ERR_RESOURCE_INVALID, "resource is null or not an object")
+        };
+      }
+      if (typeof resource.resourceUrl !== "string" || resource.resourceUrl.length === 0) {
+        return {
+          success: false,
+          error: makeAnimError(ANIMATION_ERR_RESOURCE_URL_INVALID, "resourceUrl missing or empty")
+        };
+      }
+      if (resource.resourceUrl.indexOf(ANIMATION_RESOURCE_URL_PREFIX) !== 0) {
+        return {
+          success: false,
+          error: makeAnimError(
+            ANIMATION_ERR_RESOURCE_URL_INVALID,
+            "resourceUrl is not a controlled animation URL (must start with " + ANIMATION_RESOURCE_URL_PREFIX + ")"
+          )
+        };
+      }
+      if (typeof resource.resourceId !== "string" || resource.resourceId.length === 0) {
+        return {
+          success: false,
+          error: makeAnimError(ANIMATION_ERR_RESOURCE_INVALID, "resourceId missing or empty")
+        };
+      }
+      if (typeof resource.displayName !== "string" || resource.displayName.length === 0) {
+        return {
+          success: false,
+          error: makeAnimError(ANIMATION_ERR_RESOURCE_INVALID, "displayName missing or empty")
+        };
+      }
+      if (typeof resource.size !== "number" || !isFinite(resource.size) || resource.size <= 0) {
+        return {
+          success: false,
+          error: makeAnimError(ANIMATION_ERR_RESOURCE_SIZE_INVALID, "size must be a positive finite number")
+        };
+      }
+      this.loadGeneration++;
+      var generation = this.loadGeneration;
+      this.activeLoadGeneration = generation;
+      this.pendingResource = {
+        resourceUrl: resource.resourceUrl,
+        resourceId: resource.resourceId,
+        displayName: resource.displayName,
+        mimeType: resource.mimeType || "model/gltf-binary",
+        size: resource.size
+      };
+      if (this._state !== AnimationState.FAILED) {
+        this.lastSuccessfulState = this._state;
+      }
+      this.lastError = null;
+      this._state = AnimationState.LOADING;
+      this._asyncLoadVrma(generation, this.pendingResource, vrm);
+      return { success: true, state: this._state, generation };
+    }
+    /**
+     * 内部:异步加载 VRMA 文件 (规范 §十七~§二十)。
+     *
+     * 流程:
+     * 1. 创建专用 GLTFLoader (不复用模型 Loader)
+     * 2. 注册 VRMAnimationLoaderPlugin (不注册 VRMLoaderPlugin)
+     * 3. loader.load(url, onLoad, onProgress, onError)
+     * 4. onLoad: 提取 gltf.userData.vrmAnimations[0]
+     * 5. 调用 createVRMAnimationClip(vrmAnimation, currentVrm)
+     * 6. 验证 Clip (duration / tracks)
+     * 7. 创建 Action (mixer.clipAction)
+     * 8. 配置 Action (setLoop(LoopRepeat, Infinity) / clampWhenFinished / enabled)
+     * 9. 提交新动画 (原子替换)
+     * 10. 释放旧 Action/Clip
+     * 11. 状态进入 READY
+     *
+     * 失败时:
+     * - 过期结果 (generation 不匹配): ANIMATION_STALE_RESULT,不提交
+     * - 无动画数据: ANIMATION_DATA_MISSING
+     * - Clip 创建失败: ANIMATION_CLIP_CREATION_FAILED
+     * - Clip 无效: ANIMATION_CLIP_INVALID
+     * - Clip 空: ANIMATION_CLIP_EMPTY
+     * - 加载异常: ANIMATION_LOAD_FAILED
+     * - 加载失败时恢复旧动画状态 (若有)
+     *
+     * @param {number} generation 加载代次
+     * @param {object} pendingResource 待加载资源
+     * @param {object} vrm 当前 VRM
+     * @private
+     */
+    _asyncLoadVrma(generation, pendingResource, vrm) {
+      var self2 = this;
+      var loader = new GLTFLoader();
+      loader.register(function(parser) {
+        return new VRMAnimationLoaderPlugin(parser);
+      });
+      var onLoad = function(gltf) {
+        if (self2.disposed || generation !== self2.activeLoadGeneration || self2.pendingResource !== pendingResource) {
+          console.warn("[ViewerAnimationController] stale load result ignored: generation=" + generation);
+          return;
+        }
+        var currentVrmNow = self2._getCurrentVrm();
+        if (currentVrmNow !== vrm) {
+          self2._handleLoadFailure(
+            generation,
+            pendingResource,
+            makeAnimError(ANIMATION_ERR_STALE_RESULT, "currentVrm changed during animation load")
+          );
+          return;
+        }
+        var vrmAnimations = gltf && gltf.userData && gltf.userData.vrmAnimations || null;
+        if (!Array.isArray(vrmAnimations) || vrmAnimations.length === 0) {
+          self2._handleLoadFailure(
+            generation,
+            pendingResource,
+            makeAnimError(ANIMATION_ERR_DATA_MISSING, "gltf.userData.vrmAnimations is empty or not an array")
+          );
+          return;
+        }
+        var vrmAnimation = vrmAnimations[0];
+        if (!vrmAnimation) {
+          self2._handleLoadFailure(
+            generation,
+            pendingResource,
+            makeAnimError(ANIMATION_ERR_DATA_MISSING, "vrmAnimations[0] is null or undefined")
+          );
+          return;
+        }
+        var clip = null;
+        try {
+          clip = createVRMAnimationClip(vrmAnimation, vrm);
+        } catch (e) {
+          var msg2 = e && e.message ? e.message : String(e);
+          self2._handleLoadFailure(
+            generation,
+            pendingResource,
+            makeAnimError(ANIMATION_ERR_CLIP_CREATION_FAILED, "createVRMAnimationClip threw: " + msg2)
+          );
+          return;
+        }
+        if (!clip) {
+          self2._handleLoadFailure(
+            generation,
+            pendingResource,
+            makeAnimError(ANIMATION_ERR_CLIP_CREATION_FAILED, "createVRMAnimationClip returned null")
+          );
+          return;
+        }
+        if (clip.isAnimationClip !== true) {
+          self2._handleLoadFailure(
+            generation,
+            pendingResource,
+            makeAnimError(ANIMATION_ERR_CLIP_INVALID, "clip.isAnimationClip !== true")
+          );
+          return;
+        }
+        if (typeof clip.duration !== "number" || !isFinite(clip.duration) || clip.duration <= 0) {
+          self2._handleLoadFailure(
+            generation,
+            pendingResource,
+            makeAnimError(ANIMATION_ERR_CLIP_INVALID, "clip.duration is invalid: " + String(clip.duration))
+          );
+          return;
+        }
+        if (!Array.isArray(clip.tracks) || clip.tracks.length === 0) {
+          self2._handleLoadFailure(
+            generation,
+            pendingResource,
+            makeAnimError(ANIMATION_ERR_CLIP_EMPTY, "clip.tracks is empty or not an array")
+          );
+          return;
+        }
+        var action = null;
+        try {
+          action = self2.mixer.clipAction(clip);
+        } catch (e) {
+          var msg22 = e && e.message ? e.message : String(e);
+          self2._handleLoadFailure(
+            generation,
+            pendingResource,
+            makeAnimError(ANIMATION_ERR_ACTION_MISSING, "mixer.clipAction threw: " + msg22)
+          );
+          return;
+        }
+        if (!action || typeof action.play !== "function" || typeof action.stop !== "function") {
+          self2._handleLoadFailure(
+            generation,
+            pendingResource,
+            makeAnimError(ANIMATION_ERR_ACTION_MISSING, "clipAction returned invalid action")
+          );
+          return;
+        }
+        try {
+          action.setLoop(LoopRepeat, Infinity);
+          action.clampWhenFinished = true;
+          action.enabled = true;
+        } catch (e) {
+          var msg3 = e && e.message ? e.message : String(e);
+          self2._handleLoadFailure(
+            generation,
+            pendingResource,
+            makeAnimError(ANIMATION_ERR_ACTION_MISSING, "action config failed: " + msg3)
+          );
+          return;
+        }
+        var oldClip = self2.currentClip;
+        var oldAction = self2.currentAction;
+        var oldResource = self2.currentResource;
+        self2.currentClip = clip;
+        self2.currentAction = action;
+        self2.currentResource = pendingResource;
+        self2.currentAnimationName = pendingResource.displayName;
+        self2.duration = clip.duration;
+        self2.currentTime = 0;
+        self2.pendingResource = null;
+        self2.lastError = null;
+        self2._state = AnimationState.READY;
+        self2.lastSuccessfulState = AnimationState.READY;
+        if (oldAction) {
+          try {
+            oldAction.stop();
+          } catch (_e) {
+          }
+        }
+        if (self2.mixer && oldClip) {
+          try {
+            if (typeof self2.mixer.uncacheAction === "function") {
+              self2.mixer.uncacheAction(oldClip, vrm.scene);
+            } else {
+              self2.mixer.uncacheClip(oldClip);
+            }
+          } catch (_e) {
+          }
+          try {
+            self2.mixer.uncacheClip(oldClip);
+          } catch (_e) {
+          }
+        }
+        console.info("[ViewerAnimationController] VRMA loaded: " + pendingResource.displayName + " (duration=" + clip.duration + "s, tracks=" + clip.tracks.length + ")");
+      };
+      var onError = function(error) {
+        if (self2.disposed || generation !== self2.activeLoadGeneration || self2.pendingResource !== pendingResource) {
+          console.warn("[ViewerAnimationController] stale load error ignored: generation=" + generation);
+          return;
+        }
+        var msg2 = error && error.message ? error.message : String(error);
+        self2._handleLoadFailure(
+          generation,
+          pendingResource,
+          makeAnimError(ANIMATION_ERR_LOAD_FAILED, "GLTFLoader.load failed: " + msg2)
+        );
+      };
+      try {
+        loader.load(pendingResource.resourceUrl, onLoad, void 0, onError);
+      } catch (e) {
+        var msg = e && e.message ? e.message : String(e);
+        this._handleLoadFailure(
+          generation,
+          pendingResource,
+          makeAnimError(ANIMATION_ERR_LOAD_FAILED, "GLTFLoader.load threw: " + msg)
+        );
+      }
+    }
+    /**
+     * 内部:处理加载失败 (规范 §十七~§二十)。
+     *
+     * - 记录错误
+     * - 清除 pendingResource
+     * - 若有旧动画可用,恢复旧状态 (而不是永久丢失)
+     * - 若无旧动画,状态进入 FAILED
+     *
+     * @param {number} generation 加载代次
+     * @param {object} pendingResource 待加载资源
+     * @param {{code: string, message: string}} error 错误对象
+     * @private
+     */
+    _handleLoadFailure(generation, pendingResource, error) {
+      if (generation !== this.activeLoadGeneration || this.pendingResource !== pendingResource) {
+        return;
+      }
+      this.lastError = error;
+      this.pendingResource = null;
+      if (this.currentClip && this.currentAction && this.currentResource) {
+        this._state = this.lastSuccessfulState || AnimationState.READY;
+        console.warn("[ViewerAnimationController] load failed, restored previous animation: " + error.code + " " + error.message);
+      } else {
+        this._state = AnimationState.FAILED;
+        console.warn("[ViewerAnimationController] load failed, no previous animation: " + error.code + " " + error.message);
+      }
+    }
+    /**
+     * 播放动画 (规范 §二十二)。
+     *
+     * 合法状态:READY / PAUSED / STOPPED
+     * - READY / STOPPED: action.reset() + action.play()
+     * - PAUSED: action.paused = false + action.play()
+     *
+     * @returns {{success: boolean, state?: string, error?: {code: string, message: string}}}
+     */
+    play() {
+      if (this.disposed) {
+        return {
+          success: false,
+          error: makeAnimError(ANIMATION_ERR_DISPOSED, "AnimationController already disposed")
+        };
+      }
+      if (this._state === AnimationState.PLAYING) {
+        return {
+          success: false,
+          error: makeAnimError(ANIMATION_ERR_ALREADY_PLAYING, "Animation is already playing")
+        };
+      }
+      if (this._state !== AnimationState.READY && this._state !== AnimationState.PAUSED && this._state !== AnimationState.STOPPED) {
+        return {
+          success: false,
+          error: makeAnimError(
+            ANIMATION_ERR_NOT_READY,
+            "Cannot play in state " + this._state + " (expected READY/PAUSED/STOPPED)"
+          )
+        };
+      }
+      if (!this.currentAction) {
+        return {
+          success: false,
+          error: makeAnimError(ANIMATION_ERR_ACTION_MISSING, "currentAction is null")
+        };
+      }
+      if (!this.mixer) {
+        return {
+          success: false,
+          error: makeAnimError(ANIMATION_ERR_ACTION_MISSING, "mixer is null")
+        };
+      }
+      try {
+        if (this._state === AnimationState.READY || this._state === AnimationState.STOPPED) {
+          this.currentAction.reset();
+          this.currentAction.enabled = true;
+          this.currentAction.paused = false;
+          this.currentAction.play();
+          this.currentTime = 0;
+        } else {
+          this.currentAction.paused = false;
+          this.currentAction.play();
+        }
+        this._state = AnimationState.PLAYING;
+        this.lastError = null;
+        return { success: true, state: this._state };
+      } catch (e) {
+        var msg = e && e.message ? e.message : String(e);
+        this.lastError = makeAnimError(ANIMATION_ERR_ACTION_MISSING, "action.play threw: " + msg);
+        return { success: false, error: this.lastError };
+      }
+    }
+    /**
+     * 暂停动画 (规范 §二十三)。
+     *
+     * 只允许 PLAYING 状态。
+     * 保留当前播放时间 / Action / Clip / 资源。
+     *
+     * @returns {{success: boolean, state?: string, error?: {code: string, message: string}}}
+     */
+    pause() {
+      if (this.disposed) {
+        return {
+          success: false,
+          error: makeAnimError(ANIMATION_ERR_DISPOSED, "AnimationController already disposed")
+        };
+      }
+      if (this._state !== AnimationState.PLAYING) {
+        return {
+          success: false,
+          error: makeAnimError(
+            ANIMATION_ERR_PAUSE_INVALID_STATE,
+            "Cannot pause in state " + this._state + " (expected PLAYING)"
+          )
+        };
+      }
+      if (!this.currentAction) {
+        return {
+          success: false,
+          error: makeAnimError(ANIMATION_ERR_ACTION_MISSING, "currentAction is null")
+        };
+      }
+      try {
+        this.currentAction.paused = true;
+        this.currentTime = this.currentAction.time;
+        this._state = AnimationState.PAUSED;
+        return { success: true, state: this._state };
+      } catch (e) {
+        var msg = e && e.message ? e.message : String(e);
+        this.lastError = makeAnimError(ANIMATION_ERR_PAUSE_INVALID_STATE, "pause threw: " + msg);
+        return { success: false, error: this.lastError };
+      }
+    }
+    /**
+     * 停止动画 (规范 §二十四)。
+     *
+     * 默认 resetPose=true。
+     * - action.stop()
+     * - mixer.stopAllAction()
+     * - currentTime = 0
+     * - state = STOPPED
+     * - resetPose=true 且 currentVrm.humanoid.resetNormalizedPose 存在时调用
+     *
+     * STOPPED 仍保留 Clip / 资源 / 动画名称 / duration,可再次播放。
+     *
+     * @param {object} [options]
+     * @param {boolean} [options.resetPose=true] 是否重置姿势
+     * @returns {{success: boolean, state?: string, error?: {code: string, message: string}}}
+     */
+    stop(options) {
+      if (this.disposed) {
+        return {
+          success: false,
+          error: makeAnimError(ANIMATION_ERR_DISPOSED, "AnimationController already disposed")
+        };
+      }
+      if (this._state !== AnimationState.PLAYING && this._state !== AnimationState.PAUSED) {
+        return {
+          success: false,
+          error: makeAnimError(
+            ANIMATION_ERR_STOP_INVALID_STATE,
+            "Cannot stop in state " + this._state + " (expected PLAYING/PAUSED)"
+          )
+        };
+      }
+      var opts = options || {};
+      var resetPose = opts.resetPose !== false;
+      try {
+        if (this.currentAction) {
+          try {
+            this.currentAction.stop();
+          } catch (_e) {
+          }
+        }
+        if (this.mixer) {
+          try {
+            this.mixer.stopAllAction();
+          } catch (_e) {
+          }
+        }
+        this.currentTime = 0;
+        this._state = AnimationState.STOPPED;
+        if (resetPose && this.currentVrm && this.currentVrm.humanoid && typeof this.currentVrm.humanoid.resetNormalizedPose === "function") {
+          try {
+            this.currentVrm.humanoid.resetNormalizedPose();
+          } catch (e) {
+            var msg = e && e.message ? e.message : String(e);
+            console.warn("[ViewerAnimationController] resetNormalizedPose failed: " + msg);
+            this.lastError = makeAnimError(
+              ANIMATION_ERR_POSE_RESET_WARNING,
+              "resetNormalizedPose failed: " + msg
+            );
+          }
+        }
+        return { success: true, state: this._state };
+      } catch (e) {
+        var msg2 = e && e.message ? e.message : String(e);
+        this.lastError = makeAnimError(ANIMATION_ERR_STOP_INVALID_STATE, "stop threw: " + msg2);
+        return { success: false, error: this.lastError };
+      }
     }
     /**
      * 销毁动画控制器,释放所有资源。
@@ -44325,6 +44895,110 @@ void main() {
         };
       }
       return { success: true, dependencyState: this.animationController.getDependencyState() };
+    }
+    // ===== Phase 3A — VRMA 文件导入与最小播放闭环 =====
+    /**
+     * Phase 3A: 加载 VRMA 动画资源 (规范 §二十九)。
+     *
+     * 同步返回加载启动结果,异步结果通过 getAnimationState() / getAnimationDebugState() 查询。
+     * 不通过 Bridge 返回 Promise。
+     *
+     * 动画加载失败不得改变 ViewerState / ModelState / CameraState / SceneState。
+     *
+     * @param {object} resource
+     *   {resourceUrl, resourceId, displayName, mimeType, size}
+     * @returns {{success: boolean, state?: string, generation?: number, error?: {code: string, message: string}}}
+     */
+    loadAnimationResource(resource) {
+      if (this._state !== STATE_READY) {
+        return {
+          success: false,
+          error: { code: "VIEWER_NOT_READY", message: "Viewer not ready (state=" + this._state + ")" }
+        };
+      }
+      if (!this.animationController) {
+        return {
+          success: false,
+          error: { code: "ANIMATION_NOT_INITIALIZED", message: "AnimationController not initialized" }
+        };
+      }
+      if (!this.modelLoader || !this.modelLoader.currentVrm) {
+        return {
+          success: false,
+          error: { code: "ANIMATION_VRM_MISSING", message: "currentVrm is null (model not loaded)" }
+        };
+      }
+      try {
+        var result = this.animationController.loadVrmaResource(resource);
+        return result;
+      } catch (e) {
+        var msg = e && e.message ? e.message : String(e);
+        return {
+          success: false,
+          error: { code: "ANIMATION_LOAD_FAILED", message: "loadVrmaResource threw: " + msg }
+        };
+      }
+    }
+    /**
+     * Phase 3A: 播放动画 (规范 §二十九)。
+     *
+     * @returns {{success: boolean, state?: string, error?: {code: string, message: string}}}
+     */
+    playAnimation() {
+      if (this._state !== STATE_READY) {
+        return {
+          success: false,
+          error: { code: "VIEWER_NOT_READY", message: "Viewer not ready (state=" + this._state + ")" }
+        };
+      }
+      if (!this.animationController) {
+        return {
+          success: false,
+          error: { code: "ANIMATION_NOT_INITIALIZED", message: "AnimationController not initialized" }
+        };
+      }
+      return this.animationController.play();
+    }
+    /**
+     * Phase 3A: 暂停动画 (规范 §二十九)。
+     *
+     * @returns {{success: boolean, state?: string, error?: {code: string, message: string}}}
+     */
+    pauseAnimation() {
+      if (this._state !== STATE_READY) {
+        return {
+          success: false,
+          error: { code: "VIEWER_NOT_READY", message: "Viewer not ready (state=" + this._state + ")" }
+        };
+      }
+      if (!this.animationController) {
+        return {
+          success: false,
+          error: { code: "ANIMATION_NOT_INITIALIZED", message: "AnimationController not initialized" }
+        };
+      }
+      return this.animationController.pause();
+    }
+    /**
+     * Phase 3A: 停止动画 (规范 §二十九)。
+     *
+     * @param {object} [options] {resetPose?: boolean} 默认 resetPose=true
+     * @returns {{success: boolean, state?: string, error?: {code: string, message: string}}}
+     */
+    stopAnimation(options) {
+      if (this._state !== STATE_READY) {
+        return {
+          success: false,
+          error: { code: "VIEWER_NOT_READY", message: "Viewer not ready (state=" + this._state + ")" }
+        };
+      }
+      if (!this.animationController) {
+        return {
+          success: false,
+          error: { code: "ANIMATION_NOT_INITIALIZED", message: "AnimationController not initialized" }
+        };
+      }
+      return this.animationController.stop(options);
     }
     // ===== Phase 2A-1: Camera Controls enable/disable =====
     /**
@@ -47159,6 +47833,105 @@ void main() {
         return callViewer(function(v) {
           var result = v.getAnimationDependencyState();
           return { success: true, dependencyState: result.dependencyState };
+        });
+      },
+      // ===== Phase 3A — VRMA 文件导入与最小播放闭环 (规范 §三十) =====
+      /**
+       * Phase 3A: 加载 VRMA 动画资源。
+       *
+       * 同步返回加载启动结果 (不返回 Promise):
+       *   {"success": true, "state": "LOADING", "generation": <number>}
+       *   {"success": false, "error": {"code": "...", "message": "..."}}
+       *
+       * 异步结果通过 getAnimationState() / getAnimationDebugState() 查询。
+       *
+       * @param {string} resourceJson ArkTS 传入的 JSON 字符串
+       *   必需字段:resourceUrl / resourceId / displayName / mimeType / size
+       *   禁止字段:cachePath / sourceUri (ArkTS 已剥离)
+       * @returns {string} JSON 结果
+       */
+      loadAnimationResource: function(resourceJson) {
+        if (typeof resourceJson !== "string" || resourceJson.length === 0) {
+          return jsonResult({
+            success: false,
+            error: { code: "ANIMATION_RESOURCE_INVALID", message: "resourceJson must be a non-empty string" }
+          });
+        }
+        var resource;
+        try {
+          resource = JSON.parse(resourceJson);
+        } catch (e) {
+          return jsonResult({
+            success: false,
+            error: { code: "ANIMATION_RESOURCE_INVALID", message: "resourceJson is not valid JSON: " + (e && e.message ? e.message : String(e)) }
+          });
+        }
+        if (!resource || typeof resource !== "object") {
+          return jsonResult({
+            success: false,
+            error: { code: "ANIMATION_RESOURCE_INVALID", message: "resourceJson parsed to non-object" }
+          });
+        }
+        var forbidden = ["cachePath", "sourceUri"];
+        for (var i = 0; i < forbidden.length; i++) {
+          if (Object.prototype.hasOwnProperty.call(resource, forbidden[i])) {
+            return jsonResult({
+              success: false,
+              error: { code: "ANIMATION_RESOURCE_INVALID", message: "Forbidden field present: " + forbidden[i] }
+            });
+          }
+        }
+        return callViewer(function(v) {
+          var result = v.loadAnimationResource(resource);
+          return result;
+        });
+      },
+      /**
+       * Phase 3A: 播放动画。
+       * @returns {string} JSON 结果
+       *   {"success": true, "state": "PLAYING"}
+       *   {"success": false, "error": {"code": "...", "message": "..."}}
+       */
+      playAnimation: function() {
+        return callViewer(function(v) {
+          var result = v.playAnimation();
+          return result;
+        });
+      },
+      /**
+       * Phase 3A: 暂停动画。
+       * @returns {string} JSON 结果
+       *   {"success": true, "state": "PAUSED"}
+       *   {"success": false, "error": {"code": "...", "message": "..."}}
+       */
+      pauseAnimation: function() {
+        return callViewer(function(v) {
+          var result = v.pauseAnimation();
+          return result;
+        });
+      },
+      /**
+       * Phase 3A: 停止动画。
+       * @param {string} [optionsJson] 可选 JSON 字符串 {resetPose?: boolean}
+       * @returns {string} JSON 结果
+       *   {"success": true, "state": "STOPPED"}
+       *   {"success": false, "error": {"code": "...", "message": "..."}}
+       */
+      stopAnimation: function(optionsJson) {
+        var options = void 0;
+        if (typeof optionsJson === "string" && optionsJson.length > 0) {
+          try {
+            options = JSON.parse(optionsJson);
+          } catch (e) {
+            return jsonResult({
+              success: false,
+              error: { code: "ANIMATION_STOP_INVALID_STATE", message: "optionsJson is not valid JSON" }
+            });
+          }
+        }
+        return callViewer(function(v) {
+          var result = v.stopAnimation(options);
+          return result;
         });
       }
     };

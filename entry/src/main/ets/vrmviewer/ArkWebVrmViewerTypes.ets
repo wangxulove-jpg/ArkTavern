@@ -107,10 +107,12 @@ export interface ArkWebAnimationDebugState {
   clipReady: boolean;
   actionReady: boolean;
   animationName: string;
+  resourceId: string;
   duration: number;
   currentTime: number;
   playbackSpeed: number;
   loop: boolean;
+  loadGeneration: number;
   errorCode: string;
   errorMessage: string;
 }
@@ -133,6 +135,23 @@ export class ArkWebAnimationErrorCode {
   public static readonly DEPENDENCY_EXPORT_MISSING: string = 'ANIMATION_DEPENDENCY_EXPORT_MISSING';
   public static readonly DEPENDENCY_BUILD_FAILED: string = 'ANIMATION_DEPENDENCY_BUILD_FAILED';
   public static readonly DEPENDENCY_LICENSE_MISSING: string = 'ANIMATION_DEPENDENCY_LICENSE_MISSING';
+  // Phase 3A — VRMA 文件导入与最小播放闭环
+  public static readonly RESOURCE_INVALID: string = 'ANIMATION_RESOURCE_INVALID';
+  public static readonly RESOURCE_URL_INVALID: string = 'ANIMATION_RESOURCE_URL_INVALID';
+  public static readonly RESOURCE_SIZE_INVALID: string = 'ANIMATION_RESOURCE_SIZE_INVALID';
+  public static readonly LOAD_IN_PROGRESS: string = 'ANIMATION_LOAD_IN_PROGRESS';
+  public static readonly DATA_MISSING: string = 'ANIMATION_DATA_MISSING';
+  public static readonly CLIP_CREATION_FAILED: string = 'ANIMATION_CLIP_CREATION_FAILED';
+  public static readonly CLIP_INVALID: string = 'ANIMATION_CLIP_INVALID';
+  public static readonly CLIP_EMPTY: string = 'ANIMATION_CLIP_EMPTY';
+  public static readonly NOT_READY: string = 'ANIMATION_NOT_READY';
+  public static readonly ALREADY_PLAYING: string = 'ANIMATION_ALREADY_PLAYING';
+  public static readonly ACTION_MISSING: string = 'ANIMATION_ACTION_MISSING';
+  public static readonly PAUSE_INVALID_STATE: string = 'ANIMATION_PAUSE_INVALID_STATE';
+  public static readonly STOP_INVALID_STATE: string = 'ANIMATION_STOP_INVALID_STATE';
+  public static readonly POSE_RESET_WARNING: string = 'ANIMATION_POSE_RESET_WARNING';
+  public static readonly STALE_RESULT: string = 'ANIMATION_STALE_RESULT';
+  public static readonly LOAD_FAILED: string = 'ANIMATION_LOAD_FAILED';
 }
 
 /**
@@ -154,6 +173,30 @@ export interface ArkWebAnimationDependencyState {
   loaderAvailable: boolean;
   clipFactoryAvailable: boolean;
   runtimeNetworkRequired: boolean;
+}
+
+/**
+ * Phase 3A — VRMA 文件导入与最小播放闭环: 已准备的动画资源。
+ *
+ * 由 ArkWebAnimationResourceProvider.registerFile() 产出,
+ * 传给 JavaScript loadAnimationResource() 时只包含:
+ *   publicUrl / displayName / size / mimeType / resourceId
+ *
+ * cachePath 只能存在于 ArkTS 内部,不传给 JavaScript。
+ *
+ * 规范 §十一。
+ */
+export interface ArkWebPreparedAnimationResource {
+  /** 资源 ID (与缓存文件名一致, 不透明)。 */
+  resourceId: string;
+  /** 受控内部 URL: https://ark-tavern.local/animation/<resourceId>。 */
+  publicUrl: string;
+  /** 用户可读显示名。 */
+  displayName: string;
+  /** MIME 类型 (固定为 model/gltf-binary)。 */
+  mimeType: string;
+  /** 文件字节数。 */
+  size: number;
 }
 
 /**
@@ -368,7 +411,12 @@ export class ArkWebViewerConfig {
     'getAnimationState',
     'getAnimationDebugState',
     // Phase 3A 依赖补齐: 动画系统依赖状态只读查询
-    'getAnimationDependencyState'
+    'getAnimationDependencyState',
+    // Phase 3A — VRMA 文件导入与最小播放闭环: 动画加载与播放控制
+    'loadAnimationResource',
+    'playAnimation',
+    'pauseAnimation',
+    'stopAnimation'
   ];
 
   /** Bridge 方法白名单:JavaScript → ArkTS。 */

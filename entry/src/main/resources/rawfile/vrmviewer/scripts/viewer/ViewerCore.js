@@ -647,6 +647,115 @@ export class ViewerCore {
     return { success: true, dependencyState: this.animationController.getDependencyState() };
   }
 
+  // ===== Phase 3A — VRMA 文件导入与最小播放闭环 =====
+
+  /**
+   * Phase 3A: 加载 VRMA 动画资源 (规范 §二十九)。
+   *
+   * 同步返回加载启动结果,异步结果通过 getAnimationState() / getAnimationDebugState() 查询。
+   * 不通过 Bridge 返回 Promise。
+   *
+   * 动画加载失败不得改变 ViewerState / ModelState / CameraState / SceneState。
+   *
+   * @param {object} resource
+   *   {resourceUrl, resourceId, displayName, mimeType, size}
+   * @returns {{success: boolean, state?: string, generation?: number, error?: {code: string, message: string}}}
+   */
+  loadAnimationResource(resource) {
+    if (this._state !== STATE_READY) {
+      return {
+        success: false,
+        error: { code: 'VIEWER_NOT_READY', message: 'Viewer not ready (state=' + this._state + ')' }
+      };
+    }
+    if (!this.animationController) {
+      return {
+        success: false,
+        error: { code: 'ANIMATION_NOT_INITIALIZED', message: 'AnimationController not initialized' }
+      };
+    }
+    if (!this.modelLoader || !this.modelLoader.currentVrm) {
+      return {
+        success: false,
+        error: { code: 'ANIMATION_VRM_MISSING', message: 'currentVrm is null (model not loaded)' }
+      };
+    }
+    try {
+      var result = this.animationController.loadVrmaResource(resource);
+      return result;
+    } catch (e) {
+      var msg = e && e.message ? e.message : String(e);
+      return {
+        success: false,
+        error: { code: 'ANIMATION_LOAD_FAILED', message: 'loadVrmaResource threw: ' + msg }
+      };
+    }
+  }
+
+  /**
+   * Phase 3A: 播放动画 (规范 §二十九)。
+   *
+   * @returns {{success: boolean, state?: string, error?: {code: string, message: string}}}
+   */
+  playAnimation() {
+    if (this._state !== STATE_READY) {
+      return {
+        success: false,
+        error: { code: 'VIEWER_NOT_READY', message: 'Viewer not ready (state=' + this._state + ')' }
+      };
+    }
+    if (!this.animationController) {
+      return {
+        success: false,
+        error: { code: 'ANIMATION_NOT_INITIALIZED', message: 'AnimationController not initialized' }
+      };
+    }
+    return this.animationController.play();
+  }
+
+  /**
+   * Phase 3A: 暂停动画 (规范 §二十九)。
+   *
+   * @returns {{success: boolean, state?: string, error?: {code: string, message: string}}}
+   */
+  pauseAnimation() {
+    if (this._state !== STATE_READY) {
+      return {
+        success: false,
+        error: { code: 'VIEWER_NOT_READY', message: 'Viewer not ready (state=' + this._state + ')' }
+      };
+    }
+    if (!this.animationController) {
+      return {
+        success: false,
+        error: { code: 'ANIMATION_NOT_INITIALIZED', message: 'AnimationController not initialized' }
+      };
+    }
+    return this.animationController.pause();
+  }
+
+  /**
+   * Phase 3A: 停止动画 (规范 §二十九)。
+   *
+   * @param {object} [options] {resetPose?: boolean} 默认 resetPose=true
+   * @returns {{success: boolean, state?: string, error?: {code: string, message: string}}}
+   */
+  stopAnimation(options) {
+    if (this._state !== STATE_READY) {
+      return {
+        success: false,
+        error: { code: 'VIEWER_NOT_READY', message: 'Viewer not ready (state=' + this._state + ')' }
+      };
+    }
+    if (!this.animationController) {
+      return {
+        success: false,
+        error: { code: 'ANIMATION_NOT_INITIALIZED', message: 'AnimationController not initialized' }
+      };
+    }
+    return this.animationController.stop(options);
+  }
+
   // ===== Phase 2A-1: Camera Controls enable/disable =====
 
   /**

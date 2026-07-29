@@ -1399,6 +1399,111 @@ if (window.__arkTavernBootstrapState) {
         var result = v.getAnimationDependencyState();
         return { success: true, dependencyState: result.dependencyState };
       });
+    },
+
+    // ===== Phase 3A — VRMA 文件导入与最小播放闭环 (规范 §三十) =====
+
+    /**
+     * Phase 3A: 加载 VRMA 动画资源。
+     *
+     * 同步返回加载启动结果 (不返回 Promise):
+     *   {"success": true, "state": "LOADING", "generation": <number>}
+     *   {"success": false, "error": {"code": "...", "message": "..."}}
+     *
+     * 异步结果通过 getAnimationState() / getAnimationDebugState() 查询。
+     *
+     * @param {string} resourceJson ArkTS 传入的 JSON 字符串
+     *   必需字段:resourceUrl / resourceId / displayName / mimeType / size
+     *   禁止字段:cachePath / sourceUri (ArkTS 已剥离)
+     * @returns {string} JSON 结果
+     */
+    loadAnimationResource: function (resourceJson) {
+      if (typeof resourceJson !== 'string' || resourceJson.length === 0) {
+        return jsonResult({
+          success: false,
+          error: { code: 'ANIMATION_RESOURCE_INVALID', message: 'resourceJson must be a non-empty string' }
+        });
+      }
+      var resource;
+      try {
+        resource = JSON.parse(resourceJson);
+      } catch (e) {
+        return jsonResult({
+          success: false,
+          error: { code: 'ANIMATION_RESOURCE_INVALID', message: 'resourceJson is not valid JSON: ' + (e && e.message ? e.message : String(e)) }
+        });
+      }
+      if (!resource || typeof resource !== 'object') {
+        return jsonResult({
+          success: false,
+          error: { code: 'ANIMATION_RESOURCE_INVALID', message: 'resourceJson parsed to non-object' }
+        });
+      }
+      // 字段白名单校验 (禁止 cachePath / sourceUri)
+      var forbidden = ['cachePath', 'sourceUri'];
+      for (var i = 0; i < forbidden.length; i++) {
+        if (Object.prototype.hasOwnProperty.call(resource, forbidden[i])) {
+          return jsonResult({
+            success: false,
+            error: { code: 'ANIMATION_RESOURCE_INVALID', message: 'Forbidden field present: ' + forbidden[i] }
+          });
+        }
+      }
+      return callViewer(function (v) {
+        var result = v.loadAnimationResource(resource);
+        return result;
+      });
+    },
+
+    /**
+     * Phase 3A: 播放动画。
+     * @returns {string} JSON 结果
+     *   {"success": true, "state": "PLAYING"}
+     *   {"success": false, "error": {"code": "...", "message": "..."}}
+     */
+    playAnimation: function () {
+      return callViewer(function (v) {
+        var result = v.playAnimation();
+        return result;
+      });
+    },
+
+    /**
+     * Phase 3A: 暂停动画。
+     * @returns {string} JSON 结果
+     *   {"success": true, "state": "PAUSED"}
+     *   {"success": false, "error": {"code": "...", "message": "..."}}
+     */
+    pauseAnimation: function () {
+      return callViewer(function (v) {
+        var result = v.pauseAnimation();
+        return result;
+      });
+    },
+
+    /**
+     * Phase 3A: 停止动画。
+     * @param {string} [optionsJson] 可选 JSON 字符串 {resetPose?: boolean}
+     * @returns {string} JSON 结果
+     *   {"success": true, "state": "STOPPED"}
+     *   {"success": false, "error": {"code": "...", "message": "..."}}
+     */
+    stopAnimation: function (optionsJson) {
+      var options = undefined;
+      if (typeof optionsJson === 'string' && optionsJson.length > 0) {
+        try {
+          options = JSON.parse(optionsJson);
+        } catch (e) {
+          return jsonResult({
+            success: false,
+            error: { code: 'ANIMATION_STOP_INVALID_STATE', message: 'optionsJson is not valid JSON' }
+          });
+        }
+      }
+      return callViewer(function (v) {
+        var result = v.stopAnimation(options);
+        return result;
+      });
     }
   };
 

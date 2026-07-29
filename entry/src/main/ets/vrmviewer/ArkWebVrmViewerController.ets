@@ -949,6 +949,109 @@ export class ArkWebVrmViewerController implements ArkWebViewerBridgeListener {
     }
   }
 
+  // ===== Phase 3A — VRMA 文件导入与最小播放闭环 (规范 §三十一) =====
+
+  /**
+   * Phase 3A: 加载 VRMA 动画资源。
+   *
+   * 同步返回加载启动结果(不返回 Promise):
+   *   {"success": true, "state": "LOADING", "generation": <number>}
+   *   {"success": false, "error": {"code": "...", "message": "..."}}
+   *
+   * 异步结果通过 getAnimationState() / getAnimationDebugState() 查询。
+   *
+   * @param resourceJson ArkTS 传入的 JSON 字符串
+   *   必需字段:resourceUrl / resourceId / displayName / mimeType / size
+   *   禁止字段:cachePath / sourceUri (ArkTS 已剥离)
+   * @returns JSON 字符串
+   */
+  async loadAnimationResource(resourceJson: string): Promise<string> {
+    if (this.disposed) {
+      const disposedError: ArkWebBridgeErrorPayload = { code: 'DISPOSED', message: 'controller disposed' };
+      const disposedResponse: ArkWebBridgeFailedResponse = { success: false, error: disposedError };
+      return JSON.stringify(disposedResponse);
+    }
+    try {
+      return await this.jsCaller.loadAnimationResource(resourceJson);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const failedError: ArkWebBridgeErrorPayload = { code: 'ANIMATION_LOAD_FAILED', message: msg };
+      const failedResponse: ArkWebBridgeFailedResponse = { success: false, error: failedError };
+      return JSON.stringify(failedResponse);
+    }
+  }
+
+  /**
+   * Phase 3A: 播放动画。
+   *
+   * @returns JSON 字符串
+   *   {"success": true, "state": "PLAYING"}
+   *   {"success": false, "error": {"code": "...", "message": "..."}}
+   */
+  async playAnimation(): Promise<string> {
+    if (this.disposed) {
+      const disposedError: ArkWebBridgeErrorPayload = { code: 'DISPOSED', message: 'controller disposed' };
+      const disposedResponse: ArkWebBridgeFailedResponse = { success: false, error: disposedError };
+      return JSON.stringify(disposedResponse);
+    }
+    try {
+      return await this.jsCaller.playAnimation();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const failedError: ArkWebBridgeErrorPayload = { code: 'ANIMATION_ACTION_MISSING', message: msg };
+      const failedResponse: ArkWebBridgeFailedResponse = { success: false, error: failedError };
+      return JSON.stringify(failedResponse);
+    }
+  }
+
+  /**
+   * Phase 3A: 暂停动画。
+   *
+   * @returns JSON 字符串
+   *   {"success": true, "state": "PAUSED"}
+   *   {"success": false, "error": {"code": "...", "message": "..."}}
+   */
+  async pauseAnimation(): Promise<string> {
+    if (this.disposed) {
+      const disposedError: ArkWebBridgeErrorPayload = { code: 'DISPOSED', message: 'controller disposed' };
+      const disposedResponse: ArkWebBridgeFailedResponse = { success: false, error: disposedError };
+      return JSON.stringify(disposedResponse);
+    }
+    try {
+      return await this.jsCaller.pauseAnimation();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const failedError: ArkWebBridgeErrorPayload = { code: 'ANIMATION_PAUSE_INVALID_STATE', message: msg };
+      const failedResponse: ArkWebBridgeFailedResponse = { success: false, error: failedError };
+      return JSON.stringify(failedResponse);
+    }
+  }
+
+  /**
+   * Phase 3A: 停止动画。
+   *
+   * @param optionsJson 可选 JSON 字符串 {resetPose?: boolean},默认 resetPose=true
+   *   传空字符串表示使用默认选项。
+   * @returns JSON 字符串
+   *   {"success": true, "state": "STOPPED"}
+   *   {"success": false, "error": {"code": "...", "message": "..."}}
+   */
+  async stopAnimation(optionsJson: string): Promise<string> {
+    if (this.disposed) {
+      const disposedError: ArkWebBridgeErrorPayload = { code: 'DISPOSED', message: 'controller disposed' };
+      const disposedResponse: ArkWebBridgeFailedResponse = { success: false, error: disposedError };
+      return JSON.stringify(disposedResponse);
+    }
+    try {
+      return await this.jsCaller.stopAnimation(optionsJson);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const failedError: ArkWebBridgeErrorPayload = { code: 'ANIMATION_STOP_INVALID_STATE', message: msg };
+      const failedResponse: ArkWebBridgeFailedResponse = { success: false, error: failedError };
+      return JSON.stringify(failedResponse);
+    }
+  }
+
   // ===== Web 组件生命周期回调 =====
 
   /**

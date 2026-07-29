@@ -703,6 +703,58 @@ export class ArkWebViewerJsCaller {
     return this.call('getAnimationDependencyState');
   }
 
+  /**
+   * Phase 3A — VRMA 文件导入与最小播放闭环: 调用 window.arkTavernViewerBridge.loadAnimationResource(resourceJson)
+   *
+   * 同步返回加载启动结果(不返回 Promise):
+   *   {"success": true, "state": "LOADING", "generation": <number>}
+   *   {"success": false, "error": {"code": "...", "message": "..."}}
+   *
+   * 异步结果通过 getAnimationState() / getAnimationDebugState() 查询。
+   *
+   * @param resourceJson ArkTS 传入的 JSON 字符串
+   *   必需字段:resourceUrl / resourceId / displayName / mimeType / size
+   *   禁止字段:cachePath / sourceUri (ArkTS 已剥离)
+   * @returns JSON 字符串
+   */
+  async loadAnimationResource(resourceJson: string): Promise<string> {
+    return this.callWithStringArg('loadAnimationResource', resourceJson);
+  }
+
+  /**
+   * Phase 3A — VRMA 文件导入与最小播放闭环: 调用 window.arkTavernViewerBridge.playAnimation()
+   *
+   * @returns JSON 字符串
+   *   {"success": true, "state": "PLAYING"}
+   *   {"success": false, "error": {"code": "...", "message": "..."}}
+   */
+  async playAnimation(): Promise<string> {
+    return this.call('playAnimation');
+  }
+
+  /**
+   * Phase 3A — VRMA 文件导入与最小播放闭环: 调用 window.arkTavernViewerBridge.pauseAnimation()
+   *
+   * @returns JSON 字符串
+   *   {"success": true, "state": "PAUSED"}
+   *   {"success": false, "error": {"code": "...", "message": "..."}}
+   */
+  async pauseAnimation(): Promise<string> {
+    return this.call('pauseAnimation');
+  }
+
+  /**
+   * Phase 3A — VRMA 文件导入与最小播放闭环: 调用 window.arkTavernViewerBridge.stopAnimation(optionsJson)
+   *
+   * @param optionsJson 可选 JSON 字符串 {resetPose?: boolean},默认 resetPose=true
+   * @returns JSON 字符串
+   *   {"success": true, "state": "STOPPED"}
+   *   {"success": false, "error": {"code": "...", "message": "..."}}
+   */
+  async stopAnimation(optionsJson: string): Promise<string> {
+    return this.callWithStringArg('stopAnimation', optionsJson);
+  }
+
   private async call(methodName: string): Promise<string> {
     const fn = this.runJs;
     if (fn === null) {
