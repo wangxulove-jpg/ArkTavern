@@ -46,6 +46,7 @@ import {
   ANIMATION_CACHE_SUBDIR,
   VRMA_MIME_TYPE
 } from './ArkWebAnimationImportController';
+import { ArkWebAvatarAnimationAsset } from './ArkWebAvatarAssetTypes';
 
 /**
  * 动画资源状态机 (与 ModelResourceState 解耦)。
@@ -147,6 +148,8 @@ export class ArkWebAnimationResourceProvider {
   private disposed: boolean = false;
   /** 受控缓存目录 (规范化后的绝对路径)。 */
   private readonly animationDirectory: string;
+  /** 持久化根目录 (filesDir/avatar-assets, Phase 3C-1)。空字符串表示未配置。 */
+  private persistentRootDir: string = '';
 
   /**
    * 构造函数。
@@ -156,6 +159,23 @@ export class ArkWebAnimationResourceProvider {
   constructor(cacheDir: string) {
     const rawDir: string = `${cacheDir}/${ANIMATION_CACHE_SUBDIR}`;
     this.animationDirectory = normalizePath(rawDir);
+  }
+
+  /**
+   * 配置持久化根目录 (filesDir/avatar-assets) (Phase 3C-1)。
+   *
+   * 配置后, registerPersistentAsset 可接受位于 <persistentRootDir>/animations/ 下的文件。
+   * 不影响原有 registerFile 对 cacheDir 的处理。
+   *
+   * @param assetsRootDir 资产根目录 (来自 ArkWebAvatarAssetLibrary.getAssetsRootDir())
+   */
+  setPersistentRootDir(assetsRootDir: string): void {
+    if (assetsRootDir.length === 0) {
+      this.persistentRootDir = '';
+      return;
+    }
+    this.persistentRootDir = normalizePath(assetsRootDir);
+    console.info(`[ArkWebAnimationResourceProvider] persistentRootDir=${this.persistentRootDir}`);
   }
 
   /**
@@ -232,6 +252,90 @@ export class ArkWebAnimationResourceProvider {
 
     console.info(
       `[ArkWebAnimationResourceProvider] registerFile: resourceId=${file.resourceId}, size=${file.size}, mimeType=${file.mimeType}`
+    );
+
+    return publicResource;
+  }
+
+  /**
+   * 注册持久化动画资产为受控资源 (Phase 3C-1)。
+   *
+   * 与 registerFile 的区别:
+   * - 输入为 ArkWebAvatarAnimationAsset (来自 library.json)
+   * - 文件位于 <persistentRootDir>/animations/ 下 (filesDir)
+   * - 通过 assetLibrary.resolveAbsolutePath 由调用方提供绝对路径
+   * - 不依赖 ImportedAnimationFile / cachePath
+   *
+   * 步骤:
+   * 1. 检查 Provider 未销毁
+   * 2. 验证 persistentRootDir 已配置
+   * 3. 验证 absolutePath 位于 <persistentRootDir>/animations/ 下 (目录穿越防护)
+   * 4. 验证文件存在且为普通文件
+   * 5. 验证文件大小与 asset.byteLength 一致
+   * 6. 构造 WebAnimationResource (使用 asset.resourceId)
+   * 7. 原子替换 currentResource
+   *
+   * @param asset 持久化动画资产
+   * @param absolutePath 由 PersistentAnimationStore.resolveAbsolutePath 返回的绝对路径
+   * @returns 公共资源接口; 失败抛出 Error
+   */
+  registerPersistentAsset(asset: ArkWebAvatarAnimationAsset, absolutePath: string): WebAnimationResource {
+    if (this.disposed || this.state === AnimationResourceState.DISPOSED) {
+      throw new Error(AnimationResourceErrorCode.RESOURCE_PROVIDER_DISPOSED);
+    }
+    if (this.persistentRootDir.length === 0) {
+      throw new Error(`${AnimationResourceErrorCode.RESOURCE_PATH_INVALID}: persistentRootDir not configured`);
+    }
+    // 受控动画持久目录: <persistentRootDir>/animations
+    const persistentAnimDir: string = `${this.persistentRootDir}/animations`;
+
+    const normalizedPath: string = normalizePath(absolutePath);
+    if (!isPathUnderDirectory(normalizedPath, persistentAnimDir)) {
+      throw new Error(`${AnimationResourceErrorCode.RESOURCE_PATH_INVALID}: path not under persistent animations dir`);
+    }
+    if (containsTraversalSegments(normalizedPath)) {
+      throw new Error(`${AnimationResourceErrorCode.RESOURCE_PATH_INVALID}: path contains '..' segment`);
+    }
+
+    // 文件存在性 + 大小校验
+    let stat: fileIo.Stat;
+    try {
+      stat = fileIo.statSync(normalizedPath);
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      throw new Error(`${AnimationResourceErrorCode.RESOURCE_OPEN_FAILED}: stat failed: ${msg}`);
+    }
+    if (!stat.isFile) {
+      throw new Error(`${AnimationResourceErrorCode.RESOURCE_PATH_INVALID}: not a regular file`);
+    }
+    if (stat.size !== asset.byteLength) {
+      throw new Error(
+        `${AnimationResourceErrorCode.RESOURCE_PATH_INVALID}: size mismatch (expected ${asset.byteLength}, actual ${stat.size})`
+      );
+    }
+
+    // 构造受控 URL (使用 asset.resourceId)
+    const resourceUrl: string = buildAnimationResourceUrl(asset.resourceId);
+
+    const publicResource: WebAnimationResource = {
+      resourceId: asset.resourceId,
+      resourceUrl: resourceUrl,
+      displayName: asset.displayName,
+      mimeType: asset.mimeType,
+      size: asset.byteLength,
+      extension: 'vrma',
+      createdAt: asset.createdAt
+    };
+
+    const internalResource: InternalAnimationResource = {
+      publicResource: publicResource,
+      cachePath: normalizedPath
+    };
+    this.currentResource = internalResource;
+    this.state = AnimationResourceState.READY;
+
+    console.info(
+      `[ArkWebAnimationResourceProvider] registerPersistentAsset: resourceId=${asset.resourceId}, size=${asset.byteLength}`
     );
 
     return publicResource;

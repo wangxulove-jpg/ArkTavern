@@ -62,15 +62,46 @@ export interface ArkWebAvatarModelAsset {
  * 本阶段:
  * - schemaVersion = 1
  * - models 数组 (可含 0..N 条记录)
- * - animations 固定为空数组 (Phase 3C 实现)
- * - poses 固定为空数组 (Phase 3C 实现)
+ * - animations 数组 (Phase 3C-1 起支持多 VRMA 持久化)
+ * - poses 固定为空数组 (Phase 3C 后续阶段实现)
  */
 export interface ArkWebAvatarAssetLibraryData {
   schemaVersion: number;
   activeModelId: string;
   models: ArkWebAvatarModelAsset[];
-  animations: Object[];
+  animations: ArkWebAvatarAnimationAsset[];
   poses: Object[];
+}
+
+/**
+ * 持久化动画资产记录 (Phase 3C-1)。
+ *
+ * 字段:
+ * - actionId: 唯一标识 (action_<timestamp>_<random>)
+ * - resourceId: Provider 资源 ID (可与 actionId 相同)
+ * - displayName: 用户可读显示名 (来自用户文件名,已做安全清理)
+ * - relativePath: 相对 filesDir/avatar-assets/ 的路径 (如 "animations/action_xxx.vrma")
+ * - mimeType: MIME 类型 (model/gltf-binary)
+ * - byteLength: 文件大小 (字节)
+ * - createdAt: 创建时间戳 (ms)
+ * - updatedAt: 更新时间戳 (ms)
+ *
+ * 禁止字段:
+ * - absolutePath
+ * - cachePath
+ * - sourceUri
+ * - ArkWeb URL
+ * - 文件描述符
+ */
+export interface ArkWebAvatarAnimationAsset {
+  actionId: string;
+  resourceId: string;
+  displayName: string;
+  relativePath: string;
+  mimeType: string;
+  byteLength: number;
+  createdAt: number;
+  updatedAt: number;
 }
 
 /**
@@ -182,4 +213,30 @@ export class LegacyModelMigrationErrorCode {
   static readonly LEGACY_MIGRATE_COPY_FAILED: string = 'LEGACY_MIGRATE_COPY_FAILED';
   /** 迁移后清单写入失败。 */
   static readonly LEGACY_MIGRATE_LIBRARY_WRITE_FAILED: string = 'LEGACY_MIGRATE_LIBRARY_WRITE_FAILED';
+}
+
+/**
+ * 持久化动画资产错误码 (Phase 3C-1)。
+ */
+export class PersistentAnimationErrorCode {
+  /** PersistentAnimationStore 已销毁。 */
+  static readonly ANIMATION_STORE_DISPOSED: string = 'ANIMATION_STORE_DISPOSED';
+  /** AssetLibrary 未初始化或已销毁。 */
+  static readonly ANIMATION_STORE_LIBRARY_INVALID: string = 'ANIMATION_STORE_LIBRARY_INVALID';
+  /** 源文件打开失败。 */
+  static readonly ANIMATION_SOURCE_OPEN_FAILED: string = 'ANIMATION_SOURCE_OPEN_FAILED';
+  /** 源文件为空 (size === 0)。 */
+  static readonly ANIMATION_FILE_EMPTY: string = 'ANIMATION_FILE_EMPTY';
+  /** 目标 .part 文件创建失败。 */
+  static readonly ANIMATION_TARGET_CREATE_FAILED: string = 'ANIMATION_TARGET_CREATE_FAILED';
+  /** 复制过程读取失败。 */
+  static readonly ANIMATION_FILE_READ_FAILED: string = 'ANIMATION_FILE_READ_FAILED';
+  /** 复制过程写入失败。 */
+  static readonly ANIMATION_FILE_WRITE_FAILED: string = 'ANIMATION_FILE_WRITE_FAILED';
+  /** 复制不完整 (写入字节数与源大小不一致)。 */
+  static readonly ANIMATION_FILE_COPY_INCOMPLETE: string = 'ANIMATION_FILE_COPY_INCOMPLETE';
+  /** rename .part → 最终文件失败。 */
+  static readonly ANIMATION_RENAME_FAILED: string = 'ANIMATION_RENAME_FAILED';
+  /** 清单写入失败 (回滚: 删除新动画文件)。 */
+  static readonly ANIMATION_LIBRARY_WRITE_FAILED: string = 'ANIMATION_LIBRARY_WRITE_FAILED';
 }

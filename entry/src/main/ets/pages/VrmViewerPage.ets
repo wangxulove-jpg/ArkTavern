@@ -119,11 +119,16 @@ import {
   ArkWebPersistentModelStore
 } from '../vrmviewer/ArkWebPersistentModelStore';
 import {
+  ArkWebPersistentAnimationStore
+} from '../vrmviewer/ArkWebPersistentAnimationStore';
+import {
   ArkWebAvatarModelAsset,
+  ArkWebAvatarAnimationAsset,
   ArkWebModelRestoreState,
   ArkWebModelRestoreResult,
   ASSET_LIBRARY_SCHEMA_VERSION,
-  ModelRestoreErrorCode
+  ModelRestoreErrorCode,
+  PersistentAnimationErrorCode
 } from '../vrmviewer/ArkWebAvatarAssetTypes';
 
 /**
@@ -567,6 +572,18 @@ struct VrmViewerPage {
   /** 动画加载轮询最大次数(300 × 100ms = 30s 超时) */
   private readonly ANIMATION_LOAD_POLL_MAX_COUNT: number = 300;
 
+  // ===== Phase 3C-1 — 多 VRMA 持久化与动作列表 =====
+  /** 持久化动画存储 (Phase 3C-1)。 */
+  private persistentAnimationStore: ArkWebPersistentAnimationStore | null = null;
+  /** 持久化动画资产列表 (从 library.animations 读取)。 */
+  @State animationAssets: ArkWebAvatarAnimationAsset[] = [];
+  /** 当前选中的 actionId (用户点击列表项后设置)。 */
+  @State selectedActionId: string = '';
+  /** 动画库错误码 (导入/恢复/加载失败时设置)。 */
+  @State animationLibraryErrorCode: string = '';
+  /** 动画库错误消息。 */
+  @State animationLibraryErrorMessage: string = '';
+
   // ===== Phase 3B — 模型自动恢复与持久化资产目录 =====
   /** 资产库状态(READY / EMPTY / FAILED / DISPOSED) */
   @State assetLibraryState: string = 'IDLE';
@@ -736,6 +753,16 @@ struct VrmViewerPage {
       this.animationResourceProvider = new ArkWebAnimationResourceProvider(ctx.cacheDir);
     }
 
+    // Phase 3C-1:创建持久化动画存储,配置 Provider 接受 filesDir/avatar-assets/animations/
+    if (this.persistentAnimationStore === null && this.assetLibrary !== null) {
+      this.persistentAnimationStore = new ArkWebPersistentAnimationStore(ctx, this.assetLibrary);
+    }
+    if (this.animationResourceProvider !== null && this.assetLibrary !== null) {
+      this.animationResourceProvider.setPersistentRootDir(this.assetLibrary.getAssetsRootDir());
+      // 异步加载已有动画列表(不在启动时自动加载动画内容)
+      this.loadAnimationAssetsFromLibrary();
+    }
+
     // Web 组件加载由 build() 触发,初始化在 onPageEnd 回调中完成
   }
 
@@ -846,6 +873,16 @@ struct VrmViewerPage {
       this.animationImportController.dispose();
       this.animationImportController = null;
     }
+    // Phase 3C-1:13. 销毁持久化动画存储(不删除 filesDir 下的动画文件,不清空 library.animations)
+    if (this.persistentAnimationStore !== null) {
+      this.persistentAnimationStore.dispose();
+      this.persistentAnimationStore = null;
+    }
+    // Phase 3C-1:14. 清空动画列表运行时状态(下次进入重新读取 library)
+    this.animationAssets = [];
+    this.selectedActionId = '';
+    this.animationLibraryErrorCode = '';
+    this.animationLibraryErrorMessage = '';
     // Phase 3B:13. 销毁 Phase 3B 持久化资源(不删除 filesDir 下的模型文件与 library.json)
     // 标记 restoreDisposed 阻止异步恢复回调
     this.restoreDisposed = true;
@@ -1391,17 +1428,20 @@ struct VrmViewerPage {
   // ===== Phase 3A — VRMA 文件导入与最小播放闭环 =====
 
   /**
-   * Phase 3A: 用户点击"选择 VRMA"按钮。
+   * Phase 3C-1: 用户点击"选择 VRMA"按钮。
    *
-   * 流程 (AGENTS.md Phase 3A §三十二):
+   * 流程 (AGENTS.md Phase 3C-1 §六):
    * 1. 选择 .vrma (DocumentViewPicker, 仅 .vrma 后缀)
-   * 2. 原子缓存到 <cacheDir>/vrm-animations/<resourceId>.vrma
-   * 3. 注册 Provider (生成受控 URL)
-   * 4. 调用 loadAnimationResource() (同步返回 LOADING + generation)
-   * 5. 启动轮询 (每 100ms, 最长 30s)
-   * 6. READY/FAILED 后停止轮询
+   * 2. 持久复制到 <filesDir>/avatar-assets/animations/<actionId>.vrma.part → rename
+   * 3. 向 library.animations 追加记录 (不覆盖已有动作)
+   * 4. 刷新动作列表
+   * 5. 自动选择新动作
+   * 6. 注册 Animation Provider (registerPersistentAsset)
+   * 7. 调用现有 loadAnimationResource()
+   * 8. 启动轮询
    *
-   * 加载中禁用选择/播放/暂停/停止 (由 animationImportState / debugAnimationState 控制)。
+   * 加载中禁用选择/播放/暂停/停止。
+   * 失败保留其他动作记录,显示具体错误码。
    */
   private async onAnimationImportButton(): Promise<void> {
     if (this.animationImportController === null) {
@@ -1410,6 +1450,10 @@ struct VrmViewerPage {
     }
     if (this.animationResourceProvider === null) {
       promptAction.showToast({ message: '动画资源 Provider 未初始化' });
+      return;
+    }
+    if (this.persistentAnimationStore === null) {
+      promptAction.showToast({ message: '动画持久存储未初始化' });
       return;
     }
     // Viewer 必须 READY (Bridge 可用)
@@ -1426,8 +1470,11 @@ struct VrmViewerPage {
     this.animationImportState = AnimationImportState.PICKING;
     this.animationImportError = '';
     this.animationActionError = '';
+    this.animationLibraryErrorCode = '';
+    this.animationLibraryErrorMessage = '';
 
     try {
+      // 1. 选择 .vrma
       const file: ImportedAnimationFile | null =
         await this.animationImportController.pickAnimationFile();
       this.animationImportState = this.animationImportController.getState();
@@ -1447,54 +1494,38 @@ struct VrmViewerPage {
         return;
       }
 
-      // 注册到 Provider (生成受控 URL)
-      let publicResource: WebAnimationResource;
-      try {
-        publicResource = this.animationResourceProvider.registerFile(file);
-        this.animationResourceState = this.animationResourceProvider.getState();
-      } catch (e) {
-        const msg: string = e instanceof Error ? e.message : String(e);
-        this.animationImportError = `资源注册失败: ${msg}`;
+      // 2. 持久化到 filesDir/avatar-assets/animations/<actionId>.vrma
+      const asset: ArkWebAvatarAnimationAsset | null =
+        await this.persistentAnimationStore.importAnimation(
+          file.sourceUri, file.displayName, file.extension
+        );
+      if (asset === null) {
+        this.animationImportError = this.persistentAnimationStore.getLastError();
+        this.animationLibraryErrorCode = PersistentAnimationErrorCode.ANIMATION_LIBRARY_WRITE_FAILED;
+        this.animationLibraryErrorMessage = this.animationImportError;
         this.animationImportState = AnimationImportState.FAILED;
-        promptAction.showToast({ message: this.animationImportError });
+        promptAction.showToast({ message: `持久化失败: ${this.animationImportError}` });
         return;
       }
 
-      // 构造传给 JavaScript 的资源 JSON (只含 resourceUrl/displayName/size/mimeType/resourceId)
-      const resourceJsonObj: AnimationResourceBridgePayload = {
-        resourceUrl: publicResource.resourceUrl,
-        resourceId: publicResource.resourceId,
-        displayName: publicResource.displayName,
-        mimeType: publicResource.mimeType,
-        size: publicResource.size
-      };
-      const resourceJson: string = JSON.stringify(resourceJsonObj);
+      // 3. 刷新动作列表
+      await this.loadAnimationAssetsFromLibrary();
 
-      // 调用 Bridge loadAnimationResource (同步返回 LOADING + generation)
-      const resultJson: string = await this.arkWebController.loadAnimationResource(resourceJson);
-      const parsed: Record<string, Object> | null = this.parseAnimationLoadResponse(resultJson);
-      if (parsed === null) {
-        this.animationImportError = 'loadAnimationResource 返回非法 JSON';
+      // 4. 自动选择新动作 + 加载
+      const loaded: boolean = await this.loadAnimationByActionId(asset.actionId);
+      if (!loaded) {
+        // 加载失败: 保留持久资产记录,显示错误码
         this.animationImportState = AnimationImportState.FAILED;
-        promptAction.showToast({ message: this.animationImportError });
-        return;
-      }
-      if (parsed['success'] !== true) {
-        const errObj = parsed['error'] as Record<string, Object>;
-        const errorCode: string = errObj ? (errObj['code'] as string) || 'UNKNOWN' : 'UNKNOWN';
-        const msg: string = errObj ? (errObj['message'] as string) || '' : '';
-        this.animationImportError = `加载启动失败: ${errorCode}${msg.length > 0 ? ' - ' + msg : ''}`;
-        this.animationImportState = AnimationImportState.FAILED;
-        promptAction.showToast({ message: this.animationImportError });
+        promptAction.showToast({
+          message: `动作已保存但加载失败: ${this.animationLibraryErrorMessage}`
+        });
         return;
       }
 
-      // 加载已启动, 状态显示 LOADING
+      // 5. 加载已启动
       this.animationImportState = AnimationImportState.READY;
       this.animationActionError = '';
-      // 立即刷新 Debug 状态 (获取 generation)
       this.refreshAnimationDebugState();
-      // 启动轮询
       this.startAnimationLoadPolling();
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
@@ -1502,6 +1533,156 @@ struct VrmViewerPage {
       this.animationImportState = AnimationImportState.FAILED;
       promptAction.showToast({ message: this.animationImportError });
     }
+  }
+
+  // ===== Phase 3C-1 — 多 VRMA 持久化与动作列表 =====
+
+  /**
+   * Phase 3C-1: 从 library.json 读取 animations 数组,刷新动作列表。
+   *
+   * 仅恢复元数据,不在启动时解析所有 VRMA。
+   * 失败时不清空已有列表 (保留上次状态)。
+   */
+  private async loadAnimationAssetsFromLibrary(): Promise<void> {
+    if (this.assetLibrary === null) {
+      return;
+    }
+    try {
+      const animations: ArkWebAvatarAnimationAsset[] = await this.assetLibrary.readAnimations();
+      this.animationAssets = animations;
+      console.info(`[VrmViewerPage] loaded ${animations.length} animation assets from library`);
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      console.warn(`[VrmViewerPage] loadAnimationAssetsFromLibrary failed: ${msg}`);
+    }
+  }
+
+  /**
+   * Phase 3C-1: 根据 actionId 加载持久化动画到现有 AnimationController。
+   *
+   * 流程:
+   * 1. 校验状态 (Viewer READY / Store / Provider 可用)
+   * 2. 从 library 查找 actionId 对应资产
+   * 3. 解析绝对路径 (filesDir + relativePath)
+   * 4. 注册到 Provider (registerPersistentAsset)
+   * 5. 调用 Bridge loadAnimationResource
+   * 6. 更新 selectedActionId
+   *
+   * 不自动播放 (用户需手动点击播放按钮)。
+   *
+   * @returns 成功返回 true; 失败返回 false (错误信息写入 animationLibraryErrorMessage)
+   */
+  private async loadAnimationByActionId(actionId: string): Promise<boolean> {
+    if (actionId.length === 0) {
+      this.animationLibraryErrorCode = PersistentAnimationErrorCode.ANIMATION_STORE_DISPOSED;
+      this.animationLibraryErrorMessage = 'actionId 为空';
+      return false;
+    }
+    if (this.assetLibrary === null || this.persistentAnimationStore === null
+        || this.animationResourceProvider === null) {
+      this.animationLibraryErrorCode = PersistentAnimationErrorCode.ANIMATION_STORE_LIBRARY_INVALID;
+      this.animationLibraryErrorMessage = '动画库/存储/Provider 未初始化';
+      return false;
+    }
+    if (this.viewerState !== ArkWebViewerState.READY) {
+      this.animationLibraryErrorCode = PersistentAnimationErrorCode.ANIMATION_STORE_DISPOSED;
+      this.animationLibraryErrorMessage = 'Viewer 未 READY';
+      return false;
+    }
+    if (this.debugAnimationState === 'LOADING') {
+      this.animationLibraryErrorCode = PersistentAnimationErrorCode.ANIMATION_STORE_DISPOSED;
+      this.animationLibraryErrorMessage = '动画加载中,请稍候';
+      return false;
+    }
+
+    // 1. 查找资产
+    const asset: ArkWebAvatarAnimationAsset | null =
+      await this.assetLibrary.findAnimation(actionId);
+    if (asset === null) {
+      this.animationLibraryErrorCode = PersistentAnimationErrorCode.ANIMATION_STORE_LIBRARY_INVALID;
+      this.animationLibraryErrorMessage = `未找到动作: ${actionId}`;
+      return false;
+    }
+
+    // 2. 解析绝对路径
+    const absolutePath: string = this.persistentAnimationStore.resolveAbsolutePath(asset.relativePath);
+    if (absolutePath.length === 0) {
+      this.animationLibraryErrorCode = PersistentAnimationErrorCode.ANIMATION_STORE_LIBRARY_INVALID;
+      this.animationLibraryErrorMessage = `路径不安全: ${asset.relativePath}`;
+      return false;
+    }
+
+    // 3. 注册到 Provider
+    let publicResource: WebAnimationResource;
+    try {
+      publicResource = this.animationResourceProvider.registerPersistentAsset(asset, absolutePath);
+      this.animationResourceState = this.animationResourceProvider.getState();
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      this.animationLibraryErrorCode = PersistentAnimationErrorCode.ANIMATION_RENAME_FAILED;
+      this.animationLibraryErrorMessage = `Provider 注册失败: ${msg}`;
+      return false;
+    }
+
+    // 4. 调用 Bridge loadAnimationResource
+    const resourceJsonObj: AnimationResourceBridgePayload = {
+      resourceUrl: publicResource.resourceUrl,
+      resourceId: publicResource.resourceId,
+      displayName: publicResource.displayName,
+      mimeType: publicResource.mimeType,
+      size: publicResource.size
+    };
+    const resourceJson: string = JSON.stringify(resourceJsonObj);
+
+    const resultJson: string = await this.arkWebController.loadAnimationResource(resourceJson);
+    const parsed: Record<string, Object> | null = this.parseAnimationLoadResponse(resultJson);
+    if (parsed === null) {
+      this.animationLibraryErrorCode = PersistentAnimationErrorCode.ANIMATION_LIBRARY_WRITE_FAILED;
+      this.animationLibraryErrorMessage = 'loadAnimationResource 返回非法 JSON';
+      return false;
+    }
+    if (parsed['success'] !== true) {
+      const errObj = parsed['error'] as Record<string, Object>;
+      const errorCode: string = errObj ? (errObj['code'] as string) || 'UNKNOWN' : 'UNKNOWN';
+      const msg: string = errObj ? (errObj['message'] as string) || '' : '';
+      this.animationLibraryErrorCode = errorCode;
+      this.animationLibraryErrorMessage = `加载启动失败: ${errorCode}${msg.length > 0 ? ' - ' + msg : ''}`;
+      return false;
+    }
+
+    // 5. 更新选中状态
+    this.selectedActionId = actionId;
+    this.animationLibraryErrorCode = '';
+    this.animationLibraryErrorMessage = '';
+    console.info(`[VrmViewerPage] loadAnimationByActionId ok: ${actionId}`);
+    return true;
+  }
+
+  /**
+   * Phase 3C-1: 用户点击动作列表项时触发。
+   */
+  private async onAnimationListItemClick(actionId: string): Promise<void> {
+    if (actionId.length === 0) {
+      return;
+    }
+    if (this.debugAnimationState === 'LOADING') {
+      promptAction.showToast({ message: '动画加载中,请稍候' });
+      return;
+    }
+    if (this.selectedActionId === actionId && this.debugAnimationState === 'READY') {
+      // 已选中且已加载,不重复加载
+      return;
+    }
+
+    const loaded: boolean = await this.loadAnimationByActionId(actionId);
+    if (!loaded) {
+      promptAction.showToast({
+        message: `加载失败: ${this.animationLibraryErrorMessage}`
+      });
+      return;
+    }
+    this.refreshAnimationDebugState();
+    this.startAnimationLoadPolling();
   }
 
   /**
@@ -5989,6 +6170,32 @@ struct VrmViewerPage {
       .width('100%')
       .margin({ bottom: 16 })
 
+      // Phase 3C-1 — 动作列表
+      Text('动作列表')
+        .fontSize($r('app.float.app_font_subtitle'))
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.app_text_primary'))
+        .margin({ bottom: 8 })
+
+      if (this.animationAssets.length === 0) {
+        Text('暂无已保存的动作,点击"选择 VRMA"导入')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .width('100%')
+          .margin({ bottom: 16 })
+      } else {
+        List({ space: 4 }) {
+          ForEach(this.animationAssets, (asset: ArkWebAvatarAnimationAsset) => {
+            ListItem() {
+              this.AnimationListItem(asset)
+            }
+          }, (asset: ArkWebAvatarAnimationAsset) => asset.actionId)
+        }
+        .width('100%')
+        .margin({ bottom: 16 })
+        .alignListItem(ListItemAlign.Center)
+      }
+
       // 状态显示区
       Text('动画状态')
         .fontSize($r('app.float.app_font_subtitle'))
@@ -6015,6 +6222,11 @@ struct VrmViewerPage {
         this.DebugRow('错误信息', this.debugAnimationErrorMessage)
       }
 
+      if (this.animationLibraryErrorCode.length > 0) {
+        this.DebugRow('动画库错误码', this.animationLibraryErrorCode)
+        this.DebugRow('动画库错误信息', this.animationLibraryErrorMessage)
+      }
+
       if (this.animationImportError.length > 0) {
         Text(this.animationImportError)
           .fontSize($r('app.float.app_font_caption'))
@@ -6033,6 +6245,66 @@ struct VrmViewerPage {
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)
+  }
+
+  /**
+   * Phase 3C-1: 动作列表项 (显示动作名/大小/选中状态)。
+   *
+   * 不显示: absolutePath / relativePath / filesDir / 原始 URI。
+   */
+  @Builder
+  AnimationListItem(asset: ArkWebAvatarAnimationAsset) {
+    Row() {
+      Column() {
+        Text(asset.displayName)
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor($r('app.color.app_text_primary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+        Text(this.formatAnimationByteLength(asset.byteLength))
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .width('100%')
+          .margin({ top: 2 })
+      }
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
+
+      Text(this.selectedActionId === asset.actionId ? '已选中' : '点击加载')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor(this.selectedActionId === asset.actionId
+          ? $r('app.color.app_text_primary')
+          : $r('app.color.app_text_secondary'))
+        .margin({ left: 8 })
+    }
+    .width('100%')
+    .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+    .backgroundColor(this.selectedActionId === asset.actionId
+      ? $r('app.color.app_surface_2')
+      : $r('app.color.app_surface_1'))
+    .borderRadius($r('app.float.app_radius_sm'))
+    .onClick(() => {
+      this.onAnimationListItemClick(asset.actionId);
+    })
+  }
+
+  /**
+   * Phase 3C-1: 格式化动画字节大小为可读字符串。
+   */
+  private formatAnimationByteLength(bytes: number): string {
+    if (bytes <= 0) {
+      return '0 B';
+    }
+    const KB: number = 1024;
+    const MB: number = KB * 1024;
+    if (bytes >= MB) {
+      return `${(bytes / MB).toFixed(2)} MB`;
+    }
+    if (bytes >= KB) {
+      return `${(bytes / KB).toFixed(2)} KB`;
+    }
+    return `${bytes} B`;
   }
 
   @Builder

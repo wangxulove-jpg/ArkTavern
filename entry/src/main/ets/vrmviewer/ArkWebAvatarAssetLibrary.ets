@@ -55,6 +55,7 @@ import { common } from '@kit.AbilityKit';
 import {
   ArkWebAvatarAssetLibraryData,
   ArkWebAvatarModelAsset,
+  ArkWebAvatarAnimationAsset,
   AssetLibraryErrorCode
 } from './ArkWebAvatarAssetTypes';
 import { ASSET_LIBRARY_SCHEMA_VERSION } from './ArkWebAvatarAssetTypes';
@@ -68,6 +69,11 @@ export const AVATAR_ASSETS_DIR_NAME: string = 'avatar-assets';
  * 模型子目录名称 (相对 avatar-assets/)。
  */
 export const MODELS_SUBDIR_NAME: string = 'models';
+
+/**
+ * 动画子目录名称 (相对 avatar-assets/)。Phase 3C-1。
+ */
+export const ANIMATIONS_SUBDIR_NAME: string = 'animations';
 
 /**
  * library.json 文件名。
@@ -96,6 +102,8 @@ export class ArkWebAvatarAssetLibrary {
   private readonly assetsRootDir: string;
   /** 模型目录绝对路径 (<filesDir>/avatar-assets/models)。 */
   private readonly modelsDir: string;
+  /** 动画目录绝对路径 (<filesDir>/avatar-assets/animations)。Phase 3C-1。 */
+  private readonly animationsDir: string;
   /** library.json 绝对路径。 */
   private readonly libraryFilePath: string;
   /** library.json.part 绝对路径。 */
@@ -104,6 +112,8 @@ export class ArkWebAvatarAssetLibrary {
   private inMemoryData: ArkWebAvatarAssetLibraryData | null = null;
   /** 是否已初始化 (ensureInitialized 成功)。 */
   private initialized: boolean = false;
+  /** 进行中的初始化 promise (防止并发初始化导致 .part 竞态)。 */
+  private initPromise: Promise<boolean> | null = null;
   /** 是否已销毁。 */
   private disposed: boolean = false;
 
@@ -112,6 +122,7 @@ export class ArkWebAvatarAssetLibrary {
     const rawRoot: string = `${context.filesDir}/${AVATAR_ASSETS_DIR_NAME}`;
     this.assetsRootDir = this.normalizePath(rawRoot);
     this.modelsDir = `${this.assetsRootDir}/${MODELS_SUBDIR_NAME}`;
+    this.animationsDir = `${this.assetsRootDir}/${ANIMATIONS_SUBDIR_NAME}`;
     this.libraryFilePath = `${this.assetsRootDir}/${LIBRARY_FILE_NAME}`;
     this.libraryPartFilePath = `${this.assetsRootDir}/${LIBRARY_PART_FILE_NAME}`;
   }
@@ -124,6 +135,11 @@ export class ArkWebAvatarAssetLibrary {
   /** 获取模型目录绝对路径 (<filesDir>/avatar-assets/models)。 */
   getModelsDir(): string {
     return this.modelsDir;
+  }
+
+  /** 获取动画目录绝对路径 (<filesDir>/avatar-assets/animations)。Phase 3C-1。 */
+  getAnimationsDir(): string {
+    return this.animationsDir;
   }
 
   /** 获取 library.json 绝对路径。 */
@@ -141,6 +157,10 @@ export class ArkWebAvatarAssetLibrary {
    * 4. 若 library.json 存在但不合法,重命名为 .corrupt.<ts> 并创建空清单
    * 5. initialized = true
    *
+   * 并发保护: 多次调用复用同一个 initPromise, 防止 aboutToAppear 的异步
+   * ensureInitialized 与 loadAnimationAssetsFromLibrary / importModel 触发的
+   * ensureInitialized 并发执行导致 library.json.part 互删竞态。
+   *
    * @returns 成功返回 true;失败返回 false (查看 console)
    */
   async ensureInitialized(): Promise<boolean> {
@@ -150,23 +170,64 @@ export class ArkWebAvatarAssetLibrary {
     if (this.initialized) {
       return true;
     }
-
-    // 1. 创建资产根目录
+    if (this.initPromise !== null) {
+      return this.initPromise;
+    }
+    const promise: Promise<boolean> = this.doEnsureInit();
+    this.initPromise = promise;
     try {
-      await fileIo.mkdir(this.assetsRootDir, true);
-    } catch (e) {
-      const msg: string = e instanceof Error ? e.message : String(e);
-      console.warn(`[ArkWebAvatarAssetLibrary] mkdir assetsRoot failed: ${msg}`);
+      const ok: boolean = await promise;
+      return ok;
+    } finally {
+      // 无论成功失败都清空: 成功后 initialized=true 会短路; 失败后允许重试
+      if (this.initPromise === promise) {
+        this.initPromise = null;
+      }
+    }
+  }
+
+  /**
+   * ensureInitialized 的实际实现 (无并发保护, 由 ensureInitialized 包装调用)。
+   */
+  private async doEnsureInit(): Promise<boolean> {
+    if (this.disposed) {
       return false;
+    }
+    if (this.initialized) {
+      return true;
+    }
+
+    // 1. 创建资产根目录 (已存在则跳过, 避免 mkdir 抛 "File exists")
+    if (!(await this.dirExists(this.assetsRootDir))) {
+      try {
+        await fileIo.mkdir(this.assetsRootDir, true);
+      } catch (e) {
+        const msg: string = e instanceof Error ? e.message : String(e);
+        console.warn(`[ArkWebAvatarAssetLibrary] mkdir assetsRoot failed: ${msg}`);
+        return false;
+      }
     }
 
     // 2. 创建模型子目录
-    try {
-      await fileIo.mkdir(this.modelsDir, true);
-    } catch (e) {
-      const msg: string = e instanceof Error ? e.message : String(e);
-      console.warn(`[ArkWebAvatarAssetLibrary] mkdir modelsDir failed: ${msg}`);
-      return false;
+    if (!(await this.dirExists(this.modelsDir))) {
+      try {
+        await fileIo.mkdir(this.modelsDir, true);
+      } catch (e) {
+        const msg: string = e instanceof Error ? e.message : String(e);
+        console.warn(`[ArkWebAvatarAssetLibrary] mkdir modelsDir failed: ${msg}`);
+        return false;
+      }
+    }
+
+    // 2b. 创建动画子目录 (Phase 3C-1)
+    if (!(await this.dirExists(this.animationsDir))) {
+      try {
+        await fileIo.mkdir(this.animationsDir, true);
+      } catch (e) {
+        const msg: string = e instanceof Error ? e.message : String(e);
+        console.warn(`[ArkWebAvatarAssetLibrary] mkdir animationsDir failed: ${msg}`);
+        return false;
+      }
     }
 
     // 3. 检查 library.json 是否存在
@@ -322,7 +383,7 @@ export class ArkWebAvatarAssetLibrary {
       schemaVersion: ASSET_LIBRARY_SCHEMA_VERSION,
       activeModelId: asset.modelId,
       models: newModels,
-      animations: [],
+      animations: data.animations,
       poses: []
     };
 
@@ -371,7 +432,7 @@ export class ArkWebAvatarAssetLibrary {
       schemaVersion: ASSET_LIBRARY_SCHEMA_VERSION,
       activeModelId: modelId,
       models: data.models,
-      animations: [],
+      animations: data.animations,
       poses: []
     };
     const writeOk: boolean = await this.atomicWriteLibrary(newData);
@@ -380,6 +441,98 @@ export class ArkWebAvatarAssetLibrary {
     }
     this.inMemoryData = newData;
     console.info(`[ArkWebAvatarAssetLibrary] setActiveModel ok modelId=${modelId}`);
+    return true;
+  }
+
+  // ===== Phase 3C-1: 动画资产操作 =====
+
+  /**
+   * 读取 library.animations 数组 (Phase 3C-1)。
+   *
+   * @returns 动画资产数组; 失败返回空数组
+   */
+  async readAnimations(): Promise<ArkWebAvatarAnimationAsset[]> {
+    if (this.disposed) {
+      return [];
+    }
+    const data: ArkWebAvatarAssetLibraryData | null = await this.readLibrary();
+    if (data === null) {
+      return [];
+    }
+    return data.animations;
+  }
+
+  /**
+   * 按 actionId 查找动画资产 (Phase 3C-1)。
+   */
+  async findAnimation(actionId: string): Promise<ArkWebAvatarAnimationAsset | null> {
+    if (actionId.length === 0) {
+      return null;
+    }
+    const animations: ArkWebAvatarAnimationAsset[] = await this.readAnimations();
+    for (let i = 0; i < animations.length; i++) {
+      if (animations[i].actionId === actionId) {
+        return animations[i];
+      }
+    }
+    return null;
+  }
+
+  /**
+   * 追加动画资产记录 (Phase 3C-1)。
+   *
+   * - 不覆盖已有记录 (若 actionId 已存在, 返回 false)
+   * - 安全校验 relativePath (以 "animations/" 开头, 不含 ..)
+   * - 原子写入 library.json
+   * - 保留 models / poses / activeModelId 不变
+   *
+   * @returns 成功返回 true; 失败返回 false
+   */
+  async appendAnimation(asset: ArkWebAvatarAnimationAsset): Promise<boolean> {
+    if (this.disposed) {
+      return false;
+    }
+    if (!this.initialized) {
+      const ok: boolean = await this.ensureInitialized();
+      if (!ok) {
+        return false;
+      }
+    }
+    // 安全校验 relativePath
+    if (!this.isAnimationRelativePathSafe(asset.relativePath)) {
+      console.warn(`[ArkWebAvatarAssetLibrary] unsafe animation relativePath: ${asset.relativePath}`);
+      return false;
+    }
+
+    const data: ArkWebAvatarAssetLibraryData | null = await this.readLibrary();
+    if (data === null) {
+      return false;
+    }
+
+    // 检查重复 (actionId 不允许重复)
+    for (let i = 0; i < data.animations.length; i++) {
+      if (data.animations[i].actionId === asset.actionId) {
+        console.warn(`[ArkWebAvatarAssetLibrary] appendAnimation: actionId already exists: ${asset.actionId}`);
+        return false;
+      }
+    }
+
+    const newAnimations: ArkWebAvatarAnimationAsset[] = data.animations.slice();
+    newAnimations.push(asset);
+
+    const newData: ArkWebAvatarAssetLibraryData = {
+      schemaVersion: ASSET_LIBRARY_SCHEMA_VERSION,
+      activeModelId: data.activeModelId,
+      models: data.models,
+      animations: newAnimations,
+      poses: []
+    };
+    const writeOk: boolean = await this.atomicWriteLibrary(newData);
+    if (!writeOk) {
+      return false;
+    }
+    this.inMemoryData = newData;
+    console.info(`[ArkWebAvatarAssetLibrary] appendAnimation ok actionId=${asset.actionId} count=${newAnimations.length}`);
     return true;
   }
 
@@ -396,6 +549,7 @@ export class ArkWebAvatarAssetLibrary {
     this.disposed = true;
     this.inMemoryData = null;
     this.initialized = false;
+    this.initPromise = null;
   }
 
   /** 是否已销毁。 */
@@ -409,11 +563,12 @@ export class ArkWebAvatarAssetLibrary {
    * 创建空清单数据。
    */
   private createEmptyLibraryData(): ArkWebAvatarAssetLibraryData {
+    const emptyAnimations: ArkWebAvatarAnimationAsset[] = [];
     return {
       schemaVersion: ASSET_LIBRARY_SCHEMA_VERSION,
       activeModelId: '',
       models: [],
-      animations: [],
+      animations: emptyAnimations,
       poses: []
     };
   }
@@ -615,26 +770,40 @@ export class ArkWebAvatarAssetLibrary {
       }
       models.push(m);
     }
-    // animations / poses (本阶段必须为空数组)
+    // animations (Phase 3C-1 起支持多 VRMA 持久化)
+    // 向后兼容: 缺失 animations 字段视为空数组 (Phase 3B 旧清单可能没有此字段)
     const animationsObj: Object | undefined = o['animations'];
-    if (!Array.isArray(animationsObj) || animationsObj.length > 0) {
-      // 非空数组在本阶段视为不支持 (Phase 3C 才支持)
-      // 但允许存在空数组
+    const animations: ArkWebAvatarAnimationAsset[] = [];
+    if (animationsObj !== undefined) {
       if (!Array.isArray(animationsObj)) {
         return null;
       }
+      for (let i = 0; i < animationsObj.length; i++) {
+        const animObj: Object = animationsObj[i];
+        const a: ArkWebAvatarAnimationAsset | null = this.coerceToAnimationAsset(animObj);
+        if (a === null) {
+          return null;
+        }
+        animations.push(a);
+      }
     }
+    // poses (本阶段必须为空数组)
+    // 向后兼容: 缺失 poses 字段视为空数组
     const posesObj: Object | undefined = o['poses'];
-    if (!Array.isArray(posesObj)) {
-      return null;
+    const poses: Object[] = [];
+    if (posesObj !== undefined) {
+      if (!Array.isArray(posesObj)) {
+        return null;
+      }
+      poses.push(...(posesObj as Object[]));
     }
 
     return {
       schemaVersion: schemaVersion,
       activeModelId: activeModelIdObj as string,
       models: models,
-      animations: animationsObj as Object[],
-      poses: posesObj as Object[]
+      animations: animations,
+      poses: poses
     };
   }
 
@@ -688,6 +857,55 @@ export class ArkWebAvatarAssetLibrary {
   }
 
   /**
+   * 把 object 强制为 ArkWebAvatarAnimationAsset (Phase 3C-1)。
+   */
+  private coerceToAnimationAsset(obj: Object): ArkWebAvatarAnimationAsset | null {
+    const o: Record<string, Object> = obj as Record<string, Object>;
+    const actionId: Object | undefined = o['actionId'];
+    if (typeof actionId !== 'string' || actionId.length === 0) {
+      return null;
+    }
+    const resourceId: Object | undefined = o['resourceId'];
+    if (typeof resourceId !== 'string' || resourceId.length === 0) {
+      return null;
+    }
+    const displayName: Object | undefined = o['displayName'];
+    if (typeof displayName !== 'string') {
+      return null;
+    }
+    const relativePath: Object | undefined = o['relativePath'];
+    if (typeof relativePath !== 'string' || !this.isAnimationRelativePathSafe(relativePath as string)) {
+      return null;
+    }
+    const mimeType: Object | undefined = o['mimeType'];
+    if (typeof mimeType !== 'string') {
+      return null;
+    }
+    const byteLengthObj: Object | undefined = o['byteLength'];
+    if (typeof byteLengthObj !== 'number' || !Number.isFinite(byteLengthObj) || byteLengthObj <= 0) {
+      return null;
+    }
+    const createdAtObj: Object | undefined = o['createdAt'];
+    if (typeof createdAtObj !== 'number' || !Number.isFinite(createdAtObj)) {
+      return null;
+    }
+    const updatedAtObj: Object | undefined = o['updatedAt'];
+    if (typeof updatedAtObj !== 'number' || !Number.isFinite(updatedAtObj)) {
+      return null;
+    }
+    return {
+      actionId: actionId as string,
+      resourceId: resourceId as string,
+      displayName: displayName as string,
+      relativePath: relativePath as string,
+      mimeType: mimeType as string,
+      byteLength: byteLengthObj as number,
+      createdAt: createdAtObj as number,
+      updatedAt: updatedAtObj as number
+    };
+  }
+
+  /**
    * 校验 relativePath 是否安全。
    * - 必须以 "models/" 开头
    * - 不得包含 ".."
@@ -714,6 +932,32 @@ export class ArkWebAvatarAssetLibrary {
   }
 
   /**
+   * 校验动画 relativePath 是否安全 (Phase 3C-1)。
+   * - 必须以 "animations/" 开头
+   * - 不得包含 ".."
+   * - 不得包含反斜杠
+   * - 不得以 "/" 开头 (必须是相对路径)
+   */
+  private isAnimationRelativePathSafe(p: string): boolean {
+    if (p.length === 0) {
+      return false;
+    }
+    if (p.startsWith('/')) {
+      return false;
+    }
+    if (!p.startsWith('animations/')) {
+      return false;
+    }
+    if (p.includes('..')) {
+      return false;
+    }
+    if (p.includes('\\')) {
+      return false;
+    }
+    return true;
+  }
+
+  /**
    * 路径规范化 (去除末尾多余的 /)。
    */
   private normalizePath(p: string): string {
@@ -721,6 +965,19 @@ export class ArkWebAvatarAssetLibrary {
       return p.substring(0, p.length - 1);
     }
     return p;
+  }
+
+  /**
+   * 判断目录是否存在 (fileIo.access 异常视为不存在)。
+   * 用于 mkdir 前预检, 避免 "File exists" 错误。
+   */
+  private async dirExists(dirPath: string): Promise<boolean> {
+    try {
+      await fileIo.access(dirPath);
+      return true;
+    } catch (_e) {
+      return false;
+    }
   }
 
   /**
