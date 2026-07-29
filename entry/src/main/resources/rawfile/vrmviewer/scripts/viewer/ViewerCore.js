@@ -44,6 +44,7 @@ import { ViewerScene } from './ViewerScene.js';
 import { ViewerCamera } from './ViewerCamera.js';
 import { ViewerFrameLoop } from './ViewerFrameLoop.js';
 import { ViewerModelLoader, ModelState } from './ViewerModelLoader.js';
+import { ViewerAnimationController, AnimationState } from './ViewerAnimationController.js';
 
 // ===== 状态枚举 =====
 var STATE_UNINITIALIZED = 'UNINITIALIZED';
@@ -92,6 +93,8 @@ export class ViewerCore {
     this.frameLoop = null;
     /** @type {ViewerModelLoader|null} */
     this.modelLoader = null;
+    /** @type {ViewerAnimationController|null} Phase 3A: 动画运行时控制器 */
+    this.animationController = null;
     /** @type {HTMLElement|null} */
     this._container = null;
     /** @type {ResizeObserver|null} */
@@ -189,13 +192,35 @@ export class ViewerCore {
       // Phase 1D-2C-2A: 记录 VIEWER_MODEL_LOADER_READY
       this._emitStartupDiagnostic('VIEWER_MODEL_LOADER_READY', '', 'ViewerModelLoader initialized');
 
+      // ===== Phase 3A: Animation Controller =====
+      // 创建动画控制器,注入 getCurrentVrm 回调(由 ModelLoader 提供)
+      // 动画控制器独立于 ModelLoader,仅持有 AnimationMixer / currentAction / currentClip
+      // 不阻塞 Viewer READY,失败仅记录,不改 ViewerState / ModelState
+      this.animationController = new ViewerAnimationController({
+        getCurrentVrm: () => {
+          return this.modelLoader ? this.modelLoader.getCurrentVrm() : null;
+        }
+      });
+      this.animationController.initialize();
+      this._emitStartupDiagnostic('VIEWER_ANIMATION_CONTROLLER_READY', '', 'ViewerAnimationController initialized');
+
       // 启动渲染循环
-      // 顺序(与 Figure animate() 行 2860-2906 一致):
-      //   FRAME_START → deltaSeconds → modelLoader.update(delta) → camera.update(delta) → scene.render(camera) → FRAME_END
-      // Figure: currentVrm.update(deltaTime) → controls.update() → renderer.render()
+      // 顺序(与 Figure animate() 行 2860-2906 一致,Phase 3A 新增 animationController.update):
+      //   FRAME_START → deltaSeconds
+      //   → modelLoader.update(delta) [vrm.update]      ← VRM 变换先规范化
+      //   → animationController.update(delta) [mixer.update]  ← 动画后应用
+      //   → camera.update(delta)                         ← OrbitControls 更新
+      //   → scene.render(camera)                         ← 最终渲染
+      //   FRAME_END
+      // 更新顺序依据:Figure index.html:2876-2880 vrm.update → mixer.update,
+      //   three-vrm 3.x 的 humanoid.update() 需在 mixer.update() 之前执行。
+      // ANIMATION_UPDATE_ORDER: VRM_FIRST_THEN_MIXER
       this.frameLoop.start((deltaSeconds) => {
         if (this.modelLoader) {
           this.modelLoader.update(deltaSeconds);
+        }
+        if (this.animationController) {
+          this.animationController.update(deltaSeconds);
         }
         this.camera.update(deltaSeconds);
         this.scene.render(this.camera.getCamera());
@@ -456,6 +481,10 @@ export class ViewerCore {
    * - sceneReady / cameraReady / frameLoopRunning 重命名为 threeLoaded / sceneInitialized /
    *   cameraInitialized / frameLoopRunning(保留旧字段供向后兼容)
    *
+   * Phase 3A 扩展:
+   * - animationState 字段从硬编码 'NOT_INITIALIZED' 改为读取 animationController.getState()
+   * - 新增 animationVrmBound / animationMixerReady 字段供 Debug 使用
+   *
    * @returns {object}
    */
   getSceneState() {
@@ -483,6 +512,17 @@ export class ViewerCore {
     var sceneSettings = this.scene ? this.scene.getSettings() : null;
     var cameraControls = this.camera ? this.camera.getControlsEnabled() : { success: false, error: 'CAMERA_NOT_INITIALIZED' };
 
+    // Phase 3A: 动画状态(从 animationController 读取,未初始化时为 UNINITIALIZED)
+    var animationState = this.animationController
+      ? this.animationController.getState()
+      : AnimationState.UNINITIALIZED;
+    var animationVrmBound = this.animationController
+      ? !!this.animationController.currentVrm
+      : false;
+    var animationMixerReady = this.animationController
+      ? !!this.animationController.mixer
+      : false;
+
     return {
       viewerState: this._state,
       // Phase 2A-1: 模型状态扩展
@@ -491,7 +531,10 @@ export class ViewerCore {
       modelDisplayName: modelDisplayName,
       modelSource: modelSource,
       modelError: modelError,
-      animationState: 'NOT_INITIALIZED',
+      // Phase 3A: 动画状态扩展(替换原硬编码 'NOT_INITIALIZED')
+      animationState: animationState,
+      animationVrmBound: animationVrmBound,
+      animationMixerReady: animationMixerReady,
       humanoidState: 'NOT_INITIALIZED',
       springBoneState: 'NOT_INITIALIZED',
       // Phase 2A-1: Scene 与 Camera 状态扩展
@@ -506,8 +549,77 @@ export class ViewerCore {
       // 保留旧字段供向后兼容
       sceneReady: !!this.scene,
       cameraReady: !!this.camera,
-      phase: 'PHASE_2A_2'
+      phase: 'PHASE_3A'
     };
+  }
+
+  // ===== Phase 3A: Animation System =====
+
+  /**
+   * Phase 3A: 初始化动画系统。
+   *
+   * 在 ViewerCore.initialize 中已自动调用,此方法用于:
+   *   - 幂等查询:返回当前动画系统状态
+   *   - 失败后重试(若 animationController 处于 FAILED)
+   *
+   * 不阻塞 Viewer READY。
+   * 动画系统失败不改 ViewerState / ModelState。
+   *
+   * @returns {{success: boolean, state?: string, error?: {code: string, message: string}}}
+   */
+  initializeAnimationSystem() {
+    if (!this.animationController) {
+      // 创建并初始化(仅在 initialize 未自动完成时使用)
+      this.animationController = new ViewerAnimationController({
+        getCurrentVrm: () => {
+          return this.modelLoader ? this.modelLoader.getCurrentVrm() : null;
+        }
+      });
+    }
+    var result = this.animationController.initialize();
+    return result;
+  }
+
+  /**
+   * Phase 3A: 获取动画系统状态(只读)。
+   *
+   * @returns {{success: boolean, state?: string}}
+   */
+  getAnimationState() {
+    if (!this.animationController) {
+      return { success: true, state: AnimationState.UNINITIALIZED };
+    }
+    return { success: true, state: this.animationController.getState() };
+  }
+
+  /**
+   * Phase 3A: 获取动画系统调试状态快照(只读)。
+   *
+   * 供 Bridge getAnimationDebugState 使用,字段与 ArkWebAnimationDebugState 对齐。
+   *
+   * @returns {{success: boolean, debugState?: object}}
+   */
+  getAnimationDebugState() {
+    if (!this.animationController) {
+      return {
+        success: true,
+        debugState: {
+          state: AnimationState.UNINITIALIZED,
+          vrmBound: false,
+          mixerReady: false,
+          clipReady: false,
+          actionReady: false,
+          animationName: '',
+          duration: 0,
+          currentTime: 0,
+          playbackSpeed: 1,
+          loop: true,
+          errorCode: '',
+          errorMessage: ''
+        }
+      };
+    }
+    return { success: true, debugState: this.animationController.getDebugState() };
   }
 
   // ===== Phase 2A-1: Camera Controls enable/disable =====
@@ -811,18 +923,23 @@ export class ViewerCore {
   /**
    * 销毁 Viewer,释放所有资源。
    *
-   * 顺序(AGENTS.md Phase 1C-2 §十九):
+   * 顺序(AGENTS.md Phase 1C-2 §十九,Phase 3A 补充 animationController):
    *   1. 状态推进到 DISPOSING
    *   2. 使进行中的 initialize 失效(_initToken++)
    *   3. 移除 ResizeObserver / window resize listener
    *   4. 停止 Frame Loop
-   *   5. dispose ModelLoader(释放当前 VRM:Geometry / Material / Texture)
-   *   6. dispose Camera(OrbitControls)
-   *   7. dispose Scene(Renderer / 测试方块 / 灯光 / Canvas)
-   *   8. 清空引用
-   *   9. 状态推进到 DISPOSED
+   *   5. dispose AnimationController(释放 AnimationMixer,不销毁 VRM)
+   *   6. dispose ModelLoader(释放当前 VRM:Geometry / Material / Texture)
+   *   7. dispose Camera(OrbitControls)
+   *   8. dispose Scene(Renderer / 测试方块 / 灯光 / Canvas)
+   *   9. 清空引用
+   *  10. 状态推进到 DISPOSED
    *
-   * 必须先销毁模型,再销毁 Scene:
+   * 必须先 dispose AnimationController,再 dispose ModelLoader:
+   *   AnimationMixer.uncacheRoot 需要 vrm.scene 仍可访问,
+   *   而 ModelLoader.dispose 会释放 vrm.scene 资源。
+   *
+   * 必须先 dispose ModelLoader,再 dispose Scene:
    *   模型的 Geometry / Material / Texture 需要遍历 vrm.scene 释放,
    *   若先销毁 Scene 会导致 vrm.scene 被清空,无法正确遍历。
    */
@@ -836,6 +953,11 @@ export class ViewerCore {
     if (this.frameLoop) {
       this.frameLoop.dispose();
       this.frameLoop = null;
+    }
+    // Phase 3A: 先 dispose AnimationController(释放 Mixer,不销毁 VRM)
+    if (this.animationController) {
+      this.animationController.dispose();
+      this.animationController = null;
     }
     // 必须先 dispose ModelLoader,再 dispose Scene
     // (ModelLoader 需要遍历 vrm.scene 释放资源,Scene 不能先被清空)
@@ -889,6 +1011,11 @@ export class ViewerCore {
       this.frameLoop.dispose();
       this.frameLoop = null;
     }
+    // Phase 3A: 失败时也清理 AnimationController
+    if (this.animationController) {
+      this.animationController.dispose();
+      this.animationController = null;
+    }
     if (this.modelLoader) {
       this.modelLoader.dispose();
       this.modelLoader = null;
@@ -910,6 +1037,7 @@ export class ViewerCore {
    * Phase 1D-2B-2 起职责调整:
    * - LOADING:仅通知 ArkTS
    * - READY:Scene 替换已由 onReplaceModel 同步完成,此处仅做相机重置 + 通知 ArkTS
+   *   Phase 3A:同时调用 animationController.bindVrm(currentVrm)
    * - FAILED:保留当前显示(旧模型或测试方块),通知 ArkTS(Viewer 仍为 READY,仅 Model FAILED)
    * - DISPOSED:不处理(由 dispose 流程触发)
    *
@@ -950,6 +1078,24 @@ export class ViewerCore {
       // 保存最近的 cameraFocusWarning 供 loadUserModelResource 读取
       this._lastCameraFocusWarning = cameraFocusWarning;
 
+      // Phase 3A: 模型 READY 后绑定 VRM 到动画控制器
+      // - 绑定失败仅记录,不改 ModelState / ViewerState
+      // - 绑定后 state = IDLE (无 clip,不进入 READY/PLAYING)
+      if (this.animationController && this.modelLoader) {
+        var vrmToBind = this.modelLoader.getCurrentVrm();
+        if (vrmToBind) {
+          try {
+            var bindResult = this.animationController.bindVrm(vrmToBind);
+            if (!bindResult.success) {
+              console.warn('[ViewerCore] animationController.bindVrm failed: ' +
+                (bindResult.error ? bindResult.error.code + ' ' + bindResult.error.message : 'unknown'));
+            }
+          } catch (e) {
+            console.warn('[ViewerCore] animationController.bindVrm threw: ' + (e && e.message ? e.message : String(e)));
+          }
+        }
+      }
+
       // 通知 ArkTS 模型状态变化
       if (window.ViewerBridge && typeof window.ViewerBridge.notifyModelStateChanged === 'function') {
         window.ViewerBridge.notifyModelStateChanged(state);
@@ -980,6 +1126,11 @@ export class ViewerCore {
    * 2. if (previousVrm) scene.removeModel(previousVrm.scene) — 旧模型从 Scene 移除
    * 3. scene.removeTestObject() — 移除测试方块(若存在)
    *
+   * Phase 3A 补充:
+   * - 在 Scene 替换前,若存在旧 VRM,先调用 animationController.unbindVrm()
+   *   释放旧 AnimationMixer(避免 mixer 引用已被移除的 scene root)
+   * - 新 VRM 的 bindVrm 由 _onModelStateChanged(READY) 处理
+   *
    * 抛异常时 ViewerModelLoader 会释放新模型,旧模型保留。
    *
    * @param {object} nextVrm 新加载的 VRM 根对象
@@ -991,6 +1142,16 @@ export class ViewerCore {
     }
     if (!nextVrm || !nextVrm.scene) {
       throw new Error('nextVrm.scene is empty');
+    }
+    // Phase 3A: 替换前先解绑旧 VRM(释放旧 AnimationMixer)
+    // - 首次加载时 previousVrm 为 null,animationController.currentVrm 也为 null,unbindVrm 是安全的
+    // - 解绑失败仅记录,不阻塞 Scene 替换
+    if (this.animationController && previousVrm) {
+      try {
+        this.animationController.unbindVrm();
+      } catch (e) {
+        console.warn('[ViewerCore] animationController.unbindVrm threw: ' + (e && e.message ? e.message : String(e)));
+      }
     }
     // 1. 新模型加入 Scene
     this.scene.addModel(nextVrm.scene);

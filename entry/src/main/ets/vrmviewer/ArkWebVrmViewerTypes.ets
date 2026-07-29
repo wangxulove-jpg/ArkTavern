@@ -68,15 +68,67 @@ export enum ArkWebModelState {
 }
 
 /**
- * 动画播放状态(Phase 3+ 使用,Phase 1A 仅声明)。
+ * 动画播放状态(Phase 3A 重构,与 Web 端 AnimationState 枚举完全对齐)。
+ *
+ * Phase 1A 仅声明旧值(NOT_LOADED 等),Phase 3A 起替换为完整状态机:
+ *   UNINITIALIZED → IDLE (initialize)
+ *   IDLE → LOADING (loadAnimation,Phase 3A 未实现)
+ *   LOADING → READY (clip 准备完成,Phase 3A 未实现)
+ *   READY → PLAYING (play,Phase 3A 未实现)
+ *   PLAYING → PAUSED (pause,Phase 3A 未实现)
+ *   PLAYING/PAUSED → STOPPED (stop,Phase 3A 未实现)
+ *   任意 → FAILED (错误,不影响 ViewerState/ModelState)
+ *   任意 → DISPOSED (dispose)
+ *
+ * Phase 3A 骨架实际使用的状态:UNINITIALIZED / IDLE / FAILED / DISPOSED。
  */
 export enum ArkWebAnimationState {
-  NOT_LOADED = 'NOT_LOADED',
+  UNINITIALIZED = 'UNINITIALIZED',
+  IDLE = 'IDLE',
   LOADING = 'LOADING',
+  READY = 'READY',
   PLAYING = 'PLAYING',
   PAUSED = 'PAUSED',
   STOPPED = 'STOPPED',
-  FAILED = 'FAILED'
+  FAILED = 'FAILED',
+  DISPOSED = 'DISPOSED'
+}
+
+/**
+ * Phase 3A: 动画系统调试状态快照(只读)。
+ *
+ * 与 Web 端 ViewerAnimationController.getDebugState() 返回对象字段一一对应。
+ * 供 Debug Tab 显示动画系统内部状态。
+ */
+export interface ArkWebAnimationDebugState {
+  state: ArkWebAnimationState;
+  vrmBound: boolean;
+  mixerReady: boolean;
+  clipReady: boolean;
+  actionReady: boolean;
+  animationName: string;
+  duration: number;
+  currentTime: number;
+  playbackSpeed: number;
+  loop: boolean;
+  errorCode: string;
+  errorMessage: string;
+}
+
+/**
+ * Phase 3A: 动画系统错误代码(与 Web 端 ViewerAnimationController 错误码对齐)。
+ *
+ * 动画错误不得导致 ViewerState = FAILED / ModelState = FAILED。
+ */
+export class ArkWebAnimationErrorCode {
+  public static readonly CONTROLLER_DISPOSED: string = 'ANIMATION_CONTROLLER_DISPOSED';
+  public static readonly NOT_INITIALIZED: string = 'ANIMATION_NOT_INITIALIZED';
+  public static readonly VRM_MISSING: string = 'ANIMATION_VRM_MISSING';
+  public static readonly VRM_INVALID: string = 'ANIMATION_VRM_INVALID';
+  public static readonly MIXER_CREATION_FAILED: string = 'ANIMATION_MIXER_CREATION_FAILED';
+  public static readonly DELTA_INVALID: string = 'ANIMATION_DELTA_INVALID';
+  public static readonly DEPENDENCY_MISSING: string = 'ANIMATION_DEPENDENCY_MISSING';
+  public static readonly UNSUPPORTED: string = 'ANIMATION_UNSUPPORTED';
 }
 
 /**
@@ -286,7 +338,10 @@ export class ArkWebViewerConfig {
     'setEnvironmentEnabled',
     'setSkyboxVisible',
     'setEnvironmentIntensity',
-    'getEnvironmentSettings'
+    'getEnvironmentSettings',
+    // Phase 3A: 动画系统只读查询(不包含 play/pause/stop/seek 等控制方法)
+    'getAnimationState',
+    'getAnimationDebugState'
   ];
 
   /** Bridge 方法白名单:JavaScript → ArkTS。 */

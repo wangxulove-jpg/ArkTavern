@@ -1355,10 +1355,41 @@ if (window.__arkTavernBootstrapState) {
           error: { code: 'DIAGNOSTICS_CALL_FAILED', message: msg }
         });
       }
+    },
+
+    // ===== Phase 3A: Animation System (只读 Bridge) =====
+    // 本阶段仅提供只读查询方法,不提供 play/pause/stop/seek 等控制方法。
+    // 动画系统失败不影响 ViewerState / ModelState。
+
+    /**
+     * Phase 3A: 获取动画系统状态(只读)。
+     *
+     * @returns {string} JSON 结果
+     *   成功:{"success": true, "state": "IDLE"}
+     *   state 枚举:UNINITIALIZED / IDLE / LOADING / READY / PLAYING / PAUSED / STOPPED / FAILED / DISPOSED
+     */
+    getAnimationState: function () {
+      return callViewer(function (v) {
+        var result = v.getAnimationState();
+        return { success: true, state: result.state };
+      });
+    },
+
+    /**
+     * Phase 3A: 获取动画系统调试状态快照(只读)。
+     *
+     * @returns {string} JSON 结果
+     *   成功:{"success": true, "debugState": {state, vrmBound, mixerReady, ...}}
+     */
+    getAnimationDebugState: function () {
+      return callViewer(function (v) {
+        var result = v.getAnimationDebugState();
+        return { success: true, debugState: result.debugState };
+      });
     }
   };
 
-  console.log('[App] arkTavernViewerBridge registered (Phase 1B + 1D-2A + 1D-2B-1 + 1D-2B-2 + 1D-2C-1 + 1D-2C-2A + 2A-1, delegates to ViewerCore + preparedResource keeper + probe + userModelLoadCoordinator + runtimeDiagnostics keeper + cameraControls + sceneSettings)');
+  console.log('[App] arkTavernViewerBridge registered (Phase 1B + 1D-2A + 1D-2B-1 + 1D-2B-2 + 1D-2C-1 + 1D-2C-2A + 2A-1 + 2F + 3A, delegates to ViewerCore + preparedResource keeper + probe + userModelLoadCoordinator + runtimeDiagnostics keeper + cameraControls + sceneSettings + animationController)');
 
   // Phase 1D-2C-2A: 记录 JS_BRIDGE_BOUND(Bridge 已注册到 window)
   emitStartupDiagnostic('JS_BRIDGE_BOUND', '', 'arkTavernViewerBridge registered');

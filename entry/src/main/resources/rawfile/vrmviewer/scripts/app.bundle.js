@@ -128,6 +128,9 @@
   var SIGNED_RED_RGTC1_Format = 36284;
   var RED_GREEN_RGTC2_Format = 36285;
   var SIGNED_RED_GREEN_RGTC2_Format = 36286;
+  var LoopOnce = 2200;
+  var LoopRepeat = 2201;
+  var LoopPingPong = 2202;
   var InterpolateDiscrete = 2300;
   var InterpolateLinear = 2301;
   var InterpolateSmooth = 2302;
@@ -135,6 +138,7 @@
   var ZeroSlopeEnding = 2401;
   var WrapAroundEnding = 2402;
   var NormalAnimationBlendMode = 2500;
+  var AdditiveAnimationBlendMode = 2501;
   var TrianglesDrawMode = 0;
   var TriangleStripDrawMode = 1;
   var TriangleFanDrawMode = 2;
@@ -17199,6 +17203,182 @@
       this.cameras = array;
     }
   };
+  var PropertyMixer = class {
+    /**
+     * Constructs a new property mixer.
+     *
+     * @param {PropertyBinding} binding - The property binding.
+     * @param {string} typeName - The keyframe track type name.
+     * @param {number} valueSize - The keyframe track value size.
+     */
+    constructor(binding, typeName, valueSize) {
+      this.binding = binding;
+      this.valueSize = valueSize;
+      let mixFunction, mixFunctionAdditive, setIdentity;
+      switch (typeName) {
+        case "quaternion":
+          mixFunction = this._slerp;
+          mixFunctionAdditive = this._slerpAdditive;
+          setIdentity = this._setAdditiveIdentityQuaternion;
+          this.buffer = new Float64Array(valueSize * 6);
+          this._workIndex = 5;
+          break;
+        case "string":
+        case "bool":
+          mixFunction = this._select;
+          mixFunctionAdditive = this._select;
+          setIdentity = this._setAdditiveIdentityOther;
+          this.buffer = new Array(valueSize * 5);
+          break;
+        default:
+          mixFunction = this._lerp;
+          mixFunctionAdditive = this._lerpAdditive;
+          setIdentity = this._setAdditiveIdentityNumeric;
+          this.buffer = new Float64Array(valueSize * 5);
+      }
+      this._mixBufferRegion = mixFunction;
+      this._mixBufferRegionAdditive = mixFunctionAdditive;
+      this._setIdentity = setIdentity;
+      this._origIndex = 3;
+      this._addIndex = 4;
+      this.cumulativeWeight = 0;
+      this.cumulativeWeightAdditive = 0;
+      this.useCount = 0;
+      this.referenceCount = 0;
+    }
+    /**
+     * Accumulates data in the `incoming` region into `accu<i>`.
+     *
+     * @param {number} accuIndex - The accumulation index.
+     * @param {number} weight - The weight.
+     */
+    accumulate(accuIndex, weight) {
+      const buffer = this.buffer, stride = this.valueSize, offset = accuIndex * stride + stride;
+      let currentWeight = this.cumulativeWeight;
+      if (currentWeight === 0) {
+        for (let i = 0; i !== stride; ++i) {
+          buffer[offset + i] = buffer[i];
+        }
+        currentWeight = weight;
+      } else {
+        currentWeight += weight;
+        const mix = weight / currentWeight;
+        this._mixBufferRegion(buffer, offset, 0, mix, stride);
+      }
+      this.cumulativeWeight = currentWeight;
+    }
+    /**
+     * Accumulates data in the `incoming` region into `add`.
+     *
+     * @param {number} weight - The weight.
+     */
+    accumulateAdditive(weight) {
+      const buffer = this.buffer, stride = this.valueSize, offset = stride * this._addIndex;
+      if (this.cumulativeWeightAdditive === 0) {
+        this._setIdentity();
+      }
+      this._mixBufferRegionAdditive(buffer, offset, 0, weight, stride);
+      this.cumulativeWeightAdditive += weight;
+    }
+    /**
+     * Applies the state of `accu<i>` to the binding when accus differ.
+     *
+     * @param {number} accuIndex - The accumulation index.
+     */
+    apply(accuIndex) {
+      const stride = this.valueSize, buffer = this.buffer, offset = accuIndex * stride + stride, weight = this.cumulativeWeight, weightAdditive = this.cumulativeWeightAdditive, binding = this.binding;
+      this.cumulativeWeight = 0;
+      this.cumulativeWeightAdditive = 0;
+      if (weight < 1) {
+        const originalValueOffset = stride * this._origIndex;
+        this._mixBufferRegion(
+          buffer,
+          offset,
+          originalValueOffset,
+          1 - weight,
+          stride
+        );
+      }
+      if (weightAdditive > 0) {
+        this._mixBufferRegionAdditive(buffer, offset, this._addIndex * stride, 1, stride);
+      }
+      for (let i = stride, e = stride + stride; i !== e; ++i) {
+        if (buffer[i] !== buffer[i + stride]) {
+          binding.setValue(buffer, offset);
+          break;
+        }
+      }
+    }
+    /**
+     * Remembers the state of the bound property and copy it to both accus.
+     */
+    saveOriginalState() {
+      const binding = this.binding;
+      const buffer = this.buffer, stride = this.valueSize, originalValueOffset = stride * this._origIndex;
+      binding.getValue(buffer, originalValueOffset);
+      for (let i = stride, e = originalValueOffset; i !== e; ++i) {
+        buffer[i] = buffer[originalValueOffset + i % stride];
+      }
+      this._setIdentity();
+      this.cumulativeWeight = 0;
+      this.cumulativeWeightAdditive = 0;
+    }
+    /**
+     * Applies the state previously taken via {@link PropertyMixer#saveOriginalState} to the binding.
+     */
+    restoreOriginalState() {
+      const originalValueOffset = this.valueSize * 3;
+      this.binding.setValue(this.buffer, originalValueOffset);
+    }
+    // internals
+    _setAdditiveIdentityNumeric() {
+      const startIndex = this._addIndex * this.valueSize;
+      const endIndex = startIndex + this.valueSize;
+      for (let i = startIndex; i < endIndex; i++) {
+        this.buffer[i] = 0;
+      }
+    }
+    _setAdditiveIdentityQuaternion() {
+      this._setAdditiveIdentityNumeric();
+      this.buffer[this._addIndex * this.valueSize + 3] = 1;
+    }
+    _setAdditiveIdentityOther() {
+      const startIndex = this._origIndex * this.valueSize;
+      const targetIndex = this._addIndex * this.valueSize;
+      for (let i = 0; i < this.valueSize; i++) {
+        this.buffer[targetIndex + i] = this.buffer[startIndex + i];
+      }
+    }
+    // mix functions
+    _select(buffer, dstOffset, srcOffset, t, stride) {
+      if (t >= 0.5) {
+        for (let i = 0; i !== stride; ++i) {
+          buffer[dstOffset + i] = buffer[srcOffset + i];
+        }
+      }
+    }
+    _slerp(buffer, dstOffset, srcOffset, t) {
+      Quaternion.slerpFlat(buffer, dstOffset, buffer, dstOffset, buffer, srcOffset, t);
+    }
+    _slerpAdditive(buffer, dstOffset, srcOffset, t, stride) {
+      const workOffset = this._workIndex * stride;
+      Quaternion.multiplyQuaternionsFlat(buffer, workOffset, buffer, dstOffset, buffer, srcOffset);
+      Quaternion.slerpFlat(buffer, dstOffset, buffer, dstOffset, buffer, workOffset, t);
+    }
+    _lerp(buffer, dstOffset, srcOffset, t, stride) {
+      const s = 1 - t;
+      for (let i = 0; i !== stride; ++i) {
+        const j = dstOffset + i;
+        buffer[j] = buffer[j] * s + buffer[srcOffset + i] * t;
+      }
+    }
+    _lerpAdditive(buffer, dstOffset, srcOffset, t, stride) {
+      for (let i = 0; i !== stride; ++i) {
+        const j = dstOffset + i;
+        buffer[j] = buffer[j] + buffer[srcOffset + i] * t;
+      }
+    }
+  };
   var _RESERVED_CHARS_RE = "\\[\\]\\.:\\/";
   var _reservedRe = new RegExp("[" + _RESERVED_CHARS_RE + "]", "g");
   var _wordChar = "[^" + _RESERVED_CHARS_RE + "]";
@@ -17624,7 +17804,936 @@
       PropertyBinding.prototype._setValue_fromArray_setMatrixWorldNeedsUpdate
     ]
   ];
+  var AnimationAction = class {
+    /**
+     * Constructs a new animation action.
+     *
+     * @param {AnimationMixer} mixer - The mixer that is controlled by this action.
+     * @param {AnimationClip} clip - The animation clip that holds the actual keyframes.
+     * @param {?Object3D} [localRoot=null] - The root object on which this action is performed.
+     * @param {(NormalAnimationBlendMode|AdditiveAnimationBlendMode)} [blendMode] - The blend mode.
+     */
+    constructor(mixer, clip, localRoot = null, blendMode = clip.blendMode) {
+      this._mixer = mixer;
+      this._clip = clip;
+      this._localRoot = localRoot;
+      this.blendMode = blendMode;
+      const tracks = clip.tracks, nTracks = tracks.length, interpolants = new Array(nTracks);
+      const interpolantSettings = {
+        endingStart: ZeroCurvatureEnding,
+        endingEnd: ZeroCurvatureEnding
+      };
+      for (let i = 0; i !== nTracks; ++i) {
+        const interpolant = tracks[i].createInterpolant(null);
+        interpolants[i] = interpolant;
+        interpolant.settings = interpolantSettings;
+      }
+      this._interpolantSettings = interpolantSettings;
+      this._interpolants = interpolants;
+      this._propertyBindings = new Array(nTracks);
+      this._cacheIndex = null;
+      this._byClipCacheIndex = null;
+      this._timeScaleInterpolant = null;
+      this._weightInterpolant = null;
+      this.loop = LoopRepeat;
+      this._loopCount = -1;
+      this._startTime = null;
+      this.time = 0;
+      this.timeScale = 1;
+      this._effectiveTimeScale = 1;
+      this.weight = 1;
+      this._effectiveWeight = 1;
+      this.repetitions = Infinity;
+      this.paused = false;
+      this.enabled = true;
+      this.clampWhenFinished = false;
+      this.zeroSlopeAtStart = true;
+      this.zeroSlopeAtEnd = true;
+    }
+    /**
+     * Starts the playback of the animation.
+     *
+     * @return {AnimationAction} A reference to this animation action.
+     */
+    play() {
+      this._mixer._activateAction(this);
+      return this;
+    }
+    /**
+     * Stops the playback of the animation.
+     *
+     * @return {AnimationAction} A reference to this animation action.
+     */
+    stop() {
+      this._mixer._deactivateAction(this);
+      return this.reset();
+    }
+    /**
+     * Resets the playback of the animation.
+     *
+     * @return {AnimationAction} A reference to this animation action.
+     */
+    reset() {
+      this.paused = false;
+      this.enabled = true;
+      this.time = 0;
+      this._loopCount = -1;
+      this._startTime = null;
+      return this.stopFading().stopWarping();
+    }
+    /**
+     * Returns `true` if the animation is running.
+     *
+     * @return {boolean} Whether the animation is running or not.
+     */
+    isRunning() {
+      return this.enabled && !this.paused && this.timeScale !== 0 && this._startTime === null && this._mixer._isActiveAction(this);
+    }
+    /**
+     * Returns `true` when {@link AnimationAction#play} has been called.
+     *
+     * @return {boolean} Whether the animation is scheduled or not.
+     */
+    isScheduled() {
+      return this._mixer._isActiveAction(this);
+    }
+    /**
+     * Defines the time when the animation should start.
+     *
+     * @param {number} time - The start time in seconds.
+     * @return {AnimationAction} A reference to this animation action.
+     */
+    startAt(time) {
+      this._startTime = time;
+      return this;
+    }
+    /**
+     * Configures the loop settings for this action.
+     *
+     * @param {(LoopRepeat|LoopOnce|LoopPingPong)} mode - The loop mode.
+     * @param {number} repetitions - The number of repetitions.
+     * @return {AnimationAction} A reference to this animation action.
+     */
+    setLoop(mode, repetitions) {
+      this.loop = mode;
+      this.repetitions = repetitions;
+      return this;
+    }
+    /**
+     * Sets the effective weight of this action.
+     *
+     * An action has no effect and thus an effective weight of zero when the
+     * action is disabled.
+     *
+     * @param {number} weight - The weight to set.
+     * @return {AnimationAction} A reference to this animation action.
+     */
+    setEffectiveWeight(weight) {
+      this.weight = weight;
+      this._effectiveWeight = this.enabled ? weight : 0;
+      return this.stopFading();
+    }
+    /**
+     * Returns the effective weight of this action.
+     *
+     * @return {number} The effective weight.
+     */
+    getEffectiveWeight() {
+      return this._effectiveWeight;
+    }
+    /**
+     * Fades the animation in by increasing its weight gradually from `0` to `1`,
+     * within the passed time interval.
+     *
+     * @param {number} duration - The duration of the fade.
+     * @return {AnimationAction} A reference to this animation action.
+     */
+    fadeIn(duration) {
+      return this._scheduleFading(duration, 0, 1);
+    }
+    /**
+     * Fades the animation out by decreasing its weight gradually from `1` to `0`,
+     * within the passed time interval.
+     *
+     * @param {number} duration - The duration of the fade.
+     * @return {AnimationAction} A reference to this animation action.
+     */
+    fadeOut(duration) {
+      return this._scheduleFading(duration, 1, 0);
+    }
+    /**
+     * Causes this action to fade in and the given action to fade out,
+     * within the passed time interval.
+     *
+     * @param {AnimationAction} fadeOutAction - The animation action to fade out.
+     * @param {number} duration - The duration of the fade.
+     * @param {boolean} [warp=false] - Whether warping should be used or not.
+     * @return {AnimationAction} A reference to this animation action.
+     */
+    crossFadeFrom(fadeOutAction, duration, warp = false) {
+      fadeOutAction.fadeOut(duration);
+      this.fadeIn(duration);
+      if (warp === true) {
+        const fadeInDuration = this._clip.duration, fadeOutDuration = fadeOutAction._clip.duration, startEndRatio = fadeOutDuration / fadeInDuration, endStartRatio = fadeInDuration / fadeOutDuration;
+        fadeOutAction.warp(1, startEndRatio, duration);
+        this.warp(endStartRatio, 1, duration);
+      }
+      return this;
+    }
+    /**
+     * Causes this action to fade out and the given action to fade in,
+     * within the passed time interval.
+     *
+     * @param {AnimationAction} fadeInAction - The animation action to fade in.
+     * @param {number} duration - The duration of the fade.
+     * @param {boolean} [warp=false] - Whether warping should be used or not.
+     * @return {AnimationAction} A reference to this animation action.
+     */
+    crossFadeTo(fadeInAction, duration, warp = false) {
+      return fadeInAction.crossFadeFrom(this, duration, warp);
+    }
+    /**
+     * Stops any fading which is applied to this action.
+     *
+     * @return {AnimationAction} A reference to this animation action.
+     */
+    stopFading() {
+      const weightInterpolant = this._weightInterpolant;
+      if (weightInterpolant !== null) {
+        this._weightInterpolant = null;
+        this._mixer._takeBackControlInterpolant(weightInterpolant);
+      }
+      return this;
+    }
+    /**
+     * Sets the effective time scale of this action.
+     *
+     * An action has no effect and thus an effective time scale of zero when the
+     * action is paused.
+     *
+     * @param {number} timeScale - The time scale to set.
+     * @return {AnimationAction} A reference to this animation action.
+     */
+    setEffectiveTimeScale(timeScale) {
+      this.timeScale = timeScale;
+      this._effectiveTimeScale = this.paused ? 0 : timeScale;
+      return this.stopWarping();
+    }
+    /**
+     * Returns the effective time scale of this action.
+     *
+     * @return {number} The effective time scale.
+     */
+    getEffectiveTimeScale() {
+      return this._effectiveTimeScale;
+    }
+    /**
+     * Sets the duration for a single loop of this action.
+     *
+     * @param {number} duration - The duration to set.
+     * @return {AnimationAction} A reference to this animation action.
+     */
+    setDuration(duration) {
+      this.timeScale = this._clip.duration / duration;
+      return this.stopWarping();
+    }
+    /**
+     * Synchronizes this action with the passed other action.
+     *
+     * @param {AnimationAction} action - The action to sync with.
+     * @return {AnimationAction} A reference to this animation action.
+     */
+    syncWith(action) {
+      this.time = action.time;
+      this.timeScale = action.timeScale;
+      return this.stopWarping();
+    }
+    /**
+     * Decelerates this animation's speed to `0` within the passed time interval.
+     *
+     * @param {number} duration - The duration.
+     * @return {AnimationAction} A reference to this animation action.
+     */
+    halt(duration) {
+      return this.warp(this._effectiveTimeScale, 0, duration);
+    }
+    /**
+     * Changes the playback speed, within the passed time interval, by modifying
+     * {@link AnimationAction#timeScale} gradually from `startTimeScale` to
+     * `endTimeScale`.
+     *
+     * @param {number} startTimeScale - The start time scale.
+     * @param {number} endTimeScale - The end time scale.
+     * @param {number} duration - The duration.
+     * @return {AnimationAction} A reference to this animation action.
+     */
+    warp(startTimeScale, endTimeScale, duration) {
+      const mixer = this._mixer, now = mixer.time, timeScale = this.timeScale;
+      let interpolant = this._timeScaleInterpolant;
+      if (interpolant === null) {
+        interpolant = mixer._lendControlInterpolant();
+        this._timeScaleInterpolant = interpolant;
+      }
+      const times = interpolant.parameterPositions, values = interpolant.sampleValues;
+      times[0] = now;
+      times[1] = now + duration;
+      values[0] = startTimeScale / timeScale;
+      values[1] = endTimeScale / timeScale;
+      return this;
+    }
+    /**
+     * Stops any scheduled warping which is applied to this action.
+     *
+     * @return {AnimationAction} A reference to this animation action.
+     */
+    stopWarping() {
+      const timeScaleInterpolant = this._timeScaleInterpolant;
+      if (timeScaleInterpolant !== null) {
+        this._timeScaleInterpolant = null;
+        this._mixer._takeBackControlInterpolant(timeScaleInterpolant);
+      }
+      return this;
+    }
+    /**
+     * Returns the animation mixer of this animation action.
+     *
+     * @return {AnimationMixer} The animation mixer.
+     */
+    getMixer() {
+      return this._mixer;
+    }
+    /**
+     * Returns the animation clip of this animation action.
+     *
+     * @return {AnimationClip} The animation clip.
+     */
+    getClip() {
+      return this._clip;
+    }
+    /**
+     * Returns the root object of this animation action.
+     *
+     * @return {Object3D} The root object.
+     */
+    getRoot() {
+      return this._localRoot || this._mixer._root;
+    }
+    // Interna
+    _update(time, deltaTime, timeDirection, accuIndex) {
+      if (!this.enabled) {
+        this._updateWeight(time);
+        return;
+      }
+      const startTime = this._startTime;
+      if (startTime !== null) {
+        const timeRunning = (time - startTime) * timeDirection;
+        if (timeRunning < 0 || timeDirection === 0) {
+          deltaTime = 0;
+        } else {
+          this._startTime = null;
+          deltaTime = timeDirection * timeRunning;
+        }
+      }
+      deltaTime *= this._updateTimeScale(time);
+      const clipTime = this._updateTime(deltaTime);
+      const weight = this._updateWeight(time);
+      if (weight > 0) {
+        const interpolants = this._interpolants;
+        const propertyMixers = this._propertyBindings;
+        switch (this.blendMode) {
+          case AdditiveAnimationBlendMode:
+            for (let j = 0, m = interpolants.length; j !== m; ++j) {
+              interpolants[j].evaluate(clipTime);
+              propertyMixers[j].accumulateAdditive(weight);
+            }
+            break;
+          case NormalAnimationBlendMode:
+          default:
+            for (let j = 0, m = interpolants.length; j !== m; ++j) {
+              interpolants[j].evaluate(clipTime);
+              propertyMixers[j].accumulate(accuIndex, weight);
+            }
+        }
+      }
+    }
+    _updateWeight(time) {
+      let weight = 0;
+      if (this.enabled) {
+        weight = this.weight;
+        const interpolant = this._weightInterpolant;
+        if (interpolant !== null) {
+          const interpolantValue = interpolant.evaluate(time)[0];
+          weight *= interpolantValue;
+          if (time > interpolant.parameterPositions[1]) {
+            this.stopFading();
+            if (interpolantValue === 0) {
+              this.enabled = false;
+            }
+          }
+        }
+      }
+      this._effectiveWeight = weight;
+      return weight;
+    }
+    _updateTimeScale(time) {
+      let timeScale = 0;
+      if (!this.paused) {
+        timeScale = this.timeScale;
+        const interpolant = this._timeScaleInterpolant;
+        if (interpolant !== null) {
+          const interpolantValue = interpolant.evaluate(time)[0];
+          timeScale *= interpolantValue;
+          if (time > interpolant.parameterPositions[1]) {
+            this.stopWarping();
+            if (timeScale === 0) {
+              this.paused = true;
+            } else {
+              this.timeScale = timeScale;
+            }
+          }
+        }
+      }
+      this._effectiveTimeScale = timeScale;
+      return timeScale;
+    }
+    _updateTime(deltaTime) {
+      const duration = this._clip.duration;
+      const loop = this.loop;
+      let time = this.time + deltaTime;
+      let loopCount = this._loopCount;
+      const pingPong = loop === LoopPingPong;
+      if (deltaTime === 0) {
+        if (loopCount === -1) return time;
+        return pingPong && (loopCount & 1) === 1 ? duration - time : time;
+      }
+      if (loop === LoopOnce) {
+        if (loopCount === -1) {
+          this._loopCount = 0;
+          this._setEndings(true, true, false);
+        }
+        handle_stop: {
+          if (time >= duration) {
+            time = duration;
+          } else if (time < 0) {
+            time = 0;
+          } else {
+            this.time = time;
+            break handle_stop;
+          }
+          if (this.clampWhenFinished) this.paused = true;
+          else this.enabled = false;
+          this.time = time;
+          this._mixer.dispatchEvent({
+            type: "finished",
+            action: this,
+            direction: deltaTime < 0 ? -1 : 1
+          });
+        }
+      } else {
+        if (loopCount === -1) {
+          if (deltaTime >= 0) {
+            loopCount = 0;
+            this._setEndings(true, this.repetitions === 0, pingPong);
+          } else {
+            this._setEndings(this.repetitions === 0, true, pingPong);
+          }
+        }
+        if (time >= duration || time < 0) {
+          const loopDelta = Math.floor(time / duration);
+          time -= duration * loopDelta;
+          loopCount += Math.abs(loopDelta);
+          const pending = this.repetitions - loopCount;
+          if (pending <= 0) {
+            if (this.clampWhenFinished) this.paused = true;
+            else this.enabled = false;
+            time = deltaTime > 0 ? duration : 0;
+            this.time = time;
+            this._mixer.dispatchEvent({
+              type: "finished",
+              action: this,
+              direction: deltaTime > 0 ? 1 : -1
+            });
+          } else {
+            if (pending === 1) {
+              const atStart = deltaTime < 0;
+              this._setEndings(atStart, !atStart, pingPong);
+            } else {
+              this._setEndings(false, false, pingPong);
+            }
+            this._loopCount = loopCount;
+            this.time = time;
+            this._mixer.dispatchEvent({
+              type: "loop",
+              action: this,
+              loopDelta
+            });
+          }
+        } else {
+          this.time = time;
+        }
+        if (pingPong && (loopCount & 1) === 1) {
+          return duration - time;
+        }
+      }
+      return time;
+    }
+    _setEndings(atStart, atEnd, pingPong) {
+      const settings = this._interpolantSettings;
+      if (pingPong) {
+        settings.endingStart = ZeroSlopeEnding;
+        settings.endingEnd = ZeroSlopeEnding;
+      } else {
+        if (atStart) {
+          settings.endingStart = this.zeroSlopeAtStart ? ZeroSlopeEnding : ZeroCurvatureEnding;
+        } else {
+          settings.endingStart = WrapAroundEnding;
+        }
+        if (atEnd) {
+          settings.endingEnd = this.zeroSlopeAtEnd ? ZeroSlopeEnding : ZeroCurvatureEnding;
+        } else {
+          settings.endingEnd = WrapAroundEnding;
+        }
+      }
+    }
+    _scheduleFading(duration, weightNow, weightThen) {
+      const mixer = this._mixer, now = mixer.time;
+      let interpolant = this._weightInterpolant;
+      if (interpolant === null) {
+        interpolant = mixer._lendControlInterpolant();
+        this._weightInterpolant = interpolant;
+      }
+      const times = interpolant.parameterPositions, values = interpolant.sampleValues;
+      times[0] = now;
+      values[0] = weightNow;
+      times[1] = now + duration;
+      values[1] = weightThen;
+      return this;
+    }
+  };
   var _controlInterpolantsResultBuffer = new Float32Array(1);
+  var AnimationMixer = class extends EventDispatcher {
+    /**
+     * Constructs a new animation mixer.
+     *
+     * @param {Object3D} root - The object whose animations shall be played by this mixer.
+     */
+    constructor(root) {
+      super();
+      this._root = root;
+      this._initMemoryManager();
+      this._accuIndex = 0;
+      this.time = 0;
+      this.timeScale = 1;
+    }
+    _bindAction(action, prototypeAction) {
+      const root = action._localRoot || this._root, tracks = action._clip.tracks, nTracks = tracks.length, bindings = action._propertyBindings, interpolants = action._interpolants, rootUuid = root.uuid, bindingsByRoot = this._bindingsByRootAndName;
+      let bindingsByName = bindingsByRoot[rootUuid];
+      if (bindingsByName === void 0) {
+        bindingsByName = {};
+        bindingsByRoot[rootUuid] = bindingsByName;
+      }
+      for (let i = 0; i !== nTracks; ++i) {
+        const track = tracks[i], trackName = track.name;
+        let binding = bindingsByName[trackName];
+        if (binding !== void 0) {
+          ++binding.referenceCount;
+          bindings[i] = binding;
+        } else {
+          binding = bindings[i];
+          if (binding !== void 0) {
+            if (binding._cacheIndex === null) {
+              ++binding.referenceCount;
+              this._addInactiveBinding(binding, rootUuid, trackName);
+            }
+            continue;
+          }
+          const path = prototypeAction && prototypeAction._propertyBindings[i].binding.parsedPath;
+          binding = new PropertyMixer(
+            PropertyBinding.create(root, trackName, path),
+            track.ValueTypeName,
+            track.getValueSize()
+          );
+          ++binding.referenceCount;
+          this._addInactiveBinding(binding, rootUuid, trackName);
+          bindings[i] = binding;
+        }
+        interpolants[i].resultBuffer = binding.buffer;
+      }
+    }
+    _activateAction(action) {
+      if (!this._isActiveAction(action)) {
+        if (action._cacheIndex === null) {
+          const rootUuid = (action._localRoot || this._root).uuid, clipUuid = action._clip.uuid, actionsForClip = this._actionsByClip[clipUuid];
+          this._bindAction(
+            action,
+            actionsForClip && actionsForClip.knownActions[0]
+          );
+          this._addInactiveAction(action, clipUuid, rootUuid);
+        }
+        const bindings = action._propertyBindings;
+        for (let i = 0, n = bindings.length; i !== n; ++i) {
+          const binding = bindings[i];
+          if (binding.useCount++ === 0) {
+            this._lendBinding(binding);
+            binding.saveOriginalState();
+          }
+        }
+        this._lendAction(action);
+      }
+    }
+    _deactivateAction(action) {
+      if (this._isActiveAction(action)) {
+        const bindings = action._propertyBindings;
+        for (let i = 0, n = bindings.length; i !== n; ++i) {
+          const binding = bindings[i];
+          if (--binding.useCount === 0) {
+            binding.restoreOriginalState();
+            this._takeBackBinding(binding);
+          }
+        }
+        this._takeBackAction(action);
+      }
+    }
+    // Memory manager
+    _initMemoryManager() {
+      this._actions = [];
+      this._nActiveActions = 0;
+      this._actionsByClip = {};
+      this._bindings = [];
+      this._nActiveBindings = 0;
+      this._bindingsByRootAndName = {};
+      this._controlInterpolants = [];
+      this._nActiveControlInterpolants = 0;
+      const scope = this;
+      this.stats = {
+        actions: {
+          get total() {
+            return scope._actions.length;
+          },
+          get inUse() {
+            return scope._nActiveActions;
+          }
+        },
+        bindings: {
+          get total() {
+            return scope._bindings.length;
+          },
+          get inUse() {
+            return scope._nActiveBindings;
+          }
+        },
+        controlInterpolants: {
+          get total() {
+            return scope._controlInterpolants.length;
+          },
+          get inUse() {
+            return scope._nActiveControlInterpolants;
+          }
+        }
+      };
+    }
+    // Memory management for AnimationAction objects
+    _isActiveAction(action) {
+      const index = action._cacheIndex;
+      return index !== null && index < this._nActiveActions;
+    }
+    _addInactiveAction(action, clipUuid, rootUuid) {
+      const actions = this._actions, actionsByClip = this._actionsByClip;
+      let actionsForClip = actionsByClip[clipUuid];
+      if (actionsForClip === void 0) {
+        actionsForClip = {
+          knownActions: [action],
+          actionByRoot: {}
+        };
+        action._byClipCacheIndex = 0;
+        actionsByClip[clipUuid] = actionsForClip;
+      } else {
+        const knownActions = actionsForClip.knownActions;
+        action._byClipCacheIndex = knownActions.length;
+        knownActions.push(action);
+      }
+      action._cacheIndex = actions.length;
+      actions.push(action);
+      actionsForClip.actionByRoot[rootUuid] = action;
+    }
+    _removeInactiveAction(action) {
+      const actions = this._actions, lastInactiveAction = actions[actions.length - 1], cacheIndex = action._cacheIndex;
+      lastInactiveAction._cacheIndex = cacheIndex;
+      actions[cacheIndex] = lastInactiveAction;
+      actions.pop();
+      action._cacheIndex = null;
+      const clipUuid = action._clip.uuid, actionsByClip = this._actionsByClip, actionsForClip = actionsByClip[clipUuid], knownActionsForClip = actionsForClip.knownActions, lastKnownAction = knownActionsForClip[knownActionsForClip.length - 1], byClipCacheIndex = action._byClipCacheIndex;
+      lastKnownAction._byClipCacheIndex = byClipCacheIndex;
+      knownActionsForClip[byClipCacheIndex] = lastKnownAction;
+      knownActionsForClip.pop();
+      action._byClipCacheIndex = null;
+      const actionByRoot = actionsForClip.actionByRoot, rootUuid = (action._localRoot || this._root).uuid;
+      delete actionByRoot[rootUuid];
+      if (knownActionsForClip.length === 0) {
+        delete actionsByClip[clipUuid];
+      }
+      this._removeInactiveBindingsForAction(action);
+    }
+    _removeInactiveBindingsForAction(action) {
+      const bindings = action._propertyBindings;
+      for (let i = 0, n = bindings.length; i !== n; ++i) {
+        const binding = bindings[i];
+        if (--binding.referenceCount === 0) {
+          this._removeInactiveBinding(binding);
+        }
+      }
+    }
+    _lendAction(action) {
+      const actions = this._actions, prevIndex = action._cacheIndex, lastActiveIndex = this._nActiveActions++, firstInactiveAction = actions[lastActiveIndex];
+      action._cacheIndex = lastActiveIndex;
+      actions[lastActiveIndex] = action;
+      firstInactiveAction._cacheIndex = prevIndex;
+      actions[prevIndex] = firstInactiveAction;
+    }
+    _takeBackAction(action) {
+      const actions = this._actions, prevIndex = action._cacheIndex, firstInactiveIndex = --this._nActiveActions, lastActiveAction = actions[firstInactiveIndex];
+      action._cacheIndex = firstInactiveIndex;
+      actions[firstInactiveIndex] = action;
+      lastActiveAction._cacheIndex = prevIndex;
+      actions[prevIndex] = lastActiveAction;
+    }
+    // Memory management for PropertyMixer objects
+    _addInactiveBinding(binding, rootUuid, trackName) {
+      const bindingsByRoot = this._bindingsByRootAndName, bindings = this._bindings;
+      let bindingByName = bindingsByRoot[rootUuid];
+      if (bindingByName === void 0) {
+        bindingByName = {};
+        bindingsByRoot[rootUuid] = bindingByName;
+      }
+      bindingByName[trackName] = binding;
+      binding._cacheIndex = bindings.length;
+      bindings.push(binding);
+    }
+    _removeInactiveBinding(binding) {
+      const bindings = this._bindings, propBinding = binding.binding, rootUuid = propBinding.rootNode.uuid, trackName = propBinding.path, bindingsByRoot = this._bindingsByRootAndName, bindingByName = bindingsByRoot[rootUuid], lastInactiveBinding = bindings[bindings.length - 1], cacheIndex = binding._cacheIndex;
+      lastInactiveBinding._cacheIndex = cacheIndex;
+      bindings[cacheIndex] = lastInactiveBinding;
+      bindings.pop();
+      delete bindingByName[trackName];
+      if (Object.keys(bindingByName).length === 0) {
+        delete bindingsByRoot[rootUuid];
+      }
+    }
+    _lendBinding(binding) {
+      const bindings = this._bindings, prevIndex = binding._cacheIndex, lastActiveIndex = this._nActiveBindings++, firstInactiveBinding = bindings[lastActiveIndex];
+      binding._cacheIndex = lastActiveIndex;
+      bindings[lastActiveIndex] = binding;
+      firstInactiveBinding._cacheIndex = prevIndex;
+      bindings[prevIndex] = firstInactiveBinding;
+    }
+    _takeBackBinding(binding) {
+      const bindings = this._bindings, prevIndex = binding._cacheIndex, firstInactiveIndex = --this._nActiveBindings, lastActiveBinding = bindings[firstInactiveIndex];
+      binding._cacheIndex = firstInactiveIndex;
+      bindings[firstInactiveIndex] = binding;
+      lastActiveBinding._cacheIndex = prevIndex;
+      bindings[prevIndex] = lastActiveBinding;
+    }
+    // Memory management of Interpolants for weight and time scale
+    _lendControlInterpolant() {
+      const interpolants = this._controlInterpolants, lastActiveIndex = this._nActiveControlInterpolants++;
+      let interpolant = interpolants[lastActiveIndex];
+      if (interpolant === void 0) {
+        interpolant = new LinearInterpolant(
+          new Float32Array(2),
+          new Float32Array(2),
+          1,
+          _controlInterpolantsResultBuffer
+        );
+        interpolant.__cacheIndex = lastActiveIndex;
+        interpolants[lastActiveIndex] = interpolant;
+      }
+      return interpolant;
+    }
+    _takeBackControlInterpolant(interpolant) {
+      const interpolants = this._controlInterpolants, prevIndex = interpolant.__cacheIndex, firstInactiveIndex = --this._nActiveControlInterpolants, lastActiveInterpolant = interpolants[firstInactiveIndex];
+      interpolant.__cacheIndex = firstInactiveIndex;
+      interpolants[firstInactiveIndex] = interpolant;
+      lastActiveInterpolant.__cacheIndex = prevIndex;
+      interpolants[prevIndex] = lastActiveInterpolant;
+    }
+    /**
+     * Returns an instance of {@link AnimationAction} for the passed clip.
+     *
+     * If an action fitting the clip and root parameters doesn't yet exist, it
+     * will be created by this method. Calling this method several times with the
+     * same clip and root parameters always returns the same action.
+     *
+     * @param {AnimationClip|string} clip - An animation clip or alternatively the name of the animation clip.
+     * @param {Object3D} [optionalRoot] - An alternative root object.
+     * @param {(NormalAnimationBlendMode|AdditiveAnimationBlendMode)} [blendMode] - The blend mode.
+     * @return {?AnimationAction} The animation action.
+     */
+    clipAction(clip, optionalRoot, blendMode) {
+      const root = optionalRoot || this._root, rootUuid = root.uuid;
+      let clipObject = typeof clip === "string" ? AnimationClip.findByName(root, clip) : clip;
+      const clipUuid = clipObject !== null ? clipObject.uuid : clip;
+      const actionsForClip = this._actionsByClip[clipUuid];
+      let prototypeAction = null;
+      if (blendMode === void 0) {
+        if (clipObject !== null) {
+          blendMode = clipObject.blendMode;
+        } else {
+          blendMode = NormalAnimationBlendMode;
+        }
+      }
+      if (actionsForClip !== void 0) {
+        const existingAction = actionsForClip.actionByRoot[rootUuid];
+        if (existingAction !== void 0 && existingAction.blendMode === blendMode) {
+          return existingAction;
+        }
+        prototypeAction = actionsForClip.knownActions[0];
+        if (clipObject === null)
+          clipObject = prototypeAction._clip;
+      }
+      if (clipObject === null) return null;
+      const newAction = new AnimationAction(this, clipObject, optionalRoot, blendMode);
+      this._bindAction(newAction, prototypeAction);
+      this._addInactiveAction(newAction, clipUuid, rootUuid);
+      return newAction;
+    }
+    /**
+     * Returns an existing animation action for the passed clip.
+     *
+     * @param {AnimationClip|string} clip - An animation clip or alternatively the name of the animation clip.
+     * @param {Object3D} [optionalRoot] - An alternative root object.
+     * @return {?AnimationAction} The animation action. Returns `null` if no action was found.
+     */
+    existingAction(clip, optionalRoot) {
+      const root = optionalRoot || this._root, rootUuid = root.uuid, clipObject = typeof clip === "string" ? AnimationClip.findByName(root, clip) : clip, clipUuid = clipObject ? clipObject.uuid : clip, actionsForClip = this._actionsByClip[clipUuid];
+      if (actionsForClip !== void 0) {
+        return actionsForClip.actionByRoot[rootUuid] || null;
+      }
+      return null;
+    }
+    /**
+     * Deactivates all previously scheduled actions on this mixer.
+     *
+     * @return {AnimationMixer} A reference to thi animation mixer.
+     */
+    stopAllAction() {
+      const actions = this._actions, nActions = this._nActiveActions;
+      for (let i = nActions - 1; i >= 0; --i) {
+        actions[i].stop();
+      }
+      return this;
+    }
+    /**
+     * Advances the global mixer time and updates the animation.
+     *
+     * This is usually done in the render loop by passing the delta
+     * time from {@link Clock} or {@link Timer}.
+     *
+     * @param {number} deltaTime - The delta time in seconds.
+     * @return {AnimationMixer} A reference to thi animation mixer.
+     */
+    update(deltaTime) {
+      deltaTime *= this.timeScale;
+      const actions = this._actions, nActions = this._nActiveActions, time = this.time += deltaTime, timeDirection = Math.sign(deltaTime), accuIndex = this._accuIndex ^= 1;
+      for (let i = 0; i !== nActions; ++i) {
+        const action = actions[i];
+        action._update(time, deltaTime, timeDirection, accuIndex);
+      }
+      const bindings = this._bindings, nBindings = this._nActiveBindings;
+      for (let i = 0; i !== nBindings; ++i) {
+        bindings[i].apply(accuIndex);
+      }
+      return this;
+    }
+    /**
+     * Sets the global mixer to a specific time and updates the animation accordingly.
+     *
+     * This is useful when you need to jump to an exact time in an animation. The
+     * input parameter will be scaled by {@link AnimationMixer#timeScale}
+     *
+     * @param {number} time - The time to set in seconds.
+     * @return {AnimationMixer} A reference to thi animation mixer.
+     */
+    setTime(time) {
+      this.time = 0;
+      for (let i = 0; i < this._actions.length; i++) {
+        this._actions[i].time = 0;
+      }
+      return this.update(time);
+    }
+    /**
+     * Returns this mixer's root object.
+     *
+     * @return {Object3D} The mixer's root object.
+     */
+    getRoot() {
+      return this._root;
+    }
+    /**
+     * Deallocates all memory resources for a clip. Before using this method make
+     * sure to call {@link AnimationAction#stop} for all related actions.
+     *
+     * @param {AnimationClip} clip - The clip to uncache.
+     */
+    uncacheClip(clip) {
+      const actions = this._actions, clipUuid = clip.uuid, actionsByClip = this._actionsByClip, actionsForClip = actionsByClip[clipUuid];
+      if (actionsForClip !== void 0) {
+        const actionsToRemove = actionsForClip.knownActions;
+        for (let i = 0, n = actionsToRemove.length; i !== n; ++i) {
+          const action = actionsToRemove[i];
+          this._deactivateAction(action);
+          const cacheIndex = action._cacheIndex, lastInactiveAction = actions[actions.length - 1];
+          action._cacheIndex = null;
+          action._byClipCacheIndex = null;
+          lastInactiveAction._cacheIndex = cacheIndex;
+          actions[cacheIndex] = lastInactiveAction;
+          actions.pop();
+          this._removeInactiveBindingsForAction(action);
+        }
+        delete actionsByClip[clipUuid];
+      }
+    }
+    /**
+     * Deallocates all memory resources for a root object. Before using this
+     * method make sure to call {@link AnimationAction#stop} for all related
+     * actions or alternatively {@link AnimationMixer#stopAllAction} when the
+     * mixer operates on a single root.
+     *
+     * @param {Object3D} root - The root object to uncache.
+     */
+    uncacheRoot(root) {
+      const rootUuid = root.uuid, actionsByClip = this._actionsByClip;
+      for (const clipUuid in actionsByClip) {
+        const actionByRoot = actionsByClip[clipUuid].actionByRoot, action = actionByRoot[rootUuid];
+        if (action !== void 0) {
+          this._deactivateAction(action);
+          this._removeInactiveAction(action);
+        }
+      }
+      const bindingsByRoot = this._bindingsByRootAndName, bindingByName = bindingsByRoot[rootUuid];
+      if (bindingByName !== void 0) {
+        for (const trackName in bindingByName) {
+          const binding = bindingByName[trackName];
+          binding.restoreOriginalState();
+          this._removeInactiveBinding(binding);
+        }
+      }
+    }
+    /**
+     * Deallocates all memory resources for an action. The action is identified by the
+     * given clip and an optional root object. Before using this method make
+     * sure to call {@link AnimationAction#stop} to deactivate the action.
+     *
+     * @param {AnimationClip|string} clip - An animation clip or alternatively the name of the animation clip.
+     * @param {Object3D} [optionalRoot] - An alternative root object.
+     */
+    uncacheAction(clip, optionalRoot) {
+      const action = this.existingAction(clip, optionalRoot);
+      if (action !== null) {
+        this._deactivateAction(action);
+        this._removeInactiveAction(action);
+      }
+    }
+  };
   var GLBufferAttribute = class {
     /**
      * Constructs a new GL buffer attribute.
@@ -40381,6 +41490,348 @@ void main() {
     }
   };
 
+  // scripts/viewer/ViewerAnimationController.js
+  var AnimationState = Object.freeze({
+    UNINITIALIZED: "UNINITIALIZED",
+    IDLE: "IDLE",
+    LOADING: "LOADING",
+    READY: "READY",
+    PLAYING: "PLAYING",
+    PAUSED: "PAUSED",
+    STOPPED: "STOPPED",
+    FAILED: "FAILED",
+    DISPOSED: "DISPOSED"
+  });
+  var ANIMATION_ERR_DISPOSED = "ANIMATION_CONTROLLER_DISPOSED";
+  var ANIMATION_ERR_NOT_INITIALIZED = "ANIMATION_NOT_INITIALIZED";
+  var ANIMATION_ERR_VRM_MISSING = "ANIMATION_VRM_MISSING";
+  var ANIMATION_ERR_VRM_INVALID = "ANIMATION_VRM_INVALID";
+  var ANIMATION_ERR_MIXER_CREATION_FAILED = "ANIMATION_MIXER_CREATION_FAILED";
+  var ANIMATION_ERR_DELTA_INVALID = "ANIMATION_DELTA_INVALID";
+  var ANIMATION_ERR_DEPENDENCY_MISSING = "ANIMATION_DEPENDENCY_MISSING";
+  var ANIMATION_ERR_UNSUPPORTED = "ANIMATION_UNSUPPORTED";
+  function makeAnimError(code, message) {
+    return { code, message };
+  }
+  var ViewerAnimationController = class {
+    /**
+     * @param {object} options
+     * @param {function(): (object|null)} options.getCurrentVrm 返回当前 VRM 根对象(由 ViewerCore 提供)
+     */
+    constructor(options) {
+      this._state = AnimationState.UNINITIALIZED;
+      this.currentVrm = null;
+      this.mixer = null;
+      this.currentClip = null;
+      this.currentAction = null;
+      this.currentAnimationName = "";
+      this.duration = 0;
+      this.currentTime = 0;
+      this.loop = true;
+      this.playbackSpeed = 1;
+      this.lastError = null;
+      this.disposed = false;
+      this._getCurrentVrm = options && typeof options.getCurrentVrm === "function" ? options.getCurrentVrm : function() {
+        return null;
+      };
+    }
+    /**
+     * 初始化动画控制器。
+     *
+     * 状态转换:
+     *   UNINITIALIZED → IDLE
+     *   IDLE/READY/PLAYING/PAUSED/STOPPED → 返回当前状态(幂等)
+     *   DISPOSED → 返回错误 ANIMATION_CONTROLLER_DISPOSED
+     *   FAILED → 返回错误(允许重试 initialize)
+     *
+     * 初始化不得创建假的 AnimationClip。
+     *
+     * @returns {{success: boolean, state?: string, error?: {code: string, message: string}}}
+     */
+    initialize() {
+      if (this.disposed) {
+        return {
+          success: false,
+          error: makeAnimError(ANIMATION_ERR_DISPOSED, "AnimationController already disposed")
+        };
+      }
+      if (this._state === AnimationState.IDLE || this._state === AnimationState.READY || this._state === AnimationState.PLAYING || this._state === AnimationState.PAUSED || this._state === AnimationState.STOPPED) {
+        return { success: true, state: this._state };
+      }
+      if (this._state === AnimationState.FAILED) {
+        this.lastError = null;
+      }
+      this._state = AnimationState.IDLE;
+      return { success: true, state: this._state };
+    }
+    /**
+     * 绑定 VRM 模型,创建 AnimationMixer。
+     *
+     * 策略 (AGENTS.md Phase 3A §十四~§十五):
+     *   1. 停止并释放旧 AnimationMixer (若存在)
+     *   2. 清除旧 Action/Clip
+     *   3. 绑定新 currentVrm
+     *   4. 创建 new THREE.AnimationMixer(vrm.scene)
+     *   5. state = IDLE (无 clip,不进入 READY/PLAYING)
+     *
+     * 重复绑定同一 VRM: 不得重复创建 Mixer。
+     *
+     * 动画绑定失败不得让:
+     *   - ModelState = FAILED
+     *   - ViewerState = FAILED
+     *
+     * @param {object} vrm VRM 根对象(必须包含 scene 属性)
+     * @returns {{success: boolean, state?: string, error?: {code: string, message: string}}}
+     */
+    bindVrm(vrm) {
+      if (this.disposed) {
+        return {
+          success: false,
+          error: makeAnimError(ANIMATION_ERR_DISPOSED, "AnimationController already disposed")
+        };
+      }
+      if (this._state === AnimationState.UNINITIALIZED) {
+        return {
+          success: false,
+          error: makeAnimError(ANIMATION_ERR_NOT_INITIALIZED, "AnimationController not initialized")
+        };
+      }
+      if (!vrm) {
+        return {
+          success: false,
+          error: makeAnimError(ANIMATION_ERR_VRM_MISSING, "vrm is null or undefined")
+        };
+      }
+      if (!vrm.scene) {
+        return {
+          success: false,
+          error: makeAnimError(ANIMATION_ERR_VRM_INVALID, "vrm.scene is missing")
+        };
+      }
+      if (this.currentVrm === vrm && this.mixer) {
+        return { success: true, state: this._state };
+      }
+      this._disposeMixer();
+      this.currentClip = null;
+      this.currentAction = null;
+      this.currentAnimationName = "";
+      this.duration = 0;
+      this.currentTime = 0;
+      this.lastError = null;
+      this.currentVrm = vrm;
+      try {
+        this.mixer = new AnimationMixer(vrm.scene);
+      } catch (e) {
+        var msg = e && e.message ? e.message : String(e);
+        this.lastError = makeAnimError(ANIMATION_ERR_MIXER_CREATION_FAILED, msg);
+        this._state = AnimationState.IDLE;
+        return {
+          success: false,
+          error: this.lastError
+        };
+      }
+      this._state = AnimationState.IDLE;
+      return { success: true, state: this._state };
+    }
+    /**
+     * 解绑 VRM,停止并释放 Mixer。
+     *
+     * 策略 (AGENTS.md Phase 3A §十五):
+     *   mixer.stopAllAction();
+     *   mixer.uncacheRoot(vrm.scene);
+     *   再清除引用。
+     *
+     * 不销毁 VRM 模型本身(VRM 所有权属于 ViewerModelLoader)。
+     *
+     * @returns {{success: boolean, state?: string}}
+     */
+    unbindVrm() {
+      if (this.disposed) {
+        return {
+          success: false,
+          error: makeAnimError(ANIMATION_ERR_DISPOSED, "AnimationController already disposed")
+        };
+      }
+      this._disposeMixer();
+      this.currentVrm = null;
+      this.currentClip = null;
+      this.currentAction = null;
+      this.currentAnimationName = "";
+      this.duration = 0;
+      this.currentTime = 0;
+      if (this._state !== AnimationState.DISPOSED) {
+        this._state = AnimationState.IDLE;
+      }
+      return { success: true, state: this._state };
+    }
+    /**
+     * 每帧更新(由 ViewerFrameLoop 通过 ViewerCore 调用)。
+     *
+     * 策略 (AGENTS.md Phase 3A §十六~§十七):
+     *   - 复用现有 Frame Loop (不创建第二个 requestAnimationFrame)
+     *   - deltaSeconds 必须是有限非负数
+     *   - state !== PLAYING → 不调用 mixer.update
+     *   - state === PLAYING → mixer.update(deltaSeconds * playbackSpeed)
+     *
+     * 更新顺序 (ANIMATION_UPDATE_ORDER: VRM_FIRST_THEN_MIXER):
+     *   ViewerFrameLoop → modelLoader.update(deltaSeconds) [vrm.update] → animationController.update(deltaSeconds) [mixer.update]
+     *   依据: Figure index.html:2876→2880 和 OWNverse offset 3351702 一致采用 vrm.update → mixer.update
+     *
+     * Phase 3A 骨架:
+     *   无实际 Clip 时,state 不会进入 PLAYING,因此 mixer.update 不会被调用。
+     *
+     * @param {number} deltaSeconds 帧间隔(秒)
+     */
+    update(deltaSeconds) {
+      if (this.disposed) return;
+      if (this._state === AnimationState.DISPOSED) return;
+      if (typeof deltaSeconds !== "number" || !isFinite(deltaSeconds) || deltaSeconds < 0 || isNaN(deltaSeconds)) {
+        if (this.lastError === null || this.lastError.code !== ANIMATION_ERR_DELTA_INVALID) {
+          this.lastError = makeAnimError(
+            ANIMATION_ERR_DELTA_INVALID,
+            "deltaSeconds is invalid: " + String(deltaSeconds)
+          );
+          console.warn("[ViewerAnimationController] " + this.lastError.code + ": " + this.lastError.message);
+        }
+        return;
+      }
+      if (this._state !== AnimationState.PLAYING) {
+        return;
+      }
+      if (this.mixer) {
+        try {
+          this.mixer.update(deltaSeconds * this.playbackSpeed);
+          if (this.currentAction) {
+            this.currentTime = this.currentAction.time;
+          }
+        } catch (e) {
+          var msg = e && e.message ? e.message : String(e);
+          this.lastError = makeAnimError("ANIMATION_MIXER_UPDATE_FAILED", msg);
+          console.warn("[ViewerAnimationController] mixer.update failed: " + msg);
+        }
+      }
+    }
+    /**
+     * 获取当前动画状态。
+     *
+     * @returns {string} AnimationState 枚举值
+     */
+    getState() {
+      return this._state;
+    }
+    /**
+     * 获取调试状态快照(只读,供 Bridge getAnimationDebugState 使用)。
+     *
+     * @returns {object} ArkWebAnimationDebugState 兼容对象
+     */
+    getDebugState() {
+      return {
+        state: this._state,
+        vrmBound: !!this.currentVrm,
+        mixerReady: !!this.mixer,
+        clipReady: !!this.currentClip,
+        actionReady: !!this.currentAction,
+        animationName: this.currentAnimationName,
+        duration: this.duration,
+        currentTime: this.currentTime,
+        playbackSpeed: this.playbackSpeed,
+        loop: this.loop,
+        errorCode: this.lastError ? this.lastError.code : "",
+        errorMessage: this.lastError ? this.lastError.message : ""
+      };
+    }
+    /**
+     * Phase 3A: 查询动画依赖状态(只读)。
+     *
+     * 返回当前动画系统的依赖可用性信息。
+     * - three-vrm-animation 未安装,VRMA 解析与 createVRMAnimationClip 不可用
+     * - AnimationMixer 属于 three.js core,已可用
+     *
+     * 此方法同时引用所有错误码常量,避免 esbuild tree-shaking 移除未使用的错误码
+     * (ANIMATION_DEPENDENCY_MISSING / ANIMATION_UNSUPPORTED 等在本阶段无实际调用路径)。
+     *
+     * @returns {{dependencyAvailable: boolean, dependencyName: string, mixerAvailable: boolean, errorCodes: string[]}}
+     */
+    getDependencyStatus() {
+      return {
+        dependencyAvailable: false,
+        dependencyName: "@pixiv/three-vrm-animation",
+        mixerAvailable: true,
+        // 引用所有错误码,防止 tree-shaking 移除未使用的常量
+        errorCodes: [
+          ANIMATION_ERR_DISPOSED,
+          ANIMATION_ERR_NOT_INITIALIZED,
+          ANIMATION_ERR_VRM_MISSING,
+          ANIMATION_ERR_VRM_INVALID,
+          ANIMATION_ERR_MIXER_CREATION_FAILED,
+          ANIMATION_ERR_DELTA_INVALID,
+          ANIMATION_ERR_DEPENDENCY_MISSING,
+          ANIMATION_ERR_UNSUPPORTED
+        ]
+      };
+    }
+    /**
+     * 销毁动画控制器,释放所有资源。
+     *
+     * 策略 (AGENTS.md Phase 3A §二十四):
+     *   1. stopAllAction (mixer 存在时)
+     *   2. uncacheClip (currentClip 存在时)
+     *   3. uncacheRoot (mixer 与 currentVrm 均存在时)
+     *   4. 清除 Mixer
+     *   5. 清除 Clip
+     *   6. 清除 Action
+     *   7. 清除 currentVrm
+     *   8. state = DISPOSED
+     *
+     * 不得 dispose VRM 模型本身(VRM 所有权属于 ViewerModelLoader)。
+     */
+    dispose() {
+      if (this.disposed) return;
+      this.disposed = true;
+      this._disposeMixer();
+      this.mixer = null;
+      this.currentClip = null;
+      this.currentAction = null;
+      this.currentVrm = null;
+      this.currentAnimationName = "";
+      this.duration = 0;
+      this.currentTime = 0;
+      this._state = AnimationState.DISPOSED;
+    }
+    // ===== 内部方法 =====
+    /**
+     * 内部:停止并释放当前 Mixer(不清除 currentVrm 引用)。
+     *
+     * 依据 AGENTS.md Phase 3A §十五:
+     *   mixer.stopAllAction();
+     *   mixer.uncacheRoot(vrm.scene);
+     */
+    _disposeMixer() {
+      if (this.mixer) {
+        try {
+          this.mixer.stopAllAction();
+        } catch (e) {
+          console.warn("[ViewerAnimationController] stopAllAction failed: " + (e && e.message ? e.message : String(e)));
+        }
+        if (this.currentVrm && this.currentVrm.scene) {
+          try {
+            this.mixer.uncacheRoot(this.currentVrm.scene);
+          } catch (e) {
+            console.warn("[ViewerAnimationController] uncacheRoot failed: " + (e && e.message ? e.message : String(e)));
+          }
+        }
+        if (this.currentClip) {
+          try {
+            this.mixer.uncacheClip(this.currentClip);
+          } catch (e) {
+            console.warn("[ViewerAnimationController] uncacheClip failed: " + (e && e.message ? e.message : String(e)));
+          }
+        }
+        this.mixer = null;
+      }
+    }
+  };
+
   // scripts/viewer/ViewerCore.js
   var STATE_UNINITIALIZED = "UNINITIALIZED";
   var STATE_INITIALIZING = "INITIALIZING";
@@ -40409,6 +41860,7 @@ void main() {
       this.camera = null;
       this.frameLoop = null;
       this.modelLoader = null;
+      this.animationController = null;
       this._container = null;
       this._resizeObserver = null;
       this._boundWindowResize = this._onWindowResize.bind(this);
@@ -40477,9 +41929,19 @@ void main() {
         });
         this.modelLoader.initialize();
         this._emitStartupDiagnostic("VIEWER_MODEL_LOADER_READY", "", "ViewerModelLoader initialized");
+        this.animationController = new ViewerAnimationController({
+          getCurrentVrm: () => {
+            return this.modelLoader ? this.modelLoader.getCurrentVrm() : null;
+          }
+        });
+        this.animationController.initialize();
+        this._emitStartupDiagnostic("VIEWER_ANIMATION_CONTROLLER_READY", "", "ViewerAnimationController initialized");
         this.frameLoop.start((deltaSeconds) => {
           if (this.modelLoader) {
             this.modelLoader.update(deltaSeconds);
+          }
+          if (this.animationController) {
+            this.animationController.update(deltaSeconds);
           }
           this.camera.update(deltaSeconds);
           this.scene.render(this.camera.getCamera());
@@ -40711,6 +42173,10 @@ void main() {
      * - sceneReady / cameraReady / frameLoopRunning 重命名为 threeLoaded / sceneInitialized /
      *   cameraInitialized / frameLoopRunning(保留旧字段供向后兼容)
      *
+     * Phase 3A 扩展:
+     * - animationState 字段从硬编码 'NOT_INITIALIZED' 改为读取 animationController.getState()
+     * - 新增 animationVrmBound / animationMixerReady 字段供 Debug 使用
+     *
      * @returns {object}
      */
     getSceneState() {
@@ -40729,6 +42195,9 @@ void main() {
       }
       var sceneSettings = this.scene ? this.scene.getSettings() : null;
       var cameraControls = this.camera ? this.camera.getControlsEnabled() : { success: false, error: "CAMERA_NOT_INITIALIZED" };
+      var animationState = this.animationController ? this.animationController.getState() : AnimationState.UNINITIALIZED;
+      var animationVrmBound = this.animationController ? !!this.animationController.currentVrm : false;
+      var animationMixerReady = this.animationController ? !!this.animationController.mixer : false;
       return {
         viewerState: this._state,
         // Phase 2A-1: 模型状态扩展
@@ -40737,7 +42206,10 @@ void main() {
         modelDisplayName,
         modelSource,
         modelError,
-        animationState: "NOT_INITIALIZED",
+        // Phase 3A: 动画状态扩展(替换原硬编码 'NOT_INITIALIZED')
+        animationState,
+        animationVrmBound,
+        animationMixerReady,
         humanoidState: "NOT_INITIALIZED",
         springBoneState: "NOT_INITIALIZED",
         // Phase 2A-1: Scene 与 Camera 状态扩展
@@ -40752,8 +42224,72 @@ void main() {
         // 保留旧字段供向后兼容
         sceneReady: !!this.scene,
         cameraReady: !!this.camera,
-        phase: "PHASE_2A_2"
+        phase: "PHASE_3A"
       };
+    }
+    // ===== Phase 3A: Animation System =====
+    /**
+     * Phase 3A: 初始化动画系统。
+     *
+     * 在 ViewerCore.initialize 中已自动调用,此方法用于:
+     *   - 幂等查询:返回当前动画系统状态
+     *   - 失败后重试(若 animationController 处于 FAILED)
+     *
+     * 不阻塞 Viewer READY。
+     * 动画系统失败不改 ViewerState / ModelState。
+     *
+     * @returns {{success: boolean, state?: string, error?: {code: string, message: string}}}
+     */
+    initializeAnimationSystem() {
+      if (!this.animationController) {
+        this.animationController = new ViewerAnimationController({
+          getCurrentVrm: () => {
+            return this.modelLoader ? this.modelLoader.getCurrentVrm() : null;
+          }
+        });
+      }
+      var result = this.animationController.initialize();
+      return result;
+    }
+    /**
+     * Phase 3A: 获取动画系统状态(只读)。
+     *
+     * @returns {{success: boolean, state?: string}}
+     */
+    getAnimationState() {
+      if (!this.animationController) {
+        return { success: true, state: AnimationState.UNINITIALIZED };
+      }
+      return { success: true, state: this.animationController.getState() };
+    }
+    /**
+     * Phase 3A: 获取动画系统调试状态快照(只读)。
+     *
+     * 供 Bridge getAnimationDebugState 使用,字段与 ArkWebAnimationDebugState 对齐。
+     *
+     * @returns {{success: boolean, debugState?: object}}
+     */
+    getAnimationDebugState() {
+      if (!this.animationController) {
+        return {
+          success: true,
+          debugState: {
+            state: AnimationState.UNINITIALIZED,
+            vrmBound: false,
+            mixerReady: false,
+            clipReady: false,
+            actionReady: false,
+            animationName: "",
+            duration: 0,
+            currentTime: 0,
+            playbackSpeed: 1,
+            loop: true,
+            errorCode: "",
+            errorMessage: ""
+          }
+        };
+      }
+      return { success: true, debugState: this.animationController.getDebugState() };
     }
     // ===== Phase 2A-1: Camera Controls enable/disable =====
     /**
@@ -41042,18 +42578,23 @@ void main() {
     /**
      * 销毁 Viewer,释放所有资源。
      *
-     * 顺序(AGENTS.md Phase 1C-2 §十九):
+     * 顺序(AGENTS.md Phase 1C-2 §十九,Phase 3A 补充 animationController):
      *   1. 状态推进到 DISPOSING
      *   2. 使进行中的 initialize 失效(_initToken++)
      *   3. 移除 ResizeObserver / window resize listener
      *   4. 停止 Frame Loop
-     *   5. dispose ModelLoader(释放当前 VRM:Geometry / Material / Texture)
-     *   6. dispose Camera(OrbitControls)
-     *   7. dispose Scene(Renderer / 测试方块 / 灯光 / Canvas)
-     *   8. 清空引用
-     *   9. 状态推进到 DISPOSED
+     *   5. dispose AnimationController(释放 AnimationMixer,不销毁 VRM)
+     *   6. dispose ModelLoader(释放当前 VRM:Geometry / Material / Texture)
+     *   7. dispose Camera(OrbitControls)
+     *   8. dispose Scene(Renderer / 测试方块 / 灯光 / Canvas)
+     *   9. 清空引用
+     *  10. 状态推进到 DISPOSED
      *
-     * 必须先销毁模型,再销毁 Scene:
+     * 必须先 dispose AnimationController,再 dispose ModelLoader:
+     *   AnimationMixer.uncacheRoot 需要 vrm.scene 仍可访问,
+     *   而 ModelLoader.dispose 会释放 vrm.scene 资源。
+     *
+     * 必须先 dispose ModelLoader,再 dispose Scene:
      *   模型的 Geometry / Material / Texture 需要遍历 vrm.scene 释放,
      *   若先销毁 Scene 会导致 vrm.scene 被清空,无法正确遍历。
      */
@@ -41065,6 +42606,10 @@ void main() {
       if (this.frameLoop) {
         this.frameLoop.dispose();
         this.frameLoop = null;
+      }
+      if (this.animationController) {
+        this.animationController.dispose();
+        this.animationController = null;
       }
       if (this.modelLoader) {
         this.modelLoader.dispose();
@@ -41110,6 +42655,10 @@ void main() {
         this.frameLoop.dispose();
         this.frameLoop = null;
       }
+      if (this.animationController) {
+        this.animationController.dispose();
+        this.animationController = null;
+      }
       if (this.modelLoader) {
         this.modelLoader.dispose();
         this.modelLoader = null;
@@ -41130,6 +42679,7 @@ void main() {
      * Phase 1D-2B-2 起职责调整:
      * - LOADING:仅通知 ArkTS
      * - READY:Scene 替换已由 onReplaceModel 同步完成,此处仅做相机重置 + 通知 ArkTS
+     *   Phase 3A:同时调用 animationController.bindVrm(currentVrm)
      * - FAILED:保留当前显示(旧模型或测试方块),通知 ArkTS(Viewer 仍为 READY,仅 Model FAILED)
      * - DISPOSED:不处理(由 dispose 流程触发)
      *
@@ -41163,6 +42713,19 @@ void main() {
           }
         }
         this._lastCameraFocusWarning = cameraFocusWarning;
+        if (this.animationController && this.modelLoader) {
+          var vrmToBind = this.modelLoader.getCurrentVrm();
+          if (vrmToBind) {
+            try {
+              var bindResult = this.animationController.bindVrm(vrmToBind);
+              if (!bindResult.success) {
+                console.warn("[ViewerCore] animationController.bindVrm failed: " + (bindResult.error ? bindResult.error.code + " " + bindResult.error.message : "unknown"));
+              }
+            } catch (e) {
+              console.warn("[ViewerCore] animationController.bindVrm threw: " + (e && e.message ? e.message : String(e)));
+            }
+          }
+        }
         if (window.ViewerBridge && typeof window.ViewerBridge.notifyModelStateChanged === "function") {
           window.ViewerBridge.notifyModelStateChanged(state);
         }
@@ -41187,6 +42750,11 @@ void main() {
      * 2. if (previousVrm) scene.removeModel(previousVrm.scene) — 旧模型从 Scene 移除
      * 3. scene.removeTestObject() — 移除测试方块(若存在)
      *
+     * Phase 3A 补充:
+     * - 在 Scene 替换前,若存在旧 VRM,先调用 animationController.unbindVrm()
+     *   释放旧 AnimationMixer(避免 mixer 引用已被移除的 scene root)
+     * - 新 VRM 的 bindVrm 由 _onModelStateChanged(READY) 处理
+     *
      * 抛异常时 ViewerModelLoader 会释放新模型,旧模型保留。
      *
      * @param {object} nextVrm 新加载的 VRM 根对象
@@ -41198,6 +42766,13 @@ void main() {
       }
       if (!nextVrm || !nextVrm.scene) {
         throw new Error("nextVrm.scene is empty");
+      }
+      if (this.animationController && previousVrm) {
+        try {
+          this.animationController.unbindVrm();
+        } catch (e) {
+          console.warn("[ViewerCore] animationController.unbindVrm threw: " + (e && e.message ? e.message : String(e)));
+        }
       }
       this.scene.addModel(nextVrm.scene);
       if (previousVrm && previousVrm.scene) {
@@ -43510,9 +45085,37 @@ void main() {
             error: { code: "DIAGNOSTICS_CALL_FAILED", message: msg }
           });
         }
+      },
+      // ===== Phase 3A: Animation System (只读 Bridge) =====
+      // 本阶段仅提供只读查询方法,不提供 play/pause/stop/seek 等控制方法。
+      // 动画系统失败不影响 ViewerState / ModelState。
+      /**
+       * Phase 3A: 获取动画系统状态(只读)。
+       *
+       * @returns {string} JSON 结果
+       *   成功:{"success": true, "state": "IDLE"}
+       *   state 枚举:UNINITIALIZED / IDLE / LOADING / READY / PLAYING / PAUSED / STOPPED / FAILED / DISPOSED
+       */
+      getAnimationState: function() {
+        return callViewer(function(v) {
+          var result = v.getAnimationState();
+          return { success: true, state: result.state };
+        });
+      },
+      /**
+       * Phase 3A: 获取动画系统调试状态快照(只读)。
+       *
+       * @returns {string} JSON 结果
+       *   成功:{"success": true, "debugState": {state, vrmBound, mixerReady, ...}}
+       */
+      getAnimationDebugState: function() {
+        return callViewer(function(v) {
+          var result = v.getAnimationDebugState();
+          return { success: true, debugState: result.debugState };
+        });
       }
     };
-    console.log("[App] arkTavernViewerBridge registered (Phase 1B + 1D-2A + 1D-2B-1 + 1D-2B-2 + 1D-2C-1 + 1D-2C-2A + 2A-1, delegates to ViewerCore + preparedResource keeper + probe + userModelLoadCoordinator + runtimeDiagnostics keeper + cameraControls + sceneSettings)");
+    console.log("[App] arkTavernViewerBridge registered (Phase 1B + 1D-2A + 1D-2B-1 + 1D-2B-2 + 1D-2C-1 + 1D-2C-2A + 2A-1 + 2F + 3A, delegates to ViewerCore + preparedResource keeper + probe + userModelLoadCoordinator + runtimeDiagnostics keeper + cameraControls + sceneSettings + animationController)");
     emitStartupDiagnostic("JS_BRIDGE_BOUND", "", "arkTavernViewerBridge registered");
     async function onDomReady() {
       emitStartupDiagnostic("ARKWEB_PAGE_END", "", "DOM ready, page loaded");

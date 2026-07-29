@@ -148,10 +148,14 @@ export class ArkWebVrmViewerNativeBridge {
 
   private parseAnimationState(state: string): ArkWebAnimationState {
     switch (state) {
-      case 'NOT_LOADED':
-        return ArkWebAnimationState.NOT_LOADED;
+      case 'UNINITIALIZED':
+        return ArkWebAnimationState.UNINITIALIZED;
+      case 'IDLE':
+        return ArkWebAnimationState.IDLE;
       case 'LOADING':
         return ArkWebAnimationState.LOADING;
+      case 'READY':
+        return ArkWebAnimationState.READY;
       case 'PLAYING':
         return ArkWebAnimationState.PLAYING;
       case 'PAUSED':
@@ -160,8 +164,10 @@ export class ArkWebVrmViewerNativeBridge {
         return ArkWebAnimationState.STOPPED;
       case 'FAILED':
         return ArkWebAnimationState.FAILED;
+      case 'DISPOSED':
+        return ArkWebAnimationState.DISPOSED;
       default:
-        return ArkWebAnimationState.NOT_LOADED;
+        return ArkWebAnimationState.UNINITIALIZED;
     }
   }
 }
@@ -652,6 +658,36 @@ export class ArkWebViewerJsCaller {
    */
   async getEnvironmentSettings(): Promise<string> {
     return this.call('getEnvironmentSettings');
+  }
+
+  // ===== Phase 3A: Animation System (只读查询) =====
+
+  /**
+   * Phase 3A: 调用 window.arkTavernViewerBridge.getAnimationState()
+   *
+   * 获取动画系统当前状态(只读)。
+   * 不触发动画加载/播放,仅查询 AnimationController.getState()。
+   *
+   * @returns JSON 字符串,形如
+   *   {"success": true, "state": "IDLE"}
+   *   state 枚举:UNINITIALIZED / IDLE / LOADING / READY / PLAYING / PAUSED / STOPPED / FAILED / DISPOSED
+   */
+  async getAnimationState(): Promise<string> {
+    return this.call('getAnimationState');
+  }
+
+  /**
+   * Phase 3A: 调用 window.arkTavernViewerBridge.getAnimationDebugState()
+   *
+   * 获取动画系统调试状态快照(只读)。
+   * 包含 state / vrmBound / mixerReady / clipReady / actionReady / animationName /
+   * duration / currentTime / playbackSpeed / loop / errorCode / errorMessage。
+   *
+   * @returns JSON 字符串,形如
+   *   {"success": true, "debugState": {"state": "...", "vrmBound": ..., ...}}
+   */
+  async getAnimationDebugState(): Promise<string> {
+    return this.call('getAnimationDebugState');
   }
 
   private async call(methodName: string): Promise<string> {

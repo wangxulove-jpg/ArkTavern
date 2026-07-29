@@ -466,6 +466,32 @@ struct VrmViewerPage {
   @State screenshotErrorMessage: string = '';
   @State screenshotInProgress: boolean = false;
 
+  // ===== Phase 3A: 动画系统 Debug 状态(由 getAnimationDebugState 解析) =====
+  /** Debug:动画状态机字符串(UNINITIALIZED/IDLE/LOADING/READY/PLAYING/PAUSED/STOPPED/FAILED/DISPOSED) */
+  @State debugAnimationState: string = 'UNINITIALIZED';
+  /** Debug:VRM 是否已绑定到动画控制器 */
+  @State debugAnimationVrmBound: boolean = false;
+  /** Debug:AnimationMixer 是否已创建 */
+  @State debugAnimationMixerReady: boolean = false;
+  /** Debug:AnimationClip 是否已准备 */
+  @State debugAnimationClipReady: boolean = false;
+  /** Debug:AnimationAction 是否已准备 */
+  @State debugAnimationActionReady: boolean = false;
+  /** Debug:当前动画名称 */
+  @State debugAnimationName: string = '';
+  /** Debug:动画总时长(秒) */
+  @State debugAnimationDuration: number = 0;
+  /** Debug:当前播放时间(秒) */
+  @State debugAnimationCurrentTime: number = 0;
+  /** Debug:播放速度 */
+  @State debugAnimationPlaybackSpeed: number = 1;
+  /** Debug:是否循环播放 */
+  @State debugAnimationLoop: boolean = true;
+  /** Debug:动画错误码 */
+  @State debugAnimationErrorCode: string = '';
+  /** Debug:动画错误信息 */
+  @State debugAnimationErrorMessage: string = '';
+
   aboutToAppear(): void {
     // Phase 2A-3A: 启用 Web 全绘制能力(webPageSnapshot 前置条件)
     // 必须在 aboutToAppear 中调用(Web 组件初始化前),官方文档明确要求
@@ -519,6 +545,8 @@ struct VrmViewerPage {
         this.refreshDebugSceneState();
         // Phase 2A-2:Viewer READY 后刷新 Camera Debug 状态
         this.refreshCameraDebugState();
+        // Phase 3A:Viewer READY 后刷新动画 Debug 状态
+        this.refreshAnimationDebugState();
         // Phase 2F:Viewer READY 后启动环境贴图初始化(后台,不阻塞 UI)
         this.startEnvironmentInitialization();
       }
@@ -1083,6 +1111,8 @@ struct VrmViewerPage {
       // Phase 2A-2: 模型 READY 后(自动取景已完成)刷新 Camera Debug
       if (this.debugModelState === 'READY') {
         this.refreshCameraDebugState();
+        // Phase 3A: 模型 READY 后也刷新动画 Debug(绑定可能刚刚完成)
+        this.refreshAnimationDebugState();
       }
       // Scene 设置
       this.debugCameraControlsEnabled = scene['cameraControlsEnabled'] === true;
@@ -1101,6 +1131,52 @@ struct VrmViewerPage {
       }
     } catch (e) {
       console.warn('[VrmViewerPage] parseDebugSceneState failed: ' + (e instanceof Error ? e.message : String(e)));
+    }
+  }
+
+  // ===== Phase 3A: 动画系统 Debug 状态查询 =====
+
+  /**
+   * Phase 3A: 刷新动画系统 Debug 状态(从 getAnimationDebugState 解析)。
+   *
+   * 仅在 Viewer READY / 模型替换完成 / 用户手动刷新 Debug 时查询,
+   * 不每帧执行 ArkTS Bridge 查询。
+   */
+  private refreshAnimationDebugState(): void {
+    this.arkWebController.getAnimationDebugState().then((resultJson: string) => {
+      this.parseAnimationDebugState(resultJson);
+    }).catch((e: Object) => {
+      console.warn('[VrmViewerPage] refreshAnimationDebugState exception: ' + (e instanceof Error ? e.message : String(e)));
+    });
+  }
+
+  /**
+   * Phase 3A: 解析 getAnimationDebugState 返回的 JSON,更新动画 Debug 状态。
+   */
+  private parseAnimationDebugState(resultJson: string): void {
+    try {
+      const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
+      if (obj['success'] !== true) {
+        return;
+      }
+      const debugState = obj['debugState'] as Record<string, Object>;
+      if (!debugState) {
+        return;
+      }
+      this.debugAnimationState = (debugState['state'] as string) || 'UNINITIALIZED';
+      this.debugAnimationVrmBound = debugState['vrmBound'] === true;
+      this.debugAnimationMixerReady = debugState['mixerReady'] === true;
+      this.debugAnimationClipReady = debugState['clipReady'] === true;
+      this.debugAnimationActionReady = debugState['actionReady'] === true;
+      this.debugAnimationName = (debugState['animationName'] as string) || '';
+      this.debugAnimationDuration = (debugState['duration'] as number) || 0;
+      this.debugAnimationCurrentTime = (debugState['currentTime'] as number) || 0;
+      this.debugAnimationPlaybackSpeed = (debugState['playbackSpeed'] as number) || 1;
+      this.debugAnimationLoop = debugState['loop'] === true;
+      this.debugAnimationErrorCode = (debugState['errorCode'] as string) || '';
+      this.debugAnimationErrorMessage = (debugState['errorMessage'] as string) || '';
+    } catch (e) {
+      console.warn('[VrmViewerPage] parseAnimationDebugState failed: ' + (e instanceof Error ? e.message : String(e)));
     }
   }
 
@@ -4614,10 +4690,31 @@ struct VrmViewerPage {
 
   @Builder
   TabAnimationContent() {
-    Text('动画功能尚未启用')
-      .fontSize($r('app.float.app_font_body'))
-      .fontColor($r('app.color.app_text_secondary'))
-      .width('100%')
+    Column() {
+      // Phase 3A: 动画系统状态显示(只读,无播放控件)
+      Text('动画系统')
+        .fontSize($r('app.float.app_font_subtitle'))
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.app_text_primary'))
+        .margin({ bottom: 8 })
+
+      this.DebugRow('动画状态', this.debugAnimationState)
+      this.DebugRow('VRM 绑定', this.debugAnimationVrmBound ? '已绑定' : '未绑定')
+      this.DebugRow('Mixer', this.debugAnimationMixerReady ? 'READY' : 'NOT READY')
+      this.DebugRow('动画文件', this.debugAnimationClipReady ? this.debugAnimationName : '未导入')
+
+      if (this.debugAnimationErrorCode.length > 0) {
+        this.DebugRow('动画错误', `${this.debugAnimationErrorCode}: ${this.debugAnimationErrorMessage}`)
+      }
+
+      Text('VRMA 文件导入与播放将在下一项接入')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_secondary'))
+        .margin({ top: 16 })
+        .width('100%')
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
   }
 
   @Builder
@@ -4934,7 +5031,20 @@ struct VrmViewerPage {
         this.DebugRow('Screenshot Error', `${this.screenshotErrorCode}: ${this.screenshotErrorMessage}`)
       }
 
-      this.DebugRow('Animation', 'NOT INITIALIZED')
+      // Phase 3A: 动画系统 Debug 字段(由 getAnimationDebugState 解析)
+      this.DebugRow('Animation State', this.debugAnimationState)
+      this.DebugRow('Animation VRM Bound', this.debugAnimationVrmBound ? 'YES' : 'NO')
+      this.DebugRow('Animation Mixer', this.debugAnimationMixerReady ? 'READY' : 'NOT READY')
+      this.DebugRow('Animation Clip', this.debugAnimationClipReady ? 'READY' : 'NOT READY')
+      this.DebugRow('Animation Action', this.debugAnimationActionReady ? 'READY' : 'NOT READY')
+      this.DebugRow('Animation Name', this.debugAnimationName.length > 0 ? this.debugAnimationName : '-')
+      this.DebugRow('Animation Duration', this.debugAnimationDuration > 0 ? `${this.debugAnimationDuration.toFixed(3)}s` : '-')
+      this.DebugRow('Animation Time', this.debugAnimationCurrentTime > 0 ? `${this.debugAnimationCurrentTime.toFixed(3)}s` : '-')
+      this.DebugRow('Animation Speed', this.debugAnimationPlaybackSpeed.toFixed(2))
+      this.DebugRow('Animation Loop', this.debugAnimationLoop ? 'YES' : 'NO')
+      if (this.debugAnimationErrorCode.length > 0) {
+        this.DebugRow('Animation Error', `${this.debugAnimationErrorCode}: ${this.debugAnimationErrorMessage}`)
+      }
       this.DebugRow('Humanoid', 'NOT INITIALIZED')
       this.DebugRow('Spring Bone', 'NOT INITIALIZED')
       this.DebugRow('Detail', this.viewerDetail)
@@ -4947,7 +5057,7 @@ struct VrmViewerPage {
           .width('100%')
       }
 
-      // Phase 2A-1: 刷新 Debug 状态按钮(手动触发 getSceneState + getCameraState)
+      // Phase 2A-1: 刷新 Debug 状态按钮(手动触发 getSceneState + getCameraState + getAnimationDebugState)
       Button('刷新 Debug 状态')
         .fontSize($r('app.float.app_font_body'))
         .fontColor($r('app.color.app_text_primary'))
@@ -4958,6 +5068,7 @@ struct VrmViewerPage {
         .onClick(() => {
           this.refreshDebugSceneState();
           this.refreshCameraDebugState();
+          this.refreshAnimationDebugState();
         })
     }
     .width('100%')

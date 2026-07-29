@@ -869,6 +869,58 @@ export class ArkWebVrmViewerController implements ArkWebViewerBridgeListener {
     }
   }
 
+  // ===== Phase 3A: Animation System (只读查询) =====
+
+  /**
+   * Phase 3A: 获取动画系统当前状态(只读)。
+   *
+   * 不触发动画加载/播放,仅查询 AnimationController.getState()。
+   * 动画系统失败不影响 ViewerState / ModelState。
+   *
+   * @returns JSON 字符串,形如
+   *   {"success": true, "state": "IDLE"}
+   */
+  async getAnimationState(): Promise<string> {
+    if (this.disposed) {
+      const disposedError: ArkWebBridgeErrorPayload = { code: 'DISPOSED', message: 'controller disposed' };
+      const disposedResponse: ArkWebBridgeFailedResponse = { success: false, error: disposedError };
+      return JSON.stringify(disposedResponse);
+    }
+    try {
+      return await this.jsCaller.getAnimationState();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const failedError: ArkWebBridgeErrorPayload = { code: 'ANIMATION_STATE_QUERY_FAILED', message: msg };
+      const failedResponse: ArkWebBridgeFailedResponse = { success: false, error: failedError };
+      return JSON.stringify(failedResponse);
+    }
+  }
+
+  /**
+   * Phase 3A: 获取动画系统调试状态快照(只读)。
+   *
+   * 包含 state / vrmBound / mixerReady / clipReady / actionReady / animationName /
+   * duration / currentTime / playbackSpeed / loop / errorCode / errorMessage。
+   *
+   * @returns JSON 字符串,形如
+   *   {"success": true, "debugState": {"state": "...", "vrmBound": ..., ...}}
+   */
+  async getAnimationDebugState(): Promise<string> {
+    if (this.disposed) {
+      const disposedError: ArkWebBridgeErrorPayload = { code: 'DISPOSED', message: 'controller disposed' };
+      const disposedResponse: ArkWebBridgeFailedResponse = { success: false, error: disposedError };
+      return JSON.stringify(disposedResponse);
+    }
+    try {
+      return await this.jsCaller.getAnimationDebugState();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const failedError: ArkWebBridgeErrorPayload = { code: 'ANIMATION_DEBUG_STATE_QUERY_FAILED', message: msg };
+      const failedResponse: ArkWebBridgeFailedResponse = { success: false, error: failedError };
+      return JSON.stringify(failedResponse);
+    }
+  }
+
   // ===== Web 组件生命周期回调 =====
 
   /**
