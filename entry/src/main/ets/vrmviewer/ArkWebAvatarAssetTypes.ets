@@ -64,7 +64,7 @@ export interface ArkWebAvatarModelAsset {
  * - models 数组 (可含 0..N 条记录)
  * - animations 数组 (Phase 3C-1 起支持多 VRMA 持久化)
  * - defaultIdleActionId (Phase 3C-2 起支持默认待机标记, 空字符串表示无默认)
- * - poses 固定为空数组 (Phase 3C 后续阶段实现)
+ * - poses 数组 (Phase 3D-1 起支持 JSON 姿势持久化)
  */
 export interface ArkWebAvatarAssetLibraryData {
   schemaVersion: number;
@@ -72,7 +72,7 @@ export interface ArkWebAvatarAssetLibraryData {
   models: ArkWebAvatarModelAsset[];
   animations: ArkWebAvatarAnimationAsset[];
   defaultIdleActionId: string;
-  poses: Object[];
+  poses: ArkWebAvatarPoseAsset[];
 }
 
 /**
@@ -262,4 +262,86 @@ export class AnimationManagementErrorCode {
   static readonly ANIMATION_DEFAULT_IDLE_INVALID: string = 'ANIMATION_DEFAULT_IDLE_INVALID';
   /** 默认待机标记更新时清单写入失败。 */
   static readonly ANIMATION_DEFAULT_IDLE_WRITE_FAILED: string = 'ANIMATION_DEFAULT_IDLE_WRITE_FAILED';
+}
+
+/**
+ * 持久化姿势资产记录 (Phase 3D-1)。
+ *
+ * 字段:
+ * - poseId: 唯一标识 (pose_<timestamp>_<random>)
+ * - displayName: 用户可读显示名 (来自用户文件名,已做安全清理)
+ * - relativePath: 相对 filesDir/avatar-assets/ 的路径 (如 "poses/pose_xxx.json")
+ * - byteLength: 文件大小 (字节)
+ * - format: JSON 姿势格式标识 (固定为 "json")
+ * - createdAt: 创建时间戳 (ms)
+ * - updatedAt: 更新时间戳 (ms)
+ *
+ * 禁止字段:
+ * - absolutePath
+ * - cachePath
+ * - sourceUri
+ * - ArkWeb URL
+ * - 文件描述符
+ *
+ * 本阶段不保存骨骼数据, 只保存文件元数据;
+ * 骨骼数据通过 PersistentPoseStore 解析 .json 文件获得。
+ */
+export interface ArkWebAvatarPoseAsset {
+  poseId: string;
+  displayName: string;
+  relativePath: string;
+  byteLength: number;
+  format: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/**
+ * 持久化姿势资产错误码 (Phase 3D-1)。
+ */
+export class PersistentPoseErrorCode {
+  /** PersistentPoseStore 已销毁。 */
+  static readonly POSE_STORE_DISPOSED: string = 'POSE_STORE_DISPOSED';
+  /** AssetLibrary 未初始化或已销毁。 */
+  static readonly POSE_STORE_LIBRARY_INVALID: string = 'POSE_STORE_LIBRARY_INVALID';
+  /** 源文件打开失败。 */
+  static readonly POSE_SOURCE_OPEN_FAILED: string = 'POSE_SOURCE_OPEN_FAILED';
+  /** 源文件为空 (size === 0)。 */
+  static readonly POSE_FILE_EMPTY: string = 'POSE_FILE_EMPTY';
+  /** 目标 .part 文件创建失败。 */
+  static readonly POSE_TARGET_CREATE_FAILED: string = 'POSE_TARGET_CREATE_FAILED';
+  /** 复制过程读取失败。 */
+  static readonly POSE_FILE_READ_FAILED: string = 'POSE_FILE_READ_FAILED';
+  /** 复制过程写入失败。 */
+  static readonly POSE_FILE_WRITE_FAILED: string = 'POSE_FILE_WRITE_FAILED';
+  /** 复制不完整 (写入字节数与源大小不一致)。 */
+  static readonly POSE_FILE_COPY_INCOMPLETE: string = 'POSE_FILE_COPY_INCOMPLETE';
+  /** rename .part → 最终文件失败。 */
+  static readonly POSE_RENAME_FAILED: string = 'POSE_RENAME_FAILED';
+  /** 清单写入失败 (回滚: 删除新姿势文件)。 */
+  static readonly POSE_LIBRARY_WRITE_FAILED: string = 'POSE_LIBRARY_WRITE_FAILED';
+  /** JSON 解析失败。 */
+  static readonly POSE_JSON_PARSE_FAILED: string = 'POSE_JSON_PARSE_FAILED';
+  /** JSON 根节点不是对象。 */
+  static readonly POSE_JSON_ROOT_NOT_OBJECT: string = 'POSE_JSON_ROOT_NOT_OBJECT';
+  /** JSON 结构不支持 (无可识别的骨骼或姿势数据对象)。 */
+  static readonly POSE_JSON_SCHEMA_UNSUPPORTED: string = 'POSE_JSON_SCHEMA_UNSUPPORTED';
+}
+
+/**
+ * 姿势导入错误码 (Phase 3D-1)。
+ */
+export class PoseImportErrorCode {
+  /** 文件扩展名不是 .json。 */
+  static readonly POSE_IMPORT_EXTENSION_INVALID: string = 'POSE_IMPORT_EXTENSION_INVALID';
+  /** 文件名为空。 */
+  static readonly POSE_IMPORT_FILENAME_EMPTY: string = 'POSE_IMPORT_FILENAME_EMPTY';
+  /** 文件名为目录或包含路径分隔符。 */
+  static readonly POSE_IMPORT_FILENAME_INVALID: string = 'POSE_IMPORT_FILENAME_INVALID';
+  /** 文件为空。 */
+  static readonly POSE_IMPORT_FILE_EMPTY: string = 'POSE_IMPORT_FILE_EMPTY';
+  /** JSON 解析失败。 */
+  static readonly POSE_IMPORT_JSON_PARSE_FAILED: string = 'POSE_IMPORT_JSON_PARSE_FAILED';
+  /** JSON 结构不支持。 */
+  static readonly POSE_IMPORT_JSON_UNSUPPORTED: string = 'POSE_IMPORT_JSON_UNSUPPORTED';
 }

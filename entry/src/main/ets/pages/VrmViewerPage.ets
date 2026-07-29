@@ -122,14 +122,24 @@ import {
   ArkWebPersistentAnimationStore
 } from '../vrmviewer/ArkWebPersistentAnimationStore';
 import {
+  ArkWebPersistentPoseStore
+} from '../vrmviewer/ArkWebPersistentPoseStore';
+import {
+  ArkWebPoseImportController,
+  PoseImportState
+} from '../vrmviewer/ArkWebPoseImportController';
+import {
   ArkWebAvatarModelAsset,
   ArkWebAvatarAnimationAsset,
+  ArkWebAvatarPoseAsset,
   ArkWebModelRestoreState,
   ArkWebModelRestoreResult,
   ASSET_LIBRARY_SCHEMA_VERSION,
   ModelRestoreErrorCode,
   PersistentAnimationErrorCode,
-  AnimationManagementErrorCode
+  AnimationManagementErrorCode,
+  PersistentPoseErrorCode,
+  PoseImportErrorCode
 } from '../vrmviewer/ArkWebAvatarAssetTypes';
 
 /**
@@ -586,6 +596,21 @@ struct VrmViewerPage {
   @State animationLibraryErrorMessage: string = '';
   /** 默认待机 actionId (Phase 3C-2, 仅元数据, 不自动加载/播放)。 */
   @State defaultIdleActionId: string = '';
+  // ===== Phase 3D-1 — JSON 姿势导入与持久化姿势库 =====
+  /** 持久化姿势存储 (Phase 3D-1)。 */
+  private persistentPoseStore: ArkWebPersistentPoseStore | null = null;
+  /** 姿势导入控制器 (Phase 3D-1)。 */
+  private poseImportController: ArkWebPoseImportController | null = null;
+  /** 持久化姿势资产列表 (从 library.poses 读取)。 */
+  @State poseAssets: ArkWebAvatarPoseAsset[] = [];
+  /** 当前选中的 poseId (用户点击列表项后设置, 本阶段不应用姿势)。 */
+  @State selectedPoseId: string = '';
+  /** 姿势导入是否进行中。 */
+  @State poseImporting: boolean = false;
+  /** 姿势库错误码 (导入/恢复失败时设置)。 */
+  @State poseLibraryErrorCode: string = '';
+  /** 姿势库错误消息。 */
+  @State poseLibraryErrorMessage: string = '';
   /** 删除确认对话框是否显示 (Phase 3C-2, 页面内确认状态, 不引入新 API)。 */
   @State animationDeleteConfirmVisible: boolean = false;
   /** 删除确认对话框待删除的 actionId。 */
@@ -778,6 +803,17 @@ struct VrmViewerPage {
       this.loadAnimationAssetsFromLibrary();
     }
 
+    // Phase 3D-1:创建姿势导入控制器和持久化姿势存储
+    // 本阶段只管理姿势资产元数据,不应用姿势到模型骨骼
+    if (this.poseImportController === null) {
+      this.poseImportController = new ArkWebPoseImportController(ctx);
+    }
+    if (this.persistentPoseStore === null && this.assetLibrary !== null) {
+      this.persistentPoseStore = new ArkWebPersistentPoseStore(ctx, this.assetLibrary);
+      // 异步加载已有姿势列表(不在启动时自动选中或应用姿势)
+      this.loadPoseAssetsFromLibrary();
+    }
+
     // Web 组件加载由 build() 触发,初始化在 onPageEnd 回调中完成
   }
 
@@ -906,6 +942,22 @@ struct VrmViewerPage {
     this.animationRenameDialogVisible = false;
     this.pendingRenameActionId = '';
     this.pendingRenameDisplayName = '';
+    // Phase 3D-1: 销毁姿势导入控制器和持久化姿势存储
+    // (不删除 filesDir 下的姿势文件, 不清空 library.poses)
+    if (this.poseImportController !== null) {
+      this.poseImportController.dispose();
+      this.poseImportController = null;
+    }
+    if (this.persistentPoseStore !== null) {
+      this.persistentPoseStore.dispose();
+      this.persistentPoseStore = null;
+    }
+    // Phase 3D-1: 清空姿势列表运行时状态(下次进入重新读取 library)
+    this.poseAssets = [];
+    this.selectedPoseId = '';
+    this.poseImporting = false;
+    this.poseLibraryErrorCode = '';
+    this.poseLibraryErrorMessage = '';
     // Phase 3B:13. 销毁 Phase 3B 持久化资源(不删除 filesDir 下的模型文件与 library.json)
     // 标记 restoreDisposed 阻止异步恢复回调
     this.restoreDisposed = true;
@@ -1582,6 +1634,107 @@ struct VrmViewerPage {
       const msg: string = e instanceof Error ? e.message : String(e);
       console.warn(`[VrmViewerPage] loadAnimationAssetsFromLibrary failed: ${msg}`);
     }
+  }
+
+  // ===== Phase 3D-1 — JSON 姿势导入与持久化姿势库 =====
+
+  /**
+   * Phase 3D-1: 从 library.json 读取 poses 数组, 刷新姿势列表。
+   *
+   * 仅恢复元数据, 不在启动时解析姿势 JSON 内容。
+   * 不自动选中 poseId, 不自动应用姿势到模型骨骼。
+   * 失败时不清空已有列表 (保留上次状态)。
+   */
+  private async loadPoseAssetsFromLibrary(): Promise<void> {
+    if (this.assetLibrary === null) {
+      return;
+    }
+    try {
+      const poses: ArkWebAvatarPoseAsset[] = await this.assetLibrary.readPoses();
+      this.poseAssets = poses;
+      console.info(`[VrmViewerPage] loaded ${poses.length} pose assets from library`);
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      console.warn(`[VrmViewerPage] loadPoseAssetsFromLibrary failed: ${msg}`);
+    }
+  }
+
+  /**
+   * Phase 3D-1: 点击 "导入姿势" 按钮处理。
+   *
+   * 调用 Picker 选择 .json 文件, 由 PersistentPoseStore 完成持久化与 JSON 结构验证。
+   * 成功后刷新姿势列表 (不自动选中, 不自动应用)。
+   */
+  private async onPoseImportButton(): Promise<void> {
+    if (this.poseImportController === null || this.persistentPoseStore === null) {
+      this.poseLibraryErrorCode = PoseImportErrorCode.POSE_IMPORT_FILENAME_INVALID;
+      this.poseLibraryErrorMessage = '姿势导入控制器未初始化';
+      promptAction.showToast({ message: this.poseLibraryErrorMessage });
+      return;
+    }
+    this.poseImporting = true;
+    this.poseLibraryErrorCode = '';
+    this.poseLibraryErrorMessage = '';
+    try {
+      const asset: ArkWebAvatarPoseAsset | null =
+        await this.poseImportController.pickAndImportPose(this.persistentPoseStore);
+      if (asset === null) {
+        const state: PoseImportState = this.poseImportController.getState();
+        if (state === PoseImportState.CANCELLED) {
+          // 用户取消, 非错误
+          this.poseLibraryErrorCode = '';
+          this.poseLibraryErrorMessage = '';
+        } else {
+          this.poseLibraryErrorCode = this.poseImportController.getLastError();
+          this.poseLibraryErrorMessage = `姿势导入失败: ${this.poseLibraryErrorCode}`;
+          promptAction.showToast({ message: this.poseLibraryErrorMessage });
+        }
+      } else {
+        this.poseLibraryErrorCode = '';
+        this.poseLibraryErrorMessage = '';
+        promptAction.showToast({ message: '姿势已导入' });
+        await this.loadPoseAssetsFromLibrary();
+      }
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      this.poseLibraryErrorCode = PersistentPoseErrorCode.POSE_LIBRARY_WRITE_FAILED;
+      this.poseLibraryErrorMessage = `姿势导入异常: ${msg}`;
+      promptAction.showToast({ message: this.poseLibraryErrorMessage });
+    } finally {
+      this.poseImporting = false;
+    }
+  }
+
+  /**
+   * Phase 3D-1: 点击姿势列表项处理。
+   *
+   * 本阶段仅更新 selectedPoseId, 不应用姿势到模型骨骼。
+   * 姿势应用将在 Phase 3D-2 接入。
+   */
+  private onPoseListItemClick(poseId: string): void {
+    if (poseId.length === 0) {
+      return;
+    }
+    this.selectedPoseId = poseId;
+    promptAction.showToast({ message: '姿势应用将在下一项接入' });
+  }
+
+  /**
+   * Phase 3D-1: 格式化姿势字节大小为可读字符串。
+   */
+  private formatPoseByteLength(bytes: number): string {
+    if (bytes <= 0) {
+      return '0 B';
+    }
+    const KB: number = 1024;
+    const MB: number = KB * 1024;
+    if (bytes >= MB) {
+      return `${(bytes / MB).toFixed(2)} MB`;
+    }
+    if (bytes >= KB) {
+      return `${(bytes / KB).toFixed(2)} KB`;
+    }
+    return `${bytes} B`;
   }
 
   /**
@@ -6278,33 +6431,129 @@ struct VrmViewerPage {
   @Builder
   TabPoseContent() {
     Column() {
-      Text('等待 3D 模型与 Humanoid 初始化')
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
-        .margin({ bottom: 12 })
+      // Phase 3D-1 — JSON 姿势导入与持久化姿势库
+      Text('姿势系统')
+        .fontSize($r('app.float.app_font_subtitle'))
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.app_text_primary'))
+        .margin({ bottom: 8 })
 
+      // 导入控件区
       Row() {
-        this.DisabledPoseButton('Reset')
-        this.DisabledPoseButton('Head Yaw Left')
-        this.DisabledPoseButton('Head Yaw Right')
+        Button('导入姿势')
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor($r('app.color.app_text_primary'))
+          .backgroundColor($r('app.color.app_surface_2'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(36)
+          .layoutWeight(1)
+          .enabled(!this.poseImporting)
+          .onClick(() => {
+            this.onPoseImportButton();
+          })
       }
       .width('100%')
+      .margin({ bottom: 8 })
+
+      // 姿势列表
+      Text('姿势列表')
+        .fontSize($r('app.float.app_font_subtitle'))
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.app_text_primary'))
+        .margin({ bottom: 8 })
+
+      if (this.poseAssets.length === 0) {
+        Text('暂无已保存的姿势,点击"导入姿势"选择 .json 文件')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .width('100%')
+          .margin({ bottom: 16 })
+      } else {
+        List({ space: 4 }) {
+          ForEach(this.poseAssets, (asset: ArkWebAvatarPoseAsset) => {
+            ListItem() {
+              this.PoseListItem(asset)
+            }
+          }, (asset: ArkWebAvatarPoseAsset) => asset.poseId)
+        }
+        .width('100%')
+        .margin({ bottom: 16 })
+        .alignListItem(ListItemAlign.Center)
+      }
+
+      // 状态显示区
+      Text('姿势状态')
+        .fontSize($r('app.float.app_font_subtitle'))
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.app_text_primary'))
+        .margin({ bottom: 8 })
+
+      this.DebugRow('姿势数量', this.poseAssets.length > 0 ? String(this.poseAssets.length) : '0')
+      this.DebugRow('选中姿势', this.selectedPoseId.length > 0 ? this.selectedPoseId : '未选中')
+      this.DebugRow('导入中', this.poseImporting ? '是' : '否')
+
+      if (this.poseLibraryErrorCode.length > 0) {
+        this.DebugRow('错误码', this.poseLibraryErrorCode)
+      }
+
+      // Phase 3D-1: 提示本阶段不应用姿势
+      Text('本阶段仅管理姿势资产,姿势应用将在下一项接入')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_tertiary'))
+        .margin({ top: 8 })
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)
   }
 
+  /**
+   * Phase 3D-1: 姿势列表项。
+   *
+   * 显示: displayName / 文件大小 / 格式 / 选中标记。
+   * 点击: 仅更新 selectedPoseId (本阶段不应用姿势)。
+   * 不显示: absolutePath / relativePath / filesDir / 原始 URI。
+   */
   @Builder
-  DisabledPoseButton(label: string) {
-    Button(label)
-      .fontSize($r('app.float.app_font_caption'))
-      .fontColor($r('app.color.app_text_tertiary'))
-      .backgroundColor($r('app.color.app_surface_2'))
-      .borderRadius($r('app.float.app_radius_sm'))
-      .height(36)
-      .enabled(false)
+  PoseListItem(asset: ArkWebAvatarPoseAsset) {
+    Row() {
+      Column() {
+        Text(asset.displayName)
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor($r('app.color.app_text_primary'))
+          .width('100%')
+        Row() {
+          Text(this.formatPoseByteLength(asset.byteLength))
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_secondary'))
+          Text(' · ')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_tertiary'))
+          Text(asset.format)
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_secondary'))
+        }
+        .width('100%')
+        .margin({ top: 2 })
+      }
       .layoutWeight(1)
-      .margin({ left: 4, right: 4 })
+      .alignItems(HorizontalAlign.Start)
+
+      if (this.selectedPoseId === asset.poseId) {
+        Text('已选中')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .backgroundColor($r('app.color.app_surface_2'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+      }
+    }
+    .width('100%')
+    .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+    .backgroundColor($r('app.color.app_surface_1'))
+    .borderRadius($r('app.float.app_radius_sm'))
+    .onClick(() => {
+      this.onPoseListItemClick(asset.poseId);
+    })
   }
 
   @Builder

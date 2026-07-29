@@ -56,6 +56,7 @@ import {
   ArkWebAvatarAssetLibraryData,
   ArkWebAvatarModelAsset,
   ArkWebAvatarAnimationAsset,
+  ArkWebAvatarPoseAsset,
   AssetLibraryErrorCode
 } from './ArkWebAvatarAssetTypes';
 import { ASSET_LIBRARY_SCHEMA_VERSION } from './ArkWebAvatarAssetTypes';
@@ -74,6 +75,11 @@ export const MODELS_SUBDIR_NAME: string = 'models';
  * 动画子目录名称 (相对 avatar-assets/)。Phase 3C-1。
  */
 export const ANIMATIONS_SUBDIR_NAME: string = 'animations';
+
+/**
+ * 姿势子目录名称 (相对 avatar-assets/)。Phase 3D-1。
+ */
+export const POSES_SUBDIR_NAME: string = 'poses';
 
 /**
  * library.json 文件名。
@@ -104,6 +110,8 @@ export class ArkWebAvatarAssetLibrary {
   private readonly modelsDir: string;
   /** 动画目录绝对路径 (<filesDir>/avatar-assets/animations)。Phase 3C-1。 */
   private readonly animationsDir: string;
+  /** 姿势目录绝对路径 (<filesDir>/avatar-assets/poses)。Phase 3D-1。 */
+  private readonly posesDir: string;
   /** library.json 绝对路径。 */
   private readonly libraryFilePath: string;
   /** library.json.part 绝对路径。 */
@@ -123,6 +131,7 @@ export class ArkWebAvatarAssetLibrary {
     this.assetsRootDir = this.normalizePath(rawRoot);
     this.modelsDir = `${this.assetsRootDir}/${MODELS_SUBDIR_NAME}`;
     this.animationsDir = `${this.assetsRootDir}/${ANIMATIONS_SUBDIR_NAME}`;
+    this.posesDir = `${this.assetsRootDir}/${POSES_SUBDIR_NAME}`;
     this.libraryFilePath = `${this.assetsRootDir}/${LIBRARY_FILE_NAME}`;
     this.libraryPartFilePath = `${this.assetsRootDir}/${LIBRARY_PART_FILE_NAME}`;
   }
@@ -140,6 +149,11 @@ export class ArkWebAvatarAssetLibrary {
   /** 获取动画目录绝对路径 (<filesDir>/avatar-assets/animations)。Phase 3C-1。 */
   getAnimationsDir(): string {
     return this.animationsDir;
+  }
+
+  /** 获取姿势目录绝对路径 (<filesDir>/avatar-assets/poses)。Phase 3D-1。 */
+  getPosesDir(): string {
+    return this.posesDir;
   }
 
   /** 获取 library.json 绝对路径。 */
@@ -226,6 +240,17 @@ export class ArkWebAvatarAssetLibrary {
       } catch (e) {
         const msg: string = e instanceof Error ? e.message : String(e);
         console.warn(`[ArkWebAvatarAssetLibrary] mkdir animationsDir failed: ${msg}`);
+        return false;
+      }
+    }
+
+    // 2c. 创建姿势子目录 (Phase 3D-1)
+    if (!(await this.dirExists(this.posesDir))) {
+      try {
+        await fileIo.mkdir(this.posesDir, true);
+      } catch (e) {
+        const msg: string = e instanceof Error ? e.message : String(e);
+        console.warn(`[ArkWebAvatarAssetLibrary] mkdir posesDir failed: ${msg}`);
         return false;
       }
     }
@@ -385,7 +410,7 @@ export class ArkWebAvatarAssetLibrary {
       models: newModels,
       animations: data.animations,
       defaultIdleActionId: data.defaultIdleActionId,
-      poses: []
+      poses: data.poses
     };
 
     const writeOk: boolean = await this.atomicWriteLibrary(newData);
@@ -435,7 +460,7 @@ export class ArkWebAvatarAssetLibrary {
       models: data.models,
       animations: data.animations,
       defaultIdleActionId: data.defaultIdleActionId,
-      poses: []
+      poses: data.poses
     };
     const writeOk: boolean = await this.atomicWriteLibrary(newData);
     if (!writeOk) {
@@ -528,7 +553,7 @@ export class ArkWebAvatarAssetLibrary {
       models: data.models,
       animations: newAnimations,
       defaultIdleActionId: data.defaultIdleActionId,
-      poses: []
+      poses: data.poses
     };
     const writeOk: boolean = await this.atomicWriteLibrary(newData);
     if (!writeOk) {
@@ -721,6 +746,99 @@ export class ArkWebAvatarAssetLibrary {
       return '';
     }
     return data.defaultIdleActionId;
+  }
+
+  // ===== Phase 3D-1: 姿势资产操作 =====
+
+  /**
+   * 读取 library.poses 数组 (Phase 3D-1)。
+   *
+   * @returns 姿势资产数组; 失败返回空数组
+   */
+  async readPoses(): Promise<ArkWebAvatarPoseAsset[]> {
+    if (this.disposed) {
+      return [];
+    }
+    const data: ArkWebAvatarAssetLibraryData | null = await this.readLibrary();
+    if (data === null) {
+      return [];
+    }
+    return data.poses;
+  }
+
+  /**
+   * 按 poseId 查找姿势资产 (Phase 3D-1)。
+   */
+  async findPose(poseId: string): Promise<ArkWebAvatarPoseAsset | null> {
+    if (poseId.length === 0) {
+      return null;
+    }
+    const poses: ArkWebAvatarPoseAsset[] = await this.readPoses();
+    for (let i = 0; i < poses.length; i++) {
+      if (poses[i].poseId === poseId) {
+        return poses[i];
+      }
+    }
+    return null;
+  }
+
+  /**
+   * 追加姿势资产记录 (Phase 3D-1)。
+   *
+   * - 不覆盖已有记录 (若 poseId 已存在, 返回 false)
+   * - 安全校验 relativePath (以 "poses/" 开头, 不含 ..)
+   * - 原子写入 library.json
+   * - 保留 models / animations / activeModelId / defaultIdleActionId 不变
+   *
+   * @returns 成功返回 true; 失败返回 false
+   */
+  async appendPose(asset: ArkWebAvatarPoseAsset): Promise<boolean> {
+    if (this.disposed) {
+      return false;
+    }
+    if (!this.initialized) {
+      const ok: boolean = await this.ensureInitialized();
+      if (!ok) {
+        return false;
+      }
+    }
+    // 安全校验 relativePath
+    if (!this.isPoseRelativePathSafe(asset.relativePath)) {
+      console.warn(`[ArkWebAvatarAssetLibrary] unsafe pose relativePath: ${asset.relativePath}`);
+      return false;
+    }
+
+    const data: ArkWebAvatarAssetLibraryData | null = await this.readLibrary();
+    if (data === null) {
+      return false;
+    }
+
+    // 检查重复 (poseId 不允许重复)
+    for (let i = 0; i < data.poses.length; i++) {
+      if (data.poses[i].poseId === asset.poseId) {
+        console.warn(`[ArkWebAvatarAssetLibrary] appendPose: poseId already exists: ${asset.poseId}`);
+        return false;
+      }
+    }
+
+    const newPoses: ArkWebAvatarPoseAsset[] = data.poses.slice();
+    newPoses.push(asset);
+
+    const newData: ArkWebAvatarAssetLibraryData = {
+      schemaVersion: ASSET_LIBRARY_SCHEMA_VERSION,
+      activeModelId: data.activeModelId,
+      models: data.models,
+      animations: data.animations,
+      defaultIdleActionId: data.defaultIdleActionId,
+      poses: newPoses
+    };
+    const writeOk: boolean = await this.atomicWriteLibrary(newData);
+    if (!writeOk) {
+      return false;
+    }
+    this.inMemoryData = newData;
+    console.info(`[ArkWebAvatarAssetLibrary] appendPose ok poseId=${asset.poseId} count=${newPoses.length}`);
+    return true;
   }
 
   /**
@@ -975,15 +1093,22 @@ export class ArkWebAvatarAssetLibrary {
         animations.push(a);
       }
     }
-    // poses (本阶段必须为空数组)
-    // 向后兼容: 缺失 poses 字段视为空数组
+    // poses (Phase 3D-1 起支持 JSON 姿势持久化)
+    // 向后兼容: 缺失 poses 字段视为空数组 (旧清单可能没有此字段)
     const posesObj: Object | undefined = o['poses'];
-    const poses: Object[] = [];
+    const poses: ArkWebAvatarPoseAsset[] = [];
     if (posesObj !== undefined) {
       if (!Array.isArray(posesObj)) {
         return null;
       }
-      poses.push(...(posesObj as Object[]));
+      for (let i = 0; i < posesObj.length; i++) {
+        const poseObj: Object = posesObj[i];
+        const p: ArkWebAvatarPoseAsset | null = this.coerceToPoseAsset(poseObj);
+        if (p === null) {
+          return null;
+        }
+        poses.push(p);
+      }
     }
     // defaultIdleActionId (Phase 3C-2 起支持默认待机标记)
     // 向后兼容: 缺失字段视为空字符串 (无默认待机)
@@ -1154,6 +1279,80 @@ export class ArkWebAvatarAssetLibrary {
       return false;
     }
     return true;
+  }
+
+  /**
+   * 校验姿势 relativePath 是否安全 (Phase 3D-1)。
+   * - 必须以 "poses/" 开头
+   * - 不得包含 ".."
+   * - 不得包含反斜杠
+   * - 不得以 "/" 开头 (必须是相对路径)
+   * - 必须以 .json 结尾
+   */
+  private isPoseRelativePathSafe(p: string): boolean {
+    if (p.length === 0) {
+      return false;
+    }
+    if (p.startsWith('/')) {
+      return false;
+    }
+    if (!p.startsWith('poses/')) {
+      return false;
+    }
+    if (p.includes('..')) {
+      return false;
+    }
+    if (p.includes('\\')) {
+      return false;
+    }
+    if (!p.endsWith('.json')) {
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * 把 object 强制为 ArkWebAvatarPoseAsset (Phase 3D-1)。
+   */
+  private coerceToPoseAsset(obj: Object): ArkWebAvatarPoseAsset | null {
+    const o: Record<string, Object> = obj as Record<string, Object>;
+    const poseId: Object | undefined = o['poseId'];
+    if (typeof poseId !== 'string' || poseId.length === 0) {
+      return null;
+    }
+    const displayName: Object | undefined = o['displayName'];
+    if (typeof displayName !== 'string') {
+      return null;
+    }
+    const relativePath: Object | undefined = o['relativePath'];
+    if (typeof relativePath !== 'string' || !this.isPoseRelativePathSafe(relativePath as string)) {
+      return null;
+    }
+    const byteLengthObj: Object | undefined = o['byteLength'];
+    if (typeof byteLengthObj !== 'number' || !Number.isFinite(byteLengthObj) || byteLengthObj <= 0) {
+      return null;
+    }
+    const format: Object | undefined = o['format'];
+    if (typeof format !== 'string' || format.length === 0) {
+      return null;
+    }
+    const createdAtObj: Object | undefined = o['createdAt'];
+    if (typeof createdAtObj !== 'number' || !Number.isFinite(createdAtObj)) {
+      return null;
+    }
+    const updatedAtObj: Object | undefined = o['updatedAt'];
+    if (typeof updatedAtObj !== 'number' || !Number.isFinite(updatedAtObj)) {
+      return null;
+    }
+    return {
+      poseId: poseId as string,
+      displayName: displayName as string,
+      relativePath: relativePath as string,
+      byteLength: byteLengthObj as number,
+      format: format as string,
+      createdAt: createdAtObj as number,
+      updatedAt: updatedAtObj as number
+    };
   }
 
   /**
