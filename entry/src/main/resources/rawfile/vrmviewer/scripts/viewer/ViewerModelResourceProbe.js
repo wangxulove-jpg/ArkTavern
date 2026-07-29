@@ -1,9 +1,13 @@
 /**
- * ViewerModelResourceProbe — ArkWeb 受控模型资源探测器(Phase 1D-2B-1)
+ * ViewerModelResourceProbe — ArkWeb 受控模型资源探测器
+ *
+ * Phase 1D-2B-1 初始实现
+ * Phase 1D-2B-2 增加 X-ArkTavern-Resource-Id 一致性校验
+ * Phase 1D-2C-2E-2A 增加自定义长度头 X-ArkTavern-Content-Length 优先解析
  *
  * 职责:
  * - 通过 HEAD 请求探测 ArkWebModelResourceProvider 暴露的受控资源 URL
- * - 校验响应状态码、Content-Type、Content-Length、X-ArkTavern-Resource-Id
+ * - 校验响应状态码、Content-Type、Content-Length(自定义头优先)、X-ArkTavern-Resource-Id
  * - 不读取模型文件内容(不调用 arrayBuffer / blob / getReader)
  * - 竞态保护(probeGeneration + activePromise)
  *
@@ -16,17 +20,26 @@
  *     ↓
  *   ArkWebModelResourceProvider.handleRequest(url, 'HEAD', headers)
  *     ↓
- *   返回 200 + 响应头(不打开文件)
+ *   返回 200 + 响应头(包含 Content-Length + X-ArkTavern-Content-Length)
  *     ↓
  *   JavaScript 校验 status / MIME / Length / ID / redirected
- *     ↓
+ *     ↓ (Length 优先使用 X-ArkTavern-Content-Length,标准头作为兼容回退)
  *   RESOURCE_VERIFIED / RESOURCE_PROBE_FAILED
+ *
+ * Phase 1D-2C-2E-2A 长度解析优先级:
+ *   1. X-ArkTavern-Content-Length 有效 → 使用自定义头(contentLengthSource = CUSTOM)
+ *   2. 自定义头缺失,标准 Content-Length 为有效正整数 → 使用标准头(STANDARD)
+ *   3. 自定义头缺失,标准 Content-Length = 0 → RESOURCE_LENGTH_UNAVAILABLE
+ *   4. 两个头都缺失 → RESOURCE_LENGTH_MISSING
+ *   5. 自定义头存在但无效(非数字) → RESOURCE_CUSTOM_LENGTH_INVALID
+ *   6. 自定义头存在但与 expected size 不一致 → RESOURCE_LENGTH_MISMATCH
  *
  * 安全约束:
  * - 不读取响应 body(HEAD 无 body)
  * - 不调用 response.arrayBuffer() / response.blob() / response.body.getReader()
  * - 不调用 GLTFLoader.load() / ViewerModelLoader.loadModel()
  * - 探测结果只含状态与响应头字段,不含 cachePath / sourceUri
+ * - 不记录完整 Headers 对象(仅记录已解析的数值)
  *
  * 竞态保护:
  * - probeGeneration:每次探测递增,完成后检查是否已过期
@@ -35,7 +48,8 @@
  *
  * Reference:
  * - AGENTS.md Phase 1D-2B-1 §九 / §十 / §十一
- * - ITEM-007 实施记录(ARKWEB_FIGURE_PORT_LOG.md)
+ * - Phase 1D-2C-2E-1-T2: 根因分类 = ARKWEB_RUNTIME_HEADER_VISIBILITY
+ * - Phase 1D-2C-2E-2A: 双头验证方案
  */
 
 /**
@@ -50,6 +64,10 @@ export const ResourceProbeState = Object.freeze({
 
 /**
  * 探测错误码常量(与 ArkTS ModelResourceProbeErrorCode 字符串对齐)。
+ *
+ * Phase 1D-2C-2E-2A 新增:
+ * - RESOURCE_CUSTOM_LENGTH_INVALID: 自定义头存在但无法解析
+ * - RESOURCE_LENGTH_UNAVAILABLE: 自定义头缺失且标准头为 0
  */
 export const ResourceProbeErrorCode = Object.freeze({
   RESOURCE_NOT_PREPARED: 'RESOURCE_NOT_PREPARED',
@@ -63,19 +81,40 @@ export const ResourceProbeErrorCode = Object.freeze({
   RESOURCE_LENGTH_INVALID: 'RESOURCE_LENGTH_INVALID',
   RESOURCE_LENGTH_MISMATCH: 'RESOURCE_LENGTH_MISMATCH',
   RESOURCE_ID_MISSING: 'RESOURCE_ID_MISSING',
-  RESOURCE_ID_MISMATCH: 'RESOURCE_ID_MISMATCH'
+  RESOURCE_ID_MISMATCH: 'RESOURCE_ID_MISMATCH',
+  // Phase 1D-2C-2E-2A 新增
+  RESOURCE_CUSTOM_LENGTH_INVALID: 'RESOURCE_CUSTOM_LENGTH_INVALID',
+  RESOURCE_LENGTH_UNAVAILABLE: 'RESOURCE_LENGTH_UNAVAILABLE'
+});
+
+/**
+ * Phase 1D-2C-2E-2A: 长度来源类型常量。
+ *
+ * 用于 Probe 结果中的 contentLengthSource 字段,标识最终选用的长度证明来源。
+ */
+export const ResourceLengthSource = Object.freeze({
+  CUSTOM: 'CUSTOM',
+  STANDARD: 'STANDARD',
+  UNAVAILABLE: 'UNAVAILABLE'
 });
 
 /**
  * 构造失败结果对象(不抛异常)。
  *
+ * Phase 1D-2C-2E-2A: 失败结果也包含长度诊断字段(默认 -1 / ''),
+ * 保证 ArkTS 端解析时所有字段都存在。
+ *
  * @param {string} resourceUrl 资源 URL
  * @param {string} errorCode 错误码(见 ResourceProbeErrorCode)
  * @param {string} errorMessage 错误消息
  * @param {number} [statusCode=0] HTTP 状态码(fetch 失败时为 0)
+ * @param {object} [lengthDiagnostic] 长度诊断字段(可选)
+ *   @param {number} [lengthDiagnostic.customContentLength]
+ *   @param {number} [lengthDiagnostic.standardContentLength]
+ *   @param {string} [lengthDiagnostic.contentLengthSource]
  * @returns {Object} 失败结果对象
  */
-function buildFailedResult(resourceUrl, errorCode, errorMessage, statusCode) {
+function buildFailedResult(resourceUrl, errorCode, errorMessage, statusCode, lengthDiagnostic) {
   return {
     state: ResourceProbeState.FAILED,
     resourceUrl: resourceUrl || '',
@@ -86,22 +125,45 @@ function buildFailedResult(resourceUrl, errorCode, errorMessage, statusCode) {
     redirected: false,
     errorCode: errorCode,
     errorMessage: errorMessage || '',
-    verifiedAt: Date.now()
+    verifiedAt: Date.now(),
+    contentLengthSource: (lengthDiagnostic && lengthDiagnostic.contentLengthSource) || '',
+    customContentLength: (lengthDiagnostic && typeof lengthDiagnostic.customContentLength === 'number')
+      ? lengthDiagnostic.customContentLength
+      : -1,
+    standardContentLength: (lengthDiagnostic && typeof lengthDiagnostic.standardContentLength === 'number')
+      ? lengthDiagnostic.standardContentLength
+      : -1
   };
 }
 
 /**
  * 构造成功结果对象。
  *
+ * Phase 1D-2C-2E-2A: 成功结果必须包含 contentLengthSource / customContentLength / standardContentLength,
+ * 以便 ArkTS 端 UI 显示"长度来源: 自定义响应头"等诊断信息。
+ *
  * @param {string} resourceUrl 资源 URL
  * @param {number} statusCode HTTP 状态码
  * @param {string} mimeType 响应 Content-Type
- * @param {number} contentLength 响应 Content-Length
+ * @param {number} contentLength 选定的 Content-Length(优先来自自定义头)
  * @param {string} resourceId 响应 X-ArkTavern-Resource-Id
  * @param {boolean} redirected 是否发生重定向
+ * @param {string} contentLengthSource 长度来源(CUSTOM / STANDARD)
+ * @param {number} customContentLength 自定义头解析值(失败时为 -1)
+ * @param {number} standardContentLength 标准头解析值(失败时为 -1)
  * @returns {Object} 成功结果对象
  */
-function buildVerifiedResult(resourceUrl, statusCode, mimeType, contentLength, resourceId, redirected) {
+function buildVerifiedResult(
+  resourceUrl,
+  statusCode,
+  mimeType,
+  contentLength,
+  resourceId,
+  redirected,
+  contentLengthSource,
+  customContentLength,
+  standardContentLength
+) {
   return {
     state: ResourceProbeState.VERIFIED,
     resourceUrl: resourceUrl,
@@ -112,7 +174,10 @@ function buildVerifiedResult(resourceUrl, statusCode, mimeType, contentLength, r
     redirected: redirected === true,
     errorCode: '',
     errorMessage: '',
-    verifiedAt: Date.now()
+    verifiedAt: Date.now(),
+    contentLengthSource: contentLengthSource,
+    customContentLength: typeof customContentLength === 'number' ? customContentLength : -1,
+    standardContentLength: typeof standardContentLength === 'number' ? standardContentLength : -1
   };
 }
 
@@ -207,7 +272,10 @@ export class ViewerModelResourceProbe {
       redirected: false,
       errorCode: '',
       errorMessage: '',
-      verifiedAt: Date.now()
+      verifiedAt: Date.now(),
+      contentLengthSource: '',
+      customContentLength: -1,
+      standardContentLength: -1
     };
 
     var promise = this._executeProbe(resource, generation);
@@ -245,6 +313,9 @@ export class ViewerModelResourceProbe {
 
   /**
    * 执行实际的 HEAD fetch 与校验(内部方法)。
+   *
+   * Phase 1D-2C-2E-2A: 长度校验改为双头优先级解析
+   * (X-ArkTavern-Content-Length 优先,标准 Content-Length 兼容回退)。
    *
    * @param {Object} resource 资源对象
    * @param {number} generation 探测代次
@@ -323,32 +394,139 @@ export class ViewerModelResourceProbe {
       );
     }
 
-    // 5. 检查 Content-Length
-    var contentLengthStr = response.headers.get('Content-Length');
-    if (contentLengthStr === null || contentLengthStr === undefined || contentLengthStr === '') {
-      return buildFailedResult(
-        resourceUrl,
-        ResourceProbeErrorCode.RESOURCE_LENGTH_MISSING,
-        'Content-Length header missing',
-        response.status
-      );
+    // 5. Phase 1D-2C-2E-2A: 双头长度解析
+    //    优先级:
+    //      a. 自定义头存在 → 解析为整数
+    //         - 解析失败 → RESOURCE_CUSTOM_LENGTH_INVALID(不回退到标准头)
+    //         - 与 expectedSize 不一致 → RESOURCE_LENGTH_MISMATCH
+    //         - 一致 → 使用自定义头 (CUSTOM)
+    //      b. 自定义头缺失,标准头存在 → 解析为整数
+    //         - 解析失败 → RESOURCE_LENGTH_INVALID
+    //         - 与 expectedSize 不一致 → RESOURCE_LENGTH_MISMATCH
+    //         - 一致 → 使用标准头 (STANDARD)
+    //      c. 两个头都缺失 → RESOURCE_LENGTH_MISSING
+    //      d. 自定义头缺失,标准头 = 0 → RESOURCE_LENGTH_UNAVAILABLE
+    //      e. 自定义头缺失,标准头存在但非数字 → RESOURCE_LENGTH_INVALID
+    var customLengthStr = response.headers.get('X-ArkTavern-Content-Length');
+    var standardLengthStr = response.headers.get('Content-Length');
+
+    // 解析标准头(用于诊断字段,无论是否最终使用)
+    // standardContentLength: -1 = 缺失或未解析, >=0 = 解析成功
+    // standardHeaderPresent: 标准头是否存在(非空字符串),用于区分 MISSING 与 INVALID
+    var standardContentLength = -1;
+    var standardHeaderPresent = (
+      standardLengthStr !== null && standardLengthStr !== undefined && standardLengthStr !== ''
+    );
+    if (standardHeaderPresent) {
+      var parsedStandard = Number(standardLengthStr);
+      if (Number.isSafeInteger(parsedStandard) && parsedStandard >= 0) {
+        standardContentLength = parsedStandard;
+      }
     }
-    var contentLength = Number(contentLengthStr);
-    if (!Number.isSafeInteger(contentLength) || contentLength < 0) {
-      return buildFailedResult(
-        resourceUrl,
-        ResourceProbeErrorCode.RESOURCE_LENGTH_INVALID,
-        'Content-Length not a safe non-negative integer: ' + contentLengthStr,
-        response.status
-      );
-    }
-    if (contentLength !== expectedSize) {
-      return buildFailedResult(
-        resourceUrl,
-        ResourceProbeErrorCode.RESOURCE_LENGTH_MISMATCH,
-        'Content-Length mismatch: expected ' + expectedSize + ', got ' + contentLength,
-        response.status
-      );
+
+    // 解析自定义头
+    var customContentLength = -1;
+    var customHeaderPresent = (customLengthStr !== null && customLengthStr !== undefined && customLengthStr !== '');
+
+    if (customHeaderPresent) {
+      var parsedCustom = Number(customLengthStr);
+      if (!Number.isSafeInteger(parsedCustom) || parsedCustom < 0) {
+        // 自定义头存在但无效 → RESOURCE_CUSTOM_LENGTH_INVALID(不回退)
+        return buildFailedResult(
+          resourceUrl,
+          ResourceProbeErrorCode.RESOURCE_CUSTOM_LENGTH_INVALID,
+          'X-ArkTavern-Content-Length not a safe non-negative integer: ' + customLengthStr,
+          response.status,
+          {
+            customContentLength: -1,
+            standardContentLength: standardContentLength,
+            contentLengthSource: ResourceLengthSource.UNAVAILABLE
+          }
+        );
+      }
+      customContentLength = parsedCustom;
+
+      if (customContentLength !== expectedSize) {
+        return buildFailedResult(
+          resourceUrl,
+          ResourceProbeErrorCode.RESOURCE_LENGTH_MISMATCH,
+          'Content-Length mismatch: expected ' + expectedSize + ', got ' + customContentLength
+            + ' (source: CUSTOM, standard: ' + standardContentLength + ')',
+          response.status,
+          {
+            customContentLength: customContentLength,
+            standardContentLength: standardContentLength,
+            contentLengthSource: ResourceLengthSource.CUSTOM
+          }
+        );
+      }
+
+      // 自定义头有效且一致 → 使用 CUSTOM
+      var selectedLength = customContentLength;
+      var selectedSource = ResourceLengthSource.CUSTOM;
+    } else {
+      // 自定义头缺失,尝试标准头
+      if (!standardHeaderPresent) {
+        // 标准头也缺失 → RESOURCE_LENGTH_MISSING
+        return buildFailedResult(
+          resourceUrl,
+          ResourceProbeErrorCode.RESOURCE_LENGTH_MISSING,
+          'Content-Length header missing (both custom and standard absent)',
+          response.status,
+          {
+            customContentLength: -1,
+            standardContentLength: -1,
+            contentLengthSource: ResourceLengthSource.UNAVAILABLE
+          }
+        );
+      }
+      if (standardContentLength === -1) {
+        // 标准头存在但无法解析为非负整数 → RESOURCE_LENGTH_INVALID
+        return buildFailedResult(
+          resourceUrl,
+          ResourceProbeErrorCode.RESOURCE_LENGTH_INVALID,
+          'Content-Length not a safe non-negative integer: ' + standardLengthStr,
+          response.status,
+          {
+            customContentLength: -1,
+            standardContentLength: -1,
+            contentLengthSource: ResourceLengthSource.UNAVAILABLE
+          }
+        );
+      }
+      if (standardContentLength === 0) {
+        // 自定义头缺失,标准头 = 0 → RESOURCE_LENGTH_UNAVAILABLE
+        // (常见于 ArkWeb HEAD 响应重写 Content-Length 为 0 的情况)
+        return buildFailedResult(
+          resourceUrl,
+          ResourceProbeErrorCode.RESOURCE_LENGTH_UNAVAILABLE,
+          'Content-Length unavailable: custom header missing, standard = 0 (expected ' + expectedSize + ')',
+          response.status,
+          {
+            customContentLength: -1,
+            standardContentLength: 0,
+            contentLengthSource: ResourceLengthSource.UNAVAILABLE
+          }
+        );
+      }
+      // 标准头有效且非 0 → 检查一致性
+      if (standardContentLength !== expectedSize) {
+        return buildFailedResult(
+          resourceUrl,
+          ResourceProbeErrorCode.RESOURCE_LENGTH_MISMATCH,
+          'Content-Length mismatch: expected ' + expectedSize + ', got ' + standardContentLength
+            + ' (source: STANDARD, custom: missing)',
+          response.status,
+          {
+            customContentLength: -1,
+            standardContentLength: standardContentLength,
+            contentLengthSource: ResourceLengthSource.STANDARD
+          }
+        );
+      }
+      // 标准头有效且一致 → 使用 STANDARD
+      var selectedLength = standardContentLength;
+      var selectedSource = ResourceLengthSource.STANDARD;
     }
 
     // 6. 检查 X-ArkTavern-Resource-Id
@@ -358,7 +536,12 @@ export class ViewerModelResourceProbe {
         resourceUrl,
         ResourceProbeErrorCode.RESOURCE_ID_MISSING,
         'X-ArkTavern-Resource-Id header missing',
-        response.status
+        response.status,
+        {
+          customContentLength: customContentLength,
+          standardContentLength: standardContentLength,
+          contentLengthSource: selectedSource
+        }
       );
     }
 
@@ -384,7 +567,12 @@ export class ViewerModelResourceProbe {
         resourceUrl,
         ResourceProbeErrorCode.RESOURCE_ID_MISMATCH,
         'Resource ID mismatch: URL opaque id=\'' + urlOpaqueId + '\', header=\'' + resourceId + '\'',
-        response.status
+        response.status,
+        {
+          customContentLength: customContentLength,
+          standardContentLength: standardContentLength,
+          contentLengthSource: selectedSource
+        }
       );
     }
 
@@ -393,9 +581,12 @@ export class ViewerModelResourceProbe {
       resourceUrl,
       response.status,
       contentType,
-      contentLength,
+      selectedLength,
       resourceId,
-      response.redirected
+      response.redirected,
+      selectedSource,
+      customContentLength,
+      standardContentLength
     );
   }
 

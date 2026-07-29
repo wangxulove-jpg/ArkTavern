@@ -29,6 +29,13 @@ import { ViewerCore } from './viewer/ViewerCore.js';
 import { ViewerModelResourceProbe } from './viewer/ViewerModelResourceProbe.js';
 import { ViewerUserModelLoadCoordinator } from './viewer/ViewerUserModelLoadCoordinator.js';
 
+// Phase 1D-2C-2C: 标记 app.js 模块主体开始执行
+// (静态 import 已完成,若 import 失败此行不会执行,
+//  bootstrap.js 的 window.error / unhandledrejection 监听负责捕获)
+if (window.__arkTavernBootstrapState) {
+  window.__arkTavernBootstrapState.markModuleExecuting();
+}
+
 (function (global) {
   'use strict';
 
@@ -46,8 +53,19 @@ import { ViewerUserModelLoadCoordinator } from './viewer/ViewerUserModelLoadCoor
   // 不放进 ViewerCore:协调器属于 Bridge 层,负责前置条件检查与状态机管理。
   // 实际加载由 ViewerCore.loadUserModelResource 委托 ViewerModelLoader.loadModel 完成。
   // 通过 window.arkTavernUserModelLoadCoordinator 暴露,供 Bridge 委托使用。
+  // Phase 1D-2C-1:注入 onDiagnostic 回调,转发到 arkTavernVrmRuntimeDiagnostics keeper。
   var userModelLoadCoordinator = new ViewerUserModelLoadCoordinator({
-    viewer: viewer
+    viewer: viewer,
+    onDiagnostic: function (diagnostic) {
+      var keeper = global.arkTavernVrmRuntimeDiagnostics;
+      if (keeper && typeof keeper.record === 'function') {
+        try {
+          keeper.record(diagnostic);
+        } catch (e) {
+          console.warn('[App] coordinator diagnostic forward failed: ' + (e && e.message ? e.message : String(e)));
+        }
+      }
+    }
   });
   global.arkTavernUserModelLoadCoordinator = userModelLoadCoordinator;
 
@@ -105,6 +123,40 @@ import { ViewerUserModelLoadCoordinator } from './viewer/ViewerUserModelLoadCoor
     }
   }
 
+  // ===== Phase 1D-2C-2A: 启动诊断记录 =====
+  // 委托 global.arkTavernVrmRuntimeDiagnostics keeper(ViewerBridge.js 注册)。
+  // 记录启动链路:ARKWEB_PAGE_END / JS_BRIDGE_BOUND / INITIALIZE_REQUESTED /
+  // VIEWER_CONTAINER_FOUND / VIEWER_CONTAINER_NOT_FOUND / VIEWER_CORE_INITIALIZING /
+  // VIEWER_READY / VIEWER_INITIALIZE_FAILED。
+  //
+  // 安全约束:不记录 cachePath / sourceUri / fd / stack / 用户目录。
+  function emitStartupDiagnostic(stage, code, message) {
+    var keeper = global.arkTavernVrmRuntimeDiagnostics;
+    if (!keeper || typeof keeper.record !== 'function') {
+      return;
+    }
+    var msg = String(message || '');
+    if (msg.length > 256) {
+      msg = msg.substring(0, 256);
+    }
+    var diagnostic = {
+      stage: stage,
+      code: code || '',
+      message: msg,
+      resourceId: '',
+      requestMethod: '',
+      httpStatus: 0,
+      mimeType: '',
+      contentLength: 0,
+      timestamp: Date.now()
+    };
+    try {
+      keeper.record(diagnostic);
+    } catch (e) {
+      console.warn('[App] startup diagnostic record failed: ' + (e && e.message ? e.message : String(e)));
+    }
+  }
+
   /**
    * 调用 ViewerCore 方法并包装为 JSON 结果。
    * @param {function} fn 接收 viewer 实例,返回 {success, state?, error?, ...}
@@ -136,11 +188,21 @@ import { ViewerUserModelLoadCoordinator } from './viewer/ViewerUserModelLoadCoor
      *   - 若仍在 INITIALIZING,返回当前状态(允许 ArkTS 轮询)
      *   - 若 FAILED,返回错误(允许 ArkTS 重试触发)
      *   - 若 UNINITIALIZED 且未启动,触发初始化
+     *
+     * Phase 1D-2C-2A:
+     *   - 严格同步返回 JSON 字符串(不声明 async,不返回 Promise)
+     *   - 记录启动诊断(INITIALIZE_REQUESTED / VIEWER_CONTAINER_FOUND /
+     *     VIEWER_CONTAINER_NOT_FOUND / VIEWER_CORE_INITIALIZING)
+     *   - Viewer.initialize() 异步触发,不等待,失败由 onViewerError 回调推进
      */
     initializeViewer: function () {
+      // Phase 1D-2C-2A: 记录 INITIALIZE_REQUESTED
+      emitStartupDiagnostic('INITIALIZE_REQUESTED', '', 'initializeViewer called');
+
       return callViewer(function (v) {
         var state = v.getState();
         if (state === 'READY' || state === 'INITIALIZING') {
+          // 已 READY 或正在 INITIALIZING:幂等返回,不再次触发 initialize
           return { success: true, state: state };
         }
         if (state === 'DISPOSED') {
@@ -150,24 +212,87 @@ import { ViewerUserModelLoadCoordinator } from './viewer/ViewerUserModelLoadCoor
           };
         }
         if (state === 'FAILED') {
+          // Phase 1D-2C-2A: FAILED 时返回保存的错误,不自动重新初始化
+          // 重试需通过 retryInitializeViewer() 显式触发
           return {
             success: false,
-            error: { code: 'INIT_FAILED', phase: state, message: 'Viewer previously failed', recoverable: true }
+            error: { code: 'INIT_FAILED', phase: state, message: 'Viewer previously failed, call retryInitializeViewer to retry', recoverable: true }
           };
         }
         // UNINITIALIZED:触发初始化
         var container = document.getElementById('ViewerStage');
         if (!container) {
+          // Phase 1D-2C-2A: 记录 VIEWER_CONTAINER_NOT_FOUND
+          emitStartupDiagnostic('VIEWER_CONTAINER_NOT_FOUND', 'VIEWER_CONTAINER_NOT_FOUND', 'ViewerStage container not found');
           return {
             success: false,
-            error: { code: 'SCENE_INITIALIZATION_FAILED', phase: state, message: 'ViewerStage container not found', recoverable: false }
+            error: { code: 'VIEWER_CONTAINER_NOT_FOUND', phase: state, message: 'ViewerStage container not found', recoverable: false }
           };
         }
-        // 异步触发,不等待(状态由 onViewerReady 回调推进)
+        // Phase 1D-2C-2A: 记录 VIEWER_CONTAINER_FOUND
+        emitStartupDiagnostic('VIEWER_CONTAINER_FOUND', '', 'ViewerStage container found');
+
+        // Phase 1D-2C-2A: 记录 VIEWER_CORE_INITIALIZING(异步触发,不等待)
+        emitStartupDiagnostic('VIEWER_CORE_INITIALIZING', '', 'ViewerCore.initialize started');
         v.initialize(container).then(function (res) {
           if (res.success) {
             hidePlaceholder();
           }
+          // 失败时 ViewerCore._notifyError 已通过 onViewerError 回调通知 ArkTS,
+          // 此处不重复上报,避免覆盖更具体的错误码。
+        }).catch(function (error) {
+          // 兜底:ViewerCore.initialize 抛出异常(不应发生,但保护)
+          var msg = error && error.message ? error.message : String(error);
+          emitStartupDiagnostic('VIEWER_INITIALIZE_FAILED', 'VIEWER_INITIALIZE_REJECTED', 'ViewerCore.initialize rejected: ' + msg);
+        });
+        return { success: true, state: 'INITIALIZING' };
+      });
+    },
+
+    /**
+     * Phase 1D-2C-2A: 重试 Viewer 初始化。
+     *
+     * 仅在 Viewer 处于 FAILED 状态时有效。
+     * - 重置 ViewerCore 状态(若支持)或重新创建实例
+     * - 触发 initialize(container)
+     * - 同步返回 INITIALIZING,结果通过 onViewerReady/onViewerError 回调
+     *
+     * @returns {string} JSON 结果
+     *   成功启动:{"success": true, "state": "INITIALIZING"}
+     *   当前非 FAILED:{"success": false, "error": {"code": "RETRY_NOT_ALLOWED", ...}}
+     */
+    retryInitializeViewer: function () {
+      emitStartupDiagnostic('INITIALIZE_REQUESTED', '', 'retryInitializeViewer called');
+      return callViewer(function (v) {
+        var state = v.getState();
+        if (state !== 'FAILED') {
+          return {
+            success: false,
+            error: {
+              code: 'RETRY_NOT_ALLOWED',
+              phase: state,
+              message: 'Retry only allowed in FAILED state, current: ' + state,
+              recoverable: false
+            }
+          };
+        }
+        var container = document.getElementById('ViewerStage');
+        if (!container) {
+          emitStartupDiagnostic('VIEWER_CONTAINER_NOT_FOUND', 'VIEWER_CONTAINER_NOT_FOUND', 'ViewerStage container not found');
+          return {
+            success: false,
+            error: { code: 'VIEWER_CONTAINER_NOT_FOUND', phase: state, message: 'ViewerStage container not found', recoverable: false }
+          };
+        }
+        emitStartupDiagnostic('VIEWER_CONTAINER_FOUND', '', 'ViewerStage container found for retry');
+        emitStartupDiagnostic('VIEWER_CORE_INITIALIZING', '', 'ViewerCore.initialize started (retry)');
+        v.initialize(container).then(function (res) {
+          if (res.success) {
+            hidePlaceholder();
+          }
+        }).catch(function (error) {
+          var msg = error && error.message ? error.message : String(error);
+          emitStartupDiagnostic('VIEWER_INITIALIZE_FAILED', 'VIEWER_INITIALIZE_REJECTED', 'Retry rejected: ' + msg);
         });
         return { success: true, state: 'INITIALIZING' };
       });
@@ -609,10 +734,82 @@ import { ViewerUserModelLoadCoordinator } from './viewer/ViewerUserModelLoadCoor
           error: { code: 'COORDINATOR_CALL_FAILED', message: msg }
         });
       }
+    },
+
+    // ===== Phase 1D-2C-1: 运行时诊断(获取/清除最近一条诊断记录) =====
+    // 委托 window.arkTavernVrmRuntimeDiagnostics keeper(ViewerBridge.js 注册)。
+    //
+    // 诊断来源:
+    // - ViewerModelLoader.onDiagnostic(经 ViewerCore._forwardModelLoaderDiagnostic 转发)
+    //   覆盖阶段:GLTF_LOAD_STARTED / GLTF_LOAD_PROGRESS / GLTF_LOAD_FAILED /
+    //   VRM_DATA_VALIDATED / MODEL_REPLACE_STARTED / MODEL_REPLACE_COMMITTED /
+    //   MODEL_REPLACE_FAILED
+    // - ViewerUserModelLoadCoordinator.onDiagnostic(app.js 注入的回调转发)
+    //   覆盖阶段:LOAD_STARTED(含前置条件失败,保留具体 errorCode)
+    // - Provider 的诊断由 ArkTS 端直接处理(不经过此 keeper)
+    //
+    // keeper 只保留最近一条(覆盖式),不累积历史。
+    // 诊断对象字段白名单:stage / code / message / resourceId / requestMethod /
+    // httpStatus / mimeType / contentLength / timestamp
+    // 严禁字段:cachePath / sourceUri / fd / stack / 用户目录
+
+    /**
+     * 获取最近一条运行时诊断。
+     *
+     * @returns {string} JSON 结果
+     *   {"success": true, "diagnostic": <object|null>}
+     *   diagnostic 不含 cachePath / sourceUri / fd / stack。
+     *   无记录时 diagnostic 为 null。
+     */
+    getVrmRuntimeDiagnostic: function () {
+      var keeper = global.arkTavernVrmRuntimeDiagnostics;
+      if (!keeper || typeof keeper.get !== 'function') {
+        return jsonResult({
+          success: false,
+          error: { code: 'DIAGNOSTICS_UNAVAILABLE', message: 'arkTavernVrmRuntimeDiagnostics not registered' }
+        });
+      }
+      try {
+        return keeper.get();
+      } catch (e) {
+        var msg = e && e.message ? e.message : String(e);
+        return jsonResult({
+          success: false,
+          error: { code: 'DIAGNOSTICS_CALL_FAILED', message: msg }
+        });
+      }
+    },
+
+    /**
+     * 清除最近一条运行时诊断。
+     *
+     * @returns {string} JSON 结果
+     *   {"success": true, "state": "DIAGNOSTIC_CLEARED"}
+     */
+    clearVrmRuntimeDiagnostic: function () {
+      var keeper = global.arkTavernVrmRuntimeDiagnostics;
+      if (!keeper || typeof keeper.clear !== 'function') {
+        return jsonResult({
+          success: false,
+          error: { code: 'DIAGNOSTICS_UNAVAILABLE', message: 'arkTavernVrmRuntimeDiagnostics not registered' }
+        });
+      }
+      try {
+        return keeper.clear();
+      } catch (e) {
+        var msg = e && e.message ? e.message : String(e);
+        return jsonResult({
+          success: false,
+          error: { code: 'DIAGNOSTICS_CALL_FAILED', message: msg }
+        });
+      }
     }
   };
 
-  console.log('[App] arkTavernViewerBridge registered (Phase 1B + 1D-2A + 1D-2B-1 + 1D-2B-2, delegates to ViewerCore + preparedResource keeper + probe + userModelLoadCoordinator)');
+  console.log('[App] arkTavernViewerBridge registered (Phase 1B + 1D-2A + 1D-2B-1 + 1D-2B-2 + 1D-2C-1 + 1D-2C-2A, delegates to ViewerCore + preparedResource keeper + probe + userModelLoadCoordinator + runtimeDiagnostics keeper)');
+
+  // Phase 1D-2C-2A: 记录 JS_BRIDGE_BOUND(Bridge 已注册到 window)
+  emitStartupDiagnostic('JS_BRIDGE_BOUND', '', 'arkTavernViewerBridge registered');
 
   // ===== 页面生命周期 =====
 
@@ -621,6 +818,8 @@ import { ViewerUserModelLoadCoordinator } from './viewer/ViewerUserModelLoadCoor
    * ViewerCore 内部会创建 Scene / Camera / FrameLoop,并通过 ViewerBridge 通知 ArkTS。
    */
   async function onDomReady() {
+    // Phase 1D-2C-2A: 记录 ARKWEB_PAGE_END(对应 ArkTS onPageEnd 触发时机)
+    emitStartupDiagnostic('ARKWEB_PAGE_END', '', 'DOM ready, page loaded');
     updatePlaceholder('INITIALIZING', '正在初始化 Three.js Scene...');
     var container = document.getElementById('ViewerStage');
     if (!container) {
@@ -657,5 +856,11 @@ import { ViewerUserModelLoadCoordinator } from './viewer/ViewerUserModelLoadCoor
     });
   } else {
     onDomReady();
+  }
+
+  // Phase 1D-2C-2C: 标记 window.arkTavernViewerBridge 已创建并赋值完成
+  // (此时 ArkTS 调用 initializeViewer 可以找到 Bridge 对象)
+  if (window.__arkTavernBootstrapState) {
+    window.__arkTavernBootstrapState.markBridgeReady();
   }
 })(typeof window !== 'undefined' ? window : globalThis);

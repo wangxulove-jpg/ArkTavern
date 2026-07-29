@@ -54,6 +54,10 @@ import {
   isModelResourceUrl,
   extractOpaqueIdFromUrl
 } from './ArkWebModelResourceTypes';
+import {
+  VrmRuntimeDiagnostic,
+  VrmRuntimeStage
+} from './ArkWebVrmRuntimeDiagnosticsTypes';
 
 /**
  * 资源响应构造结果(内部使用)。
@@ -93,6 +97,17 @@ export class ArkWebModelResourceProvider {
   private disposed: boolean = false;
   /** 受控缓存目录(规范化后的绝对路径)。 */
   private readonly importDirectory: string;
+  /**
+   * Phase 1D-2C-1: 诊断回调。
+   *
+   * 由 VrmViewerPage 注入,用于把 Provider 处理 HEAD/GET 请求的过程上报到页面,
+   * 在运行诊断区域显示真实失败阶段、错误码和错误信息。
+   *
+   * 安全约束:
+   * - 回调收到的 VrmRuntimeDiagnostic 不含 cachePath / sourceUri / fd / stack
+   * - 仅包含 stage / code / message / resourceId / requestMethod / httpStatus / mimeType / contentLength / timestamp
+   */
+  private onDiagnostic: ((diagnostic: VrmRuntimeDiagnostic) => void) | null = null;
 
   /**
    * 构造函数。
@@ -105,6 +120,58 @@ export class ArkWebModelResourceProvider {
     // importDirectory 形如 /data/storage/el2/cache/vrm-imports
     const rawDir: string = `${cacheDir}/${CACHE_SUBDIR}`;
     this.importDirectory = normalizePath(rawDir);
+  }
+
+  /**
+   * Phase 1D-2C-1: 设置诊断回调。
+   *
+   * @param callback 诊断回调函数(可空,传 null 取消)
+   */
+  setDiagnosticCallback(callback: ((diagnostic: VrmRuntimeDiagnostic) => void) | null): void {
+    this.onDiagnostic = callback;
+  }
+
+  /**
+   * Phase 1D-2C-1: 上报诊断(内部方法)。
+   *
+   * 仅 stage / code / message / resourceId / requestMethod / httpStatus / mimeType / contentLength / timestamp,
+   * 不上报 cachePath / sourceUri / fd / stack / 用户目录。
+   */
+  private emitDiagnostic(
+    stage: VrmRuntimeStage,
+    code: string,
+    message: string,
+    requestMethod: string,
+    httpStatus: number,
+    mimeType: string,
+    contentLength: number
+  ): void {
+    if (this.onDiagnostic === null) {
+      return;
+    }
+    // 截断错误消息,避免完整堆栈泄漏
+    const truncatedMessage: string = message.length > 256 ? message.substring(0, 256) : message;
+    const resourceId: string = this.currentResource !== null
+      ? this.currentResource.publicResource.id
+      : '';
+    const diagnostic: VrmRuntimeDiagnostic = {
+      stage: stage,
+      code: code,
+      message: truncatedMessage,
+      resourceId: resourceId,
+      requestMethod: requestMethod,
+      httpStatus: httpStatus,
+      mimeType: mimeType,
+      contentLength: contentLength,
+      timestamp: Date.now()
+    };
+    try {
+      this.onDiagnostic(diagnostic);
+    } catch (e) {
+      // 回调失败仅日志,不影响 Provider 主流程
+      const msg: string = e instanceof Error ? e.message : String(e);
+      console.warn(`[ArkWebModelResourceProvider] onDiagnostic callback failed: ${msg}`);
+    }
   }
 
   /**
@@ -321,13 +388,14 @@ export class ArkWebModelResourceProvider {
         'Method Not Allowed',
         `Method ${method} not allowed`
       );
-      // 覆盖为含 Allow 的完整响应头(保留 CORS,Phase 1D-2B-2)
+      // 覆盖为含 Allow 的完整响应头(保留 CORS,Phase 1D-2B-2 + 1D-2C-2E-2A 自定义长度头)
       response.setResponseHeader([
         { headerKey: 'Content-Type', headerValue: 'text/plain' },
         { headerKey: 'Cache-Control', headerValue: 'no-store' },
         { headerKey: 'Allow', headerValue: 'GET, HEAD' },
         { headerKey: 'Access-Control-Allow-Origin', headerValue: '*' },
-        { headerKey: 'Access-Control-Expose-Headers', headerValue: 'Content-Length, X-ArkTavern-Resource-Id' },
+        { headerKey: 'Access-Control-Expose-Headers',
+          headerValue: 'Content-Length, X-ArkTavern-Content-Length, X-ArkTavern-Resource-Id' },
         { headerKey: 'X-Content-Type-Options', headerValue: 'nosniff' }
       ]);
       return {
@@ -368,6 +436,17 @@ export class ArkWebModelResourceProvider {
     const publicResource: WebModelResource = resource.publicResource;
     const cachePath: string = resource.cachePath;
 
+    // Phase 1D-2C-1: 上报 PROVIDER_HEAD 阶段
+    this.emitDiagnostic(
+      VrmRuntimeStage.PROVIDER_HEAD,
+      '',
+      'HEAD request received',
+      'HEAD',
+      0,
+      publicResource.mimeType,
+      publicResource.size
+    );
+
     try {
       // 验证文件仍存在且大小一致(不打开文件)
       const stat: fileIo.Stat = fileIo.statSync(cachePath);
@@ -376,6 +455,15 @@ export class ArkWebModelResourceProvider {
           500,
           'Internal Server Error',
           'Cache path is not a regular file'
+        );
+        this.emitDiagnostic(
+          VrmRuntimeStage.PROVIDER_RESPONSE,
+          ModelResourceErrorCode.RESOURCE_PATH_INVALID,
+          'Cache path is not a regular file',
+          'HEAD',
+          500,
+          '',
+          0
         );
         return {
           response: response,
@@ -389,6 +477,15 @@ export class ArkWebModelResourceProvider {
           'Internal Server Error',
           `Size mismatch (expected ${publicResource.size}, actual ${stat.size})`
         );
+        this.emitDiagnostic(
+          VrmRuntimeStage.PROVIDER_RESPONSE,
+          'RESOURCE_SIZE_CHANGED',
+          `Size mismatch (expected ${publicResource.size}, actual ${stat.size})`,
+          'HEAD',
+          500,
+          '',
+          0
+        );
         return {
           response: response,
           errorCode: ModelResourceErrorCode.RESOURCE_PATH_INVALID,
@@ -400,6 +497,16 @@ export class ArkWebModelResourceProvider {
       const response: WebResourceResponse = this.createHeadResponse(resource);
       console.info(
         `[ArkWebModelResourceProvider] HEAD: id=${publicResource.id}, size=${publicResource.size}`
+      );
+      // Phase 1D-2C-1: 上报 PROVIDER_RESPONSE 200
+      this.emitDiagnostic(
+        VrmRuntimeStage.PROVIDER_RESPONSE,
+        '',
+        'HEAD 200 OK',
+        'HEAD',
+        200,
+        publicResource.mimeType,
+        publicResource.size
       );
       return {
         response: response,
@@ -413,6 +520,15 @@ export class ArkWebModelResourceProvider {
         500,
         'Internal Server Error',
         `HEAD stat failed: ${msg}`
+      );
+      this.emitDiagnostic(
+        VrmRuntimeStage.PROVIDER_RESPONSE,
+        ModelResourceErrorCode.RESOURCE_OPEN_FAILED,
+        `HEAD stat failed: ${msg}`,
+        'HEAD',
+        500,
+        '',
+        0
       );
       return {
         response: response,
@@ -438,6 +554,17 @@ export class ArkWebModelResourceProvider {
     let file: fileIo.File | null = null;
     let fdTransferred: boolean = false;
 
+    // Phase 1D-2C-1: 上报 PROVIDER_GET 阶段
+    this.emitDiagnostic(
+      VrmRuntimeStage.PROVIDER_GET,
+      '',
+      'GET request received',
+      'GET',
+      0,
+      publicResource.mimeType,
+      publicResource.size
+    );
+
     try {
       // 打开缓存文件(只读),获取 FD
       file = fileIo.openSync(cachePath, fileIo.OpenMode.READ_ONLY);
@@ -450,6 +577,16 @@ export class ArkWebModelResourceProvider {
 
       console.info(
         `[ArkWebModelResourceProvider] GET: id=${publicResource.id}, fd=${file.fd}, size=${publicResource.size}`
+      );
+      // Phase 1D-2C-1: 上报 PROVIDER_RESPONSE 200
+      this.emitDiagnostic(
+        VrmRuntimeStage.PROVIDER_RESPONSE,
+        '',
+        'GET 200 OK',
+        'GET',
+        200,
+        publicResource.mimeType,
+        publicResource.size
       );
 
       return {
@@ -466,6 +603,16 @@ export class ArkWebModelResourceProvider {
         500,
         'Internal Server Error',
         `Resource load failed: ${msg}`
+      );
+      // Phase 1D-2C-1: 上报 PROVIDER_RESPONSE 失败
+      this.emitDiagnostic(
+        VrmRuntimeStage.PROVIDER_RESPONSE,
+        ModelResourceErrorCode.RESOURCE_OPEN_FAILED,
+        `GET open file failed: ${msg}`,
+        'GET',
+        500,
+        '',
+        0
       );
 
       return {
@@ -487,19 +634,24 @@ export class ArkWebModelResourceProvider {
   }
 
   /**
-   * 构造成功响应的公共 Header 数组(Phase 1D-2B-1 统一化,1D-2B-2 增加 CORS)。
+   * 构造成功响应的公共 Header 数组(Phase 1D-2B-1 统一化,1D-2B-2 增加 CORS,1D-2C-2E-2A 增加自定义长度头)。
    *
    * 包含:
    * - Content-Type:资源 MIME
-   * - Content-Length:资源大小
+   * - Content-Length:资源大小(标准头,ArkWeb 实机可能重写为 0)
+   * - X-ArkTavern-Content-Length:资源大小(Phase 1D-2C-2E-2A 自定义头,绕过标准头被重写)
    * - Cache-Control: no-store
    * - Accept-Ranges: none
    * - X-ArkTavern-Resource-Id:资源 opaque ID
    * - Access-Control-Allow-Origin: *(Phase 1D-2B-2,跨源读取)
-   * - Access-Control-Expose-Headers: Content-Length, X-ArkTavern-Resource-Id(Phase 1D-2B-2)
+   * - Access-Control-Expose-Headers: Content-Length, X-ArkTavern-Content-Length, X-ArkTavern-Resource-Id
+   *   (Phase 1D-2B-2 + 1D-2C-2E-2A:Expose-Headers 必须包含自定义长度头,否则 fetch 不可读)
    * - X-Content-Type-Options: nosniff(Phase 1D-2B-2,安全)
    *
    * HEAD 与 GET 必须使用同一组成功响应头。
+   * 标准 Content-Length 与自定义 X-ArkTavern-Content-Length 必须使用同一资源大小来源
+   * (String(publicResource.size)),保证两端一致。
+   *
    * 本阶段不新增 OPTIONS 请求处理(GET / HEAD 均为简单方法,请求不携带自定义头)。
    * 不设置 Access-Control-Allow-Credentials: true。
    *
@@ -508,14 +660,17 @@ export class ArkWebModelResourceProvider {
    */
   private createSuccessHeaders(resource: InternalModelResource): Array<Header> {
     const publicResource: WebModelResource = resource.publicResource;
+    const sizeString: string = String(publicResource.size);
     return [
       { headerKey: 'Content-Type', headerValue: publicResource.mimeType },
-      { headerKey: 'Content-Length', headerValue: String(publicResource.size) },
+      { headerKey: 'Content-Length', headerValue: sizeString },
+      { headerKey: 'X-ArkTavern-Content-Length', headerValue: sizeString },
       { headerKey: 'Cache-Control', headerValue: 'no-store' },
       { headerKey: 'Accept-Ranges', headerValue: 'none' },
       { headerKey: 'X-ArkTavern-Resource-Id', headerValue: publicResource.id },
       { headerKey: 'Access-Control-Allow-Origin', headerValue: '*' },
-      { headerKey: 'Access-Control-Expose-Headers', headerValue: 'Content-Length, X-ArkTavern-Resource-Id' },
+      { headerKey: 'Access-Control-Expose-Headers',
+        headerValue: 'Content-Length, X-ArkTavern-Content-Length, X-ArkTavern-Resource-Id' },
       { headerKey: 'X-Content-Type-Options', headerValue: 'nosniff' }
     ];
   }
@@ -558,9 +713,11 @@ export class ArkWebModelResourceProvider {
   }
 
   /**
-   * 构造错误响应(Phase 1D-2B-1 统一化,1D-2B-2 增加 CORS)。
+   * 构造错误响应(Phase 1D-2B-1 统一化,1D-2B-2 增加 CORS,1D-2C-2E-2A 同步 Expose-Headers)。
    *
    * 错误响应同样需要 CORS 头,以便 JavaScript 端 fetch 能读取错误响应信息。
+   * Expose-Headers 必须与成功响应保持一致(包含 X-ArkTavern-Content-Length),
+   * 否则 fetch 在某些场景下无法读取自定义头。
    *
    * @param statusCode HTTP 状态码(如 405 / 416 / 500)
    * @param reason HTTP reason phrase(如 'Method Not Allowed')
@@ -581,7 +738,8 @@ export class ArkWebModelResourceProvider {
       { headerKey: 'Content-Type', headerValue: 'text/plain' },
       { headerKey: 'Cache-Control', headerValue: 'no-store' },
       { headerKey: 'Access-Control-Allow-Origin', headerValue: '*' },
-      { headerKey: 'Access-Control-Expose-Headers', headerValue: 'Content-Length, X-ArkTavern-Resource-Id' },
+      { headerKey: 'Access-Control-Expose-Headers',
+        headerValue: 'Content-Length, X-ArkTavern-Content-Length, X-ArkTavern-Resource-Id' },
       { headerKey: 'X-Content-Type-Options', headerValue: 'nosniff' }
     ]);
     return response;

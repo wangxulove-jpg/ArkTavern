@@ -9,32 +9,32 @@
   <link rel="stylesheet" href="styles/viewer.css" />
 
   <!--
-    MARK: Import Map — Three.js + three-vrm 本地依赖解析
-    Figure 原版使用 CDN (cdn.jsdelivr.net/npm/three@0.176.0 与 @pixiv/three-vrm@3),
-    ArkWeb 环境禁止 CDN,因此将所有运行时依赖本地化:
+    MARK: Phase 1D-2C-2D — 经典脚本单包入口(无 import map)
 
-    - three@0.176.0 → vendor/three/three.module.js (+ three.core.js + controls/ + loaders/ + utils/)
-    - @pixiv/three-vrm@3.5.5 → vendor/pixiv/three-vrm.module.js (esbuild bundle,three 已 external)
+    原 Phase 1B/1C/1D-2C-2C 入口使用 importmap + module script,
+    依赖 ArkWeb 支持 import map、rawfile ESM 与正确 module MIME。
 
-    通过 import map 将 bare specifier 映射到本地路径。
-    three-vrm bundle 内部 48 处 `import ... from "three"` 由本 import map 解析到同一份
-    three.module.js,避免出现第二份 Three.js 实例(否则 instanceof / Object3D 类型不一致)。
+    实机停在 APP_MODULE_LOADING,代码级测试确认源码模块图、语法、bootstrap 状态机、
+    Bridge 脚本、VRM 二进制结构全部正常。根因更可能来自 ArkWeb 运行时对以上三项的
+    兼容问题,因此本阶段改为:
 
-    three.module.js 内部 import './three.core.js' (相对路径,同目录,无需 import map)。
-    OrbitControls.js / GLTFLoader.js / BufferGeometryUtils.js 内部 import 'three' (bare specifier,由 import map 解析)。
-    three-vrm.module.js 内部 import 'three' (bare specifier,由 import map 解析)。
+    - 移除 importmap 声明
+    - 移除 module script 形式的 app.js 入口
+    - 改为普通经典脚本 app.bundle.js 加载 esbuild 预打包的 IIFE 单包
 
-    本阶段不引入 @pixiv/three-vrm-animation(动画阶段再添加)。
+    app.bundle.js 由 tools/vrm-runtime-bundle/build.mjs 生成,内联:
+      - Three.js 0.176.0 (three.module.js + three.core.js + addons/)
+      - @pixiv/three-vrm 3.5.5 (three-vrm.module.js)
+      - ViewerCore / ViewerScene / ViewerCamera / ViewerFrameLoop /
+        ViewerModelLoader / ViewerModelResourceProbe /
+        ViewerUserModelLoadCoordinator
+      - app.js 主体(注册 window.arkTavernViewerBridge)
+
+    构建期依赖映射保留在 tools/vrm-runtime-bundle/import-map.json(从原 index.html
+    import map 复制)。生产 index.html 不再依赖 import map。
+
+    模块源码(scripts/app.js + scripts/viewer/*.js)保留不变,仅作为 bundle 源。
   -->
-  <script type="importmap">
-    {
-      "imports": {
-        "three": "./vendor/three/three.module.js",
-        "three/addons/": "./vendor/three/",
-        "@pixiv/three-vrm": "./vendor/pixiv/three-vrm.module.js"
-      }
-    }
-  </script>
 </head>
 
 <body>
@@ -46,15 +46,16 @@
     - 仅显示 Viewer 状态文本,作为 ArkWeb 加载 + 双向 Bridge 通信的最小验证。
     - 不加载 Three.js / three-vrm / 任何 3D 资源。
 
-    Phase 1B(当前):
-    - 通过 import map 加载本地 three@0.176.0
+    Phase 1B ~ 1D-2C-2C:
+    - 通过 import map 加载本地 three@0.176.0(已废弃)
+
+    Phase 1D-2C-2D(当前):
+    - 通过 app.bundle.js 加载经典 IIFE 单包(无 import map、无 ESM)
     - 在 ViewerStage 容器中挂载 WebGLRenderer / Scene / Camera / Light
-    - 显示测试物体(BoxGeometry)验证渲染管线
-    - 不加载 VRM(Phase 1C)
+    - 支持文件导入与模型加载(Phase 1D-2A ~ 1D-2C-1)
 
     后续阶段(规划):
-    - Phase 1C:加载默认 VRM 模型。
-    - Phase 1D:ArkTS 文件导入 → JavaScript loadModel。
+    - Phase 1D-2C-2E: 实机验证 Viewer 初始化
   -->
 
   <div id="ViewerStage" class="viewer-stage">
@@ -81,8 +82,28 @@
 
   <!-- Viewer Bridge:负责 ArkTS ↔ JavaScript 双向通信(普通脚本,设置 window 全局对象) -->
   <script src="scripts/viewer/ViewerBridge.js"></script>
-  <!-- App 入口:ES Module,负责 ViewerCore 生命周期与 Three.js 渲染循环 -->
-  <script type="module" src="scripts/app.js"></script>
+
+  <!--
+    Phase 1D-2C-2C: bootstrap.js — 模块启动诊断与 Bridge 引导层
+    作为普通经典脚本(非 module)在 app.bundle.js 之前加载,不依赖 import map。
+    维护全局启动状态机,捕获 window.error / unhandledrejection,
+    暴露 window.arkTavernBootstrapBridge.getBootstrapState() 供 ArkTS 查询。
+    加载失败不影响页面其他资源(经典脚本失败只影响自身)。
+  -->
+  <script src="scripts/bootstrap.js"></script>
+  <script>
+    // 标记 app.bundle.js 即将开始加载(经典脚本同步执行,确保在 bundle 之前)
+    window.__arkTavernBootstrapState &&
+    window.__arkTavernBootstrapState.markModuleLoading();
+  </script>
+
+  <!--
+    Phase 1D-2C-2D: App 入口 — 经典 IIFE 单包
+    由 tools/vrm-runtime-bundle/build.mjs 生成,内联 Three.js + three-vrm + Viewer 模块。
+    不依赖 import map、不依赖 rawfile ESM、不依赖 module MIME。
+    普通经典脚本同步执行,在 ViewerBridge.js / bootstrap.js / markModuleLoading 之后。
+  -->
+  <script src="scripts/app.bundle.js"></script>
 </body>
 
 </html>

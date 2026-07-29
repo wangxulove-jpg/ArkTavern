@@ -69,6 +69,18 @@ export const UserModelLoadErrorCode = Object.freeze({
 var CONTROLLED_URL_PREFIX = 'https://ark-tavern.local/model/';
 
 /**
+ * Phase 1D-2C-1: 运行时诊断阶段(与 ArkTS VrmRuntimeStage 对齐)。
+ * 仅声明本协调器实际会触发的阶段。
+ *
+ * 协调器只上报 LOAD_STARTED 阶段(含成功启动与前置条件失败)。
+ * 底层 GLTFLoader 加载失败已由 ViewerModelLoader 上报 GLTF_LOAD_FAILED /
+ * MODEL_REPLACE_FAILED,协调器不重复上报阶段,但保留底层错误码。
+ */
+var VRM_STAGE = Object.freeze({
+  LOAD_STARTED: 'LOAD_STARTED'
+});
+
+/**
  * 从受控 URL 提取 opaque id。
  * @param {string} resourceUrl
  * @returns {string} opaque id;空字符串表示 URL 不合法
@@ -112,6 +124,7 @@ export class ViewerUserModelLoadCoordinator {
   /**
    * @param {object} options
    * @param {object} options.viewer ViewerCore 实例(必须实现 getState / loadUserModelResource)
+   * @param {function(object)|null} [options.onDiagnostic] Phase 1D-2C-1 诊断回调
    */
   constructor(options) {
     options = options || {};
@@ -127,6 +140,66 @@ export class ViewerUserModelLoadCoordinator {
     this.activePromise = null;
     /** @type {boolean} 是否已销毁 */
     this.disposed = false;
+    /**
+     * Phase 1D-2C-1: 诊断回调。
+     *
+     * 由 app.js 注入,转发到 arkTavernVrmRuntimeDiagnostics keeper。
+     * 协调器只上报 LOAD_STARTED 阶段(含前置条件失败),底层 GLTFLoader /
+     * Scene 替换失败由 ViewerModelLoader 自行上报。
+     * @type {function(object)|null}
+     */
+    this.onDiagnostic = typeof options.onDiagnostic === 'function' ? options.onDiagnostic : null;
+    /**
+     * Phase 1D-2C-1: 当前加载对应的资源 opaque id。
+     * 用于诊断回调中填充 resourceId 字段。
+     * @type {string}
+     */
+    this.currentResourceId = '';
+  }
+
+  /**
+   * Phase 1D-2C-1: 设置诊断回调。
+   * @param {function(object)|null} callback 诊断回调函数(传 null 取消)
+   */
+  setDiagnosticCallback(callback) {
+    this.onDiagnostic = typeof callback === 'function' ? callback : null;
+  }
+
+  /**
+   * Phase 1D-2C-1: 上报诊断(内部方法)。
+   *
+   * 只填充 stage / code / message / resourceId / requestMethod / httpStatus / mimeType / contentLength / timestamp,
+   * 不包含 cachePath / sourceUri / fd / stack / 用户目录。
+   *
+   * @param {string} stage VRM_STAGE.* 之一
+   * @param {string} code 错误码(成功阶段为空字符串)
+   * @param {string} message 简短消息
+   * @private
+   */
+  _emitDiagnostic(stage, code, message) {
+    if (!this.onDiagnostic) {
+      return;
+    }
+    var msg = String(message || '');
+    if (msg.length > 256) {
+      msg = msg.substring(0, 256);
+    }
+    var diagnostic = {
+      stage: stage,
+      code: code || '',
+      message: msg,
+      resourceId: this.currentResourceId || '',
+      requestMethod: '',
+      httpStatus: 0,
+      mimeType: '',
+      contentLength: 0,
+      timestamp: Date.now()
+    };
+    try {
+      this.onDiagnostic(diagnostic);
+    } catch (e) {
+      console.warn('[UserModelLoadCoordinator] onDiagnostic callback failed: ' + (e && e.message ? e.message : String(e)));
+    }
   }
 
   /**
@@ -149,6 +222,13 @@ export class ViewerUserModelLoadCoordinator {
         'Coordinator disposed'
       );
       this.state = UserModelLoadState.FAILED;
+      // Phase 1D-2C-1: 上报 LOAD_STARTED 失败(协调器已销毁)
+      this.currentResourceId = '';
+      this._emitDiagnostic(
+        VRM_STAGE.LOAD_STARTED,
+        UserModelLoadErrorCode.MODEL_LOAD_COORDINATOR_DISPOSED,
+        'Coordinator disposed'
+      );
       return this.lastResult;
     }
 
@@ -161,6 +241,13 @@ export class ViewerUserModelLoadCoordinator {
         'A user model load is already in progress'
       );
       // 不更新 state(保持 LOADING)
+      // Phase 1D-2C-1: 上报 LOAD_STARTED 失败(已有进行中的加载)
+      this._updateResourceIdFromResource(resource);
+      this._emitDiagnostic(
+        VRM_STAGE.LOAD_STARTED,
+        UserModelLoadErrorCode.MODEL_LOAD_IN_PROGRESS,
+        'A user model load is already in progress'
+      );
       return this.lastResult;
     }
 
@@ -169,6 +256,16 @@ export class ViewerUserModelLoadCoordinator {
     if (precheck !== null) {
       this.lastResult = precheck;
       this.state = UserModelLoadState.FAILED;
+      // Phase 1D-2C-1: 上报 LOAD_STARTED 失败(前置条件未通过)
+      // 保留 precheck.errorCode(RESOURCE_NOT_PREPARED / RESOURCE_NOT_VERIFIED /
+      // RESOURCE_ID_MISMATCH / VIEWER_NOT_READY / MODEL_RESOURCE_UNSUPPORTED 等),
+      // 不压缩为通用的 MODEL_LOAD_FAILED。
+      this._updateResourceIdFromResource(resource);
+      this._emitDiagnostic(
+        VRM_STAGE.LOAD_STARTED,
+        precheck.errorCode || UserModelLoadErrorCode.MODEL_LOAD_FAILED,
+        precheck.errorMessage || 'Precondition check failed'
+      );
       return this.lastResult;
     }
 
@@ -176,6 +273,14 @@ export class ViewerUserModelLoadCoordinator {
     var generation = ++this.loadGeneration;
     this.state = UserModelLoadState.LOADING;
     this.lastResult = this._buildLoadingResult(resource);
+    // Phase 1D-2C-1: 提取 resourceId 用于后续诊断
+    this._updateResourceIdFromResource(resource);
+    // Phase 1D-2C-1: 上报 LOAD_STARTED 成功(已通过前置条件,异步加载即将开始)
+    this._emitDiagnostic(
+      VRM_STAGE.LOAD_STARTED,
+      '',
+      'User model load started: ' + (resource.displayName || '(unknown)')
+    );
 
     var promise = this._executeLoad(resource, generation);
     this.activePromise = promise;
@@ -184,6 +289,25 @@ export class ViewerUserModelLoadCoordinator {
     this._trackAsyncLoad(promise, resource, generation);
 
     return this.lastResult;
+  }
+
+  /**
+   * Phase 1D-2C-1: 从 resource 对象提取 opaque id 作为 currentResourceId。
+   * @param {object} resource
+   * @private
+   */
+  _updateResourceIdFromResource(resource) {
+    this.currentResourceId = '';
+    if (!resource || typeof resource !== 'object') {
+      return;
+    }
+    if (typeof resource.resourceUrl !== 'string' || resource.resourceUrl.length === 0) {
+      return;
+    }
+    var opaqueId = extractOpaqueIdFromUrl(resource.resourceUrl);
+    if (opaqueId.length > 0) {
+      this.currentResourceId = opaqueId;
+    }
   }
 
   /**
@@ -200,10 +324,29 @@ export class ViewerUserModelLoadCoordinator {
       if (generation !== this.loadGeneration || this.disposed) {
         // 过期结果不更新 state / lastResult(但记录到 console)
         console.warn('[UserModelLoadCoordinator] stale result ignored: gen=' + generation);
+        // Phase 1D-2C-1: 上报 LOAD_STARTED 失败(过期)
+        // 注意:此处保留 MODEL_LOAD_STALE 错误码,不压缩为 MODEL_LOAD_FAILED。
+        // 底层 ModelLoader 已上报 GLTF_LOAD_FAILED / MODEL_REPLACE_FAILED,
+        // 协调器只补充"协调器视角的过期"信息。
+        this._emitDiagnostic(
+          VRM_STAGE.LOAD_STARTED,
+          UserModelLoadErrorCode.MODEL_LOAD_STALE,
+          'Load result is stale (generation mismatch)'
+        );
         return;
       }
       this.state = result.state;
       this.lastResult = result;
+      // Phase 1D-2C-1: 失败结果上报诊断
+      // 注意:底层 ViewerModelLoader 已上报 GLTF_LOAD_FAILED / MODEL_REPLACE_FAILED,
+      // 此处保留 result.errorCode,不压缩为 MODEL_LOAD_FAILED。
+      if (result.state === UserModelLoadState.FAILED && result.errorCode) {
+        this._emitDiagnostic(
+          VRM_STAGE.LOAD_STARTED,
+          result.errorCode,
+          result.errorMessage || 'Load failed'
+        );
+      }
     } catch (e) {
       var msg = e && e.message ? e.message : String(e);
       if (generation === this.loadGeneration && !this.disposed) {
@@ -211,6 +354,12 @@ export class ViewerUserModelLoadCoordinator {
         this.lastResult = this._buildFailedResult(
           resource.resourceUrl,
           resource.displayName,
+          UserModelLoadErrorCode.MODEL_LOAD_FAILED,
+          'Unexpected exception: ' + msg
+        );
+        // Phase 1D-2C-1: 上报诊断(协调器自身捕获的异常)
+        this._emitDiagnostic(
+          VRM_STAGE.LOAD_STARTED,
           UserModelLoadErrorCode.MODEL_LOAD_FAILED,
           'Unexpected exception: ' + msg
         );
@@ -511,6 +660,8 @@ export class ViewerUserModelLoadCoordinator {
     this.lastResult = null;
     this.loadGeneration++;
     this.viewer = null;
+    this.currentResourceId = ''; // Phase 1D-2C-1
+    this.onDiagnostic = null; // Phase 1D-2C-1
     // 不重置 activePromise,正在进行的加载完成后会被忽略
   }
 }

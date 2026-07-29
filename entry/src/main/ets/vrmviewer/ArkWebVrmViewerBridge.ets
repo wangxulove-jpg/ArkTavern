@@ -174,6 +174,28 @@ export class ArkWebVrmViewerNativeBridge {
  *
  * 注意:runJavaScript 是异步的,需要在 WebviewController 关联的 Web 组件加载完成后调用。
  */
+
+/**
+ * Phase 1D-2C-2B: Bridge 错误详情接口。
+ * 用于 normalizeRunJavaScriptResult 中返回受控错误 JSON 的类型化对象字面量。
+ */
+interface BridgeErrorDetail {
+  code: string;
+  message: string;
+  phase: string;
+  recoverable: boolean;
+  rawSummary?: string;
+}
+
+/**
+ * Phase 1D-2C-2B: Bridge 错误结果接口。
+ * 用于 normalizeRunJavaScriptResult 中返回受控错误 JSON 的类型化对象字面量。
+ */
+interface BridgeErrorResult {
+  success: boolean;
+  error: BridgeErrorDetail;
+}
+
 export class ArkWebViewerJsCaller {
   private runJs: ((script: string) => Promise<string>) | null = null;
 
@@ -190,6 +212,19 @@ export class ArkWebViewerJsCaller {
   /** 调用 window.arkTavernViewerBridge.initializeViewer() */
   async initializeViewer(): Promise<string> {
     return this.call('initializeViewer');
+  }
+
+  /**
+   * Phase 1D-2C-2A: 调用 window.arkTavernViewerBridge.retryInitializeViewer()
+   *
+   * 仅在 Viewer 处于 FAILED 状态时由 Controller 调用。Web 端方法同步返回 JSON 字符串:
+   *   成功启动重试:{"success": true, "state": "INITIALIZING"}
+   *   当前非 FAILED:{"success": false, "error": {"code": "RETRY_NOT_ALLOWED", ...}}
+   *
+   * 重试结果通过 onViewerReady / onViewerError 回调推进 Controller 状态机。
+   */
+  async retryInitializeViewer(): Promise<string> {
+    return this.call('retryInitializeViewer');
   }
 
   /** 调用 window.arkTavernViewerBridge.disposeViewer() */
@@ -354,13 +389,58 @@ export class ArkWebViewerJsCaller {
     return this.call('clearPreparedModelLoadResult');
   }
 
+  // ===== Phase 1D-2C-1: 运行时诊断 =====
+
+  /**
+   * 调用 window.arkTavernViewerBridge.getVrmRuntimeDiagnostic()
+   *
+   * 同步获取 Web 端最近一条运行时诊断记录。
+   * 诊断记录由 Provider / Coordinator / GLTFLoader 通过 onDiagnostic 回调上报,
+   * 收集在 Web 端诊断中心,只保留最近一条。
+   *
+   * 返回的 JSON 字符串结构:
+   *   {"success": true, "diagnostic": <VrmRuntimeDiagnostic|null>}
+   *   diagnostic 字段:
+   *     - stage: 阶段字符串(见 VrmRuntimeStage)
+   *     - code: 错误码(底层原始错误码)
+   *     - message: 错误消息(已截断,不含完整堆栈)
+   *     - resourceId: opaque resource id(不含 cachePath)
+   *     - requestMethod: HEAD / GET
+   *     - httpStatus: HTTP 状态码
+   *     - mimeType: 响应 Content-Type
+   *     - contentLength: 响应 Content-Length
+   *     - timestamp: 发生时间戳(ms)
+   *
+   * 安全约束:
+   * - diagnostic 不含 cachePath / sourceUri / fd / stack / 用户目录
+   * - 由 Web 端诊断中心做字段白名单过滤
+   *
+   * @returns JSON 字符串
+   */
+  async getVrmRuntimeDiagnostic(): Promise<string> {
+    return this.call('getVrmRuntimeDiagnostic');
+  }
+
+  /**
+   * 调用 window.arkTavernViewerBridge.clearVrmRuntimeDiagnostic()
+   *
+   * 清除 Web 端诊断中心最近一条诊断记录。
+   * 不影响 Provider / Coordinator / GLTFLoader 的运行状态。
+   *
+   * @returns JSON 字符串,形如 {"success": true, "state": "DIAGNOSTIC_CLEARED"}
+   */
+  async clearVrmRuntimeDiagnostic(): Promise<string> {
+    return this.call('clearVrmRuntimeDiagnostic');
+  }
+
   private async call(methodName: string): Promise<string> {
     const fn = this.runJs;
     if (fn === null) {
       throw new Error(`JsCaller not bound: cannot call ${methodName}`);
     }
-    const script = `try { window.arkTavernViewerBridge && window.arkTavernViewerBridge.${methodName} && window.arkTavernViewerBridge.${methodName}(); } catch (e) { JSON.stringify({ success: false, error: (e && e.message) ? e.message : String(e) }); }`;
-    return fn(script);
+    const script: string = this.buildBridgeCallScript(methodName, '');
+    const raw: string = await fn(script);
+    return this.normalizeRunJavaScriptResult(raw);
   }
 
   private async callWithArgs(methodName: string, args: number[]): Promise<string> {
@@ -368,9 +448,19 @@ export class ArkWebViewerJsCaller {
     if (fn === null) {
       throw new Error(`JsCaller not bound: cannot call ${methodName}`);
     }
-    const argsStr: string = args.map((n: number) => String(n)).join(', ');
-    const script = `try { window.arkTavernViewerBridge && window.arkTavernViewerBridge.${methodName} && window.arkTavernViewerBridge.${methodName}(${argsStr}); } catch (e) { JSON.stringify({ success: false, error: (e && e.message) ? e.message : String(e) }); }`;
-    return fn(script);
+    // Phase 1D-2C-2B: 数字参数必须 isFinite,禁止 NaN/Infinity 注入
+    const safeArgs: string[] = [];
+    for (let i = 0; i < args.length; i++) {
+      const n: number = args[i];
+      if (!isFinite(n)) {
+        throw new Error(`JsCaller.callWithArgs(${methodName}): argument at index ${i} is not finite (n=${n})`);
+      }
+      safeArgs.push(String(n));
+    }
+    const argsExpr: string = safeArgs.join(', ');
+    const script: string = this.buildBridgeCallScript(methodName, argsExpr);
+    const raw: string = await fn(script);
+    return this.normalizeRunJavaScriptResult(raw);
   }
 
   /**
@@ -385,9 +475,270 @@ export class ArkWebViewerJsCaller {
       throw new Error(`JsCaller not bound: cannot call ${methodName}`);
     }
     // JSON.stringify 输出形如 "..."(含双引号),可直接作为 JS 字符串字面量
+    // 自动转义单引号 / 双引号 / 反斜杠 / 换行 / Unicode 分隔符,防止 JavaScript 注入
     const argLiteral: string = JSON.stringify(strArg);
-    const script = `try { window.arkTavernViewerBridge && window.arkTavernViewerBridge.${methodName} && window.arkTavernViewerBridge.${methodName}(${argLiteral}); } catch (e) { JSON.stringify({ success: false, error: (e && e.message) ? e.message : String(e) }); }`;
-    return fn(script);
+    const script: string = this.buildBridgeCallScript(methodName, argLiteral);
+    const raw: string = await fn(script);
+    return this.normalizeRunJavaScriptResult(raw);
+  }
+
+  /**
+   * Phase 1D-2C-2B: 统一构造 Bridge 调用脚本。
+   *
+   * 使用立即执行函数(IIFE)作为脚本顶层表达式,确保 runJavaScript 拿到稳定的返回值。
+   * 所有路径(成功 / Bridge 缺失 / 方法缺失 / 异常)均显式 `return` JSON 字符串。
+   *
+   * 关键约束:
+   * - IIFE 本身是整个脚本的最后一个表达式
+   * - 成功路径 `return method.call(bridge)`,保持 this 指向 bridge
+   * - Bridge 缺失 / 方法缺失 / 异常路径均 `return JSON.stringify({...})`
+   * - 不出现 `bridge.method();` 形式的无返回值调用
+   *
+   * @param methodName Bridge 方法名(已在白名单中校验)
+   * @param argExpressions 参数表达式字符串(已序列化,空字符串表示无参数)
+   */
+  private buildBridgeCallScript(methodName: string, argExpressions: string): string {
+    // 参数表达式为空时调用形如 `method.call(bridge)`,否则 `method.call(bridge, arg1, arg2)`
+    const callArgs: string = argExpressions.length > 0 ? `bridge, ${argExpressions}` : 'bridge';
+    return `(function () {
+  try {
+    var bridge = window.arkTavernViewerBridge;
+    if (!bridge) {
+      // Phase 1D-2C-2C: 主 Bridge 不存在,查询 bootstrap.js 引导层状态
+      // 区分 APP_MODULE_LOAD_FAILED / APP_MODULE_EXECUTION_FAILED / APP_BRIDGE_NOT_READY / BOOTSTRAP_BRIDGE_NOT_FOUND
+      var bootstrapBridge = window.arkTavernBootstrapBridge;
+      var bootstrapState = null;
+      var bootstrapAvailable = false;
+
+      if (bootstrapBridge && typeof bootstrapBridge.getBootstrapState === 'function') {
+        bootstrapAvailable = true;
+        try {
+          bootstrapState = bootstrapBridge.getBootstrapState();
+        } catch (_) {
+          bootstrapState = null;
+        }
+      }
+
+      // 解析 bootstrapState,提取 phase / errorCode / errorMessage / source / line / column
+      var bsPhase = '';
+      var bsErrorCode = '';
+      var bsErrorMessage = '';
+      var bsSource = '';
+      var bsLine = 0;
+      var bsColumn = 0;
+
+      if (bootstrapState) {
+        try {
+          var bsParsed = JSON.parse(bootstrapState);
+          if (bsParsed && bsParsed.state) {
+            var s = bsParsed.state;
+            bsPhase = s.phase || '';
+            bsErrorCode = s.errorCode || '';
+            bsErrorMessage = s.errorMessage || '';
+            bsSource = s.source || '';
+            bsLine = s.line || 0;
+            bsColumn = s.column || 0;
+          }
+        } catch (_) {
+          // bootstrapState 不是合法 JSON,忽略
+        }
+      }
+
+      // 根据 bootstrap 状态映射错误码
+      var mappedCode = 'APP_BRIDGE_NOT_READY';
+      var mappedMessage = 'window.arkTavernViewerBridge is unavailable';
+      var mappedPhase = 'APP_BOOTSTRAP';
+
+      if (!bootstrapAvailable) {
+        // bootstrap.js 自身未加载(经典脚本加载失败)
+        mappedCode = 'BOOTSTRAP_BRIDGE_NOT_FOUND';
+        mappedMessage = 'window.arkTavernBootstrapBridge is unavailable (bootstrap.js not loaded)';
+        mappedPhase = 'APP_BOOTSTRAP';
+      } else if (bsPhase === 'APP_MODULE_FAILED') {
+        // app.js 模块加载或执行失败
+        if (bsErrorCode === 'WINDOW_ERROR') {
+          mappedCode = 'APP_MODULE_EXECUTION_FAILED';
+          mappedMessage = bsErrorMessage || 'app.js module execution failed';
+        } else if (bsErrorCode === 'UNHANDLED_REJECTION') {
+          mappedCode = 'APP_MODULE_LOAD_FAILED';
+          mappedMessage = bsErrorMessage || 'app.js module load failed';
+        } else {
+          mappedCode = 'APP_MODULE_EXECUTION_FAILED';
+          mappedMessage = bsErrorMessage || 'app.js module failed';
+        }
+        mappedPhase = bsPhase;
+      } else if (bsPhase === 'APP_MODULE_LOADING') {
+        // app.js 模块正在加载(import 解析中)
+        mappedCode = 'APP_BRIDGE_NOT_READY';
+        mappedMessage = 'app.js module is still loading';
+        mappedPhase = bsPhase;
+      } else if (bsPhase === 'APP_MODULE_EXECUTING') {
+        // app.js 模块正在执行,但 Bridge 尚未创建
+        mappedCode = 'APP_BRIDGE_NOT_READY';
+        mappedMessage = 'app.js module is executing, bridge not yet ready';
+        mappedPhase = bsPhase;
+      } else if (bsPhase === 'BOOTSTRAP_READY') {
+        // bootstrap.js 已加载,但 app.js 尚未开始执行
+        mappedCode = 'APP_BRIDGE_NOT_READY';
+        mappedMessage = 'app.js module has not started';
+        mappedPhase = bsPhase;
+      }
+
+      return JSON.stringify({
+        success: false,
+        error: {
+          code: mappedCode,
+          message: mappedMessage,
+          phase: mappedPhase,
+          recoverable: true,
+          bootstrapState: bootstrapState,
+          bootstrapPhase: bsPhase,
+          bootstrapSource: bsSource,
+          bootstrapLine: bsLine,
+          bootstrapColumn: bsColumn
+        }
+      });
+    }
+    var method = bridge['${methodName}'];
+    if (typeof method !== 'function') {
+      return JSON.stringify({
+        success: false,
+        error: {
+          code: 'BRIDGE_METHOD_NOT_FOUND',
+          message: 'Bridge method is unavailable: ${methodName}',
+          phase: 'BRIDGE_CALL',
+          recoverable: true
+        }
+      });
+    }
+    return method.call(${callArgs});
+  } catch (error) {
+    return JSON.stringify({
+      success: false,
+      error: {
+        code: 'BRIDGE_CALL_FAILED',
+        message: error && error.message ? String(error.message) : String(error),
+        phase: 'BRIDGE_CALL',
+        recoverable: true
+      }
+    });
+  }
+})()`;
+  }
+
+  /**
+   * Phase 1D-2C-2B: 规范化 runJavaScript 返回值。
+   *
+   * ArkWeb runJavaScript 可能返回 null / undefined / 空字符串 / [object Promise] /
+   * 普通 JSON 字符串 / 被额外引号包裹的 JSON / 非 JSON 字符串。本方法统一处理为
+   * 合法 JSON 字符串或受控错误 JSON。
+   *
+   * 处理顺序:
+   * 1. null / undefined / 空字符串 → BRIDGE_RESULT_EMPTY
+   * 2. 字符串 "null" / "undefined" → BRIDGE_RESULT_EMPTY
+   * 3. [object Promise] / Promise 特征 → BRIDGE_RESULT_PROMISE
+   * 4. 被额外引号包裹的 JSON(双层编码)→ 解包一层后返回内部 JSON
+   * 5. 普通 JSON 对象字符串 → 原样返回
+   * 6. 非 JSON 字符串 → BRIDGE_RESULT_NOT_JSON(含截断 rawSummary)
+   *
+   * 安全约束:
+   * - rawSummary 截断到 200 字符,不含完整执行脚本
+   * - 不无限递归解包,最多解包 1 层
+   * - 不把合法空对象 JSON 无依据判定为 Promise
+   */
+  private normalizeRunJavaScriptResult(raw: string): string {
+    // 1. null / undefined / 空字符串
+    if (raw === null || raw === undefined || raw.length === 0) {
+      return this.makeBridgeErrorJson('BRIDGE_RESULT_EMPTY', 'Bridge call returned no value', true);
+    }
+
+    const trimmed: string = raw.trim();
+
+    // 2. 字符串 "null" / "undefined"(JS null/undefined 被 runJavaScript 字符串化)
+    if (trimmed === 'null' || trimmed === 'undefined') {
+      return this.makeBridgeErrorJson('BRIDGE_RESULT_EMPTY', 'Bridge call returned no value', true);
+    }
+
+    // 3. [object Promise] / 明确 Promise 特征
+    //    注意:只在有明确 Promise 特征时判定,不把合法空对象 JSON({})误判为 Promise。
+    //    合法空对象 JSON "{}" 会在步骤 7 原样返回,不进入此分支。
+    //    Promise.toString() 输出 "[object Promise]",是唯一的明确 Promise 特征。
+    if (trimmed === '[object Promise]' ||
+        trimmed.indexOf('[object Promise]') >= 0) {
+      return this.makeBridgeErrorJson('BRIDGE_RESULT_PROMISE', 'Bridge call returned a Promise (method may be async)', false);
+    }
+
+    // 4. 尝试作为普通 JSON 解析
+    let firstParse: Object | null = null;
+    try {
+      firstParse = JSON.parse(trimmed);
+    } catch (e) {
+      // 5. 非 JSON 字符串 → BRIDGE_RESULT_NOT_JSON
+      //    rawSummary 截断到 200 字符,避免泄露完整脚本
+      const summary: string = trimmed.length > 200 ? trimmed.substring(0, 200) + '...' : trimmed;
+      return this.makeBridgeErrorJsonWithRaw('BRIDGE_RESULT_NOT_JSON', 'Bridge call returned a non-JSON value', true, summary);
+    }
+
+    // 6. 如果 firstParse 是字符串,可能是被额外引号包裹的 JSON,尝试解包一层
+    if (typeof firstParse === 'string') {
+      const inner: string = firstParse as string;
+      // 内部字符串为空 → BRIDGE_RESULT_EMPTY
+      if (inner.length === 0) {
+        return this.makeBridgeErrorJson('BRIDGE_RESULT_EMPTY', 'Bridge call returned no value', true);
+      }
+      // 内部字符串以 { 或 [ 开头,视为 JSON,原样返回内部字符串
+      const innerTrimmed: string = inner.trim();
+      if (innerTrimmed.startsWith('{') || innerTrimmed.startsWith('[')) {
+        return innerTrimmed;
+      }
+      // 内部字符串是 "null" / "undefined" → BRIDGE_RESULT_EMPTY
+      if (innerTrimmed === 'null' || innerTrimmed === 'undefined') {
+        return this.makeBridgeErrorJson('BRIDGE_RESULT_EMPTY', 'Bridge call returned no value', true);
+      }
+      // 内部字符串非 JSON → BRIDGE_RESULT_NOT_JSON
+      const summary: string = innerTrimmed.length > 200 ? innerTrimmed.substring(0, 200) + '...' : innerTrimmed;
+      return this.makeBridgeErrorJsonWithRaw('BRIDGE_RESULT_NOT_JSON', 'Bridge call returned a non-JSON value', true, summary);
+    }
+
+    // 7. 普通 JSON 对象 / 数组 → 原样返回 trimmed
+    return trimmed;
+  }
+
+  /**
+   * Phase 1D-2C-2B: 构造 Bridge 错误 JSON 字符串(不带 rawSummary)。
+   * 使用类型化对象字面量,满足 ArkTS arkts-no-untyped-obj-literals 规则。
+   */
+  private makeBridgeErrorJson(code: string, message: string, recoverable: boolean): string {
+    const errorDetail: BridgeErrorDetail = {
+      code: code,
+      message: message,
+      phase: 'BRIDGE_CALL',
+      recoverable: recoverable
+    };
+    const result: BridgeErrorResult = {
+      success: false,
+      error: errorDetail
+    };
+    return JSON.stringify(result);
+  }
+
+  /**
+   * Phase 1D-2C-2B: 构造 Bridge 错误 JSON 字符串(带 rawSummary)。
+   * 用于 BRIDGE_RESULT_NOT_JSON,附带截断后的原始返回摘要。
+   */
+  private makeBridgeErrorJsonWithRaw(code: string, message: string, recoverable: boolean, rawSummary: string): string {
+    const errorDetail: BridgeErrorDetail = {
+      code: code,
+      message: message,
+      phase: 'BRIDGE_CALL',
+      recoverable: recoverable,
+      rawSummary: rawSummary
+    };
+    const result: BridgeErrorResult = {
+      success: false,
+      error: errorDetail
+    };
+    return JSON.stringify(result);
   }
 }
 

@@ -81,6 +81,27 @@ export enum ArkWebAnimationState {
 
 /**
  * Bridge 错误代码(与 Web 端 ViewerBridge.notifyViewerError 的 code 字段对齐)。
+ *
+ * Phase 1D-2C-2A 新增 initializeViewer 同步返回链路上的错误码:
+ * - INITIALIZE_RESULT_EMPTY: runJavaScript 返回空字符串
+ * - INITIALIZE_RESULT_NOT_JSON: 返回内容不是合法 JSON
+ * - INITIALIZE_RESULT_PROMISE: 返回 [object Promise](Bridge 误声明为 async)
+ * - VIEWER_CONTAINER_NOT_FOUND: HTML 容器 ViewerStage 未找到
+ * - VIEWER_INITIALIZE_REJECTED: ViewerCore.initialize 抛出异常
+ * - VIEWER_READY_TIMEOUT: 初始化超时(沿用 INIT_TIMEOUT_MS)
+ *
+ * Phase 1D-2C-2B 新增 JsCaller 层错误码(Bridge 调用脚本与返回值规范化):
+ * - BRIDGE_NOT_FOUND: window.arkTavernViewerBridge 不可用
+ * - BRIDGE_METHOD_NOT_FOUND: 指定方法不存在或不是函数
+ * - BRIDGE_CALL_FAILED: Bridge 方法同步抛出异常
+ * - BRIDGE_RESULT_EMPTY: runJavaScript 返回 null / undefined / 空字符串
+ * - BRIDGE_RESULT_PROMISE: runJavaScript 返回 [object Promise]
+ * - BRIDGE_RESULT_NOT_JSON: 返回内容不是合法 JSON(也无法解包)
+ *
+ * 职责分层:
+ * - JsCaller 层优先返回 BRIDGE_RESULT_*(底层调用与返回值规范化)
+ * - Controller 层在未收到具体 BRIDGE_RESULT_* 时回退到 INITIALIZE_RESULT_*
+ * - Controller 必须保留 JsCaller 返回的具体错误码,不强制改成 INITIALIZE_RESULT_*
  */
 export enum ArkWebViewerErrorCode {
   INIT_FAILED = 'INIT_FAILED',
@@ -92,6 +113,29 @@ export enum ArkWebViewerErrorCode {
   FILE_UNREADABLE = 'FILE_UNREADABLE',
   INVALID_URI = 'INVALID_URI',
   PAGE_DISPOSED = 'PAGE_DISPOSED',
+  // Phase 1D-2C-2A: initializeViewer 同步返回链路错误码(Controller 层)
+  INITIALIZE_RESULT_EMPTY = 'INITIALIZE_RESULT_EMPTY',
+  INITIALIZE_RESULT_NOT_JSON = 'INITIALIZE_RESULT_NOT_JSON',
+  INITIALIZE_RESULT_PROMISE = 'INITIALIZE_RESULT_PROMISE',
+  VIEWER_CONTAINER_NOT_FOUND = 'VIEWER_CONTAINER_NOT_FOUND',
+  VIEWER_INITIALIZE_REJECTED = 'VIEWER_INITIALIZE_REJECTED',
+  VIEWER_READY_TIMEOUT = 'VIEWER_READY_TIMEOUT',
+  // Phase 1D-2C-2B: JsCaller 层错误码(Bridge 调用脚本与返回值规范化)
+  BRIDGE_NOT_FOUND = 'BRIDGE_NOT_FOUND',
+  BRIDGE_METHOD_NOT_FOUND = 'BRIDGE_METHOD_NOT_FOUND',
+  BRIDGE_CALL_FAILED = 'BRIDGE_CALL_FAILED',
+  BRIDGE_RESULT_EMPTY = 'BRIDGE_RESULT_EMPTY',
+  BRIDGE_RESULT_PROMISE = 'BRIDGE_RESULT_PROMISE',
+  BRIDGE_RESULT_NOT_JSON = 'BRIDGE_RESULT_NOT_JSON',
+  // Phase 1D-2C-2C: app.js 模块启动诊断错误码(bootstrap 引导层)
+  // - APP_BRIDGE_NOT_READY: window.arkTavernViewerBridge 不存在,但 bootstrap 状态可用
+  // - APP_MODULE_LOAD_FAILED: app.js 模块加载失败(import 解析失败 / 网络错误)
+  // - APP_MODULE_EXECUTION_FAILED: app.js 模块执行失败(语法错误 / 运行时错误)
+  // - BOOTSTRAP_BRIDGE_NOT_FOUND: window.arkTavernBootstrapBridge 也不存在(bootstrap.js 未加载)
+  APP_BRIDGE_NOT_READY = 'APP_BRIDGE_NOT_READY',
+  APP_MODULE_LOAD_FAILED = 'APP_MODULE_LOAD_FAILED',
+  APP_MODULE_EXECUTION_FAILED = 'APP_MODULE_EXECUTION_FAILED',
+  BOOTSTRAP_BRIDGE_NOT_FOUND = 'BOOTSTRAP_BRIDGE_NOT_FOUND',
   UNKNOWN = 'UNKNOWN'
 }
 
@@ -122,6 +166,72 @@ export interface ArkWebViewerStatePayload {
 }
 
 /**
+ * Web 端 PreparedModelResourceKeeper 状态机(Phase 1D-2C-2E-1)。
+ *
+ * 与 Native 端 ModelResourceState 解耦:
+ * - ModelResourceState.READY 只表示 Native ResourceProvider 已注册资源 URL
+ * - WebPreparedResourceState.READY 表示 JavaScript keeper 已通过 prepareModelResource
+ *   接收资源元数据并通过 getPreparedModelResource 回读校验
+ *
+ * 状态流转:
+ *   EMPTY → PREPARING       (ensurePreparedModelResource 开始)
+ *   PREPARING → READY       (prepare + readback 成功)
+ *   PREPARING → FAILED      (任一校验失败)
+ *   READY → PREPARING       (重新准备,资源更换或手动重试)
+ *   FAILED → PREPARING      (手动重试)
+ *   任意 → EMPTY            (clearPreparedModelResource / 资源注销)
+ *
+ * 关键约束:
+ * - 自动探测(probePreparedModelResource)只允许在 READY 状态启动
+ * - Native ModelResourceState.READY ≠ WebPreparedResourceState.READY
+ */
+export enum WebPreparedResourceState {
+  /** 初始状态,JavaScript keeper 未收到资源元数据。 */
+  EMPTY = 'EMPTY',
+  /** 正在调用 prepareModelResource + getPreparedModelResource 回读校验。 */
+  PREPARING = 'PREPARING',
+  /** 资源元数据已同步到 JavaScript keeper 并通过回读校验。 */
+  READY = 'READY',
+  /** 准备失败(prepare 调用失败 / 返回无效 / 回读为空 / 回读不一致 / 代次过期)。 */
+  FAILED = 'FAILED'
+}
+
+/**
+ * Web 资源准备错误码(Phase 1D-2C-2E-1)。
+ *
+ * 用于精确描述 ensurePreparedModelResource 各阶段失败原因,
+ * 替代之前将所有准备失败压缩为 PROBE_START_FAILED 的做法。
+ */
+export class WebPreparedResourceErrorCode {
+  /** Viewer 未就绪(状态非 READY)。 */
+  static readonly VIEWER_NOT_READY: string = 'VIEWER_NOT_READY';
+  /** Native 资源未就绪(ModelResourceState 非 READY)。 */
+  static readonly NATIVE_RESOURCE_NOT_READY: string = 'NATIVE_RESOURCE_NOT_READY';
+  /** 资源元数据为 null(preparedResource 未注册)。 */
+  static readonly RESOURCE_NULL: string = 'RESOURCE_NULL';
+  /** 用户模型加载进行中,禁止替换 PreparedResource。 */
+  static readonly MODEL_LOAD_IN_PROGRESS: string = 'MODEL_LOAD_IN_PROGRESS';
+  /** 已有 prepare 操作进行中。 */
+  static readonly RESOURCE_PREPARE_IN_PROGRESS: string = 'RESOURCE_PREPARE_IN_PROGRESS';
+  /** prepareModelResource Bridge 调用本身失败(异常 / rejected)。 */
+  static readonly RESOURCE_PREPARE_CALL_FAILED: string = 'RESOURCE_PREPARE_CALL_FAILED';
+  /** prepareModelResource 返回内容不是合法 JSON 或结构无效。 */
+  static readonly RESOURCE_PREPARE_RESULT_INVALID: string = 'RESOURCE_PREPARE_RESULT_INVALID';
+  /** prepareModelResource 返回 success=false(keeper 拒绝,如字段缺失 / 类型错误)。 */
+  static readonly RESOURCE_PREPARE_REJECTED: string = 'RESOURCE_PREPARE_REJECTED';
+  /** getPreparedModelResource 回读 resource 为 null(keeper 未保存)。 */
+  static readonly RESOURCE_PREPARE_READBACK_EMPTY: string = 'RESOURCE_PREPARE_READBACK_EMPTY';
+  /** getPreparedModelResource 回读 JSON 无效或字段缺失。 */
+  static readonly RESOURCE_PREPARE_READBACK_INVALID: string = 'RESOURCE_PREPARE_READBACK_INVALID';
+  /** 回读字段与发送字段不一致(resourceUrl / displayName / mimeType / size / extension / gltfDependencyState)。 */
+  static readonly RESOURCE_PREPARE_READBACK_MISMATCH: string = 'RESOURCE_PREPARE_READBACK_MISMATCH';
+  /** prepareGeneration 已过期(期间发起新 prepare 或 dispose)。 */
+  static readonly RESOURCE_PREPARE_STALE: string = 'RESOURCE_PREPARE_STALE';
+  /** ensurePreparedModelResource 内部异常。 */
+  static readonly RESOURCE_PREPARE_EXCEPTION: string = 'RESOURCE_PREPARE_EXCEPTION';
+}
+
+/**
  * 默认 Viewer 配置常量(Phase 1A:仅 Web 组件配置)。
  *
  * 后续阶段会补充相机/灯光/背景等参数(从 Figure index.html 迁移)。
@@ -139,6 +249,7 @@ export class ArkWebViewerConfig {
   /** Bridge 方法白名单:ArkTS → JavaScript。 */
   public static readonly BRIDGE_METHODS_JS: string[] = [
     'initializeViewer',
+    'retryInitializeViewer',
     'disposeViewer',
     'getViewerState',
     'resetCamera',
@@ -155,7 +266,10 @@ export class ArkWebViewerConfig {
     // Phase 1D-2B-2: 用户模型加载(GLTFLoader 实际加载与原子替换)
     'loadPreparedModelResource',
     'getPreparedModelLoadResult',
-    'clearPreparedModelLoadResult'
+    'clearPreparedModelLoadResult',
+    // Phase 1D-2C-1: 运行时诊断(获取/清除最近一条诊断记录)
+    'getVrmRuntimeDiagnostic',
+    'clearVrmRuntimeDiagnostic'
   ];
 
   /** Bridge 方法白名单:JavaScript → ArkTS。 */

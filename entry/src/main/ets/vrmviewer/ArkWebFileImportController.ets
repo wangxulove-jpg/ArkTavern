@@ -193,6 +193,74 @@ export class ArkWebFileImportController {
   }
 
   /**
+   * 恢复上次导入的文件(Phase 1D-2C-1)。
+   *
+   * 由 VrmViewerPage 在 aboutToAppear 中调用,从 ArkWebModelImportStateStore
+   * 恢复的 ImportedModelFile 注入到当前控制器,使后续 Provider 注册与探测
+   * 可直接复用现有缓存文件,无需用户重新选择。
+   *
+   * 要求:
+   * - disposed 时拒绝
+   * - operationInProgress 时拒绝
+   * - 不复制文件(缓存文件已在 <cacheDir>/vrm-imports/)
+   * - 不重新读取 sourceUri(恢复时 sourceUri 为空字符串)
+   * - 验证扩展名与 cachePath
+   * - 原子设置 currentFile
+   * - state = READY
+   * - lastError = ''
+   *
+   * 不得把 restore 当成一次系统 Picker 操作。
+   *
+   * @param file 从 StateStore 恢复的文件元数据(已通过安全验证)
+   * @returns true 表示恢复成功;false 表示拒绝(disposed / operationInProgress / 验证失败)
+   */
+  restoreCurrentFile(file: ImportedModelFile): boolean {
+    if (this.disposed) {
+      console.warn('[ArkWebFileImportController] restoreCurrentFile rejected: disposed');
+      return false;
+    }
+    if (this.operationInProgress) {
+      console.warn('[ArkWebFileImportController] restoreCurrentFile rejected: operation in progress');
+      return false;
+    }
+
+    // 验证 file 字段
+    if (file === null || file === undefined) {
+      console.warn('[ArkWebFileImportController] restoreCurrentFile rejected: file is null');
+      return false;
+    }
+    if (file.extension !== 'vrm' && file.extension !== 'glb' && file.extension !== 'gltf') {
+      console.warn(`[ArkWebFileImportController] restoreCurrentFile rejected: invalid extension=${file.extension}`);
+      return false;
+    }
+    if (file.cachePath.length === 0) {
+      console.warn('[ArkWebFileImportController] restoreCurrentFile rejected: cachePath empty');
+      return false;
+    }
+    if (file.cachePath.includes('..')) {
+      console.warn('[ArkWebFileImportController] restoreCurrentFile rejected: cachePath contains ..');
+      return false;
+    }
+    // cachePath 必须位于 <cacheDir>/vrm-imports/ 下
+    const expectedDir: string = `${this.context.cacheDir}/${CACHE_SUBDIR}`;
+    if (!file.cachePath.startsWith(expectedDir + '/')) {
+      console.warn('[ArkWebFileImportController] restoreCurrentFile rejected: cachePath not under import directory');
+      return false;
+    }
+    if (file.size <= 0) {
+      console.warn(`[ArkWebFileImportController] restoreCurrentFile rejected: size=${file.size}`);
+      return false;
+    }
+
+    // 原子设置 currentFile(不删除旧文件,因为旧文件可能就是同一个恢复文件)
+    this.currentFile = file;
+    this.lastError = '';
+    this.setState(ModelImportState.READY);
+    console.info(`[ArkWebFileImportController] restoreCurrentFile ok id=${file.id} size=${file.size} ext=${file.extension}`);
+    return true;
+  }
+
+  /**
    * 销毁控制器。
    *
    * 标记 disposed,使进行中的异步操作失效。

@@ -67,6 +67,25 @@ export class ArkWebVrmViewerController implements ArkWebViewerBridgeListener {
   /** 初始化超时计时器 ID。 */
   private initTimerId: number = -1;
 
+  /**
+   * Phase 1D-2C-2A: 初始化请求代次。
+   *
+   * 防止 onPageEnd 重复触发 initializeViewer:
+   * - 0:从未请求初始化
+   * - 1:已请求过一次初始化(onPageEnd 触发)
+   * - 后续值:每次 retryInitializeViewer 递增
+   *
+   * 规则:
+   * - UNINITIALIZED → 启动一次 initialize
+   * - INITIALIZING → 返回当前状态,不再次 initialize
+   * - READY → 幂等返回 READY
+   * - FAILED → 默认返回保存的错误,只有明确点击"重试 Viewer"才重新初始化
+   * - onPageEnd 每次页面实例只触发一次初始化请求
+   */
+  private initializeGeneration: number = 0;
+  /** onPageEnd 是否已请求过初始化(防止页面实例内重复初始化)。 */
+  private initializeRequestedFromPageEnd: boolean = false;
+
   constructor() {
     // Native Bridge 的回调由本类处理
     this.nativeBridge.setListener(this);
@@ -383,6 +402,49 @@ export class ArkWebVrmViewerController implements ArkWebViewerBridgeListener {
     }
   }
 
+  // ===== Phase 1D-2C-1: 运行时诊断 =====
+
+  /**
+   * 获取 Web 端最近一条运行时诊断记录。
+   *
+   * 诊断由 Provider / Coordinator / GLTFLoader 通过 onDiagnostic 回调上报到 Web 端诊断中心。
+   * ArkTS 端通过本方法轮询拉取,在页面显示真实失败阶段、错误码和错误信息。
+   *
+   * @returns JSON 字符串
+   *   {"success": true, "diagnostic": <VrmRuntimeDiagnostic|null>}
+   *   diagnostic 不含 cachePath / sourceUri / fd / stack / 用户目录
+   */
+  async getVrmRuntimeDiagnostic(): Promise<string> {
+    if (this.disposed) {
+      return JSON.stringify({ success: false, error: 'disposed' });
+    }
+    try {
+      return await this.jsCaller.getVrmRuntimeDiagnostic();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return JSON.stringify({ success: false, error: msg });
+    }
+  }
+
+  /**
+   * 清除 Web 端诊断中心最近一条诊断记录。
+   *
+   * 不影响 Provider / Coordinator / GLTFLoader 的运行状态。
+   *
+   * @returns JSON 字符串,形如 {"success": true, "state": "DIAGNOSTIC_CLEARED"}
+   */
+  async clearVrmRuntimeDiagnostic(): Promise<string> {
+    if (this.disposed) {
+      return JSON.stringify({ success: false, error: 'disposed' });
+    }
+    try {
+      return await this.jsCaller.clearVrmRuntimeDiagnostic();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return JSON.stringify({ success: false, error: msg });
+    }
+  }
+
   // ===== Web 组件生命周期回调 =====
 
   /**
@@ -408,7 +470,13 @@ export class ArkWebVrmViewerController implements ArkWebViewerBridgeListener {
    * 此时:
    * 1. 注册 Native Bridge(arkTavernNative)到 Web 端
    * 2. 绑定 JsCaller(arkTavernViewerBridge)
-   * 3. 触发 initializeViewer
+   * 3. 触发 initializeViewer(每次页面实例只触发一次)
+   *
+   * Phase 1D-2C-2A:
+   * - 防止重复初始化:onPageEnd 多次触发时,只第一次调用 initializeViewer
+   * - 解析 initializeViewer 同步返回的 JSON 字符串
+   * - 正确处理 INITIALIZING 状态(不当作失败)
+   * - 失败时完整保留 error.code / error.message / error.phase / error.recoverable
    */
   async onPageEnd(): Promise<void> {
     if (this.disposed) {
@@ -432,31 +500,135 @@ export class ArkWebVrmViewerController implements ArkWebViewerBridgeListener {
         return this.webviewController.runJavaScript(script);
       });
 
-      // 3. 切换状态为 INITIALIZING
+      // 3. Phase 1D-2C-2A: 防止重复初始化
+      //    onPageEnd 在页面实例内只触发一次 initializeViewer 请求
+      if (this.initializeRequestedFromPageEnd) {
+        console.info(`[ArkWebVrmViewerController] initializeViewer already requested (state=${this.state}), skip`);
+        return;
+      }
+      this.initializeRequestedFromPageEnd = true;
+      this.initializeGeneration++;
+
+      // 4. 切换状态为 INITIALIZING
       this.setState(ArkWebViewerState.INITIALIZING, '正在调用 initializeViewer');
 
-      // 4. 启动初始化超时保护
+      // 5. 启动初始化超时保护
       this.startInitTimeout();
 
-      // 5. 调用 Web 端 initializeViewer
+      // 6. 调用 Web 端 initializeViewer(同步返回 JSON 字符串)
       const resultJson: string = await this.jsCaller.initializeViewer();
-      this.clearInitTimeout();
-
       console.info('[ArkWebVrmViewerController] initializeViewer result: ' + resultJson);
 
-      // 解析结果(简单判断,不依赖 JSON.parse,避免 ArkTS 类型问题)
-      if (resultJson.indexOf('"success":true') >= 0 || resultJson.indexOf('"success": true') >= 0) {
-        // 成功:状态由 onViewerReady 回调推进到 READY,这里不直接设置
-        console.info('[ArkWebVrmViewerController] initializeViewer succeeded, waiting for onViewerReady');
-      } else {
-        // 失败
-        this.handleInitFailure(resultJson);
+      // 7. Phase 1D-2C-2A: 解析返回结果(支持 INITIALIZING / READY / FAILED)
+      const parsed: InitResultParseOutcome = this.parseInitResultJson(resultJson);
+
+      if (parsed.kind === 'INITIALIZING') {
+        // success=true,state=INITIALIZING → 保持 INITIALIZING,等待 onViewerReady/onViewerError
+        this.clearInitTimeout();
+        console.info('[ArkWebVrmViewerController] initializeViewer returned INITIALIZING, waiting for callback');
+        // 状态保持 INITIALIZING,不修改 detail(避免覆盖更具体的进度)
+        return;
       }
+
+      if (parsed.kind === 'READY') {
+        // success=true,state=READY → 直接推进到 READY(理论罕见,Web 端通常异步)
+        this.clearInitTimeout();
+        console.info('[ArkWebVrmViewerController] initializeViewer returned READY directly');
+        this.onViewerReady();
+        return;
+      }
+
+      // parsed.kind === 'FAILED'
+      this.clearInitTimeout();
+      this.handleInitFailure(parsed);
     } catch (e) {
       this.clearInitTimeout();
       const msg = e instanceof Error ? e.message : String(e);
       console.error('[ArkWebVrmViewerController] onPageEnd failed: ' + msg);
-      this.handleInitFailure(JSON.stringify({ success: false, error: msg }));
+      const fail: InitResultParseOutcome = {
+        kind: 'FAILED',
+        code: ArkWebViewerErrorCode.INIT_FAILED,
+        message: `onPageEnd 异常: ${msg}`,
+        phase: 'INITIALIZING',
+        recoverable: true,
+        rawSummary: msg
+      };
+      this.handleInitFailure(fail);
+    }
+  }
+
+  /**
+   * Phase 1D-2C-2A: 重试 Viewer 初始化。
+   *
+   * 仅在 Viewer 处于 FAILED 状态时有效。由页面"重试 Viewer"按钮调用。
+   *
+   * 行为:
+   * 1. 校验当前状态为 FAILED(否则返回 RETRY_NOT_ALLOWED)
+   * 2. 清除 lastErrorCode / lastErrorMessage
+   * 3. 递增 initializeGeneration
+   * 4. 状态切换为 INITIALIZING
+   * 5. 启动超时保护
+   * 6. 调用 Web 端 retryInitializeViewer(同步返回 JSON 字符串)
+   * 7. 解析返回结果(INITIALIZING / READY / FAILED)
+   * 8. 等待 onViewerReady / onViewerError 回调推进状态
+   */
+  async retryInitializeViewer(): Promise<void> {
+    if (this.disposed) {
+      console.warn('[ArkWebVrmViewerController] retryInitializeViewer ignored: disposed');
+      return;
+    }
+    if (this.state !== ArkWebViewerState.FAILED) {
+      console.warn(`[ArkWebVrmViewerController] retryInitializeViewer ignored: state=${this.state} (requires FAILED)`);
+      return;
+    }
+
+    // 清除当前 Viewer 错误
+    this.lastErrorCode = '';
+    this.lastErrorMessage = '';
+
+    // 递增代次,触发新的初始化请求
+    this.initializeGeneration++;
+
+    // 状态切换为 INITIALIZING
+    this.setState(ArkWebViewerState.INITIALIZING, '正在重试 initializeViewer');
+
+    // 启动超时保护
+    this.startInitTimeout();
+
+    try {
+      const resultJson: string = await this.jsCaller.retryInitializeViewer();
+      console.info('[ArkWebVrmViewerController] retryInitializeViewer result: ' + resultJson);
+
+      const parsed: InitResultParseOutcome = this.parseInitResultJson(resultJson);
+
+      if (parsed.kind === 'INITIALIZING') {
+        this.clearInitTimeout();
+        console.info('[ArkWebVrmViewerController] retryInitializeViewer returned INITIALIZING, waiting for callback');
+        return;
+      }
+
+      if (parsed.kind === 'READY') {
+        this.clearInitTimeout();
+        console.info('[ArkWebVrmViewerController] retryInitializeViewer returned READY directly');
+        this.onViewerReady();
+        return;
+      }
+
+      this.clearInitTimeout();
+      this.handleInitFailure(parsed);
+    } catch (e) {
+      this.clearInitTimeout();
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error('[ArkWebVrmViewerController] retryInitializeViewer failed: ' + msg);
+      const fail: InitResultParseOutcome = {
+        kind: 'FAILED',
+        code: ArkWebViewerErrorCode.INIT_FAILED,
+        message: `retryInitializeViewer 异常: ${msg}`,
+        phase: 'INITIALIZING',
+        recoverable: true,
+        rawSummary: msg
+      };
+      this.handleInitFailure(fail);
     }
   }
 
@@ -539,7 +711,7 @@ export class ArkWebVrmViewerController implements ArkWebViewerBridgeListener {
       if (this.state === ArkWebViewerState.INITIALIZING) {
         console.warn('[ArkWebVrmViewerController] initializeViewer timeout');
         this.onViewerError(
-          ArkWebViewerErrorCode.INIT_FAILED,
+          ArkWebViewerErrorCode.VIEWER_READY_TIMEOUT,
           'Viewer 初始化超时',
           'INITIALIZING',
           true
@@ -555,18 +727,253 @@ export class ArkWebVrmViewerController implements ArkWebViewerBridgeListener {
     }
   }
 
-  private handleInitFailure(resultJson: string): void {
-    let errorMsg: string = '未知错误';
-    // 简单字符串匹配提取 error 字段(避免 JSON.parse 的类型问题)
-    const errorMatch: RegExpMatchArray | null = resultJson.match(/"error"\s*:\s*"([^"]*)"/);
-    if (errorMatch !== null && errorMatch.length >= 2) {
-      errorMsg = errorMatch[1];
+  /**
+   * Phase 1D-2C-2A: 解析 initializeViewer / retryInitializeViewer 同步返回的 JSON 字符串。
+   *
+   * 支持的合法返回形式:
+   *   {"success": true, "state": "READY"}
+   *   {"success": true, "state": "INITIALIZING"}
+   *   {"success": false, "error": {"code": "...", "message": "...", "phase": "...", "recoverable": false}}
+   *
+   * 异常返回兼容:
+   *   - 空字符串 → INITIALIZE_RESULT_EMPTY
+   *   - 非法 JSON → INITIALIZE_RESULT_NOT_JSON
+   *   - [object Promise] → INITIALIZE_RESULT_PROMISE(Bridge 误声明为 async)
+   *   - error 是字符串 / 顶层 message / 缺失字段 → 统一降级为 UNKNOWN
+   *
+   * 安全约束:不记录完整脚本,rawSummary 截断到 200 字符,过滤敏感路径。
+   */
+  private parseInitResultJson(resultJson: string): InitResultParseOutcome {
+    // 1. 空字符串
+    if (resultJson === null || resultJson === undefined || resultJson.length === 0) {
+      return {
+        kind: 'FAILED',
+        code: ArkWebViewerErrorCode.INITIALIZE_RESULT_EMPTY,
+        message: 'initializeViewer 返回空字符串',
+        phase: 'INITIALIZING',
+        recoverable: true,
+        rawSummary: ''
+      };
     }
-    this.onViewerError(
-      ArkWebViewerErrorCode.INIT_FAILED,
-      `initializeViewer 失败: ${errorMsg}`,
-      'INITIALIZING',
-      true
-    );
+
+    const trimmed: string = resultJson.trim();
+
+    // 2. [object Promise](Bridge 误声明为 async)
+    if (trimmed === '[object Promise]' || trimmed.indexOf('[object Promise]') >= 0) {
+      return {
+        kind: 'FAILED',
+        code: ArkWebViewerErrorCode.INITIALIZE_RESULT_PROMISE,
+        message: 'initializeViewer 返回 [object Promise](可能被声明为 async)',
+        phase: 'INITIALIZING',
+        recoverable: false,
+        rawSummary: this.summarizeRaw(trimmed)
+      };
+    }
+
+    // 3. JSON.parse
+    let parsed: Record<string, Object> | null = null;
+    try {
+      parsed = JSON.parse(trimmed) as Record<string, Object>;
+    } catch (e) {
+      // 非法 JSON
+      const parseErr: string = e instanceof Error ? e.message : String(e);
+      return {
+        kind: 'FAILED',
+        code: ArkWebViewerErrorCode.INITIALIZE_RESULT_NOT_JSON,
+        message: `initializeViewer 返回非法 JSON: ${parseErr}`,
+        phase: 'INITIALIZING',
+        recoverable: false,
+        rawSummary: this.summarizeRaw(trimmed)
+      };
+    }
+
+    if (parsed === null || typeof parsed !== 'object') {
+      return {
+        kind: 'FAILED',
+        code: ArkWebViewerErrorCode.INITIALIZE_RESULT_NOT_JSON,
+        message: 'initializeViewer 返回非对象 JSON',
+        phase: 'INITIALIZING',
+        recoverable: false,
+        rawSummary: this.summarizeRaw(trimmed)
+      };
+    }
+
+    // 4. 提取 success / state / error
+    const successRaw: Object | undefined = parsed['success'];
+    const success: boolean = successRaw === true;
+    const stateRaw: Object | undefined = parsed['state'];
+    const state: string = (stateRaw !== undefined && stateRaw !== null) ? String(stateRaw) : '';
+
+    // 5. success=true 分支
+    if (success) {
+      if (state === 'READY') {
+        return { kind: 'READY' };
+      }
+      // state === 'INITIALIZING' 或其他 → 视为 INITIALIZING(保守)
+      return { kind: 'INITIALIZING' };
+    }
+
+    // 6. success=false 分支:提取 error 字段(支持对象 / 字符串 / 缺失)
+    const errorRaw: Object | undefined = parsed['error'];
+    let errCode: string = ArkWebViewerErrorCode.UNKNOWN;
+    let errMsg: string = '未知错误';
+    let errPhase: string = 'INITIALIZING';
+    let errRecoverable: boolean = true;
+    let errRawSummary: string = '';
+
+    if (errorRaw !== null && errorRaw !== undefined) {
+      if (typeof errorRaw === 'string') {
+        // error 是字符串:视为 message
+        errMsg = String(errorRaw);
+      } else if (typeof errorRaw === 'object') {
+        // error 是对象:提取 code / message / phase / recoverable / rawSummary
+        // Phase 1D-2C-2B: 同时提取 rawSummary,保留 JsCaller 规范化的原始返回摘要
+        const errObj: Record<string, Object> = errorRaw as Record<string, Object>;
+        const codeRaw: Object | undefined = errObj['code'];
+        if (codeRaw !== undefined && codeRaw !== null) {
+          errCode = String(codeRaw);
+        }
+        const msgRaw: Object | undefined = errObj['message'];
+        if (msgRaw !== undefined && msgRaw !== null) {
+          errMsg = String(msgRaw);
+        }
+        const phaseRaw: Object | undefined = errObj['phase'];
+        if (phaseRaw !== undefined && phaseRaw !== null) {
+          errPhase = String(phaseRaw);
+        }
+        const recRaw: Object | undefined = errObj['recoverable'];
+        if (recRaw !== undefined && recRaw !== null) {
+          errRecoverable = recRaw === true;
+        }
+        // Phase 1D-2C-2B: 提取 rawSummary(JsCaller 在 BRIDGE_RESULT_NOT_JSON 时附带)
+        const rawSummaryRaw: Object | undefined = errObj['rawSummary'];
+        if (rawSummaryRaw !== undefined && rawSummaryRaw !== null) {
+          errRawSummary = String(rawSummaryRaw);
+        }
+
+        // Phase 1D-2C-2C: 提取 bootstrap 引导层详情(JsCaller 在 APP_* 错误时附带)
+        // 把 bootstrapPhase / bootstrapSource / bootstrapLine / bootstrapColumn 追加到 rawSummary,
+        // 最多 500 字符,不含完整 stack。
+        const bsPhaseRaw: Object | undefined = errObj['bootstrapPhase'];
+        const bsSourceRaw: Object | undefined = errObj['bootstrapSource'];
+        const bsLineRaw: Object | undefined = errObj['bootstrapLine'];
+        const bsColumnRaw: Object | undefined = errObj['bootstrapColumn'];
+        const bsStateRaw: Object | undefined = errObj['bootstrapState'];
+
+        if (bsPhaseRaw !== undefined && bsPhaseRaw !== null) {
+          const bsPhase: string = String(bsPhaseRaw);
+          const bsSource: string = bsSourceRaw !== undefined && bsSourceRaw !== null ? String(bsSourceRaw) : '';
+          const bsLine: number = bsLineRaw !== undefined && bsLineRaw !== null ? Number(bsLineRaw) : 0;
+          const bsColumn: number = bsColumnRaw !== undefined && bsColumnRaw !== null ? Number(bsColumnRaw) : 0;
+
+          // 构造 bootstrap 详情摘要(最多 500 字符)
+          let bsDetail: string = `[bootstrap phase=${bsPhase}`;
+          if (bsSource.length > 0) {
+            // source 可能是完整 URL,只保留文件名部分,避免泄露完整路径
+            const sourceFileName: string = bsSource.split('/').pop() || bsSource;
+            bsDetail += ` source=${sourceFileName}:${bsLine}:${bsColumn}`;
+          }
+          bsDetail += ']';
+
+          // 如果 errRawSummary 已有内容,追加 bootstrap 详情;否则直接使用
+          if (errRawSummary.length > 0) {
+            errRawSummary = errRawSummary + ' ' + bsDetail;
+          } else {
+            errRawSummary = bsDetail;
+          }
+
+          // 截断到 500 字符
+          if (errRawSummary.length > 500) {
+            errRawSummary = errRawSummary.substring(0, 500) + '...';
+          }
+        } else if (bsStateRaw !== undefined && bsStateRaw !== null) {
+          // bootstrapPhase 缺失但有 bootstrapState,记录原始 state 字符串(截断到 200 字符)
+          const bsStateStr: string = String(bsStateRaw);
+          const bsStateSummary: string = bsStateStr.length > 200 ? bsStateStr.substring(0, 200) + '...' : bsStateStr;
+          if (errRawSummary.length > 0) {
+            errRawSummary = errRawSummary + ' [bootstrapState=' + bsStateSummary + ']';
+          } else {
+            errRawSummary = '[bootstrapState=' + bsStateSummary + ']';
+          }
+          if (errRawSummary.length > 500) {
+            errRawSummary = errRawSummary.substring(0, 500) + '...';
+          }
+        }
+      }
+    } else {
+      // error 缺失:尝试顶层 message
+      const topMsg: Object | undefined = parsed['message'];
+      if (topMsg !== undefined && topMsg !== null) {
+        errMsg = String(topMsg);
+      }
+    }
+
+    return {
+      kind: 'FAILED',
+      code: errCode,
+      message: errMsg,
+      phase: errPhase,
+      recoverable: errRecoverable,
+      // Phase 1D-2C-2B: 优先使用 JsCaller 规范化时附带的 rawSummary(error.rawSummary),
+      // 仅在 JsCaller 未提供时回退到 Controller 自身解析的 trimmed 摘要
+      rawSummary: errRawSummary.length > 0 ? errRawSummary : this.summarizeRaw(trimmed)
+    };
   }
+
+  /**
+   * Phase 1D-2C-2A: 截断原始返回摘要(最多 200 字符),用于日志和诊断显示。
+   * 不显示完整脚本或敏感路径。
+   */
+  private summarizeRaw(raw: string): string {
+    if (raw.length <= 200) {
+      return raw;
+    }
+    return raw.substring(0, 200) + '...';
+  }
+
+  /**
+   * Phase 1D-2C-2A: 处理 initializeViewer / retryInitializeViewer 同步返回的失败结果。
+   *
+   * 与旧版差异:
+   * - 不再使用正则匹配 error 字段(只能匹配字符串形式)
+   * - 改为 JSON.parse 提取 error.code / error.message / error.phase / error.recoverable
+   * - 完整保留底层错误码(不压缩为 INIT_FAILED)
+   * - 保留原始返回摘要(用于诊断显示,不含完整脚本)
+   */
+  private handleInitFailure(parsed: InitResultParseOutcome): void {
+    if (parsed.kind !== 'FAILED') {
+      return;
+    }
+    const code: string = parsed.code !== undefined ? parsed.code : ArkWebViewerErrorCode.UNKNOWN;
+    const message: string = parsed.message !== undefined ? parsed.message : '未知错误';
+    const phase: string = parsed.phase !== undefined ? parsed.phase : 'INITIALIZING';
+    const recoverable: boolean = parsed.recoverable !== undefined ? parsed.recoverable : true;
+    const rawSummary: string = parsed.rawSummary !== undefined ? parsed.rawSummary : '';
+    const displayMessage: string = rawSummary.length > 0
+      ? `${message} (raw: ${rawSummary})`
+      : message;
+    this.onViewerError(code, displayMessage, phase, recoverable);
+  }
+}
+
+/**
+ * Phase 1D-2C-2A: initializeViewer / retryInitializeViewer 返回结果解析outcome。
+ *
+ * - kind=READY:success=true,state=READY → 直接推进到 READY
+ * - kind=INITIALIZING:success=true,state=INITIALIZING → 等待 onViewerReady/onViewerError
+ * - kind=FAILED:success=false 或解析失败 → 调用 onViewerError
+ */
+interface InitResultParseOutcome {
+  /** 解析结果分类。 */
+  kind: 'READY' | 'INITIALIZING' | 'FAILED';
+  /** 错误码(kind=FAILED 时有效)。 */
+  code?: string;
+  /** 错误消息(kind=FAILED 时有效)。 */
+  message?: string;
+  /** 错误阶段(kind=FAILED 时有效)。 */
+  phase?: string;
+  /** 是否可恢复(kind=FAILED 时有效)。 */
+  recoverable?: boolean;
+  /** 原始返回摘要(截断到 200 字符,用于诊断显示)。 */
+  rawSummary?: string;
 }

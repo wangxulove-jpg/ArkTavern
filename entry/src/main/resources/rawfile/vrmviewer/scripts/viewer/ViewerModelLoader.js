@@ -74,6 +74,57 @@ export var ERR_MODEL_SCENE_EMPTY = 'MODEL_SCENE_EMPTY';
 export var ERR_MODEL_LOAD_STALE = 'MODEL_LOAD_STALE';
 export var ERR_MODEL_LOADER_DISPOSED = 'MODEL_LOADER_DISPOSED';
 
+// ===== Phase 1D-2C-1: 运行时诊断阶段(与 ArkTS VrmRuntimeStage 对齐) =====
+// 仅与 ArkTS 端 VrmRuntimeStage 枚举的字符串值保持一致,
+// 不在此处定义完整枚举,只声明本 Loader 实际会触发的阶段。
+var VRM_STAGE = Object.freeze({
+  GLTF_LOAD_STARTED: 'GLTF_LOAD_STARTED',
+  GLTF_LOAD_PROGRESS: 'GLTF_LOAD_PROGRESS',
+  GLTF_LOAD_FAILED: 'GLTF_LOAD_FAILED',
+  VRM_DATA_VALIDATED: 'VRM_DATA_VALIDATED',
+  MODEL_REPLACE_STARTED: 'MODEL_REPLACE_STARTED',
+  MODEL_REPLACE_COMMITTED: 'MODEL_REPLACE_COMMITTED',
+  MODEL_REPLACE_FAILED: 'MODEL_REPLACE_FAILED'
+});
+
+/**
+ * Phase 1D-2C-1: 标准化 GLTFLoader 抛出的错误对象。
+ *
+ * GLTFLoader 的 onError 可能传入:
+ * - Error 实例(含 name / message)
+ * - 字符串(如 'Failed to fetch')
+ * - XMLHttpRequest(部分旧路径)
+ * - ProgressEvent(网络层错误)
+ *
+ * 本函数只保留 name + message,移除堆栈与文件路径信息。
+ *
+ * @param {*} error 原始错误对象
+ * @returns {{name: string, message: string}}
+ */
+function normalizeLoaderError(error) {
+  if (error === null || error === undefined) {
+    return { name: 'Error', message: 'Unknown error' };
+  }
+  if (typeof error === 'string') {
+    return { name: 'Error', message: error };
+  }
+  if (error instanceof Error) {
+    return {
+      name: error.name ? String(error.name) : 'Error',
+      message: error.message ? String(error.message) : String(error)
+    };
+  }
+  // ProgressEvent / Event 等非 Error 对象
+  if (typeof error === 'object') {
+    var name = error.name ? String(error.name) : (error.type ? String(error.type) : 'Error');
+    var message = error.message
+      ? String(error.message)
+      : (error.statusText ? String(error.statusText) : 'Network or loader error');
+    return { name: name, message: message };
+  }
+  return { name: 'Error', message: String(error) };
+}
+
 /** 默认 VRM 资源路径(相对于 index.html) */
 export var DEFAULT_VRM_URL = './assets/models/default.vrm';
 export var DEFAULT_VRM_DISPLAY_NAME = 'Default VRM';
@@ -108,6 +159,26 @@ export class ViewerModelLoader {
     this.onError = typeof options.onError === 'function' ? options.onError : null;
     /** @type {function(object, object|null)|null} Phase 1D-2B-2 新增 */
     this.onReplaceModel = typeof options.onReplaceModel === 'function' ? options.onReplaceModel : null;
+    /**
+     * Phase 1D-2C-1: 运行时诊断回调。
+     *
+     * 由 ViewerCore 注入(转发到 app.js 的 arkTavernVrmRuntimeDiagnostics keeper)。
+     * 签名:function(diagnostic) 其中 diagnostic = {
+     *   stage: string,         // VrmRuntimeStage 字符串值
+     *   code: string,          // 错误码(成功阶段为空字符串)
+     *   message: string,       // 简短消息(已截断,无堆栈)
+     *   resourceId: string,    // 资源 opaque id(未知时为空字符串)
+     *   requestMethod: string, // 'GET' / 'HEAD' / ''(非 HTTP 阶段)
+     *   httpStatus: number,    // HTTP 状态码(非 HTTP 阶段为 0)
+     *   mimeType: string,      // MIME 类型(未知时为空字符串)
+     *   contentLength: number, // 内容长度(未知时为 0)
+     *   timestamp: number      // Date.now()
+     * }
+     *
+     * 安全约束:回调收到的 diagnostic 不含 cachePath / sourceUri / fd / stack。
+     * @type {function(object)|null}
+     */
+    this.onDiagnostic = typeof options.onDiagnostic === 'function' ? options.onDiagnostic : null;
 
     /** @type {GLTFLoader|null} */
     this.loader = null;
@@ -121,6 +192,14 @@ export class ViewerModelLoader {
     this.lastError = null;
 
     /**
+     * Phase 1D-2C-1: 当前加载对应的资源 opaque id。
+     * 由 loadModel 调用方通过 options 传入,或在 loadModel 解析受控 URL 时提取。
+     * 用于诊断回调中填充 resourceId 字段。
+     * @type {string}
+     */
+    this.currentResourceId = '';
+
+    /**
      * 加载代次。
      * 每次 dispose 或开始新一次加载时自增,用于使进行中的异步加载失效,
      * 避免异步加载完成后写入已被销毁 / 已被替换的 currentVrm。
@@ -128,6 +207,57 @@ export class ViewerModelLoader {
     this.loadGeneration = 0;
     /** 是否已销毁 */
     this.disposed = false;
+  }
+
+  /**
+   * Phase 1D-2C-1: 设置诊断回调。
+   * @param {function(object)|null} callback 诊断回调函数(传 null 取消)
+   */
+  setDiagnosticCallback(callback) {
+    this.onDiagnostic = typeof callback === 'function' ? callback : null;
+  }
+
+  /**
+   * Phase 1D-2C-1: 上报诊断(内部方法)。
+   *
+   * 只填充 stage / code / message / resourceId / requestMethod / httpStatus / mimeType / contentLength / timestamp,
+   * 不包含 cachePath / sourceUri / fd / stack / 用户目录。
+   *
+   * @param {string} stage VRM_STAGE.* 之一
+   * @param {string} code 错误码(成功阶段为空字符串)
+   * @param {string} message 简短消息
+   * @param {string} [requestMethod] 'GET' / 'HEAD' / ''(默认 '')
+   * @param {number} [httpStatus] HTTP 状态码(默认 0)
+   * @param {string} [mimeType] MIME 类型(默认 '')
+   * @param {number} [contentLength] 内容长度(默认 0)
+   * @private
+   */
+  _emitDiagnostic(stage, code, message, requestMethod, httpStatus, mimeType, contentLength) {
+    if (!this.onDiagnostic) {
+      return;
+    }
+    var msg = String(message || '');
+    // 截断错误消息,避免完整堆栈或长 URL 泄漏
+    if (msg.length > 256) {
+      msg = msg.substring(0, 256);
+    }
+    var diagnostic = {
+      stage: stage,
+      code: code || '',
+      message: msg,
+      resourceId: this.currentResourceId || '',
+      requestMethod: requestMethod || '',
+      httpStatus: httpStatus || 0,
+      mimeType: mimeType || '',
+      contentLength: contentLength || 0,
+      timestamp: Date.now()
+    };
+    try {
+      this.onDiagnostic(diagnostic);
+    } catch (e) {
+      // 回调失败仅日志,不影响加载主流程
+      console.warn('[ModelLoader] onDiagnostic callback failed: ' + (e && e.message ? e.message : String(e)));
+    }
   }
 
   /**
@@ -223,24 +353,85 @@ export class ViewerModelLoader {
     //    注意:Phase 1D-2B-2 修复 DEFECT_1 — displayName 延后到 READY 提交前才设置,
     //    加载失败时保留旧模型的 displayName。
     var pendingDisplayName = displayName || '';
+
+    // Phase 1D-2C-1: 从受控 URL 提取 opaque id 作为诊断 resourceId
+    // 受控 URL 格式:https://ark-tavern.local/model/<opaque-id>
+    // 默认 VRM URL (./assets/models/default.vrm) 无 opaque id,resourceId 留空。
+    this.currentResourceId = '';
+    if (typeof url === 'string' && url.indexOf('https://ark-tavern.local/model/') === 0) {
+      var tail = url.substring('https://ark-tavern.local/model/'.length);
+      var qIdx = tail.indexOf('?');
+      if (qIdx >= 0) {
+        tail = tail.substring(0, qIdx);
+      }
+      var fIdx = tail.indexOf('#');
+      if (fIdx >= 0) {
+        tail = tail.substring(0, fIdx);
+      }
+      if (tail.length > 0 && tail.indexOf('/') < 0) {
+        this.currentResourceId = tail;
+      }
+    }
+
     this._setState(ModelState.LOADING, 'Loading: ' + pendingDisplayName);
+
+    // Phase 1D-2C-1: 上报 GLTF_LOAD_STARTED
+    // requestMethod='GET' 因为 GLTFLoader 通过 HTTP GET 获取资源
+    this._emitDiagnostic(
+      VRM_STAGE.GLTF_LOAD_STARTED,
+      '',
+      'GLTFLoader.load started for ' + (pendingDisplayName || '(default)'),
+      'GET',
+      0,
+      '',
+      0
+    );
 
     // 3. 加载新 GLTF
     var gltf;
     try {
       gltf = await new Promise((resolve, reject) => {
         // Figure: loader.load(url, onLoad, onProgress, onError)
+        // Phase 1D-2C-1: 启用 onProgress 回调,上报 GLTF_LOAD_PROGRESS
         this.loader.load(
           url,
           (loaded) => resolve(loaded),
-          undefined, // onProgress 暂不处理(ArkWeb rawfile 加载进度不可靠)
+          (progressEvent) => {
+            // GLTFLoader 的 onProgress 通常是 ProgressEvent
+            // 只保留数字,不记录 URL
+            var loaded = 0;
+            var total = 0;
+            var lengthComputable = false;
+            try {
+              if (progressEvent && typeof progressEvent === 'object') {
+                lengthComputable = !!progressEvent.lengthComputable;
+                loaded = typeof progressEvent.loaded === 'number' ? progressEvent.loaded : 0;
+                total = typeof progressEvent.total === 'number' ? progressEvent.total : 0;
+              }
+            } catch (e) {
+              // ProgressEvent 读取失败,忽略
+              return;
+            }
+            // 只有 lengthComputable 才有有意义的 total
+            this._emitDiagnostic(
+              VRM_STAGE.GLTF_LOAD_PROGRESS,
+              '',
+              'loaded=' + loaded + ' total=' + total + ' computable=' + lengthComputable,
+              'GET',
+              0,
+              '',
+              total
+            );
+          },
           (error) => reject(error)
         );
       });
     } catch (e) {
       // 加载失败:保留旧模型(若有),仅更新状态为 FAILED
       // 旧 currentVrm / displayName 保持不变
-      var loadErrMsg = e && e.message ? e.message : String(e);
+      // Phase 1D-2C-1: 标准化错误并上报 GLTF_LOAD_FAILED
+      var normalizedErr = normalizeLoaderError(e);
+      var loadErrMsg = normalizedErr.message;
       // 注意:此处使用 pendingDisplayName 判断是否为默认模型加载,
       // 而非 this.displayName(因为 displayName 未在加载开始时提交)
       var loadErrCode = (pendingDisplayName === DEFAULT_VRM_DISPLAY_NAME)
@@ -250,6 +441,16 @@ export class ViewerModelLoader {
       this.lastError = loadErr;
       this._setState(ModelState.FAILED, loadErrMsg);
       this._notifyError(loadErr);
+      // 上报诊断(只保留 name + message,无堆栈)
+      this._emitDiagnostic(
+        VRM_STAGE.GLTF_LOAD_FAILED,
+        loadErrCode,
+        normalizedErr.name + ': ' + loadErrMsg,
+        'GET',
+        0,
+        '',
+        0
+      );
       return { success: false, error: loadErr };
     }
 
@@ -259,6 +460,16 @@ export class ViewerModelLoader {
       this._disposeGltf(gltf);
       var staleErr = makeError(ERR_MODEL_LOAD_STALE, 'Load result is stale', 'LOADING_MODEL', false);
       // 不通知 ArkTS(这是内部竞态,不是用户可见错误)
+      // Phase 1D-2C-1: 仍上报诊断(标记为 stale,便于排查)
+      this._emitDiagnostic(
+        VRM_STAGE.GLTF_LOAD_FAILED,
+        ERR_MODEL_LOAD_STALE,
+        'Load result is stale (generation mismatch)',
+        'GET',
+        0,
+        '',
+        0
+      );
       return { success: false, error: staleErr };
     }
 
@@ -269,6 +480,15 @@ export class ViewerModelLoader {
       this._setState(ModelState.FAILED, 'gltf.scene is empty');
       this._notifyError(emptyErr);
       this._disposeGltf(gltf);
+      this._emitDiagnostic(
+        VRM_STAGE.GLTF_LOAD_FAILED,
+        ERR_MODEL_SCENE_EMPTY,
+        'gltf.scene is empty',
+        'GET',
+        0,
+        '',
+        0
+      );
       return { success: false, error: emptyErr };
     }
 
@@ -279,8 +499,28 @@ export class ViewerModelLoader {
       this._setState(ModelState.FAILED, 'VRM data not found');
       this._notifyError(noVrmErr);
       this._disposeGltf(gltf);
+      this._emitDiagnostic(
+        VRM_STAGE.GLTF_LOAD_FAILED,
+        ERR_VRM_DATA_NOT_FOUND,
+        'gltf.userData.vrm not found',
+        'GET',
+        0,
+        '',
+        0
+      );
       return { success: false, error: noVrmErr };
     }
+
+    // Phase 1D-2C-1: 上报 VRM_DATA_VALIDATED(模型数据校验通过,即将进入替换阶段)
+    this._emitDiagnostic(
+      VRM_STAGE.VRM_DATA_VALIDATED,
+      '',
+      'gltf.scene and userData.vrm validated',
+      'GET',
+      0,
+      '',
+      0
+    );
 
     // 5. 执行 VRMUtils 性能优化(与 Figure 行 910-912 一致)
     // 已确认 three-vrm 3.5.5 导出这三个方法(vendor/pixiv/three-vrm.module.js 行 6694-6699)
@@ -313,6 +553,15 @@ export class ViewerModelLoader {
     if (generation !== this.loadGeneration || this.disposed) {
       this._disposeGltf(gltf);
       var staleErr2 = makeError(ERR_MODEL_LOAD_STALE, 'Load result is stale after validate', 'LOADING_MODEL', false);
+      this._emitDiagnostic(
+        VRM_STAGE.GLTF_LOAD_FAILED,
+        ERR_MODEL_LOAD_STALE,
+        'Load result is stale after validate (generation mismatch)',
+        'GET',
+        0,
+        '',
+        0
+      );
       return { success: false, error: staleErr2 };
     }
 
@@ -323,6 +572,16 @@ export class ViewerModelLoader {
     //    Phase 1D-2B-2 修复 DEFECT_2/3/4:在 currentVrm 提交之前调用 onReplaceModel,
     //    让 ViewerCore 同步完成 scene.addModel + scene.removeModel + scene.removeTestObject。
     //    若 onReplaceModel 抛异常,视为加载失败,释放新模型,旧模型保留。
+    // Phase 1D-2C-1: 上报 MODEL_REPLACE_STARTED(即将开始 Scene 替换)
+    this._emitDiagnostic(
+      VRM_STAGE.MODEL_REPLACE_STARTED,
+      '',
+      'Replacing model in scene' + (oldVrm ? ' (previous exists)' : ' (first load)'),
+      '',
+      0,
+      '',
+      0
+    );
     if (this.onReplaceModel) {
       try {
         this.onReplaceModel(vrm, oldVrm);
@@ -335,6 +594,16 @@ export class ViewerModelLoader {
         this.lastError = replaceErr2;
         this._setState(ModelState.FAILED, replaceErrMsg);
         this._notifyError(replaceErr2);
+        // Phase 1D-2C-1: 上报 MODEL_REPLACE_FAILED
+        this._emitDiagnostic(
+          VRM_STAGE.MODEL_REPLACE_FAILED,
+          ERR_MODEL_LOAD_FAILED,
+          'onReplaceModel failed: ' + replaceErrMsg,
+          '',
+          0,
+          '',
+          0
+        );
         return { success: false, error: replaceErr2 };
       }
     }
@@ -353,6 +622,17 @@ export class ViewerModelLoader {
     if (oldVrm) {
       this._disposeVrm(oldVrm);
     }
+
+    // Phase 1D-2C-1: 上报 MODEL_REPLACE_COMMITTED(Scene 替换已提交)
+    this._emitDiagnostic(
+      VRM_STAGE.MODEL_REPLACE_COMMITTED,
+      '',
+      'Model replaced and committed: ' + (pendingDisplayName || '(default)'),
+      '',
+      0,
+      '',
+      0
+    );
 
     // 13. state = READY(触发 ViewerCore.onModelStateChanged(READY) → camera.reset)
     this.lastError = null;
@@ -435,10 +715,12 @@ export class ViewerModelLoader {
     }
     this.loader = null;
     this.displayName = '';
+    this.currentResourceId = ''; // Phase 1D-2C-1
     this._setState(ModelState.DISPOSED, 'Disposed');
     this.onStateChanged = null;
     this.onError = null;
     this.onReplaceModel = null; // Phase 1D-2B-2
+    this.onDiagnostic = null; // Phase 1D-2C-1
   }
 
   // ===== 内部方法 =====

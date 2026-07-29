@@ -145,7 +145,7 @@ export class ModelResourceErrorCode {
 }
 
 /**
- * 模型资源探测错误码(Phase 1D-2B-1)。
+ * 模型资源探测错误码(Phase 1D-2B-1 + 1D-2C-2E-2A)。
  *
  * 仅用于 JavaScript 端 ViewerModelResourceProbe 的探测失败场景。
  * 错误以 JSON 字符串形式返回,不抛到全局。
@@ -165,20 +165,36 @@ export class ModelResourceProbeErrorCode {
   static readonly RESOURCE_REDIRECTED: string = 'RESOURCE_REDIRECTED';
   /** Content-Type 与预期 MIME 不匹配(基础 MIME 比较忽略 charset 参数)。 */
   static readonly RESOURCE_MIME_MISMATCH: string = 'RESOURCE_MIME_MISMATCH';
-  /** Content-Length header 缺失。 */
+  /** Content-Length header 缺失(自定义头与标准头均缺失)。 */
   static readonly RESOURCE_LENGTH_MISSING: string = 'RESOURCE_LENGTH_MISSING';
-  /** Content-Length 值无法解析为安全整数。 */
+  /** Content-Length 值无法解析为安全整数(自定义头与标准头均无效)。 */
   static readonly RESOURCE_LENGTH_INVALID: string = 'RESOURCE_LENGTH_INVALID';
-  /** Content-Length 与资源大小不一致。 */
+  /** Content-Length 与资源大小不一致(自定义头与标准头均存在但与预期不符)。 */
   static readonly RESOURCE_LENGTH_MISMATCH: string = 'RESOURCE_LENGTH_MISMATCH';
   /** X-ArkTavern-Resource-Id header 缺失。 */
   static readonly RESOURCE_ID_MISSING: string = 'RESOURCE_ID_MISSING';
   /** X-ArkTavern-Resource-Id 与 URL 中 opaque id 不一致(Phase 1D-2B-2)。 */
   static readonly RESOURCE_ID_MISMATCH: string = 'RESOURCE_ID_MISMATCH';
+  /**
+   * Phase 1D-2C-2E-2A: 自定义长度头 X-ArkTavern-Content-Length 存在但无法解析为安全整数。
+   *
+   * 当自定义头存在但值非数字时返回此错误,不静默回退到标准头。
+   * 因为 Provider 给出了损坏的自定义证明,说明链路有问题。
+   */
+  static readonly RESOURCE_CUSTOM_LENGTH_INVALID: string = 'RESOURCE_CUSTOM_LENGTH_INVALID';
+  /**
+   * Phase 1D-2C-2E-2A: 长度不可用。
+   *
+   * 自定义头缺失,标准 Content-Length = 0,无法证明资源实际大小。
+   * 与 RESOURCE_LENGTH_MISSING 的区别:
+   * - LENGTH_MISSING: 两个头都缺失
+   * - LENGTH_UNAVAILABLE: 标准头存在但为 0,自定义头缺失(常见于 ArkWeb HEAD 响应)
+   */
+  static readonly RESOURCE_LENGTH_UNAVAILABLE: string = 'RESOURCE_LENGTH_UNAVAILABLE';
 }
 
 /**
- * 模型资源探测结果(Phase 1D-2B-1)。
+ * 模型资源探测结果(Phase 1D-2B-1 + 1D-2C-2E-2A)。
  *
  * 由 JavaScript 端 ViewerModelResourceProbe.probe() 返回,
  * 通过 Bridge 传回 ArkTS 端供页面显示。
@@ -186,6 +202,7 @@ export class ModelResourceProbeErrorCode {
  * 安全约束:
  * - 不包含 cachePath / sourceUri / 任何文件系统路径
  * - 只含探测状态、HTTP 状态码、响应头校验结果与时间戳
+ * - 不包含完整 Headers 对象(仅记录已解析的关键值)
  */
 export interface ModelResourceProbeResult {
   /** 探测状态(NOT_PROBED / PROBING / VERIFIED / FAILED)。 */
@@ -196,7 +213,12 @@ export interface ModelResourceProbeResult {
   statusCode: number;
   /** 响应的 Content-Type(HEAD 请求响应;失败时为空字符串)。 */
   mimeType: string;
-  /** 响应的 Content-Length(解析为整数;失败时为 -1)。 */
+  /**
+   * 选定的 Content-Length(解析为整数;失败时为 -1)。
+   *
+   * Phase 1D-2C-2E-2A:此值为长度选择逻辑的最终结果,
+   * 优先来自 X-ArkTavern-Content-Length,标准头作为兼容回退。
+   */
   contentLength: number;
   /** 响应的 X-ArkTavern-Resource-Id(HEAD 请求响应;失败时为空字符串)。 */
   resourceId: string;
@@ -208,6 +230,29 @@ export interface ModelResourceProbeResult {
   errorMessage: string;
   /** 探测完成时间戳(ms)。 */
   verifiedAt: number;
+  /**
+   * Phase 1D-2C-2E-2A: 长度来源类型。
+   *
+   * - 'CUSTOM': 使用 X-ArkTavern-Content-Length
+   * - 'STANDARD': 使用标准 Content-Length
+   * - 'UNAVAILABLE': 长度不可用(两个头均缺失或为 0)
+   * - '': 探测未到达长度校验阶段(如 fetch 失败)
+   */
+  contentLengthSource: string;
+  /**
+   * Phase 1D-2C-2E-2A: 自定义长度头解析后的数值(失败时为 -1)。
+   *
+   * 仅记录 X-ArkTavern-Content-Length 的最终解析值,
+   * 不包含原始字符串(避免泄漏完整 Headers 对象)。
+   */
+  customContentLength: number;
+  /**
+   * Phase 1D-2C-2E-2A: 标准长度头解析后的数值(失败时为 -1)。
+   *
+   * 仅记录标准 Content-Length 的最终解析值,
+   * 用于诊断 ArkWeb 是否重写为 0。
+   */
+  standardContentLength: number;
 }
 
 /**

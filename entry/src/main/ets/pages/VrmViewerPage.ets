@@ -46,7 +46,9 @@ import { router, promptAction } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import {
   ArkWebViewerConfig,
-  ArkWebViewerState
+  ArkWebViewerState,
+  WebPreparedResourceErrorCode,
+  WebPreparedResourceState
 } from '../vrmviewer/ArkWebVrmViewerTypes';
 import {
   ArkWebViewerEventListener,
@@ -66,8 +68,18 @@ import {
 import {
   ModelResourceProbeState,
   ModelResourceState,
-  WebModelResource
+  WebModelResource,
+  extractOpaqueIdFromUrl,
+  isModelResourceUrl
 } from '../vrmviewer/ArkWebModelResourceTypes';
+import {
+  ArkWebModelImportStateStore,
+  ImportStateRestoreResult
+} from '../vrmviewer/ArkWebModelImportStateStore';
+import {
+  VrmRuntimeDiagnostic,
+  VrmRuntimeStage
+} from '../vrmviewer/ArkWebVrmRuntimeDiagnosticsTypes';
 
 /** 查看器模式 */
 enum ViewerMode {
@@ -145,6 +157,8 @@ struct VrmViewerPage {
   @State lastError: string = '';
   /** Web 组件是否已加载完成(用于触发 Web 重建) */
   @State webLoaded: boolean = false;
+  /** Phase 1D-2C-2A: Viewer 重试进行中(防止重复点击) */
+  @State retryInProgress: boolean = false;
 
   // ===== Phase 1D-1: 模型导入状态 =====
   /** 导入状态机(由 ImportController 驱动,通过轮询同步到 @State) */
@@ -163,6 +177,24 @@ struct VrmViewerPage {
   @State preparedResource: WebModelResource | null = null;
   /** 资源准备错误消息(空字符串表示无错误) */
   @State resourceLastError: string = '';
+
+  // ===== Phase 1D-2C-2E-1: Web Prepared 资源状态 =====
+  // 与 Native resourceState 解耦:
+  // - resourceState === READY 只表示 Native ResourceProvider 已注册资源 URL
+  // - webPreparedState === READY 表示 JavaScript keeper 已通过 prepareModelResource
+  //   接收资源元数据并通过 getPreparedModelResource 回读校验
+  /** Web 端 PreparedModelResourceKeeper 状态(EMPTY / PREPARING / READY / FAILED) */
+  @State webPreparedState: WebPreparedResourceState = WebPreparedResourceState.EMPTY;
+  /** Web 资源准备错误码(成功时为空字符串) */
+  @State webPreparedErrorCode: string = '';
+  /** Web 资源准备错误消息(成功时为空字符串) */
+  @State webPreparedErrorMessage: string = '';
+  /** prepare 代次(每次 ensurePreparedModelResource 递增,用于过期判断) */
+  private prepareGeneration: number = 0;
+  /** 是否正在调用 prepareModelResource + 回读(防止重复触发) */
+  private prepareInProgress: boolean = false;
+  /** 最近一次成功准备的资源 URL(用于自动探测前的一致性校验) */
+  private lastPreparedResourceUrl: string = '';
 
   // ===== Phase 1D-2B-1: 资源探测状态 =====
   /** 探测状态机(NOT_PROBED / PROBING / VERIFIED / FAILED) */
@@ -183,6 +215,24 @@ struct VrmViewerPage {
   @State probeErrorMessage: string = '';
   /** 探测完成时间戳(ms,0 表示未探测) */
   @State probeVerifiedAt: number = 0;
+  /**
+   * Phase 1D-2C-2E-2A: 长度来源类型(CUSTOM / STANDARD / UNAVAILABLE / '')。
+   *
+   * 显示 UI 诊断:
+   * - CUSTOM: 使用 X-ArkTavern-Content-Length
+   * - STANDARD: 使用标准 Content-Length
+   * - UNAVAILABLE: 长度不可用
+   * - '': 探测未到达长度校验阶段
+   */
+  @State probeContentLengthSource: string = '';
+  /**
+   * Phase 1D-2C-2E-2A: 自定义长度头解析后的数值(-1 表示未解析到)。
+   */
+  @State probeCustomContentLength: number = -1;
+  /**
+   * Phase 1D-2C-2E-2A: 标准长度头解析后的数值(-1 表示未解析到)。
+   */
+  @State probeStandardContentLength: number = -1;
   /** 是否正在探测(防止重复点击 + 轮询控制) */
   @State probeInProgress: boolean = false;
   /** 轮询计时器 ID(-1 表示无轮询) */
@@ -226,17 +276,69 @@ struct VrmViewerPage {
   private importController: ArkWebFileImportController | null = null;
   /** 缓存模型资源提供者(Phase 1D-2A,在 aboutToAppear 中创建) */
   private resourceProvider: ArkWebModelResourceProvider | null = null;
+  /** 导入元数据持久化存储(Phase 1D-2C-1,在 aboutToAppear 中创建) */
+  private importStateStore: ArkWebModelImportStateStore | null = null;
   /** 事件监听器包装器(注入闭包更新 @State) */
   private eventListener: ViewerEventListener = new ViewerEventListener();
 
   /** 抽屉标题区(拖动条 + 标题)固定高度 */
   private readonly DRAWER_HEADER_HEIGHT: number = 60;
 
+  // ===== Phase 1D-2C-1: 恢复与自动探测状态 =====
+  /** 恢复代次(每次启动恢复递增,用于过期判断) */
+  private restoreGeneration: number = 0;
+  /** 是否正在恢复中(防止重复触发) */
+  private restoreInProgress: boolean = false;
+  /** 待 Viewer READY 后处理的恢复文件(ArkWeb 未就绪时暂存) */
+  private pendingRestoredFile: ImportedModelFile | null = null;
+  /** 自动探测代次(每次自动探测递增) */
+  private autoProbeGeneration: number = 0;
+  /** 上次自动探测的资源 URL(避免对同一 URL 重复自动探测) */
+  private lastAutoProbedResourceUrl: string = '';
+
+  // ===== Phase 1D-2C-1: 运行时诊断状态 =====
+  /** 最近一条运行时诊断(由 Provider/Coordinator 等通过回调上报) */
+  @State runtimeDiagnostic: VrmRuntimeDiagnostic | null = null;
+  /** 恢复结果错误码(成功时为空字符串) */
+  @State restoreErrorCode: string = '';
+  /** 恢复结果错误消息(成功时为空字符串) */
+  @State restoreErrorMessage: string = '';
+  /** 恢复结果简短提示(用于 UI 显示) */
+  @State restoreHint: string = '';
+
   aboutToAppear(): void {
     // 注入闭包:Controller 回调 → 更新 @State
     this.eventListener.onStateChangedFn = (state: ArkWebViewerState, detail: string) => {
       this.viewerState = state;
       this.viewerDetail = detail;
+      // Phase 1D-2C-1:Viewer 进入 READY 时,处理 pendingRestoredFile
+      // Phase 1D-2C-2E-1:processRestoredFile 已改为 async,内部 await ensurePreparedModelResource
+      // 这里不 await(闭包非 async),processRestoredFile 内部会自行更新 @State
+      if (state === ArkWebViewerState.READY && this.pendingRestoredFile !== null) {
+        const restoredFile: ImportedModelFile | null = this.pendingRestoredFile;
+        this.pendingRestoredFile = null;
+        console.info('[VrmViewerPage] Viewer READY, processing pending restored file');
+        this.processRestoredFile(restoredFile);
+      }
+      // Phase 1D-2C-2E-1:Viewer 刚 READY 且已有 current ImportedModelFile 但 WebPrepared 未 READY
+      // (导入发生在 Viewer READY 之前,ensurePreparedModelResource 当时返回 VIEWER_NOT_READY)
+      // 维护 generation 防止与 restore 路径重复执行
+      if (state === ArkWebViewerState.READY &&
+          this.pendingRestoredFile === null &&
+          this.preparedResource !== null &&
+          this.resourceState === ModelResourceState.READY &&
+          this.webPreparedState !== WebPreparedResourceState.READY &&
+          this.webPreparedState !== WebPreparedResourceState.PREPARING &&
+          !this.prepareInProgress &&
+          !this.loadInProgress) {
+        const currentResource: WebModelResource = this.preparedResource;
+        console.info('[VrmViewerPage] Viewer READY, retry prepare for current resource');
+        this.ensurePreparedModelResource(currentResource, false).then((ok: boolean) => {
+          if (ok) {
+            this.tryAutoProbeResource();
+          }
+        });
+      }
     };
     this.eventListener.onErrorFn = (code: string, message: string) => {
       this.lastErrorCode = code;
@@ -247,14 +349,22 @@ struct VrmViewerPage {
     this.viewerState = ArkWebViewerState.UNINITIALIZED;
     this.viewerDetail = '正在加载 Web Viewer...';
 
+    const ctx: common.UIAbilityContext = getContext(this) as common.UIAbilityContext;
+
     // Phase 1D-1:创建模型导入控制器(需要 UIAbilityContext 用于 cacheDir 和 Picker)
     if (this.importController === null) {
-      const ctx: common.UIAbilityContext = getContext(this) as common.UIAbilityContext;
       this.importController = new ArkWebFileImportController(ctx);
 
       // Phase 1D-2A:创建资源 Provider(使用同一 context 的 cacheDir)
       // importDirectory = <cacheDir>/vrm-imports(与 ImportController 一致)
       this.resourceProvider = new ArkWebModelResourceProvider(ctx.cacheDir);
+    }
+
+    // Phase 1D-2C-1:创建导入元数据持久化存储,并启动恢复
+    if (this.importStateStore === null) {
+      this.importStateStore = new ArkWebModelImportStateStore(ctx);
+      // 异步启动恢复,不阻塞页面构建
+      this.startRestoreFromStateStore();
     }
 
     // Web 组件加载由 build() 触发,初始化在 onPageEnd 回调中完成
@@ -322,6 +432,17 @@ struct VrmViewerPage {
     if (this.importController !== null) {
       this.importController.dispose();
     }
+    // Phase 1D-2C-1:8. 最后销毁 StateStore(不清除 Preferences 记录,保留供下次恢复)
+    if (this.importStateStore !== null) {
+      this.importStateStore.dispose();
+      this.importStateStore = null;
+    }
+    // 清空恢复状态
+    this.pendingRestoredFile = null;
+    this.restoreInProgress = false;
+    this.lastAutoProbedResourceUrl = '';
+    // Phase 1D-2C-2E-1: 清空 Web Prepared 状态
+    this.resetWebPreparedState();
     // 最后销毁 Web Viewer
     this.arkWebController.destroy();
     this.webLoaded = false;
@@ -430,7 +551,11 @@ struct VrmViewerPage {
         // STALE_IMPORT_RESULT / DISPOSED 静默处理
       } else {
         // Phase 1D-2A:导入成功后注册资源(生成受控 URL)
-        this.registerImportedResource(result);
+        // Phase 1D-2C-2E-1:await 确保 prepare + readback 完成后再继续
+        await this.registerImportedResource(result);
+        // Phase 1D-2C-1:导入成功后持久化元数据到 StateStore
+        // 保存失败不影响当前导入,只显示提示
+        this.saveImportStateToStore(result);
         // 不调用 loadModel(Phase 1D-2B)
         // 不替换默认 VRM
         promptAction.showToast({ message: '模型文件已准备,等待加载' });
@@ -446,78 +571,790 @@ struct VrmViewerPage {
   }
 
   /**
-   * 注册已导入的模型文件到资源 Provider(Phase 1D-2A)。
+   * 注册已导入的模型文件到资源 Provider(Phase 1D-2A,1D-2C-2E-1 修正调用顺序)。
+   *
+   * 正确顺序(AGENTS.md Phase 1D-2C-2E-1 §十一 导入成功路径):
+   *   ImportedModelFile READY
+   *   → ResourceProvider.registerFile()
+   *   → Native resourceState = READY
+   *   → 等待 Viewer READY(若未 READY,ensurePreparedModelResource 会返回 VIEWER_NOT_READY)
+   *   → ensurePreparedModelResource()
+   *   → WebPrepared READY
+   *   → tryAutoProbeResource()
    *
    * 失败处理:
-   * - 保留缓存文件(ImportController currentFile 保留)
-   * - 默认模型继续显示
-   * - Provider state 保持 EMPTY
-   * - 页面显示资源准备失败
-   *
-   * 成功后调用 `prepareModelResource` Bridge:
-   * - 把资源元数据传给 Web 端 keeper(只含白名单字段)
-   * - 不触发任何模型加载行为
-   * - Bridge 失败仅记录日志,不影响 Provider 状态
+   * - registerFile 失败:保留缓存文件,Provider state 保持 EMPTY,页面显示资源准备失败
+   * - ensurePreparedModelResource 失败:保留 ImportedModelFile + Native ResourceProvider + 资源 URL,
+   *   webPreparedState = FAILED,不启动 probe,允许用户重试
    *
    * @param file 已导入的模型文件
    */
-  private registerImportedResource(file: ImportedModelFile): void {
+  private async registerImportedResource(file: ImportedModelFile): Promise<void> {
     if (this.resourceProvider === null) {
       this.resourceState = ModelResourceState.EMPTY;
       this.preparedResource = null;
       this.resourceLastError = 'resourceProvider not initialized';
       return;
     }
+    let resource: WebModelResource;
     try {
-      const resource: WebModelResource = this.resourceProvider.registerFile(file);
+      resource = this.resourceProvider.registerFile(file);
       this.preparedResource = resource;
       this.resourceState = this.resourceProvider.getState();
       this.resourceLastError = '';
       console.info(`[VrmViewerPage] resource ready: url=${resource.resourceUrl}`);
-
-      // Phase 1D-2A:同步资源元数据到 Web 端 keeper(不触发加载)
-      // 只含白名单字段,cachePath / sourceUri 永远不会传给 JavaScript
-      this.notifyPreparedResourceToWeb(resource);
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
       this.preparedResource = null;
       this.resourceState = this.resourceProvider.getState();
       this.resourceLastError = msg;
       console.error(`[VrmViewerPage] registerResource failed: ${msg}`);
+      return;
+    }
+
+    // Phase 1D-2C-2E-1: 统一资源准备(prepare + readback),严格等待完成后再探测
+    // 失败时 webPreparedState = FAILED,不启动 probe,保留缓存和 Native Resource
+    const prepared: boolean = await this.ensurePreparedModelResource(resource, false);
+    if (!prepared) {
+      console.warn(`[VrmViewerPage] import ensurePreparedModelResource failed: ${this.webPreparedErrorCode}`);
+      return;
+    }
+    // Phase 1D-2C-1:资源准备完成后尝试自动探测(满足条件时执行一次)
+    this.tryAutoProbeResource();
+  }
+
+  /**
+   * 统一资源准备方法(Phase 1D-2C-2E-1)。
+   *
+   * 替代原 fire-and-forget 的 notifyPreparedResourceToWeb,严格保证:
+   *   1. 检查 ViewerState === READY
+   *   2. 检查 resourceProvider state === READY
+   *   3. 检查 resource 非 null
+   *   4. 检查没有用户模型加载操作
+   *   5. generation++
+   *   6. webPreparedState = PREPARING
+   *   7. 序列化公共资源字段(白名单,JSON.stringify)
+   *   8. 调用 prepareModelResource(resourceJson)
+   *   9. 解析返回 JSON
+   *  10. 验证 success === true
+   *  11. 验证 state === RESOURCE_READY
+   *  12. 调用 getPreparedModelResource()
+   *  13. 解析回读 JSON
+   *  14. 验证资源字段完全一致(resourceUrl / displayName / mimeType / size / extension / gltfDependencyState)
+   *  15. 检查 generation 未过期
+   *  16. 提交 webPreparedState = READY
+   *  17. 保存 lastPreparedResourceUrl
+   *  18. 返回 true
+   *
+   * 失败时:
+   * - 保留 ImportedModelFile
+   * - 保留 Native ResourceProvider
+   * - 保留资源 URL
+   * - 不启动 probe
+   * - 不启动 GLTFLoader
+   * - 保持立方体
+   * - 允许用户重试
+   *
+   * @param resource 已注册的公共资源(由 resourceProvider.registerFile 产出)
+   * @param allowRetry 是否允许在已有 prepare 进行中时重试(手动验证按钮传 true)
+   * @returns true 表示准备成功,false 表示失败(错误码已写入 webPreparedErrorCode)
+   */
+  private async ensurePreparedModelResource(
+    resource: WebModelResource,
+    allowRetry: boolean
+  ): Promise<boolean> {
+    // 1. 检查 ViewerState === READY
+    if (this.viewerState !== ArkWebViewerState.READY) {
+      this.webPreparedState = WebPreparedResourceState.FAILED;
+      this.webPreparedErrorCode = WebPreparedResourceErrorCode.VIEWER_NOT_READY;
+      this.webPreparedErrorMessage = 'Viewer 未就绪';
+      console.warn(`[VrmViewerPage] ensurePreparedModelResource rejected: viewerState=${this.viewerState}`);
+      return false;
+    }
+    // 2. 检查 resourceProvider state === READY
+    if (this.resourceState !== ModelResourceState.READY) {
+      this.webPreparedState = WebPreparedResourceState.FAILED;
+      this.webPreparedErrorCode = WebPreparedResourceErrorCode.NATIVE_RESOURCE_NOT_READY;
+      this.webPreparedErrorMessage = 'Native 资源未就绪';
+      console.warn(`[VrmViewerPage] ensurePreparedModelResource rejected: resourceState=${this.resourceState}`);
+      return false;
+    }
+    // 3. 检查 resource 非 null
+    if (resource === null) {
+      this.webPreparedState = WebPreparedResourceState.FAILED;
+      this.webPreparedErrorCode = WebPreparedResourceErrorCode.RESOURCE_NULL;
+      this.webPreparedErrorMessage = '资源元数据为空';
+      console.warn('[VrmViewerPage] ensurePreparedModelResource rejected: resource null');
+      return false;
+    }
+    // 4. 检查没有用户模型加载操作
+    if (this.loadInProgress) {
+      this.webPreparedState = WebPreparedResourceState.FAILED;
+      this.webPreparedErrorCode = WebPreparedResourceErrorCode.MODEL_LOAD_IN_PROGRESS;
+      this.webPreparedErrorMessage = '用户模型加载中';
+      console.warn('[VrmViewerPage] ensurePreparedModelResource rejected: loadInProgress');
+      return false;
+    }
+    // 检查 prepare 进行中(allowRetry 时跳过,手动验证按钮可重试)
+    if (this.prepareInProgress && !allowRetry) {
+      this.webPreparedState = WebPreparedResourceState.FAILED;
+      this.webPreparedErrorCode = WebPreparedResourceErrorCode.RESOURCE_PREPARE_IN_PROGRESS;
+      this.webPreparedErrorMessage = '资源准备进行中';
+      console.warn('[VrmViewerPage] ensurePreparedModelResource rejected: prepareInProgress');
+      return false;
+    }
+
+    // 5. generation++
+    this.prepareGeneration++;
+    const currentGeneration: number = this.prepareGeneration;
+
+    // 6. webPreparedState = PREPARING
+    this.webPreparedState = WebPreparedResourceState.PREPARING;
+    this.webPreparedErrorCode = '';
+    this.webPreparedErrorMessage = '';
+    this.prepareInProgress = true;
+
+    try {
+      // 7. 序列化公共资源字段(白名单,JSON.stringify)
+      // 禁止发送:cachePath / sourceUri / 文件描述符 / Preferences 记录 / Native Provider 内部对象
+      const payload: Record<string, Object> = {
+        'resourceUrl': resource.resourceUrl,
+        'displayName': resource.displayName,
+        'mimeType': resource.mimeType,
+        'size': resource.size,
+        'extension': resource.extension,
+        'gltfDependencyState': resource.gltfDependencyState
+      };
+      const resourceJson: string = JSON.stringify(payload);
+
+      // 8. 调用 prepareModelResource(resourceJson)
+      const prepareResult: string = await this.arkWebController.prepareModelResource(resourceJson);
+
+      // 9. 解析返回 JSON
+      let parsedPrepare: Record<string, Object>;
+      try {
+        parsedPrepare = JSON.parse(prepareResult) as Record<string, Object>;
+      } catch (e) {
+        this.webPreparedState = WebPreparedResourceState.FAILED;
+        this.webPreparedErrorCode = WebPreparedResourceErrorCode.RESOURCE_PREPARE_RESULT_INVALID;
+        this.webPreparedErrorMessage = `prepareModelResource 返回非 JSON: ${prepareResult}`;
+        console.error(`[VrmViewerPage] prepareModelResource result invalid: ${prepareResult}`);
+        return false;
+      }
+
+      // 10. 验证 success === true
+      if (parsedPrepare['success'] !== true) {
+        this.webPreparedState = WebPreparedResourceState.FAILED;
+        this.webPreparedErrorCode = WebPreparedResourceErrorCode.RESOURCE_PREPARE_REJECTED;
+        const errorObj: Object | undefined = parsedPrepare['error'];
+        if (errorObj !== undefined && errorObj !== null) {
+          const errRecord: Record<string, Object> = errorObj as Record<string, Object>;
+          this.webPreparedErrorMessage =
+            `keeper 拒绝: ${(errRecord['code'] as string) || ''} ${(errRecord['message'] as string) || ''}`.trim();
+        } else {
+          this.webPreparedErrorMessage = `keeper 拒绝: ${prepareResult}`;
+        }
+        console.warn(`[VrmViewerPage] prepareModelResource rejected: ${this.webPreparedErrorMessage}`);
+        return false;
+      }
+
+      // 11. 验证 state === RESOURCE_READY(允许 keeper 返回额外字段,但 state 必须匹配)
+      const returnedState: string = (parsedPrepare['state'] as string) || '';
+      if (returnedState !== 'RESOURCE_READY') {
+        this.webPreparedState = WebPreparedResourceState.FAILED;
+        this.webPreparedErrorCode = WebPreparedResourceErrorCode.RESOURCE_PREPARE_RESULT_INVALID;
+        this.webPreparedErrorMessage = `state 非 RESOURCE_READY: ${returnedState}`;
+        console.warn(`[VrmViewerPage] prepareModelResource state invalid: ${returnedState}`);
+        return false;
+      }
+
+      // 12. 调用 getPreparedModelResource() 回读
+      const getResult: string = await this.arkWebController.getPreparedModelResource();
+
+      // 13. 解析回读 JSON
+      let parsedGet: Record<string, Object>;
+      try {
+        parsedGet = JSON.parse(getResult) as Record<string, Object>;
+      } catch (e) {
+        this.webPreparedState = WebPreparedResourceState.FAILED;
+        this.webPreparedErrorCode = WebPreparedResourceErrorCode.RESOURCE_PREPARE_READBACK_INVALID;
+        this.webPreparedErrorMessage = `getPreparedModelResource 返回非 JSON: ${getResult}`;
+        console.error(`[VrmViewerPage] getPreparedModelResource result invalid: ${getResult}`);
+        return false;
+      }
+
+      if (parsedGet['success'] !== true) {
+        this.webPreparedState = WebPreparedResourceState.FAILED;
+        this.webPreparedErrorCode = WebPreparedResourceErrorCode.RESOURCE_PREPARE_READBACK_INVALID;
+        this.webPreparedErrorMessage = `getPreparedModelResource success=false: ${getResult}`;
+        console.warn(`[VrmViewerPage] getPreparedModelResource success=false: ${getResult}`);
+        return false;
+      }
+
+      // 14. 验证资源字段完全一致
+      const readbackResourceObj: Object | undefined = parsedGet['resource'];
+      if (readbackResourceObj === undefined || readbackResourceObj === null) {
+        this.webPreparedState = WebPreparedResourceState.FAILED;
+        this.webPreparedErrorCode = WebPreparedResourceErrorCode.RESOURCE_PREPARE_READBACK_EMPTY;
+        this.webPreparedErrorMessage = '回读资源为 null(keeper 未保存)';
+        console.warn('[VrmViewerPage] getPreparedModelResource readback resource null');
+        return false;
+      }
+
+      const readbackResource: Record<string, Object> = readbackResourceObj as Record<string, Object>;
+
+      // 从 resourceUrl 提取 opaque ID,确认 /model/<opaque-id> 存在且非空
+      if (!isModelResourceUrl(resource.resourceUrl)) {
+        this.webPreparedState = WebPreparedResourceState.FAILED;
+        this.webPreparedErrorCode = WebPreparedResourceErrorCode.RESOURCE_PREPARE_READBACK_MISMATCH;
+        this.webPreparedErrorMessage = `resourceUrl 非受控 URL: ${resource.resourceUrl}`;
+        console.warn(`[VrmViewerPage] resourceUrl not controlled: ${resource.resourceUrl}`);
+        return false;
+      }
+      const opaqueId: string | null = extractOpaqueIdFromUrl(resource.resourceUrl);
+      if (opaqueId === null || opaqueId.length === 0) {
+        this.webPreparedState = WebPreparedResourceState.FAILED;
+        this.webPreparedErrorCode = WebPreparedResourceErrorCode.RESOURCE_PREPARE_READBACK_MISMATCH;
+        this.webPreparedErrorMessage = `opaque ID 为空: ${resource.resourceUrl}`;
+        console.warn(`[VrmViewerPage] opaque id empty: ${resource.resourceUrl}`);
+        return false;
+      }
+
+      // 字段逐一比对(完全一致)
+      const readbackResourceUrl: string = (readbackResource['resourceUrl'] as string) || '';
+      const readbackDisplayName: string = (readbackResource['displayName'] as string) || '';
+      const readbackMimeType: string = (readbackResource['mimeType'] as string) || '';
+      const readbackSize: number = this.safeNumber(readbackResource['size'], -1);
+      const readbackExtension: string = (readbackResource['extension'] as string) || '';
+      const readbackGltfDep: string = (readbackResource['gltfDependencyState'] as string) || '';
+
+      if (readbackResourceUrl !== resource.resourceUrl ||
+          readbackDisplayName !== resource.displayName ||
+          readbackMimeType !== resource.mimeType ||
+          readbackSize !== resource.size ||
+          readbackExtension !== resource.extension ||
+          readbackGltfDep !== resource.gltfDependencyState) {
+        this.webPreparedState = WebPreparedResourceState.FAILED;
+        this.webPreparedErrorCode = WebPreparedResourceErrorCode.RESOURCE_PREPARE_READBACK_MISMATCH;
+        this.webPreparedErrorMessage =
+          `回读不一致: url=${readbackResourceUrl === resource.resourceUrl ? 'ok' : 'X'}, ` +
+          `name=${readbackDisplayName === resource.displayName ? 'ok' : 'X'}, ` +
+          `mime=${readbackMimeType === resource.mimeType ? 'ok' : 'X'}, ` +
+          `size=${readbackSize === resource.size ? 'ok' : 'X'}, ` +
+          `ext=${readbackExtension === resource.extension ? 'ok' : 'X'}, ` +
+          `dep=${readbackGltfDep === resource.gltfDependencyState ? 'ok' : 'X'}`;
+        console.warn(`[VrmViewerPage] readback mismatch: ${this.webPreparedErrorMessage}`);
+        return false;
+      }
+
+      // 15. 检查 generation 未过期
+      if (currentGeneration !== this.prepareGeneration) {
+        this.webPreparedState = WebPreparedResourceState.FAILED;
+        this.webPreparedErrorCode = WebPreparedResourceErrorCode.RESOURCE_PREPARE_STALE;
+        this.webPreparedErrorMessage =
+          `generation 过期: current=${currentGeneration}, latest=${this.prepareGeneration}`;
+        console.warn(`[VrmViewerPage] prepare generation stale: ${this.webPreparedErrorMessage}`);
+        return false;
+      }
+
+      // 16. 提交 webPreparedState = READY
+      this.webPreparedState = WebPreparedResourceState.READY;
+      this.webPreparedErrorCode = '';
+      this.webPreparedErrorMessage = '';
+      // 17. 保存 lastPreparedResourceUrl
+      this.lastPreparedResourceUrl = resource.resourceUrl;
+      console.info(`[VrmViewerPage] ensurePreparedModelResource ok: url=${resource.resourceUrl}`);
+      // 18. 返回 true
+      return true;
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      this.webPreparedState = WebPreparedResourceState.FAILED;
+      this.webPreparedErrorCode = WebPreparedResourceErrorCode.RESOURCE_PREPARE_CALL_FAILED;
+      this.webPreparedErrorMessage = `prepare 调用异常: ${msg}`;
+      console.error(`[VrmViewerPage] ensurePreparedModelResource exception: ${msg}`);
+      return false;
+    } finally {
+      this.prepareInProgress = false;
     }
   }
 
   /**
-   * 把资源元数据传给 Web 端 keeper(Phase 1D-2A)。
-   *
-   * - 构造 JSON 字符串(只含白名单字段:resourceUrl / displayName / mimeType / size / extension)
-   * - 调用 arkWebController.prepareModelResource(resourceJson)
-   * - 异步,不等待,失败仅日志
-   * - 严格不调用 loadModel() / replaceModel()
+   * 重置 Web Prepared 状态到 EMPTY(用于资源注销 / 清除缓存)。
    */
-  private notifyPreparedResourceToWeb(resource: WebModelResource): void {
-    const payload: Record<string, Object> = {
-      'resourceUrl': resource.resourceUrl,
-      'displayName': resource.displayName,
-      'mimeType': resource.mimeType,
-      'size': resource.size,
-      'extension': resource.extension
-    };
-    let resourceJson: string;
-    try {
-      resourceJson = JSON.stringify(payload);
-    } catch (e) {
-      const msg: string = e instanceof Error ? e.message : String(e);
-      console.error(`[VrmViewerPage] serialize preparedResource failed: ${msg}`);
+  private resetWebPreparedState(): void {
+    this.webPreparedState = WebPreparedResourceState.EMPTY;
+    this.webPreparedErrorCode = '';
+    this.webPreparedErrorMessage = '';
+    this.lastPreparedResourceUrl = '';
+    this.prepareInProgress = false;
+  }
+
+  // ===== Phase 1D-2C-1: 导入状态恢复与自动探测 =====
+
+  /**
+   * 启动从 StateStore 恢复上次导入的模型元数据。
+   *
+   * 流程(AGENTS.md Phase 1D-2C-1 §十 页面恢复顺序):
+   * 1. StateStore.restore() 读取并验证持久化记录
+   * 2. 验证成功:获取 ImportedModelFile
+   * 3. ImportController.restoreCurrentFile(file) 注入到当前控制器
+   * 4. 检查 Viewer 是否 READY:
+   *    - READY:立即注册资源 + prepareModelResource + 自动探测
+   *    - 未 READY:暂存 pendingRestoredFile,等待 onViewerReady 回调处理
+   *
+   * 失败处理:
+   * - Preferences 无记录:静默(页面正常打开)
+   * - 记录损坏:StateStore 自动 clear,页面显示"上次导入文件已失效"
+   * - restoreCurrentFile 拒绝:页面显示错误
+   */
+  private async startRestoreFromStateStore(): Promise<void> {
+    if (this.importStateStore === null) {
       return;
     }
-    // 异步调用,不等待,失败仅记录日志
-    this.arkWebController.prepareModelResource(resourceJson).then((result: string) => {
-      console.info(`[VrmViewerPage] prepareModelResource result: ${result}`);
-    }).catch((e: Object) => {
+    if (this.restoreInProgress) {
+      return;
+    }
+    this.restoreInProgress = true;
+    this.restoreGeneration++;
+    const generation: number = this.restoreGeneration;
+
+    try {
+      const result: ImportStateRestoreResult = await this.importStateStore.restore();
+      // 代次检查:若期间发起新恢复或已 dispose,放弃此次结果
+      if (generation !== this.restoreGeneration) {
+        console.info('[VrmViewerPage] restore result stale, ignored');
+        return;
+      }
+
+      if (result.file === null) {
+        // 无记录或损坏记录
+        if (result.errorCode.length > 0) {
+          this.restoreErrorCode = result.errorCode;
+          this.restoreErrorMessage = result.errorMessage;
+          this.restoreHint = '上次导入文件已失效';
+          console.warn(`[VrmViewerPage] restore failed: ${result.errorCode} ${result.errorMessage}`);
+        } else {
+          // 无记录,正常情况
+          this.restoreHint = '';
+        }
+        return;
+      }
+
+      // 恢复成功:注入到 ImportController
+      const file: ImportedModelFile = result.file;
+      if (this.importController === null) {
+        console.warn('[VrmViewerPage] importController null during restore');
+        return;
+      }
+      const restoreOk: boolean = this.importController.restoreCurrentFile(file);
+      if (!restoreOk) {
+        this.restoreErrorCode = 'RESTORE_CURRENT_FILE_REJECTED';
+        this.restoreErrorMessage = 'ImportController 拒绝恢复文件';
+        this.restoreHint = '恢复失败,请重新导入';
+        return;
+      }
+
+      // 同步状态到 @State
+      this.importState = this.importController.getState();
+      this.importedFile = this.importController.getCurrentFile();
+      this.importLastError = this.importController.getLastError();
+      this.restoreHint = '已恢复上次导入模型,正在重新验证';
+
+      console.info(`[VrmViewerPage] restore ok id=${file.id} size=${file.size} ext=${file.extension}`);
+
+      // 检查 Viewer 是否 READY
+      if (this.viewerState === ArkWebViewerState.READY) {
+        // Viewer 已就绪,立即处理
+        // Phase 1D-2C-2E-1:await 确保 prepare + readback 完成后再继续
+        await this.processRestoredFile(file);
+      } else {
+        // Viewer 未就绪,暂存等待 onViewerReady
+        this.pendingRestoredFile = file;
+        console.info('[VrmViewerPage] Viewer not ready, pending restored file');
+      }
+    } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
-      console.warn(`[VrmViewerPage] prepareModelResource failed: ${msg}`);
-    });
+      this.restoreErrorCode = 'RESTORE_EXCEPTION';
+      this.restoreErrorMessage = msg;
+      this.restoreHint = '恢复异常,请重新导入';
+      console.error(`[VrmViewerPage] restore exception: ${msg}`);
+    } finally {
+      this.restoreInProgress = false;
+    }
+  }
+
+  /**
+   * 处理恢复的文件:注册资源 + ensurePreparedModelResource + 自动探测。
+   *
+   * 由 startRestoreFromStateStore(Viewer 已 READY)或 onViewerReady 回调(Viewer 刚 READY)调用。
+   *
+   * 正确顺序(AGENTS.md Phase 1D-2C-2E-1 §十一 页面恢复路径):
+   *   StateStore.restore()
+   *   → ImportController.restoreCurrentFile()
+   *   → 等待 Viewer READY
+   *   → ResourceProvider.registerFile()
+   *   → ensurePreparedModelResource()
+   *   → WebPrepared READY
+   *   → 自动 HEAD 探测一次
+   *
+   * 不得因为页面已经恢复资源 URL,就跳过 prepareModelResource()。
+   *
+   * 失败处理:
+   * - registerFile 失败:restoreHint 显示"资源准备失败"
+   * - ensurePreparedModelResource 失败:webPreparedState = FAILED,不启动 probe,允许用户重试
+   */
+  private async processRestoredFile(file: ImportedModelFile): Promise<void> {
+    if (this.resourceProvider === null) {
+      this.restoreHint = '资源 Provider 未初始化';
+      return;
+    }
+    let resource: WebModelResource;
+    try {
+      resource = this.resourceProvider.registerFile(file);
+      this.preparedResource = resource;
+      this.resourceState = this.resourceProvider.getState();
+      this.resourceLastError = '';
+      console.info(`[VrmViewerPage] restored resource ready: url=${resource.resourceUrl}`);
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      this.preparedResource = null;
+      this.resourceState = this.resourceProvider.getState();
+      this.resourceLastError = msg;
+      this.restoreHint = `资源准备失败: ${msg}`;
+      console.error(`[VrmViewerPage] processRestoredFile register failed: ${msg}`);
+      return;
+    }
+
+    // Phase 1D-2C-2E-1: 统一资源准备(prepare + readback),严格等待完成后再探测
+    // 不得因为页面已经恢复资源 URL,就跳过 prepareModelResource()
+    const prepared: boolean = await this.ensurePreparedModelResource(resource, false);
+    if (!prepared) {
+      console.warn(`[VrmViewerPage] restore ensurePreparedModelResource failed: ${this.webPreparedErrorCode}`);
+      this.restoreHint = `资源同步失败: ${this.webPreparedErrorMessage}`;
+      return;
+    }
+    // 自动探测(满足条件时执行一次)
+    this.tryAutoProbeResource();
+  }
+
+  /**
+   * 保存当前导入的模型元数据到 StateStore。
+   *
+   * 时机:
+   * - 导入成功后(onImportModelButton)
+   * - 缓存文件完整复制 + rename 成功 + 文件大小验证通过之后
+   *
+   * 失败处理:
+   * - 缓存文件与当前导入仍可继续使用
+   * - 页面显示"模型已导入,但重进恢复信息保存失败"
+   * - 不删除缓存文件
+   */
+  private async saveImportStateToStore(file: ImportedModelFile): Promise<void> {
+    if (this.importStateStore === null) {
+      return;
+    }
+    try {
+      const ok: boolean = await this.importStateStore.save(file);
+      if (!ok) {
+        console.warn('[VrmViewerPage] import state save failed (cache still usable)');
+        promptAction.showToast({ message: '模型已导入,但重进恢复信息保存失败' });
+      }
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      console.warn(`[VrmViewerPage] saveImportStateToStore exception: ${msg}`);
+    }
+  }
+
+  /**
+   * 自动执行 HEAD 探测(Phase 1D-2C-1 §十二)。
+   *
+   * 触发条件(全部满足才执行):
+   * - Viewer READY
+   * - PreparedResource 存在
+   * - 当前没有探测
+   * - 当前没有用户模型加载
+   * - resourceUrl 与 PreparedResource 一致
+   * - 该 resourceUrl 未自动探测过(同一 URL 只自动探测一次)
+   *
+   * 自动探测只执行一次:
+   * - 维护 lastAutoProbedResourceUrl,避免重复自动探测
+   * - 资源更换后允许对新 URL 自动探测一次
+   *
+   * 失败处理:
+   * - 保留"验证资源"按钮,允许用户手动重试
+   * - 不自动加载模型
+   *
+   * 成功处理:
+   * - 启用"加载模型"按钮
+   * - 仍不自动加载模型
+   */
+  private tryAutoProbeResource(): void {
+    // 前置条件检查(Phase 1D-2C-2E-1:必须同时满足以下全部条件)
+    // 1. ViewerState === READY
+    if (this.viewerState !== ArkWebViewerState.READY) {
+      return;
+    }
+    // 2. Native ResourceState === READY
+    if (this.resourceState !== ModelResourceState.READY) {
+      return;
+    }
+    // 3. WebPreparedResourceState === READY(关键新增:JavaScript keeper 必须已准备)
+    if (this.webPreparedState !== WebPreparedResourceState.READY) {
+      return;
+    }
+    // 4. preparedResource !== null
+    if (this.preparedResource === null) {
+      return;
+    }
+    // 5. 当前没有 prepare
+    if (this.prepareInProgress) {
+      return;
+    }
+    // 6. 当前没有 probe
+    if (this.probeInProgress) {
+      return;
+    }
+    // 7. 当前没有 model load
+    if (this.loadInProgress) {
+      return;
+    }
+    // 8. lastPreparedResourceUrl === preparedResource.resourceUrl(一致性校验)
+    const resourceUrl: string = this.preparedResource.resourceUrl;
+    if (resourceUrl !== this.lastPreparedResourceUrl) {
+      console.warn(`[VrmViewerPage] auto probe skipped: url mismatch prepared=${resourceUrl} lastPrepared=${this.lastPreparedResourceUrl}`);
+      return;
+    }
+    // 同一 URL 只自动探测一次
+    if (resourceUrl === this.lastAutoProbedResourceUrl) {
+      return;
+    }
+    // 已探测过(VERIFIED / FAILED)的 URL 不再自动探测
+    if (this.probeState !== ModelResourceProbeState.NOT_PROBED) {
+      return;
+    }
+
+    // Phase 1D-2C-2E-1: 探测前可做一次轻量回读(可选,若回读为空则标记 FAILED)
+    // 这里不阻塞,直接启动探测(executeAutoProbe 内部会调用 probePreparedModelResource,
+    // JS 端会再次从 keeper 读取,若为空返回 RESOURCE_NOT_PREPARED)
+
+    this.autoProbeGeneration++;
+    this.lastAutoProbedResourceUrl = resourceUrl;
+    console.info(`[VrmViewerPage] auto probe started: url=${resourceUrl}`);
+    // 直接调用 onProbeResourceButton 的逻辑,但不显示 toast(避免打扰用户)
+    this.executeAutoProbe();
+  }
+
+  /**
+   * 执行自动探测(不显示交互 toast,只更新状态)。
+   */
+  private async executeAutoProbe(): Promise<void> {
+    if (this.preparedResource === null) {
+      return;
+    }
+    if (this.viewerState !== ArkWebViewerState.READY) {
+      return;
+    }
+    if (this.probeInProgress) {
+      return;
+    }
+    if (this.loadInProgress) {
+      return;
+    }
+
+    // 重置探测状态
+    this.resetProbeState();
+    this.probeInProgress = true;
+    this.probeState = ModelResourceProbeState.PROBING;
+    this.probePollCount = 0;
+
+    try {
+      const startResult: string = await this.arkWebController.probePreparedModelResource();
+      console.info(`[VrmViewerPage] auto probePreparedModelResource result: ${startResult}`);
+      if (startResult.indexOf('"success":true') < 0 && startResult.indexOf('"success": true') < 0) {
+        // 启动失败
+        this.probeState = ModelResourceProbeState.FAILED;
+        this.probeErrorCode = 'PROBE_START_FAILED';
+        const errorMatch: RegExpMatchArray | null = startResult.match(/"message"\s*:\s*"([^"]*)"/);
+        this.probeErrorMessage = errorMatch !== null && errorMatch.length >= 2 ? errorMatch[1] : startResult;
+        this.probeVerifiedAt = Date.now();
+        this.probeInProgress = false;
+        console.warn(`[VrmViewerPage] auto probe start failed: ${this.probeErrorMessage}`);
+        return;
+      }
+      // 启动轮询
+      this.startProbePolling();
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      this.probeState = ModelResourceProbeState.FAILED;
+      this.probeErrorCode = 'PROBE_START_FAILED';
+      this.probeErrorMessage = msg;
+      this.probeVerifiedAt = Date.now();
+      this.probeInProgress = false;
+      console.warn(`[VrmViewerPage] auto probe exception: ${msg}`);
+    }
+  }
+
+  /**
+   * 拉取并应用最新运行时诊断(由轮询或按钮触发)。
+   *
+   * 调用 arkWebController.getVrmRuntimeDiagnostic() 获取 Web 端最近一条诊断记录。
+   * 失败仅日志,不影响页面状态。
+   */
+  private async refreshRuntimeDiagnostic(): Promise<void> {
+    try {
+      const resultJson: string = await this.arkWebController.getVrmRuntimeDiagnostic();
+      this.applyRuntimeDiagnostic(resultJson);
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      console.warn(`[VrmViewerPage] refreshRuntimeDiagnostic failed: ${msg}`);
+    }
+  }
+
+  /**
+   * 解析 getVrmRuntimeDiagnostic 返回的 JSON 并更新 @State。
+   */
+  private applyRuntimeDiagnostic(resultJson: string): void {
+    try {
+      const parsed: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
+      const success: boolean = parsed['success'] === true;
+      if (!success) {
+        return;
+      }
+      const diagObj: Object = parsed['diagnostic'] as Object;
+      if (diagObj === null || diagObj === undefined) {
+        this.runtimeDiagnostic = null;
+        return;
+      }
+      const diag: Record<string, Object> = diagObj as Record<string, Object>;
+      this.runtimeDiagnostic = {
+        stage: this.parseVrmStage(this.safeString(diag['stage'], '')),
+        code: this.safeString(diag['code'], ''),
+        message: this.safeString(diag['message'], ''),
+        resourceId: this.safeString(diag['resourceId'], ''),
+        requestMethod: this.safeString(diag['requestMethod'], ''),
+        httpStatus: this.safeNumber(diag['httpStatus'], 0),
+        mimeType: this.safeString(diag['mimeType'], ''),
+        contentLength: this.safeNumber(diag['contentLength'], 0),
+        timestamp: this.safeNumber(diag['timestamp'], 0)
+      };
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      console.warn(`[VrmViewerPage] applyRuntimeDiagnostic parse failed: ${msg}`);
+    }
+  }
+
+  /**
+   * 解析 VrmRuntimeStage 字符串(无法识别时返回 IDLE)。
+   *
+   * Phase 1D-2C-2A: 新增启动阶段(ARKWEB_PAGE_END ~ VIEWER_INITIALIZE_FAILED),
+   * 用于在 Viewer 初始化失败时显示最近一条启动诊断。
+   */
+  private parseVrmStage(s: string): VrmRuntimeStage {
+    switch (s) {
+      case 'IDLE': return VrmRuntimeStage.IDLE;
+      // Phase 1D-2C-2A: 启动阶段
+      case 'ARKWEB_PAGE_END': return VrmRuntimeStage.ARKWEB_PAGE_END;
+      case 'JS_BRIDGE_BOUND': return VrmRuntimeStage.JS_BRIDGE_BOUND;
+      case 'INITIALIZE_REQUESTED': return VrmRuntimeStage.INITIALIZE_REQUESTED;
+      case 'INITIALIZE_RESULT_RECEIVED': return VrmRuntimeStage.INITIALIZE_RESULT_RECEIVED;
+      case 'VIEWER_CONTAINER_FOUND': return VrmRuntimeStage.VIEWER_CONTAINER_FOUND;
+      case 'VIEWER_CONTAINER_NOT_FOUND': return VrmRuntimeStage.VIEWER_CONTAINER_NOT_FOUND;
+      case 'VIEWER_CORE_INITIALIZING': return VrmRuntimeStage.VIEWER_CORE_INITIALIZING;
+      case 'VIEWER_SCENE_READY': return VrmRuntimeStage.VIEWER_SCENE_READY;
+      case 'VIEWER_CAMERA_READY': return VrmRuntimeStage.VIEWER_CAMERA_READY;
+      case 'VIEWER_MODEL_LOADER_READY': return VrmRuntimeStage.VIEWER_MODEL_LOADER_READY;
+      case 'VIEWER_FRAME_LOOP_READY': return VrmRuntimeStage.VIEWER_FRAME_LOOP_READY;
+      case 'VIEWER_READY': return VrmRuntimeStage.VIEWER_READY;
+      case 'VIEWER_INITIALIZE_FAILED': return VrmRuntimeStage.VIEWER_INITIALIZE_FAILED;
+      // Phase 1D-2C-1: 导入/恢复/资源/探测/加载阶段
+      case 'IMPORT_READY': return VrmRuntimeStage.IMPORT_READY;
+      case 'RESTORE_READY': return VrmRuntimeStage.RESTORE_READY;
+      case 'RESOURCE_REGISTERED': return VrmRuntimeStage.RESOURCE_REGISTERED;
+      case 'RESOURCE_PREPARED': return VrmRuntimeStage.RESOURCE_PREPARED;
+      case 'PROBE_STARTED': return VrmRuntimeStage.PROBE_STARTED;
+      case 'PROBE_VERIFIED': return VrmRuntimeStage.PROBE_VERIFIED;
+      case 'PROBE_FAILED': return VrmRuntimeStage.PROBE_FAILED;
+      case 'LOAD_STARTED': return VrmRuntimeStage.LOAD_STARTED;
+      case 'PROVIDER_HEAD': return VrmRuntimeStage.PROVIDER_HEAD;
+      case 'PROVIDER_GET': return VrmRuntimeStage.PROVIDER_GET;
+      case 'PROVIDER_RESPONSE': return VrmRuntimeStage.PROVIDER_RESPONSE;
+      case 'GLTF_LOAD_STARTED': return VrmRuntimeStage.GLTF_LOAD_STARTED;
+      case 'GLTF_LOAD_PROGRESS': return VrmRuntimeStage.GLTF_LOAD_PROGRESS;
+      case 'GLTF_LOAD_FAILED': return VrmRuntimeStage.GLTF_LOAD_FAILED;
+      case 'VRM_DATA_VALIDATED': return VrmRuntimeStage.VRM_DATA_VALIDATED;
+      case 'MODEL_REPLACE_STARTED': return VrmRuntimeStage.MODEL_REPLACE_STARTED;
+      case 'MODEL_REPLACE_COMMITTED': return VrmRuntimeStage.MODEL_REPLACE_COMMITTED;
+      case 'MODEL_REPLACE_FAILED': return VrmRuntimeStage.MODEL_REPLACE_FAILED;
+      default: return VrmRuntimeStage.IDLE;
+    }
+  }
+
+  /** 运行时诊断时间显示(格式化为人类可读) */
+  private diagnosticTimestampLabel(): string {
+    if (this.runtimeDiagnostic === null || this.runtimeDiagnostic.timestamp <= 0) {
+      return '—';
+    }
+    const date: Date = new Date(this.runtimeDiagnostic.timestamp);
+    const h: number = date.getHours();
+    const m: number = date.getMinutes();
+    const s: number = date.getSeconds();
+    const hh: string = h < 10 ? `0${h}` : `${h}`;
+    const mm: string = m < 10 ? `0${m}` : `${m}`;
+    const ss: string = s < 10 ? `0${s}` : `${s}`;
+    return `${hh}:${mm}:${ss}`;
+  }
+
+  /** 清除运行时诊断按钮回调 */
+  private async onClearDiagnosticButton(): Promise<void> {
+    try {
+      await this.arkWebController.clearVrmRuntimeDiagnostic();
+      this.runtimeDiagnostic = null;
+      console.info('[VrmViewerPage] runtime diagnostic cleared');
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      console.warn(`[VrmViewerPage] clear diagnostic failed: ${msg}`);
+    }
+  }
+
+  /**
+   * Phase 1D-2C-2A: "重试 Viewer" 按钮回调。
+   *
+   * 仅在 Viewer 处于 FAILED 状态时可用。流程:
+   * 1. 防止重复点击(retryInProgress)
+   * 2. 清除当前 Viewer 错误(lastErrorCode / lastError)
+   * 3. 调用 Controller.retryInitializeViewer()
+   *    - Controller 内部校验 FAILED 状态
+   *    - 调用 Web 端 retryInitializeViewer(同步返回)
+   *    - 状态切换为 INITIALIZING
+   *    - 等待 onViewerReady / onViewerError 回调推进状态
+   * 4. 状态由 Controller 通过 Listener 回调更新到 @State
+   *
+   * 不重新进入页面,不重建 Web 组件。
+   */
+  private async onRetryViewerButton(): Promise<void> {
+    if (this.retryInProgress) {
+      console.warn('[VrmViewerPage] retry already in progress, ignore');
+      return;
+    }
+    if (this.viewerState !== ArkWebViewerState.FAILED) {
+      console.warn(`[VrmViewerPage] retry ignored: viewerState=${this.viewerState} (requires FAILED)`);
+      return;
+    }
+    this.retryInProgress = true;
+    // 清除当前错误显示(Controller 也会清除内部 lastError)
+    this.lastErrorCode = '';
+    this.lastError = '';
+    try {
+      await this.arkWebController.retryInitializeViewer();
+      console.info('[VrmViewerPage] retryInitializeViewer dispatched');
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      console.error(`[VrmViewerPage] retryInitializeViewer failed: ${msg}`);
+      this.lastErrorCode = 'RETRY_FAILED';
+      this.lastError = `重试失败: ${msg}`;
+    } finally {
+      this.retryInProgress = false;
+    }
   }
 
   /**
@@ -589,6 +1426,26 @@ struct VrmViewerPage {
     this.importState = this.importController.getState();
     this.importedFile = this.importController.getCurrentFile();
     this.importLastError = this.importController.getLastError();
+    // Phase 1D-2C-1:6. 清除 StateStore 中的导入记录(清除缓存时必须清除 Preferences)
+    if (this.importStateStore !== null) {
+      await this.importStateStore.clear();
+    }
+    // Phase 1D-2C-1:7. 清空恢复状态与诊断
+    this.restoreErrorCode = '';
+    this.restoreErrorMessage = '';
+    this.restoreHint = '';
+    this.runtimeDiagnostic = null;
+    this.lastAutoProbedResourceUrl = '';
+    this.pendingRestoredFile = null;
+    // Phase 1D-2C-2E-1: 清空 Web Prepared 状态
+    this.resetWebPreparedState();
+    // Phase 1D-2C-1:8. 清除 Web 端运行时诊断(异步,不等待)
+    this.arkWebController.clearVrmRuntimeDiagnostic().then((result: string) => {
+      console.info(`[VrmViewerPage] clearVrmRuntimeDiagnostic result: ${result}`);
+    }).catch((e: Object) => {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      console.warn(`[VrmViewerPage] clearVrmRuntimeDiagnostic failed: ${msg}`);
+    });
     promptAction.showToast({ message: '已清除缓存文件' });
   }
 
@@ -612,25 +1469,42 @@ struct VrmViewerPage {
    */
   private async onProbeResourceButton(): Promise<void> {
     // 前置条件检查
-    if (this.preparedResource === null) {
-      promptAction.showToast({ message: '请先准备资源' });
+    // 1. Native 资源未 READY:提示资源未注册
+    if (this.preparedResource === null || this.resourceState !== ModelResourceState.READY) {
+      promptAction.showToast({ message: '资源未注册,请先导入模型' });
       return;
     }
+    // 2. Viewer 未就绪
     if (this.viewerState !== ArkWebViewerState.READY) {
       promptAction.showToast({ message: 'Viewer 未就绪' });
       return;
     }
+    // 3. 已有探测进行中,忽略重复点击
     if (this.probeInProgress) {
-      // 已有探测进行中,忽略重复点击
       return;
     }
-    // Phase 1D-2B-2:用户模型加载期间禁止验证资源
+    // 4. 用户模型加载期间禁止验证资源
     if (this.loadInProgress) {
       promptAction.showToast({ message: '模型加载中,请稍候' });
       return;
     }
 
-    // 重置探测状态(保留上次结果作为参考?规范要求重置)
+    // Phase 1D-2C-2E-1: 如果 WebPrepared 未 READY,先调用 ensurePreparedModelResource 重新准备
+    // 这样手动验证按钮同时具备:重新准备资源 + 重新执行 HEAD 探测 的恢复能力
+    // 不要求 WebPrepared 预先 READY,否则准备失败后用户无法重试
+    if (this.webPreparedState !== WebPreparedResourceState.READY) {
+      console.info('[VrmViewerPage] manual probe: WebPrepared not READY, retry prepare');
+      const resource: WebModelResource = this.preparedResource;
+      const prepared: boolean = await this.ensurePreparedModelResource(resource, true);
+      if (!prepared) {
+        promptAction.showToast({
+          message: `资源同步失败: ${this.webPreparedErrorCode} ${this.webPreparedErrorMessage}`
+        });
+        return;
+      }
+    }
+
+    // 重置探测状态
     this.resetProbeState();
     this.probeInProgress = true;
     this.probeState = ModelResourceProbeState.PROBING;
@@ -760,6 +1634,8 @@ struct VrmViewerPage {
       } else if (this.probeState === ModelResourceProbeState.FAILED) {
         promptAction.showToast({ message: `探测失败: ${this.probeErrorMessage}` });
       }
+      // Phase 1D-2C-1:探测完成后刷新运行时诊断(拉取 Provider HEAD 阶段记录)
+      this.refreshRuntimeDiagnostic();
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
       console.error(`[VrmViewerPage] parse probe result failed: ${msg}, raw=${resultJson}`);
@@ -795,6 +1671,10 @@ struct VrmViewerPage {
     this.probeErrorCode = this.safeString(result['errorCode'], '');
     this.probeErrorMessage = this.safeString(result['errorMessage'], '');
     this.probeVerifiedAt = this.safeNumber(result['verifiedAt'], 0);
+    // Phase 1D-2C-2E-2A: 长度来源诊断字段
+    this.probeContentLengthSource = this.safeString(result['contentLengthSource'], '');
+    this.probeCustomContentLength = this.safeNumber(result['customContentLength'], -1);
+    this.probeStandardContentLength = this.safeNumber(result['standardContentLength'], -1);
   }
 
   /**
@@ -810,6 +1690,10 @@ struct VrmViewerPage {
     this.probeErrorCode = '';
     this.probeErrorMessage = '';
     this.probeVerifiedAt = 0;
+    // Phase 1D-2C-2E-2A: 重置长度诊断字段
+    this.probeContentLengthSource = '';
+    this.probeCustomContentLength = -1;
+    this.probeStandardContentLength = -1;
     this.probePollCount = 0;
   }
 
@@ -829,10 +1713,10 @@ struct VrmViewerPage {
     return defaultValue;
   }
 
-  /** 探测状态显示标签 */
+  /** 探测状态显示标签(Phase 1D-2C-1: NOT_PROBED 为中性,不显示为错误色) */
   private probeStateLabel(): string {
     if (this.probeState === ModelResourceProbeState.NOT_PROBED) {
-      return '未探测';
+      return '未发起探测';
     } else if (this.probeState === ModelResourceProbeState.PROBING) {
       return '探测中...';
     } else if (this.probeState === ModelResourceProbeState.VERIFIED) {
@@ -856,6 +1740,26 @@ struct VrmViewerPage {
     const mm: string = m < 10 ? `0${m}` : `${m}`;
     const ss: string = s < 10 ? `0${s}` : `${s}`;
     return `${hh}:${mm}:${ss}`;
+  }
+
+  /**
+   * Phase 1D-2C-2E-2A: 长度来源显示标签。
+   *
+   * 用于 UI 诊断区域,标识最终选用的长度证明来源。
+   * - CUSTOM: 自定义响应头(X-ArkTavern-Content-Length)
+   * - STANDARD: 标准响应头(Content-Length)
+   * - UNAVAILABLE: 长度不可用
+   * - '': 探测未到达长度校验阶段
+   */
+  private probeLengthSourceLabel(): string {
+    if (this.probeContentLengthSource === 'CUSTOM') {
+      return '自定义响应头';
+    } else if (this.probeContentLengthSource === 'STANDARD') {
+      return '标准响应头';
+    } else if (this.probeContentLengthSource === 'UNAVAILABLE') {
+      return '不可用';
+    }
+    return '—';
   }
 
   // ===== Phase 1D-2B-2: 用户模型加载(GLTFLoader 实际加载与原子替换) =====
@@ -1041,6 +1945,8 @@ struct VrmViewerPage {
       } else if (this.loadState === 'FAILED') {
         promptAction.showToast({ message: '模型加载失败,当前模型已保留' });
       }
+      // Phase 1D-2C-1:加载完成后刷新运行时诊断(拉取 GLTF_LOAD_* / MODEL_REPLACE_* 阶段记录)
+      this.refreshRuntimeDiagnostic();
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
       console.error(`[VrmViewerPage] parse load result failed: ${msg}, raw=${resultJson}`);
@@ -1093,10 +1999,10 @@ struct VrmViewerPage {
     this.loadPollCount = 0;
   }
 
-  /** 加载状态显示标签 */
+  /** 加载状态显示标签(Phase 1D-2C-1: NOT_REQUESTED 为中性,不显示为错误色) */
   private loadStateLabel(): string {
     if (this.loadState === 'NOT_REQUESTED') {
-      return '未加载';
+      return '未发起加载';
     } else if (this.loadState === 'LOADING') {
       return '加载中...';
     } else if (this.loadState === 'READY') {
@@ -1137,6 +2043,142 @@ struct VrmViewerPage {
     const mm: string = m < 10 ? `0${m}` : `${m}`;
     const ss: string = s < 10 ? `0${s}` : `${s}`;
     return `${hh}:${mm}:${ss}`;
+  }
+
+  /**
+   * Phase 1D-2C-1: 整体动态状态提示。
+   *
+   * 替代旧版静态"未探测、未加载"文案。根据 importState / probeState / loadState /
+   * restoreHint / viewerState 综合计算当前应显示的中性/成功/失败提示。
+   *
+   * Phase 1D-2C-2A:
+   * - 新增优先级 0:Viewer FAILED 时显示"Viewer 初始化失败,模型验证尚未开始"
+   *   (避免在 Viewer 失败时显示"导入完成,正在验证资源"等虚假进度提示)
+   * - 资源不变量:Viewer FAILED 时不进入探测/加载链路
+   *
+   * 返回空字符串表示无提示(初始空闲态)。
+   */
+  private overallStatusHint(): string {
+    // 优先级 0:Viewer 初始化失败(最高优先级,覆盖所有资源/加载提示)
+    if (this.viewerState === ArkWebViewerState.FAILED) {
+      return 'Viewer 初始化失败,模型验证尚未开始';
+    }
+    // 优先级 1:恢复中或恢复失败
+    if (this.restoreHint.length > 0) {
+      return this.restoreHint;
+    }
+    // 优先级 2:导入未完成
+    if (this.importState === ModelImportState.IDLE ||
+        this.importState === ModelImportState.PICKING ||
+        this.importState === ModelImportState.COPYING) {
+      return '';
+    }
+    if (this.importState === ModelImportState.READY) {
+      // 优先级 3:加载中
+      if (this.loadState === 'LOADING') {
+        return '模型加载中';
+      }
+      // 优先级 4:加载成功
+      if (this.loadState === 'READY') {
+        return '模型加载成功';
+      }
+      // 优先级 5:加载失败
+      if (this.loadState === 'FAILED') {
+        return '模型加载失败,当前模型已保留';
+      }
+      // 优先级 6:探测中
+      if (this.probeState === ModelResourceProbeState.PROBING) {
+        return '导入完成,正在验证资源';
+      }
+      // 优先级 7:探测通过
+      if (this.probeState === ModelResourceProbeState.VERIFIED) {
+        return '资源验证通过,可以加载模型';
+      }
+      // 优先级 8:探测失败
+      if (this.probeState === ModelResourceProbeState.FAILED) {
+        return '资源验证失败,请查看运行诊断';
+      }
+      // Phase 1D-2C-2E-1: Web 资源准备失败(Native 已就绪,但 JS keeper 未接收或回读失败)
+      // 显示真实 RESOURCE_PREPARE_* 错误,而不是把它压缩为 PROBE_START_FAILED
+      if (this.webPreparedState === WebPreparedResourceState.FAILED) {
+        return '资源同步失败,请重新验证资源';
+      }
+      // 优先级 9:已导入 + Web 资源准备中
+      if (this.webPreparedState === WebPreparedResourceState.PREPARING) {
+        return 'Native 资源已注册,正在同步到 Viewer';
+      }
+      // 优先级 10:已导入 + Web 资源已准备 + 未探测
+      if (this.webPreparedState === WebPreparedResourceState.READY) {
+        return '模型资源已同步,正在验证';
+      }
+      // 优先级 11:已导入但 Web 资源未准备(中性,不显示错误色)
+      return '导入完成,正在验证资源';
+    }
+    return '';
+  }
+
+  /**
+   * Phase 1D-2C-1: 整体动态状态颜色。
+   * - 失败:app_danger
+   * - 成功:model_settings_success
+   * - 中性/进行中:app_text_secondary
+   *
+   * Phase 1D-2C-2A: Viewer FAILED 时也使用 app_danger。
+   */
+  private overallStatusColor(): ResourceColor {
+    if (this.viewerState === ArkWebViewerState.FAILED) {
+      return $r('app.color.app_danger');
+    }
+    if (this.restoreErrorCode.length > 0) {
+      return $r('app.color.app_danger');
+    }
+    if (this.loadState === 'FAILED' ||
+        this.probeState === ModelResourceProbeState.FAILED ||
+        this.webPreparedState === WebPreparedResourceState.FAILED) {
+      return $r('app.color.app_danger');
+    }
+    if (this.loadState === 'READY' || this.probeState === ModelResourceProbeState.VERIFIED) {
+      return $r('app.color.model_settings_success');
+    }
+    return $r('app.color.app_text_secondary');
+  }
+
+  /**
+   * Phase 1D-2C-1: 运行时诊断阶段标签(直接显示原始阶段字符串)。
+   *
+   * 规范要求错误信息必须显示实际阶段(如 GLTF_LOAD_FAILED / RESOURCE_OPEN_FAILED /
+   * VRM_DATA_NOT_FOUND / MODEL_REPLACE_FAILED),不得压缩为通用的"加载失败"。
+   * 因此直接返回 stage 枚举字符串。
+   */
+  private runtimeStageLabel(stage: VrmRuntimeStage): string {
+    return String(stage);
+  }
+
+  /**
+   * Phase 1D-2C-1: 运行时诊断阶段颜色。
+   * - *_FAILED / MODEL_REPLACE_FAILED / GLTF_LOAD_FAILED: app_danger
+   * - *_COMMITTED / VERIFIED / VALIDATED: model_settings_success
+   * - 其他(进行中/中性): app_text_secondary
+   *
+   * Phase 1D-2C-2A: VIEWER_INITIALIZE_FAILED / VIEWER_CONTAINER_NOT_FOUND
+   * 也归为失败阶段,使用 app_danger。
+   * VIEWER_READY 启动阶段归为成功,使用 model_settings_success。
+   */
+  private runtimeStageColor(stage: VrmRuntimeStage): ResourceColor {
+    if (stage === VrmRuntimeStage.PROBE_FAILED ||
+        stage === VrmRuntimeStage.GLTF_LOAD_FAILED ||
+        stage === VrmRuntimeStage.MODEL_REPLACE_FAILED ||
+        stage === VrmRuntimeStage.VIEWER_INITIALIZE_FAILED ||
+        stage === VrmRuntimeStage.VIEWER_CONTAINER_NOT_FOUND) {
+      return $r('app.color.app_danger');
+    }
+    if (stage === VrmRuntimeStage.PROBE_VERIFIED ||
+        stage === VrmRuntimeStage.VRM_DATA_VALIDATED ||
+        stage === VrmRuntimeStage.MODEL_REPLACE_COMMITTED ||
+        stage === VrmRuntimeStage.VIEWER_READY) {
+      return $r('app.color.model_settings_success');
+    }
+    return $r('app.color.app_text_secondary');
   }
 
   /** 模型名称(顶部工具栏显示) */
@@ -1270,6 +2312,18 @@ struct VrmViewerPage {
             .textAlign(TextAlign.Center)
             .maxLines(3)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
+          // Phase 1D-2C-2A: 重试 Viewer 按钮(不重新进入页面即可重试)
+          Button('重试 Viewer')
+            .fontSize($r('app.float.app_font_body'))
+            .fontColor('#FFFFFF')
+            .backgroundColor($r('app.color.app_accent'))
+            .borderRadius($r('app.float.app_radius_sm'))
+            .height(40)
+            .margin({ top: 16, left: 32, right: 32 })
+            .enabled(!this.retryInProgress)
+            .onClick(() => {
+              this.onRetryViewerButton();
+            })
         }
         .width('100%')
         .height('100%')
@@ -1559,6 +2613,15 @@ struct VrmViewerPage {
         .fontColor($r('app.color.app_text_tertiary'))
         .margin({ top: 4 })
 
+      // ===== Phase 1D-2C-1: 整体动态状态提示(替代旧版静态"未探测、未加载") =====
+      if (this.overallStatusHint().length > 0) {
+        Text(this.overallStatusHint())
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor(this.overallStatusColor())
+          .margin({ top: 8 })
+          .width('100%')
+      }
+
       Divider().margin({ top: 12, bottom: 12 })
 
       // ===== Phase 1D-1: 模型导入 =====
@@ -1628,7 +2691,16 @@ struct VrmViewerPage {
 
       Column() {
         this.ImportInfoRow('资源状态', this.resourceStateLabel())
-        if (this.preparedResource !== null) {
+        // Phase 1D-2C-2E-1: Web Prepared 状态(与 Native resourceState 解耦)
+        // - resourceState === READY 仅表示 Native Provider 已注册资源 URL
+        // - webPreparedState === READY 表示 JavaScript keeper 已通过 prepareModelResource
+        //   接收资源元数据并通过 getPreparedModelResource 回读校验
+        this.ImportInfoRow('Web 资源状态', this.webPreparedStateLabel())
+        // Phase 1D-2C-2A: 资源状态不变量
+        // - resourceState === EMPTY → preparedResource 必须为 null → 不显示 URL / MIME / 大小 / 扩展名
+        // - preparedResource !== null → resourceState 必须为 READY
+        // 双重校验:仅当 preparedResource 非空且 resourceState !== EMPTY 时才显示资源详情
+        if (this.preparedResource !== null && this.resourceState !== ModelResourceState.EMPTY) {
           this.ImportInfoRow('资源 URL', this.preparedResource.resourceUrl)
           this.ImportInfoRow('MIME', this.preparedResource.mimeType)
           this.ImportInfoRow('资源大小', this.sizeLabel(this.preparedResource.size))
@@ -1640,6 +2712,24 @@ struct VrmViewerPage {
             .fontColor($r('app.color.app_danger'))
             .margin({ top: 8 })
             .width('100%')
+        }
+        // Phase 1D-2C-2E-1: Web 资源准备错误显示
+        // 失败时显示真实 RESOURCE_PREPARE_* 错误,而不是把它压缩为 PROBE_START_FAILED
+        if (this.webPreparedState === WebPreparedResourceState.FAILED) {
+          if (this.webPreparedErrorCode.length > 0) {
+            Text(`Web 资源错误码: ${this.webPreparedErrorCode}`)
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_danger'))
+              .margin({ top: 8 })
+              .width('100%')
+          }
+          if (this.webPreparedErrorMessage.length > 0) {
+            Text(`Web 资源错误: ${this.webPreparedErrorMessage}`)
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_danger'))
+              .margin({ top: 4 })
+              .width('100%')
+          }
         }
       }
       .width('100%')
@@ -1680,6 +2770,9 @@ struct VrmViewerPage {
           this.ImportInfoRow('HTTP 状态', this.probeStatusCode > 0 ? `${this.probeStatusCode}` : '—')
           this.ImportInfoRow('MIME 校验', this.probeMimeType.length > 0 ? this.probeMimeType : '—')
           this.ImportInfoRow('文件大小', this.probeContentLength >= 0 ? this.sizeLabel(this.probeContentLength) : '—')
+          this.ImportInfoRow('长度来源', this.probeLengthSourceLabel())
+          this.ImportInfoRow('自定义长度', this.probeCustomContentLength >= 0 ? `${this.probeCustomContentLength}` : '—')
+          this.ImportInfoRow('标准长度', this.probeStandardContentLength >= 0 ? `${this.probeStandardContentLength}` : '—')
           this.ImportInfoRow('资源 ID', this.probeResourceId.length > 0 ? this.probeResourceId : '—')
           this.ImportInfoRow('重定向', this.probeRedirected ? '是(异常)' : '否')
           this.ImportInfoRow('验证时间', this.probeVerifiedAtLabel())
@@ -1773,6 +2866,74 @@ struct VrmViewerPage {
       }
       .width('100%')
       .margin({ top: 12 })
+
+      // ===== Phase 1D-2C-1: 运行诊断(最近一条 Provider/GLTFLoader/Coordinator 诊断) =====
+      Divider().margin({ top: 12, bottom: 12 })
+
+      Text('运行诊断(Phase 1D-2C-1)')
+        .fontSize($r('app.float.app_font_subtitle'))
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.app_text_primary'))
+        .margin({ bottom: 8 })
+
+      // 刷新诊断按钮(手动拉取一次最近诊断)
+      // Phase 1D-2C-2A: 不再依赖 ViewerState === READY,只要 Viewer 未被销毁就允许刷新
+      // (初始化失败时也必须能查看启动诊断)
+      Button('刷新诊断')
+        .fontSize($r('app.float.app_font_body'))
+        .fontColor('#FFFFFF')
+        .backgroundColor($r('app.color.app_accent'))
+        .borderRadius($r('app.float.app_radius_sm'))
+        .height(40)
+        .width('100%')
+        .enabled(this.viewerState !== ArkWebViewerState.DISPOSED && this.webLoaded)
+        .onClick(() => {
+          this.refreshRuntimeDiagnostic();
+        })
+
+      // 诊断信息显示
+      Column() {
+        if (this.runtimeDiagnostic === null) {
+          this.ImportInfoRow('最后阶段', '—')
+          this.ImportInfoRow('错误码', '—')
+          this.ImportInfoRow('错误信息', '暂无诊断记录')
+        } else {
+          this.ImportInfoRow('最后阶段', this.runtimeStageLabel(this.runtimeDiagnostic.stage))
+          this.ImportInfoRow('错误码', this.runtimeDiagnostic.code.length > 0 ? this.runtimeDiagnostic.code : '—')
+          this.ImportInfoRow('错误信息', this.runtimeDiagnostic.message.length > 0 ? this.runtimeDiagnostic.message : '—')
+          this.ImportInfoRow('请求方法', this.runtimeDiagnostic.requestMethod.length > 0 ? this.runtimeDiagnostic.requestMethod : '—')
+          this.ImportInfoRow('HTTP 状态', this.runtimeDiagnostic.httpStatus > 0 ? `${this.runtimeDiagnostic.httpStatus}` : '—')
+          this.ImportInfoRow('MIME', this.runtimeDiagnostic.mimeType.length > 0 ? this.runtimeDiagnostic.mimeType : '—')
+          this.ImportInfoRow('Content-Length', this.runtimeDiagnostic.contentLength > 0 ? this.sizeLabel(this.runtimeDiagnostic.contentLength) : '—')
+          this.ImportInfoRow('资源 ID', this.runtimeDiagnostic.resourceId.length > 0 ? this.runtimeDiagnostic.resourceId : '—')
+          this.ImportInfoRow('发生时间', this.diagnosticTimestampLabel())
+        }
+      }
+      .width('100%')
+      .margin({ top: 12 })
+
+      // 阶段颜色提示(失败/成功)
+      if (this.runtimeDiagnostic !== null) {
+        Text(this.runtimeStageLabel(this.runtimeDiagnostic.stage))
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor(this.runtimeStageColor(this.runtimeDiagnostic.stage))
+          .margin({ top: 8 })
+          .width('100%')
+      }
+
+      // 清除诊断按钮
+      Button('清除诊断')
+        .fontSize($r('app.float.app_font_body'))
+        .fontColor($r('app.color.app_text_primary'))
+        .backgroundColor($r('app.color.app_surface_2'))
+        .borderRadius($r('app.float.app_radius_sm'))
+        .height(40)
+        .width('100%')
+        .margin({ top: 8 })
+        .enabled(this.runtimeDiagnostic !== null)
+        .onClick(() => {
+          this.onClearDiagnosticButton();
+        })
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)
@@ -1846,6 +3007,31 @@ struct VrmViewerPage {
       return '已就绪(可拦截请求)';
     } else if (this.resourceState === ModelResourceState.DISPOSED) {
       return '已销毁';
+    }
+    return '未知';
+  }
+
+  /**
+   * Phase 1D-2C-2E-1: Web Prepared 资源状态显示标签。
+   *
+   * 与 resourceStateLabel 解耦:
+   * - resourceState === READY 只表示 Native Provider 已注册资源 URL
+   * - webPreparedState === READY 表示 JavaScript keeper 已通过 prepareModelResource
+   *   接收资源元数据并通过 getPreparedModelResource 回读校验
+   *
+   * 状态机:
+   *   EMPTY → PREPARING → READY
+   *   PREPARING → FAILED
+   */
+  private webPreparedStateLabel(): string {
+    if (this.webPreparedState === WebPreparedResourceState.EMPTY) {
+      return '未准备';
+    } else if (this.webPreparedState === WebPreparedResourceState.PREPARING) {
+      return '准备中';
+    } else if (this.webPreparedState === WebPreparedResourceState.READY) {
+      return '已准备';
+    } else if (this.webPreparedState === WebPreparedResourceState.FAILED) {
+      return '准备失败';
     }
     return '未知';
   }

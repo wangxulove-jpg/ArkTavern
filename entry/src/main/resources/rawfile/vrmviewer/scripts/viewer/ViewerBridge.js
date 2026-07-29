@@ -227,6 +227,97 @@
     return JSON.stringify({ success: true, state: 'RESOURCE_CLEARED' });
   }
 
+  // ===== Phase 1D-2C-1: VrmRuntimeDiagnostics keeper =====
+  // 运行时诊断记录 keeper,只保存最近一条 VrmRuntimeDiagnostic。
+  //
+  // 设计约束(AGENTS.md Phase 1D-2C-1 §十三 / §十七):
+  // - 诊断对象字段白名单:stage / code / message / resourceId / requestMethod /
+  //   httpStatus / mimeType / contentLength / timestamp
+  // - 严禁保存:cachePath / sourceUri / fd / stack / 用户目录
+  // - 只保留最近一条(覆盖式),不累积历史
+  // - getVrmRuntimeDiagnostic() 返回最近一条;无记录时返回 {success: true, diagnostic: null}
+  // - clearVrmRuntimeDiagnostic() 清除记录
+  //
+  // 由 ViewerModelLoader.onDiagnostic 回调(经 ViewerCore._forwardModelLoaderDiagnostic 转发)
+  // 与 ViewerUserModelLoadCoordinator.onDiagnostic 回调写入。
+  // Provider 的诊断由 ArkTS 端直接处理(不经过此 keeper)。
+
+  /** 诊断字段白名单(只允许这些字段进入 keeper)。 */
+  var DIAGNOSTIC_FIELDS = [
+    'stage', 'code', 'message', 'resourceId',
+    'requestMethod', 'httpStatus', 'mimeType', 'contentLength', 'timestamp'
+  ];
+
+  /**
+   * 记录一条诊断(覆盖式,只保留最近一条)。
+   * @param {object} diagnostic 诊断对象
+   */
+  function recordDiagnostic(diagnostic) {
+    if (!diagnostic || typeof diagnostic !== 'object') {
+      console.warn('[ViewerBridge] recordDiagnostic ignored: invalid diagnostic');
+      return;
+    }
+    // 字段白名单过滤 + 类型基本校验
+    var filtered = {};
+    for (var i = 0; i < DIAGNOSTIC_FIELDS.length; i++) {
+      var key = DIAGNOSTIC_FIELDS[i];
+      if (Object.prototype.hasOwnProperty.call(diagnostic, key)) {
+        var value = diagnostic[key];
+        // 基本类型校验:stage/code/message/resourceId/mimeType 为 string,
+        // httpStatus/contentLength/timestamp 为 number
+        if (key === 'httpStatus' || key === 'contentLength' || key === 'timestamp') {
+          if (typeof value === 'number' && isFinite(value)) {
+            filtered[key] = value;
+          } else {
+            filtered[key] = 0;
+          }
+        } else {
+          filtered[key] = typeof value === 'string' ? value : '';
+        }
+      } else {
+        // 缺失字段填充默认值
+        if (key === 'httpStatus' || key === 'contentLength' || key === 'timestamp') {
+          filtered[key] = 0;
+        } else {
+          filtered[key] = '';
+        }
+      }
+    }
+    global.arkTavernVrmRuntimeDiagnosticRecord = filtered;
+  }
+
+  /**
+   * 获取最近一条诊断。
+   * @returns {string} JSON 结果
+   *   {"success": true, "diagnostic": <object|null>}
+   */
+  function getDiagnostic() {
+    var record = null;
+    if (typeof global.arkTavernVrmRuntimeDiagnosticRecord !== 'undefined' &&
+        global.arkTavernVrmRuntimeDiagnosticRecord !== null) {
+      // 复制一份,避免外部修改污染内部记录
+      record = {};
+      var src = global.arkTavernVrmRuntimeDiagnosticRecord;
+      for (var i = 0; i < DIAGNOSTIC_FIELDS.length; i++) {
+        var key = DIAGNOSTIC_FIELDS[i];
+        if (Object.prototype.hasOwnProperty.call(src, key)) {
+          record[key] = src[key];
+        }
+      }
+    }
+    return JSON.stringify({ success: true, diagnostic: record });
+  }
+
+  /**
+   * 清除最近一条诊断。
+   * @returns {string} JSON 结果
+   *   {"success": true, "state": "DIAGNOSTIC_CLEARED"}
+   */
+  function clearDiagnostic() {
+    global.arkTavernVrmRuntimeDiagnosticRecord = null;
+    return JSON.stringify({ success: true, state: 'DIAGNOSTIC_CLEARED' });
+  }
+
   // 暴露 notify 工具到 window.ViewerBridge,供 ViewerCore / app.js 调用。
   global.ViewerBridge = {
     notifyViewerReady: notifyViewerReady,
@@ -238,8 +329,22 @@
       prepare: prepareModelResource,
       get: getPreparedModelResource,
       clear: clearPreparedModelResource
+    },
+    // Phase 1D-2C-1: 运行时诊断 keeper(只保留最近一条)
+    runtimeDiagnostics: {
+      record: recordDiagnostic,
+      get: getDiagnostic,
+      clear: clearDiagnostic
     }
   };
 
-  console.log('[ViewerBridge] window.ViewerBridge notify helpers + preparedResource keeper registered (Phase 1B + 1D-2A)');
+  // Phase 1D-2C-1: 同时暴露 arkTavernVrmRuntimeDiagnostics 给 ViewerCore._forwardModelLoaderDiagnostic 使用
+  // (ViewerCore 通过 window.arkTavernVrmRuntimeDiagnostics.record 转发 ModelLoader 诊断)
+  global.arkTavernVrmRuntimeDiagnostics = {
+    record: recordDiagnostic,
+    get: getDiagnostic,
+    clear: clearDiagnostic
+  };
+
+  console.log('[ViewerBridge] window.ViewerBridge notify helpers + preparedResource keeper + runtimeDiagnostics keeper registered (Phase 1B + 1D-2A + 1D-2C-1)');
 })(typeof window !== 'undefined' ? window : globalThis);

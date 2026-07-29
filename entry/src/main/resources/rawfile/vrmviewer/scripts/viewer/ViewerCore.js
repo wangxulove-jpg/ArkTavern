@@ -143,6 +143,8 @@ export class ViewerCore {
       if (token !== this._initToken) {
         return { success: false, error: makeError(ERR_VIEWER_ALREADY_DISPOSED, 'Viewer disposed during initialization', STATE_DISPOSING, false) };
       }
+      // Phase 1D-2C-2A: 记录 VIEWER_SCENE_READY
+      this._emitStartupDiagnostic('VIEWER_SCENE_READY', '', 'ViewerScene initialized');
 
       // ===== Camera =====
       this.camera = new ViewerCamera();
@@ -151,6 +153,8 @@ export class ViewerCore {
       if (token !== this._initToken) {
         return { success: false, error: makeError(ERR_VIEWER_ALREADY_DISPOSED, 'Viewer disposed during initialization', STATE_DISPOSING, false) };
       }
+      // Phase 1D-2C-2A: 记录 VIEWER_CAMERA_READY
+      this._emitStartupDiagnostic('VIEWER_CAMERA_READY', '', 'ViewerCamera initialized');
 
       // ===== Frame Loop =====
       this.frameLoop = new ViewerFrameLoop();
@@ -162,6 +166,7 @@ export class ViewerCore {
       // 回调顺序:ModelLoader 状态变化 → ViewerCore 处理 Scene 挂载/相机重置 → 通知 ArkTS
       // Phase 1D-2B-2:新增 onReplaceModel 回调,由 ViewerCore 同步完成 Scene 替换,
       // 确保 currentVrm 提交前新模型已挂载、旧模型已从 Scene 移除(原子替换)。
+      // Phase 1D-2C-1:新增 onDiagnostic 回调,转发到 arkTavernVrmRuntimeDiagnostics keeper。
       this.modelLoader = new ViewerModelLoader({
         onStateChanged: (state, detail) => {
           this._onModelStateChanged(state, detail);
@@ -171,9 +176,14 @@ export class ViewerCore {
         },
         onReplaceModel: (nextVrm, previousVrm) => {
           this._replaceModelInScene(nextVrm, previousVrm);
+        },
+        onDiagnostic: (diagnostic) => {
+          this._forwardModelLoaderDiagnostic(diagnostic);
         }
       });
       this.modelLoader.initialize();
+      // Phase 1D-2C-2A: 记录 VIEWER_MODEL_LOADER_READY
+      this._emitStartupDiagnostic('VIEWER_MODEL_LOADER_READY', '', 'ViewerModelLoader initialized');
 
       // 启动渲染循环
       // 顺序(与 Figure animate() 行 2860-2906 一致):
@@ -186,6 +196,8 @@ export class ViewerCore {
         this.camera.update(deltaSeconds);
         this.scene.render(this.camera.getCamera());
       });
+      // Phase 1D-2C-2A: 记录 VIEWER_FRAME_LOOP_READY
+      this._emitStartupDiagnostic('VIEWER_FRAME_LOOP_READY', '', 'ViewerFrameLoop started');
 
       if (token !== this._initToken) {
         return { success: false, error: makeError(ERR_VIEWER_ALREADY_DISPOSED, 'Viewer disposed during initialization', STATE_DISPOSING, false) };
@@ -555,8 +567,12 @@ export class ViewerCore {
   /**
    * 通知 ArkTS:Viewer 已就绪。
    * 通过 window.ViewerBridge.notifyViewerReady → window.arkTavernNative.onViewerReady
+   *
+   * Phase 1D-2C-2A: 同时记录 VIEWER_READY 启动诊断。
    */
   _notifyReady() {
+    // Phase 1D-2C-2A: 记录 VIEWER_READY 启动诊断
+    this._emitStartupDiagnostic('VIEWER_READY', '', 'ViewerCore entered READY state');
     if (window.ViewerBridge && typeof window.ViewerBridge.notifyViewerReady === 'function') {
       window.ViewerBridge.notifyViewerReady();
     }
@@ -566,10 +582,82 @@ export class ViewerCore {
    * 通知 ArkTS:Viewer 发生错误。
    * 通过 window.ViewerBridge.notifyViewerError → window.arkTavernNative.onViewerError
    * @param {{code: string, message: string, phase: string, recoverable: boolean}} err
+   *
+   * Phase 1D-2C-2A: 同时记录 VIEWER_INITIALIZE_FAILED 启动诊断,保留底层 err.code。
    */
   _notifyError(err) {
+    // Phase 1D-2C-2A: 记录 VIEWER_INITIALIZE_FAILED 启动诊断(保留底层错误码)
+    var errCode = (err && err.code) ? err.code : 'UNKNOWN';
+    var errMsg = (err && err.message) ? err.message : 'Unknown error';
+    this._emitStartupDiagnostic('VIEWER_INITIALIZE_FAILED', errCode, errMsg);
     if (window.ViewerBridge && typeof window.ViewerBridge.notifyViewerError === 'function') {
       window.ViewerBridge.notifyViewerError(err.code, err.message, err.phase, err.recoverable);
+    }
+  }
+
+  /**
+   * Phase 1D-2C-2A: 记录启动诊断(内部方法)。
+   *
+   * 委托 window.arkTavernVrmRuntimeDiagnostics keeper(ViewerBridge.js 注册)。
+   * 与 _forwardModelLoaderDiagnostic 不同,本方法用于 ViewerCore 自身的启动阶段
+   * (VIEWER_SCENE_READY / VIEWER_CAMERA_READY / VIEWER_MODEL_LOADER_READY /
+   *  VIEWER_FRAME_LOOP_READY / VIEWER_READY / VIEWER_INITIALIZE_FAILED)。
+   *
+   * 安全约束:不记录 cachePath / sourceUri / fd / stack / 用户目录。
+   *
+   * @param {string} stage 启动阶段字符串(与 VrmRuntimeStage 枚举对齐)
+   * @param {string} code 错误码(成功阶段为空字符串)
+   * @param {string} message 简短消息(已截断为 256 字符)
+   */
+  _emitStartupDiagnostic(stage, code, message) {
+    var keeper = window.arkTavernVrmRuntimeDiagnostics;
+    if (!keeper || typeof keeper.record !== 'function') {
+      return;
+    }
+    var msg = String(message || '');
+    if (msg.length > 256) {
+      msg = msg.substring(0, 256);
+    }
+    var diagnostic = {
+      stage: stage,
+      code: code || '',
+      message: msg,
+      resourceId: '',
+      requestMethod: '',
+      httpStatus: 0,
+      mimeType: '',
+      contentLength: 0,
+      timestamp: Date.now()
+    };
+    try {
+      keeper.record(diagnostic);
+    } catch (e) {
+      console.warn('[ViewerCore] startup diagnostic record failed: ' + (e && e.message ? e.message : String(e)));
+    }
+  }
+
+  /**
+   * Phase 1D-2C-1: 转发 ModelLoader 诊断到 arkTavernVrmRuntimeDiagnostics keeper。
+   *
+   * app.js 会在 window.arkTavernVrmRuntimeDiagnostics 上注册 record(diagnostic) 方法。
+   * ViewerCore 不解析诊断内容,只做转发。诊断对象格式由 ViewerModelLoader 保证。
+   *
+   * 安全约束:
+   * - diagnostic 不含 cachePath / sourceUri / fd / stack(由 ViewerModelLoader 保证)
+   * - 转发失败仅日志,不影响加载主流程
+   *
+   * @param {object} diagnostic 诊断对象
+   */
+  _forwardModelLoaderDiagnostic(diagnostic) {
+    var keeper = window.arkTavernVrmRuntimeDiagnostics;
+    if (!keeper || typeof keeper.record !== 'function') {
+      // keeper 未注册,仅日志(不影响加载)
+      return;
+    }
+    try {
+      keeper.record(diagnostic);
+    } catch (e) {
+      console.warn('[ViewerCore] forward model loader diagnostic failed: ' + (e && e.message ? e.message : String(e)));
     }
   }
 }
