@@ -921,6 +921,34 @@ export class ArkWebVrmViewerController implements ArkWebViewerBridgeListener {
     }
   }
 
+  /**
+   * Phase 3A 依赖补齐: 获取动画系统依赖状态(只读)。
+   *
+   * 返回 three-vrm-animation 依赖可用性,包含:
+   * available / packageName / version / loaderAvailable / clipFactoryAvailable /
+   * runtimeNetworkRequired。
+   *
+   * 不暴露 Node 模块路径、本机绝对路径、完整 package.json、许可证全文。
+   *
+   * @returns JSON 字符串,形如
+   *   {"success": true, "dependencyState": {"available": true, "packageName": "@pixiv/three-vrm-animation", "version": "3.5.5", "loaderAvailable": true, "clipFactoryAvailable": true, "runtimeNetworkRequired": false}}
+   */
+  async getAnimationDependencyState(): Promise<string> {
+    if (this.disposed) {
+      const disposedError: ArkWebBridgeErrorPayload = { code: 'DISPOSED', message: 'controller disposed' };
+      const disposedResponse: ArkWebBridgeFailedResponse = { success: false, error: disposedError };
+      return JSON.stringify(disposedResponse);
+    }
+    try {
+      return await this.jsCaller.getAnimationDependencyState();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const failedError: ArkWebBridgeErrorPayload = { code: 'ANIMATION_DEPENDENCY_STATE_QUERY_FAILED', message: msg };
+      const failedResponse: ArkWebBridgeFailedResponse = { success: false, error: failedError };
+      return JSON.stringify(failedResponse);
+    }
+  }
+
   // ===== Web 组件生命周期回调 =====
 
   /**

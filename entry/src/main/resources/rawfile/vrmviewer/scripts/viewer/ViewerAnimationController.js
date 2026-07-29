@@ -10,15 +10,23 @@
  *   - dispose(): 销毁并释放所有资源(不销毁 VRM 模型本身)
  *
  * 不做的事 (Phase 3A 骨架限制):
- *   - 不加载 VRMA 文件 (需要 three-vrm-animation,当前未安装)
- *   - 不创建 AnimationClip (无 VRMA 解析器)
+ *   - 不加载 VRMA 文件 (依赖已就绪但导入流程未实现)
+ *   - 不创建 AnimationClip (createVRMAnimationClip 未实际调用)
  *   - 不实际播放动画 (state 不会进入 PLAYING)
  *   - 不提供 play/pause/stop/seek 控制方法
  *   - 不持有 ViewerCore 引用 (仅通过构造参数 getCurrentVrm 获取当前 VRM)
  *
  * 依赖:
  *   - THREE.AnimationMixer (three.js core 0.176.0, 已可用)
- *   - 不依赖 @pixiv/three-vrm-animation (未安装)
+ *   - @pixiv/three-vrm-animation 3.5.5 (已安装,静态 import 用于依赖探测;
+ *     VRMAnimationLoaderPlugin / createVRMAnimationClip 本阶段不实际调用)
+ *
+ * Phase 3A 依赖补齐:
+ *   - 静态 import { VRMAnimationLoaderPlugin, createVRMAnimationClip } from '@pixiv/three-vrm-animation'
+ *   - 通过 getDependencyState() 暴露只读依赖状态
+ *   - 不暴露 Node 模块路径、本机绝对路径、完整 package.json、许可证全文
+ *   - 不注册 VRMAnimationLoaderPlugin 到生产 GLTFLoader
+ *   - 不调用 createVRMAnimationClip
  *
  * Reference:
  *   - figure-main/index.html:937-938 currentMixer = new THREE.AnimationMixer(vrm.scene)
@@ -44,6 +52,10 @@
  *   任意 → FAILED (错误,仅记录,不阻塞 Viewer)
  */
 import * as THREE from 'three';
+import {
+  VRMAnimationLoaderPlugin,
+  createVRMAnimationClip
+} from '@pixiv/three-vrm-animation';
 
 // ===== 动画状态枚举 (与 ArkTS ArkWebAnimationState 对齐) =====
 export var AnimationState = Object.freeze({
@@ -67,6 +79,15 @@ export var ANIMATION_ERR_MIXER_CREATION_FAILED = 'ANIMATION_MIXER_CREATION_FAILE
 export var ANIMATION_ERR_DELTA_INVALID = 'ANIMATION_DELTA_INVALID';
 export var ANIMATION_ERR_DEPENDENCY_MISSING = 'ANIMATION_DEPENDENCY_MISSING';
 export var ANIMATION_ERR_UNSUPPORTED = 'ANIMATION_UNSUPPORTED';
+export var ANIMATION_ERR_DEPENDENCY_VERSION_MISMATCH = 'ANIMATION_DEPENDENCY_VERSION_MISMATCH';
+export var ANIMATION_ERR_DEPENDENCY_EXPORT_MISSING = 'ANIMATION_DEPENDENCY_EXPORT_MISSING';
+export var ANIMATION_ERR_DEPENDENCY_BUILD_FAILED = 'ANIMATION_DEPENDENCY_BUILD_FAILED';
+export var ANIMATION_ERR_DEPENDENCY_LICENSE_MISSING = 'ANIMATION_DEPENDENCY_LICENSE_MISSING';
+
+// ===== 依赖元数据 (只读,不暴露本机路径) =====
+// 精确版本必须与 tools/vrm-vendor/package.json 锁定值一致。
+var ANIMATION_DEPENDENCY_PACKAGE_NAME = '@pixiv/three-vrm-animation';
+var ANIMATION_DEPENDENCY_VERSION = '3.5.5';
 
 /**
  * 构造错误对象。
@@ -361,22 +382,25 @@ export class ViewerAnimationController {
   }
 
   /**
-   * Phase 3A: 查询动画依赖状态(只读)。
+   * Phase 3A: 查询动画依赖状态(只读,向后兼容)。
    *
    * 返回当前动画系统的依赖可用性信息。
-   * - three-vrm-animation 未安装,VRMA 解析与 createVRMAnimationClip 不可用
+   * - three-vrm-animation 3.5.5 已安装,VRMAnimationLoaderPlugin / createVRMAnimationClip 可用
    * - AnimationMixer 属于 three.js core,已可用
    *
-   * 此方法同时引用所有错误码常量,避免 esbuild tree-shaking 移除未使用的错误码
-   * (ANIMATION_DEPENDENCY_MISSING / ANIMATION_UNSUPPORTED 等在本阶段无实际调用路径)。
+   * 此方法同时引用所有错误码常量,避免 esbuild tree-shaking 移除未使用的错误码。
    *
-   * @returns {{dependencyAvailable: boolean, dependencyName: string, mixerAvailable: boolean, errorCodes: string[]}}
+   * @returns {{dependencyAvailable: boolean, dependencyName: string, dependencyVersion: string, mixerAvailable: boolean, loaderAvailable: boolean, clipFactoryAvailable: boolean, runtimeNetworkRequired: boolean, errorCodes: string[]}}
    */
   getDependencyStatus() {
     return {
-      dependencyAvailable: false,
-      dependencyName: '@pixiv/three-vrm-animation',
+      dependencyAvailable: true,
+      dependencyName: ANIMATION_DEPENDENCY_PACKAGE_NAME,
+      dependencyVersion: ANIMATION_DEPENDENCY_VERSION,
       mixerAvailable: true,
+      loaderAvailable: typeof VRMAnimationLoaderPlugin === 'function',
+      clipFactoryAvailable: typeof createVRMAnimationClip === 'function',
+      runtimeNetworkRequired: false,
       // 引用所有错误码,防止 tree-shaking 移除未使用的常量
       errorCodes: [
         ANIMATION_ERR_DISPOSED,
@@ -386,8 +410,34 @@ export class ViewerAnimationController {
         ANIMATION_ERR_MIXER_CREATION_FAILED,
         ANIMATION_ERR_DELTA_INVALID,
         ANIMATION_ERR_DEPENDENCY_MISSING,
-        ANIMATION_ERR_UNSUPPORTED
+        ANIMATION_ERR_UNSUPPORTED,
+        ANIMATION_ERR_DEPENDENCY_VERSION_MISMATCH,
+        ANIMATION_ERR_DEPENDENCY_EXPORT_MISSING,
+        ANIMATION_ERR_DEPENDENCY_BUILD_FAILED,
+        ANIMATION_ERR_DEPENDENCY_LICENSE_MISSING
       ]
+    };
+  }
+
+  /**
+   * Phase 3A 依赖补齐: 查询依赖状态(只读,规范 §十五)。
+   *
+   * 返回依赖可用性的受控视图,不暴露:
+   *   - Node 模块路径
+   *   - 本机绝对路径
+   *   - 完整 package.json
+   *   - 许可证全文
+   *
+   * @returns {{available: boolean, packageName: string, version: string, loaderAvailable: boolean, clipFactoryAvailable: boolean, runtimeNetworkRequired: boolean}}
+   */
+  getDependencyState() {
+    return {
+      available: true,
+      packageName: ANIMATION_DEPENDENCY_PACKAGE_NAME,
+      version: ANIMATION_DEPENDENCY_VERSION,
+      loaderAvailable: typeof VRMAnimationLoaderPlugin === 'function',
+      clipFactoryAvailable: typeof createVRMAnimationClip === 'function',
+      runtimeNetworkRequired: false
     };
   }
 

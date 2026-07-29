@@ -129,6 +129,31 @@ export class ArkWebAnimationErrorCode {
   public static readonly DELTA_INVALID: string = 'ANIMATION_DELTA_INVALID';
   public static readonly DEPENDENCY_MISSING: string = 'ANIMATION_DEPENDENCY_MISSING';
   public static readonly UNSUPPORTED: string = 'ANIMATION_UNSUPPORTED';
+  public static readonly DEPENDENCY_VERSION_MISMATCH: string = 'ANIMATION_DEPENDENCY_VERSION_MISMATCH';
+  public static readonly DEPENDENCY_EXPORT_MISSING: string = 'ANIMATION_DEPENDENCY_EXPORT_MISSING';
+  public static readonly DEPENDENCY_BUILD_FAILED: string = 'ANIMATION_DEPENDENCY_BUILD_FAILED';
+  public static readonly DEPENDENCY_LICENSE_MISSING: string = 'ANIMATION_DEPENDENCY_LICENSE_MISSING';
+}
+
+/**
+ * Phase 3A 依赖补齐: 动画系统依赖状态(只读)。
+ *
+ * 与 Web 端 ViewerAnimationController.getDependencyState() 返回对象字段一一对应。
+ * 供 Debug Tab / Animation Tab 显示 three-vrm-animation 依赖可用性。
+ *
+ * 不暴露:
+ * - Node 模块路径
+ * - 本机绝对路径
+ * - 完整 package.json
+ * - 许可证全文
+ */
+export interface ArkWebAnimationDependencyState {
+  available: boolean;
+  packageName: string;
+  version: string;
+  loaderAvailable: boolean;
+  clipFactoryAvailable: boolean;
+  runtimeNetworkRequired: boolean;
 }
 
 /**
@@ -341,7 +366,9 @@ export class ArkWebViewerConfig {
     'getEnvironmentSettings',
     // Phase 3A: 动画系统只读查询(不包含 play/pause/stop/seek 等控制方法)
     'getAnimationState',
-    'getAnimationDebugState'
+    'getAnimationDebugState',
+    // Phase 3A 依赖补齐: 动画系统依赖状态只读查询
+    'getAnimationDependencyState'
   ];
 
   /** Bridge 方法白名单:JavaScript → ArkTS。 */

@@ -1386,6 +1386,19 @@ if (window.__arkTavernBootstrapState) {
         var result = v.getAnimationDebugState();
         return { success: true, debugState: result.debugState };
       });
+    },
+
+    /**
+     * Phase 3A 依赖补齐: 获取动画系统依赖状态(只读)。
+     *
+     * @returns {string} JSON 结果
+     *   成功:{"success": true, "dependencyState": {available, packageName, version, loaderAvailable, clipFactoryAvailable, runtimeNetworkRequired}}
+     */
+    getAnimationDependencyState: function () {
+      return callViewer(function (v) {
+        var result = v.getAnimationDependencyState();
+        return { success: true, dependencyState: result.dependencyState };
+      });
     }
   };
 

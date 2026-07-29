@@ -690,6 +690,19 @@ export class ArkWebViewerJsCaller {
     return this.call('getAnimationDebugState');
   }
 
+  /**
+   * Phase 3A 依赖补齐: 调用 window.arkTavernViewerBridge.getAnimationDependencyState()
+   *
+   * 获取动画系统依赖状态(只读),包含 three-vrm-animation 依赖可用性。
+   * 不暴露 Node 模块路径、本机绝对路径、完整 package.json、许可证全文。
+   *
+   * @returns JSON 字符串,形如
+   *   {"success": true, "dependencyState": {"available": true, "packageName": "...", "version": "3.5.5", "loaderAvailable": true, "clipFactoryAvailable": true, "runtimeNetworkRequired": false}}
+   */
+  async getAnimationDependencyState(): Promise<string> {
+    return this.call('getAnimationDependencyState');
+  }
+
   private async call(methodName: string): Promise<string> {
     const fn = this.runJs;
     if (fn === null) {

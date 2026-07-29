@@ -622,6 +622,31 @@ export class ViewerCore {
     return { success: true, debugState: this.animationController.getDebugState() };
   }
 
+  /**
+   * Phase 3A 依赖补齐: 获取动画系统依赖状态(只读)。
+   *
+   * 供 Bridge getAnimationDependencyState 使用,返回 three-vrm-animation 依赖可用性。
+   * 不暴露 Node 模块路径、本机绝对路径、完整 package.json、许可证全文。
+   *
+   * @returns {{success: boolean, dependencyState?: object}}
+   */
+  getAnimationDependencyState() {
+    if (!this.animationController) {
+      return {
+        success: true,
+        dependencyState: {
+          available: false,
+          packageName: '@pixiv/three-vrm-animation',
+          version: '',
+          loaderAvailable: false,
+          clipFactoryAvailable: false,
+          runtimeNetworkRequired: true
+        }
+      };
+    }
+    return { success: true, dependencyState: this.animationController.getDependencyState() };
+  }
+
   // ===== Phase 2A-1: Camera Controls enable/disable =====
 
   /**

@@ -491,6 +491,18 @@ struct VrmViewerPage {
   @State debugAnimationErrorCode: string = '';
   /** Debug:动画错误信息 */
   @State debugAnimationErrorMessage: string = '';
+  /** Debug:动画依赖可用性 (Phase 3A 依赖补齐) */
+  @State debugAnimationDependencyAvailable: boolean = false;
+  /** Debug:动画依赖包名 (Phase 3A 依赖补齐) */
+  @State debugAnimationDependencyPackageName: string = '';
+  /** Debug:动画依赖版本 (Phase 3A 依赖补齐) */
+  @State debugAnimationDependencyVersion: string = '';
+  /** Debug:VRMAnimationLoaderPlugin 可用 (Phase 3A 依赖补齐) */
+  @State debugAnimationLoaderAvailable: boolean = false;
+  /** Debug:createVRMAnimationClip 可用 (Phase 3A 依赖补齐) */
+  @State debugAnimationClipFactoryAvailable: boolean = false;
+  /** Debug:动画依赖是否需要运行时网络 (Phase 3A 依赖补齐) */
+  @State debugAnimationRuntimeNetworkRequired: boolean = false;
 
   aboutToAppear(): void {
     // Phase 2A-3A: 启用 Web 全绘制能力(webPageSnapshot 前置条件)
@@ -1148,6 +1160,36 @@ struct VrmViewerPage {
     }).catch((e: Object) => {
       console.warn('[VrmViewerPage] refreshAnimationDebugState exception: ' + (e instanceof Error ? e.message : String(e)));
     });
+    // Phase 3A 依赖补齐: 同时查询依赖状态
+    this.arkWebController.getAnimationDependencyState().then((resultJson: string) => {
+      this.parseAnimationDependencyState(resultJson);
+    }).catch((e: Object) => {
+      console.warn('[VrmViewerPage] getAnimationDependencyState exception: ' + (e instanceof Error ? e.message : String(e)));
+    });
+  }
+
+  /**
+   * Phase 3A 依赖补齐: 解析 getAnimationDependencyState 返回的 JSON,更新依赖状态。
+   */
+  private parseAnimationDependencyState(resultJson: string): void {
+    try {
+      const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
+      if (obj['success'] !== true) {
+        return;
+      }
+      const depState = obj['dependencyState'] as Record<string, Object>;
+      if (!depState) {
+        return;
+      }
+      this.debugAnimationDependencyAvailable = depState['available'] === true;
+      this.debugAnimationDependencyPackageName = (depState['packageName'] as string) || '';
+      this.debugAnimationDependencyVersion = (depState['version'] as string) || '';
+      this.debugAnimationLoaderAvailable = depState['loaderAvailable'] === true;
+      this.debugAnimationClipFactoryAvailable = depState['clipFactoryAvailable'] === true;
+      this.debugAnimationRuntimeNetworkRequired = depState['runtimeNetworkRequired'] === true;
+    } catch (e) {
+      console.warn('[VrmViewerPage] parseAnimationDependencyState parse failed: ' + (e instanceof Error ? e.message : String(e)));
+    }
   }
 
   /**
@@ -5045,6 +5087,13 @@ struct VrmViewerPage {
       if (this.debugAnimationErrorCode.length > 0) {
         this.DebugRow('Animation Error', `${this.debugAnimationErrorCode}: ${this.debugAnimationErrorMessage}`)
       }
+      // Phase 3A 依赖补齐: 动画依赖状态字段(由 getAnimationDependencyState 解析)
+      this.DebugRow('VRMA Dependency', this.debugAnimationDependencyAvailable ? 'READY' : 'NOT READY')
+      this.DebugRow('three-vrm-animation Version',
+        this.debugAnimationDependencyVersion.length > 0 ? this.debugAnimationDependencyVersion : '-')
+      this.DebugRow('VRMAnimationLoaderPlugin', this.debugAnimationLoaderAvailable ? 'READY' : 'NOT READY')
+      this.DebugRow('createVRMAnimationClip', this.debugAnimationClipFactoryAvailable ? 'READY' : 'NOT READY')
+      this.DebugRow('Runtime Network', this.debugAnimationRuntimeNetworkRequired ? 'YES (FAIL)' : 'NO (OK)')
       this.DebugRow('Humanoid', 'NOT INITIALIZED')
       this.DebugRow('Spring Bone', 'NOT INITIALIZED')
       this.DebugRow('Detail', this.viewerDetail)
