@@ -260,6 +260,50 @@ export class ArkWebViewerJsCaller {
     return this.call('getCameraState');
   }
 
+  // ===== Phase 2B: 平滑重置 =====
+
+  /**
+   * Phase 2B: 调用 window.arkTavernViewerBridge.smoothResetCamera(options)
+   *
+   * 同步启动平滑重置过渡。最终状态通过 getCameraTransitionState() 轮询获取。
+   *
+   * @param optionsJson 选项 JSON 字符串,形如 '{"durationSeconds":0.45,"preserveControlsEnabled":true}'
+   *   - durationSeconds: 过渡时长(0.1~2.0 秒),默认 0.45
+   *   - preserveControlsEnabled: 是否保持 controls.enabled,默认 true
+   * @returns JSON 字符串
+   *   启动成功: {"success": true, "state": "READY", "transitionState": "RUNNING", "transition": {...}}
+   *   启动失败: {"success": false, "error": {...}, "transitionState": "..."}
+   */
+  async smoothResetCamera(optionsJson: string): Promise<string> {
+    return this.callWithStringArg('smoothResetCamera', optionsJson);
+  }
+
+  /**
+   * Phase 2B: 调用 window.arkTavernViewerBridge.getCameraTransitionState()
+   *
+   * 获取当前相机过渡状态,用于轮询平滑重置进度。
+   *
+   * @returns JSON 字符串
+   *   {"success": true, "state": "READY", "transition": {...}}
+   *   transition.state: IDLE/RUNNING/COMPLETED/CANCELLED/FAILED/DISPOSED
+   */
+  async getCameraTransitionState(): Promise<string> {
+    return this.call('getCameraTransitionState');
+  }
+
+  /**
+   * Phase 2B: 调用 window.arkTavernViewerBridge.cancelCameraTransition(reason)
+   *
+   * 取消正在运行的平滑相机过渡,保留取消瞬间的相机位置。
+   *
+   * @param reason 取消原因字符串
+   * @returns JSON 字符串
+   *   {"success": true, "state": "READY", "transition": {...}}
+   */
+  async cancelCameraTransition(reason: string): Promise<string> {
+    return this.callWithStringArg('cancelCameraTransition', reason);
+  }
+
   /** 调用 window.arkTavernViewerBridge.resizeViewer(width, height) */
   async resizeViewer(width: number, height: number): Promise<string> {
     return this.callWithArgs('resizeViewer', [width, height]);

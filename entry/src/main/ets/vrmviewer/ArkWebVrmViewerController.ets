@@ -22,10 +22,15 @@
 import { webview } from '@kit.ArkWeb';
 import {
   ArkWebAnimationState,
+  ArkWebBridgeErrorPayload,
+  ArkWebBridgeFailedResponse,
+  ArkWebCameraTransitionState,
+  ArkWebCameraTransitionStateResponse,
   ArkWebModelState,
   ArkWebViewerConfig,
   ArkWebViewerErrorCode,
-  ArkWebViewerState
+  ArkWebViewerState,
+  buildSmoothResetOptionsJson
 } from './ArkWebVrmViewerTypes';
 import {
   ArkWebViewerBridgeListener,
@@ -193,6 +198,112 @@ export class ArkWebVrmViewerController implements ArkWebViewerBridgeListener {
       const msg = e instanceof Error ? e.message : String(e);
       console.warn('[ArkWebVrmViewerController] getCameraState failed: ' + msg);
       return '';
+    }
+  }
+
+  // ===== Phase 2B: 平滑重置 =====
+
+  /**
+   * Phase 2B: 平滑重置相机到 Figure 基准位置。
+   *
+   * 同步启动过渡,由帧循环异步驱动完成。最终状态通过 getCameraTransitionState() 轮询获取。
+   *
+   * @param durationSeconds 过渡时长(秒),默认 0.45,合法范围 0.1~2.0
+   * @param preserveControlsEnabled 是否保持 controls.enabled,默认 true
+   * @returns JSON 字符串
+   *   启动成功: {"success": true, "state": "READY", "transitionState": "RUNNING", "transition": {...}}
+   *   启动失败: {"success": false, "error": {...}}
+   */
+  async smoothResetCamera(
+    durationSeconds: number = 0.45,
+    preserveControlsEnabled: boolean = true
+  ): Promise<string> {
+    if (this.disposed) {
+      console.warn('[ArkWebVrmViewerController] smoothResetCamera ignored: disposed');
+      const disposedError: ArkWebBridgeErrorPayload = { code: 'DISPOSED', message: 'controller disposed' };
+      const disposedResponse: ArkWebBridgeFailedResponse = { success: false, error: disposedError };
+      return JSON.stringify(disposedResponse);
+    }
+    try {
+      const optionsJson: string = buildSmoothResetOptionsJson(durationSeconds, preserveControlsEnabled);
+      const resultJson: string = await this.jsCaller.smoothResetCamera(optionsJson);
+      console.info('[ArkWebVrmViewerController] smoothResetCamera result: ' + resultJson);
+      return resultJson;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.warn('[ArkWebVrmViewerController] smoothResetCamera failed: ' + msg);
+      const failedError: ArkWebBridgeErrorPayload = { code: 'SMOOTH_RESET_FAILED', message: msg };
+      const failedResponse: ArkWebBridgeFailedResponse = { success: false, error: failedError };
+      return JSON.stringify(failedResponse);
+    }
+  }
+
+  /**
+   * Phase 2B: 获取当前相机过渡状态。
+   *
+   * 用于 ArkUI 轮询平滑重置进度。
+   *
+   * @returns JSON 字符串
+   *   {"success": true, "state": "READY", "transition": {...}}
+   */
+  async getCameraTransitionState(): Promise<string> {
+    if (this.disposed) {
+      console.warn('[ArkWebVrmViewerController] getCameraTransitionState ignored: disposed');
+      const idleTransition: ArkWebCameraTransitionStateResponse = {
+        success: false,
+        transition: {
+          state: ArkWebCameraTransitionState.IDLE,
+          progress: 0,
+          durationSeconds: 0,
+          elapsedSeconds: 0,
+          cancelReason: '',
+          errorCode: '',
+          errorMessage: '',
+          startedAt: 0,
+          completedAt: 0
+        }
+      };
+      return JSON.stringify(idleTransition);
+    }
+    try {
+      const resultJson: string = await this.jsCaller.getCameraTransitionState();
+      return resultJson;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.warn('[ArkWebVrmViewerController] getCameraTransitionState failed: ' + msg);
+      const queryError: ArkWebBridgeErrorPayload = { code: 'TRANSITION_STATE_QUERY_FAILED', message: msg };
+      const queryResponse: ArkWebBridgeFailedResponse = { success: false, error: queryError };
+      return JSON.stringify(queryResponse);
+    }
+  }
+
+  /**
+   * Phase 2B: 取消当前平滑相机过渡。
+   *
+   * 取消后保留取消瞬间的相机位置,不跳到终点,不恢复起点。
+   *
+   * @param reason 取消原因字符串
+   * @returns JSON 字符串
+   *   {"success": true, "state": "READY", "transition": {...}}
+   */
+  async cancelCameraTransition(reason: string): Promise<string> {
+    if (this.disposed) {
+      console.warn('[ArkWebVrmViewerController] cancelCameraTransition ignored: disposed');
+      const disposedError: ArkWebBridgeErrorPayload = { code: 'DISPOSED', message: 'controller disposed' };
+      const disposedResponse: ArkWebBridgeFailedResponse = { success: false, error: disposedError };
+      return JSON.stringify(disposedResponse);
+    }
+    try {
+      const safeReason: string = typeof reason === 'string' && reason.length > 0 ? reason : 'UNKNOWN';
+      const resultJson: string = await this.jsCaller.cancelCameraTransition(safeReason);
+      console.info('[ArkWebVrmViewerController] cancelCameraTransition result: ' + resultJson);
+      return resultJson;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.warn('[ArkWebVrmViewerController] cancelCameraTransition failed: ' + msg);
+      const cancelError: ArkWebBridgeErrorPayload = { code: 'CANCEL_TRANSITION_FAILED', message: msg };
+      const cancelResponse: ArkWebBridgeFailedResponse = { success: false, error: cancelError };
+      return JSON.stringify(cancelResponse);
     }
   }
 
@@ -618,6 +729,11 @@ export class ArkWebVrmViewerController implements ArkWebViewerBridgeListener {
   /**
    * Web 组件控制器已附加。
    * 此时可以配置 WebviewController(如开启调试)。
+   *
+   * Phase 2A-3A: enableWholeWebPageDrawing() 已移至 VrmViewerPage.aboutToAppear 中调用。
+   * 官方文档要求在 aboutToAppear 生命周期(Web 组件初始化前)调用静态方法;
+   * 在 onControllerAttached 中调用太晚会导致 webPageSnapshot 返回 status=false
+   * (width/height=0, map empty)。
    */
   onControllerAttached(): void {
     if (this.disposed) {

@@ -372,6 +372,119 @@ if (window.__arkTavernBootstrapState) {
       });
     },
 
+    // ===== Phase 2B: 平滑重置 =====
+
+    /**
+     * Phase 2B: 平滑重置相机到 Figure 基准位置。
+     *
+     * 同步启动过渡,由现有帧循环异步驱动完成。不创建第二个 requestAnimationFrame。
+     *
+     * 终点固定为 Figure 基准(与 resetCamera() 完全一致):
+     *   FOV=30, near=0.1, far=20, position=(0,1.25,2), target=(0,1.25,0)
+     *
+     * 起点为当前真实相机状态。缓动:smootherStep。
+     *
+     * @param {object} [options] 可选参数
+     *   - durationSeconds: 过渡时长(0.1~2.0 秒),默认 0.45
+     *   - preserveControlsEnabled: 是否保持 controls.enabled,默认 true
+     * @returns {string} JSON 结果
+     *   启动成功: {"success": true, "state": "RUNNING", "transition": {...}}
+     *   启动失败: {"success": false, "error": {...}, "transition": {...}|undefined}
+     */
+    smoothResetCamera: function (options) {
+      return callViewer(function (v) {
+        var opts = options || {};
+        // 严格数值校验:durationSeconds 必须为有限数值
+        if (opts.durationSeconds !== undefined && typeof opts.durationSeconds !== 'number') {
+          return {
+            success: false,
+            state: v.getState(),
+            error: {
+              code: 'CAMERA_SMOOTH_RESET_DURATION_INVALID',
+              phase: v.getState(),
+              message: 'durationSeconds must be a number',
+              recoverable: false
+            }
+          };
+        }
+        // 严格布尔校验:preserveControlsEnabled 必须为布尔
+        if (opts.preserveControlsEnabled !== undefined && typeof opts.preserveControlsEnabled !== 'boolean') {
+          return {
+            success: false,
+            state: v.getState(),
+            error: {
+              code: 'INVALID_ARGUMENT',
+              phase: v.getState(),
+              message: 'preserveControlsEnabled must be a boolean',
+              recoverable: false
+            }
+          };
+        }
+        var result = v.smoothResetCamera(opts);
+        if (result && result.success) {
+          return {
+            success: true,
+            state: v.getState(),
+            transitionState: result.state,
+            transition: result.transition
+          };
+        }
+        return {
+          success: false,
+          state: v.getState(),
+          transitionState: result && result.state ? result.state : undefined,
+          transition: result && result.transition ? result.transition : undefined,
+          error: result && result.error ? result.error : {
+            code: 'SMOOTH_RESET_FAILED',
+            phase: v.getState(),
+            message: 'smoothResetCamera failed',
+            recoverable: false
+          }
+        };
+      });
+    },
+
+    /**
+     * Phase 2B: 获取当前相机过渡状态。
+     *
+     * 用于 ArkTS 轮询平滑重置进度。
+     *
+     * @returns {string} JSON 结果
+     *   {"success": true, "state": viewerState, "transition": {...}}
+     *   transition.state: IDLE/RUNNING/COMPLETED/CANCELLED/FAILED/DISPOSED
+     */
+    getCameraTransitionState: function () {
+      return callViewer(function (v) {
+        var result = v.getCameraTransitionState();
+        return {
+          success: true,
+          state: v.getState(),
+          transition: result.transition
+        };
+      });
+    },
+
+    /**
+     * Phase 2B: 取消当前平滑相机过渡。
+     *
+     * 取消后保留取消瞬间的相机位置,不跳到终点,不恢复起点。
+     *
+     * @param {string} reason 取消原因
+     * @returns {string} JSON 结果
+     *   {"success": true, "state": viewerState, "transition": {...}}
+     */
+    cancelCameraTransition: function (reason) {
+      return callViewer(function (v) {
+        var r = typeof reason === 'string' ? reason : String(reason || 'UNKNOWN');
+        var result = v.cancelCameraTransition(r);
+        return {
+          success: true,
+          state: v.getState(),
+          transition: result.transition
+        };
+      });
+    },
+
     /** 调整 Viewer 尺寸(ArkTS 主动通知容器尺寸变化时调用) */
     resizeViewer: function (width, height) {
       return callViewer(function (v) {

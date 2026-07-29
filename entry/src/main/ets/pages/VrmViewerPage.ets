@@ -44,13 +44,24 @@
 
 import { router, promptAction } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
+import { webview } from '@kit.ArkWeb';
 import {
   ArkWebViewerConfig,
   ArkWebViewerState,
   WebPreparedResourceErrorCode,
   WebPreparedResourceState,
   ArkWebCameraState,
-  parseCameraState
+  ArkWebCameraTransitionResult,
+  ArkWebCameraTransitionState,
+  ARKWEB_CAMERA_SMOOTH_RESET_DEFAULT_DURATION,
+  ARKWEB_CAMERA_TRANSITION_POLL_INTERVAL_MS,
+  ARKWEB_CAMERA_TRANSITION_POLL_TIMEOUT_MS,
+  parseCameraState,
+  parseCameraTransitionResult,
+  ScreenshotState,
+  ScreenshotResult,
+  ScreenshotErrorCode,
+  createIdleScreenshotResult
 } from '../vrmviewer/ArkWebVrmViewerTypes';
 import {
   ArkWebViewerEventListener,
@@ -82,6 +93,9 @@ import {
   VrmRuntimeDiagnostic,
   VrmRuntimeStage
 } from '../vrmviewer/ArkWebVrmRuntimeDiagnosticsTypes';
+import {
+  ArkWebScreenshotController
+} from '../vrmviewer/ArkWebScreenshotController';
 
 /** 查看器模式 */
 enum ViewerMode {
@@ -280,6 +294,8 @@ struct VrmViewerPage {
   private resourceProvider: ArkWebModelResourceProvider | null = null;
   /** 导入元数据持久化存储(Phase 1D-2C-1,在 aboutToAppear 中创建) */
   private importStateStore: ArkWebModelImportStateStore | null = null;
+  /** 3D 视口截图控制器(Phase 2A-3A,在 aboutToAppear 中创建) */
+  private screenshotController: ArkWebScreenshotController | null = null;
   /** 事件监听器包装器(注入闭包更新 @State) */
   private eventListener: ViewerEventListener = new ViewerEventListener();
 
@@ -374,7 +390,53 @@ struct VrmViewerPage {
   @State debugCameraAspect: number = 1;
   @State debugCameraLastAction: string = 'INITIALIZE';
 
+  // ===== Phase 2B: 平滑相机过渡状态 =====
+  /** Debug:过渡状态 (IDLE/RUNNING/COMPLETED/CANCELLED/FAILED/DISPOSED) */
+  @State debugCameraTransitionState: string = 'IDLE';
+  /** Debug:过渡进度 [0,1] */
+  @State debugCameraTransitionProgress: number = 0;
+  /** Debug:过渡总时长(秒) */
+  @State debugCameraTransitionDuration: number = 0;
+  /** Debug:已过过渡时间(秒) */
+  @State debugCameraTransitionElapsed: number = 0;
+  /** Debug:取消原因 */
+  @State debugCameraTransitionCancelReason: string = '';
+  /** Debug:错误码 */
+  @State debugCameraTransitionErrorCode: string = '';
+  /** Debug:错误信息 */
+  @State debugCameraTransitionErrorMessage: string = '';
+  /** 重置按钮禁用 (平滑重置进行中) */
+  @State resetButtonDisabled: boolean = false;
+  /** 平滑过渡状态轮询计时器 ID */
+  private cameraTransitionPollTimerId: number = -1;
+  /** 平滑过渡轮询开始时间戳(ms) */
+  private cameraTransitionPollStartedAt: number = 0;
+
+  // ===== Phase 2A-3A: 截图状态 =====
+  @State screenshotState: string = 'IDLE';
+  @State screenshotFileName: string = '';
+  @State screenshotWidth: number = 0;
+  @State screenshotHeight: number = 0;
+  @State screenshotByteLength: number = 0;
+  @State screenshotCreatedAt: number = 0;
+  @State screenshotErrorCode: string = '';
+  @State screenshotErrorMessage: string = '';
+  @State screenshotInProgress: boolean = false;
+
   aboutToAppear(): void {
+    // Phase 2A-3A: 启用 Web 全绘制能力(webPageSnapshot 前置条件)
+    // 必须在 aboutToAppear 中调用(Web 组件初始化前),官方文档明确要求
+    // 之前在 onControllerAttached 中调用太晚,导致 webPageSnapshot 返回 status=false
+    try {
+      webview.WebviewController.enableWholeWebPageDrawing();
+      console.info('[VrmViewerPage] enableWholeWebPageDrawing called in aboutToAppear');
+    } catch (e) {
+      console.warn('[VrmViewerPage] enableWholeWebPageDrawing failed: ' +
+        (e instanceof Error ? e.message : String(e)));
+    }
+    // Phase 2B: 重新进入页面时重置 Camera Transition Debug 状态到 IDLE
+    this.resetCameraTransitionDebugState();
+
     // 注入闭包:Controller 回调 → 更新 @State
     this.eventListener.onStateChangedFn = (state: ArkWebViewerState, detail: string) => {
       this.viewerState = state;
@@ -443,6 +505,15 @@ struct VrmViewerPage {
       this.startRestoreFromStateStore();
     }
 
+    // Phase 2A-3A:创建截图控制器(Route A: Native ArkWeb Snapshot)
+    if (this.screenshotController === null) {
+      this.screenshotController = new ArkWebScreenshotController(
+        this.arkWebController.getWebviewController(),
+        ctx.cacheDir,
+        () => this.arkWebController.getState()
+      );
+    }
+
     // Web 组件加载由 build() 触发,初始化在 onPageEnd 回调中完成
   }
 
@@ -490,6 +561,8 @@ struct VrmViewerPage {
     }
     this.lightUpdateScheduled = false;
     this.lightUpdateGeneration++;
+    // Phase 2B: 停止相机过渡状态轮询(页面销毁不再调用 JavaScript)
+    this.stopCameraTransitionPolling();
     // Phase 1D-2B-2:1. 停止用户模型加载结果轮询
     this.stopLoadPolling();
     this.resetLoadState();
@@ -523,6 +596,11 @@ struct VrmViewerPage {
     if (this.importStateStore !== null) {
       this.importStateStore.dispose();
       this.importStateStore = null;
+    }
+    // Phase 2A-3A:9. 销毁截图控制器(不删除已保存的截图文件)
+    if (this.screenshotController !== null) {
+      this.screenshotController.dispose();
+      this.screenshotController = null;
     }
     // 清空恢复状态
     this.pendingRestoredFile = null;
@@ -1013,29 +1091,258 @@ struct VrmViewerPage {
   }
 
   /**
-   * Phase 2A-2: 重置按钮。
+   * Phase 2B: 重置按钮(用户可见的默认重置行为)。
    *
-   * 重置相机到 Figure 基准位置(FOV=30, near=0.1, far=20, position=(0,1.25,2), target=(0,1.25,0))。
-   * 不依赖当前模型大小。成功后刷新 Camera Debug。
+   * 调用 smoothResetCamera() 启动平滑重置过渡。
+   * - 同步启动,异步完成(由帧循环驱动)
+   * - 启动后立即禁用重置按钮
+   * - 启动状态轮询(100ms 间隔,最长 3 秒)
+   * - 终态 (COMPLETED/CANCELLED/FAILED/DISPOSED) 停止轮询并恢复按钮
+   * - COMPLETED 时刷新 Camera Debug
+   *
+   * 即时重置 API resetCamera() 保留,本阶段不暴露第二个常驻按钮。
    */
   private async onResetButton(): Promise<void> {
+    if (this.resetButtonDisabled) {
+      promptAction.showToast({ message: '正在重置,请稍候' });
+      return;
+    }
+    if (this.viewerState !== ArkWebViewerState.READY) {
+      promptAction.showToast({ message: '重置失败:Viewer 未就绪' });
+      return;
+    }
+    this.resetButtonDisabled = true;
     try {
-      const resultJson: string = await this.arkWebController.resetCamera();
-      if (resultJson && resultJson.length > 0) {
-        const cameraState: ArkWebCameraState | null = parseCameraState(resultJson);
-        if (cameraState) {
-          this.updateCameraDebugState(cameraState);
-          promptAction.showToast({ message: '已重置' });
-        } else {
-          promptAction.showToast({ message: '重置失败:状态解析失败' });
-        }
+      const resultJson: string = await this.arkWebController.smoothResetCamera(
+        ARKWEB_CAMERA_SMOOTH_RESET_DEFAULT_DURATION,
+        true
+      );
+      const parsed: ArkWebCameraTransitionResult | null = parseCameraTransitionResult(resultJson);
+      if (parsed === null) {
+        promptAction.showToast({ message: '重置失败:启动结果解析失败' });
+        this.resetButtonDisabled = false;
+        return;
+      }
+      if (parsed.state === ArkWebCameraTransitionState.RUNNING) {
+        // 启动成功,开始轮询
+        this.updateCameraTransitionDebugState(parsed);
+        this.startCameraTransitionPolling();
+        promptAction.showToast({ message: '正在重置...' });
       } else {
-        promptAction.showToast({ message: '重置失败:Viewer 未就绪' });
+        // 启动失败或状态非 RUNNING (例如 ALREADY_RUNNING 已被取消等)
+        this.updateCameraTransitionDebugState(parsed);
+        this.resetButtonDisabled = false;
+        const errMsg: string = parsed.errorMessage.length > 0
+          ? parsed.errorMessage
+          : (parsed.errorCode.length > 0 ? parsed.errorCode : '未知错误');
+        promptAction.showToast({ message: '重置失败:' + errMsg });
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
+      this.resetButtonDisabled = false;
       promptAction.showToast({ message: '重置失败:' + msg });
     }
+  }
+
+  /**
+   * Phase 2B: 启动相机过渡状态轮询。
+   *
+   * - 间隔:ARKWEB_CAMERA_TRANSITION_POLL_INTERVAL_MS (100ms)
+   * - 超时:ARKWEB_CAMERA_TRANSITION_POLL_TIMEOUT_MS (3000ms)
+   * - 终态 (COMPLETED/CANCELLED/FAILED/DISPOSED) 停止轮询
+   * - 页面销毁时停止轮询 (stopCameraTransitionPolling)
+   */
+  private startCameraTransitionPolling(): void {
+    this.stopCameraTransitionPolling();
+    this.cameraTransitionPollStartedAt = Date.now();
+    this.cameraTransitionPollTimerId = setInterval(
+      () => { this.pollCameraTransitionState(); },
+      ARKWEB_CAMERA_TRANSITION_POLL_INTERVAL_MS
+    );
+  }
+
+  /**
+   * Phase 2B: 停止相机过渡状态轮询(取消计时器,不重置状态变量)。
+   */
+  private stopCameraTransitionPolling(): void {
+    if (this.cameraTransitionPollTimerId !== -1) {
+      clearInterval(this.cameraTransitionPollTimerId);
+      this.cameraTransitionPollTimerId = -1;
+    }
+    this.cameraTransitionPollStartedAt = 0;
+  }
+
+  /**
+   * Phase 2B: 轮询一次相机过渡状态。
+   *
+   * 终态时:
+   * - 停止轮询
+   * - 恢复重置按钮
+   * - COMPLETED 时刷新 Camera Debug
+   * - 超时强制停止轮询并恢复按钮 (保留最后一次状态)
+   */
+  private async pollCameraTransitionState(): Promise<void> {
+    // 超时检查
+    const elapsedMs: number = Date.now() - this.cameraTransitionPollStartedAt;
+    if (elapsedMs >= ARKWEB_CAMERA_TRANSITION_POLL_TIMEOUT_MS) {
+      console.warn('[VrmViewerPage] camera transition poll timeout, stopping');
+      this.stopCameraTransitionPolling();
+      this.resetButtonDisabled = false;
+      return;
+    }
+    try {
+      const resultJson: string = await this.arkWebController.getCameraTransitionState();
+      const parsed: ArkWebCameraTransitionResult | null = parseCameraTransitionResult(resultJson);
+      if (parsed === null) {
+        console.warn('[VrmViewerPage] pollCameraTransitionState: parse failed');
+        return;
+      }
+      this.updateCameraTransitionDebugState(parsed);
+      // 终态检查
+      if (parsed.state === ArkWebCameraTransitionState.COMPLETED ||
+          parsed.state === ArkWebCameraTransitionState.CANCELLED ||
+          parsed.state === ArkWebCameraTransitionState.FAILED ||
+          parsed.state === ArkWebCameraTransitionState.DISPOSED) {
+        this.stopCameraTransitionPolling();
+        this.resetButtonDisabled = false;
+        // COMPLETED 时刷新 Camera Debug
+        if (parsed.state === ArkWebCameraTransitionState.COMPLETED) {
+          this.refreshCameraDebugState();
+          promptAction.showToast({ message: '已重置' });
+        } else if (parsed.state === ArkWebCameraTransitionState.CANCELLED) {
+          promptAction.showToast({ message: '重置已取消:' + parsed.cancelReason });
+        } else if (parsed.state === ArkWebCameraTransitionState.FAILED) {
+          promptAction.showToast({ message: '重置失败:' + parsed.errorCode });
+        }
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.warn('[VrmViewerPage] pollCameraTransitionState failed: ' + msg);
+    }
+  }
+
+  /**
+   * Phase 2B: 用 ArkWebCameraTransitionResult 更新 Camera Transition Debug 状态变量。
+   *
+   * @param transition 解析后的过渡结果
+   */
+  private updateCameraTransitionDebugState(transition: ArkWebCameraTransitionResult): void {
+    this.debugCameraTransitionState = transition.state;
+    this.debugCameraTransitionProgress = transition.progress;
+    this.debugCameraTransitionDuration = transition.durationSeconds;
+    this.debugCameraTransitionElapsed = transition.elapsedSeconds;
+    this.debugCameraTransitionCancelReason = transition.cancelReason;
+    this.debugCameraTransitionErrorCode = transition.errorCode;
+    this.debugCameraTransitionErrorMessage = transition.errorMessage;
+  }
+
+  /**
+   * Phase 2B: 重置 Camera Transition Debug 状态到 IDLE (页面重新进入时)。
+   */
+  private resetCameraTransitionDebugState(): void {
+    this.debugCameraTransitionState = 'IDLE';
+    this.debugCameraTransitionProgress = 0;
+    this.debugCameraTransitionDuration = 0;
+    this.debugCameraTransitionElapsed = 0;
+    this.debugCameraTransitionCancelReason = '';
+    this.debugCameraTransitionErrorCode = '';
+    this.debugCameraTransitionErrorMessage = '';
+    this.resetButtonDisabled = false;
+  }
+
+  /**
+   * Phase 2A-3A: 截图按钮。
+   *
+   * 捕获 Three.js 3D 视口(ArkWeb 快照),编码为 PNG,原子写入应用缓存。
+   * 截图期间只禁用截图按钮,不禁用 Frame Loop / 模型 / 相机 / 页面。
+   * 成功显示文件名/尺寸/大小,失败显示具体错误码。
+   */
+  private async onScreenshotButton(): Promise<void> {
+    if (this.screenshotController === null) {
+      promptAction.showToast({ message: '截图控制器未初始化' });
+      return;
+    }
+    if (this.screenshotInProgress) {
+      promptAction.showToast({ message: '截图进行中,请稍候' });
+      return;
+    }
+    if (this.viewerState !== ArkWebViewerState.READY) {
+      promptAction.showToast({ message: 'Viewer 未就绪' });
+      return;
+    }
+
+    this.screenshotInProgress = true;
+    this.screenshotState = 'CAPTURING';
+    this.screenshotErrorCode = '';
+    this.screenshotErrorMessage = '';
+
+    try {
+      const result: ScreenshotResult = await this.screenshotController.capture();
+      this.updateScreenshotState(result);
+      if (result.state === ScreenshotState.READY) {
+        promptAction.showToast({
+          message: `截图已保存到应用缓存\n${result.fileName}\n${result.width}x${result.height} · ${this.formatByteLength(result.byteLength)}`
+        });
+      } else {
+        promptAction.showToast({
+          message: `截图失败:${result.errorCode}\n${result.errorMessage}`
+        });
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.screenshotState = 'FAILED';
+      this.screenshotErrorCode = ScreenshotErrorCode.EXCEPTION;
+      this.screenshotErrorMessage = msg;
+      promptAction.showToast({ message: '截图失败:' + msg });
+    } finally {
+      this.screenshotInProgress = false;
+    }
+  }
+
+  /**
+   * Phase 2A-3A: 更新截图 @State(从 ScreenshotResult)。
+   *
+   * 安全约束:不显示 cachePath。
+   */
+  private updateScreenshotState(result: ScreenshotResult): void {
+    this.screenshotState = result.state;
+    this.screenshotFileName = result.fileName;
+    this.screenshotWidth = result.width;
+    this.screenshotHeight = result.height;
+    this.screenshotByteLength = result.byteLength;
+    this.screenshotCreatedAt = result.createdAt;
+    this.screenshotErrorCode = result.errorCode;
+    this.screenshotErrorMessage = result.errorMessage;
+  }
+
+  /**
+   * Phase 2A-3A: 格式化字节数为可读字符串。
+   */
+  private formatByteLength(bytes: number): string {
+    if (bytes < 1024) {
+      return `${bytes} B`;
+    }
+    if (bytes < 1024 * 1024) {
+      return `${(bytes / 1024).toFixed(1)} KB`;
+    }
+    return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  }
+
+  /**
+   * Phase 2A-3A: 格式化时间戳为可读字符串。
+   */
+  private formatTimestamp(ts: number): string {
+    if (ts === 0) {
+      return '-';
+    }
+    const d: Date = new Date(ts);
+    const yyyy: string = String(d.getFullYear());
+    const mm: string = String(d.getMonth() + 1).padStart(2, '0');
+    const dd: string = String(d.getDate()).padStart(2, '0');
+    const hh: string = String(d.getHours()).padStart(2, '0');
+    const mi: string = String(d.getMinutes()).padStart(2, '0');
+    const ss: string = String(d.getSeconds()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}`;
   }
 
   /**
@@ -2941,8 +3248,8 @@ struct VrmViewerPage {
     Row() {
       Column() {
         this.QuickButton('聚焦', () => { this.onFocusButton(); })
-        this.QuickButton('重置', () => { this.onResetButton(); })
-        this.QuickButton('截图', () => { this.showPlaceholderToast(); })
+        this.QuickButton('重置', () => { this.onResetButton(); }, this.resetButtonDisabled)
+        this.QuickButton('截图', () => { this.onScreenshotButton(); })
         this.QuickButton('设置', () => { this.showPlaceholderToast(); })
       }
       .backgroundColor('#99000000')
@@ -2958,17 +3265,21 @@ struct VrmViewerPage {
   }
 
   @Builder
-  QuickButton(label: string, action: () => void) {
+  QuickButton(label: string, action: () => void, disabled: boolean = false) {
     Text(label)
       .fontSize($r('app.float.app_font_caption'))
-      .fontColor('#FFFFFF')
+      .fontColor(disabled ? '#80FFFFFF' : '#FFFFFF')
       .textAlign(TextAlign.Center)
       .width(44)
       .height(44)
       .borderRadius($r('app.float.app_radius_sm'))
       .margin({ top: 4, bottom: 4 })
+      .opacity(disabled ? 0.5 : 1.0)
+      .enabled(!disabled)
       .onClick(() => {
-        action();
+        if (!disabled) {
+          action();
+        }
       })
   }
 
@@ -3790,6 +4101,41 @@ struct VrmViewerPage {
         this.debugCameraNear.toFixed(3) + ' / ' + this.debugCameraFar.toFixed(3))
       this.DebugRow('Camera Aspect', this.debugCameraAspect.toFixed(3))
       this.DebugRow('Camera Last Action', this.debugCameraLastAction)
+
+      // Phase 2B: Camera Transition Debug
+      this.DebugRow('Transition State', this.debugCameraTransitionState)
+      this.DebugRow('Transition Progress',
+        (this.debugCameraTransitionProgress * 100).toFixed(0) + '%')
+      this.DebugRow('Transition Duration',
+        this.debugCameraTransitionDuration > 0
+          ? this.debugCameraTransitionDuration.toFixed(2) + 's'
+          : '-')
+      this.DebugRow('Transition Elapsed',
+        this.debugCameraTransitionDuration > 0
+          ? this.debugCameraTransitionElapsed.toFixed(2) + 's'
+          : '-')
+      if (this.debugCameraTransitionCancelReason.length > 0) {
+        this.DebugRow('Transition Cancel', this.debugCameraTransitionCancelReason)
+      }
+      if (this.debugCameraTransitionErrorCode.length > 0) {
+        this.DebugRow('Transition Error',
+          this.debugCameraTransitionErrorCode + ': ' + this.debugCameraTransitionErrorMessage)
+      }
+
+      // Phase 2A-3A: 截图状态(不显示 cachePath)
+      this.DebugRow('Screenshot State', this.screenshotState)
+      this.DebugRow('Screenshot File', this.screenshotFileName.length > 0 ? this.screenshotFileName : '-')
+      this.DebugRow('Screenshot Size',
+        this.screenshotWidth > 0 && this.screenshotHeight > 0
+          ? `${this.screenshotWidth}x${this.screenshotHeight}`
+          : '-')
+      this.DebugRow('Screenshot Bytes',
+        this.screenshotByteLength > 0 ? this.formatByteLength(this.screenshotByteLength) : '-')
+      this.DebugRow('Screenshot Time',
+        this.screenshotCreatedAt > 0 ? this.formatTimestamp(this.screenshotCreatedAt) : '-')
+      if (this.screenshotErrorCode.length > 0) {
+        this.DebugRow('Screenshot Error', `${this.screenshotErrorCode}: ${this.screenshotErrorMessage}`)
+      }
 
       this.DebugRow('Animation', 'NOT INITIALIZED')
       this.DebugRow('Humanoid', 'NOT INITIALIZED')

@@ -29376,12 +29376,49 @@ void main() {
   var ACTION_INITIALIZE = "INITIALIZE";
   var ACTION_RESET = "RESET";
   var ACTION_FOCUS = "FOCUS";
+  var ACTION_MODEL_REPLACED_FOCUS = "MODEL_REPLACED_FOCUS";
+  var ACTION_SMOOTH_RESET = "SMOOTH_RESET";
+  var CameraTransitionState = Object.freeze({
+    IDLE: "IDLE",
+    RUNNING: "RUNNING",
+    COMPLETED: "COMPLETED",
+    CANCELLED: "CANCELLED",
+    FAILED: "FAILED",
+    DISPOSED: "DISPOSED"
+  });
+  var CANCEL_REASON_USER_INTERACTION = "USER_INTERACTION";
+  var CANCEL_REASON_INSTANT_RESET = "INSTANT_RESET";
+  var CANCEL_REASON_FOCUS = "FOCUS";
+  var CANCEL_REASON_MODEL_REPLACED_FOCUS = "MODEL_REPLACED_FOCUS";
+  var CANCEL_REASON_DISPOSE = "DISPOSE";
+  var DEFAULT_SMOOTH_RESET_DURATION = 0.45;
+  var MIN_SMOOTH_RESET_DURATION = 0.1;
+  var MAX_SMOOTH_RESET_DURATION = 2;
+  var CAMERA_SMOOTH_RESET_DURATION_INVALID = "CAMERA_SMOOTH_RESET_DURATION_INVALID";
+  var CAMERA_SMOOTH_RESET_STATE_INVALID = "CAMERA_SMOOTH_RESET_STATE_INVALID";
+  var CAMERA_SMOOTH_RESET_ALREADY_RUNNING = "CAMERA_SMOOTH_RESET_ALREADY_RUNNING";
+  var CAMERA_SMOOTH_RESET_DISPOSED = "CAMERA_SMOOTH_RESET_DISPOSED";
+  function smootherStep(t) {
+    var clamped = Math.min(1, Math.max(0, t));
+    return clamped * clamped * clamped * (clamped * (clamped * 6 - 15) + 10);
+  }
   var ViewerCamera = class {
     constructor() {
       this.camera = null;
       this.controls = null;
       this._disposed = false;
       this.lastAction = ACTION_INITIALIZE;
+      this.transitionState = CameraTransitionState.IDLE;
+      this.transitionGeneration = 0;
+      this.transitionElapsed = 0;
+      this.transitionDuration = 0;
+      this.transitionStartState = null;
+      this.transitionTargetState = null;
+      this.transitionLastError = "";
+      this.transitionCancelReason = "";
+      this.transitionStartedAt = 0;
+      this.transitionCompletedAt = 0;
+      this._controlsStartHandler = null;
     }
     /**
      * 初始化 Camera 与 OrbitControls。
@@ -29417,14 +29454,31 @@ void main() {
       this.controls.enableDamping = false;
       this.controls.update();
       this.lastAction = ACTION_INITIALIZE;
+      this._controlsStartHandler = () => {
+        this._cancelTransitionIfNeeded(CANCEL_REASON_USER_INTERACTION);
+      };
+      try {
+        this.controls.addEventListener("start", this._controlsStartHandler);
+      } catch (e) {
+        console.warn("[ViewerCamera] OrbitControls start listener failed: " + (e && e.message ? e.message : String(e)));
+      }
     }
     /**
      * 每帧更新。
      * Figure: animate() 中调用 controls.update()
-     * @param {number} deltaSeconds 自上一帧以来的秒数(本阶段未使用,保留接口供后续 damping/动画)
+     *
+     * Phase 2B: 若平滑过渡处于 RUNNING,先更新过渡插值,再调用 controls.update()。
+     * 顺序(与 AGENTS.md §十 推荐一致):
+     *   1. 更新平滑相机过渡
+     *   2. controls.update()
+     *
+     * @param {number} deltaSeconds 自上一帧以来的秒数
      */
     update(deltaSeconds) {
       if (this._disposed || !this.controls) return;
+      if (this.transitionState === CameraTransitionState.RUNNING) {
+        this._applyTransitionFrame(deltaSeconds);
+      }
       this.controls.update();
     }
     /**
@@ -29467,6 +29521,7 @@ void main() {
       if (!this.camera || !this.controls) {
         return { success: false, error: CAMERA_NOT_INITIALIZED };
       }
+      this._cancelTransitionIfNeeded(CANCEL_REASON_INSTANT_RESET);
       var opts = options || {};
       var preserveEnabled = opts.preserveControlsEnabled !== false;
       var savedEnabled = this.controls.enabled;
@@ -29579,6 +29634,8 @@ void main() {
         return { success: false, error: CAMERA_FOCUS_MODEL_MISSING };
       }
       var opts = options || {};
+      var focusCancelReason = opts.action === ACTION_MODEL_REPLACED_FOCUS ? CANCEL_REASON_MODEL_REPLACED_FOCUS : CANCEL_REASON_FOCUS;
+      this._cancelTransitionIfNeeded(focusCancelReason);
       var margin = typeof opts.margin === "number" && opts.margin > 0 ? opts.margin : CAMERA_FOCUS_MARGIN;
       var preserveDirection = opts.preserveDirection !== false;
       var preserveEnabled = opts.preserveControlsEnabled !== false;
@@ -29671,6 +29728,265 @@ void main() {
       }
       return { success: true, state: this._buildCameraState() };
     }
+    // ===== Phase 2B: 平滑重置 =====
+    /**
+     * Phase 2B: 平滑重置相机到 Figure 基准位置。
+     *
+     * 同步启动过渡,由现有帧循环(ViewerCamera.update)异步驱动完成。
+     * 不创建第二个 requestAnimationFrame。
+     *
+     * 终点固定为 Figure 基准(与 reset() 完全一致):
+     *   FOV=30, near=0.1, far=20, position=(0,1.25,2), target=(0,1.25,0)
+     *
+     * 起点为调用时当前真实相机状态。
+     *
+     * 缓动:smootherStep(本地纯函数,不引入外部 Tween 库)
+     *
+     * 控制状态:
+     *   - preserveControlsEnabled=true 时,过渡开始前 controls.enabled 状态在过渡完成后保持不变
+     *   - controls.enabled 只控制用户输入,不阻止内部相机插值
+     *
+     * 异常安全:
+     *   - 启动失败不修改相机
+     *   - 运行中遇到无效数值进入 FAILED,保留上一帧有效相机状态
+     *
+     * @param {object} [options]
+     * @param {number} [options.durationSeconds=0.45] 过渡时长(0.1~2.0 秒)
+     * @param {boolean} [options.preserveControlsEnabled=true] 是否保持 controls.enabled
+     * @returns {{success: boolean, state?: string, error?: string, transition?: object}}
+     */
+    smoothReset(options) {
+      if (this._disposed) {
+        return { success: false, error: CAMERA_SMOOTH_RESET_DISPOSED };
+      }
+      if (!this.camera || !this.controls) {
+        return { success: false, error: CAMERA_NOT_INITIALIZED };
+      }
+      if (this.transitionState === CameraTransitionState.RUNNING) {
+        return {
+          success: false,
+          error: CAMERA_SMOOTH_RESET_ALREADY_RUNNING,
+          transition: this.getTransitionState()
+        };
+      }
+      var opts = options || {};
+      var duration = typeof opts.durationSeconds === "number" ? opts.durationSeconds : DEFAULT_SMOOTH_RESET_DURATION;
+      if (!isFinite(duration) || duration < MIN_SMOOTH_RESET_DURATION || duration > MAX_SMOOTH_RESET_DURATION) {
+        return { success: false, error: CAMERA_SMOOTH_RESET_DURATION_INVALID };
+      }
+      var startState = this._captureCurrentCameraState();
+      if (!startState) {
+        return { success: false, error: CAMERA_SMOOTH_RESET_STATE_INVALID };
+      }
+      if (!this._isFiniteCameraState(startState)) {
+        return { success: false, error: CAMERA_SMOOTH_RESET_STATE_INVALID };
+      }
+      var targetState = this._buildFigureTargetState();
+      if (!this._isFiniteCameraState(targetState)) {
+        return { success: false, error: CAMERA_SMOOTH_RESET_STATE_INVALID };
+      }
+      this.transitionGeneration++;
+      this.transitionState = CameraTransitionState.RUNNING;
+      this.transitionElapsed = 0;
+      this.transitionDuration = duration;
+      this.transitionStartState = startState;
+      this.transitionTargetState = targetState;
+      this.transitionLastError = "";
+      this.transitionCancelReason = "";
+      this.transitionStartedAt = Date.now();
+      this.transitionCompletedAt = 0;
+      return {
+        success: true,
+        state: CameraTransitionState.RUNNING,
+        transition: this.getTransitionState()
+      };
+    }
+    /**
+     * Phase 2B: 获取当前过渡状态。
+     * @returns {object} 过渡结果对象
+     */
+    getTransitionState() {
+      var progress = 0;
+      if (this.transitionState === CameraTransitionState.COMPLETED) {
+        progress = 1;
+      } else if (this.transitionState === CameraTransitionState.RUNNING && this.transitionDuration > 0) {
+        progress = Math.min(1, this.transitionElapsed / this.transitionDuration);
+      } else if (this.transitionState === CameraTransitionState.CANCELLED || this.transitionState === CameraTransitionState.FAILED) {
+        if (this.transitionDuration > 0) {
+          progress = Math.min(1, this.transitionElapsed / this.transitionDuration);
+        }
+      }
+      return {
+        state: this.transitionState,
+        progress,
+        durationSeconds: this.transitionDuration,
+        elapsedSeconds: this.transitionElapsed,
+        cancelReason: this.transitionCancelReason,
+        errorCode: this.transitionLastError,
+        errorMessage: this.transitionLastError ? "Camera transition failed: " + this.transitionLastError : "",
+        startedAt: this.transitionStartedAt,
+        completedAt: this.transitionCompletedAt
+      };
+    }
+    /**
+     * Phase 2B: 取消当前平滑过渡。
+     *
+     * 取消后:
+     *   - 保留取消瞬间的相机位置(不跳到终点,不恢复起点)
+     *   - 不修改 controls.enabled
+     *
+     * @param {string} reason 取消原因
+     */
+    cancelTransition(reason) {
+      if (this._disposed) return;
+      if (this.transitionState !== CameraTransitionState.RUNNING) return;
+      this.transitionState = CameraTransitionState.CANCELLED;
+      this.transitionCancelReason = String(reason || "UNKNOWN");
+      this.transitionCompletedAt = Date.now();
+    }
+    /**
+     * Phase 2B: 内部取消辅助(仅在 RUNNING 时取消)。
+     * @param {string} reason
+     * @private
+     */
+    _cancelTransitionIfNeeded(reason) {
+      if (this.transitionState === CameraTransitionState.RUNNING) {
+        this.cancelTransition(reason);
+      }
+    }
+    /**
+     * Phase 2B: 每帧应用过渡插值。
+     *
+     * 流程:
+     *   1. elapsed += deltaSeconds
+     *   2. progress = min(1, elapsed / duration)
+     *   3. eased = smootherStep(progress)
+     *   4. 插值 position/target/fov/near/far
+     *   5. camera.updateProjectionMatrix() + controls.update()
+     *   6. 到达终点时显式写入精确 Figure 值,避免浮点残差
+     *   7. state = COMPLETED, lastAction = SMOOTH_RESET
+     *
+     * 失败处理:
+     *   - 插值遇到无效数值 → state=FAILED,保留上一帧有效相机状态
+     *
+     * @param {number} deltaSeconds
+     * @private
+     */
+    _applyTransitionFrame(deltaSeconds) {
+      if (!this.camera || !this.controls) return;
+      if (!this.transitionStartState || !this.transitionTargetState) {
+        this.transitionState = CameraTransitionState.FAILED;
+        this.transitionLastError = CAMERA_SMOOTH_RESET_STATE_INVALID;
+        this.transitionCompletedAt = Date.now();
+        return;
+      }
+      var delta = typeof deltaSeconds === "number" && isFinite(deltaSeconds) && deltaSeconds > 0 ? deltaSeconds : 0;
+      this.transitionElapsed += delta;
+      var progress = this.transitionDuration > 0 ? Math.min(1, this.transitionElapsed / this.transitionDuration) : 1;
+      var eased = smootherStep(progress);
+      var s = this.transitionStartState;
+      var t = this.transitionTargetState;
+      var newPos = this._lerpVec3(s.position, t.position, eased);
+      var newTarget = this._lerpVec3(s.target, t.target, eased);
+      var newFov = s.fov + (t.fov - s.fov) * eased;
+      var newNear = s.near + (t.near - s.near) * eased;
+      var newFar = s.far + (t.far - s.far) * eased;
+      if (!isFinite(newPos.x) || !isFinite(newPos.y) || !isFinite(newPos.z) || !isFinite(newTarget.x) || !isFinite(newTarget.y) || !isFinite(newTarget.z) || !isFinite(newFov) || !isFinite(newNear) || !isFinite(newFar)) {
+        this.transitionState = CameraTransitionState.FAILED;
+        this.transitionLastError = CAMERA_SMOOTH_RESET_STATE_INVALID;
+        this.transitionCompletedAt = Date.now();
+        return;
+      }
+      this.camera.position.set(newPos.x, newPos.y, newPos.z);
+      this.controls.target.set(newTarget.x, newTarget.y, newTarget.z);
+      this.camera.fov = newFov;
+      this.camera.near = newNear;
+      this.camera.far = newFar;
+      this.camera.updateProjectionMatrix();
+      if (progress >= 1) {
+        this.camera.position.set(
+          DEFAULT_CAMERA_POSITION.x,
+          DEFAULT_CAMERA_POSITION.y,
+          DEFAULT_CAMERA_POSITION.z
+        );
+        this.controls.target.set(
+          DEFAULT_CONTROLS_TARGET.x,
+          DEFAULT_CONTROLS_TARGET.y,
+          DEFAULT_CONTROLS_TARGET.z
+        );
+        this.camera.fov = DEFAULT_FOV;
+        this.camera.near = DEFAULT_NEAR;
+        this.camera.far = DEFAULT_FAR;
+        this.camera.updateProjectionMatrix();
+        this.transitionState = CameraTransitionState.COMPLETED;
+        this.transitionCompletedAt = Date.now();
+        this.lastAction = ACTION_SMOOTH_RESET;
+      }
+    }
+    /**
+     * Phase 2B: 捕获当前相机状态(作为过渡起点)。
+     * @returns {object|null}
+     * @private
+     */
+    _captureCurrentCameraState() {
+      if (!this.camera || !this.controls) return null;
+      var pos = this.camera.position;
+      var target = this.controls.target;
+      return {
+        position: { x: pos.x, y: pos.y, z: pos.z },
+        target: { x: target.x, y: target.y, z: target.z },
+        fov: this.camera.fov,
+        near: this.camera.near,
+        far: this.camera.far
+      };
+    }
+    /**
+     * Phase 2B: 构造 Figure 基准目标状态(过渡终点)。
+     * @returns {object}
+     * @private
+     */
+    _buildFigureTargetState() {
+      return {
+        position: {
+          x: DEFAULT_CAMERA_POSITION.x,
+          y: DEFAULT_CAMERA_POSITION.y,
+          z: DEFAULT_CAMERA_POSITION.z
+        },
+        target: {
+          x: DEFAULT_CONTROLS_TARGET.x,
+          y: DEFAULT_CONTROLS_TARGET.y,
+          z: DEFAULT_CONTROLS_TARGET.z
+        },
+        fov: DEFAULT_FOV,
+        near: DEFAULT_NEAR,
+        far: DEFAULT_FAR
+      };
+    }
+    /**
+     * Phase 2B: 验证相机状态所有数值有限。
+     * @param {object} state
+     * @returns {boolean}
+     * @private
+     */
+    _isFiniteCameraState(state) {
+      if (!state || !state.position || !state.target) return false;
+      return isFinite(state.position.x) && isFinite(state.position.y) && isFinite(state.position.z) && isFinite(state.target.x) && isFinite(state.target.y) && isFinite(state.target.z) && isFinite(state.fov) && isFinite(state.near) && isFinite(state.far);
+    }
+    /**
+     * Phase 2B: 线性插值两个三维向量。
+     * @param {object} a 起点向量 {x,y,z}
+     * @param {object} b 终点向量 {x,y,z}
+     * @param {number} t 插值因子 [0,1]
+     * @returns {{x: number, y: number, z: number}}
+     * @private
+     */
+    _lerpVec3(a, b, t) {
+      return {
+        x: a.x + (b.x - a.x) * t,
+        y: a.y + (b.y - a.y) * t,
+        z: a.z + (b.z - a.z) * t
+      };
+    }
     /**
      * Phase 2A-2: 构造 CameraState 对象。
      *
@@ -29699,6 +30015,22 @@ void main() {
     dispose() {
       if (this._disposed) return;
       this._disposed = true;
+      if (this.transitionState === CameraTransitionState.RUNNING) {
+        this.transitionState = CameraTransitionState.DISPOSED;
+        this.transitionCancelReason = CANCEL_REASON_DISPOSE;
+        this.transitionCompletedAt = Date.now();
+      } else {
+        this.transitionState = CameraTransitionState.DISPOSED;
+      }
+      if (this.controls && this._controlsStartHandler) {
+        try {
+          this.controls.removeEventListener("start", this._controlsStartHandler);
+        } catch (e) {
+        }
+      }
+      this._controlsStartHandler = null;
+      this.transitionStartState = null;
+      this.transitionTargetState = null;
       if (this.controls) {
         try {
           this.controls.dispose();
@@ -39782,6 +40114,77 @@ void main() {
       }
       return this.camera.getCameraState();
     }
+    // ===== Phase 2B: 平滑重置 =====
+    /**
+     * Phase 2B: 平滑重置相机到 Figure 基准位置。
+     *
+     * 同步启动过渡,由现有帧循环(ViewerCamera.update)异步驱动完成。
+     * 不创建第二个 requestAnimationFrame。
+     *
+     * 终点固定为 Figure 基准(与 resetCamera() 完全一致):
+     *   FOV=30, near=0.1, far=20, position=(0,1.25,2), target=(0,1.25,0)
+     *
+     * 起点为当前真实相机状态。缓动:smootherStep(本地纯函数)。
+     *
+     * @param {object} [options]
+     * @param {number} [options.durationSeconds=0.45] 过渡时长(0.1~2.0 秒)
+     * @param {boolean} [options.preserveControlsEnabled=true] 是否保持 controls.enabled
+     * @returns {{success: boolean, state?: string, transition?: object, error?: object}}
+     */
+    smoothResetCamera(options) {
+      if (this._state !== STATE_READY) {
+        return {
+          success: false,
+          error: makeError2(ERR_VIEWER_NOT_READY, "Viewer state is " + this._state + ", expected READY", this._state, true)
+        };
+      }
+      if (!this.camera) {
+        return {
+          success: false,
+          error: makeError2(ERR_CAMERA_INITIALIZATION_FAILED, "Camera not initialized", this._state, true)
+        };
+      }
+      return this.camera.smoothReset(options);
+    }
+    /**
+     * Phase 2B: 获取当前相机过渡状态。
+     *
+     * @returns {{success: boolean, transition?: object}}
+     */
+    getCameraTransitionState() {
+      if (!this.camera) {
+        return {
+          success: false,
+          transition: {
+            state: "IDLE",
+            progress: 0,
+            durationSeconds: 0,
+            elapsedSeconds: 0,
+            cancelReason: "",
+            errorCode: "",
+            errorMessage: "",
+            startedAt: 0,
+            completedAt: 0
+          }
+        };
+      }
+      return { success: true, transition: this.camera.getTransitionState() };
+    }
+    /**
+     * Phase 2B: 取消当前平滑相机过渡。
+     *
+     * 取消后保留取消瞬间的相机位置,不跳到终点,不恢复起点。
+     *
+     * @param {string} reason 取消原因
+     * @returns {{success: boolean, cancelled?: boolean, transition?: object}}
+     */
+    cancelCameraTransition(reason) {
+      if (!this.camera) {
+        return { success: false };
+      }
+      this.camera.cancelTransition(reason);
+      return { success: true, transition: this.camera.getTransitionState() };
+    }
     /**
      * 调整 Viewer 尺寸。
      *
@@ -41544,6 +41947,113 @@ void main() {
             success: false,
             state: v.getState(),
             error: result && result.error ? result.error : { code: "CAMERA_STATE_FAILED", message: "getCameraState failed" }
+          };
+        });
+      },
+      // ===== Phase 2B: 平滑重置 =====
+      /**
+       * Phase 2B: 平滑重置相机到 Figure 基准位置。
+       *
+       * 同步启动过渡,由现有帧循环异步驱动完成。不创建第二个 requestAnimationFrame。
+       *
+       * 终点固定为 Figure 基准(与 resetCamera() 完全一致):
+       *   FOV=30, near=0.1, far=20, position=(0,1.25,2), target=(0,1.25,0)
+       *
+       * 起点为当前真实相机状态。缓动:smootherStep。
+       *
+       * @param {object} [options] 可选参数
+       *   - durationSeconds: 过渡时长(0.1~2.0 秒),默认 0.45
+       *   - preserveControlsEnabled: 是否保持 controls.enabled,默认 true
+       * @returns {string} JSON 结果
+       *   启动成功: {"success": true, "state": "RUNNING", "transition": {...}}
+       *   启动失败: {"success": false, "error": {...}, "transition": {...}|undefined}
+       */
+      smoothResetCamera: function(options) {
+        return callViewer(function(v) {
+          var opts = options || {};
+          if (opts.durationSeconds !== void 0 && typeof opts.durationSeconds !== "number") {
+            return {
+              success: false,
+              state: v.getState(),
+              error: {
+                code: "CAMERA_SMOOTH_RESET_DURATION_INVALID",
+                phase: v.getState(),
+                message: "durationSeconds must be a number",
+                recoverable: false
+              }
+            };
+          }
+          if (opts.preserveControlsEnabled !== void 0 && typeof opts.preserveControlsEnabled !== "boolean") {
+            return {
+              success: false,
+              state: v.getState(),
+              error: {
+                code: "INVALID_ARGUMENT",
+                phase: v.getState(),
+                message: "preserveControlsEnabled must be a boolean",
+                recoverable: false
+              }
+            };
+          }
+          var result = v.smoothResetCamera(opts);
+          if (result && result.success) {
+            return {
+              success: true,
+              state: v.getState(),
+              transitionState: result.state,
+              transition: result.transition
+            };
+          }
+          return {
+            success: false,
+            state: v.getState(),
+            transitionState: result && result.state ? result.state : void 0,
+            transition: result && result.transition ? result.transition : void 0,
+            error: result && result.error ? result.error : {
+              code: "SMOOTH_RESET_FAILED",
+              phase: v.getState(),
+              message: "smoothResetCamera failed",
+              recoverable: false
+            }
+          };
+        });
+      },
+      /**
+       * Phase 2B: 获取当前相机过渡状态。
+       *
+       * 用于 ArkTS 轮询平滑重置进度。
+       *
+       * @returns {string} JSON 结果
+       *   {"success": true, "state": viewerState, "transition": {...}}
+       *   transition.state: IDLE/RUNNING/COMPLETED/CANCELLED/FAILED/DISPOSED
+       */
+      getCameraTransitionState: function() {
+        return callViewer(function(v) {
+          var result = v.getCameraTransitionState();
+          return {
+            success: true,
+            state: v.getState(),
+            transition: result.transition
+          };
+        });
+      },
+      /**
+       * Phase 2B: 取消当前平滑相机过渡。
+       *
+       * 取消后保留取消瞬间的相机位置,不跳到终点,不恢复起点。
+       *
+       * @param {string} reason 取消原因
+       * @returns {string} JSON 结果
+       *   {"success": true, "state": viewerState, "transition": {...}}
+       */
+      cancelCameraTransition: function(reason) {
+        return callViewer(function(v) {
+          var r = typeof reason === "string" ? reason : String(reason || "UNKNOWN");
+          var result = v.cancelCameraTransition(r);
+          return {
+            success: true,
+            state: v.getState(),
+            transition: result.transition
           };
         });
       },

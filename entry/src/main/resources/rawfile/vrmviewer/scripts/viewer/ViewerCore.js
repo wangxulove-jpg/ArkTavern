@@ -329,6 +329,81 @@ export class ViewerCore {
     return this.camera.getCameraState();
   }
 
+  // ===== Phase 2B: 平滑重置 =====
+
+  /**
+   * Phase 2B: 平滑重置相机到 Figure 基准位置。
+   *
+   * 同步启动过渡,由现有帧循环(ViewerCamera.update)异步驱动完成。
+   * 不创建第二个 requestAnimationFrame。
+   *
+   * 终点固定为 Figure 基准(与 resetCamera() 完全一致):
+   *   FOV=30, near=0.1, far=20, position=(0,1.25,2), target=(0,1.25,0)
+   *
+   * 起点为当前真实相机状态。缓动:smootherStep(本地纯函数)。
+   *
+   * @param {object} [options]
+   * @param {number} [options.durationSeconds=0.45] 过渡时长(0.1~2.0 秒)
+   * @param {boolean} [options.preserveControlsEnabled=true] 是否保持 controls.enabled
+   * @returns {{success: boolean, state?: string, transition?: object, error?: object}}
+   */
+  smoothResetCamera(options) {
+    if (this._state !== STATE_READY) {
+      return {
+        success: false,
+        error: makeError(ERR_VIEWER_NOT_READY, 'Viewer state is ' + this._state + ', expected READY', this._state, true)
+      };
+    }
+    if (!this.camera) {
+      return {
+        success: false,
+        error: makeError(ERR_CAMERA_INITIALIZATION_FAILED, 'Camera not initialized', this._state, true)
+      };
+    }
+    return this.camera.smoothReset(options);
+  }
+
+  /**
+   * Phase 2B: 获取当前相机过渡状态。
+   *
+   * @returns {{success: boolean, transition?: object}}
+   */
+  getCameraTransitionState() {
+    if (!this.camera) {
+      return {
+        success: false,
+        transition: {
+          state: 'IDLE',
+          progress: 0,
+          durationSeconds: 0,
+          elapsedSeconds: 0,
+          cancelReason: '',
+          errorCode: '',
+          errorMessage: '',
+          startedAt: 0,
+          completedAt: 0
+        }
+      };
+    }
+    return { success: true, transition: this.camera.getTransitionState() };
+  }
+
+  /**
+   * Phase 2B: 取消当前平滑相机过渡。
+   *
+   * 取消后保留取消瞬间的相机位置,不跳到终点,不恢复起点。
+   *
+   * @param {string} reason 取消原因
+   * @returns {{success: boolean, cancelled?: boolean, transition?: object}}
+   */
+  cancelCameraTransition(reason) {
+    if (!this.camera) {
+      return { success: false };
+    }
+    this.camera.cancelTransition(reason);
+    return { success: true, transition: this.camera.getTransitionState() };
+  }
+
   /**
    * 调整 Viewer 尺寸。
    *

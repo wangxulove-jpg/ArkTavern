@@ -520,6 +520,213 @@ export function parseCameraState(jsonStr: string): ArkWebCameraState | null {
   }
 }
 
+// ===== Phase 2B: 平滑重置 =====
+
+/**
+ * Phase 2B: 相机过渡状态机。
+ *
+ * 状态流转:
+ *   IDLE → RUNNING → COMPLETED
+ *   RUNNING → CANCELLED  (用户交互 / 即时重置 / 聚焦 / dispose)
+ *   RUNNING → FAILED     (无效数值)
+ *   任意 → DISPOSED      (Viewer dispose)
+ */
+export enum ArkWebCameraTransitionState {
+  IDLE = 'IDLE',
+  RUNNING = 'RUNNING',
+  COMPLETED = 'COMPLETED',
+  CANCELLED = 'CANCELLED',
+  FAILED = 'FAILED',
+  DISPOSED = 'DISPOSED'
+}
+
+/**
+ * Phase 2B: 平滑相机过渡结果。
+ *
+ * 由 getCameraTransitionState() / smoothResetCamera() / cancelCameraTransition() 返回。
+ */
+export interface ArkWebCameraTransitionResult {
+  /** 当前过渡状态 */
+  state: ArkWebCameraTransitionState;
+  /** 过渡进度 [0,1] */
+  progress: number;
+  /** 过渡总时长(秒) */
+  durationSeconds: number;
+  /** 已经过渡时间(秒) */
+  elapsedSeconds: number;
+  /** 取消原因(空字符串表示未取消) */
+  cancelReason: string;
+  /** 错误码(空字符串表示无错误) */
+  errorCode: string;
+  /** 错误信息(空字符串表示无错误) */
+  errorMessage: string;
+  /** 过渡开始时间戳(ms) */
+  startedAt: number;
+  /** 过渡完成时间戳(ms) */
+  completedAt: number;
+}
+
+/**
+ * Phase 2B: 平滑重置选项(构造 optionsJson 时使用,ArkTS 严格模式要求对象字面量对应 interface)。
+ */
+export interface ArkWebSmoothResetOptions {
+  /** 过渡时长(秒) */
+  durationSeconds: number;
+  /** 是否保持 controls.enabled */
+  preserveControlsEnabled: boolean;
+}
+
+/**
+ * Phase 2B: Bridge 错误载荷(Controller 返回失败响应时使用)。
+ */
+export interface ArkWebBridgeErrorPayload {
+  /** 错误码 */
+  code: string;
+  /** 错误信息 */
+  message: string;
+}
+
+/**
+ * Phase 2B: Bridge 操作失败响应(Controller 在 disposed/catch 分支返回)。
+ */
+export interface ArkWebBridgeFailedResponse {
+  /** 操作是否成功 */
+  success: boolean;
+  /** 错误载荷 */
+  error: ArkWebBridgeErrorPayload;
+}
+
+/**
+ * Phase 2B: getCameraTransitionState 失败响应(disposed 时返回 IDLE transition)。
+ */
+export interface ArkWebCameraTransitionStateResponse {
+  /** 查询是否成功 */
+  success: boolean;
+  /** 过渡状态结果 */
+  transition: ArkWebCameraTransitionResult;
+}
+
+/**
+ * Phase 2B: 平滑重置默认时长(秒) - ArkTavern 交互适配参数。
+ */
+export const ARKWEB_CAMERA_SMOOTH_RESET_DEFAULT_DURATION: number = 0.45;
+
+/**
+ * Phase 2B: 平滑重置合法时长范围(秒)。
+ */
+export const ARKWEB_CAMERA_SMOOTH_RESET_MIN_DURATION: number = 0.1;
+export const ARKWEB_CAMERA_SMOOTH_RESET_MAX_DURATION: number = 2.0;
+
+/**
+ * Phase 2B: 过渡状态轮询间隔(ms)。
+ */
+export const ARKWEB_CAMERA_TRANSITION_POLL_INTERVAL_MS: number = 100;
+
+/**
+ * Phase 2B: 过渡状态轮询超时(ms)。
+ */
+export const ARKWEB_CAMERA_TRANSITION_POLL_TIMEOUT_MS: number = 3000;
+
+/**
+ * Phase 2B: 校验平滑重置时长是否合法。
+ *
+ * @param durationSeconds 时长(秒)
+ * @returns true=合法;false=非法
+ */
+export function isValidSmoothResetDuration(durationSeconds: number): boolean {
+  if (typeof durationSeconds !== 'number') {
+    return false;
+  }
+  if (!isFinite(durationSeconds)) {
+    return false;
+  }
+  return durationSeconds >= ARKWEB_CAMERA_SMOOTH_RESET_MIN_DURATION &&
+         durationSeconds <= ARKWEB_CAMERA_SMOOTH_RESET_MAX_DURATION;
+}
+
+/**
+ * Phase 2B: 构造平滑重置选项 JSON 字符串。
+ *
+ * @param durationSeconds 时长(秒),非法时使用默认值 0.45
+ * @param preserveControlsEnabled 是否保持 controls.enabled,默认 true
+ * @returns JSON 字符串,形如 '{"durationSeconds":0.45,"preserveControlsEnabled":true}'
+ */
+export function buildSmoothResetOptionsJson(
+  durationSeconds: number,
+  preserveControlsEnabled: boolean = true
+): string {
+  const duration: number = isValidSmoothResetDuration(durationSeconds)
+    ? durationSeconds
+    : ARKWEB_CAMERA_SMOOTH_RESET_DEFAULT_DURATION;
+  const options: ArkWebSmoothResetOptions = {
+    durationSeconds: duration,
+    preserveControlsEnabled: preserveControlsEnabled === true
+  };
+  return JSON.stringify(options);
+}
+
+/**
+ * Phase 2B: 解析 getCameraTransitionState / smoothResetCamera / cancelCameraTransition
+ * 返回的 JSON 字符串。
+ *
+ * @param jsonStr Bridge 返回的 JSON 字符串
+ * @returns 解析成功返回 ArkWebCameraTransitionResult,失败返回 null
+ */
+export function parseCameraTransitionResult(jsonStr: string): ArkWebCameraTransitionResult | null {
+  try {
+    const obj: Record<string, Object> = JSON.parse(jsonStr) as Record<string, Object>;
+    // transition 对象可能在顶层或 nested 在 transition 字段
+    let transitionObj: Record<string, Object> | null = null;
+    if (obj['transition']) {
+      transitionObj = obj['transition'] as Record<string, Object>;
+    } else if (obj['state'] && typeof obj['state'] === 'string') {
+      // 兼容直接返回 transition 对象的场景
+      transitionObj = obj;
+    }
+    if (!transitionObj) {
+      return null;
+    }
+    const stateStr: string = (transitionObj['state'] as string) || 'IDLE';
+    let state: ArkWebCameraTransitionState;
+    switch (stateStr) {
+      case 'IDLE':
+        state = ArkWebCameraTransitionState.IDLE;
+        break;
+      case 'RUNNING':
+        state = ArkWebCameraTransitionState.RUNNING;
+        break;
+      case 'COMPLETED':
+        state = ArkWebCameraTransitionState.COMPLETED;
+        break;
+      case 'CANCELLED':
+        state = ArkWebCameraTransitionState.CANCELLED;
+        break;
+      case 'FAILED':
+        state = ArkWebCameraTransitionState.FAILED;
+        break;
+      case 'DISPOSED':
+        state = ArkWebCameraTransitionState.DISPOSED;
+        break;
+      default:
+        state = ArkWebCameraTransitionState.IDLE;
+        break;
+    }
+    return {
+      state: state,
+      progress: (transitionObj['progress'] as number) ?? 0,
+      durationSeconds: (transitionObj['durationSeconds'] as number) ?? 0,
+      elapsedSeconds: (transitionObj['elapsedSeconds'] as number) ?? 0,
+      cancelReason: (transitionObj['cancelReason'] as string) || '',
+      errorCode: (transitionObj['errorCode'] as string) || '',
+      errorMessage: (transitionObj['errorMessage'] as string) || '',
+      startedAt: (transitionObj['startedAt'] as number) ?? 0,
+      completedAt: (transitionObj['completedAt'] as number) ?? 0
+    };
+  } catch (e) {
+    return null;
+  }
+}
+
 /**
  * Phase 2A-1: 将灯光百分比(0-100)映射为强度(0.0-4.0)。
  *
@@ -545,4 +752,123 @@ export function lightPercentageToIntensity(percentage: number): number {
  */
 export function lightIntensityToPercentage(intensity: number): number {
   return intensity * 25.0;
+}
+
+// ===== Phase 2A-3A: 截图能力类型定义 =====
+
+/**
+ * Phase 2A-3A: 截图状态机。
+ *
+ * 状态流转:
+ *   IDLE → CAPTURING → SAVING → READY
+ *   IDLE → CAPTURING → FAILED
+ *   IDLE → CAPTURING → SAVING → FAILED
+ *   任意 → DISPOSED
+ *
+ * 约束:
+ * - CAPTURING/SAVING 期间拒绝新的截图请求
+ * - READY 后可以再次发起截图(回到 IDLE 再到 CAPTURING)
+ * - DISPOSED 为终态,不可恢复
+ */
+export enum ScreenshotState {
+  /** 空闲,可以发起截图 */
+  IDLE = 'IDLE',
+  /** 正在捕获 ArkWeb 快照(调用 webPageSnapshot) */
+  CAPTURING = 'CAPTURING',
+  /** 正在将 PNG 写入应用缓存 */
+  SAVING = 'SAVING',
+  /** 截图已完成并保存成功 */
+  READY = 'READY',
+  /** 截图失败 */
+  FAILED = 'FAILED',
+  /** 控制器已销毁 */
+  DISPOSED = 'DISPOSED'
+}
+
+/**
+ * Phase 2A-3A: 截图结果。
+ *
+ * 安全约束:
+ * - cachePath 只存在于 ArkTS 内部,禁止发送到 JavaScript 或显示在 UI
+ * - 禁止包含 Base64 / PixelMap 对象 / 文件描述符
+ */
+export interface ScreenshotResult {
+  /** 截图状态 */
+  state: ScreenshotState;
+  /** 文件名(不含路径) */
+  fileName: string;
+  /** 应用缓存完整路径(仅 ArkTS 内部使用,不显示在 UI) */
+  cachePath: string;
+  /** MIME 类型,固定 'image/png' */
+  mimeType: string;
+  /** 图像宽度(px) */
+  width: number;
+  /** 图像高度(px) */
+  height: number;
+  /** PNG 文件字节数 */
+  byteLength: number;
+  /** 创建时间戳(ms) */
+  createdAt: number;
+  /** 失败错误码(成功时为空字符串) */
+  errorCode: string;
+  /** 失败错误信息(成功时为空字符串) */
+  errorMessage: string;
+}
+
+/**
+ * Phase 2A-3A: 截图错误代码。
+ *
+ * 用于精确描述截图链路各阶段失败原因。
+ */
+export class ScreenshotErrorCode {
+  /** 控制器已销毁 */
+  static readonly CONTROLLER_DISPOSED: string = 'SCREENSHOT_CONTROLLER_DISPOSED';
+  /** 已有截图进行中 */
+  static readonly IN_PROGRESS: string = 'SCREENSHOT_IN_PROGRESS';
+  /** Viewer 未就绪 */
+  static readonly VIEWER_NOT_READY: string = 'VIEWER_NOT_READY';
+  /** WebviewController 未就绪 */
+  static readonly WEBVIEW_CONTROLLER_NOT_READY: string = 'SCREENSHOT_WEBVIEW_CONTROLLER_NOT_READY';
+  /** 快照 API 调用失败 */
+  static readonly SNAPSHOT_CALL_FAILED: string = 'SCREENSHOT_SNAPSHOT_CALL_FAILED';
+  /** 快照返回 status=false */
+  static readonly SNAPSHOT_STATUS_FALSE: string = 'SCREENSHOT_SNAPSHOT_STATUS_FALSE';
+  /** PixelMap 为空 */
+  static readonly PIXELMAP_EMPTY: string = 'SCREENSHOT_PIXELMAP_EMPTY';
+  /** PNG 编码失败 */
+  static readonly PNG_ENCODE_FAILED: string = 'SCREENSHOT_PNG_ENCODE_FAILED';
+  /** PNG 编码结果为空 */
+  static readonly PNG_BUFFER_EMPTY: string = 'SCREENSHOT_PNG_BUFFER_EMPTY';
+  /** 缓存目录创建失败 */
+  static readonly CACHE_DIRECTORY_FAILED: string = 'SCREENSHOT_CACHE_DIRECTORY_FAILED';
+  /** 文件创建失败 */
+  static readonly FILE_CREATE_FAILED: string = 'SCREENSHOT_FILE_CREATE_FAILED';
+  /** 文件写入失败 */
+  static readonly FILE_WRITE_FAILED: string = 'SCREENSHOT_FILE_WRITE_FAILED';
+  /** 文件为空 */
+  static readonly FILE_EMPTY: string = 'SCREENSHOT_FILE_EMPTY';
+  /** 文件 rename 失败 */
+  static readonly FILE_RENAME_FAILED: string = 'SCREENSHOT_FILE_RENAME_FAILED';
+  /** 截图代次已过期 */
+  static readonly STALE: string = 'SCREENSHOT_STALE';
+  /** 内部异常 */
+  static readonly EXCEPTION: string = 'SCREENSHOT_EXCEPTION';
+}
+
+/**
+ * Phase 2A-3A: 创建空的截图结果(IDLE 状态)。
+ */
+export function createIdleScreenshotResult(): ScreenshotResult {
+  return {
+    state: ScreenshotState.IDLE,
+    fileName: '',
+    cachePath: '',
+    mimeType: 'image/png',
+    width: 0,
+    height: 0,
+    byteLength: 0,
+    createdAt: 0,
+    errorCode: '',
+    errorMessage: ''
+  };
 }
