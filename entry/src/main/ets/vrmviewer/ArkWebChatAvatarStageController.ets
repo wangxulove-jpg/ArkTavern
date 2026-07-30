@@ -97,6 +97,15 @@ import {
   ArkWebAvatarChatFinalResult,
   ArkWebAvatarChatFinalResultSource
 } from '../services/avatar/ArkWebAvatarChatBridgeTypes';
+import {
+  ArkWebAvatarShotDirector
+} from './ArkWebAvatarShotDirector';
+import {
+  ArkWebAvatarShot,
+  ArkWebAvatarShotDirectorState,
+  ArkWebAvatarShotRuntime,
+  ArkWebAvatarShotRuntimeSnapshot
+} from './ArkWebAvatarShotDirectorTypes';
 
 const LOG_TAG: string = 'ChatAvatarStage';
 
@@ -240,6 +249,8 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
   private dialogueLifecycle: ArkWebDialoguePerformanceLifecycleController | null = null;
   /** AI 能力目录 */
   private capabilityCatalog: ArkWebAvatarAiCapabilityCatalog | null = null;
+  /** Phase 4B-2: 镜头导演 (管理 FULL_BODY / FACE_RESET_VIEW 平滑切换) */
+  private shotDirector: ArkWebAvatarShotDirector | null = null;
 
   // ===== 运行时状态 (Phase 4B-1R §第一项) =====
 
@@ -529,15 +540,45 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
           if (self.performanceController === null) {
             return Promise.resolve(false);
           }
-          return self.performanceController.stopPerformance();
+          return self.performanceController.stopPerformance().then((ok: boolean): boolean => {
+            // Phase 4B-2: 停止演出后通知 ShotDirector 恢复 FULL_BODY
+            if (ok && self.shotDirector !== null) {
+              self.shotDirector.onPerformanceStopped('PERFORMANCE_STOPPED')
+                .catch((e: Object): void => {
+                  console.warn(LOG_TAG, 'shotDirector.onPerformanceStopped threw: ' +
+                    (e instanceof Error ? e.message : String(e)));
+                });
+            }
+            return ok;
+          });
         },
         executePerformance: (cmd: ArkWebAvatarPerformanceCommand): Promise<boolean> => {
           if (self.performanceController === null) {
             return Promise.resolve(false);
           }
-          return self.performanceController.executeCommand(cmd).then(
-            (result: ArkWebPerformanceResult): boolean => result.success
-          );
+          // Phase 4B-2: 镜头准备成功后才执行演出
+          const preparePromise: Promise<boolean> = self.shotDirector !== null
+            ? self.shotDirector.prepareForCommand(cmd)
+            : Promise.resolve(true);
+          return preparePromise.then((prepareOk: boolean): Promise<boolean> => {
+            if (!prepareOk) {
+              console.warn(LOG_TAG, 'shotDirector.prepareForCommand failed, skip performance');
+              return Promise.resolve(false);
+            }
+            return self.performanceController!.executeCommand(cmd).then(
+              (result: ArkWebPerformanceResult): boolean => {
+                // Phase 4B-2: 演出失败通知 ShotDirector 恢复 FULL_BODY
+                if (!result.success && self.shotDirector !== null) {
+                  self.shotDirector.onPerformanceFailed('PERFORMANCE_EXECUTE_FAILED')
+                    .catch((e: Object): void => {
+                      console.warn(LOG_TAG, 'shotDirector.onPerformanceFailed threw: ' +
+                        (e instanceof Error ? e.message : String(e)));
+                    });
+                }
+                return result.success;
+              }
+            );
+          });
         }
       };
       this.dialogueLifecycle =
@@ -547,6 +588,20 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
     // 7. 创建 AI 能力目录
     if (this.capabilityCatalog === null && this.assetLibrary !== null) {
       this.capabilityCatalog = new ArkWebAvatarAiCapabilityCatalog(this.assetLibrary);
+    }
+
+    // 7.5 Phase 4B-2: 创建镜头导演
+    if (this.shotDirector === null) {
+      const self: ArkWebChatAvatarStageController = this;
+      const shotRuntime: ArkWebAvatarShotRuntime = {
+        transitionToFullBody: (): Promise<boolean> => self.shotTransitionToFullBody(),
+        transitionToResetView: (): Promise<boolean> => self.shotTransitionToResetView(),
+        cancelCameraTransition: (reason: string): Promise<boolean> =>
+          self.shotCancelCameraTransition(reason),
+        isModelReady: (): boolean => self.currentStageState === 'MODEL_READY',
+        isStageSizeValid: (): boolean => self.stageWidth > 0 && self.stageHeight > 0
+      };
+      this.shotDirector = new ArkWebAvatarShotDirector(shotRuntime);
     }
 
     // 8. 注册 Avatar endpoint 到 Bridge (覆盖式)
@@ -745,6 +800,11 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
     if (this.capabilityCatalog !== null) {
       this.capabilityCatalog.dispose();
       this.capabilityCatalog = null;
+    }
+    // Phase 4B-2: 销毁 ShotDirector (清除表情恢复定时器 + 取消过渡, 不执行可见过渡)
+    if (this.shotDirector !== null) {
+      this.shotDirector.dispose();
+      this.shotDirector = null;
     }
 
     // 3. 销毁 ResourceProvider (停止响应拦截请求)
@@ -1020,6 +1080,13 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
           await this.fitFullBodyInternal();
         } else {
           console.warn(LOG_TAG, 'fitAvatarFullBody skipped: size invalid, will retry on onAreaChange');
+        }
+        // Phase 4B-2: 通知 ShotDirector 模型 READY (执行 FULL_BODY 构图)
+        if (this.shotDirector !== null) {
+          this.shotDirector.onModelReady().catch((e: Object): void => {
+            console.warn(LOG_TAG, 'shotDirector.onModelReady threw: ' +
+              (e instanceof Error ? e.message : String(e)));
+          });
         }
       }
       // loaded=false 时错误码已在内部设置
@@ -1440,6 +1507,128 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
       console.warn(LOG_TAG, 'fitAvatarFullBody threw: ' +
         (e instanceof Error ? e.message : String(e)));
     }
+  }
+
+  // ===== Phase 4B-2: ShotRuntime 实现 =====
+
+  /**
+   * ShotRuntime.transitionToFullBody 实现。
+   *
+   * 调用 arkWebController.fitAvatarFullBody (Phase 4B-1 已有)。
+   * 复用现有 API, 不创建第二套相机系统。
+   */
+  private async shotTransitionToFullBody(): Promise<boolean> {
+    if (this.disposed) {
+      return false;
+    }
+    if (this.arkWebController.getState() !== ArkWebViewerState.READY) {
+      return false;
+    }
+    try {
+      const resultJson: string = await this.arkWebController.fitAvatarFullBody();
+      if (this.disposed) {
+        return false;
+      }
+      const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
+      return obj['success'] === true;
+    } catch (e) {
+      console.warn(LOG_TAG, 'shotTransitionToFullBody threw: ' +
+        (e instanceof Error ? e.message : String(e)));
+      return false;
+    }
+  }
+
+  /**
+   * ShotRuntime.transitionToResetView 实现。
+   *
+   * 调用 arkWebController.smoothResetCamera (与重置按钮相同的方法)。
+   * 复用现有平滑重置 API, 不硬编码第二套脸部相机坐标。
+   */
+  private async shotTransitionToResetView(): Promise<boolean> {
+    if (this.disposed) {
+      return false;
+    }
+    if (this.arkWebController.getState() !== ArkWebViewerState.READY) {
+      return false;
+    }
+    try {
+      // durationSeconds=0.45 (默认平滑时长), preserveControlsEnabled=true (保持 CHAT_STAGE 禁用)
+      const resultJson: string = await this.arkWebController.smoothResetCamera(0.45, true);
+      if (this.disposed) {
+        return false;
+      }
+      const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
+      return obj['success'] === true;
+    } catch (e) {
+      console.warn(LOG_TAG, 'shotTransitionToResetView threw: ' +
+        (e instanceof Error ? e.message : String(e)));
+      return false;
+    }
+  }
+
+  /**
+   * ShotRuntime.cancelCameraTransition 实现。
+   *
+   * 调用 arkWebController.cancelCameraTransition (取消正在进行的过渡)。
+   */
+  private async shotCancelCameraTransition(reason: string): Promise<boolean> {
+    if (this.disposed) {
+      return false;
+    }
+    try {
+      const resultJson: string = await this.arkWebController.cancelCameraTransition(reason);
+      if (this.disposed) {
+        return false;
+      }
+      const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
+      return obj['success'] === true;
+    } catch (e) {
+      console.warn(LOG_TAG, 'shotCancelCameraTransition threw: ' +
+        (e instanceof Error ? e.message : String(e)));
+      return false;
+    }
+  }
+
+  /**
+   * Phase 4B-2: 获取镜头导演运行时快照 (供 AI 面板诊断显示)。
+   */
+  getShotRuntimeSnapshot(): ArkWebAvatarShotRuntimeSnapshot | null {
+    if (this.shotDirector === null) {
+      return null;
+    }
+    return this.shotDirector.getRuntimeSnapshot();
+  }
+
+  /**
+   * Phase 4B-2: 手动切换到全身镜头 (AI 面板验证按钮)。
+   */
+  async transitionToFullBody(reason: string): Promise<boolean> {
+    if (this.shotDirector === null) {
+      return false;
+    }
+    return await this.shotDirector.transitionToFullBody(reason);
+  }
+
+  /**
+   * Phase 4B-2: 手动切换到脸部 (重置) 镜头 (AI 面板验证按钮)。
+   */
+  async transitionToFaceResetView(reason: string): Promise<boolean> {
+    if (this.shotDirector === null) {
+      return false;
+    }
+    return await this.shotDirector.transitionToFaceResetView(reason);
+  }
+
+  /**
+   * Phase 4B-2: Stage 从隐藏切换为显示时由组件层调用。
+   *
+   * 通知 ShotDirector 恢复 FULL_BODY (不恢复隐藏前的脸部镜头)。
+   */
+  async onStageVisible(): Promise<void> {
+    if (this.shotDirector === null) {
+      return;
+    }
+    await this.shotDirector.onStageVisible();
   }
 
   /**

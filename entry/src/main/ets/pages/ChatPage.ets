@@ -74,6 +74,9 @@ import {
   ChatAvatarStageEventListener
 } from '../vrmviewer/ArkWebChatAvatarStageController';
 import {
+  ArkWebAvatarShotRuntimeSnapshot
+} from '../vrmviewer/ArkWebAvatarShotDirectorTypes';
+import {
   ArkWebAvatarAiCapabilitySnapshot,
   ArkWebAvatarAiAnimationCapability,
   ArkWebAvatarAiPoseCapability,
@@ -236,6 +239,8 @@ struct ChatPage {
   @State avatarModelDisplayName: string = '';
   /** Phase 4B-1R: Stage 运行时快照 (供 AI 面板紧凑诊断显示) */
   @State avatarStageSnapshot: ArkWebChatAvatarStageRuntimeSnapshot | null = null;
+  /** Phase 4B-2: 镜头导演运行时快照 (供 AI 面板镜头状态显示) */
+  @State avatarShotSnapshot: ArkWebAvatarShotRuntimeSnapshot | null = null;
 
   aboutToAppear(): void {
     const modelService = AppServices.getModelService();
@@ -622,6 +627,7 @@ struct ChatPage {
             listener.onStateChangedFn = (state: ArkWebChatAvatarStageState, _detail: string): void => {
               self.avatarStageState = state;
               self.avatarStageSnapshot = controller.getRuntimeSnapshot();
+              self.avatarShotSnapshot = controller.getShotRuntimeSnapshot();
               // 模型就绪后刷新能力快照
               if (state === 'MODEL_READY') {
                 self.refreshAiCapabilitySnapshot();
@@ -1017,10 +1023,41 @@ struct ChatPage {
             .fontSize($r('app.float.app_font_caption'))
             .width('100%')
             .height(30)
-            .margin({ top: 6, bottom: 8 })
+            .margin({ top: 6, bottom: 4 })
             .onClick(() => {
               this.reloadAvatarModel();
             })
+
+          // Phase 4B-2: 镜头手动验证按钮 (只调用 ShotDirector, 不直接调用相机)
+          Row() {
+            Button('全身')
+              .type(ButtonType.Normal)
+              .borderRadius($r('app.float.app_radius_sm'))
+              .backgroundColor('rgba(255,255,255,0.12)')
+              .fontColor($r('app.color.app_text_primary'))
+              .fontSize($r('app.float.app_font_caption'))
+              .height(28)
+              .layoutWeight(1)
+              .margin({ right: 4 })
+              .onClick(() => {
+                this.transitionToFullBody();
+              })
+
+            Button('脸部（重置视角）')
+              .type(ButtonType.Normal)
+              .borderRadius($r('app.float.app_radius_sm'))
+              .backgroundColor('rgba(255,255,255,0.12)')
+              .fontColor($r('app.color.app_text_primary'))
+              .fontSize($r('app.float.app_font_caption'))
+              .height(28)
+              .layoutWeight(1)
+              .margin({ left: 4 })
+              .onClick(() => {
+                this.transitionToFaceResetView();
+              })
+          }
+          .width('100%')
+          .margin({ bottom: 8 })
 
           // 无能力快照时提示
           if (this.aiCapabilitySnapshot === null) {
@@ -1174,6 +1211,15 @@ struct ChatPage {
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
 
+      // Phase 4B-2: 镜头状态行
+      Text(`镜头: ${this.shotStateText()}`)
+        .fontSize(11)
+        .fontColor($r('app.color.app_text_secondary'))
+        .width('100%')
+        .margin({ top: 2 })
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+
       if (this.stageErrorText().length > 0) {
         Text(`错误: ${this.stageErrorText()}`)
           .fontSize(11)
@@ -1240,6 +1286,26 @@ struct ChatPage {
     return code.length > 0 ? code : '';
   }
 
+  /** Phase 4B-2 诊断辅助: 镜头状态文本。 */
+  private shotStateText(): string {
+    if (this.avatarShotSnapshot === null) {
+      return '-';
+    }
+    const state: string = this.avatarShotSnapshot!.state;
+    const shot: string = this.avatarShotSnapshot!.currentShot;
+    if (state === 'TRANSITIONING') {
+      return `切换中 → ${this.avatarShotSnapshot!.requestedShot}`;
+    }
+    if (state === 'FAILED') {
+      return `失败 (${shot})`;
+    }
+    if (state === 'DISPOSED') {
+      return '已销毁';
+    }
+    // FULL_BODY / FACE_RESET_VIEW / IDLE
+    return shot;
+  }
+
   /**
    * Phase 4B-1R §第八项: 重新加载模型按钮回调。
    *
@@ -1259,10 +1325,58 @@ struct ChatPage {
     this.avatarStageSnapshot = controller.getRuntimeSnapshot();
     controller.reloadActiveModel().then((): void => {
       this.avatarStageSnapshot = controller.getRuntimeSnapshot();
+      this.avatarShotSnapshot = controller.getShotRuntimeSnapshot();
     }).catch((e: Object): void => {
       Logger.warn(LOG_TAG, 'reloadAvatarModel failed: ' +
         (e instanceof Error ? e.message : String(e)));
       this.avatarStageSnapshot = controller.getRuntimeSnapshot();
+      this.avatarShotSnapshot = controller.getShotRuntimeSnapshot();
+    });
+  }
+
+  /**
+   * Phase 4B-2: 手动切换到全身镜头 (AI 面板验证按钮)。
+   *
+   * 只调用 ShotDirector, 不直接调用 ArkWebVrmViewerController 相机方法。
+   */
+  private transitionToFullBody(): void {
+    if (this.avatarStageController === null) {
+      Logger.warn(LOG_TAG, 'transitionToFullBody: controller null');
+      return;
+    }
+    const controller: ArkWebChatAvatarStageController = this.avatarStageController!;
+    controller.transitionToFullBody('AI_PANEL_BUTTON').then((ok: boolean): void => {
+      this.avatarShotSnapshot = controller.getShotRuntimeSnapshot();
+      if (!ok) {
+        Logger.warn(LOG_TAG, 'transitionToFullBody returned false');
+      }
+    }).catch((e: Object): void => {
+      Logger.warn(LOG_TAG, 'transitionToFullBody failed: ' +
+        (e instanceof Error ? e.message : String(e)));
+      this.avatarShotSnapshot = controller.getShotRuntimeSnapshot();
+    });
+  }
+
+  /**
+   * Phase 4B-2: 手动切换到脸部 (重置) 镜头 (AI 面板验证按钮)。
+   *
+   * 只调用 ShotDirector, 不直接调用 ArkWebVrmViewerController 相机方法。
+   */
+  private transitionToFaceResetView(): void {
+    if (this.avatarStageController === null) {
+      Logger.warn(LOG_TAG, 'transitionToFaceResetView: controller null');
+      return;
+    }
+    const controller: ArkWebChatAvatarStageController = this.avatarStageController!;
+    controller.transitionToFaceResetView('AI_PANEL_BUTTON').then((ok: boolean): void => {
+      this.avatarShotSnapshot = controller.getShotRuntimeSnapshot();
+      if (!ok) {
+        Logger.warn(LOG_TAG, 'transitionToFaceResetView returned false');
+      }
+    }).catch((e: Object): void => {
+      Logger.warn(LOG_TAG, 'transitionToFaceResetView failed: ' +
+        (e instanceof Error ? e.message : String(e)));
+      this.avatarShotSnapshot = controller.getShotRuntimeSnapshot();
     });
   }
 

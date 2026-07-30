@@ -111,9 +111,10 @@ export struct ChatAvatarStage {
       return;
     }
     if (this.visible) {
-      // 切回可见: 触发重新构图 (controller 内部检查 MODEL_READY + 尺寸有效性)
-      this.controller!.refitFullBody().catch((e: Object): void => {
-        console.warn(LOG_TAG, 'refit on visible toggle failed: ' +
+      // Phase 4B-2: 切回可见时通知 ShotDirector 恢复 FULL_BODY
+      // (ShotDirector 内部会触发 refitFullBody, 不恢复隐藏前的脸部镜头)
+      this.controller!.onStageVisible().catch((e: Object): void => {
+        console.warn(LOG_TAG, 'onStageVisible failed: ' +
           (e instanceof Error ? e.message : String(e)));
       });
     }
