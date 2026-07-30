@@ -303,9 +303,12 @@ export class ViewerCore {
   /**
    * Phase 2A-2: 重置相机到 Figure 基准位置。
    *
-   * Figure 基准: FOV=30, near=0.1, far=20, position=(0,1.25,2), target=(0,1.25,0)
+   * Figure 基准: FOV=30, position=(0,1.25,2), target=(0,1.25,0)
    *
-   * 不依赖当前模型大小。preserveControlsEnabled 保持控制面板触摸隔离状态。
+   * Final Acceptance Fix: near/far 不再固定 0.1/20,reset 后调用 updateCameraClipping
+   * 根据当前模型 bounds 和默认距离计算,避免拉远时模型被 far plane 裁掉。
+   *
+   * preserveControlsEnabled 保持控制面板触摸隔离状态。
    *
    * @returns {{success: boolean, state?: object, error?: object}}
    */
@@ -322,7 +325,21 @@ export class ViewerCore {
         error: makeError(ERR_CAMERA_INITIALIZATION_FAILED, 'Camera not initialized', this._state, true)
       };
     }
-    var result = this.camera.reset({ preserveControlsEnabled: true });
+    // Final Acceptance Fix: 计算当前模型 bounds 传给 reset
+    var modelBounds = null;
+    if (this.modelLoader) {
+      var currentVrm = this.modelLoader.getCurrentVrm();
+      if (currentVrm && currentVrm.scene) {
+        var bounds = this.camera.computeModelBounds(currentVrm.scene);
+        if (bounds.valid) {
+          modelBounds = { radius: bounds.radius };
+        }
+      }
+    }
+    var result = this.camera.reset({
+      preserveControlsEnabled: true,
+      modelBounds: modelBounds
+    });
     return result;
   }
 

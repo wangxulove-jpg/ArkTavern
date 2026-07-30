@@ -574,6 +574,14 @@ export interface ArkWebCameraState {
   controlsEnabled: boolean;
   /** 最近一次相机操作: INITIALIZE / RESET / FOCUS / MODEL_REPLACED_FOCUS */
   lastAction: string;
+  /** Final Acceptance Fix: OrbitControls 最小距离 */
+  minDistance?: number;
+  /** Final Acceptance Fix: OrbitControls 最大距离 */
+  maxDistance?: number;
+  /** Final Acceptance Fix: 当前模型包围球半径 */
+  modelBoundingRadius?: number;
+  /** Final Acceptance Fix: 最近一次裁剪更新原因 */
+  lastClipUpdateReason?: string;
 }
 
 /**

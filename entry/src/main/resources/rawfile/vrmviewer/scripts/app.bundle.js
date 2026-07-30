@@ -30974,6 +30974,18 @@ void main() {
   var ACTION_FOCUS = "FOCUS";
   var ACTION_MODEL_REPLACED_FOCUS = "MODEL_REPLACED_FOCUS";
   var ACTION_SMOOTH_RESET = "SMOOTH_RESET";
+  var ACTION_CLIP_UPDATE_RESIZE = "CLIP_UPDATE_RESIZE";
+  var ACTION_CLIP_UPDATE_CONTROLS = "CLIP_UPDATE_CONTROLS";
+  var CLIP_NEAR_RATIO = 0.01;
+  var CLIP_NEAR_MIN = 5e-3;
+  var CLIP_NEAR_MAX = 0.05;
+  var CLIP_FAR_FLOOR = 100;
+  var CLIP_FAR_RADIUS_FACTOR = 20;
+  var CONTROLS_MIN_DISTANCE_FLOOR = 0.1;
+  var CONTROLS_MIN_DISTANCE_RADIUS_RATIO = 0.3;
+  var CONTROLS_MAX_DISTANCE_FLOOR = 10;
+  var CONTROLS_MAX_DISTANCE_RADIUS_FACTOR = 25;
+  var CLIP_CHANGE_THRESHOLD = 0.05;
   var CameraTransitionState = Object.freeze({
     IDLE: "IDLE",
     RUNNING: "RUNNING",
@@ -31015,6 +31027,12 @@ void main() {
       this.transitionStartedAt = 0;
       this.transitionCompletedAt = 0;
       this._controlsStartHandler = null;
+      this.lastModelBoundingRadius = 0;
+      this.lastMinDistance = 0;
+      this.lastMaxDistance = 0;
+      this.lastClipUpdateReason = "";
+      this._lastClipUpdateDistance = -1;
+      this._controlsChangeHandler = null;
     }
     /**
      * 初始化 Camera 与 OrbitControls。
@@ -31058,6 +31076,14 @@ void main() {
       } catch (e) {
         console.warn("[ViewerCamera] OrbitControls start listener failed: " + (e && e.message ? e.message : String(e)));
       }
+      this._controlsChangeHandler = () => {
+        this._onControlsChange();
+      };
+      try {
+        this.controls.addEventListener("change", this._controlsChangeHandler);
+      } catch (e) {
+        console.warn("[ViewerCamera] OrbitControls change listener failed: " + (e && e.message ? e.message : String(e)));
+      }
     }
     /**
      * 每帧更新。
@@ -31080,6 +31106,9 @@ void main() {
     /**
      * 调整 Camera aspect。
      * Figure resize handler: camera.aspect = w/h; camera.updateProjectionMatrix()
+     *
+     * Final Acceptance Fix: resize 后调用 updateCameraClipping,确保画布尺寸变化时裁剪范围正确。
+     *
      * @param {number} width
      * @param {number} height
      */
@@ -31088,18 +31117,19 @@ void main() {
       if (width <= 0 || height <= 0) return;
       this.camera.aspect = width / height;
       this.camera.updateProjectionMatrix();
+      if (this.controls) {
+        this.updateCameraClipping(null, ACTION_CLIP_UPDATE_RESIZE);
+      }
     }
     /**
      * Phase 2A-2: 重置相机到 Figure 基准位置与目标点。
      *
      * Figure 基准(精确,不依赖当前模型大小):
-     *   FOV=30, near=0.1, far=20
-     *   position=(0, 1.25, 2)
-     *   target=(0, 1.25, 0)
+     *   FOV=30, position=(0, 1.25, 2), target=(0, 1.25, 0)
      *
-     * 完成后:
-     *   camera.updateProjectionMatrix()
-     *   controls.update()
+     * Final Acceptance Fix: near/far 不再使用固定 0.1/20,
+     * 而是重置 position/target 后调用 updateCameraClipping 根据当前距离和模型半径计算,
+     * 避免远距离拉远时模型被 far plane 裁掉。
      *
      * preserveControlsEnabled:
      *   重置发生时若 controls.enabled === false(控制面板正在触摸),
@@ -31108,6 +31138,7 @@ void main() {
      *
      * @param {object} [options]
      * @param {boolean} [options.preserveControlsEnabled=true] 是否保持 controls.enabled 状态
+     * @param {object} [options.modelBounds] 模型包围信息 { radius: number } (可选)
      * @returns {{success: boolean, state?: object, error?: string}}
      */
     reset(options) {
@@ -31122,8 +31153,6 @@ void main() {
       var preserveEnabled = opts.preserveControlsEnabled !== false;
       var savedEnabled = this.controls.enabled;
       this.camera.fov = DEFAULT_FOV;
-      this.camera.near = DEFAULT_NEAR;
-      this.camera.far = DEFAULT_FAR;
       this.camera.position.set(
         DEFAULT_CAMERA_POSITION.x,
         DEFAULT_CAMERA_POSITION.y,
@@ -31134,8 +31163,8 @@ void main() {
         DEFAULT_CONTROLS_TARGET.y,
         DEFAULT_CONTROLS_TARGET.z
       );
-      this.camera.updateProjectionMatrix();
       this.controls.update();
+      this.updateCameraClipping(opts.modelBounds || null, ACTION_RESET);
       if (preserveEnabled) {
         this.controls.enabled = savedEnabled;
       }
@@ -31281,21 +31310,14 @@ void main() {
       }
       var newPosition = new Vector3().copy(sphere.center).addScaledVector(direction, distance);
       var newTarget = new Vector3().copy(sphere.center);
-      var nearCandidate = distance - sphere.radius * 2.5;
-      var farCandidate = distance + sphere.radius * 4;
-      var newNear = Math.max(0.01, nearCandidate);
-      var newFar = Math.max(20, farCandidate);
-      if (!isFinite(newNear) || !isFinite(newFar) || newFar <= newNear || newFar - newNear < 1) {
-        newNear = DEFAULT_NEAR;
-        newFar = DEFAULT_FAR;
-      }
       var savedEnabled = this.controls.enabled;
       this.camera.position.copy(newPosition);
       this.controls.target.copy(newTarget);
-      this.camera.near = newNear;
-      this.camera.far = newFar;
-      this.camera.updateProjectionMatrix();
       this.controls.update();
+      this.updateCameraClipping(
+        { radius: sphere.radius },
+        action
+      );
       if (preserveEnabled) {
         this.controls.enabled = savedEnabled;
       }
@@ -31323,6 +31345,151 @@ void main() {
         return { success: false, error: CAMERA_NOT_INITIALIZED };
       }
       return { success: true, state: this._buildCameraState() };
+    }
+    // ===== Final Acceptance Fix: 相机裁剪范围统一更新 =====
+    /**
+     * Final Acceptance Fix: 统一更新相机裁剪范围 (near/far) 和 controls 距离限制。
+     *
+     * 根据:
+     *   - camera 到 controls.target 的距离
+     *   - 当前模型 bounding sphere radius
+     *   - 当前 focus/reset 模式 (通过 reason 区分)
+     *
+     * 计算并应用:
+     *   - camera.near = clamp(distance * CLIP_NEAR_RATIO, CLIP_NEAR_MIN, CLIP_NEAR_MAX)
+     *   - camera.far = max(CLIP_FAR_FLOOR, distance + modelRadius * CLIP_FAR_RADIUS_FACTOR)
+     *   - controls.minDistance = max(CONTROLS_MIN_DISTANCE_FLOOR, modelRadius * RADIUS_RATIO)
+     *   - controls.maxDistance = max(CONTROLS_MAX_DISTANCE_FLOOR, modelRadius * RADIUS_FACTOR)
+     *     且 maxDistance < camera.far
+     *
+     * 约束:
+     *   - near > 0
+     *   - far > near
+     *   - controls.minDistance > 0
+     *   - controls.maxDistance < camera.far
+     *   - 不使用 near=0 / near=0.000001 / 无限大 far
+     *
+     * 只在 near/far 实际变化超过阈值时调用 camera.updateProjectionMatrix()。
+     *
+     * @param {object} modelBounds 模型包围信息 { radius: number } 或 null (使用上次缓存)
+     * @param {string} reason 更新原因 (用于 Debug)
+     * @returns {{success: boolean, near?: number, far?: number, minDistance?: number, maxDistance?: number, updated?: boolean}}
+     */
+    updateCameraClipping(modelBounds, reason) {
+      if (this._disposed) {
+        return { success: false };
+      }
+      if (!this.camera || !this.controls) {
+        return { success: false };
+      }
+      if (modelBounds && typeof modelBounds.radius === "number" && isFinite(modelBounds.radius) && modelBounds.radius > 0) {
+        this.lastModelBoundingRadius = modelBounds.radius;
+      }
+      var modelRadius = this.lastModelBoundingRadius;
+      if (!isFinite(modelRadius) || modelRadius <= 0) {
+        modelRadius = 1.5;
+      }
+      var pos = this.camera.position;
+      var target = this.controls.target;
+      var dx = pos.x - target.x;
+      var dy = pos.y - target.y;
+      var dz = pos.z - target.z;
+      var distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      if (!isFinite(distance) || distance <= 0) {
+        return { success: false };
+      }
+      var newNear = distance * CLIP_NEAR_RATIO;
+      if (newNear < CLIP_NEAR_MIN) newNear = CLIP_NEAR_MIN;
+      if (newNear > CLIP_NEAR_MAX) newNear = CLIP_NEAR_MAX;
+      var newFar = Math.max(CLIP_FAR_FLOOR, distance + modelRadius * CLIP_FAR_RADIUS_FACTOR);
+      if (newFar <= newNear) {
+        newFar = newNear + 1;
+      }
+      var newMinDistance = Math.max(
+        CONTROLS_MIN_DISTANCE_FLOOR,
+        modelRadius * CONTROLS_MIN_DISTANCE_RADIUS_RATIO
+      );
+      var newMaxDistance = Math.max(
+        CONTROLS_MAX_DISTANCE_FLOOR,
+        modelRadius * CONTROLS_MAX_DISTANCE_RADIUS_FACTOR
+      );
+      if (newMaxDistance >= newFar) {
+        newMaxDistance = newFar - 0.1;
+      }
+      if (newMinDistance >= newMaxDistance) {
+        newMinDistance = newMaxDistance * 0.1;
+      }
+      var oldNear = this.camera.near;
+      var oldFar = this.camera.far;
+      var nearChanged = Math.abs(newNear - oldNear) / Math.max(oldNear, 1e-6) > CLIP_CHANGE_THRESHOLD;
+      var farChanged = Math.abs(newFar - oldFar) / Math.max(oldFar, 1e-6) > CLIP_CHANGE_THRESHOLD;
+      this.controls.minDistance = newMinDistance;
+      this.controls.maxDistance = newMaxDistance;
+      this.lastMinDistance = newMinDistance;
+      this.lastMaxDistance = newMaxDistance;
+      this.camera.near = newNear;
+      this.camera.far = newFar;
+      if (nearChanged || farChanged) {
+        this.camera.updateProjectionMatrix();
+      }
+      this.lastClipUpdateReason = String(reason || "UNKNOWN");
+      this._lastClipUpdateDistance = distance;
+      return {
+        success: true,
+        near: newNear,
+        far: newFar,
+        minDistance: newMinDistance,
+        maxDistance: newMaxDistance,
+        updated: nearChanged || farChanged
+      };
+    }
+    /**
+     * Final Acceptance Fix: OrbitControls 'change' 事件处理器。
+     *
+     * 距离发生明显变化(超过阈值)时更新裁剪范围。
+     * 不每帧无条件执行,仅在距离变化超过阈值时执行。
+     *
+     * @private
+     */
+    _onControlsChange() {
+      if (this._disposed || !this.camera || !this.controls) return;
+      var pos = this.camera.position;
+      var target = this.controls.target;
+      var dx = pos.x - target.x;
+      var dy = pos.y - target.y;
+      var dz = pos.z - target.z;
+      var distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      if (!isFinite(distance) || distance <= 0) return;
+      if (this._lastClipUpdateDistance > 0) {
+        var relativeChange = Math.abs(distance - this._lastClipUpdateDistance) / Math.max(this._lastClipUpdateDistance, 1e-6);
+        if (relativeChange < CLIP_CHANGE_THRESHOLD) return;
+      }
+      this.updateCameraClipping(null, ACTION_CLIP_UPDATE_CONTROLS);
+    }
+    /**
+     * Final Acceptance Fix: 计算模型包围球半径。
+     *
+     * @param {THREE.Object3D} modelRoot 模型根节点
+     * @returns {{radius: number, center: THREE.Vector3, valid: boolean}}
+     */
+    computeModelBounds(modelRoot) {
+      if (!modelRoot) {
+        return { radius: 0, center: new Vector3(), valid: false };
+      }
+      try {
+        modelRoot.updateWorldMatrix(true, true);
+        var box = new Box3().setFromObject(modelRoot);
+        if (!box || box.isEmpty()) {
+          return { radius: 0, center: new Vector3(), valid: false };
+        }
+        var sphere = box.getBoundingSphere(new Sphere());
+        if (!isFinite(sphere.radius) || sphere.radius <= 0) {
+          return { radius: 0, center: new Vector3(), valid: false };
+        }
+        return { radius: sphere.radius, center: sphere.center, valid: true };
+      } catch (e) {
+        return { radius: 0, center: new Vector3(), valid: false };
+      }
     }
     // ===== Phase 2B: 平滑重置 =====
     /**
@@ -31511,9 +31678,7 @@ void main() {
           DEFAULT_CONTROLS_TARGET.z
         );
         this.camera.fov = DEFAULT_FOV;
-        this.camera.near = DEFAULT_NEAR;
-        this.camera.far = DEFAULT_FAR;
-        this.camera.updateProjectionMatrix();
+        this.updateCameraClipping(null, ACTION_SMOOTH_RESET);
         this.transitionState = CameraTransitionState.COMPLETED;
         this.transitionCompletedAt = Date.now();
         this.lastAction = ACTION_SMOOTH_RESET;
@@ -31586,6 +31751,8 @@ void main() {
     /**
      * Phase 2A-2: 构造 CameraState 对象。
      *
+     * Final Acceptance Fix: 增加 minDistance / maxDistance / modelBoundingRadius / lastClipUpdateReason
+     *
      * @returns {object} CameraState
      * @private
      */
@@ -31605,7 +31772,12 @@ void main() {
         aspect: this.camera.aspect,
         distance,
         controlsEnabled: !!this.controls.enabled,
-        lastAction: this.lastAction
+        lastAction: this.lastAction,
+        // Final Acceptance Fix: 裁剪相关 Debug 字段
+        minDistance: this.controls.minDistance,
+        maxDistance: this.controls.maxDistance,
+        modelBoundingRadius: this.lastModelBoundingRadius,
+        lastClipUpdateReason: this.lastClipUpdateReason
       };
     }
     dispose() {
@@ -31625,6 +31797,13 @@ void main() {
         }
       }
       this._controlsStartHandler = null;
+      if (this.controls && this._controlsChangeHandler) {
+        try {
+          this.controls.removeEventListener("change", this._controlsChangeHandler);
+        } catch (e) {
+        }
+      }
+      this._controlsChangeHandler = null;
       this.transitionStartState = null;
       this.transitionTargetState = null;
       if (this.controls) {
@@ -46109,9 +46288,12 @@ void main() {
     /**
      * Phase 2A-2: 重置相机到 Figure 基准位置。
      *
-     * Figure 基准: FOV=30, near=0.1, far=20, position=(0,1.25,2), target=(0,1.25,0)
+     * Figure 基准: FOV=30, position=(0,1.25,2), target=(0,1.25,0)
      *
-     * 不依赖当前模型大小。preserveControlsEnabled 保持控制面板触摸隔离状态。
+     * Final Acceptance Fix: near/far 不再固定 0.1/20,reset 后调用 updateCameraClipping
+     * 根据当前模型 bounds 和默认距离计算,避免拉远时模型被 far plane 裁掉。
+     *
+     * preserveControlsEnabled 保持控制面板触摸隔离状态。
      *
      * @returns {{success: boolean, state?: object, error?: object}}
      */
@@ -46128,7 +46310,20 @@ void main() {
           error: makeError4(ERR_CAMERA_INITIALIZATION_FAILED, "Camera not initialized", this._state, true)
         };
       }
-      var result = this.camera.reset({ preserveControlsEnabled: true });
+      var modelBounds = null;
+      if (this.modelLoader) {
+        var currentVrm = this.modelLoader.getCurrentVrm();
+        if (currentVrm && currentVrm.scene) {
+          var bounds = this.camera.computeModelBounds(currentVrm.scene);
+          if (bounds.valid) {
+            modelBounds = { radius: bounds.radius };
+          }
+        }
+      }
+      var result = this.camera.reset({
+        preserveControlsEnabled: true,
+        modelBounds
+      });
       return result;
     }
     /**

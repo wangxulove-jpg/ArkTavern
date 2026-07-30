@@ -532,6 +532,11 @@ struct VrmViewerPage {
   @State debugCameraFar: number = 20;
   @State debugCameraAspect: number = 1;
   @State debugCameraLastAction: string = 'INITIALIZE';
+  // Final Acceptance Fix: 相机裁剪相关 Debug 状态
+  @State debugCameraMinDistance: number = 0;
+  @State debugCameraMaxDistance: number = 0;
+  @State debugCameraModelBoundingRadius: number = 0;
+  @State debugCameraLastClipUpdateReason: string = '';
 
   // ===== Phase 2B: 平滑相机过渡状态 =====
   /** Debug:过渡状态 (IDLE/RUNNING/COMPLETED/CANCELLED/FAILED/DISPOSED) */
@@ -3690,6 +3695,13 @@ struct VrmViewerPage {
     this.debugCameraAspect = cameraState.aspect;
     this.debugCameraControlsEnabled = cameraState.controlsEnabled;
     this.debugCameraLastAction = cameraState.lastAction;
+    // Final Acceptance Fix: 裁剪相关 Debug 字段
+    this.debugCameraMinDistance = cameraState.minDistance !== undefined ? cameraState.minDistance : 0;
+    this.debugCameraMaxDistance = cameraState.maxDistance !== undefined ? cameraState.maxDistance : 0;
+    this.debugCameraModelBoundingRadius =
+      cameraState.modelBoundingRadius !== undefined ? cameraState.modelBoundingRadius : 0;
+    this.debugCameraLastClipUpdateReason =
+      cameraState.lastClipUpdateReason !== undefined ? cameraState.lastClipUpdateReason : '';
   }
 
   /**
@@ -10098,6 +10110,10 @@ struct VrmViewerPage {
       this.DebugRow('Camera Near/Far',
         this.debugCameraNear.toFixed(3) + ' / ' + this.debugCameraFar.toFixed(3))
       this.DebugRow('Camera Aspect', this.debugCameraAspect.toFixed(3))
+      this.DebugRow('Controls Min/Max Distance',
+        this.debugCameraMinDistance.toFixed(3) + ' / ' + this.debugCameraMaxDistance.toFixed(3))
+      this.DebugRow('Model Bounding Radius', this.debugCameraModelBoundingRadius.toFixed(3))
+      this.DebugRow('Last Camera Clip Update', this.debugCameraLastClipUpdateReason)
       this.DebugRow('Camera Last Action', this.debugCameraLastAction)
 
       // Phase 2B: Camera Transition Debug
