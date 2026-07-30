@@ -184,6 +184,16 @@ import {
   ArkWebDialoguePerformanceLifecycleRuntime,
   ArkWebDialogueLifecycleState
 } from '../vrmviewer/ArkWebDialoguePerformanceLifecycleController';
+import { ArkWebAvatarAiCapabilityCatalog } from '../vrmviewer/ArkWebAvatarAiCapabilityCatalog';
+import {
+  ArkWebAvatarAiCapabilitySnapshot,
+  ArkWebAvatarAiCapabilityState,
+  ArkWebAvatarAiAnimationCapability,
+  ArkWebAvatarAiPoseCapability,
+  ArkWebAvatarAiExpressionCapability,
+  AI_CAPABILITY_EXPRESSION_DISPLAY_NAMES,
+  AI_CAPABILITY_EXPRESSION_BUSINESS_IDS
+} from '../vrmviewer/ArkWebAvatarAiTypes';
 
 /**
  * 传给 JavaScript loadVrmaResource 的资源 JSON 载荷。
@@ -211,6 +221,7 @@ enum ViewerTab {
   Pose = 'pose',
   Animation = 'animation',
   Expression = 'expression',
+  Ai = 'ai',
   Physics = 'physics',
   Scene = 'scene',
   Debug = 'debug'
@@ -858,6 +869,36 @@ struct VrmViewerPage {
   /** 生命周期最后错误消息 */
   @State dialoguePerformanceErrorMessage: string = '';
 
+  // ===== Phase 4A-1 — AI Tab 与模型能力目录 =====
+  /** AI 能力目录实例 (aboutToAppear 创建, disposeViewer 销毁) */
+  @State aiCapabilityCatalog: ArkWebAvatarAiCapabilityCatalog | null = null;
+  /** AI 能力目录当前状态 */
+  @State aiCapabilityState: ArkWebAvatarAiCapabilityState = ArkWebAvatarAiCapabilityState.IDLE;
+  /** AI 能力目录最后错误码 */
+  @State aiCapabilityErrorCode: string = '';
+  /** AI 能力目录最后错误消息 */
+  @State aiCapabilityErrorMessage: string = '';
+  /** 当前能力快照 (UI 展示) */
+  @State aiCapabilitySnapshot: ArkWebAvatarAiCapabilitySnapshot | null = null;
+  /** 手动测试是否执行中 */
+  @State aiTestExecuting: boolean = false;
+  /** 最近一次手动测试的 turnId */
+  @State aiLastTurnId: string = '';
+  /** 最近一次手动测试的 commandId */
+  @State aiLastCommandId: string = '';
+  /** 最近一次手动测试结果描述 */
+  @State aiLastResult: string = '';
+  /** AI Tab 手动测试: 演出类型 (animation/pose/none) */
+  @State aiTestMotionType: string = 'animation';
+  /** AI Tab 手动测试: 选中的业务动作 ID (actionId 或 poseId) */
+  @State aiTestMotionId: string = '';
+  /** AI Tab 手动测试: 选中的业务表情 ID (空字符串表示无表情) */
+  @State aiTestExpressionId: string = '';
+  /** AI Tab 手动测试: 持续时间 (ms) */
+  @State aiTestDurationMs: number = 2500;
+  /** AI Tab 手动测试: 恢复策略 (DEFAULT_POSE / RESET / KEEP) */
+  @State aiTestReturnPolicy: string = 'DEFAULT_POSE';
+
   // ===== Phase 3B — 模型自动恢复与持久化资产目录 =====
   /** 资产库状态(READY / EMPTY / FAILED / DISPOSED) */
   @State assetLibraryState: string = 'IDLE';
@@ -1089,6 +1130,12 @@ struct VrmViewerPage {
       this.dialogueLifecycleController =
         new ArkWebDialoguePerformanceLifecycleController(
           this.dialoguePerformanceMapper, lifecycleRuntime);
+    }
+
+    // Phase 4A-1:创建 AI 能力目录 (注入 AssetLibrary, 不转移所有权)
+    // Catalog 只读取业务能力,不创建 Timer / 网络 / AI 客户端 / Three.js 对象
+    if (this.aiCapabilityCatalog === null && this.assetLibrary !== null) {
+      this.aiCapabilityCatalog = new ArkWebAvatarAiCapabilityCatalog(this.assetLibrary);
     }
 
     // Web 组件加载由 build() 触发,初始化在 onPageEnd 回调中完成
@@ -1400,6 +1447,19 @@ struct VrmViewerPage {
     this.dialoguePerformanceWarnings = '';
     this.dialoguePerformanceErrorCode = '';
     this.dialoguePerformanceErrorMessage = '';
+    // Phase 4A-1: 销毁 AI 能力目录 (不销毁 AssetLibrary, 不删除模型/动画/姿势/表情映射)
+    if (this.aiCapabilityCatalog !== null) {
+      this.aiCapabilityCatalog.dispose();
+      this.aiCapabilityCatalog = null;
+    }
+    this.aiCapabilityState = ArkWebAvatarAiCapabilityState.DISPOSED;
+    this.aiCapabilityErrorCode = '';
+    this.aiCapabilityErrorMessage = '';
+    this.aiCapabilitySnapshot = null;
+    this.aiTestExecuting = false;
+    this.aiLastTurnId = '';
+    this.aiLastCommandId = '';
+    this.aiLastResult = '';
     if (this.performanceController !== null) {
       this.performanceController.dispose();
       this.performanceController = null;
@@ -1574,9 +1634,10 @@ struct VrmViewerPage {
       case ViewerTab.Pose: return 1;
       case ViewerTab.Animation: return 2;
       case ViewerTab.Expression: return 3;
-      case ViewerTab.Physics: return 4;
-      case ViewerTab.Scene: return 5;
-      case ViewerTab.Debug: return 6;
+      case ViewerTab.Ai: return 4;
+      case ViewerTab.Physics: return 5;
+      case ViewerTab.Scene: return 6;
+      case ViewerTab.Debug: return 7;
       default: return 0;
     }
   }
@@ -1591,9 +1652,10 @@ struct VrmViewerPage {
       case 1: return ViewerTab.Pose;
       case 2: return ViewerTab.Animation;
       case 3: return ViewerTab.Expression;
-      case 4: return ViewerTab.Physics;
-      case 5: return ViewerTab.Scene;
-      case 6: return ViewerTab.Debug;
+      case 4: return ViewerTab.Ai;
+      case 5: return ViewerTab.Physics;
+      case 6: return ViewerTab.Scene;
+      case 7: return ViewerTab.Debug;
       default:
         this.presentationWarning =
           ArkWebPresentationErrorCode.PANEL_STATE_INVALID + ': invalid tab index ' + index;
@@ -8014,6 +8076,7 @@ struct VrmViewerPage {
         this.TabItem('姿势', ViewerTab.Pose)
         this.TabItem('动画', ViewerTab.Animation)
         this.TabItem('表情', ViewerTab.Expression)
+        this.TabItem('AI', ViewerTab.Ai)
         this.TabItem('物理', ViewerTab.Physics)
         this.TabItem('场景', ViewerTab.Scene)
         this.TabItem('调试', ViewerTab.Debug)
@@ -8045,6 +8108,10 @@ struct VrmViewerPage {
       })
       .onClick(() => {
         this.activeTab = tab;
+        // Phase 4A-1: 切换到 AI Tab 时刷新能力目录 (不使用轮询)
+        if (tab === ViewerTab.Ai) {
+          this.refreshAiCapabilityCatalog();
+        }
       })
   }
 
@@ -8061,6 +8128,8 @@ struct VrmViewerPage {
           this.TabAnimationContent()
         } else if (this.activeTab === ViewerTab.Expression) {
           this.TabExpressionContent()
+        } else if (this.activeTab === ViewerTab.Ai) {
+          this.TabAiContent()
         } else if (this.activeTab === ViewerTab.Physics) {
           this.TabPhysicsContent()
         } else if (this.activeTab === ViewerTab.Scene) {
@@ -10471,6 +10540,1031 @@ struct VrmViewerPage {
     }
     .width('100%')
     .padding({ top: 6, bottom: 6, left: 8, right: 8 })
+  }
+
+  // ===== Phase 4A-1: AI Tab 与模型能力目录 =====
+
+  /**
+   * AI Tab 主内容 (Phase 4A-1)。
+   *
+   * 只显示业务能力:
+   *   - 连接状态 (模型状态 / 当前模型 / AI 能力目录状态 / 聊天联动)
+   *   - 模型能力概览 (动画/姿势/表情数量, 默认待机, 默认姿势)
+   *   - 可调用能力 (动画/姿势/表情三组列表, 只显示业务 ID 和显示名)
+   *   - 手动联动测试 (生成结构化 Hint, 经 LifecycleController 提交)
+   *   - 最近一次执行结果
+   *
+   * 不显示: 绝对路径 / 相对路径 / resourceId / Provider URL / 完整错误堆栈 /
+   *         generation / expiresAt / command 内部状态 (这些放入调试 Tab)。
+   *
+   * 聊天联动固定显示"未连接" (本阶段不接入真实聊天页面)。
+   */
+  @Builder
+  TabAiContent() {
+    Column() {
+      // ===== 连接状态 =====
+      Text('AI 能力面板')
+        .fontSize($r('app.float.app_font_subtitle'))
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.app_text_primary'))
+        .margin({ bottom: 8 })
+
+      // 模型状态
+      Row() {
+        Text('模型状态:')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+        Text(this.debugModelState === 'READY' ? '已就绪' : this.debugModelState)
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor(this.debugModelState === 'READY'
+            ? $r('app.color.model_settings_success')
+            : $r('app.color.app_text_tertiary'))
+          .margin({ left: 8 })
+      }
+      .width('100%')
+      .margin({ bottom: 4 })
+
+      // 当前模型名称
+      Row() {
+        Text('当前模型:')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+        Text(this.aiCurrentModelDisplayName())
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_primary'))
+          .margin({ left: 8 })
+          .layoutWeight(1)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .width('100%')
+      .margin({ bottom: 4 })
+
+      // AI 能力目录状态
+      Row() {
+        Text('AI 能力目录:')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+        Text(this.aiCapabilityState)
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor(this.aiCapabilityState === ArkWebAvatarAiCapabilityState.READY
+            ? $r('app.color.model_settings_success')
+            : (this.aiCapabilityState === ArkWebAvatarAiCapabilityState.FAILED
+              ? $r('app.color.app_text_tertiary')
+              : $r('app.color.app_text_primary')))
+          .margin({ left: 8 })
+      }
+      .width('100%')
+      .margin({ bottom: 4 })
+
+      // 聊天联动状态 (本阶段固定未连接,不伪造已连接)
+      Row() {
+        Text('聊天联动:')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+        Text('未连接')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_tertiary'))
+          .margin({ left: 8 })
+      }
+      .width('100%')
+      .margin({ bottom: 8 })
+
+      // 错误信息 (仅显示错误码,不显示完整堆栈)
+      if (this.aiCapabilityErrorCode.length > 0) {
+        Row() {
+          Text(`错误码: ${this.aiCapabilityErrorCode}`)
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_tertiary'))
+            .layoutWeight(1)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        .width('100%')
+        .margin({ bottom: 4 })
+        if (this.aiCapabilityErrorMessage.length > 0) {
+          Text(this.aiCapabilityErrorMessage)
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_tertiary'))
+            .width('100%')
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .margin({ bottom: 8 })
+        }
+      }
+
+      // 刷新按钮
+      Row() {
+        Button('刷新能力目录')
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor($r('app.color.app_text_primary'))
+          .backgroundColor($r('app.color.app_surface_2'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(36)
+          .layoutWeight(1)
+          .enabled(this.aiCapabilityCatalog !== null
+            && this.aiCapabilityState !== ArkWebAvatarAiCapabilityState.DISPOSED
+            && this.aiCapabilityState !== ArkWebAvatarAiCapabilityState.LOADING)
+          .onClick(() => {
+            this.refreshAiCapabilityCatalog();
+          })
+      }
+      .width('100%')
+      .margin({ bottom: 16 })
+
+      // ===== 模型能力概览 =====
+      Divider()
+        .color($r('app.color.app_divider'))
+        .margin({ top: 8, bottom: 12 })
+
+      Text('模型能力概览')
+        .fontSize($r('app.float.app_font_subtitle'))
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.app_text_primary'))
+        .margin({ bottom: 8 })
+
+      if (this.aiCapabilitySnapshot !== null) {
+        Column({ space: 4 }) {
+          Row() {
+            Text('动画:')
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_text_secondary'))
+            Text(`${this.aiCapabilitySnapshot.animations.length}`)
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_text_primary'))
+              .margin({ left: 8 })
+          }.width('100%')
+
+          Row() {
+            Text('姿势:')
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_text_secondary'))
+            Text(`${this.aiCapabilitySnapshot.poses.length}`)
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_text_primary'))
+              .margin({ left: 8 })
+          }.width('100%')
+
+          Row() {
+            Text('表情:')
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_text_secondary'))
+            Text(`${this.aiAvailableExpressionCount()} / 6 可用`)
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_text_primary'))
+              .margin({ left: 8 })
+          }.width('100%')
+
+          Row() {
+            Text('默认待机:')
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_text_secondary'))
+            Text(this.aiDefaultIdleDisplayName())
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_text_primary'))
+              .margin({ left: 8 })
+              .layoutWeight(1)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }.width('100%')
+
+          Row() {
+            Text('默认姿势:')
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_text_secondary'))
+            Text(this.aiDefaultPoseDisplayName())
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_text_primary'))
+              .margin({ left: 8 })
+              .layoutWeight(1)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }.width('100%')
+        }
+        .width('100%')
+        .margin({ bottom: 16 })
+      } else {
+        Text('尚未生成能力快照')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .width('100%')
+          .margin({ bottom: 16 })
+      }
+
+      // ===== 可调用能力 — 动画 =====
+      Divider()
+        .color($r('app.color.app_divider'))
+        .margin({ top: 8, bottom: 12 })
+
+      Text('动画')
+        .fontSize($r('app.float.app_font_subtitle'))
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.app_text_primary'))
+        .margin({ bottom: 8 })
+
+      if (this.aiCapabilitySnapshot === null
+        || this.aiCapabilitySnapshot.animations.length === 0) {
+        Text('无可用动画')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .width('100%')
+          .margin({ bottom: 16 })
+      } else {
+        List({ space: 4 }) {
+          ForEach(this.aiCapabilitySnapshot.animations,
+            (cap: ArkWebAvatarAiAnimationCapability) => {
+              ListItem() {
+                this.AiAnimationCapabilityItem(cap)
+              }
+            },
+            (cap: ArkWebAvatarAiAnimationCapability) => cap.actionId)
+        }
+        .width('100%')
+        .margin({ bottom: 16 })
+        .alignListItem(ListItemAlign.Center)
+      }
+
+      // ===== 可调用能力 — 姿势 =====
+      Text('姿势')
+        .fontSize($r('app.float.app_font_subtitle'))
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.app_text_primary'))
+        .margin({ bottom: 8 })
+
+      if (this.aiCapabilitySnapshot === null
+        || this.aiCapabilitySnapshot.poses.length === 0) {
+        Text('无可用姿势')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .width('100%')
+          .margin({ bottom: 16 })
+      } else {
+        List({ space: 4 }) {
+          ForEach(this.aiCapabilitySnapshot.poses,
+            (cap: ArkWebAvatarAiPoseCapability) => {
+              ListItem() {
+                this.AiPoseCapabilityItem(cap)
+              }
+            },
+            (cap: ArkWebAvatarAiPoseCapability) => cap.poseId)
+        }
+        .width('100%')
+        .margin({ bottom: 16 })
+        .alignListItem(ListItemAlign.Center)
+      }
+
+      // ===== 可调用能力 — 表情 =====
+      Text('表情')
+        .fontSize($r('app.float.app_font_subtitle'))
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.app_text_primary'))
+        .margin({ bottom: 8 })
+
+      if (this.aiCapabilitySnapshot === null
+        || this.aiCapabilitySnapshot.expressions.length === 0) {
+        Text('无可用表情')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .width('100%')
+          .margin({ bottom: 16 })
+      } else {
+        List({ space: 4 }) {
+          ForEach(this.aiCapabilitySnapshot.expressions,
+            (cap: ArkWebAvatarAiExpressionCapability) => {
+              ListItem() {
+                this.AiExpressionCapabilityItem(cap)
+              }
+            },
+            (cap: ArkWebAvatarAiExpressionCapability) => cap.expressionId)
+        }
+        .width('100%')
+        .margin({ bottom: 16 })
+        .alignListItem(ListItemAlign.Center)
+      }
+
+      // ===== 手动联动测试 =====
+      Divider()
+        .color($r('app.color.app_divider'))
+        .margin({ top: 8, bottom: 12 })
+
+      Text('手动联动测试')
+        .fontSize($r('app.float.app_font_subtitle'))
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.app_text_primary'))
+        .margin({ bottom: 4 })
+
+      Text('生成结构化 Hint, 经 LifecycleController 提交, 不绕过 Mapper')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_secondary'))
+        .width('100%')
+        .margin({ bottom: 12 })
+
+      // 演出类型选择
+      Text('演出类型')
+        .fontSize($r('app.float.app_font_body'))
+        .fontColor($r('app.color.app_text_primary'))
+        .margin({ bottom: 8 })
+
+      Row({ space: 8 }) {
+        ForEach(['animation', 'pose', 'none'] as ArkWebPerformanceMotionType[],
+          (t: ArkWebPerformanceMotionType) => {
+            Button(t === 'animation' ? '动画' : (t === 'pose' ? '姿势' : '仅表情'))
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor(this.aiTestMotionType === t
+                ? $r('app.color.app_text_primary')
+                : $r('app.color.app_text_secondary'))
+              .backgroundColor(this.aiTestMotionType === t
+                ? $r('app.color.app_surface_2')
+                : $r('app.color.app_surface_1'))
+              .borderRadius($r('app.float.app_radius_sm'))
+              .height(36)
+              .layoutWeight(1)
+              .onClick(() => {
+                this.aiTestMotionType = t;
+                // 切换类型时清空已选 motionId, 防止跨类型残留
+                this.aiTestMotionId = '';
+              })
+          })
+      }
+      .width('100%')
+      .margin({ bottom: 12 })
+
+      // 选择业务 ID
+      Text('选择业务 ID')
+        .fontSize($r('app.float.app_font_body'))
+        .fontColor($r('app.color.app_text_primary'))
+        .margin({ bottom: 8 })
+
+      if (this.aiTestMotionType === 'animation') {
+        if (this.aiCapabilitySnapshot !== null
+          && this.aiCapabilitySnapshot.animations.length > 0) {
+          this.AiMotionIdPicker('animation')
+        } else {
+          Text('无可用动画')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_secondary'))
+            .width('100%')
+            .margin({ bottom: 12 })
+        }
+      } else if (this.aiTestMotionType === 'pose') {
+        if (this.aiCapabilitySnapshot !== null
+          && this.aiCapabilitySnapshot.poses.length > 0) {
+          this.AiMotionIdPicker('pose')
+        } else {
+          Text('无可用姿势')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_secondary'))
+            .width('100%')
+            .margin({ bottom: 12 })
+        }
+      } else {
+        Text('仅表情模式, 无需选择业务 ID')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .width('100%')
+          .margin({ bottom: 12 })
+      }
+
+      // 选择表情
+      Text('选择表情')
+        .fontSize($r('app.float.app_font_body'))
+        .fontColor($r('app.color.app_text_primary'))
+        .margin({ bottom: 8 })
+
+      Row({ space: 6 }) {
+        Button('无')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor(this.aiTestExpressionId.length === 0
+            ? $r('app.color.app_text_primary')
+            : $r('app.color.app_text_secondary'))
+          .backgroundColor(this.aiTestExpressionId.length === 0
+            ? $r('app.color.app_surface_2')
+            : $r('app.color.app_surface_1'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(32)
+          .layoutWeight(1)
+          .onClick(() => {
+            this.aiTestExpressionId = '';
+          })
+        ForEach(AI_CAPABILITY_EXPRESSION_BUSINESS_IDS, (id: string) => {
+          Button(id)
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor(this.aiTestExpressionId === id
+              ? $r('app.color.app_text_primary')
+              : $r('app.color.app_text_secondary'))
+            .backgroundColor(this.aiTestExpressionId === id
+              ? $r('app.color.app_surface_2')
+              : $r('app.color.app_surface_1'))
+            .borderRadius($r('app.float.app_radius_sm'))
+            .height(32)
+            .layoutWeight(1)
+            .onClick(() => {
+              this.aiTestExpressionId = id;
+            })
+        })
+      }
+      .width('100%')
+      .margin({ bottom: 12 })
+
+      // 持续时间
+      Text('持续时间 (ms)')
+        .fontSize($r('app.float.app_font_body'))
+        .fontColor($r('app.color.app_text_primary'))
+        .margin({ bottom: 8 })
+
+      Row({ space: 8 }) {
+        ForEach([1000, 2500, 5000], (d: number) => {
+          Button(String(d))
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor(this.aiTestDurationMs === d
+              ? $r('app.color.app_text_primary')
+              : $r('app.color.app_text_secondary'))
+            .backgroundColor(this.aiTestDurationMs === d
+              ? $r('app.color.app_surface_2')
+              : $r('app.color.app_surface_1'))
+            .borderRadius($r('app.float.app_radius_sm'))
+            .height(36)
+            .layoutWeight(1)
+            .onClick(() => {
+              this.aiTestDurationMs = d;
+            })
+        })
+      }
+      .width('100%')
+      .margin({ bottom: 12 })
+
+      // 恢复策略
+      Text('恢复策略')
+        .fontSize($r('app.float.app_font_body'))
+        .fontColor($r('app.color.app_text_primary'))
+        .margin({ bottom: 8 })
+
+      Row({ space: 8 }) {
+        ForEach(['DEFAULT_POSE', 'RESET', 'KEEP'] as ArkWebPerformanceReturnPolicy[],
+          (p: ArkWebPerformanceReturnPolicy) => {
+            Button(p)
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor(this.aiTestReturnPolicy === p
+                ? $r('app.color.app_text_primary')
+                : $r('app.color.app_text_secondary'))
+              .backgroundColor(this.aiTestReturnPolicy === p
+                ? $r('app.color.app_surface_2')
+                : $r('app.color.app_surface_1'))
+              .borderRadius($r('app.float.app_radius_sm'))
+              .height(36)
+              .layoutWeight(1)
+              .onClick(() => {
+                this.aiTestReturnPolicy = p;
+              })
+          })
+      }
+      .width('100%')
+      .margin({ bottom: 16 })
+
+      // 执行 / 停止
+      Row({ space: 8 }) {
+        Button('执行 AI 演出测试')
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor($r('app.color.app_text_primary'))
+          .backgroundColor($r('app.color.app_surface_2'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(40)
+          .layoutWeight(1)
+          .enabled(this.dialogueLifecycleController !== null
+            && !this.aiTestExecuting
+            && this.debugModelState === 'READY')
+          .onClick(() => {
+            this.onExecuteAiTestClick();
+          })
+        Button('停止演出')
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor($r('app.color.app_text_primary'))
+          .backgroundColor($r('app.color.app_surface_2'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(40)
+          .layoutWeight(1)
+          .enabled(this.dialogueLifecycleController !== null
+            && !this.aiTestExecuting
+            && this.dialoguePerformanceState !== ArkWebDialogueLifecycleState.IDLE
+            && this.dialoguePerformanceState !== ArkWebDialogueLifecycleState.DISPOSED)
+          .onClick(() => {
+            this.onStopAiTestClick();
+          })
+      }
+      .width('100%')
+      .margin({ bottom: 16 })
+
+      // ===== 最近一次执行结果 =====
+      Divider()
+        .color($r('app.color.app_divider'))
+        .margin({ top: 8, bottom: 12 })
+
+      Text('最近一次执行结果')
+        .fontSize($r('app.float.app_font_subtitle'))
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.app_text_primary'))
+        .margin({ bottom: 8 })
+
+      Column({ space: 4 }) {
+        Row() {
+          Text('Turn ID:')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_secondary'))
+          Text(this.aiLastTurnId.length > 0 ? this.aiLastTurnId : '-')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_primary'))
+            .margin({ left: 8 })
+            .layoutWeight(1)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }.width('100%')
+
+        Row() {
+          Text('Command ID:')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_secondary'))
+          Text(this.aiLastCommandId.length > 0 ? this.aiLastCommandId : '-')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_primary'))
+            .margin({ left: 8 })
+            .layoutWeight(1)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }.width('100%')
+
+        if (this.aiLastResult.length > 0) {
+          Text(this.aiLastResult)
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_primary'))
+            .width('100%')
+            .maxLines(3)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+      }
+      .width('100%')
+    }
+    .width('100%')
+  }
+
+  /**
+   * AI Tab — 动画能力条目 (Phase 4A-1)。
+   *
+   * 只显示业务字段 (displayName / actionId / 是否默认待机),
+   * 不显示 resourceId / relativePath / mimeType / byteLength。
+   */
+  @Builder
+  AiAnimationCapabilityItem(cap: ArkWebAvatarAiAnimationCapability) {
+    Row() {
+      Column() {
+        Row() {
+          Text(cap.displayName)
+            .fontSize($r('app.float.app_font_body'))
+            .fontColor($r('app.color.app_text_primary'))
+            .layoutWeight(1)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+          if (cap.isDefaultIdle) {
+            Text('默认待机')
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_accent'))
+              .margin({ left: 4 })
+          }
+        }
+        .width('100%')
+        Text(`业务 ID：${cap.actionId}`)
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .width('100%')
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+
+      // 选中指示
+      Text(this.aiTestMotionType === 'animation' && this.aiTestMotionId === cap.actionId
+        ? '✓' : '')
+        .fontSize($r('app.float.app_font_body'))
+        .fontColor($r('app.color.app_text_primary'))
+        .width(24)
+        .textAlign(TextAlign.Center)
+    }
+    .width('100%')
+    .padding({ top: 6, bottom: 6, left: 8, right: 8 })
+    .onClick(() => {
+      if (this.aiTestMotionType === 'animation') {
+        this.aiTestMotionId = cap.actionId;
+      }
+    })
+  }
+
+  /**
+   * AI Tab — 姿势能力条目 (Phase 4A-1)。
+   *
+   * 只显示业务字段 (displayName / poseId / 是否默认姿势),
+   * 不显示 relativePath / byteLength / format。
+   */
+  @Builder
+  AiPoseCapabilityItem(cap: ArkWebAvatarAiPoseCapability) {
+    Row() {
+      Column() {
+        Row() {
+          Text(cap.displayName)
+            .fontSize($r('app.float.app_font_body'))
+            .fontColor($r('app.color.app_text_primary'))
+            .layoutWeight(1)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+          if (cap.isDefaultPose) {
+            Text('默认姿势')
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_accent'))
+              .margin({ left: 4 })
+          }
+        }
+        .width('100%')
+        Text(`业务 ID：${cap.poseId}`)
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .width('100%')
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+
+      Text(this.aiTestMotionType === 'pose' && this.aiTestMotionId === cap.poseId
+        ? '✓' : '')
+        .fontSize($r('app.float.app_font_body'))
+        .fontColor($r('app.color.app_text_primary'))
+        .width(24)
+        .textAlign(TextAlign.Center)
+    }
+    .width('100%')
+    .padding({ top: 6, bottom: 6, left: 8, right: 8 })
+    .onClick(() => {
+      if (this.aiTestMotionType === 'pose') {
+        this.aiTestMotionId = cap.poseId;
+      }
+    })
+  }
+
+  /**
+   * AI Tab — 表情能力条目 (Phase 4A-1)。
+   *
+   * 只显示业务字段 (中文显示名 / expressionId / 映射状态),
+   * 不显示文件路径 / BlendShape 对象 / 骨骼数据。
+   */
+  @Builder
+  AiExpressionCapabilityItem(cap: ArkWebAvatarAiExpressionCapability) {
+    Row() {
+      Column() {
+        Row() {
+          Text(this.aiExpressionDisplayName(cap.expressionId))
+            .fontSize($r('app.float.app_font_body'))
+            .fontColor($r('app.color.app_text_primary'))
+            .layoutWeight(1)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        .width('100%')
+        Text(`业务 ID：${cap.expressionId}`)
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .width('100%')
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+        Text(cap.available
+          ? `映射：${cap.mappedExpressionName}`
+          : '映射：不可用')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor(cap.available
+            ? $r('app.color.app_text_secondary')
+            : $r('app.color.app_text_tertiary'))
+          .width('100%')
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+    }
+    .width('100%')
+    .padding({ top: 6, bottom: 6, left: 8, right: 8 })
+  }
+
+  /**
+   * AI Tab — 业务 ID 选择器 (动画或姿势)。
+   *
+   * 横向滚动按钮列表, 每个按钮显示 displayName,
+   * 点击设置 aiTestMotionId 为对应 actionId / poseId。
+   */
+  @Builder
+  AiMotionIdPicker(kind: string) {
+    Scroll() {
+      Row({ space: 8 }) {
+        if (kind === 'animation'
+          && this.aiCapabilitySnapshot !== null) {
+          ForEach(this.aiCapabilitySnapshot.animations,
+            (cap: ArkWebAvatarAiAnimationCapability) => {
+              Button(cap.displayName)
+                .fontSize($r('app.float.app_font_caption'))
+                .fontColor(this.aiTestMotionId === cap.actionId
+                  ? $r('app.color.app_text_primary')
+                  : $r('app.color.app_text_secondary'))
+                .backgroundColor(this.aiTestMotionId === cap.actionId
+                  ? $r('app.color.app_surface_2')
+                  : $r('app.color.app_surface_1'))
+                .borderRadius($r('app.float.app_radius_sm'))
+                .height(32)
+                .padding({ left: 12, right: 12 })
+                .onClick(() => {
+                  this.aiTestMotionId = cap.actionId;
+                })
+            },
+            (cap: ArkWebAvatarAiAnimationCapability) => cap.actionId)
+        } else if (kind === 'pose'
+          && this.aiCapabilitySnapshot !== null) {
+          ForEach(this.aiCapabilitySnapshot.poses,
+            (cap: ArkWebAvatarAiPoseCapability) => {
+              Button(cap.displayName)
+                .fontSize($r('app.float.app_font_caption'))
+                .fontColor(this.aiTestMotionId === cap.poseId
+                  ? $r('app.color.app_text_primary')
+                  : $r('app.color.app_text_secondary'))
+                .backgroundColor(this.aiTestMotionId === cap.poseId
+                  ? $r('app.color.app_surface_2')
+                  : $r('app.color.app_surface_1'))
+                .borderRadius($r('app.float.app_radius_sm'))
+                .height(32)
+                .padding({ left: 12, right: 12 })
+                .onClick(() => {
+                  this.aiTestMotionId = cap.poseId;
+                })
+            },
+            (cap: ArkWebAvatarAiPoseCapability) => cap.poseId)
+        }
+      }
+      .padding({ top: 4, bottom: 4 })
+    }
+    .scrollable(ScrollDirection.Horizontal)
+    .scrollBar(BarState.Off)
+    .width('100%')
+    .margin({ bottom: 12 })
+  }
+
+  /**
+   * AI Tab — 当前模型显示名 (优先使用快照中的 modelDisplayName)。
+   */
+  private aiCurrentModelDisplayName(): string {
+    if (this.aiCapabilitySnapshot !== null
+      && this.aiCapabilitySnapshot.modelDisplayName.length > 0) {
+      return this.aiCapabilitySnapshot.modelDisplayName;
+    }
+    if (this.activeModelId.length > 0) {
+      return this.activeModelId;
+    }
+    return '无';
+  }
+
+  /**
+   * AI Tab — 可用表情数量 (available=true 的表情数)。
+   */
+  private aiAvailableExpressionCount(): number {
+    if (this.aiCapabilitySnapshot === null) {
+      return 0;
+    }
+    let count: number = 0;
+    const exps: ArkWebAvatarAiExpressionCapability[] =
+      this.aiCapabilitySnapshot.expressions;
+    for (let i = 0; i < exps.length; i++) {
+      if (exps[i].available) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  /**
+   * AI Tab — 默认待机显示名 (找不到时显示 '-')。
+   */
+  private aiDefaultIdleDisplayName(): string {
+    if (this.aiCapabilitySnapshot === null) {
+      return '-';
+    }
+    const id: string = this.aiCapabilitySnapshot.defaultIdleActionId;
+    if (id.length === 0) {
+      return '-';
+    }
+    const anims: ArkWebAvatarAiAnimationCapability[] =
+      this.aiCapabilitySnapshot.animations;
+    for (let i = 0; i < anims.length; i++) {
+      if (anims[i].actionId === id) {
+        return anims[i].displayName;
+      }
+    }
+    return id;
+  }
+
+  /**
+   * AI Tab — 默认姿势显示名 (找不到时显示 '-')。
+   */
+  private aiDefaultPoseDisplayName(): string {
+    if (this.aiCapabilitySnapshot === null) {
+      return '-';
+    }
+    const id: string = this.aiCapabilitySnapshot.defaultPoseId;
+    if (id.length === 0) {
+      return '-';
+    }
+    const poses: ArkWebAvatarAiPoseCapability[] =
+      this.aiCapabilitySnapshot.poses;
+    for (let i = 0; i < poses.length; i++) {
+      if (poses[i].poseId === id) {
+        return poses[i].displayName;
+      }
+    }
+    return id;
+  }
+
+  /**
+   * AI Tab — 表情业务 ID 到中文显示名。
+   */
+  private aiExpressionDisplayName(expressionId: string): string {
+    const name: string | undefined = AI_CAPABILITY_EXPRESSION_DISPLAY_NAMES[expressionId];
+    if (typeof name === 'string' && name.length > 0) {
+      return name;
+    }
+    return expressionId;
+  }
+
+  /**
+   * AI Tab — 刷新能力目录 (Phase 4A-1)。
+   *
+   * 触发时机: 页面进入 / 模型 READY / 模型替换 / 动画或姿势变化 / 用户点击刷新。
+   * 不使用轮询;每次调用都重新读取 library 生成快照。
+   */
+  private async refreshAiCapabilityCatalog(): Promise<void> {
+    if (this.aiCapabilityCatalog === null) {
+      this.aiCapabilityState = ArkWebAvatarAiCapabilityState.FAILED;
+      this.aiCapabilityErrorCode = 'AI_CAPABILITY_LIBRARY_INVALID';
+      this.aiCapabilityErrorMessage = '能力目录未初始化';
+      return;
+    }
+    if (this.aiCapabilityState === ArkWebAvatarAiCapabilityState.DISPOSED) {
+      return;
+    }
+    this.aiCapabilityState = ArkWebAvatarAiCapabilityState.LOADING;
+    this.aiCapabilityErrorCode = '';
+    this.aiCapabilityErrorMessage = '';
+    try {
+      const snapshot: ArkWebAvatarAiCapabilitySnapshot =
+        await this.aiCapabilityCatalog.buildSnapshot(this.activeModelId);
+      this.aiCapabilitySnapshot = snapshot;
+      this.aiCapabilityState = this.aiCapabilityCatalog.getState();
+      this.aiCapabilityErrorCode = this.aiCapabilityCatalog.getLastErrorCode();
+      this.aiCapabilityErrorMessage = this.aiCapabilityCatalog.getLastErrorMessage();
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      this.aiCapabilityState = ArkWebAvatarAiCapabilityState.FAILED;
+      this.aiCapabilityErrorCode = 'AI_CAPABILITY_LIBRARY_READ_FAILED';
+      this.aiCapabilityErrorMessage = '刷新异常: ' + msg;
+      this.aiCapabilitySnapshot = null;
+    }
+  }
+
+  /**
+   * AI Tab — 执行 AI 演出测试 (Phase 4A-1)。
+   *
+   * 流程:
+   *   1. 校验 LifecycleController 已初始化
+   *   2. 校验模型 READY
+   *   3. 根据演出类型校验 motionId:
+   *      - animation: motionId 必须非空且为合法 actionId
+   *      - pose: motionId 必须非空且为合法 poseId
+   *      - none: motionId 必须为空
+   *   4. 构造结构化 Hint (version=1, motionType, motionId, expressionId,
+   *      expressionWeight=1, durationMs, returnPolicy)
+   *   5. 生成 turnId (格式: ai_test_<timestamp>)
+   *   6. 调用 dialogueLifecycleController.submitFinalAssistantResult
+   *      (不绕过 Mapper / 不直接调用 PerformanceController)
+   *   7. 同步 UI 状态 (turnId / commandId / result)
+   *
+   * 安全约束:
+   *   - 不直接调用 PerformanceController.executeCommand
+   *   - 不直接调用 Mapper.mapJson
+   *   - 不引入网络请求 / AI SDK
+   */
+  private async onExecuteAiTestClick(): Promise<void> {
+    if (this.dialogueLifecycleController === null) {
+      this.aiLastResult = 'LifecycleController 未初始化';
+      promptAction.showToast({ message: 'LifecycleController 未初始化' });
+      return;
+    }
+    if (this.aiTestExecuting) {
+      return;
+    }
+    if (this.debugModelState !== 'READY') {
+      this.aiLastResult = `模型未就绪 (state=${this.debugModelState})`;
+      promptAction.showToast({ message: '模型未就绪' });
+      return;
+    }
+
+    // 根据 motionType 校验 motionId
+    let motionId: string = '';
+    if (this.aiTestMotionType === 'animation') {
+      motionId = this.aiTestMotionId;
+      if (motionId.length === 0) {
+        this.aiLastResult = '请先选择一个动画业务 ID';
+        promptAction.showToast({ message: '请先选择一个动画业务 ID' });
+        return;
+      }
+    } else if (this.aiTestMotionType === 'pose') {
+      motionId = this.aiTestMotionId;
+      if (motionId.length === 0) {
+        this.aiLastResult = '请先选择一个姿势业务 ID';
+        promptAction.showToast({ message: '请先选择一个姿势业务 ID' });
+        return;
+      }
+    } else {
+      // none: motionId 必须为空
+      motionId = '';
+    }
+
+    // 构造结构化 Hint (与 ArkWebDialoguePerformanceHint 字段一致)
+    const hint: ArkWebDialoguePerformanceHint = {
+      version: 1,
+      motionType: this.aiTestMotionType,
+      motionId: motionId,
+      expressionId: this.aiTestExpressionId,
+      expressionWeight: 1,
+      durationMs: this.aiTestDurationMs,
+      returnPolicy: this.aiTestReturnPolicy
+    };
+    const rawJson: string = JSON.stringify(hint);
+    const turnId: string = `ai_test_${Date.now()}`;
+
+    console.info(`[AiTab] test hint: ${rawJson}`);
+    this.aiTestExecuting = true;
+    this.aiLastTurnId = turnId;
+    this.aiLastCommandId = '';
+    this.aiLastResult = '执行中...';
+    try {
+      const accepted: boolean =
+        await this.dialogueLifecycleController.submitFinalAssistantResult(
+          turnId, rawJson, this.activeModelId);
+      this.syncDialogueLifecycleState();
+      this.aiLastCommandId =
+        this.dialogueLifecycleController.getCurrentCommandId();
+      const state: ArkWebDialogueLifecycleState =
+        this.dialogueLifecycleController.getState();
+      if (accepted) {
+        if (state === ArkWebDialogueLifecycleState.ACTIVE) {
+          this.aiLastResult =
+            `已执行: ${this.aiLastCommandId}` +
+            (this.dialogueLifecycleController.getMappingDegraded()
+              ? ' (降级)' : '');
+        } else if (state === ArkWebDialogueLifecycleState.COMPLETED_WITHOUT_PERFORMANCE) {
+          this.aiLastResult = '空 Hint, 无演出';
+        } else {
+          this.aiLastResult = `状态: ${state}`;
+        }
+      } else {
+        const errCode: string =
+          this.dialogueLifecycleController.getLastErrorCode();
+        this.aiLastResult = `失败: ${errCode}`;
+      }
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      this.aiLastResult = `异常: ${msg}`;
+    } finally {
+      this.aiTestExecuting = false;
+    }
+  }
+
+  /**
+   * AI Tab — 停止演出 (Phase 4A-1)。
+   *
+   * 通过 LifecycleController 取消当前演出 (cancelCurrent),
+   * 不直接调用 PerformanceController.stopPerformance。
+   */
+  private async onStopAiTestClick(): Promise<void> {
+    if (this.dialogueLifecycleController === null) {
+      return;
+    }
+    if (this.aiTestExecuting) {
+      return;
+    }
+    this.aiTestExecuting = true;
+    try {
+      await this.dialogueLifecycleController.cancelCurrent('ai_tab_manual_stop');
+      this.syncDialogueLifecycleState();
+      this.aiLastResult = '已停止当前演出';
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      this.aiLastResult = `停止异常: ${msg}`;
+    } finally {
+      this.aiTestExecuting = false;
+    }
   }
 
   @Builder
