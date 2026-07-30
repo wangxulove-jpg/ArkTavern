@@ -33,6 +33,11 @@ import {
   ConversationBranchSummary,
   ConversationRecordCounts
 } from '../models/ConversationBranch';
+import { ArkWebAvatarChatBridge } from '../services/avatar/ArkWebAvatarChatBridge';
+import {
+  ArkWebAvatarChatFinalResult,
+  ArkWebAvatarChatFinalResultSource
+} from '../services/avatar/ArkWebAvatarChatBridgeTypes';
 
 const LOG_TAG: string = 'ChatViewModel';
 
@@ -1115,6 +1120,41 @@ export class ChatViewModel {
         }
         this.errorMessage = this.toUserError(message);
         this.statusMessage = '';
+      },
+      // Phase 4A-2: 助手最终消息完成 → 发布到 ArkWebAvatarChatBridge
+      // - turnId 使用真实 assistantMessageId (符合"来自真实消息 ID"约束)
+      // - performanceHintJson 来自 ChatStreamResult.performanceHintJson 透传字段
+      // - 发布失败不影响聊天文本显示 (Bridge 内部 best-effort)
+      // - 不解析聊天正文生成动作 (TEXT_CONTENT_PARSING: NO)
+      // - 流式 token 期间不触发 (ChatService 只在 onComplete 调用此回调)
+      onAssistantMessageFinalized: (
+        assistantMessageId: string,
+        performanceHintJson: string
+      ): void => {
+        if (this.disposed) {
+          return;
+        }
+        if (assistantMessageId.length === 0) {
+          Logger.warn(LOG_TAG, 'onAssistantMessageFinalized ignored: empty assistantMessageId');
+          return;
+        }
+        const result: ArkWebAvatarChatFinalResult = {
+          turnId: assistantMessageId,
+          performanceHintJson: performanceHintJson,
+          finalizedAt: Date.now(),
+          source: ArkWebAvatarChatFinalResultSource.SINGLE_CHAT
+        };
+        // 异步发布,不阻塞 ChatService.onComplete 流程
+        // 失败只记录轻量日志,不弹出阻塞式错误
+        ArkWebAvatarChatBridge.getInstance().publishFinalResult(result).then((ok: boolean) => {
+          if (!ok) {
+            Logger.warn(LOG_TAG,
+              `publishFinalResult rejected turnId=${assistantMessageId} (Bridge state or invalid input)`);
+          }
+        }).catch((e: Object): void => {
+          Logger.warn(LOG_TAG, 'publishFinalResult threw: ' +
+            (e instanceof Error ? e.message : String(e)));
+        });
       }
     };
   }

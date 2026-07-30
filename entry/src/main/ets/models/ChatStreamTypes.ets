@@ -98,6 +98,20 @@ export interface ChatStreamResult {
   readonly deltaCount: number;
   /** 是否收到 [DONE] 标记(兼容服务端不发送 [DONE] 时为 false) */
   readonly receivedDone: boolean;
+  /**
+   * Phase 4A-2: 可选演出 Hint JSON 字符串 (透传字段,默认空字符串)。
+   *
+   * 来源限制 (AGENTS.md Phase 4A-2 §performanceHintJson 来源):
+   *   - 只允许来自 Provider 返回的结构化字段 (如 OpenAI response.metadata.performanceHintJson)
+   *   - 禁止从 Markdown / JSON 文本 / 括号内容 / 关键词匹配提取
+   *   - 没有该字段时为 undefined 或空字符串
+   *
+   * 用途: ChatService.onComplete 把此字段回调给 ChatViewModel,
+   *       由 ChatViewModel 发布到 ArkWebAvatarChatBridge。
+   *
+   * 不修改: 请求 URL / 请求体 / API Key / 流式解析协议 / 重试 / 重新生成。
+   */
+  readonly performanceHintJson?: string;
 }
 
 /**

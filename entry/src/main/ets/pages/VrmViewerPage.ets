@@ -194,6 +194,12 @@ import {
   AI_CAPABILITY_EXPRESSION_DISPLAY_NAMES,
   AI_CAPABILITY_EXPRESSION_BUSINESS_IDS
 } from '../vrmviewer/ArkWebAvatarAiTypes';
+import { ArkWebAvatarChatBridge } from '../services/avatar/ArkWebAvatarChatBridge';
+import {
+  ArkWebAvatarChatBridgeState,
+  ArkWebAvatarChatFinalResult,
+  ArkWebAvatarChatFinalResultSource
+} from '../services/avatar/ArkWebAvatarChatBridgeTypes';
 
 /**
  * 传给 JavaScript loadVrmaResource 的资源 JSON 载荷。
@@ -894,8 +900,8 @@ struct VrmViewerPage {
   @State aiTestMotionId: string = '';
   /** AI Tab 手动测试: 选中的业务表情 ID (空字符串表示无表情) */
   @State aiTestExpressionId: string = '';
-  /** AI Tab 手动测试: 持续时间 (ms) */
-  @State aiTestDurationMs: number = 2500;
+  /** AI Tab 手动测试: 持续时间 (ms), 选项: 1000 / 2500 / 5000 / 10000 / 15000 / 30000 */
+  @State aiTestDurationMs: number = 5000;
   /** AI Tab 手动测试: 恢复策略 (DEFAULT_POSE / RESET / KEEP) */
   @State aiTestReturnPolicy: string = 'DEFAULT_POSE';
 
@@ -934,6 +940,19 @@ struct VrmViewerPage {
   private modelRestoreGeneration: number = 0;
   /** 恢复是否正在执行中(防止重复触发) */
   private modelRestoreInProgress: boolean = false;
+
+  /** Phase 4A-2: 本页面实例在 AvatarChatBridge 上的 endpointId (aboutToAppear 生成) */
+  private avatarEndpointId: string = '';
+  /** Phase 4A-2: endpointId 自增计数器 (进程内唯一) */
+  private static avatarEndpointCounter: number = 0;
+  /** Phase 4A-2: Bridge 连接状态镜像 (用于 AI Tab 显示, 由 refreshAvatarBridgeState 同步) */
+  @State avatarBridgeState: string = ArkWebAvatarChatBridgeState.DISCONNECTED;
+  /** Phase 4A-2: Bridge 待处理数量 (用于 AI Tab 显示) */
+  @State avatarBridgePendingCount: number = 0;
+  /** Phase 4A-2: Bridge 最后接收 turnId (用于 AI Tab 显示) */
+  @State avatarBridgeLastTurnId: string = '';
+  /** Phase 4A-2: Bridge 最后接收时间 (用于 AI Tab 显示) */
+  @State avatarBridgeLastReceivedAt: number = 0;
 
   aboutToAppear(): void {
     // Phase 2A-3A: 启用 Web 全绘制能力(webPageSnapshot 前置条件)
@@ -1138,7 +1157,76 @@ struct VrmViewerPage {
       this.aiCapabilityCatalog = new ArkWebAvatarAiCapabilityCatalog(this.assetLibrary);
     }
 
+    // Phase 4A-2: 注册 Avatar endpoint 到 ArkWebAvatarChatBridge
+    // - endpointId 本页面实例内稳定,跨实例唯一
+    // - handler 必须经过 LifecycleController, 不得直接调用 PerformanceController / Mapper
+    // - 即使 LifecycleController 还未创建也注册 (Bridge 会缓存消息,待 Lifecycle 就绪后消费)
+    //   注意: handler 内部检查 lifecycleController 是否就绪, 未就绪时记录错误但不阻塞
+    if (this.avatarEndpointId.length === 0) {
+      VrmViewerPage.avatarEndpointCounter++;
+      this.avatarEndpointId = `vrm-viewer-${VrmViewerPage.avatarEndpointCounter}`;
+    }
+    try {
+      const self: VrmViewerPage = this;
+      ArkWebAvatarChatBridge.getInstance().registerAvatarEndpoint(
+        this.avatarEndpointId,
+        async (result: ArkWebAvatarChatFinalResult): Promise<void> => {
+          await self.onAssistantMessageFinalizedFromBridge(result);
+        }
+      );
+      this.refreshAvatarBridgeState();
+    } catch (e) {
+      console.warn('[VrmViewerPage] registerAvatarEndpoint failed: ' +
+        (e instanceof Error ? e.message : String(e)));
+    }
+
     // Web 组件加载由 build() 触发,初始化在 onPageEnd 回调中完成
+  }
+
+  /**
+   * Phase 4A-2: Bridge Avatar endpoint handler 入口。
+   *
+   * 职责:
+   *   - 接收 Bridge 投递的 ArkWebAvatarChatFinalResult
+   *   - 委托给 onAssistantMessageFinalized (经 LifecycleController, 不绕过 Mapper)
+   *   - handler 异常由 Bridge 捕获, 不影响聊天文本显示
+   *
+   * 禁止:
+   *   - 直接调用 PerformanceController.executeCommand
+   *   - 直接调用 Mapper.mapJson
+   *   - 解析聊天正文生成动作 (TEXT_CONTENT_PARSING: NO)
+   */
+  private async onAssistantMessageFinalizedFromBridge(
+    result: ArkWebAvatarChatFinalResult
+  ): Promise<void> {
+    // 更新 AI Tab 显示状态 (无论是否成功投递, 都反映最新一次接收)
+    this.refreshAvatarBridgeState();
+    try {
+      await this.onAssistantMessageFinalized(
+        result.turnId,
+        result.performanceHintJson
+      );
+    } finally {
+      // 投递完成后刷新待处理数量
+      this.refreshAvatarBridgeState();
+    }
+  }
+
+  /**
+   * Phase 4A-2: 从 Bridge 同步连接状态 / 待处理数量 / 最后接收 turnId 到 @State。
+   *
+   * 供:
+   *   - aboutToAppear 注册后立即调用
+   *   - Bridge handler 接收前后调用
+   *   - AI Tab 切换到前台时按需调用 (onPageShow)
+   *   - 手动测试发布前后调用
+   */
+  private refreshAvatarBridgeState(): void {
+    const bridge: ArkWebAvatarChatBridge = ArkWebAvatarChatBridge.getInstance();
+    this.avatarBridgeState = bridge.getConnectionState();
+    this.avatarBridgePendingCount = bridge.getPendingCount();
+    this.avatarBridgeLastTurnId = bridge.getLastReceivedTurnId();
+    this.avatarBridgeLastReceivedAt = bridge.getLastReceivedAt();
   }
 
   /**
@@ -1221,13 +1309,7 @@ struct VrmViewerPage {
   private async waitForAnimationReady(timeoutMs: number): Promise<boolean> {
     const startTick: number = Date.now();
     while (Date.now() - startTick < timeoutMs) {
-      if (this.debugAnimationState === 'READY') {
-        return true;
-      }
-      if (this.debugAnimationState === 'FAILED') {
-        return false;
-      }
-      // 刷新状态 (复用 refreshAnimationDebugState, 不启动新的 setInterval)
+      // 先刷新状态 (避免使用上一次动画遗留的 READY 缓存, 导致跳过等待)
       if (this.arkWebController !== null) {
         try {
           const resultJson: string = await this.arkWebController.getAnimationDebugState();
@@ -1236,6 +1318,12 @@ struct VrmViewerPage {
           console.warn('[PerformanceRuntime] waitForAnimationReady poll failed: ' +
             (e instanceof Error ? e.message : String(e)));
         }
+      }
+      if (this.debugAnimationState === 'READY') {
+        return true;
+      }
+      if (this.debugAnimationState === 'FAILED') {
+        return false;
       }
       // 短暂让步 (避免阻塞 UI, 不引入 setInterval)
       await new Promise<void>((resolve: Function) => setTimeout(resolve, 100));
@@ -1435,7 +1523,22 @@ struct VrmViewerPage {
     // Phase 3F-1: 销毁 PerformanceController (不删除动作 / 姿势 / 表情别名 / library.json)
     // 内部 performanceGeneration++ 使任何在途 timeout 失效
     // best-effort cancelTemporaryExpression + stopAnimation (不等待)
-    // 销毁顺序 (Phase 3F-3): LifecycleController → PerformanceController → Mapper
+    // 销毁顺序 (Phase 3F-3 + Phase 4A-2):
+    //   AvatarChatBridge.unregisterAvatarEndpoint → LifecycleController → PerformanceController → Mapper
+    // Phase 4A-2: 先注销 Bridge Avatar endpoint, 防止销毁过程中新消息投递到已销毁的 LifecycleController
+    if (this.avatarEndpointId.length > 0) {
+      try {
+        ArkWebAvatarChatBridge.getInstance().unregisterAvatarEndpoint(this.avatarEndpointId);
+      } catch (e) {
+        console.warn('[VrmViewerPage] unregisterAvatarEndpoint failed: ' +
+          (e instanceof Error ? e.message : String(e)));
+      }
+      this.avatarEndpointId = '';
+    }
+    this.avatarBridgeState = ArkWebAvatarChatBridgeState.DISCONNECTED;
+    this.avatarBridgePendingCount = 0;
+    this.avatarBridgeLastTurnId = '';
+    this.avatarBridgeLastReceivedAt = 0;
     if (this.dialogueLifecycleController !== null) {
       this.dialogueLifecycleController.dispose();
       this.dialogueLifecycleController = null;
@@ -10617,15 +10720,67 @@ struct VrmViewerPage {
       .width('100%')
       .margin({ bottom: 4 })
 
-      // 聊天联动状态 (本阶段固定未连接,不伪造已连接)
+      // Phase 4A-2: 聊天联动状态读取 AvatarChatBridge 真实状态
+      // (DISCONNECTED / CHAT_READY / AVATAR_READY / CONNECTED / DISPOSED)
+      // 主界面只显示状态中文 + 待处理数量 + 最后接收 Turn ID + 最后接收时间
+      // 不显示完整 Hint JSON / 聊天正文 / 系统提示词 / Provider 信息 (这些放入调试 Tab)
       Row() {
         Text('聊天联动:')
           .fontSize($r('app.float.app_font_caption'))
           .fontColor($r('app.color.app_text_secondary'))
-        Text('未连接')
+        Text(this.aiTabBridgeStateDisplay())
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(this.avatarBridgeState === ArkWebAvatarChatBridgeState.CONNECTED
+            ? $r('app.color.model_settings_success')
+            : (this.avatarBridgeState === ArkWebAvatarChatBridgeState.DISPOSED
+              ? $r('app.color.app_text_tertiary')
+              : $r('app.color.app_text_primary')))
           .margin({ left: 8 })
+      }
+      .width('100%')
+      .margin({ bottom: 4 })
+
+      // 待处理消息数量
+      Row() {
+        Text('待处理消息:')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+        Text(`${this.avatarBridgePendingCount}`)
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_primary'))
+          .margin({ left: 8 })
+      }
+      .width('100%')
+      .margin({ bottom: 4 })
+
+      // 最后接收 Turn ID
+      Row() {
+        Text('最后 Turn ID:')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+        Text(this.avatarBridgeLastTurnId.length > 0 ? this.avatarBridgeLastTurnId : '-')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_primary'))
+          .margin({ left: 8 })
+          .layoutWeight(1)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .width('100%')
+      .margin({ bottom: 4 })
+
+      // 最后接收时间
+      Row() {
+        Text('最后接收:')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+        Text(this.aiTabBridgeLastReceivedDisplay())
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_primary'))
+          .margin({ left: 8 })
+          .layoutWeight(1)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
       }
       .width('100%')
       .margin({ bottom: 8 })
@@ -10973,7 +11128,7 @@ struct VrmViewerPage {
         .margin({ bottom: 8 })
 
       Row({ space: 8 }) {
-        ForEach([1000, 2500, 5000], (d: number) => {
+        ForEach([1000, 2500, 5000, 10000, 15000, 30000], (d: number) => {
           Button(String(d))
             .fontSize($r('app.float.app_font_caption'))
             .fontColor(this.aiTestDurationMs === d
@@ -11327,6 +11482,44 @@ struct VrmViewerPage {
   }
 
   /**
+   * Phase 4A-2: AI Tab — AvatarChatBridge 连接状态中文显示。
+   *
+   * 主界面只显示中文状态,完整内部状态放入调试 Tab。
+   */
+  private aiTabBridgeStateDisplay(): string {
+    switch (this.avatarBridgeState) {
+      case ArkWebAvatarChatBridgeState.DISCONNECTED:
+        return '未连接';
+      case ArkWebAvatarChatBridgeState.CHAT_READY:
+        return '聊天就绪';
+      case ArkWebAvatarChatBridgeState.AVATAR_READY:
+        return 'Avatar 就绪';
+      case ArkWebAvatarChatBridgeState.CONNECTED:
+        return '已连接';
+      case ArkWebAvatarChatBridgeState.DISPOSED:
+        return '已销毁';
+      default:
+        return this.avatarBridgeState;
+    }
+  }
+
+  /**
+   * Phase 4A-2: AI Tab — Bridge 最后接收时间显示。
+   *
+   * 0 时显示 '-',否则显示本地时间字符串 (HH:mm:ss)。
+   */
+  private aiTabBridgeLastReceivedDisplay(): string {
+    if (this.avatarBridgeLastReceivedAt <= 0) {
+      return '-';
+    }
+    const d: Date = new Date(this.avatarBridgeLastReceivedAt);
+    const hh: string = d.getHours().toString().padStart(2, '0');
+    const mm: string = d.getMinutes().toString().padStart(2, '0');
+    const ss: string = d.getSeconds().toString().padStart(2, '0');
+    return `${hh}:${mm}:${ss}`;
+  }
+
+  /**
    * AI Tab — 可用表情数量 (available=true 的表情数)。
    */
   private aiAvailableExpressionCount(): number {
@@ -11433,9 +11626,9 @@ struct VrmViewerPage {
   }
 
   /**
-   * AI Tab — 执行 AI 演出测试 (Phase 4A-1)。
+   * AI Tab — 执行 AI 演出测试 (Phase 4A-1, Phase 4A-2 改走 Bridge)。
    *
-   * 流程:
+   * Phase 4A-2 起流程:
    *   1. 校验 LifecycleController 已初始化
    *   2. 校验模型 READY
    *   3. 根据演出类型校验 motionId:
@@ -11444,15 +11637,22 @@ struct VrmViewerPage {
    *      - none: motionId 必须为空
    *   4. 构造结构化 Hint (version=1, motionType, motionId, expressionId,
    *      expressionWeight=1, durationMs, returnPolicy)
-   *   5. 生成 turnId (格式: ai_test_<timestamp>)
-   *   6. 调用 dialogueLifecycleController.submitFinalAssistantResult
-   *      (不绕过 Mapper / 不直接调用 PerformanceController)
-   *   7. 同步 UI 状态 (turnId / commandId / result)
+   *   5. 构建 ArkWebAvatarChatFinalResult (source=AI_TAB_MANUAL_TEST)
+   *   6. 调用 ArkWebAvatarChatBridge.publishFinalResult
+   *      → Bridge 投递到 Avatar endpoint handler
+   *      → handler 调用 onAssistantMessageFinalized
+   *      → LifecycleController.submitFinalAssistantResult
+   *      → Mapper → PerformanceController (经 Runtime 注入)
+   *   7. 同步 UI 状态 (turnId / commandId / result / bridge state)
    *
-   * 安全约束:
+   * 安全约束 (Phase 4A-2):
+   *   - 不直接调用 onAssistantMessageFinalized
+   *   - 不直接调用 executeDialoguePerformanceHintJson
+   *   - 不直接调用 LifecycleController.submitFinalAssistantResult
    *   - 不直接调用 PerformanceController.executeCommand
    *   - 不直接调用 Mapper.mapJson
    *   - 不引入网络请求 / AI SDK
+   *   - 手动测试与真实聊天使用完全相同的数据链路 (只 source 不同)
    */
   private async onExecuteAiTestClick(): Promise<void> {
     if (this.dialogueLifecycleController === null) {
@@ -11501,6 +11701,7 @@ struct VrmViewerPage {
       returnPolicy: this.aiTestReturnPolicy
     };
     const rawJson: string = JSON.stringify(hint);
+    // Phase 4A-2: turnId 仍用 ai_test_<timestamp> 形式 (手动测试用, 与真实聊天 turnId 区分)
     const turnId: string = `ai_test_${Date.now()}`;
 
     console.info(`[AiTab] test hint: ${rawJson}`);
@@ -11509,29 +11710,66 @@ struct VrmViewerPage {
     this.aiLastCommandId = '';
     this.aiLastResult = '执行中...';
     try {
-      const accepted: boolean =
-        await this.dialogueLifecycleController.submitFinalAssistantResult(
-          turnId, rawJson, this.activeModelId);
+      // Phase 4A-2: 经 Bridge 投递, 不直接调用 LifecycleController
+      // Bridge handler 内部会调用 onAssistantMessageFinalized → submitFinalAssistantResult
+      // publishFinalResult await 后, handler 已完成投递
+      const result: ArkWebAvatarChatFinalResult = {
+        turnId: turnId,
+        performanceHintJson: rawJson,
+        finalizedAt: Date.now(),
+        source: ArkWebAvatarChatFinalResultSource.AI_TAB_MANUAL_TEST
+      };
+      const published: boolean =
+        await ArkWebAvatarChatBridge.getInstance().publishFinalResult(result);
+      this.refreshAvatarBridgeState();
+      if (!published) {
+        this.aiLastResult = `未发布: ${ArkWebAvatarChatBridge.getInstance().getLastErrorCode()}`;
+        promptAction.showToast({
+          message: `未发布: ${ArkWebAvatarChatBridge.getInstance().getLastErrorMessage()}`
+        });
+        return;
+      }
+      // Bridge handler 已 await 完成, 同步 LifecycleController 状态
       this.syncDialogueLifecycleState();
       this.aiLastCommandId =
         this.dialogueLifecycleController.getCurrentCommandId();
       const state: ArkWebDialogueLifecycleState =
         this.dialogueLifecycleController.getState();
-      if (accepted) {
-        if (state === ArkWebDialogueLifecycleState.ACTIVE) {
-          this.aiLastResult =
-            `已执行: ${this.aiLastCommandId}` +
-            (this.dialogueLifecycleController.getMappingDegraded()
-              ? ' (降级)' : '');
-        } else if (state === ArkWebDialogueLifecycleState.COMPLETED_WITHOUT_PERFORMANCE) {
-          this.aiLastResult = '空 Hint, 无演出';
-        } else {
-          this.aiLastResult = `状态: ${state}`;
-        }
-      } else {
+      if (state === ArkWebDialogueLifecycleState.ACTIVE) {
+        this.aiLastResult =
+          `已执行: ${this.aiLastCommandId}` +
+          (this.dialogueLifecycleController.getMappingDegraded()
+            ? ' (降级)' : '');
+      } else if (state === ArkWebDialogueLifecycleState.COMPLETED_WITHOUT_PERFORMANCE) {
+        this.aiLastResult = '空 Hint, 无演出';
+      } else if (state === ArkWebDialogueLifecycleState.FAILED) {
         const errCode: string =
           this.dialogueLifecycleController.getLastErrorCode();
-        this.aiLastResult = `失败: ${errCode}`;
+        // 当 LifecycleController 报告 EXECUTE_FAILED 时, 追加 PerformanceController
+        // 的具体错误码, 帮助定位真实失败原因 (ACTION_NOT_FOUND / POSE_NOT_FOUND /
+        // MOTION_APPLY_FAILED 等)。syncPerformanceDebugState 已在 runtime 回调内执行。
+        const perfErrCode: string = this.performanceLastErrorCode;
+        const perfErrMsg: string = this.performanceLastErrorMessage;
+        if (errCode === 'DIALOGUE_LIFECYCLE_EXECUTE_FAILED'
+            && perfErrCode.length > 0) {
+          // 进一步: 动画加载失败时, animationLibraryErrorCode / animationLibraryErrorMessage
+          // 保存了 loadAnimationByActionId 的具体阶段 (Provider 注册失败 / loadAnimationResource
+          // 返回 success=false / 路径不安全 等)。pose 失败时无对应字段, 仅显示 perf 错误。
+          let detail: string = '';
+          if (this.aiTestMotionType === 'animation'
+              && this.animationLibraryErrorCode.length > 0) {
+            detail = ` | 动画库: ${this.animationLibraryErrorCode}` +
+              (this.animationLibraryErrorMessage.length > 0
+                ? ` (${this.animationLibraryErrorMessage})` : '');
+          }
+          this.aiLastResult = `失败: ${errCode} → ${perfErrCode}` +
+            (perfErrMsg.length > 0 ? ` (${perfErrMsg})` : '') +
+            (detail.length > 0 ? detail : '');
+        } else {
+          this.aiLastResult = `失败: ${errCode}`;
+        }
+      } else {
+        this.aiLastResult = `状态: ${state}`;
       }
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);

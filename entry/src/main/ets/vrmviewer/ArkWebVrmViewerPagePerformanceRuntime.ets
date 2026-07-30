@@ -81,27 +81,42 @@ export class ArkWebVrmViewerPagePerformanceRuntime implements ArkWebAvatarPerfor
     // 复用 loadAnimationByActionId (内部完成 Provider 注册 + loadAnimationResource)
     const loaded: boolean = await this.deps.loadAnimationByActionId(actionId);
     if (!loaded) {
+      console.warn(`[PerformanceRuntime] playAnimationById: loadAnimationByActionId returned false: ${actionId}`);
       return false;
     }
-    // 等待动画进入 READY 状态 (复用轮询机制, 最多 30s)
-    if (this.deps.getDebugAnimationState() !== 'READY') {
-      await this.deps.waitForAnimationReady(30000);
-    }
-    if (this.deps.getDebugAnimationState() !== 'READY') {
-      console.warn(`[PerformanceRuntime] playAnimationById: animation not READY after wait: ${actionId}`);
+    // loadAnimationResource 是异步加载: Web 端状态会从 LOADING → READY。
+    // 但 ArkTS 侧 debugAnimationState 可能仍是上一次的 READY (onAnimationStateChanged
+    // 为空实现, 不主动刷新), 导致下面的旧检查被跳过, 在 Web 端仍为 LOADING 时调用
+    // playAnimation 而失败 (ANIMATION_NOT_READY)。
+    // 修复: 始终进入 waitForAnimationReady, 它内部会调用 getAnimationDebugState()
+    // 刷新到最新状态, 然后才检查 READY。
+    console.info(`[PerformanceRuntime] playAnimationById: waiting READY after load: ${actionId}`);
+    await this.deps.waitForAnimationReady(30000);
+    const stateAfterWait: string = this.deps.getDebugAnimationState();
+    if (stateAfterWait !== 'READY') {
+      console.warn(`[PerformanceRuntime] playAnimationById: animation not READY after wait (state=${stateAfterWait}): ${actionId}`);
       return false;
     }
     const controller: ArkWebVrmViewerController | null = this.deps.getArkWebController();
     if (controller === null) {
+      console.warn(`[PerformanceRuntime] playAnimationById: arkWebController is null: ${actionId}`);
       return false;
     }
     try {
       const resultJson: string = await controller.playAnimation();
+      console.info(`[PerformanceRuntime] playAnimationById: playAnimation response: ${resultJson}`);
       const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
-      return obj['success'] === true;
+      const success: boolean = obj['success'] === true;
+      if (!success) {
+        const errObj = obj['error'] as Record<string, Object>;
+        const errCode: string = errObj ? (errObj['code'] as string) || 'UNKNOWN' : 'UNKNOWN';
+        const errMsg: string = errObj ? (errObj['message'] as string) || '' : '';
+        console.warn(`[PerformanceRuntime] playAnimationById: playAnimation returned success=false: code=${errCode}, msg=${errMsg}, actionId=${actionId}`);
+      }
+      return success;
     } catch (e) {
-      console.warn('[PerformanceRuntime] playAnimation failed: ' +
-        (e instanceof Error ? e.message : String(e)));
+      const msg: string = e instanceof Error ? e.message : String(e);
+      console.warn(`[PerformanceRuntime] playAnimationById: playAnimation threw: ${msg}, actionId=${actionId}`);
       return false;
     }
   }

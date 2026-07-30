@@ -132,6 +132,25 @@ export interface ChatServiceCallbacks {
   onStateChanged: (state: ChatState) => void;
   /** 错误消息 */
   onError: (message: string) => void;
+  /**
+   * Phase 4A-2: 助手最终消息完成回调 (可选,最小透传)。
+   *
+   * 触发时机: onComplete 内,文本消息已 finalizeAssistant + persistFinalAssistant 完成
+   *           (或同步段已更新),state 切换到 Completed 之前/之后均安全。
+   *
+   * 用途: ChatViewModel 实现此回调,把结果发布到应用级 Avatar 桥接器,
+   *       供 VrmViewerPage 经 LifecycleController 消费演出。
+   *
+   * 不修改: 请求 URL / 请求体 / API Key / 流式解析协议 / 重试 / 重新生成。
+   *         本回调只透传 assistantMessageId + performanceHintJson。
+   *
+   * @param assistantMessageId 真实助手消息 ID (作为 turnId 使用)
+   * @param performanceHintJson 可选 Hint JSON (无则空字符串)
+   */
+  onAssistantMessageFinalized?: (
+    assistantMessageId: string,
+    performanceHintJson: string
+  ) => void;
 }
 
 /** 默认流式请求选项 */
@@ -1528,6 +1547,20 @@ export class ChatService {
           assistantId, result.content, ChatMessageStatus.Completed, undefined, callbacks
         );
         this.currentAssistantId = null;
+        // Phase 4A-2: 助手最终消息完成回调 (最小透传,不修改请求/协议/重试)
+        // - 只在非 Failed 时触发 (Failed 由 onError 路径处理)
+        // - 只透传 assistantMessageId + performanceHintJson,不传聊天正文/历史/Provider 信息
+        // - 回调异常不影响后续 persistFinalAssistant / setState 流程
+        if (finalStatus !== ChatMessageStatus.Failed
+            && callbacks.onAssistantMessageFinalized !== undefined) {
+          try {
+            const hintJson: string = result.performanceHintJson ?? '';
+            callbacks.onAssistantMessageFinalized(assistantId, hintJson);
+          } catch (e) {
+            Logger.warn(LOG_TAG, 'onAssistantMessageFinalized threw: ' +
+              (e instanceof Error ? e.message : String(e)));
+          }
+        }
         // 持久化最终状态,完成后才清理上下文(防止 Completed 被 normalize 误转为 Cancelled)
         this.persistFinalAssistant(assistantId).then((): void => {
           // Swipe:更新摘要生成标志

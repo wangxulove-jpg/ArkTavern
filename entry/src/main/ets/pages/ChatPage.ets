@@ -65,6 +65,7 @@ import { ForkChatMode } from '../models/ForkChatOptions';
 import { ChatSessionListPanel } from '../components/ChatSessionListPanel';
 import { Character } from '../models/Character';
 import { Logger } from '../utils/Logger';
+import { ArkWebAvatarChatBridge } from '../services/avatar/ArkWebAvatarChatBridge';
 
 const LOG_TAG: string = 'ChatPage';
 
@@ -177,6 +178,12 @@ struct ChatPage {
   /** 气泡不透明度持久化 Preferences key */
   private static readonly PREF_KEY_BUBBLE_OPACITY: string = 'chat_bubble_opacity';
 
+  /** Phase 4A-2: 本页面实例在 AvatarChatBridge 上的 endpointId (aboutToAppear 生成) */
+  private chatEndpointId: string = '';
+
+  /** Phase 4A-2: endpointId 自增计数器 (进程内唯一) */
+  private static chatEndpointCounter: number = 0;
+
   aboutToAppear(): void {
     const modelService = AppServices.getModelService();
     const characterService = AppServices.getCharacterService();
@@ -235,6 +242,18 @@ struct ChatPage {
     this.registerKeyboardListener();
     this.registerDarkModeListener();
     this.loadPersistedBubbleOpacity();
+    // Phase 4A-2: 注册到 AvatarChatBridge, 使本页面发布的最终助手消息
+    // 可被 VrmViewerPage (Avatar endpoint) 消费演出。
+    // - endpointId 必须本页面实例内稳定,跨实例唯一
+    // - 注册失败不阻塞页面初始化 (Bridge best-effort)
+    try {
+      ChatPage.chatEndpointCounter++;
+      this.chatEndpointId = `chat-page-${ChatPage.chatEndpointCounter}`;
+      ArkWebAvatarChatBridge.getInstance().registerChatEndpoint(this.chatEndpointId);
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'registerChatEndpoint failed: ' +
+        (e instanceof Error ? e.message : String(e)));
+    }
   }
 
   /**
@@ -301,6 +320,18 @@ struct ChatPage {
 
   aboutToDisappear(): void {
     this.unregisterKeyboardListener();
+    // Phase 4A-2: 注销 AvatarChatBridge chat endpoint
+    // - 不 dispose Bridge (Bridge 为应用级单例,仅应用退出时 dispose)
+    // - 注销失败不阻塞页面销毁
+    if (this.chatEndpointId.length > 0) {
+      try {
+        ArkWebAvatarChatBridge.getInstance().unregisterChatEndpoint(this.chatEndpointId);
+      } catch (e) {
+        Logger.warn(LOG_TAG, 'unregisterChatEndpoint failed: ' +
+          (e instanceof Error ? e.message : String(e)));
+      }
+      this.chatEndpointId = '';
+    }
     // 注销深色模式监听器
     if (this.darkModeListener !== null) {
       try {
