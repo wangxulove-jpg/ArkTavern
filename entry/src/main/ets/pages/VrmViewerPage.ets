@@ -179,6 +179,11 @@ import {
 } from '../vrmviewer/ArkWebVrmViewerPagePerformanceRuntime';
 import { ArkWebDialoguePerformanceMapper } from '../vrmviewer/ArkWebDialoguePerformanceMapper';
 import { ArkWebDialoguePerformanceHint, ArkWebDialoguePerformanceMappingResult } from '../vrmviewer/ArkWebDialoguePerformanceTypes';
+import {
+  ArkWebDialoguePerformanceLifecycleController,
+  ArkWebDialoguePerformanceLifecycleRuntime,
+  ArkWebDialogueLifecycleState
+} from '../vrmviewer/ArkWebDialoguePerformanceLifecycleController';
 
 /**
  * 传给 JavaScript loadVrmaResource 的资源 JSON 载荷。
@@ -809,6 +814,24 @@ struct VrmViewerPage {
   /** 映射操作进行中标志 */
   @State dialogueOperating: boolean = false;
 
+  // ===== Phase 3F-3 — 对话演出生命周期接入 =====
+  /** LifecycleController 实例 (aboutToAppear 创建, disposeViewer 销毁) */
+  @State dialogueLifecycleController: ArkWebDialoguePerformanceLifecycleController | null = null;
+  /** 当前生命周期状态 (UI 显示) */
+  @State dialoguePerformanceState: ArkWebDialogueLifecycleState = ArkWebDialogueLifecycleState.IDLE;
+  /** 当前在处理的 turnId */
+  @State dialoguePerformanceTurnId: string = '';
+  /** 当前 commandId */
+  @State dialoguePerformanceCommandId: string = '';
+  /** 最近一次映射是否降级 */
+  @State dialoguePerformanceDegraded: boolean = false;
+  /** 最近一次映射警告 */
+  @State dialoguePerformanceWarnings: string = '';
+  /** 生命周期最后错误码 */
+  @State dialoguePerformanceErrorCode: string = '';
+  /** 生命周期最后错误消息 */
+  @State dialoguePerformanceErrorMessage: string = '';
+
   // ===== Phase 3B — 模型自动恢复与持久化资产目录 =====
   /** 资产库状态(READY / EMPTY / FAILED / DISPOSED) */
   @State assetLibraryState: string = 'IDLE';
@@ -1010,6 +1033,36 @@ struct VrmViewerPage {
     // Mapper 只做 JSON 解析和字段校验, 不创建 Timer / 网络 / AI 客户端
     if (this.dialoguePerformanceMapper === null && this.assetLibrary !== null) {
       this.dialoguePerformanceMapper = new ArkWebDialoguePerformanceMapper(this.assetLibrary);
+    }
+
+    // Phase 3F-3:创建对话演出生命周期控制器
+    // LifecycleController 通过依赖接口注入 Mapper 和 Runtime, 不重新实现映射或演出逻辑
+    if (this.dialogueLifecycleController === null
+        && this.dialoguePerformanceMapper !== null
+        && this.performanceController !== null) {
+      const self: VrmViewerPage = this;
+      const lifecycleRuntime: ArkWebDialoguePerformanceLifecycleRuntime = {
+        stopPerformance: (): Promise<boolean> => {
+          if (self.performanceController === null) {
+            return Promise.resolve(false);
+          }
+          return self.performanceController.stopPerformance();
+        },
+        executePerformance: (cmd: ArkWebAvatarPerformanceCommand): Promise<boolean> => {
+          if (self.performanceController === null) {
+            return Promise.resolve(false);
+          }
+          return self.performanceController.executeCommand(cmd).then(
+            (result: ArkWebPerformanceResult): boolean => {
+              self.syncPerformanceDebugState();
+              return result.success;
+            }
+          );
+        }
+      };
+      this.dialogueLifecycleController =
+        new ArkWebDialoguePerformanceLifecycleController(
+          this.dialoguePerformanceMapper, lifecycleRuntime);
     }
 
     // Web 组件加载由 build() 触发,初始化在 onPageEnd 回调中完成
@@ -1309,6 +1362,18 @@ struct VrmViewerPage {
     // Phase 3F-1: 销毁 PerformanceController (不删除动作 / 姿势 / 表情别名 / library.json)
     // 内部 performanceGeneration++ 使任何在途 timeout 失效
     // best-effort cancelTemporaryExpression + stopAnimation (不等待)
+    // 销毁顺序 (Phase 3F-3): LifecycleController → PerformanceController → Mapper
+    if (this.dialogueLifecycleController !== null) {
+      this.dialogueLifecycleController.dispose();
+      this.dialogueLifecycleController = null;
+    }
+    this.dialoguePerformanceState = ArkWebDialogueLifecycleState.DISPOSED;
+    this.dialoguePerformanceTurnId = '';
+    this.dialoguePerformanceCommandId = '';
+    this.dialoguePerformanceDegraded = false;
+    this.dialoguePerformanceWarnings = '';
+    this.dialoguePerformanceErrorCode = '';
+    this.dialoguePerformanceErrorMessage = '';
     if (this.performanceController !== null) {
       this.performanceController.dispose();
       this.performanceController = null;
@@ -9270,7 +9335,7 @@ struct VrmViewerPage {
     .borderRadius($r('app.float.app_radius_sm'))
     .margin({ bottom: 8 })
 
-    // 执行安全映射示例按钮 (用当前选择生成结构化 Hint, 验证 Mapper 流程)
+    // 执行安全映射示例按钮 (用当前选择生成结构化 Hint, 验证生命周期 + 映射 + 演出全链路)
     Button('执行安全映射示例')
       .fontSize($r('app.float.app_font_body'))
       .fontColor($r('app.color.app_text_primary'))
@@ -9278,13 +9343,116 @@ struct VrmViewerPage {
       .borderRadius($r('app.float.app_radius_sm'))
       .height(40)
       .width('100%')
-      .enabled(this.dialoguePerformanceMapper !== null
+      .enabled(this.dialogueLifecycleController !== null
+        && this.dialoguePerformanceMapper !== null
         && this.performanceController !== null
         && !this.dialogueOperating
         && !this.performanceOperating
         && this.debugModelState === 'READY')
       .onClick(() => {
         this.onExecuteDialogueMappingClick();
+      })
+
+    // ===== Phase 3F-3: 对话演出生命周期状态 =====
+    Text('对话演出生命周期 (Phase 3F-3)')
+      .fontSize($r('app.float.app_font_caption'))
+      .fontColor($r('app.color.app_text_secondary'))
+      .width('100%')
+      .margin({ top: 8, bottom: 4 })
+
+    Column({ space: 4 }) {
+      Row({ space: 8 }) {
+        Text('Lifecycle State:')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .layoutWeight(1)
+        Text(this.dialoguePerformanceState)
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_primary'))
+          .layoutWeight(1)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }.width('100%')
+      Row({ space: 8 }) {
+        Text('Turn ID:')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .layoutWeight(1)
+        Text(this.dialoguePerformanceTurnId.length > 0 ? this.dialoguePerformanceTurnId : '-')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_primary'))
+          .layoutWeight(1)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }.width('100%')
+      Row({ space: 8 }) {
+        Text('Lifecycle Cmd ID:')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .layoutWeight(1)
+        Text(this.dialoguePerformanceCommandId.length > 0 ? this.dialoguePerformanceCommandId : '-')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_primary'))
+          .layoutWeight(1)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }.width('100%')
+      if (this.dialoguePerformanceWarnings.length > 0) {
+        Row({ space: 8 }) {
+          Text('Lifecycle Warnings:')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_secondary'))
+            .layoutWeight(1)
+          Text(this.dialoguePerformanceWarnings)
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_accent'))
+            .layoutWeight(1)
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }.width('100%')
+      }
+      if (this.dialoguePerformanceErrorCode.length > 0) {
+        Row({ space: 8 }) {
+          Text('Lifecycle Error:')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_secondary'))
+            .layoutWeight(1)
+          Text(`${this.dialoguePerformanceErrorCode}: ${this.dialoguePerformanceErrorMessage}`)
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_danger'))
+            .layoutWeight(1)
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }.width('100%')
+      }
+    }
+    .width('100%')
+    .padding(8)
+    .backgroundColor($r('app.color.app_surface_1'))
+    .borderRadius($r('app.float.app_radius_sm'))
+    .margin({ bottom: 8 })
+
+    // 中断当前生命周期 (模拟用户中断 / 新消息替换)
+    Button('中断对话演出')
+      .fontSize($r('app.float.app_font_body'))
+      .fontColor($r('app.color.app_text_primary'))
+      .backgroundColor($r('app.color.app_surface_2'))
+      .borderRadius($r('app.float.app_radius_sm'))
+      .height(40)
+      .width('100%')
+      .enabled(this.dialogueLifecycleController !== null
+        && this.dialoguePerformanceState !== ArkWebDialogueLifecycleState.IDLE
+        && this.dialoguePerformanceState !== ArkWebDialogueLifecycleState.DISPOSED
+        && this.dialoguePerformanceState !== ArkWebDialogueLifecycleState.CANCELLED
+        && this.dialoguePerformanceState !== ArkWebDialogueLifecycleState.COMPLETED
+        && this.dialoguePerformanceState !== ArkWebDialogueLifecycleState.COMPLETED_WITHOUT_PERFORMANCE
+        && this.dialoguePerformanceState !== ArkWebDialogueLifecycleState.FAILED)
+      .onClick(() => {
+        if (this.dialogueLifecycleController !== null) {
+          this.dialogueLifecycleController.cancelCurrent('manual').then((): void => {
+            this.syncDialogueLifecycleState();
+          });
+        }
       })
   }
 
@@ -9422,82 +9590,106 @@ struct VrmViewerPage {
   }
 
   /**
-   * Phase 3F-2: 执行 AI 对话结果到演出指令的安全映射。
+   * Phase 3F-3: 助手最终消息完成回调入口。
    *
-   * 内部入口: 供未来对话页面 / AI 接口回调调用。
+   * 由未来真实对话页面在助手最终消息完成时调用 (流式 token / partial / 思考过程不得调用)。
+   * 当前 VRM Viewer 未接入真实对话系统, 此方法作为生命周期入口预留。
    *
-   * 流程:
-   *   1. 检查 Mapper 和 PerformanceController 就绪
-   *   2. 调用 Mapper.mapJson(rawJson)
-   *   3. accepted=false 时记录错误并停止
-   *   4. accepted=true 时交给 performanceController.execute(command)
-   *   5. 显示映射 warning 和执行状态
+   * 只传:
+   *   - turnId: 对话轮次 ID (非空)
+   *   - performanceHintJson: AI 返回的 Hint JSON (可为空字符串)
+   *
+   * 不传: 完整提示词 / 聊天历史 / 文件路径 / Provider URL / Three.js 对象 / 原始模型数据。
+   *
+   * 流程 (委托 LifecycleController):
+   *   1. 验证 turnId 非空
+   *   2. 相同 turnId 已提交则忽略
+   *   3. lifecycleGeneration++
+   *   4. 停止上一条演出
+   *   5. 空 Hint → COMPLETED_WITHOUT_PERFORMANCE
+   *   6. Mapper.mapJson()
+   *   7. accepted=false → FAILED (不影响消息显示)
+   *   8. accepted=true → PerformanceController.execute()
+   *   9. 成功后 ACTIVE
+   *
+   * @param turnId 对话轮次 ID (非空)
+   * @param performanceHintJson AI 返回的 Hint JSON (可为空字符串)
+   */
+  async onAssistantMessageFinalized(
+    turnId: string,
+    performanceHintJson: string
+  ): Promise<void> {
+    if (this.dialogueLifecycleController === null) {
+      this.dialoguePerformanceErrorCode = 'DIALOGUE_LIFECYCLE_NOT_READY';
+      this.dialoguePerformanceErrorMessage = 'LifecycleController 未初始化';
+      return;
+    }
+    const activeModelId: string = this.activeModelId;
+    await this.dialogueLifecycleController.submitFinalAssistantResult(
+      turnId, performanceHintJson, activeModelId
+    );
+    this.syncDialogueLifecycleState();
+  }
+
+  /**
+   * Phase 3F-2 / 3F-3: 执行 AI 对话结果到演出指令的安全映射。
+   *
+   * Phase 3F-3 起必须经过 LifecycleController, 不得绕过生命周期直接调用 Mapper。
+   * 此方法保留为内部入口, 生成临时 turnId 后委托 LifecycleController。
    *
    * @param rawJson AI 返回的原始 JSON 字符串
    */
   async executeDialoguePerformanceHintJson(rawJson: string): Promise<void> {
-    if (this.dialoguePerformanceMapper === null) {
+    if (this.dialogueLifecycleController === null) {
       this.dialogueLastAccepted = false;
-      this.dialogueLastErrorCode = 'DIALOGUE_HINT_EMPTY';
-      this.dialogueLastErrorMessage = 'DialoguePerformanceMapper 未初始化';
-      promptAction.showToast({ message: 'Mapper 未初始化' });
+      this.dialogueLastErrorCode = 'DIALOGUE_LIFECYCLE_NOT_READY';
+      this.dialogueLastErrorMessage = 'LifecycleController 未初始化';
+      promptAction.showToast({ message: 'LifecycleController 未初始化' });
       return;
     }
     if (this.dialogueOperating) {
       return;
     }
     this.dialogueOperating = true;
-    this.dialogueLastErrorCode = '';
-    this.dialogueLastErrorMessage = '';
-    this.dialogueLastWarnings = '';
+    // 生成临时 turnId (手动测试用, 真实对话由 onAssistantMessageFinalized 传入)
+    const turnId: string = `manual_${Date.now()}`;
     try {
-      const mappingResult: ArkWebDialoguePerformanceMappingResult =
-        await this.dialoguePerformanceMapper.mapJson(rawJson);
-      this.dialogueLastAccepted = mappingResult.accepted;
-      this.dialogueLastDegraded = mappingResult.degraded;
-      this.dialogueLastCommandId = mappingResult.command !== undefined
-        ? mappingResult.command.commandId : '';
-      if (mappingResult.warnings.length > 0) {
-        this.dialogueLastWarnings = mappingResult.warnings.join('; ');
-      }
-      this.dialogueLastErrorCode = mappingResult.errorCode;
-      this.dialogueLastErrorMessage = mappingResult.errorMessage;
-
-      if (!mappingResult.accepted) {
-        promptAction.showToast({
-          message: `映射失败: ${mappingResult.errorCode}`
-        });
-        return;
-      }
-      if (mappingResult.command === undefined) {
-        this.dialogueLastErrorCode = 'DIALOGUE_NOTHING_TO_PERFORM';
-        this.dialogueLastErrorMessage = '映射结果 command 为空';
-        promptAction.showToast({ message: '映射结果 command 为空' });
-        return;
-      }
-      // 交给 PerformanceController 执行
-      if (this.performanceController === null) {
-        this.dialogueLastErrorCode = 'PERFORMANCE_CONTROLLER_DISPOSED';
-        this.dialogueLastErrorMessage = 'PerformanceController 未初始化';
-        promptAction.showToast({ message: 'PerformanceController 未初始化' });
-        return;
-      }
-      const execResult =
-        await this.performanceController.executeCommand(mappingResult.command);
-      this.syncPerformanceDebugState();
-      if (execResult.success) {
-        const cmd: ArkWebAvatarPerformanceCommand = mappingResult.command;
-        promptAction.showToast({
-          message: `映射执行: ${cmd.motionType}${cmd.motionId.length > 0 ? ' ' + cmd.motionId : ''}${cmd.expressionId.length > 0 ? ' + ' + cmd.expressionId : ''}${mappingResult.degraded ? ' (降级)' : ''}`
-        });
+      const accepted: boolean =
+        await this.dialogueLifecycleController.submitFinalAssistantResult(
+          turnId, rawJson, this.activeModelId
+        );
+      this.syncDialogueLifecycleState();
+      // 同步映射层 UI 状态 (向后兼容现有调试显示)
+      this.dialogueLastAccepted = accepted;
+      this.dialogueLastDegraded =
+        this.dialogueLifecycleController.getMappingDegraded();
+      this.dialogueLastWarnings =
+        this.dialogueLifecycleController.getMappingWarnings();
+      this.dialogueLastCommandId =
+        this.dialogueLifecycleController.getCurrentCommandId();
+      const lifecycleErr: string =
+        this.dialogueLifecycleController.getLastErrorCode();
+      this.dialogueLastErrorCode = lifecycleErr;
+      this.dialogueLastErrorMessage =
+        this.dialogueLifecycleController.getLastErrorMessage();
+      if (accepted) {
+        const state: ArkWebDialogueLifecycleState =
+          this.dialogueLifecycleController.getState();
+        if (state === ArkWebDialogueLifecycleState.ACTIVE) {
+          promptAction.showToast({
+            message: `映射执行: ${this.dialogueLastCommandId}${this.dialogueLastDegraded ? ' (降级)' : ''}`
+          });
+        } else if (state === ArkWebDialogueLifecycleState.COMPLETED_WITHOUT_PERFORMANCE) {
+          promptAction.showToast({ message: '空 Hint, 无演出' });
+        }
       } else {
         promptAction.showToast({
-          message: `映射执行失败: ${execResult.errorCode}`
+          message: `映射失败: ${lifecycleErr}`
         });
       }
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
-      this.dialogueLastErrorCode = 'DIALOGUE_HINT_PARSE_FAILED';
+      this.dialogueLastErrorCode = 'DIALOGUE_LIFECYCLE_THREW';
       this.dialogueLastErrorMessage = msg;
       promptAction.showToast({ message: `映射异常: ${msg}` });
     } finally {
@@ -9506,9 +9698,39 @@ struct VrmViewerPage {
   }
 
   /**
+   * Phase 3F-3: 同步 LifecycleController 状态到页面 UI 变量。
+   */
+  private syncDialogueLifecycleState(): void {
+    if (this.dialogueLifecycleController === null) {
+      this.dialoguePerformanceState = ArkWebDialogueLifecycleState.IDLE;
+      this.dialoguePerformanceTurnId = '';
+      this.dialoguePerformanceCommandId = '';
+      this.dialoguePerformanceDegraded = false;
+      this.dialoguePerformanceWarnings = '';
+      this.dialoguePerformanceErrorCode = '';
+      this.dialoguePerformanceErrorMessage = '';
+      return;
+    }
+    this.dialoguePerformanceState = this.dialogueLifecycleController.getState();
+    this.dialoguePerformanceTurnId =
+      this.dialogueLifecycleController.getCurrentTurnId();
+    this.dialoguePerformanceCommandId =
+      this.dialogueLifecycleController.getCurrentCommandId();
+    this.dialoguePerformanceDegraded =
+      this.dialogueLifecycleController.getMappingDegraded();
+    this.dialoguePerformanceWarnings =
+      this.dialogueLifecycleController.getMappingWarnings();
+    this.dialoguePerformanceErrorCode =
+      this.dialogueLifecycleController.getLastErrorCode();
+    this.dialoguePerformanceErrorMessage =
+      this.dialogueLifecycleController.getLastErrorMessage();
+  }
+
+  /**
    * Phase 3F-2: "执行安全映射示例" 按钮处理。
    *
-   * 用当前选择生成结构化 Hint JSON, 验证 Mapper 流程。
+   * Phase 3F-3 起必须经过 LifecycleController, 不再直接调用 Mapper。
+   * 用当前选择生成结构化 Hint JSON, 验证生命周期 + 映射 + 演出全链路。
    * 不引入 JSON 编辑器, 只测试映射链路。
    */
   private async onExecuteDialogueMappingClick(): Promise<void> {
