@@ -538,6 +538,22 @@ struct VrmViewerPage {
   @State debugCameraModelBoundingRadius: number = 0;
   @State debugCameraLastClipUpdateReason: string = '';
 
+  // ===== Final Acceptance UX Cleanup: Debug Tab 折叠区域状态 =====
+  /** Debug:模型与资源诊断 折叠状态 (默认折叠) */
+  @State debugSectionModelExpanded: boolean = false;
+  /** Debug:相机诊断 折叠状态 (默认折叠) */
+  @State debugSectionCameraExpanded: boolean = false;
+  /** Debug:姿势运行时 折叠状态 (默认折叠) */
+  @State debugSectionPoseExpanded: boolean = false;
+  /** Debug:动画运行时 折叠状态 (默认折叠) */
+  @State debugSectionAnimationExpanded: boolean = false;
+  /** Debug:表情运行时 折叠状态 (默认折叠) */
+  @State debugSectionExpressionExpanded: boolean = false;
+  /** Debug:统一演出 折叠状态 (默认折叠) */
+  @State debugSectionPerformanceExpanded: boolean = false;
+  /** Debug:对话生命周期 折叠状态 (默认折叠) */
+  @State debugSectionLifecycleExpanded: boolean = false;
+
   // ===== Phase 2B: 平滑相机过渡状态 =====
   /** Debug:过渡状态 (IDLE/RUNNING/COMPLETED/CANCELLED/FAILED/DISPOSED) */
   @State debugCameraTransitionState: string = 'IDLE';
@@ -6712,6 +6728,33 @@ struct VrmViewerPage {
    *
    * 返回空字符串表示无提示(初始空闲态)。
    */
+  /**
+   * Final Acceptance UX Cleanup: 模型简短加载状态标签 (主 Tab 用)。
+   *
+   * 只返回: 模型已加载 / 模型未加载 / 加载失败 / 加载中 / 恢复中
+   */
+  private modelLoadedLabel(): string {
+    if (this.modelRestoreInProgress) {
+      return '恢复中';
+    }
+    if (this.loadInProgress) {
+      return '加载中';
+    }
+    if (this.importInProgress) {
+      return '导入中';
+    }
+    if (this.loadErrorCode.length > 0 || this.modelRestoreErrorCode.length > 0) {
+      return '加载失败';
+    }
+    if (this.activeModelId.length > 0 && this.debugModelState === 'READY') {
+      return '模型已加载';
+    }
+    if (this.debugModelState === 'READY') {
+      return '模型已加载';
+    }
+    return '模型未加载';
+  }
+
   private overallStatusHint(): string {
     // 优先级 0:Viewer 初始化失败(最高优先级,覆盖所有资源/加载提示)
     if (this.viewerState === ArkWebViewerState.FAILED) {
@@ -7383,34 +7426,35 @@ struct VrmViewerPage {
   @Builder
   TabModelContent() {
     Column() {
-      // ===== Viewer 状态(只读) =====
-      Text(`Viewer 状态: ${this.viewerState}`)
-        .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_secondary'))
-      Text(`详情: ${this.viewerDetail}`)
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
-        .margin({ top: 4 })
+      // ===== Final Acceptance UX Cleanup: 主功能 Tab 只保留用户操作和简短状态 =====
 
-      // ===== Phase 1D-2C-1: 整体动态状态提示(替代旧版静态"未探测、未加载") =====
-      if (this.overallStatusHint().length > 0) {
-        Text(this.overallStatusHint())
-          .fontSize($r('app.float.app_font_body'))
-          .fontColor(this.overallStatusColor())
-          .margin({ top: 8 })
-          .width('100%')
-      }
-
-      Divider().margin({ top: 12, bottom: 12 })
-
-      // ===== Phase 1D-1: 模型导入 =====
-      Text('模型导入')
+      // 当前模型卡片:显示名称 + 加载状态
+      Text('当前模型')
         .fontSize($r('app.float.app_font_subtitle'))
         .fontWeight(FontWeight.Medium)
         .fontColor($r('app.color.app_text_primary'))
         .margin({ bottom: 8 })
 
-      // 导入按钮 + 重新加载 + 清除按钮
+      Column() {
+        Text(this.activeModelDisplayName.length > 0
+          ? this.activeModelDisplayName
+          : (this.debugModelDisplayName.length > 0 ? this.debugModelDisplayName : '未加载模型'))
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor($r('app.color.app_text_primary'))
+          .width('100%')
+        Text(this.modelLoadedLabel())
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .margin({ top: 4 })
+          .width('100%')
+      }
+      .width('100%')
+      .padding(12)
+      .backgroundColor($r('app.color.app_surface_1'))
+      .borderRadius($r('app.float.app_radius_sm'))
+      .margin({ bottom: 12 })
+
+      // 主操作按钮:导入模型 / 重新加载模型
       Row() {
         Button(this.importInProgress ? '导入中...' : '导入模型')
           .fontSize($r('app.float.app_font_body'))
@@ -7424,7 +7468,6 @@ struct VrmViewerPage {
             this.onImportModelButton();
           })
 
-        // Phase 3B: 重新加载当前 activeModel(不重新选择文件)
         Button('重新加载')
           .fontSize($r('app.float.app_font_body'))
           .fontColor('#FFFFFF')
@@ -7436,296 +7479,100 @@ struct VrmViewerPage {
           .onClick(() => {
             this.onReloadModelButton();
           })
-
-        Button('清除缓存')
-          .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_primary'))
-          .backgroundColor($r('app.color.app_surface_2'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(40)
-          .margin({ left: 8 })
-          .enabled(this.importedFile !== null && !this.importInProgress && !this.loadInProgress)
-          .onClick(() => {
-            this.onClearImportButton();
-          })
       }
       .width('100%')
 
-      // ===== 导入状态显示 =====
-      Column() {
-        this.ImportInfoRow('导入状态', this.importStateLabel())
-        if (this.importedFile !== null) {
-          this.ImportInfoRow('文件名', this.importedFile.displayName)
-          this.ImportInfoRow('格式', this.formatLabel(this.importedFile))
-          this.ImportInfoRow('文件大小', this.sizeLabel(this.importedFile.size))
-          this.ImportInfoRow('缓存准备', this.cacheReadyLabel())
-          this.ImportInfoRow('glTF 依赖', this.gltfDependencyLabel(this.importedFile))
-        }
-        if (this.importLastError.length > 0) {
-          Text(`错误: ${this.importLastError}`)
-            .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_danger'))
-            .margin({ top: 8 })
-            .width('100%')
-        }
-      }
-      .width('100%')
-      .margin({ top: 12 })
-
-      // ===== Phase 1D-2A: 资源暴露状态 =====
-      Divider().margin({ top: 12, bottom: 12 })
-
-      Text('资源暴露(Phase 1D-2A)')
-        .fontSize($r('app.float.app_font_subtitle'))
-        .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.app_text_primary'))
-        .margin({ bottom: 8 })
-
-      Column() {
-        this.ImportInfoRow('资源状态', this.resourceStateLabel())
-        // Phase 1D-2C-2E-1: Web Prepared 状态(与 Native resourceState 解耦)
-        // - resourceState === READY 仅表示 Native Provider 已注册资源 URL
-        // - webPreparedState === READY 表示 JavaScript keeper 已通过 prepareModelResource
-        //   接收资源元数据并通过 getPreparedModelResource 回读校验
-        this.ImportInfoRow('Web 资源状态', this.webPreparedStateLabel())
-        // Phase 1D-2C-2A: 资源状态不变量
-        // - resourceState === EMPTY → preparedResource 必须为 null → 不显示 URL / MIME / 大小 / 扩展名
-        // - preparedResource !== null → resourceState 必须为 READY
-        // 双重校验:仅当 preparedResource 非空且 resourceState !== EMPTY 时才显示资源详情
-        if (this.preparedResource !== null && this.resourceState !== ModelResourceState.EMPTY) {
-          this.ImportInfoRow('资源 URL', this.preparedResource.resourceUrl)
-          this.ImportInfoRow('MIME', this.preparedResource.mimeType)
-          this.ImportInfoRow('资源大小', this.sizeLabel(this.preparedResource.size))
-          this.ImportInfoRow('扩展名', this.preparedResource.extension)
-        }
-        if (this.resourceLastError.length > 0) {
-          Text(`资源错误: ${this.resourceLastError}`)
-            .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_danger'))
-            .margin({ top: 8 })
-            .width('100%')
-        }
-        // Phase 1D-2C-2E-1: Web 资源准备错误显示
-        // 失败时显示真实 RESOURCE_PREPARE_* 错误,而不是把它压缩为 PROBE_START_FAILED
-        if (this.webPreparedState === WebPreparedResourceState.FAILED) {
-          if (this.webPreparedErrorCode.length > 0) {
-            Text(`Web 资源错误码: ${this.webPreparedErrorCode}`)
-              .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_danger'))
-              .margin({ top: 8 })
-              .width('100%')
-          }
-          if (this.webPreparedErrorMessage.length > 0) {
-            Text(`Web 资源错误: ${this.webPreparedErrorMessage}`)
-              .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_danger'))
-              .margin({ top: 4 })
-              .width('100%')
-          }
-        }
-      }
-      .width('100%')
-      .margin({ top: 12 })
-
-      // ===== Phase 1D-2B-1: 资源探测(HEAD 请求校验) =====
-      Divider().margin({ top: 12, bottom: 12 })
-
-      Text('资源探测(Phase 1D-2B-1)')
-        .fontSize($r('app.float.app_font_subtitle'))
-        .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.app_text_primary'))
-        .margin({ bottom: 8 })
-
-      // 验证资源按钮
-      Button(this.probeInProgress ? '探测中...' : '验证资源')
-        .fontSize($r('app.float.app_font_body'))
-        .fontColor('#FFFFFF')
-        .backgroundColor($r('app.color.app_accent'))
-        .borderRadius($r('app.float.app_radius_sm'))
-        .height(40)
-        .width('100%')
-        .enabled(
-          this.preparedResource !== null &&
-          this.viewerState === ArkWebViewerState.READY &&
-          !this.probeInProgress &&
-          this.resourceState === ModelResourceState.READY &&
-          !this.loadInProgress
-        )
-        .onClick(() => {
-          this.onProbeResourceButton();
-        })
-
-      // 探测结果信息
-      Column() {
-        this.ImportInfoRow('探测状态', this.probeStateLabel())
-        if (this.probeState !== ModelResourceProbeState.NOT_PROBED) {
-          this.ImportInfoRow('HTTP 状态', this.probeStatusCode > 0 ? `${this.probeStatusCode}` : '—')
-          this.ImportInfoRow('MIME 校验', this.probeMimeType.length > 0 ? this.probeMimeType : '—')
-          this.ImportInfoRow('文件大小', this.probeContentLength >= 0 ? this.sizeLabel(this.probeContentLength) : '—')
-          this.ImportInfoRow('长度来源', this.probeLengthSourceLabel())
-          this.ImportInfoRow('自定义长度', this.probeCustomContentLength >= 0 ? `${this.probeCustomContentLength}` : '—')
-          this.ImportInfoRow('标准长度', this.probeStandardContentLength >= 0 ? `${this.probeStandardContentLength}` : '—')
-          this.ImportInfoRow('资源 ID', this.probeResourceId.length > 0 ? this.probeResourceId : '—')
-          this.ImportInfoRow('重定向', this.probeRedirected ? '是(异常)' : '否')
-          this.ImportInfoRow('验证时间', this.probeVerifiedAtLabel())
-        }
-        if (this.probeErrorCode.length > 0) {
-          Text(`错误码: ${this.probeErrorCode}`)
-            .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_danger'))
-            .margin({ top: 8 })
-            .width('100%')
-          Text(`错误信息: ${this.probeErrorMessage}`)
-            .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_danger'))
-            .margin({ top: 4 })
-            .width('100%')
-        }
-        if (this.probeState === ModelResourceProbeState.VERIFIED) {
-          Text('资源传输验证通过')
-            .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.model_settings_success'))
-            .margin({ top: 8 })
-            .width('100%')
-        }
-      }
-      .width('100%')
-      .margin({ top: 12 })
-
-      // ===== Phase 1D-2B-2: 用户模型加载(GLTFLoader 实际加载与原子替换) =====
-      Divider().margin({ top: 12, bottom: 12 })
-
-      Text('用户模型加载(Phase 1D-2B-2)')
-        .fontSize($r('app.float.app_font_subtitle'))
-        .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.app_text_primary'))
-        .margin({ bottom: 8 })
-
-      // 加载模型按钮
-      Button(this.loadInProgress ? '加载中...' : '加载模型')
-        .fontSize($r('app.float.app_font_body'))
-        .fontColor('#FFFFFF')
-        .backgroundColor($r('app.color.app_accent'))
-        .borderRadius($r('app.float.app_radius_sm'))
-        .height(40)
-        .width('100%')
-        .enabled(
-          this.preparedResource !== null &&
-          this.viewerState === ArkWebViewerState.READY &&
-          this.probeState === ModelResourceProbeState.VERIFIED &&
-          !this.loadInProgress &&
-          !this.probeInProgress
-        )
-        .onClick(() => {
-          this.onLoadModelButton();
-        })
-
-      // 加载结果信息
-      Column() {
-        this.ImportInfoRow('加载状态', this.loadStateLabel())
-        if (this.loadState !== 'NOT_REQUESTED') {
-          this.ImportInfoRow('目标文件', this.loadDisplayName.length > 0 ? this.loadDisplayName : '—')
-          this.ImportInfoRow('当前模型', this.loadModelDisplayName.length > 0 ? this.loadModelDisplayName : '—')
-          this.ImportInfoRow('开始时间', this.loadStartedAtLabel())
-          this.ImportInfoRow('完成时间', this.loadCompletedAtLabel())
-        }
-        if (this.loadErrorCode.length > 0) {
-          Text(`错误码: ${this.loadErrorCode}`)
-            .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_danger'))
-            .margin({ top: 8 })
-            .width('100%')
-          Text(`错误信息: ${this.loadErrorMessage}`)
-            .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_danger'))
-            .margin({ top: 4 })
-            .width('100%')
-        }
-        if (this.loadState === 'READY') {
-          Text('用户模型加载成功,已替换当前模型')
-            .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.model_settings_success'))
-            .margin({ top: 8 })
-            .width('100%')
-        }
-        if (this.loadState === 'FAILED') {
-          Text('加载失败,当前模型已保留,可重试')
-            .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_danger'))
-            .margin({ top: 8 })
-            .width('100%')
-        }
-      }
-      .width('100%')
-      .margin({ top: 12 })
-
-      // ===== Phase 1D-2C-1: 运行诊断(最近一条 Provider/GLTFLoader/Coordinator 诊断) =====
-      Divider().margin({ top: 12, bottom: 12 })
-
-      Text('运行诊断(Phase 1D-2C-1)')
-        .fontSize($r('app.float.app_font_subtitle'))
-        .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.app_text_primary'))
-        .margin({ bottom: 8 })
-
-      // 刷新诊断按钮(手动拉取一次最近诊断)
-      // Phase 1D-2C-2A: 不再依赖 ViewerState === READY,只要 Viewer 未被销毁就允许刷新
-      // (初始化失败时也必须能查看启动诊断)
-      Button('刷新诊断')
-        .fontSize($r('app.float.app_font_body'))
-        .fontColor('#FFFFFF')
-        .backgroundColor($r('app.color.app_accent'))
-        .borderRadius($r('app.float.app_radius_sm'))
-        .height(40)
-        .width('100%')
-        .enabled(this.viewerState !== ArkWebViewerState.DISPOSED && this.webLoaded)
-        .onClick(() => {
-          this.refreshRuntimeDiagnostic();
-        })
-
-      // 诊断信息显示
-      Column() {
-        if (this.runtimeDiagnostic === null) {
-          this.ImportInfoRow('最后阶段', '—')
-          this.ImportInfoRow('错误码', '—')
-          this.ImportInfoRow('错误信息', '暂无诊断记录')
-        } else {
-          this.ImportInfoRow('最后阶段', this.runtimeStageLabel(this.runtimeDiagnostic.stage))
-          this.ImportInfoRow('错误码', this.runtimeDiagnostic.code.length > 0 ? this.runtimeDiagnostic.code : '—')
-          this.ImportInfoRow('错误信息', this.runtimeDiagnostic.message.length > 0 ? this.runtimeDiagnostic.message : '—')
-          this.ImportInfoRow('请求方法', this.runtimeDiagnostic.requestMethod.length > 0 ? this.runtimeDiagnostic.requestMethod : '—')
-          this.ImportInfoRow('HTTP 状态', this.runtimeDiagnostic.httpStatus > 0 ? `${this.runtimeDiagnostic.httpStatus}` : '—')
-          this.ImportInfoRow('MIME', this.runtimeDiagnostic.mimeType.length > 0 ? this.runtimeDiagnostic.mimeType : '—')
-          this.ImportInfoRow('Content-Length', this.runtimeDiagnostic.contentLength > 0 ? this.sizeLabel(this.runtimeDiagnostic.contentLength) : '—')
-          this.ImportInfoRow('资源 ID', this.runtimeDiagnostic.resourceId.length > 0 ? this.runtimeDiagnostic.resourceId : '—')
-          this.ImportInfoRow('发生时间', this.diagnosticTimestampLabel())
-        }
-      }
-      .width('100%')
-      .margin({ top: 12 })
-
-      // 阶段颜色提示(失败/成功)
-      if (this.runtimeDiagnostic !== null) {
-        Text(this.runtimeStageLabel(this.runtimeDiagnostic.stage))
+      // 导入进度简短状态
+      if (this.importInProgress) {
+        Text('正在导入模型...')
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor(this.runtimeStageColor(this.runtimeDiagnostic.stage))
+          .fontColor($r('app.color.app_text_secondary'))
           .margin({ top: 8 })
           .width('100%')
       }
 
-      // 清除诊断按钮
-      Button('清除诊断')
-        .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_primary'))
-        .backgroundColor($r('app.color.app_surface_2'))
-        .borderRadius($r('app.float.app_radius_sm'))
-        .height(40)
+      if (this.loadInProgress) {
+        Text('正在加载模型...')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .margin({ top: 8 })
+          .width('100%')
+      }
+
+      if (this.modelRestoreInProgress) {
+        Text('正在恢复模型...')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .margin({ top: 8 })
+          .width('100%')
+      }
+
+      // 错误摘要 (仅在真实错误存在时显示)
+      if (this.importLastError.length > 0) {
+        Column() {
+          Text('导入失败')
+            .fontSize($r('app.float.app_font_body'))
+            .fontColor($r('app.color.app_danger'))
+            .width('100%')
+          Text(this.importLastError)
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_danger'))
+            .margin({ top: 4 })
+            .width('100%')
+        }
         .width('100%')
+        .padding(8)
+        .backgroundColor($r('app.color.app_surface_1'))
+        .borderRadius($r('app.float.app_radius_sm'))
         .margin({ top: 8 })
-        .enabled(this.runtimeDiagnostic !== null)
-        .onClick(() => {
-          this.onClearDiagnosticButton();
-        })
+      }
+
+      if (this.loadErrorCode.length > 0) {
+        Column() {
+          Text('加载失败')
+            .fontSize($r('app.float.app_font_body'))
+            .fontColor($r('app.color.app_danger'))
+            .width('100%')
+          Text(this.loadErrorMessage)
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_danger'))
+            .margin({ top: 4 })
+            .width('100%')
+        }
+        .width('100%')
+        .padding(8)
+        .backgroundColor($r('app.color.app_surface_1'))
+        .borderRadius($r('app.float.app_radius_sm'))
+        .margin({ top: 8 })
+      }
+
+      if (this.modelRestoreErrorCode.length > 0) {
+        Column() {
+          Text('恢复失败')
+            .fontSize($r('app.float.app_font_body'))
+            .fontColor($r('app.color.app_danger'))
+            .width('100%')
+          Text(this.modelRestoreErrorMessage)
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_danger'))
+            .margin({ top: 4 })
+            .width('100%')
+        }
+        .width('100%')
+        .padding(8)
+        .backgroundColor($r('app.color.app_surface_1'))
+        .borderRadius($r('app.float.app_radius_sm'))
+        .margin({ top: 8 })
+      }
+
+      // 整体状态提示(仅在有提示时显示)
+      if (this.overallStatusHint().length > 0) {
+        Text(this.overallStatusHint())
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor(this.overallStatusColor())
+          .margin({ top: 12 })
+          .width('100%')
+      }
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)
@@ -7849,7 +7696,7 @@ struct VrmViewerPage {
   @Builder
   TabPoseContent() {
     Column() {
-      // Phase 3D-1 — JSON 姿势导入与持久化姿势库
+      // Final Acceptance UX Cleanup: 主功能 Tab 只保留用户操作和资产列表
       Text('姿势系统')
         .fontSize($r('app.float.app_font_subtitle'))
         .fontWeight(FontWeight.Medium)
@@ -7899,7 +7746,7 @@ struct VrmViewerPage {
         .alignListItem(ListItemAlign.Center)
       }
 
-      // Phase 3D-2: 应用 / 恢复 按钮
+      // 应用 / 恢复 按钮 (固定操作区)
       Row() {
         Button('应用姿势')
           .fontSize($r('app.float.app_font_body'))
@@ -7932,53 +7779,89 @@ struct VrmViewerPage {
           })
       }
       .width('100%')
-      .margin({ bottom: 16 })
+      .margin({ bottom: 8 })
 
-      // 状态显示区
-      Text('姿势状态')
-        .fontSize($r('app.float.app_font_subtitle'))
-        .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.app_text_primary'))
-        .margin({ bottom: 8 })
+      // 简短状态:已应用姿势
+      if (this.appliedPoseId.length > 0) {
+        Text(`已应用: ${this.appliedPoseDisplayName}`)
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .width('100%')
+          .margin({ top: 4 })
+      }
 
-      this.DebugRow('姿势数量', this.poseAssets.length > 0 ? String(this.poseAssets.length) : '0')
-      this.DebugRow('选中姿势', this.selectedPoseId.length > 0 ? this.selectedPoseId : '未选中')
-      this.DebugRow('导入中', this.poseImporting ? '是' : '否')
-      this.DebugRow('应用中', this.poseApplying ? '是' : '否')
-      this.DebugRow('姿势状态', this.poseSystemState)
-      this.DebugRow('已应用姿势', this.appliedPoseId.length > 0
-        ? `${this.appliedPoseDisplayName} (${this.appliedPoseId})`
-        : '无')
-      this.DebugRow('有效骨骼数', this.poseAppliedBoneCount > 0 ? String(this.poseAppliedBoneCount) : '0')
-      this.DebugRow('忽略骨骼数', this.poseIgnoredBoneCount > 0 ? String(this.poseIgnoredBoneCount) : '0')
+      if (this.poseImporting) {
+        Text('正在导入姿势...')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .width('100%')
+          .margin({ top: 4 })
+      }
 
+      if (this.poseApplying) {
+        Text('正在应用姿势...')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .width('100%')
+          .margin({ top: 4 })
+      }
+
+      // 错误摘要 (仅在真实错误存在时显示)
       if (this.poseLastErrorCode.length > 0) {
-        this.DebugRow('姿势错误码', this.poseLastErrorCode)
+        Column() {
+          Text('姿势应用失败')
+            .fontSize($r('app.float.app_font_body'))
+            .fontColor($r('app.color.app_danger'))
+            .width('100%')
+          Text(this.poseLastErrorMessage)
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_danger'))
+            .margin({ top: 4 })
+            .width('100%')
+        }
+        .width('100%')
+        .padding(8)
+        .backgroundColor($r('app.color.app_surface_1'))
+        .borderRadius($r('app.float.app_radius_sm'))
+        .margin({ top: 8 })
       }
 
       if (this.poseLibraryErrorCode.length > 0) {
-        this.DebugRow('库错误码', this.poseLibraryErrorCode)
+        Column() {
+          Text('姿势库错误')
+            .fontSize($r('app.float.app_font_body'))
+            .fontColor($r('app.color.app_danger'))
+            .width('100%')
+          Text(this.poseLibraryErrorMessage)
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_danger'))
+            .margin({ top: 4 })
+            .width('100%')
+        }
+        .width('100%')
+        .padding(8)
+        .backgroundColor($r('app.color.app_surface_1'))
+        .borderRadius($r('app.float.app_radius_sm'))
+        .margin({ top: 8 })
       }
 
-      // Phase 3D-3: 默认姿势恢复 Debug 字段
-      // 禁止显示 absolutePath / relativePath / filesDir / 原始 URI
-      Text('默认姿势')
-        .fontSize($r('app.float.app_font_subtitle'))
-        .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.app_text_primary'))
-        .margin({ top: 8, bottom: 8 })
-
-      this.DebugRow('Default Pose ID', this.defaultPoseId.length > 0 ? this.defaultPoseId : '无')
-      this.DebugRow('Default Pose Name', this.defaultPoseDisplayName.length > 0 ? this.defaultPoseDisplayName : '无')
-      this.DebugRow('Default Pose Restore State', this.defaultPoseRestoreState)
-      this.DebugRow('Default Pose Applied To Current Model',
-        this.defaultPoseRestoreModelGeneration === this.modelRestoreGeneration
-          && this.lastRestoredDefaultPoseId.length > 0 ? '是' : '否')
-      this.DebugRow('Default Pose Restore Generation', String(this.defaultPoseRestoreGeneration))
-
       if (this.defaultPoseRestoreErrorCode.length > 0) {
-        this.DebugRow('Default Pose Restore Error',
-          `${this.defaultPoseRestoreErrorCode}: ${this.defaultPoseRestoreErrorMessage}`)
+        Column() {
+          Text('默认姿势恢复失败')
+            .fontSize($r('app.float.app_font_body'))
+            .fontColor($r('app.color.app_danger'))
+            .width('100%')
+          Text(this.defaultPoseRestoreErrorMessage)
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_danger'))
+            .margin({ top: 4 })
+            .width('100%')
+        }
+        .width('100%')
+        .padding(8)
+        .backgroundColor($r('app.color.app_surface_1'))
+        .borderRadius($r('app.float.app_radius_sm'))
+        .margin({ top: 8 })
       }
     }
     .width('100%')
@@ -8162,51 +8045,101 @@ struct VrmViewerPage {
         .alignListItem(ListItemAlign.Center)
       }
 
-      // 状态显示区
-      Text('动画状态')
-        .fontSize($r('app.float.app_font_subtitle'))
-        .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.app_text_primary'))
-        .margin({ bottom: 8 })
+      // Final Acceptance UX Cleanup: 移除内部 Debug 状态 (Mixer/Clip/Action/generation)
+      // 保留简短状态和错误摘要
 
-      this.DebugRow('状态', this.debugAnimationState)
-      this.DebugRow('动画文件', this.debugAnimationName.length > 0 ? this.debugAnimationName : '未导入')
-      this.DebugRow('VRM 绑定', this.debugAnimationVrmBound ? '已绑定' : '未绑定')
-      this.DebugRow('Mixer', this.debugAnimationMixerReady ? 'READY' : 'NOT READY')
-      this.DebugRow('Clip', this.debugAnimationClipReady ? 'READY' : 'NOT READY')
-      this.DebugRow('Action', this.debugAnimationActionReady ? 'READY' : 'NOT READY')
-      this.DebugRow('时长', this.debugAnimationDuration > 0 ? `${this.debugAnimationDuration.toFixed(2)}s` : '-')
-      this.DebugRow('当前时间', this.debugAnimationDuration > 0 ? `${this.debugAnimationCurrentTime.toFixed(2)}s` : '-')
-      this.DebugRow('加载代次', this.debugAnimationLoadGeneration > 0 ? String(this.debugAnimationLoadGeneration) : '-')
-
-      if (this.debugAnimationResourceId.length > 0) {
-        this.DebugRow('资源 ID', this.debugAnimationResourceId)
+      // 简短状态
+      if (this.debugAnimationName.length > 0) {
+        Text(`当前动作: ${this.debugAnimationName}`)
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .width('100%')
+          .margin({ top: 4 })
       }
 
+      if (this.debugAnimationState === 'LOADING') {
+        Text('正在加载动作...')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .width('100%')
+          .margin({ top: 4 })
+      }
+
+      // 错误摘要 (仅在真实错误存在时显示)
       if (this.debugAnimationErrorCode.length > 0) {
-        this.DebugRow('错误码', this.debugAnimationErrorCode)
-        this.DebugRow('错误信息', this.debugAnimationErrorMessage)
+        Column() {
+          Text('动作错误')
+            .fontSize($r('app.float.app_font_body'))
+            .fontColor($r('app.color.app_danger'))
+            .width('100%')
+          Text(this.debugAnimationErrorMessage)
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_danger'))
+            .margin({ top: 4 })
+            .width('100%')
+        }
+        .width('100%')
+        .padding(8)
+        .backgroundColor($r('app.color.app_surface_1'))
+        .borderRadius($r('app.float.app_radius_sm'))
+        .margin({ top: 8 })
       }
 
       if (this.animationLibraryErrorCode.length > 0) {
-        this.DebugRow('动画库错误码', this.animationLibraryErrorCode)
-        this.DebugRow('动画库错误信息', this.animationLibraryErrorMessage)
+        Column() {
+          Text('动画库错误')
+            .fontSize($r('app.float.app_font_body'))
+            .fontColor($r('app.color.app_danger'))
+            .width('100%')
+          Text(this.animationLibraryErrorMessage)
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_danger'))
+            .margin({ top: 4 })
+            .width('100%')
+        }
+        .width('100%')
+        .padding(8)
+        .backgroundColor($r('app.color.app_surface_1'))
+        .borderRadius($r('app.float.app_radius_sm'))
+        .margin({ top: 8 })
       }
 
       if (this.animationImportError.length > 0) {
-        Text(this.animationImportError)
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_danger'))
-          .width('100%')
-          .margin({ top: 8 })
+        Column() {
+          Text('导入错误')
+            .fontSize($r('app.float.app_font_body'))
+            .fontColor($r('app.color.app_danger'))
+            .width('100%')
+          Text(this.animationImportError)
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_danger'))
+            .margin({ top: 4 })
+            .width('100%')
+        }
+        .width('100%')
+        .padding(8)
+        .backgroundColor($r('app.color.app_surface_1'))
+        .borderRadius($r('app.float.app_radius_sm'))
+        .margin({ top: 8 })
       }
 
       if (this.animationActionError.length > 0) {
-        Text(this.animationActionError)
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_danger'))
-          .width('100%')
-          .margin({ top: 8 })
+        Column() {
+          Text('动作操作错误')
+            .fontSize($r('app.float.app_font_body'))
+            .fontColor($r('app.color.app_danger'))
+            .width('100%')
+          Text(this.animationActionError)
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_danger'))
+            .margin({ top: 4 })
+            .width('100%')
+        }
+        .width('100%')
+        .padding(8)
+        .backgroundColor($r('app.color.app_surface_1'))
+        .borderRadius($r('app.float.app_radius_sm'))
+        .margin({ top: 8 })
       }
     }
     .width('100%')
@@ -8623,27 +8556,25 @@ struct VrmViewerPage {
       }
       .width('100%')
 
-      // ===== Phase 3E-2: 表情别名映射 =====
+      // Final Acceptance UX Cleanup: 表情别名映射改为纵向完整名称布局
+      // 临时表情 / 统一演出 / 对话生命周期相关测试区域已移至 Debug Tab
       this.AliasMappingSection()
-
-      // ===== Phase 3E-2: 临时表情测试 =====
-      this.TemporaryExpressionSection()
-
-      // ===== Phase 3F-1: 统一演出测试 =====
-      this.PerformanceSection()
     }
     .width('100%')
   }
 
   /**
-   * Phase 3E-2: 表情别名映射区域。
+   * Final Acceptance UX Cleanup: 表情别名映射区域 (纵向布局)。
    *
-   * 操作:
-   *   - 选择一个真实 Expression (复用 selectedExpressionName)
-   *   - 选择目标业务 ID (neutral/happy/angry/sad/relaxed/surprised)
-   *   - 绑定 / 取消映射
+   * 改为纵向映射列表, 顺序固定: 中性 / 开心 / 愤怒 / 悲伤 / 放松 / 惊讶
+   * 每个别名使用独立映射行, 显示:
+   *   - 中文别名 (完整显示)
+   *   - 业务 ID (完整显示)
+   *   - 当前映射的真实 Expression 名称 (独立文本区域, 最多两行, 超出才 ellipsis)
+   *   - [绑定当前表情] [清除映射] 按钮
    *
-   * 显示当前映射, 不显示模型路径或内部对象。
+   * 没有当前选择时: 绑定按钮禁用
+   * 没有映射时: 显示 "未映射"
    */
   @Builder
   AliasMappingSection() {
@@ -8657,15 +8588,15 @@ struct VrmViewerPage {
       .fontColor($r('app.color.app_text_primary'))
       .margin({ bottom: 8 })
 
-    Text('将固定业务 ID 绑定到当前模型真实存在的 Expression, 持久化到 library.json。')
+    Text('将固定业务 ID 绑定到当前模型真实存在的 Expression。')
       .fontSize($r('app.float.app_font_caption'))
       .fontColor($r('app.color.app_text_secondary'))
       .width('100%')
-      .margin({ bottom: 12 })
+      .margin({ bottom: 4 })
 
-    // 当前选中的真实表情
+    // 当前选中的真实表情 (供绑定使用)
     Row() {
-      Text('真实表情:')
+      Text('当前选择:')
         .fontSize($r('app.float.app_font_caption'))
         .fontColor($r('app.color.app_text_secondary'))
       Text(this.selectedExpressionName.length > 0 ? this.selectedExpressionName : '未选择')
@@ -8674,107 +8605,22 @@ struct VrmViewerPage {
           ? $r('app.color.app_text_primary')
           : $r('app.color.app_text_tertiary'))
         .margin({ left: 8 })
-    }
-    .width('100%')
-    .margin({ bottom: 8 })
-
-    // 选择业务 ID
-    Text('目标业务 ID')
-      .fontSize($r('app.float.app_font_caption'))
-      .fontColor($r('app.color.app_text_secondary'))
-      .width('100%')
-      .margin({ bottom: 4 })
-
-    Row({ space: 6 }) {
-      ForEach(ArkWebExpressionAliasBusinessId.ALL, (id: string) => {
-        Button(id)
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor(this.expressionAliasSelectedBusinessId === id
-            ? $r('app.color.app_text_primary')
-            : $r('app.color.app_text_secondary'))
-          .backgroundColor(this.expressionAliasSelectedBusinessId === id
-            ? $r('app.color.app_surface_2')
-            : $r('app.color.app_surface_1'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(28)
-          .layoutWeight(1)
-          .onClick(() => {
-            this.expressionAliasSelectedBusinessId = id;
-          })
-      }, (id: string) => id)
+        .layoutWeight(1)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
     }
     .width('100%')
     .margin({ bottom: 12 })
 
-    // 当前映射列表
-    Text('当前映射')
-      .fontSize($r('app.float.app_font_caption'))
-      .fontColor($r('app.color.app_text_secondary'))
-      .width('100%')
-      .margin({ bottom: 4 })
-
-    if (Object.keys(this.expressionAliasMap).length === 0) {
-      Text('无映射 (旧模型记录兼容为空)')
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
-        .width('100%')
-        .margin({ bottom: 8 })
-    } else {
-      List({ space: 4 }) {
-        ForEach(Object.keys(this.expressionAliasMap), (id: string) => {
-          ListItem() {
-            Row() {
-              Text(`${id} → ${this.expressionAliasMap[id]}`)
-                .fontSize($r('app.float.app_font_caption'))
-                .fontColor($r('app.color.app_text_primary'))
-                .layoutWeight(1)
-              Button('取消')
-                .fontSize($r('app.float.app_font_caption'))
-                .fontColor($r('app.color.app_text_primary'))
-                .backgroundColor($r('app.color.app_surface_1'))
-                .borderRadius($r('app.float.app_radius_sm'))
-                .height(24)
-                .enabled(!this.expressionAliasOperating)
-                .onClick(() => {
-                  this.clearExpressionAlias(id);
-                })
-            }
-            .width('100%')
-            .padding({ top: 4, bottom: 4, left: 8, right: 8 })
-          }
-        }, (id: string) => id)
-      }
-      .width('100%')
-      .margin({ bottom: 8 })
-      .alignListItem(ListItemAlign.Center)
-    }
-
-    // 操作按钮
+    // 重新载入按钮
     Row() {
-      Button('绑定映射')
+      Button('重新载入映射')
         .fontSize($r('app.float.app_font_body'))
         .fontColor($r('app.color.app_text_primary'))
         .backgroundColor($r('app.color.app_surface_2'))
         .borderRadius($r('app.float.app_radius_sm'))
         .height(36)
         .layoutWeight(1)
-        .enabled(this.debugModelState === 'READY'
-          && this.expressionManagerReady
-          && this.selectedExpressionName.length > 0
-          && this.expressionAliasSelectedBusinessId.length > 0
-          && !this.expressionAliasOperating)
-        .onClick(() => {
-          this.saveExpressionAlias(this.expressionAliasSelectedBusinessId, this.selectedExpressionName);
-        })
-
-      Button('重新载入')
-        .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_primary'))
-        .backgroundColor($r('app.color.app_surface_2'))
-        .borderRadius($r('app.float.app_radius_sm'))
-        .height(36)
-        .layoutWeight(1)
-        .margin({ left: 8 })
         .enabled(this.activeModelId.length > 0
           && !this.expressionAliasOperating)
         .onClick(() => {
@@ -8782,23 +8628,166 @@ struct VrmViewerPage {
         })
     }
     .width('100%')
+    .margin({ bottom: 12 })
+
+    // 纵向映射列表 (顺序固定: neutral / happy / angry / sad / relaxed / surprised)
+    List({ space: 8 }) {
+      ForEach(ArkWebExpressionAliasBusinessId.ALL, (id: string) => {
+        ListItem() {
+          this.AliasMappingRow(id)
+        }
+      }, (id: string) => id)
+    }
+    .width('100%')
     .margin({ bottom: 8 })
+    .alignListItem(ListItemAlign.Center)
 
     // 错误显示
     if (this.expressionAliasErrorCode.length > 0) {
-      Text(`错误: ${this.expressionAliasErrorCode}`)
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
-        .width('100%')
-        .margin({ bottom: 4 })
-      if (this.expressionAliasErrorMessage.length > 0) {
+      Column() {
+        Text('别名操作错误')
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor($r('app.color.app_danger'))
+          .width('100%')
         Text(this.expressionAliasErrorMessage)
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor($r('app.color.app_danger'))
+          .margin({ top: 4 })
           .width('100%')
-          .margin({ bottom: 8 })
       }
+      .width('100%')
+      .padding(8)
+      .backgroundColor($r('app.color.app_surface_1'))
+      .borderRadius($r('app.float.app_radius_sm'))
+      .margin({ top: 8 })
     }
+  }
+
+  /**
+   * Final Acceptance UX Cleanup: 单个别名映射行 (纵向布局)。
+   *
+   * 显示:
+   *   - 中文别名 (完整显示)
+   *   - 业务 ID: happy (完整显示)
+   *   - 当前映射: Joy (独立文本区域, 最多两行, 超出才 ellipsis)
+   *   - [绑定当前表情] [清除映射] 按钮 (文字不被截断)
+   *
+   * @param businessId 业务 ID (neutral/happy/angry/sad/relaxed/surprised)
+   */
+  @Builder
+  AliasMappingRow(businessId: string) {
+    Column() {
+      // 第一行: 中文别名 (完整显示, 独占一行)
+      Text(this.aliasChineseLabel(businessId))
+        .fontSize($r('app.float.app_font_body'))
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.app_text_primary'))
+        .width('100%')
+        .maxLines(1)
+
+      // 第二行: 业务 ID (完整显示)
+      Row() {
+        Text('业务 ID:')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+        Text(businessId)
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_primary'))
+          .margin({ left: 6 })
+      }
+      .width('100%')
+      .margin({ top: 2 })
+
+      // 第三行: 当前映射的真实 Expression 名称 (独立文本区域, 最多两行)
+      Row() {
+        Text('当前映射:')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+        Text(this.getAliasMappedName(businessId))
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor(this.getAliasMappedName(businessId) === '未映射'
+            ? $r('app.color.app_text_tertiary')
+            : $r('app.color.app_text_primary'))
+          .margin({ left: 6 })
+          .layoutWeight(1)
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .width('100%')
+      .margin({ top: 2 })
+
+      // 第四行: 操作按钮 (绑定当前表情 / 清除映射)
+      Row() {
+        Button('绑定当前表情')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_primary'))
+          .backgroundColor($r('app.color.app_surface_2'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(32)
+          .layoutWeight(1)
+          .enabled(this.debugModelState === 'READY'
+            && this.expressionManagerReady
+            && this.selectedExpressionName.length > 0
+            && !this.expressionAliasOperating)
+          .onClick(() => {
+            this.saveExpressionAlias(businessId, this.selectedExpressionName);
+          })
+
+        Button('清除映射')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_primary'))
+          .backgroundColor($r('app.color.app_surface_1'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(32)
+          .layoutWeight(1)
+          .margin({ left: 8 })
+          .enabled(this.getAliasMappedName(businessId) !== '未映射'
+            && !this.expressionAliasOperating)
+          .onClick(() => {
+            this.clearExpressionAlias(businessId);
+          })
+      }
+      .width('100%')
+      .margin({ top: 6 })
+    }
+    .width('100%')
+    .padding(10)
+    .backgroundColor($r('app.color.app_surface_1'))
+    .borderRadius($r('app.float.app_radius_sm'))
+  }
+
+  /**
+   * Final Acceptance UX Cleanup: 获取业务 ID 的中文别名标签。
+   *
+   * 顺序固定: 中性 / 开心 / 愤怒 / 悲伤 / 放松 / 惊讶
+   */
+  private aliasChineseLabel(businessId: string): string {
+    if (businessId === 'neutral') {
+      return '中性';
+    } else if (businessId === 'happy') {
+      return '开心';
+    } else if (businessId === 'angry') {
+      return '愤怒';
+    } else if (businessId === 'sad') {
+      return '悲伤';
+    } else if (businessId === 'relaxed') {
+      return '放松';
+    } else if (businessId === 'surprised') {
+      return '惊讶';
+    }
+    return businessId;
+  }
+
+  /**
+   * Final Acceptance UX Cleanup: 获取业务 ID 当前映射的真实 Expression 名称。
+   * 没有映射时返回 "未映射"。
+   */
+  private getAliasMappedName(businessId: string): string {
+    const mapped: string = this.expressionAliasMap[businessId];
+    if (mapped !== undefined && mapped.length > 0) {
+      return mapped;
+    }
+    return '未映射';
   }
 
   /**
@@ -10026,173 +10015,309 @@ struct VrmViewerPage {
   @Builder
   TabDebugContent() {
     Column() {
-      this.DebugRow('Viewer UI', this.viewerState === ArkWebViewerState.READY ? 'READY' : this.viewerState)
-      this.DebugRow('Web Bridge', this.webLoaded ? 'READY' : 'PENDING')
-      this.DebugRow('Three.js', this.viewerState === ArkWebViewerState.READY ? 'READY' : 'NOT LOADED')
-      this.DebugRow('Scene', this.viewerState === ArkWebViewerState.READY ? 'READY' : 'NOT INITIALIZED')
-      this.DebugRow('Camera', this.viewerState === ArkWebViewerState.READY ? 'READY' : 'NOT INITIALIZED')
-      this.DebugRow('Frame Loop', this.viewerState === ArkWebViewerState.READY ? 'RUNNING' : 'STOPPED')
+      // Final Acceptance UX Cleanup: 调试 Tab 采用默认折叠区域
+      // 默认全部折叠, 点击 "展开" 才渲染详细状态
 
-      // Phase 2A-1: Model Debug 状态(来自 ViewerModelLoader 真实状态,不再硬编码 NOT LOADED)
-      this.DebugRow('Model', this.debugModelState)
-      this.DebugRow('Model Name', this.debugModelDisplayName.length > 0 ? this.debugModelDisplayName : '-')
-      this.DebugRow('Model Source', this.debugModelSource)
-      this.DebugRow('Model Loaded', this.debugModelLoaded ? 'TRUE' : 'FALSE')
-
-      // Phase 3B: 资产目录 / 模型恢复 Debug 状态
-      // 禁止显示 filesDir / absolutePath / relativePath / cachePath
-      this.DebugRow('Asset Library State',
-        this.assetLibrary !== null && !this.assetLibrary.isDisposed() ? 'READY' : 'NOT_INITIALIZED')
-      this.DebugRow('Asset Library Version', '1')
-      this.DebugRow('Active Model ID',
-        this.activeModelId.length > 0 ? this.activeModelId : '-')
-      this.DebugRow('Active Model Name',
-        this.activeModelDisplayName.length > 0 ? this.activeModelDisplayName : '-')
-      this.DebugRow('Active Model Size',
-        this.activeModelByteLength > 0 ? this.formatByteLength(this.activeModelByteLength) : '-')
-      this.DebugRow('Model Storage', 'PERSISTENT')
-      this.DebugRow('Model Restore State', this.modelRestoreState)
-      if (this.modelRestoreErrorCode.length > 0) {
-        this.DebugRow('Model Restore Error',
-          this.modelRestoreErrorCode + ': ' + this.modelRestoreErrorMessage)
-      }
-      this.DebugRow('Legacy Model Migrated', this.legacyModelMigrated ? 'YES' : 'NO')
-      this.DebugRow('Debug Test Cube', 'DISABLED')
-
-      // Phase 2A-1: Scene 与 Camera Controls Debug 状态
-      this.DebugRow('Background', this.sceneBackgroundColor)
-      this.DebugRow('Grid', this.sceneGridVisible ? 'ON' : 'OFF')
-      this.DebugRow('Light Intensity', this.sceneLightIntensity.toFixed(2))
-      this.DebugRow('Camera Controls', this.debugCameraControlsEnabled ? 'ENABLED' : 'DISABLED')
-
-      // Phase 2F: Environment Debug 状态
-      this.DebugRow('Environment State', this.environmentState)
-      this.DebugRow('Environment Source', this.environmentSource)
-      this.DebugRow('Environment Enabled', this.environmentEnabled ? 'YES' : 'NO')
-      this.DebugRow('Skybox Visible', this.skyboxVisible ? 'YES' : 'NO')
-      this.DebugRow('Environment Intensity', this.environmentIntensity.toFixed(2))
-      if (this.environmentErrorCode.length > 0) {
-        this.DebugRow('Environment Error',
-          this.environmentErrorCode + ': ' + this.environmentErrorMessage)
-      }
-
-      // Phase 2H: 演示模式 Debug 状态
-      this.DebugRow('Presentation Mode', this.presentationMode)
-      this.DebugRow('Presentation Transitioning',
-        this.presentationTransitioning ? 'YES' : 'NO')
-      this.DebugRow('Control Panel Visible',
-        this.presentationMode === PresentationMode.NORMAL ? 'YES' : 'NO')
-      this.DebugRow('Quick Toolbar Visible',
-        this.presentationMode === PresentationMode.NORMAL ? 'YES' : 'NO')
-      this.DebugRow('Saved Panel State',
-        this.panelStateBeforeDemo >= 0
-          ? this.indexToDrawerState(this.panelStateBeforeDemo)
-          : '-')
-      this.DebugRow('Saved Panel Tab',
-        this.panelStateBeforeDemo >= 0
-          ? this.indexToViewerTab(this.selectedTabBeforeDemo)
-          : '-')
-      if (this.presentationWarning.length > 0) {
-        this.DebugRow('Presentation Warning', this.presentationWarning)
-      }
-
-      // Phase 2A-2: Camera Debug 状态(从 getCameraState 获取,非硬编码)
-      this.DebugRow('Camera Position',
-        this.debugCameraPositionX.toFixed(3) + ', ' +
-        this.debugCameraPositionY.toFixed(3) + ', ' +
-        this.debugCameraPositionZ.toFixed(3))
-      this.DebugRow('Camera Target',
-        this.debugCameraTargetX.toFixed(3) + ', ' +
-        this.debugCameraTargetY.toFixed(3) + ', ' +
-        this.debugCameraTargetZ.toFixed(3))
-      this.DebugRow('Camera Distance', this.debugCameraDistance.toFixed(3))
-      this.DebugRow('Camera FOV', this.debugCameraFov.toFixed(2))
-      this.DebugRow('Camera Near/Far',
-        this.debugCameraNear.toFixed(3) + ' / ' + this.debugCameraFar.toFixed(3))
-      this.DebugRow('Camera Aspect', this.debugCameraAspect.toFixed(3))
-      this.DebugRow('Controls Min/Max Distance',
-        this.debugCameraMinDistance.toFixed(3) + ' / ' + this.debugCameraMaxDistance.toFixed(3))
-      this.DebugRow('Model Bounding Radius', this.debugCameraModelBoundingRadius.toFixed(3))
-      this.DebugRow('Last Camera Clip Update', this.debugCameraLastClipUpdateReason)
-      this.DebugRow('Camera Last Action', this.debugCameraLastAction)
-
-      // Phase 2B: Camera Transition Debug
-      this.DebugRow('Transition State', this.debugCameraTransitionState)
-      this.DebugRow('Transition Progress',
-        (this.debugCameraTransitionProgress * 100).toFixed(0) + '%')
-      this.DebugRow('Transition Duration',
-        this.debugCameraTransitionDuration > 0
-          ? this.debugCameraTransitionDuration.toFixed(2) + 's'
-          : '-')
-      this.DebugRow('Transition Elapsed',
-        this.debugCameraTransitionDuration > 0
-          ? this.debugCameraTransitionElapsed.toFixed(2) + 's'
-          : '-')
-      if (this.debugCameraTransitionCancelReason.length > 0) {
-        this.DebugRow('Transition Cancel', this.debugCameraTransitionCancelReason)
-      }
-      if (this.debugCameraTransitionErrorCode.length > 0) {
-        this.DebugRow('Transition Error',
-          this.debugCameraTransitionErrorCode + ': ' + this.debugCameraTransitionErrorMessage)
+      // ===== 模型与资源诊断 =====
+      this.DebugSectionHeader('模型与资源诊断', this.debugSectionModelExpanded, () => {
+        this.debugSectionModelExpanded = !this.debugSectionModelExpanded;
+      })
+      if (this.debugSectionModelExpanded) {
+        Column() {
+          this.DebugRow('Viewer UI', this.viewerState === ArkWebViewerState.READY ? 'READY' : this.viewerState)
+          this.DebugRow('Web Bridge', this.webLoaded ? 'READY' : 'PENDING')
+          this.DebugRow('Three.js', this.viewerState === ArkWebViewerState.READY ? 'READY' : 'NOT LOADED')
+          this.DebugRow('Scene', this.viewerState === ArkWebViewerState.READY ? 'READY' : 'NOT INITIALIZED')
+          this.DebugRow('Camera', this.viewerState === ArkWebViewerState.READY ? 'READY' : 'NOT INITIALIZED')
+          this.DebugRow('Frame Loop', this.viewerState === ArkWebViewerState.READY ? 'RUNNING' : 'STOPPED')
+          this.DebugRow('Model', this.debugModelState)
+          this.DebugRow('Model Name', this.debugModelDisplayName.length > 0 ? this.debugModelDisplayName : '-')
+          this.DebugRow('Model Source', this.debugModelSource)
+          this.DebugRow('Model Loaded', this.debugModelLoaded ? 'TRUE' : 'FALSE')
+          this.DebugRow('Asset Library State',
+            this.assetLibrary !== null && !this.assetLibrary.isDisposed() ? 'READY' : 'NOT_INITIALIZED')
+          this.DebugRow('Asset Library Version', '1')
+          this.DebugRow('Active Model ID',
+            this.activeModelId.length > 0 ? this.activeModelId : '-')
+          this.DebugRow('Active Model Name',
+            this.activeModelDisplayName.length > 0 ? this.activeModelDisplayName : '-')
+          this.DebugRow('Active Model Size',
+            this.activeModelByteLength > 0 ? this.formatByteLength(this.activeModelByteLength) : '-')
+          this.DebugRow('Model Storage', 'PERSISTENT')
+          this.DebugRow('Model Restore State', this.modelRestoreState)
+          if (this.modelRestoreErrorCode.length > 0) {
+            this.DebugRow('Model Restore Error',
+              this.modelRestoreErrorCode + ': ' + this.modelRestoreErrorMessage)
+          }
+          this.DebugRow('Legacy Model Migrated', this.legacyModelMigrated ? 'YES' : 'NO')
+          this.DebugRow('Debug Test Cube', 'DISABLED')
+          this.DebugRow('Environment State', this.environmentState)
+          this.DebugRow('Environment Source', this.environmentSource)
+          this.DebugRow('Environment Enabled', this.environmentEnabled ? 'YES' : 'NO')
+          this.DebugRow('Skybox Visible', this.skyboxVisible ? 'YES' : 'NO')
+          this.DebugRow('Environment Intensity', this.environmentIntensity.toFixed(2))
+          if (this.environmentErrorCode.length > 0) {
+            this.DebugRow('Environment Error',
+              this.environmentErrorCode + ': ' + this.environmentErrorMessage)
+          }
+          this.DebugRow('Presentation Mode', this.presentationMode)
+          this.DebugRow('Presentation Transitioning',
+            this.presentationTransitioning ? 'YES' : 'NO')
+          this.DebugRow('Control Panel Visible',
+            this.presentationMode === PresentationMode.NORMAL ? 'YES' : 'NO')
+          this.DebugRow('Quick Toolbar Visible',
+            this.presentationMode === PresentationMode.NORMAL ? 'YES' : 'NO')
+          this.DebugRow('Saved Panel State',
+            this.panelStateBeforeDemo >= 0
+              ? this.indexToDrawerState(this.panelStateBeforeDemo)
+              : '-')
+          this.DebugRow('Saved Panel Tab',
+            this.panelStateBeforeDemo >= 0
+              ? this.indexToViewerTab(this.selectedTabBeforeDemo)
+              : '-')
+          if (this.presentationWarning.length > 0) {
+            this.DebugRow('Presentation Warning', this.presentationWarning)
+          }
+          this.DebugRow('Screenshot State', this.screenshotState)
+          this.DebugRow('Screenshot File', this.screenshotFileName.length > 0 ? this.screenshotFileName : '-')
+          this.DebugRow('Screenshot Size',
+            this.screenshotWidth > 0 && this.screenshotHeight > 0
+              ? `${this.screenshotWidth}x${this.screenshotHeight}`
+              : '-')
+          this.DebugRow('Screenshot Bytes',
+            this.screenshotByteLength > 0 ? this.formatByteLength(this.screenshotByteLength) : '-')
+          this.DebugRow('Screenshot Time',
+            this.screenshotCreatedAt > 0 ? this.formatTimestamp(this.screenshotCreatedAt) : '-')
+          if (this.screenshotErrorCode.length > 0) {
+            this.DebugRow('Screenshot Error', `${this.screenshotErrorCode}: ${this.screenshotErrorMessage}`)
+          }
+        }
+        .width('100%')
+        .padding({ left: 12 })
       }
 
-      // Phase 2A-3A: 截图状态(不显示 cachePath)
-      this.DebugRow('Screenshot State', this.screenshotState)
-      this.DebugRow('Screenshot File', this.screenshotFileName.length > 0 ? this.screenshotFileName : '-')
-      this.DebugRow('Screenshot Size',
-        this.screenshotWidth > 0 && this.screenshotHeight > 0
-          ? `${this.screenshotWidth}x${this.screenshotHeight}`
-          : '-')
-      this.DebugRow('Screenshot Bytes',
-        this.screenshotByteLength > 0 ? this.formatByteLength(this.screenshotByteLength) : '-')
-      this.DebugRow('Screenshot Time',
-        this.screenshotCreatedAt > 0 ? this.formatTimestamp(this.screenshotCreatedAt) : '-')
-      if (this.screenshotErrorCode.length > 0) {
-        this.DebugRow('Screenshot Error', `${this.screenshotErrorCode}: ${this.screenshotErrorMessage}`)
+      // ===== 相机诊断 =====
+      this.DebugSectionHeader('相机诊断', this.debugSectionCameraExpanded, () => {
+        this.debugSectionCameraExpanded = !this.debugSectionCameraExpanded;
+      })
+      if (this.debugSectionCameraExpanded) {
+        Column() {
+          this.DebugRow('Background', this.sceneBackgroundColor)
+          this.DebugRow('Grid', this.sceneGridVisible ? 'ON' : 'OFF')
+          this.DebugRow('Light Intensity', this.sceneLightIntensity.toFixed(2))
+          this.DebugRow('Camera Controls', this.debugCameraControlsEnabled ? 'ENABLED' : 'DISABLED')
+          this.DebugRow('Camera Position',
+            this.debugCameraPositionX.toFixed(3) + ', ' +
+            this.debugCameraPositionY.toFixed(3) + ', ' +
+            this.debugCameraPositionZ.toFixed(3))
+          this.DebugRow('Camera Target',
+            this.debugCameraTargetX.toFixed(3) + ', ' +
+            this.debugCameraTargetY.toFixed(3) + ', ' +
+            this.debugCameraTargetZ.toFixed(3))
+          this.DebugRow('Camera Distance', this.debugCameraDistance.toFixed(3))
+          this.DebugRow('Camera FOV', this.debugCameraFov.toFixed(2))
+          this.DebugRow('Camera Near/Far',
+            this.debugCameraNear.toFixed(3) + ' / ' + this.debugCameraFar.toFixed(3))
+          this.DebugRow('Camera Aspect', this.debugCameraAspect.toFixed(3))
+          this.DebugRow('Controls Min/Max Distance',
+            this.debugCameraMinDistance.toFixed(3) + ' / ' + this.debugCameraMaxDistance.toFixed(3))
+          this.DebugRow('Model Bounding Radius', this.debugCameraModelBoundingRadius.toFixed(3))
+          this.DebugRow('Last Camera Clip Update', this.debugCameraLastClipUpdateReason)
+          this.DebugRow('Camera Last Action', this.debugCameraLastAction)
+          this.DebugRow('Transition State', this.debugCameraTransitionState)
+          this.DebugRow('Transition Progress',
+            (this.debugCameraTransitionProgress * 100).toFixed(0) + '%')
+          this.DebugRow('Transition Duration',
+            this.debugCameraTransitionDuration > 0
+              ? this.debugCameraTransitionDuration.toFixed(2) + 's'
+              : '-')
+          this.DebugRow('Transition Elapsed',
+            this.debugCameraTransitionDuration > 0
+              ? this.debugCameraTransitionElapsed.toFixed(2) + 's'
+              : '-')
+          if (this.debugCameraTransitionCancelReason.length > 0) {
+            this.DebugRow('Transition Cancel', this.debugCameraTransitionCancelReason)
+          }
+          if (this.debugCameraTransitionErrorCode.length > 0) {
+            this.DebugRow('Transition Error',
+              this.debugCameraTransitionErrorCode + ': ' + this.debugCameraTransitionErrorMessage)
+          }
+        }
+        .width('100%')
+        .padding({ left: 12 })
       }
 
-      // Phase 3A: 动画系统 Debug 字段(由 getAnimationDebugState 解析)
-      this.DebugRow('Animation State', this.debugAnimationState)
-      this.DebugRow('Animation VRM Bound', this.debugAnimationVrmBound ? 'YES' : 'NO')
-      this.DebugRow('Animation Mixer', this.debugAnimationMixerReady ? 'READY' : 'NOT READY')
-      this.DebugRow('Animation Clip', this.debugAnimationClipReady ? 'READY' : 'NOT READY')
-      this.DebugRow('Animation Action', this.debugAnimationActionReady ? 'READY' : 'NOT READY')
-      this.DebugRow('Animation Name', this.debugAnimationName.length > 0 ? this.debugAnimationName : '-')
-      this.DebugRow('Animation Duration', this.debugAnimationDuration > 0 ? `${this.debugAnimationDuration.toFixed(3)}s` : '-')
-      this.DebugRow('Animation Time', this.debugAnimationCurrentTime > 0 ? `${this.debugAnimationCurrentTime.toFixed(3)}s` : '-')
-      this.DebugRow('Animation Speed', this.debugAnimationPlaybackSpeed.toFixed(2))
-      this.DebugRow('Animation Loop', this.debugAnimationLoop ? 'YES' : 'NO')
-      this.DebugRow('Animation Resource ID',
-        this.debugAnimationResourceId.length > 0 ? this.debugAnimationResourceId : '-')
-      this.DebugRow('Animation Load Gen',
-        this.debugAnimationLoadGeneration > 0 ? String(this.debugAnimationLoadGeneration) : '-')
-      if (this.debugAnimationErrorCode.length > 0) {
-        this.DebugRow('Animation Error', `${this.debugAnimationErrorCode}: ${this.debugAnimationErrorMessage}`)
+      // ===== 姿势运行时 =====
+      this.DebugSectionHeader('姿势运行时', this.debugSectionPoseExpanded, () => {
+        this.debugSectionPoseExpanded = !this.debugSectionPoseExpanded;
+      })
+      if (this.debugSectionPoseExpanded) {
+        Column() {
+          this.DebugRow('Pose System State', this.poseSystemState)
+          this.DebugRow('Pose Count', String(this.poseAssets.length))
+          this.DebugRow('Selected Pose ID',
+            this.selectedPoseId.length > 0 ? this.selectedPoseId : '-')
+          this.DebugRow('Applied Pose ID',
+            this.appliedPoseId.length > 0 ? this.appliedPoseId : '-')
+          this.DebugRow('Applied Pose Name',
+            this.appliedPoseDisplayName.length > 0 ? this.appliedPoseDisplayName : '-')
+          this.DebugRow('Pose Importing', this.poseImporting ? 'YES' : 'NO')
+          this.DebugRow('Pose Applying', this.poseApplying ? 'YES' : 'NO')
+          this.DebugRow('Pose Applied Bones', String(this.poseAppliedBoneCount))
+          this.DebugRow('Pose Ignored Bones', String(this.poseIgnoredBoneCount))
+          if (this.poseLastErrorCode.length > 0) {
+            this.DebugRow('Pose Last Error',
+              this.poseLastErrorCode + ': ' + this.poseLastErrorMessage)
+          }
+          if (this.poseLibraryErrorCode.length > 0) {
+            this.DebugRow('Pose Library Error',
+              this.poseLibraryErrorCode + ': ' + this.poseLibraryErrorMessage)
+          }
+          this.DebugRow('Default Pose ID',
+            this.defaultPoseId.length > 0 ? this.defaultPoseId : '-')
+          this.DebugRow('Default Pose Name',
+            this.defaultPoseDisplayName.length > 0 ? this.defaultPoseDisplayName : '-')
+          this.DebugRow('Default Pose Restore State', this.defaultPoseRestoreState)
+          this.DebugRow('Default Pose Restore In Progress',
+            this.defaultPoseRestoreInProgress ? 'YES' : 'NO')
+          if (this.defaultPoseRestoreErrorCode.length > 0) {
+            this.DebugRow('Default Pose Restore Error',
+              this.defaultPoseRestoreErrorCode + ': ' + this.defaultPoseRestoreErrorMessage)
+          }
+        }
+        .width('100%')
+        .padding({ left: 12 })
       }
-      // Phase 3A 依赖补齐: 动画依赖状态字段(由 getAnimationDependencyState 解析)
-      this.DebugRow('VRMA Dependency', this.debugAnimationDependencyAvailable ? 'READY' : 'NOT READY')
-      this.DebugRow('three-vrm-animation Version',
-        this.debugAnimationDependencyVersion.length > 0 ? this.debugAnimationDependencyVersion : '-')
-      this.DebugRow('VRMAnimationLoaderPlugin', this.debugAnimationLoaderAvailable ? 'READY' : 'NOT READY')
-      this.DebugRow('createVRMAnimationClip', this.debugAnimationClipFactoryAvailable ? 'READY' : 'NOT READY')
-      this.DebugRow('Runtime Network', this.debugAnimationRuntimeNetworkRequired ? 'YES (FAIL)' : 'NO (OK)')
-      this.DebugRow('Humanoid', 'NOT INITIALIZED')
-      this.DebugRow('Spring Bone', 'NOT INITIALIZED')
-      this.DebugRow('Detail', this.viewerDetail)
 
-      // Phase 3E-1: 表情系统 Debug 字段
-      this.DebugRow('Expression State', this.expressionState)
-      this.DebugRow('Expression Manager Ready', this.expressionManagerReady ? 'YES' : 'NO')
-      this.DebugRow('Available Expression Count', String(this.availableExpressions.length))
-      this.DebugRow('Current Expression Name',
-        this.appliedExpressionName.length > 0 ? this.appliedExpressionName : '-')
-      this.DebugRow('Current Expression Weight', this.appliedExpressionWeight.toFixed(2))
-      if (this.expressionErrorCode.length > 0) {
-        this.DebugRow('Expression Error Code', this.expressionErrorCode)
-        this.DebugRow('Expression Error Message', this.expressionErrorMessage)
+      // ===== 动画运行时 =====
+      this.DebugSectionHeader('动画运行时', this.debugSectionAnimationExpanded, () => {
+        this.debugSectionAnimationExpanded = !this.debugSectionAnimationExpanded;
+      })
+      if (this.debugSectionAnimationExpanded) {
+        Column() {
+          this.DebugRow('Animation State', this.debugAnimationState)
+          this.DebugRow('Animation VRM Bound', this.debugAnimationVrmBound ? 'YES' : 'NO')
+          this.DebugRow('Animation Mixer', this.debugAnimationMixerReady ? 'READY' : 'NOT READY')
+          this.DebugRow('Animation Clip', this.debugAnimationClipReady ? 'READY' : 'NOT READY')
+          this.DebugRow('Animation Action', this.debugAnimationActionReady ? 'READY' : 'NOT READY')
+          this.DebugRow('Animation Name', this.debugAnimationName.length > 0 ? this.debugAnimationName : '-')
+          this.DebugRow('Animation Duration', this.debugAnimationDuration > 0 ? `${this.debugAnimationDuration.toFixed(3)}s` : '-')
+          this.DebugRow('Animation Time', this.debugAnimationCurrentTime > 0 ? `${this.debugAnimationCurrentTime.toFixed(3)}s` : '-')
+          this.DebugRow('Animation Speed', this.debugAnimationPlaybackSpeed.toFixed(2))
+          this.DebugRow('Animation Loop', this.debugAnimationLoop ? 'YES' : 'NO')
+          this.DebugRow('Animation Resource ID',
+            this.debugAnimationResourceId.length > 0 ? this.debugAnimationResourceId : '-')
+          this.DebugRow('Animation Load Gen',
+            this.debugAnimationLoadGeneration > 0 ? String(this.debugAnimationLoadGeneration) : '-')
+          if (this.debugAnimationErrorCode.length > 0) {
+            this.DebugRow('Animation Error', `${this.debugAnimationErrorCode}: ${this.debugAnimationErrorMessage}`)
+          }
+          this.DebugRow('VRMA Dependency', this.debugAnimationDependencyAvailable ? 'READY' : 'NOT READY')
+          this.DebugRow('three-vrm-animation Version',
+            this.debugAnimationDependencyVersion.length > 0 ? this.debugAnimationDependencyVersion : '-')
+          this.DebugRow('VRMAnimationLoaderPlugin', this.debugAnimationLoaderAvailable ? 'READY' : 'NOT READY')
+          this.DebugRow('createVRMAnimationClip', this.debugAnimationClipFactoryAvailable ? 'READY' : 'NOT READY')
+          this.DebugRow('Runtime Network', this.debugAnimationRuntimeNetworkRequired ? 'YES (FAIL)' : 'NO (OK)')
+          this.DebugRow('Humanoid', 'NOT INITIALIZED')
+          this.DebugRow('Spring Bone', 'NOT INITIALIZED')
+          this.DebugRow('Detail', this.viewerDetail)
+        }
+        .width('100%')
+        .padding({ left: 12 })
       }
-      this.DebugRow('Lip Sync Channels Preserved', this.expressionLipSyncPreserved ? 'YES' : 'NO')
 
+      // ===== 表情运行时 =====
+      this.DebugSectionHeader('表情运行时', this.debugSectionExpressionExpanded, () => {
+        this.debugSectionExpressionExpanded = !this.debugSectionExpressionExpanded;
+      })
+      if (this.debugSectionExpressionExpanded) {
+        Column() {
+          this.DebugRow('Expression State', this.expressionState)
+          this.DebugRow('Expression Manager Ready', this.expressionManagerReady ? 'YES' : 'NO')
+          this.DebugRow('Available Expression Count', String(this.availableExpressions.length))
+          this.DebugRow('Current Expression Name',
+            this.appliedExpressionName.length > 0 ? this.appliedExpressionName : '-')
+          this.DebugRow('Current Expression Weight', this.appliedExpressionWeight.toFixed(2))
+          if (this.expressionErrorCode.length > 0) {
+            this.DebugRow('Expression Error Code', this.expressionErrorCode)
+            this.DebugRow('Expression Error Message', this.expressionErrorMessage)
+          }
+          this.DebugRow('Lip Sync Channels Preserved', this.expressionLipSyncPreserved ? 'YES' : 'NO')
+          // 临时表情测试 (已从主功能 Tab 移入调试 Tab)
+          this.TemporaryExpressionSection()
+        }
+        .width('100%')
+        .padding({ left: 12 })
+      }
+
+      // ===== 统一演出 =====
+      this.DebugSectionHeader('统一演出', this.debugSectionPerformanceExpanded, () => {
+        this.debugSectionPerformanceExpanded = !this.debugSectionPerformanceExpanded;
+      })
+      if (this.debugSectionPerformanceExpanded) {
+        Column() {
+          this.DebugRow('Performance State', this.performanceState)
+          this.DebugRow('Performance Command ID',
+            this.performanceCommandId.length > 0 ? this.performanceCommandId : '-')
+          this.DebugRow('Performance Motion Type',
+            this.performanceMotionType.length > 0 ? this.performanceMotionType : '-')
+          this.DebugRow('Performance Motion ID',
+            this.performanceMotionId.length > 0 ? this.performanceMotionId : '-')
+          this.DebugRow('Performance Expression ID',
+            this.performanceExpressionId.length > 0 ? this.performanceExpressionId : '-')
+          this.DebugRow('Performance Expires At',
+            this.performanceExpiresAt > 0 ? String(this.performanceExpiresAt) : '-')
+          this.DebugRow('Performance Generation', String(this.performanceGeneration))
+          this.DebugRow('Performance Restore Timer Active',
+            this.performanceRestoreTimerActive ? 'YES' : 'NO')
+          if (this.performanceLastErrorCode.length > 0) {
+            this.DebugRow('Performance Last Error',
+              this.performanceLastErrorCode + ': ' + this.performanceLastErrorMessage)
+          }
+          // 统一演出测试 UI (含 AI Hint 安全映射, 已从主功能 Tab 移入调试 Tab)
+          this.PerformanceSection()
+        }
+        .width('100%')
+        .padding({ left: 12 })
+      }
+
+      // ===== 对话生命周期 =====
+      this.DebugSectionHeader('对话生命周期', this.debugSectionLifecycleExpanded, () => {
+        this.debugSectionLifecycleExpanded = !this.debugSectionLifecycleExpanded;
+      })
+      if (this.debugSectionLifecycleExpanded) {
+        Column() {
+          this.DebugRow('Lifecycle State', this.dialoguePerformanceState)
+          this.DebugRow('Lifecycle Turn ID',
+            this.dialoguePerformanceTurnId.length > 0 ? this.dialoguePerformanceTurnId : '-')
+          this.DebugRow('Lifecycle Command ID',
+            this.dialoguePerformanceCommandId.length > 0 ? this.dialoguePerformanceCommandId : '-')
+          this.DebugRow('Lifecycle Degraded', this.dialoguePerformanceDegraded ? 'YES' : 'NO')
+          this.DebugRow('Lifecycle Operating', this.dialogueOperating ? 'YES' : 'NO')
+          this.DebugRow('Dialogue Last Accepted', this.dialogueLastAccepted ? 'YES' : 'NO')
+          this.DebugRow('Dialogue Last Degraded', this.dialogueLastDegraded ? 'YES' : 'NO')
+          this.DebugRow('Dialogue Last Command ID',
+            this.dialogueLastCommandId.length > 0 ? this.dialogueLastCommandId : '-')
+          if (this.dialogueLastWarnings.length > 0) {
+            this.DebugRow('Dialogue Last Warnings', this.dialogueLastWarnings)
+          }
+          if (this.dialogueLastErrorCode.length > 0) {
+            this.DebugRow('Dialogue Last Error',
+              this.dialogueLastErrorCode + ': ' + this.dialogueLastErrorMessage)
+          }
+          if (this.dialoguePerformanceWarnings.length > 0) {
+            this.DebugRow('Lifecycle Warnings', this.dialoguePerformanceWarnings)
+          }
+          if (this.dialoguePerformanceErrorCode.length > 0) {
+            this.DebugRow('Lifecycle Error',
+              this.dialoguePerformanceErrorCode + ': ' + this.dialoguePerformanceErrorMessage)
+          }
+        }
+        .width('100%')
+        .padding({ left: 12 })
+      }
+
+      // 最近错误 (仅在真实错误存在时显示)
       if (this.lastError.length > 0) {
         Text(`Error [${this.lastErrorCode}]: ${this.lastError}`)
           .fontSize($r('app.float.app_font_caption'))
@@ -10201,8 +10326,8 @@ struct VrmViewerPage {
           .width('100%')
       }
 
-      // Phase 2A-1: 刷新 Debug 状态按钮(手动触发 getSceneState + getCameraState + getAnimationDebugState)
-      Button('刷新 Debug 状态')
+      // 刷新诊断 / 清除诊断 按钮
+      Button('刷新诊断')
         .fontSize($r('app.float.app_font_body'))
         .fontColor($r('app.color.app_text_primary'))
         .backgroundColor($r('app.color.app_surface_2'))
@@ -10213,12 +10338,51 @@ struct VrmViewerPage {
           this.refreshDebugSceneState();
           this.refreshCameraDebugState();
           this.refreshAnimationDebugState();
-          // Phase 3E-1: 同时刷新表情系统 Debug 状态
           this.refreshAvailableExpressions();
+        })
+
+      Button('清除诊断')
+        .fontSize($r('app.float.app_font_body'))
+        .fontColor($r('app.color.app_text_primary'))
+        .backgroundColor($r('app.color.app_surface_1'))
+        .borderRadius($r('app.float.app_radius_sm'))
+        .width('100%')
+        .margin({ top: 8 })
+        .onClick(() => {
+          this.lastError = '';
+          this.lastErrorCode = '';
         })
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)
+  }
+
+  /**
+   * Final Acceptance UX Cleanup: 调试 Tab 折叠区域标题行。
+   *
+   * 使用页面状态 + 普通按钮实现折叠, 不引入新 ArkUI API。
+   * 默认全部折叠, 点击 "展开"/"收起" 切换。
+   */
+  @Builder
+  DebugSectionHeader(title: string, expanded: boolean, onToggle: () => void) {
+    Row() {
+      Text(title)
+        .fontSize($r('app.float.app_font_body'))
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.app_text_primary'))
+        .layoutWeight(1)
+      Button(expanded ? '收起' : '展开')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_primary'))
+        .backgroundColor($r('app.color.app_surface_1'))
+        .borderRadius($r('app.float.app_radius_sm'))
+        .height(28)
+        .onClick(() => {
+          onToggle();
+        })
+    }
+    .width('100%')
+    .padding({ top: 12, bottom: 8 })
   }
 
   @Builder
