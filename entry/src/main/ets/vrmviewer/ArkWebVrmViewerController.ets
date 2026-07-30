@@ -26,6 +26,7 @@ import {
   ArkWebBridgeFailedResponse,
   ArkWebCameraTransitionState,
   ArkWebCameraTransitionStateResponse,
+  ArkWebFitAvatarFullBodyParams,
   ArkWebModelState,
   ArkWebViewerConfig,
   ArkWebViewerErrorCode,
@@ -243,20 +244,30 @@ export class ArkWebVrmViewerController implements ArkWebViewerBridgeListener {
   }
 
   /**
-   * Phase 4B-1: 聊天页面默认全身构图。
+   * Phase 4B-1 / 4B-2R: 聊天页面默认全身构图。
    *
    * 基于模型 BoundingBox / BoundingSphere / FOV / 视口,调整相机使全身可见。
    * 不修改 VRM scene scale 或 position。
    *
+   * Phase 4B-2R: 支持可选 fillRatio 参数控制模型垂直占比。
+   *   - fillRatio <= 0 或 >= 1 → 默认 margin=1.15 (向后兼容)
+   *   - fillRatio = 0.78 → margin=1/0.78 ≈ 1.282 (模型占垂直约 78%)
+   *
+   * @param fillRatio 可选垂直占比 (0 < fillRatio < 1);不传或非法使用默认值
    * @returns JSON 字符串,形如
    *   {"success": true, "state": "READY", "cameraState": {...}, "bounds": {...}}
    */
-  async fitAvatarFullBody(): Promise<string> {
+  async fitAvatarFullBody(fillRatio: number = 0): Promise<string> {
     if (this.disposed) {
       return JSON.stringify({ success: false, error: 'disposed' });
     }
     try {
-      return await this.jsCaller.fitAvatarFullBody();
+      let paramsJson: string = '';
+      if (fillRatio > 0 && fillRatio < 1) {
+        const params: ArkWebFitAvatarFullBodyParams = { fillRatio: fillRatio };
+        paramsJson = JSON.stringify(params);
+      }
+      return await this.jsCaller.fitAvatarFullBody(paramsJson);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       return JSON.stringify({ success: false, error: msg });

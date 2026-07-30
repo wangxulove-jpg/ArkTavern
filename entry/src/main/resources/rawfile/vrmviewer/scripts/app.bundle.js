@@ -47465,7 +47465,7 @@ void main() {
      *
      * @returns {{success: boolean, state?: object, bounds?: object, error?: {code: string, message: string}}}
      */
-    fitAvatarFullBody() {
+    fitAvatarFullBody(fillRatio) {
       if (this._state !== STATE_READY) {
         return {
           success: false,
@@ -47491,9 +47491,13 @@ void main() {
           error: makeError4("CAMERA_FOCUS_MODEL_NOT_LOADED", "No current VRM loaded", this._state, false)
         };
       }
+      var margin = 1.15;
+      if (typeof fillRatio === "number" && isFinite(fillRatio) && fillRatio > 0 && fillRatio < 1) {
+        margin = 1 / fillRatio;
+      }
       var result = this.camera.focusOnObject(currentVrm.scene, {
         action: "FIT_FULL_BODY",
-        margin: 1.15,
+        margin,
         preserveDirection: false,
         preserveControlsEnabled: true
       });
@@ -49508,9 +49512,19 @@ void main() {
        *   成功:{"success": true, "state": "READY", "cameraState": {...}, "bounds": {...}}
        *   失败:{"success": false, "state": "...", "error": {...}}
        */
-      fitAvatarFullBody: function() {
+      fitAvatarFullBody: function(paramsJson) {
+        var fillRatio = 0;
+        if (typeof paramsJson === "string" && paramsJson.length > 0) {
+          try {
+            var parsed = JSON.parse(paramsJson);
+            if (parsed && typeof parsed.fillRatio === "number") {
+              fillRatio = parsed.fillRatio;
+            }
+          } catch (e) {
+          }
+        }
         return callViewer(function(v) {
-          var result = v.fitAvatarFullBody();
+          var result = v.fitAvatarFullBody(fillRatio);
           if (result && result.success) {
             return { success: true, state: v.getState(), cameraState: result.state, bounds: result.bounds };
           }

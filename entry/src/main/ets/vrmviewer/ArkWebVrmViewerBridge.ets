@@ -286,16 +286,24 @@ export class ArkWebViewerJsCaller {
   }
 
   /**
-   * Phase 4B-1: 调用 window.arkTavernViewerBridge.fitAvatarFullBody()
+   * Phase 4B-1 / 4B-2R: 调用 window.arkTavernViewerBridge.fitAvatarFullBody(paramsJson)
    *
    * 聊天页面默认全身构图。基于模型 BoundingBox / BoundingSphere / FOV / 视口,
    * 调整相机 position / target / distance,使模型全身可见。
    * 不修改 VRM scene scale 或 position。
    *
+   * Phase 4B-2R: 支持可选 fillRatio 参数 (0 < fillRatio < 1) 控制模型垂直占比。
+   *   - paramsJson 为空字符串 → 默认 margin=1.15 (向后兼容)
+   *   - paramsJson = '{"fillRatio":0.78}' → margin=1/0.78 ≈ 1.282 (模型占垂直约 78%)
+   *
+   * @param paramsJson 可选 JSON 字符串,形如 {"fillRatio": 0.78};空字符串表示使用默认参数
    * @returns JSON 字符串,形如
    *   {"success": true, "state": "READY", "cameraState": {...}, "bounds": {...}}
    */
-  async fitAvatarFullBody(): Promise<string> {
+  async fitAvatarFullBody(paramsJson: string): Promise<string> {
+    if (paramsJson.length > 0) {
+      return this.callWithStringArg('fitAvatarFullBody', paramsJson);
+    }
     return this.call('fitAvatarFullBody');
   }
 

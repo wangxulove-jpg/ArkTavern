@@ -784,6 +784,17 @@ export interface ArkWebCameraTransitionStateResponse {
 }
 
 /**
+ * Phase 4B-2R: fitAvatarFullBody 可选参数载荷。
+ *
+ * 用于构造传给 Web 端的 paramsJson, 控制模型垂直占比。
+ *   - fillRatio=0.78 → margin=1/0.78 (模型占垂直约 78%)
+ */
+export interface ArkWebFitAvatarFullBodyParams {
+  /** 模型垂直占比 (0 < fillRatio < 1) */
+  fillRatio: number;
+}
+
+/**
  * Phase 2B: 平滑重置默认时长(秒) - ArkTavern 交互适配参数。
  */
 export const ARKWEB_CAMERA_SMOOTH_RESET_DEFAULT_DURATION: number = 0.45;

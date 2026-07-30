@@ -241,6 +241,12 @@ struct ChatPage {
   @State avatarStageSnapshot: ArkWebChatAvatarStageRuntimeSnapshot | null = null;
   /** Phase 4B-2: 镜头导演运行时快照 (供 AI 面板镜头状态显示) */
   @State avatarShotSnapshot: ArkWebAvatarShotRuntimeSnapshot | null = null;
+  /** Phase 4B-2R: AI 面板按钮执行状态 (LOADING/PLAYING/APPLIED/FAILED/IDLE) */
+  @State aiPanelButtonStatus: string = 'IDLE';
+  /** Phase 4B-2R: AI 面板当前操作能力 ID (actionId/poseId/expressionId) */
+  @State aiPanelActiveCapabilityId: string = '';
+  /** Phase 4B-2R: AI 面板最后错误码 (供按钮反馈显示) */
+  @State aiPanelLastErrorCode: string = '';
 
   aboutToAppear(): void {
     const modelService = AppServices.getModelService();
@@ -450,13 +456,39 @@ struct ChatPage {
   }
 
   /**
+   * Phase 4B-2R §第十一项: 验证 Avatar endpoint 已注册且属于本 Stage。
+   *
+   * ChatPage 打开 AI 面板时调用, 确保请求不会被已离开的 VrmViewerPage endpoint 消费。
+   * 失败时记录警告日志 (不阻塞面板使用, 仅作诊断)。
+   */
+  private verifyAvatarEndpoint(): void {
+    if (this.avatarStageController === null) {
+      Logger.warn(LOG_TAG, 'verifyAvatarEndpoint: controller null');
+      return;
+    }
+    const result: [boolean, string, string] =
+      this.avatarStageController!.verifyEndpointReady();
+    if (!result[0]) {
+      Logger.warn(LOG_TAG,
+        `verifyAvatarEndpoint FAILED: code=${result[1]} msg=${result[2]}`);
+    } else {
+      Logger.info(LOG_TAG, 'verifyAvatarEndpoint OK');
+    }
+  }
+
+  /**
    * 触发动画演出 (source = CHAT_AI_PANEL)。
    *
    * 构建 performanceHintJson:
    *   { "motionType": "animation", "motionId": "<actionId>", "durationMs": 5000,
    *     "returnPolicy": "DEFAULT_POSE" }
+   *
+   * Phase 4B-2R: 显示加载/播放/失败状态反馈, 不静默丢弃。
    */
   private triggerAnimation(actionId: string): void {
+    this.aiPanelActiveCapabilityId = actionId;
+    this.aiPanelButtonStatus = 'LOADING';
+    this.aiPanelLastErrorCode = '';
     const hintJson: string = JSON.stringify({
       motionType: 'animation',
       motionId: actionId,
@@ -466,7 +498,18 @@ struct ChatPage {
       interruptPolicy: 'REPLACE',
       returnPolicy: 'DEFAULT_POSE'
     });
-    this.publishPanelPerformance(hintJson);
+    this.publishPanelPerformance(hintJson).then((ok: boolean) => {
+      if (ok) {
+        this.aiPanelButtonStatus = 'PLAYING';
+      } else {
+        this.aiPanelButtonStatus = 'FAILED';
+        this.aiPanelLastErrorCode = this.resolvePanelErrorCode();
+      }
+    }).catch((e: Object) => {
+      this.aiPanelButtonStatus = 'FAILED';
+      this.aiPanelLastErrorCode = e instanceof Error ? e.message : String(e);
+      Logger.warn(LOG_TAG, 'triggerAnimation failed: ' + this.aiPanelLastErrorCode);
+    });
   }
 
   /**
@@ -475,8 +518,13 @@ struct ChatPage {
    * 构建 performanceHintJson:
    *   { "motionType": "pose", "motionId": "<poseId>", "durationMs": 5000,
    *     "returnPolicy": "DEFAULT_POSE" }
+   *
+   * Phase 4B-2R: 显示加载/应用/失败状态反馈, 不静默丢弃。
    */
   private triggerPose(poseId: string): void {
+    this.aiPanelActiveCapabilityId = poseId;
+    this.aiPanelButtonStatus = 'LOADING';
+    this.aiPanelLastErrorCode = '';
     const hintJson: string = JSON.stringify({
       motionType: 'pose',
       motionId: poseId,
@@ -486,7 +534,18 @@ struct ChatPage {
       interruptPolicy: 'REPLACE',
       returnPolicy: 'DEFAULT_POSE'
     });
-    this.publishPanelPerformance(hintJson);
+    this.publishPanelPerformance(hintJson).then((ok: boolean) => {
+      if (ok) {
+        this.aiPanelButtonStatus = 'APPLIED';
+      } else {
+        this.aiPanelButtonStatus = 'FAILED';
+        this.aiPanelLastErrorCode = this.resolvePanelErrorCode();
+      }
+    }).catch((e: Object) => {
+      this.aiPanelButtonStatus = 'FAILED';
+      this.aiPanelLastErrorCode = e instanceof Error ? e.message : String(e);
+      Logger.warn(LOG_TAG, 'triggerPose failed: ' + this.aiPanelLastErrorCode);
+    });
   }
 
   /**
@@ -495,8 +554,24 @@ struct ChatPage {
    * 构建 performanceHintJson:
    *   { "motionType": "none", "motionId": "", "expressionId": "<expressionId>",
    *     "expressionWeight": 1.0, "durationMs": 3000, "returnPolicy": "KEEP" }
+   *
+   * Phase 4B-2R: 显示加载/应用/失败状态反馈, 未映射时显示 EXPRESSION_ALIAS_NOT_RESOLVED。
    */
   private triggerExpression(expressionId: string): void {
+    this.aiPanelActiveCapabilityId = expressionId;
+    this.aiPanelButtonStatus = 'LOADING';
+    this.aiPanelLastErrorCode = '';
+    // 预检: 表情别名是否已映射 (避免静默失败)
+    if (this.avatarStageController !== null) {
+      const aliasMap: Record<string, string> = this.avatarStageController!.getExpressionAliasMap();
+      const actualName: string = aliasMap[expressionId] ?? '';
+      if (actualName.length === 0) {
+        this.aiPanelButtonStatus = 'FAILED';
+        this.aiPanelLastErrorCode = 'EXPRESSION_ALIAS_NOT_RESOLVED';
+        Logger.warn(LOG_TAG, `triggerExpression: alias not resolved: ${expressionId}`);
+        return;
+      }
+    }
     const hintJson: string = JSON.stringify({
       motionType: 'none',
       motionId: '',
@@ -506,7 +581,34 @@ struct ChatPage {
       interruptPolicy: 'REPLACE',
       returnPolicy: 'KEEP'
     });
-    this.publishPanelPerformance(hintJson);
+    this.publishPanelPerformance(hintJson).then((ok: boolean) => {
+      if (ok) {
+        this.aiPanelButtonStatus = 'APPLIED';
+      } else {
+        this.aiPanelButtonStatus = 'FAILED';
+        this.aiPanelLastErrorCode = this.resolvePanelErrorCode();
+      }
+    }).catch((e: Object) => {
+      this.aiPanelButtonStatus = 'FAILED';
+      this.aiPanelLastErrorCode = e instanceof Error ? e.message : String(e);
+      Logger.warn(LOG_TAG, 'triggerExpression failed: ' + this.aiPanelLastErrorCode);
+    });
+  }
+
+  /**
+   * Phase 4B-2R: 从 Stage Snapshot 提取最近错误码 (供按钮反馈显示)。
+   */
+  private resolvePanelErrorCode(): string {
+    if (this.avatarStageSnapshot === null) {
+      return 'UNKNOWN';
+    }
+    if (this.avatarStageSnapshot!.lastPublishErrorCode.length > 0) {
+      return this.avatarStageSnapshot!.lastPublishErrorCode;
+    }
+    if (this.avatarStageSnapshot!.lastErrorCode.length > 0) {
+      return this.avatarStageSnapshot!.lastErrorCode;
+    }
+    return 'UNKNOWN';
   }
 
   /**
@@ -530,16 +632,18 @@ struct ChatPage {
    *   2. Bridge 投递回当前 Avatar endpoint (本页面的 Stage 控制器)
    *   3. Stage 控制器经 LifecycleController → PerformanceController 执行演出
    *
+   * Phase 4B-2R: 返回 Promise<boolean>, 调用方据此显示成功/失败状态。
    * 错误隔离: 演出失败不影响聊天文本显示, 仅记录日志。
    */
-  private publishPanelPerformance(hintJson: string): void {
+  private publishPanelPerformance(hintJson: string): Promise<boolean> {
     if (this.avatarStageController === null) {
       Logger.warn(LOG_TAG, 'publishPanelPerformance: avatarStageController null');
-      return;
+      return Promise.resolve(false);
     }
-    this.avatarStageController!.publishPerformanceFromPanel(hintJson).catch((e: Object) => {
+    return this.avatarStageController!.publishPerformanceFromPanel(hintJson).catch((e: Object): boolean => {
       Logger.warn(LOG_TAG, 'publishPanelPerformance failed: ' +
         (e instanceof Error ? e.message : String(e)));
+      return false;
     });
   }
 
@@ -762,15 +866,6 @@ struct ChatPage {
         // hitTestBehavior=Transparent 让顶栏下方空白区域点击穿透到消息列表
         .hitTestBehavior(HitTestMode.Transparent)
 
-        // ===== Phase 4B-1: AI 控制面板浮层 (紧凑半透明, 右侧对齐) =====
-        // - 不使用全屏 Dialog 和遮罩
-        // - 顶部显示模型显示开关
-        // - 分组显示动作/姿势/表情能力列表
-        // - 点击能力时构建 performanceHint 并通过 AvatarChatBridge 发布 (source=CHAT_AI_PANEL)
-        if (this.aiPanelVisible) {
-          this.aiControlPanel()
-        }
-
         // ===== 浮层:输入栏(底部对齐,悬浮胶囊式) =====
         // 外层 Column 透明,只负责把 inputArea 推到底部对齐位置;
         // 输入栏本身由 inputArea 的 backgroundBlurStyle 提供视觉容器,不承载不透明背景。
@@ -786,6 +881,17 @@ struct ChatPage {
         .justifyContent(FlexAlign.End)
         .padding({ left: 12, right: 12, bottom: this.navigationBarHeight + 12 })
         .hitTestBehavior(HitTestMode.Transparent)
+
+        // ===== Phase 4B-1: AI 控制面板浮层 (紧凑半透明, 右侧对齐) =====
+        // Phase 4B-2R: 移到输入栏之后渲染, z-order 高于输入栏,
+        // 确保面板 hitTestBehavior(Block) 不被输入栏 Transparent 层阻挡。
+        // - 不使用全屏 Dialog 和遮罩
+        // - 顶部显示模型显示开关
+        // - 分组显示动作/姿势/表情能力列表
+        // - 点击能力时构建 performanceHint 并通过 AvatarChatBridge 发布 (source=CHAT_AI_PANEL)
+        if (this.aiPanelVisible) {
+          this.aiControlPanel()
+        }
 
         // ===== 弹窗层(覆盖在最上层) =====
         // 会话列表面板(覆盖层)
@@ -942,9 +1048,10 @@ struct ChatPage {
         ? $r('app.color.app_surface_2') : Color.Transparent)
       .onClick(() => {
         this.aiPanelVisible = !this.aiPanelVisible;
-        // 打开面板时刷新能力快照
+        // 打开面板时刷新能力快照 + 验证 endpoint
         if (this.aiPanelVisible) {
           this.refreshAiCapabilitySnapshot();
+          this.verifyAvatarEndpoint();
         }
       })
 
@@ -974,91 +1081,101 @@ struct ChatPage {
   @Builder
   aiControlPanel() {
     // 面板容器:靠右,不覆盖整屏,半透明背景,无全屏遮罩
-    Row() {
-      Scroll() {
-        Column() {
-          // 标题行:模型名 + 模型显示开关 + 关闭按钮
-          Row() {
-            Text(this.avatarModelDisplayName.length > 0
-              ? this.avatarModelDisplayName : '未加载模型')
-              .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_text_primary'))
-              .layoutWeight(1)
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
+    // Phase 4B-2R §第四项: 面板结构 = 固定顶部状态区 + 可滚动能力列表 + 固定底部停止按钮
+    Column() {
+      // ===== 固定顶部状态区 (标题 + 诊断 + 手动镜头按钮, 不随能力列表滚动) =====
+      Column() {
+        // 标题行:模型名 + 模型显示开关 + 关闭按钮
+        Row() {
+          Text(this.avatarModelDisplayName.length > 0
+            ? this.avatarModelDisplayName : '未加载模型')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_primary'))
+            .layoutWeight(1)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-            // 模型显示开关 (Toggle)
-            Toggle({ type: ToggleType.Switch, isOn: this.chatAvatarVisible })
-              .selectedColor($r('app.color.app_accent'))
-              .scale({ x: 0.8, y: 0.8 })
-              .onChange((isOn: boolean) => {
-                this.chatAvatarVisible = isOn;
-              })
-
-            // 关闭按钮
-            Stack() {
-              SymbolGlyph($r('sys.symbol.xmark'))
-                .fontSize(14)
-                .fontColor([$r('app.color.app_text_secondary')])
-            }
-            .width(28)
-            .height(28)
-            .margin({ left: 4 })
-            .onClick(() => {
-              this.aiPanelVisible = false;
+          // 模型显示开关 (Toggle)
+          Toggle({ type: ToggleType.Switch, isOn: this.chatAvatarVisible })
+            .selectedColor($r('app.color.app_accent'))
+            .scale({ x: 0.8, y: 0.8 })
+            .onChange((isOn: boolean) => {
+              this.chatAvatarVisible = isOn;
             })
+
+          // 关闭按钮
+          Stack() {
+            SymbolGlyph($r('sys.symbol.xmark'))
+              .fontSize(14)
+              .fontColor([$r('app.color.app_text_secondary')])
           }
+          .width(28)
+          .height(28)
+          .margin({ left: 4 })
+          .onClick(() => {
+            this.aiPanelVisible = false;
+          })
+        }
+        .width('100%')
+        .margin({ bottom: 8 })
+
+        // ===== Phase 4B-1R §第八项: 紧凑诊断信息 =====
+        this.stageDiagnosticBlock()
+
+        // Phase 4B-2R §第十二项: 运行时状态一致性 (来自 Runtime Debug State)
+        this.runtimeStatusBlock()
+
+        // 重新加载模型按钮 (Phase 4B-1R §第八项)
+        Button('重新加载模型')
+          .type(ButtonType.Normal)
+          .borderRadius($r('app.float.app_radius_sm'))
+          .backgroundColor('rgba(255,255,255,0.12)')
+          .fontColor($r('app.color.app_text_primary'))
+          .fontSize($r('app.float.app_font_caption'))
           .width('100%')
-          .margin({ bottom: 8 })
+          .height(30)
+          .margin({ top: 6, bottom: 4 })
+          .onClick(() => {
+            this.reloadAvatarModel();
+          })
 
-          // ===== Phase 4B-1R §第八项: 紧凑诊断信息 =====
-          this.stageDiagnosticBlock()
-
-          // 重新加载模型按钮 (Phase 4B-1R §第八项)
-          Button('重新加载模型')
+        // Phase 4B-2: 镜头手动验证按钮 (只调用 ShotDirector, 不直接调用相机)
+        Row() {
+          Button('全身')
             .type(ButtonType.Normal)
             .borderRadius($r('app.float.app_radius_sm'))
             .backgroundColor('rgba(255,255,255,0.12)')
             .fontColor($r('app.color.app_text_primary'))
             .fontSize($r('app.float.app_font_caption'))
-            .width('100%')
-            .height(30)
-            .margin({ top: 6, bottom: 4 })
+            .height(28)
+            .layoutWeight(1)
+            .margin({ right: 4 })
             .onClick(() => {
-              this.reloadAvatarModel();
+              this.transitionToFullBody();
             })
 
-          // Phase 4B-2: 镜头手动验证按钮 (只调用 ShotDirector, 不直接调用相机)
-          Row() {
-            Button('全身')
-              .type(ButtonType.Normal)
-              .borderRadius($r('app.float.app_radius_sm'))
-              .backgroundColor('rgba(255,255,255,0.12)')
-              .fontColor($r('app.color.app_text_primary'))
-              .fontSize($r('app.float.app_font_caption'))
-              .height(28)
-              .layoutWeight(1)
-              .margin({ right: 4 })
-              .onClick(() => {
-                this.transitionToFullBody();
-              })
+          Button('脸部（重置视角）')
+            .type(ButtonType.Normal)
+            .borderRadius($r('app.float.app_radius_sm'))
+            .backgroundColor('rgba(255,255,255,0.12)')
+            .fontColor($r('app.color.app_text_primary'))
+            .fontSize($r('app.float.app_font_caption'))
+            .height(28)
+            .layoutWeight(1)
+            .margin({ left: 4 })
+            .onClick(() => {
+              this.transitionToFaceResetView();
+            })
+        }
+        .width('100%')
+        .margin({ bottom: 8 })
+      }
+      .width('100%')
+      .padding({ left: 12, right: 12, top: 12, bottom: 4 })
 
-            Button('脸部（重置视角）')
-              .type(ButtonType.Normal)
-              .borderRadius($r('app.float.app_radius_sm'))
-              .backgroundColor('rgba(255,255,255,0.12)')
-              .fontColor($r('app.color.app_text_primary'))
-              .fontSize($r('app.float.app_font_caption'))
-              .height(28)
-              .layoutWeight(1)
-              .margin({ left: 4 })
-              .onClick(() => {
-                this.transitionToFaceResetView();
-              })
-          }
-          .width('100%')
-          .margin({ bottom: 8 })
-
+      // ===== 可滚动能力列表 (动作 / 姿势 / 表情) =====
+      Scroll() {
+        Column() {
           // 无能力快照时提示
           if (this.aiCapabilitySnapshot === null) {
             Text('暂无可用能力 (需先在 VRM Viewer 导入模型/动作/姿势/表情)')
@@ -1136,36 +1253,47 @@ struct ChatPage {
               .width('100%')
             }
           }
-
-          // 停止演出按钮
-          Button('停止演出')
-            .type(ButtonType.Normal)
-            .borderRadius($r('app.float.app_radius_sm'))
-            .backgroundColor($r('app.color.app_danger'))
-            .fontColor(Color.White)
-            .fontSize($r('app.float.app_font_caption'))
-            .width('100%')
-            .height(32)
-            .margin({ top: 8 })
-            .onClick(() => {
-              this.stopAvatarPerformance();
-            })
         }
         .width('100%')
-        .padding(12)
+        .padding({ left: 12, right: 12, bottom: 4 })
       }
       .scrollBar(BarState.Off)
       .layoutWeight(1)
+
+      // ===== 固定底部停止按钮 (始终可见, 不被滚动隐藏) =====
+      Column() {
+        Button('停止演出')
+          .type(ButtonType.Normal)
+          .borderRadius($r('app.float.app_radius_sm'))
+          .backgroundColor($r('app.color.app_danger'))
+          .fontColor(Color.White)
+          .fontSize($r('app.float.app_font_caption'))
+          .width('100%')
+          .height(32)
+          .margin({ top: 4 })
+          .onClick(() => {
+            this.stopAvatarPerformance();
+          })
+      }
+      .width('100%')
+      .padding({ left: 12, right: 12, bottom: 12 })
     }
-    .width('50%')
-    .height('55%')
+    .width('82%')
+    .constraintSize({ maxWidth: 420 })
+    .height('72%')
     .backgroundColor('rgba(30,30,30,0.85)')
     .borderRadius($r('app.float.app_radius_md'))
     .border({ width: 1, color: 'rgba(255,255,255,0.1)' })
-    // 靠右对齐, 避开顶栏按钮
-    .margin({ top: this.statusBarHeight + 52, right: 8 })
-    // 面板自身接收触摸, 不穿透到下层
-    .hitTestBehavior(HitTestMode.Default)
+    // Phase 4B-2R: 水平居中 (顶部导航下方, 底部不覆盖输入栏)
+    .margin({ top: this.statusBarHeight + 52 })
+    // Phase 4B-2R 修正: 不使用 HitTestMode.Block (会阻止子按钮接收触摸)。
+    // zIndex 提升层级确保面板在消息列表之上;
+    // 空 onClick 吸收面板空白区域的触摸, 阻止穿透到下层消息列表;
+    // 不透明背景视觉上遮挡下层, 子按钮可正常响应。
+    .zIndex(100)
+    .onClick(() => {
+      // 吸收面板空白区域的触摸, 阻止穿透到下层消息列表 (不执行任何操作)
+    })
   }
 
   /** AI 能力按钮 (点击触发演出) */
@@ -1235,6 +1363,147 @@ struct ChatPage {
     .margin({ bottom: 4 })
     .borderRadius($r('app.float.app_radius_sm'))
     .backgroundColor('rgba(255,255,255,0.05)')
+  }
+
+  /**
+   * Phase 4B-2R §第十二项: 运行时状态一致性显示块。
+   *
+   * 显示名称来自能力目录, 执行状态来自 Runtime Debug State。
+   * 例如: 当前动作：Spin 状态：PLAYING
+   */
+  @Builder
+  runtimeStatusBlock() {
+    Column() {
+      Text(`当前镜头: ${this.runtimeShotText()}`)
+        .fontSize(11)
+        .fontColor($r('app.color.app_text_secondary'))
+        .width('100%')
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+      Text(`动作: ${this.runtimeActionText()} | 状态: ${this.runtimeAnimationStateText()}`)
+        .fontSize(11)
+        .fontColor($r('app.color.app_text_secondary'))
+        .width('100%')
+        .margin({ top: 2 })
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+      Text(`姿势: ${this.runtimePoseText()} | 状态: ${this.runtimePoseStateText()}`)
+        .fontSize(11)
+        .fontColor($r('app.color.app_text_secondary'))
+        .width('100%')
+        .margin({ top: 2 })
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+      Text(`表情: ${this.runtimeExpressionText()} | 状态: ${this.runtimeExpressionStateText()}`)
+        .fontSize(11)
+        .fontColor($r('app.color.app_text_secondary'))
+        .width('100%')
+        .margin({ top: 2 })
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+      Text(`最后结果: ${this.runtimeLastResultText()}`)
+        .fontSize(11)
+        .fontColor(this.aiPanelLastErrorCode.length > 0
+          ? $r('app.color.app_danger')
+          : $r('app.color.app_text_secondary'))
+        .width('100%')
+        .margin({ top: 2 })
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+    }
+    .width('100%')
+    .padding(8)
+    .margin({ bottom: 4 })
+    .borderRadius($r('app.float.app_radius_sm'))
+    .backgroundColor('rgba(255,255,255,0.05)')
+  }
+
+  /** Phase 4B-2R: 运行时辅助 - 当前镜头。 */
+  private runtimeShotText(): string {
+    if (this.avatarShotSnapshot === null) {
+      return '-';
+    }
+    return this.avatarShotSnapshot!.currentShot;
+  }
+
+  /** Phase 4B-2R: 运行时辅助 - 当前动作显示名。 */
+  private runtimeActionText(): string {
+    if (this.avatarStageSnapshot === null) {
+      return '-';
+    }
+    const name: string = this.avatarStageSnapshot!.currentActionDisplayName;
+    return name.length > 0 ? name : '-';
+  }
+
+  /** Phase 4B-2R: 运行时辅助 - 动画运行状态 (来自 Runtime Debug State)。 */
+  private runtimeAnimationStateText(): string {
+    if (this.avatarStageSnapshot === null) {
+      return 'IDLE';
+    }
+    return this.avatarStageSnapshot!.animationRuntimeState;
+  }
+
+  /** Phase 4B-2R: 运行时辅助 - 当前姿势显示名。 */
+  private runtimePoseText(): string {
+    if (this.avatarStageSnapshot === null) {
+      return '-';
+    }
+    const name: string = this.avatarStageSnapshot!.currentPoseDisplayName;
+    return name.length > 0 ? name : '-';
+  }
+
+  /** Phase 4B-2R: 运行时辅助 - 姿势运行状态。 */
+  private runtimePoseStateText(): string {
+    if (this.avatarStageSnapshot === null) {
+      return 'IDLE';
+    }
+    return this.avatarStageSnapshot!.poseRuntimeState;
+  }
+
+  /** Phase 4B-2R: 运行时辅助 - 当前表情显示名。 */
+  private runtimeExpressionText(): string {
+    if (this.avatarStageSnapshot === null) {
+      return '-';
+    }
+    const id: string = this.avatarStageSnapshot!.currentExpressionId;
+    const actual: string = this.avatarStageSnapshot!.currentExpressionActualName;
+    if (id.length === 0) {
+      return '-';
+    }
+    return actual.length > 0 ? `${id}→${actual}` : id;
+  }
+
+  /** Phase 4B-2R: 运行时辅助 - 表情运行状态。 */
+  private runtimeExpressionStateText(): string {
+    if (this.avatarStageSnapshot === null) {
+      return 'IDLE';
+    }
+    return this.avatarStageSnapshot!.expressionRuntimeState;
+  }
+
+  /** Phase 4B-2R: 运行时辅助 - 最后结果文本 (含 publish 结果 + 错误码)。 */
+  private runtimeLastResultText(): string {
+    if (this.aiPanelButtonStatus === 'LOADING') {
+      return `加载中 (${this.aiPanelActiveCapabilityId})`;
+    }
+    if (this.aiPanelButtonStatus === 'PLAYING') {
+      return `播放中 (${this.aiPanelActiveCapabilityId})`;
+    }
+    if (this.aiPanelButtonStatus === 'APPLIED') {
+      return `已应用 (${this.aiPanelActiveCapabilityId})`;
+    }
+    if (this.aiPanelButtonStatus === 'FAILED') {
+      return `失败: ${this.aiPanelLastErrorCode}`;
+    }
+    if (this.avatarStageSnapshot !== null
+        && this.avatarStageSnapshot!.lastPublishResult.length > 0) {
+      return this.avatarStageSnapshot!.lastPublishResult;
+    }
+    return 'IDLE';
   }
 
   /** 诊断辅助: Viewer 状态文本。 */

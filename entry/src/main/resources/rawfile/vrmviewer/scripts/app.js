@@ -621,9 +621,23 @@ if (window.__arkTavernBootstrapState) {
      *   成功:{"success": true, "state": "READY", "cameraState": {...}, "bounds": {...}}
      *   失败:{"success": false, "state": "...", "error": {...}}
      */
-    fitAvatarFullBody: function () {
+    fitAvatarFullBody: function (paramsJson) {
+      // Phase 4B-2R: 支持可选 paramsJson { fillRatio: number }
+      //   - 空字符串/非 JSON → fillRatio=0 (原行为, margin=1.15)
+      //   - fillRatio=0.78 → margin=1/0.78 (模型占垂直约 78%)
+      var fillRatio = 0;
+      if (typeof paramsJson === 'string' && paramsJson.length > 0) {
+        try {
+          var parsed = JSON.parse(paramsJson);
+          if (parsed && typeof parsed.fillRatio === 'number') {
+            fillRatio = parsed.fillRatio;
+          }
+        } catch (e) {
+          // 忽略 JSON 解析错误,回退到默认行为
+        }
+      }
       return callViewer(function (v) {
-        var result = v.fitAvatarFullBody();
+        var result = v.fitAvatarFullBody(fillRatio);
         if (result && result.success) {
           return { success: true, state: v.getState(), cameraState: result.state, bounds: result.bounds };
         }

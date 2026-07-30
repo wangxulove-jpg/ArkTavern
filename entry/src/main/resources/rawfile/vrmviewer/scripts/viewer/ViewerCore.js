@@ -1433,7 +1433,7 @@ export class ViewerCore {
    *
    * @returns {{success: boolean, state?: object, bounds?: object, error?: {code: string, message: string}}}
    */
-  fitAvatarFullBody() {
+  fitAvatarFullBody(fillRatio) {
     if (this._state !== STATE_READY) {
       return {
         success: false,
@@ -1462,9 +1462,18 @@ export class ViewerCore {
     // 全身构图:margin=1.15 提供头顶安全区 + 脚部可见余量,
     // preserveDirection=false 强制正面构图(避免从侧面/斜角看模型),
     // preserveControlsEnabled=true 保持 CHAT_STAGE 下 controls.enabled=false。
+    //
+    // Phase 4B-2R: 支持可选 fillRatio (0 < fillRatio < 1) 控制模型垂直占比。
+    //   - 不传或非法 → margin=1.15 (原行为,向后兼容)
+    //   - fillRatio=0.78 → margin=1/0.78 ≈ 1.282 (模型变小,占垂直约 78%)
+    // 禁止修改 model.scene.position/scale, 仅调整相机。
+    var margin = 1.15;
+    if (typeof fillRatio === 'number' && isFinite(fillRatio) && fillRatio > 0 && fillRatio < 1) {
+      margin = 1.0 / fillRatio;
+    }
     var result = this.camera.focusOnObject(currentVrm.scene, {
       action: 'FIT_FULL_BODY',
-      margin: 1.15,
+      margin: margin,
       preserveDirection: false,
       preserveControlsEnabled: true
     });
