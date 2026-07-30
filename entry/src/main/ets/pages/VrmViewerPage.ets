@@ -177,6 +177,8 @@ import {
   ArkWebVrmViewerPagePerformanceRuntime,
   ArkWebVrmViewerPagePerformanceRuntimeDeps
 } from '../vrmviewer/ArkWebVrmViewerPagePerformanceRuntime';
+import { ArkWebDialoguePerformanceMapper } from '../vrmviewer/ArkWebDialoguePerformanceMapper';
+import { ArkWebDialoguePerformanceHint, ArkWebDialoguePerformanceMappingResult } from '../vrmviewer/ArkWebDialoguePerformanceTypes';
 
 /**
  * 传给 JavaScript loadVrmaResource 的资源 JSON 载荷。
@@ -789,6 +791,24 @@ struct VrmViewerPage {
   /** 演出测试 - 选中的业务表情 ID (空表示不设置表情) */
   @State performanceTestExpressionId: string = 'happy';
 
+  // ===== Phase 3F-2 — AI 对话结果到演出指令的安全映射 =====
+  /** DialoguePerformanceMapper 实例 (aboutToAppear 创建, disposeViewer 销毁) */
+  @State dialoguePerformanceMapper: ArkWebDialoguePerformanceMapper | null = null;
+  /** 最近一次映射结果 accepted (供 UI 显示) */
+  @State dialogueLastAccepted: boolean = false;
+  /** 最近一次映射结果 degraded (供 UI 显示) */
+  @State dialogueLastDegraded: boolean = false;
+  /** 最近一次映射 warnings (供 UI 显示) */
+  @State dialogueLastWarnings: string = '';
+  /** 最近一次映射 errorCode (供 UI 显示) */
+  @State dialogueLastErrorCode: string = '';
+  /** 最近一次映射 errorMessage (供 UI 显示) */
+  @State dialogueLastErrorMessage: string = '';
+  /** 最近一次映射生成的 commandId (供 UI 显示) */
+  @State dialogueLastCommandId: string = '';
+  /** 映射操作进行中标志 */
+  @State dialogueOperating: boolean = false;
+
   // ===== Phase 3B — 模型自动恢复与持久化资产目录 =====
   /** 资产库状态(READY / EMPTY / FAILED / DISPOSED) */
   @State assetLibraryState: string = 'IDLE';
@@ -984,6 +1004,12 @@ struct VrmViewerPage {
     if (this.performanceController === null && this.assetLibrary !== null) {
       const runtime: ArkWebAvatarPerformanceRuntime = this.createPerformanceRuntime();
       this.performanceController = new ArkWebAvatarPerformanceController(this.assetLibrary, runtime);
+    }
+
+    // Phase 3F-2:创建 AI 对话结果到演出指令的安全映射器
+    // Mapper 只做 JSON 解析和字段校验, 不创建 Timer / 网络 / AI 客户端
+    if (this.dialoguePerformanceMapper === null && this.assetLibrary !== null) {
+      this.dialoguePerformanceMapper = new ArkWebDialoguePerformanceMapper(this.assetLibrary);
     }
 
     // Web 组件加载由 build() 触发,初始化在 onPageEnd 回调中完成
@@ -1299,6 +1325,19 @@ struct VrmViewerPage {
     this.performanceLastErrorCode = '';
     this.performanceLastErrorMessage = '';
     this.performanceOperating = false;
+    // Phase 3F-2: 销毁 DialoguePerformanceMapper (不删除动作 / 姿势 / 别名 / library.json)
+    // 仅清理内存状态, 不停止在途演出 (由 PerformanceController.dispose 负责)
+    if (this.dialoguePerformanceMapper !== null) {
+      this.dialoguePerformanceMapper.dispose();
+      this.dialoguePerformanceMapper = null;
+    }
+    this.dialogueLastAccepted = false;
+    this.dialogueLastDegraded = false;
+    this.dialogueLastWarnings = '';
+    this.dialogueLastErrorCode = '';
+    this.dialogueLastErrorMessage = '';
+    this.dialogueLastCommandId = '';
+    this.dialogueOperating = false;
     // Phase 3B:13. 销毁 Phase 3B 持久化资源(不删除 filesDir 下的模型文件与 library.json)
     // 标记 restoreDisposed 阻止异步恢复回调
     this.restoreDisposed = true;
@@ -9150,6 +9189,103 @@ struct VrmViewerPage {
     }
     .width('100%')
     .margin({ bottom: 8 })
+
+    // ===== Phase 3F-2: AI 对话结果到演出指令的安全映射测试 =====
+    Text('AI Hint 安全映射 (Phase 3F-2)')
+      .fontSize($r('app.float.app_font_caption'))
+      .fontColor($r('app.color.app_text_secondary'))
+      .width('100%')
+      .margin({ top: 8, bottom: 4 })
+
+    // 映射结果状态显示
+    Column({ space: 4 }) {
+      Row({ space: 8 }) {
+        Text('Accepted:')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .layoutWeight(1)
+        Text(this.dialogueLastAccepted ? 'YES' : 'NO')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor(this.dialogueLastAccepted
+            ? $r('app.color.model_settings_success')
+            : $r('app.color.app_text_secondary'))
+          .layoutWeight(1)
+      }.width('100%')
+      Row({ space: 8 }) {
+        Text('Degraded:')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .layoutWeight(1)
+        Text(this.dialogueLastDegraded ? 'YES' : 'NO')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor(this.dialogueLastDegraded
+            ? $r('app.color.app_accent')
+            : $r('app.color.app_text_secondary'))
+          .layoutWeight(1)
+      }.width('100%')
+      Row({ space: 8 }) {
+        Text('Cmd ID:')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .layoutWeight(1)
+        Text(this.dialogueLastCommandId.length > 0 ? this.dialogueLastCommandId : '-')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_primary'))
+          .layoutWeight(1)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }.width('100%')
+      if (this.dialogueLastWarnings.length > 0) {
+        Row({ space: 8 }) {
+          Text('Warnings:')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_secondary'))
+            .layoutWeight(1)
+          Text(this.dialogueLastWarnings)
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_accent'))
+            .layoutWeight(1)
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }.width('100%')
+      }
+      if (this.dialogueLastErrorCode.length > 0) {
+        Row({ space: 8 }) {
+          Text('Error:')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_secondary'))
+            .layoutWeight(1)
+          Text(`${this.dialogueLastErrorCode}: ${this.dialogueLastErrorMessage}`)
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_danger'))
+            .layoutWeight(1)
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }.width('100%')
+      }
+    }
+    .width('100%')
+    .padding(8)
+    .backgroundColor($r('app.color.app_surface_1'))
+    .borderRadius($r('app.float.app_radius_sm'))
+    .margin({ bottom: 8 })
+
+    // 执行安全映射示例按钮 (用当前选择生成结构化 Hint, 验证 Mapper 流程)
+    Button('执行安全映射示例')
+      .fontSize($r('app.float.app_font_body'))
+      .fontColor($r('app.color.app_text_primary'))
+      .backgroundColor($r('app.color.app_surface_2'))
+      .borderRadius($r('app.float.app_radius_sm'))
+      .height(40)
+      .width('100%')
+      .enabled(this.dialoguePerformanceMapper !== null
+        && this.performanceController !== null
+        && !this.dialogueOperating
+        && !this.performanceOperating
+        && this.debugModelState === 'READY')
+      .onClick(() => {
+        this.onExecuteDialogueMappingClick();
+      })
   }
 
   /**
@@ -9283,6 +9419,119 @@ struct VrmViewerPage {
     this.performanceRestoreTimerActive = debug.restoreTimerActive;
     this.performanceLastErrorCode = debug.lastErrorCode;
     this.performanceLastErrorMessage = debug.lastErrorMessage;
+  }
+
+  /**
+   * Phase 3F-2: 执行 AI 对话结果到演出指令的安全映射。
+   *
+   * 内部入口: 供未来对话页面 / AI 接口回调调用。
+   *
+   * 流程:
+   *   1. 检查 Mapper 和 PerformanceController 就绪
+   *   2. 调用 Mapper.mapJson(rawJson)
+   *   3. accepted=false 时记录错误并停止
+   *   4. accepted=true 时交给 performanceController.execute(command)
+   *   5. 显示映射 warning 和执行状态
+   *
+   * @param rawJson AI 返回的原始 JSON 字符串
+   */
+  async executeDialoguePerformanceHintJson(rawJson: string): Promise<void> {
+    if (this.dialoguePerformanceMapper === null) {
+      this.dialogueLastAccepted = false;
+      this.dialogueLastErrorCode = 'DIALOGUE_HINT_EMPTY';
+      this.dialogueLastErrorMessage = 'DialoguePerformanceMapper 未初始化';
+      promptAction.showToast({ message: 'Mapper 未初始化' });
+      return;
+    }
+    if (this.dialogueOperating) {
+      return;
+    }
+    this.dialogueOperating = true;
+    this.dialogueLastErrorCode = '';
+    this.dialogueLastErrorMessage = '';
+    this.dialogueLastWarnings = '';
+    try {
+      const mappingResult: ArkWebDialoguePerformanceMappingResult =
+        await this.dialoguePerformanceMapper.mapJson(rawJson);
+      this.dialogueLastAccepted = mappingResult.accepted;
+      this.dialogueLastDegraded = mappingResult.degraded;
+      this.dialogueLastCommandId = mappingResult.command !== undefined
+        ? mappingResult.command.commandId : '';
+      if (mappingResult.warnings.length > 0) {
+        this.dialogueLastWarnings = mappingResult.warnings.join('; ');
+      }
+      this.dialogueLastErrorCode = mappingResult.errorCode;
+      this.dialogueLastErrorMessage = mappingResult.errorMessage;
+
+      if (!mappingResult.accepted) {
+        promptAction.showToast({
+          message: `映射失败: ${mappingResult.errorCode}`
+        });
+        return;
+      }
+      if (mappingResult.command === undefined) {
+        this.dialogueLastErrorCode = 'DIALOGUE_NOTHING_TO_PERFORM';
+        this.dialogueLastErrorMessage = '映射结果 command 为空';
+        promptAction.showToast({ message: '映射结果 command 为空' });
+        return;
+      }
+      // 交给 PerformanceController 执行
+      if (this.performanceController === null) {
+        this.dialogueLastErrorCode = 'PERFORMANCE_CONTROLLER_DISPOSED';
+        this.dialogueLastErrorMessage = 'PerformanceController 未初始化';
+        promptAction.showToast({ message: 'PerformanceController 未初始化' });
+        return;
+      }
+      const execResult =
+        await this.performanceController.executeCommand(mappingResult.command);
+      this.syncPerformanceDebugState();
+      if (execResult.success) {
+        const cmd: ArkWebAvatarPerformanceCommand = mappingResult.command;
+        promptAction.showToast({
+          message: `映射执行: ${cmd.motionType}${cmd.motionId.length > 0 ? ' ' + cmd.motionId : ''}${cmd.expressionId.length > 0 ? ' + ' + cmd.expressionId : ''}${mappingResult.degraded ? ' (降级)' : ''}`
+        });
+      } else {
+        promptAction.showToast({
+          message: `映射执行失败: ${execResult.errorCode}`
+        });
+      }
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      this.dialogueLastErrorCode = 'DIALOGUE_HINT_PARSE_FAILED';
+      this.dialogueLastErrorMessage = msg;
+      promptAction.showToast({ message: `映射异常: ${msg}` });
+    } finally {
+      this.dialogueOperating = false;
+    }
+  }
+
+  /**
+   * Phase 3F-2: "执行安全映射示例" 按钮处理。
+   *
+   * 用当前选择生成结构化 Hint JSON, 验证 Mapper 流程。
+   * 不引入 JSON 编辑器, 只测试映射链路。
+   */
+  private async onExecuteDialogueMappingClick(): Promise<void> {
+    // 根据当前 performanceTestMotionType 选择 motionId
+    let motionId: string = '';
+    if (this.performanceTestMotionType === 'animation') {
+      motionId = this.selectedActionId;
+    } else if (this.performanceTestMotionType === 'pose') {
+      motionId = this.selectedPoseId;
+    }
+    // 构造结构化 Hint (模拟 AI 返回)
+    const hint: ArkWebDialoguePerformanceHint = {
+      version: 1,
+      motionType: this.performanceTestMotionType,
+      motionId: motionId,
+      expressionId: this.performanceTestExpressionId,
+      expressionWeight: 1,
+      durationMs: this.performanceTestDurationMs,
+      returnPolicy: this.performanceTestReturnPolicy
+    };
+    const rawJson: string = JSON.stringify(hint);
+    console.info(`[DialogueMapper] test hint: ${rawJson}`);
+    await this.executeDialoguePerformanceHintJson(rawJson);
   }
 
   /**
