@@ -251,6 +251,11 @@ struct VrmViewerPage {
   // Phase 2H: 演示模式状态
   @State presentationMode: PresentationMode = PresentationMode.NORMAL;
   @State presentationTransitioning: boolean = false;
+  // Final Acceptance UX: 演示模式透明 HUD 控制层
+  // DEMO 模式下点击右上角图标切换透明 HUD (不使用全屏模态/遮罩)
+  @State presentationControlOverlayVisible: boolean = false;
+  // HUD 当前功能 Tab (0=模型 1=姿势 2=动画 3=表情 4=场景, 不含 Debug)
+  @State presentationControlTab: number = 0;
   @State activeTab: ViewerTab = ViewerTab.Model;
   @State drawerState: DrawerState = DrawerState.Half;
   @State backgroundOption: string = '#1A1A1A';
@@ -1669,6 +1674,10 @@ struct VrmViewerPage {
     // 4. 清空面板触摸交互状态
     this.panelInteractionDepth = 0;
 
+    // 4.5 Final Acceptance UX: 进入 DEMO 时关闭透明 HUD, 模型视口占满页面
+    this.presentationControlOverlayVisible = false;
+    this.presentationControlTab = 0;
+
     // 5. 恢复 Camera Controls(若被面板触摸抑制)
     this.cameraControlGeneration++;
     this.cameraControlsSuppressed = false;
@@ -1731,6 +1740,9 @@ struct VrmViewerPage {
     // 3. 切换到 NORMAL
     this.presentationMode = PresentationMode.NORMAL;
 
+    // 3.5 Final Acceptance UX: 退出 DEMO 时关闭透明 HUD
+    this.presentationControlOverlayVisible = false;
+
     // 4. 恢复保存的面板状态
     if (this.panelStateBeforeDemo >= 0 && this.panelStateBeforeDemo <= 2) {
       this.drawerState = this.indexToDrawerState(this.panelStateBeforeDemo);
@@ -1763,6 +1775,9 @@ struct VrmViewerPage {
     this.selectedTabBeforeDemo = 0;
     this.panelVisibleBeforeDemo = true;
     this.presentationWarning = '';
+    // Final Acceptance UX: 重置透明 HUD 状态
+    this.presentationControlOverlayVisible = false;
+    this.presentationControlTab = 0;
   }
 
   /**
@@ -6904,18 +6919,30 @@ struct VrmViewerPage {
       // ===== 1. 全屏预览区域(最底层,始终 100% 尺寸,不被压缩) =====
       this.PreviewArea()
 
-      // ===== 2. 顶部工具栏 =====
-      this.TopToolbar()
-
-      // ===== 3. 右侧快捷工具栏(仅普通模式) =====
-      if (this.presentationMode === PresentationMode.NORMAL) {
+      // ===== 2. 右侧快捷工具栏(仅普通模式,或 DEMO 模式 HUD 关闭时) =====
+      // Final Acceptance UX: HUD 打开时隐藏右侧工具条,避免重复按钮
+      if (this.presentationMode === PresentationMode.NORMAL
+        || (this.presentationMode === PresentationMode.DEMO
+          && !this.presentationControlOverlayVisible)) {
         this.QuickToolbar()
       }
 
-      // ===== 4. 底部控制抽屉(仅普通模式,覆盖在预览上) =====
+      // ===== 3. 底部控制抽屉(仅普通模式,覆盖在预览上) =====
+      // Final Acceptance UX: DEMO 模式不渲染原底部白色控制面板
       if (this.presentationMode === PresentationMode.NORMAL) {
         this.BottomDrawer()
       }
+
+      // ===== 4. 演示模式透明 HUD 控制层(DEMO 模式且 HUD 打开时) =====
+      // 全屏透明根层,不绘制实体背景,不注册全屏 onClick/onTouch
+      // 中央透明区域允许模型旋转和缩放
+      if (this.presentationMode === PresentationMode.DEMO
+        && this.presentationControlOverlayVisible) {
+        this.PresentationControlOverlay()
+      }
+
+      // ===== 5. 顶部工具栏(最高 z-order,确保右上角图标始终可点击) =====
+      this.TopToolbar()
     }
     .width('100%')
     .height('100%')
@@ -7186,14 +7213,28 @@ struct VrmViewerPage {
             }
           })
 
-        // 更多
+        // 更多 / 演示模式透明 HUD 开关
+        // Final Acceptance UX: 复用右上角现有图标
+        //   - NORMAL 模式: 维持原占位行为
+        //   - DEMO 模式: 切换透明 HUD (presentationControlOverlayVisible)
+        //     HUD 关闭 → "打开控制" 语义 (默认背景)
+        //     HUD 打开 → "关闭控制" 语义 (高亮背景)
         SymbolGlyph($r('sys.symbol.more'))
           .fontSize(24)
           .fontColor(['#FFFFFF'])
           .padding(8)
           .margin({ left: 4 })
+          .backgroundColor(this.presentationMode === PresentationMode.DEMO
+            && this.presentationControlOverlayVisible
+            ? '#66FFFFFF' : '#00FFFFFF')
+          .borderRadius($r('app.float.app_radius_sm'))
           .onClick(() => {
-            this.showPlaceholderToast();
+            if (this.presentationMode === PresentationMode.DEMO) {
+              this.presentationControlOverlayVisible =
+                !this.presentationControlOverlayVisible;
+            } else {
+              this.showPlaceholderToast();
+            }
           })
       }
       .width('100%')
@@ -7243,6 +7284,628 @@ struct VrmViewerPage {
       .height(44)
       .borderRadius($r('app.float.app_radius_sm'))
       .margin({ top: 4, bottom: 4 })
+      .opacity(disabled ? 0.5 : 1.0)
+      .enabled(!disabled)
+      .onClick(() => {
+        if (!disabled) {
+          action();
+        }
+      })
+  }
+
+  // ===== Final Acceptance UX: 演示模式透明 HUD 控制层 =====
+
+  /**
+   * 演示模式透明 HUD 控制层。
+   *
+   * 根层: 全屏透明,不绘制实体背景,不注册全屏 onClick/onTouch。
+   * 中央透明区域允许模型旋转和缩放 (hitTestBehavior Transparent)。
+   * 只有顶部 Tab 条 / 右侧内容卡 / 底部操作条响应点击。
+   */
+  @Builder
+  PresentationControlOverlay() {
+    Stack() {
+      // 顶层: 顶部 Tab 条 (内容顶部对齐)
+      Column() {
+        this.PresentationTopTabBar()
+      }
+      .width('100%')
+      .height('100%')
+      .justifyContent(FlexAlign.Start)
+      .alignItems(HorizontalAlign.Center)
+      .hitTestBehavior(HitTestMode.Transparent)
+
+      // 中层: 右侧内容卡 (内容右侧居中对齐)
+      Row() {
+        this.PresentationSideCard()
+      }
+      .width('100%')
+      .height('100%')
+      .justifyContent(FlexAlign.End)
+      .alignItems(VerticalAlign.Center)
+      .hitTestBehavior(HitTestMode.Transparent)
+
+      // 底层: 底部快捷操作条 (内容底部对齐)
+      Column() {
+        this.PresentationBottomActions()
+      }
+      .width('100%')
+      .height('100%')
+      .justifyContent(FlexAlign.End)
+      .alignItems(HorizontalAlign.Center)
+      .hitTestBehavior(HitTestMode.Transparent)
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor('#00FFFFFF')
+    .hitTestBehavior(HitTestMode.Transparent)
+  }
+
+  /** HUD 顶部 Tab 条 (模型/姿势/动画/表情/场景/关闭, 不含 Debug) */
+  @Builder
+  PresentationTopTabBar() {
+    Row({ space: 4 }) {
+      this.PresentationTabItem('模型', 0)
+      this.PresentationTabItem('姿势', 1)
+      this.PresentationTabItem('动画', 2)
+      this.PresentationTabItem('表情', 3)
+      this.PresentationTabItem('场景', 4)
+
+      // 关闭按钮 (语义: 关闭控制)
+      Text('关闭')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor('#FFFFFF')
+        .backgroundColor('#66FFFFFF')
+        .borderRadius($r('app.float.app_radius_sm'))
+        .height(32)
+        .padding({ left: 12, right: 12 })
+        .textAlign(TextAlign.Center)
+        .margin({ left: 8 })
+        .onClick(() => {
+          this.presentationControlOverlayVisible = false;
+        })
+    }
+    .width('auto')
+    .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+    .backgroundColor('#99000000')
+    .borderRadius($r('app.float.app_radius_md'))
+    .margin({
+      left: $r('app.float.app_spacing_12'),
+      right: $r('app.float.app_spacing_12'),
+      top: this.statusBarHeight + 56 // 位于顶部导航栏下方
+    })
+  }
+
+  /** HUD 顶部 Tab 单项 */
+  @Builder
+  PresentationTabItem(label: string, tab: number) {
+    Text(label)
+      .fontSize($r('app.float.app_font_caption'))
+      .fontColor(this.presentationControlTab === tab ? '#FFFFFF' : '#B0FFFFFF')
+      .fontWeight(this.presentationControlTab === tab ? FontWeight.Medium : FontWeight.Normal)
+      .backgroundColor(this.presentationControlTab === tab ? '#66FFFFFF' : '#00FFFFFF')
+      .borderRadius($r('app.float.app_radius_sm'))
+      .height(32)
+      .padding({ left: 12, right: 12 })
+      .textAlign(TextAlign.Center)
+      .onClick(() => {
+        this.presentationControlTab = tab;
+      })
+  }
+
+  /** HUD 右侧内容卡 (宽度约 40%, 最大高度约 60%, 深色半透明) */
+  @Builder
+  PresentationSideCard() {
+    Column() {
+      if (this.presentationControlTab === 0) {
+        this.PresentationModelContent()
+      } else if (this.presentationControlTab === 1) {
+        this.PresentationPoseContent()
+      } else if (this.presentationControlTab === 2) {
+        this.PresentationAnimationContent()
+      } else if (this.presentationControlTab === 3) {
+        this.PresentationExpressionContent()
+      } else if (this.presentationControlTab === 4) {
+        this.PresentationSceneContent()
+      }
+    }
+    .width('40%')
+    .constraintSize({ maxHeight: '60%' })
+    .padding(12)
+    .backgroundColor('#99000000')
+    .borderRadius($r('app.float.app_radius_md'))
+    .margin({ right: $r('app.float.app_spacing_12') })
+  }
+
+  /** HUD 模型内容 (仅显示名称 + 导入 + 重新加载) */
+  @Builder
+  PresentationModelContent() {
+    Scroll() {
+      Column() {
+        Text('当前模型')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor('#B0FFFFFF')
+          .width('100%')
+          .margin({ bottom: 4 })
+
+        Text(this.activeModelDisplayName.length > 0
+          ? this.activeModelDisplayName
+          : (this.debugModelDisplayName.length > 0 ? this.debugModelDisplayName : '未加载模型'))
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor('#FFFFFF')
+          .fontWeight(FontWeight.Medium)
+          .width('100%')
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .margin({ bottom: 12 })
+
+        Button(this.importInProgress ? '导入中...' : '导入模型')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor('#FFFFFF')
+          .backgroundColor('#33FFFFFF')
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(36)
+          .width('100%')
+          .enabled(!this.importInProgress
+            && this.importState !== ModelImportState.DISPOSED
+            && !this.loadInProgress)
+          .onClick(() => {
+            this.onImportModelButton();
+          })
+
+        Button('重新加载')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor('#FFFFFF')
+          .backgroundColor('#33FFFFFF')
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(36)
+          .width('100%')
+          .margin({ top: 8 })
+          .enabled(this.activeModelId.length > 0 && !this.loadInProgress)
+          .onClick(() => {
+            this.onReloadModelButton();
+          })
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Start)
+    }
+    .width('100%')
+    .height('100%')
+    .scrollable(ScrollDirection.Vertical)
+    .scrollBar(BarState.Off)
+    .align(Alignment.TopStart)
+  }
+
+  /** HUD 姿势内容 (仅显示姿势列表 + 选中/默认标记) */
+  @Builder
+  PresentationPoseContent() {
+    Scroll() {
+      Column() {
+        Text('姿势列表')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor('#B0FFFFFF')
+          .width('100%')
+          .margin({ bottom: 8 })
+
+        if (this.poseAssets.length === 0) {
+          Text('暂无姿势')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor('#80FFFFFF')
+            .width('100%')
+        } else {
+          List({ space: 4 }) {
+            ForEach(this.poseAssets, (asset: ArkWebAvatarPoseAsset) => {
+              ListItem() {
+                this.PresentationPoseRow(asset)
+              }
+            }, (asset: ArkWebAvatarPoseAsset) => asset.poseId)
+          }
+          .width('100%')
+        }
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Start)
+    }
+    .width('100%')
+    .height('100%')
+    .scrollable(ScrollDirection.Vertical)
+    .scrollBar(BarState.Off)
+    .align(Alignment.TopStart)
+  }
+
+  /** HUD 姿势条目 (紧凑显示: 名称 + 默认标记 + 选中标记) */
+  @Builder
+  PresentationPoseRow(asset: ArkWebAvatarPoseAsset) {
+    Row() {
+      Text(asset.displayName)
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor('#FFFFFF')
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .layoutWeight(1)
+
+      if (this.defaultPoseId === asset.poseId) {
+        Text('默认')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor('#FFFFFF')
+          .backgroundColor('#66FFFFFF')
+          .borderRadius($r('app.float.app_radius_sm'))
+          .padding({ left: 4, right: 4, top: 1, bottom: 1 })
+          .margin({ left: 4 })
+      }
+
+      Text(this.selectedPoseId === asset.poseId ? '✓' : '')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor('#FFFFFF')
+        .width(20)
+        .textAlign(TextAlign.Center)
+    }
+    .width('100%')
+    .padding({ top: 6, bottom: 6, left: 8, right: 8 })
+    .backgroundColor(this.selectedPoseId === asset.poseId ? '#66FFFFFF' : '#33000000')
+    .borderRadius($r('app.float.app_radius_sm'))
+    .onClick(() => {
+      this.onPoseListItemClick(asset.poseId);
+    })
+  }
+
+  /** HUD 动画内容 (仅显示动作列表 + 选中/默认待机标记) */
+  @Builder
+  PresentationAnimationContent() {
+    Scroll() {
+      Column() {
+        Text('动作列表')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor('#B0FFFFFF')
+          .width('100%')
+          .margin({ bottom: 8 })
+
+        if (this.animationAssets.length === 0) {
+          Text('暂无动作')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor('#80FFFFFF')
+            .width('100%')
+        } else {
+          List({ space: 4 }) {
+            ForEach(this.animationAssets, (asset: ArkWebAvatarAnimationAsset) => {
+              ListItem() {
+                this.PresentationAnimationRow(asset)
+              }
+            }, (asset: ArkWebAvatarAnimationAsset) => asset.actionId)
+          }
+          .width('100%')
+        }
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Start)
+    }
+    .width('100%')
+    .height('100%')
+    .scrollable(ScrollDirection.Vertical)
+    .scrollBar(BarState.Off)
+    .align(Alignment.TopStart)
+  }
+
+  /** HUD 动画条目 (紧凑显示: 名称 + 默认待机标记 + 选中标记) */
+  @Builder
+  PresentationAnimationRow(asset: ArkWebAvatarAnimationAsset) {
+    Row() {
+      Text(asset.displayName)
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor('#FFFFFF')
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .layoutWeight(1)
+
+      if (this.defaultIdleActionId === asset.actionId) {
+        Text('待机')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor('#FFFFFF')
+          .backgroundColor('#66FFFFFF')
+          .borderRadius($r('app.float.app_radius_sm'))
+          .padding({ left: 4, right: 4, top: 1, bottom: 1 })
+          .margin({ left: 4 })
+      }
+
+      Text(this.selectedActionId === asset.actionId ? '✓' : '')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor('#FFFFFF')
+        .width(20)
+        .textAlign(TextAlign.Center)
+    }
+    .width('100%')
+    .padding({ top: 6, bottom: 6, left: 8, right: 8 })
+    .backgroundColor(this.selectedActionId === asset.actionId ? '#66FFFFFF' : '#33000000')
+    .borderRadius($r('app.float.app_radius_sm'))
+    .onClick(() => {
+      this.onAnimationListItemClick(asset.actionId);
+    })
+  }
+
+  /** HUD 表情内容 (当前表情 + 目标权重 + 可用表情列表) */
+  @Builder
+  PresentationExpressionContent() {
+    Scroll() {
+      Column() {
+        // 当前表情
+        Text('当前表情')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor('#B0FFFFFF')
+          .width('100%')
+        Text(this.appliedExpressionName.length > 0
+          ? `${this.appliedExpressionName} (${this.appliedExpressionWeight.toFixed(2)})`
+          : '无')
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor('#FFFFFF')
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+          .margin({ bottom: 8 })
+
+        // 目标权重
+        Text('目标权重')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor('#B0FFFFFF')
+          .width('100%')
+        Row({ space: 4 }) {
+          ForEach([0, 0.25, 0.5, 0.75, 1], (w: number) => {
+            Text(w === 0 ? '0' : w.toFixed(2))
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor(this.selectedExpressionWeight === w ? '#FFFFFF' : '#B0FFFFFF')
+              .backgroundColor(this.selectedExpressionWeight === w ? '#66FFFFFF' : '#33000000')
+              .borderRadius($r('app.float.app_radius_sm'))
+              .height(28)
+              .layoutWeight(1)
+              .textAlign(TextAlign.Center)
+              .onClick(() => {
+                this.selectedExpressionWeight = w;
+              })
+          })
+        }
+        .width('100%')
+        .margin({ bottom: 8 })
+
+        // 可用表情列表 (名称完整显示)
+        Text('可用表情')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor('#B0FFFFFF')
+          .width('100%')
+          .margin({ bottom: 4 })
+
+        if (!this.expressionManagerReady) {
+          Text('模型不支持表情或未绑定 Expression Manager')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor('#80FFFFFF')
+            .width('100%')
+        } else if (this.availableExpressions.length === 0) {
+          Text('当前模型无可用表情')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor('#80FFFFFF')
+            .width('100%')
+        } else {
+          List({ space: 4 }) {
+            ForEach(this.availableExpressions, (exp: ArkWebAvailableExpression) => {
+              ListItem() {
+                this.PresentationExpressionRow(exp)
+              }
+            }, (exp: ArkWebAvailableExpression) => exp.name)
+          }
+          .width('100%')
+        }
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Start)
+    }
+    .width('100%')
+    .height('100%')
+    .scrollable(ScrollDirection.Vertical)
+    .scrollBar(BarState.Off)
+    .align(Alignment.TopStart)
+  }
+
+  /** HUD 表情条目 (名称完整显示 + 选中标记) */
+  @Builder
+  PresentationExpressionRow(exp: ArkWebAvailableExpression) {
+    Row() {
+      Column() {
+        Text(exp.name)
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor('#FFFFFF')
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+        if (exp.isPreset) {
+          Text('预设')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor('#80FFFFFF')
+            .width('100%')
+            .margin({ top: 1 })
+        }
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+
+      Text(this.selectedExpressionName === exp.name ? '✓' : '')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor('#FFFFFF')
+        .width(20)
+        .textAlign(TextAlign.Center)
+    }
+    .width('100%')
+    .padding({ top: 6, bottom: 6, left: 8, right: 8 })
+    .backgroundColor(this.selectedExpressionName === exp.name ? '#66FFFFFF' : '#33000000')
+    .borderRadius($r('app.float.app_radius_sm'))
+    .onClick(() => {
+      this.selectedExpressionName = exp.name;
+    })
+  }
+
+  /** HUD 场景内容 (背景 + 网格 + 环境光, 隐藏底层实现字段) */
+  @Builder
+  PresentationSceneContent() {
+    Scroll() {
+      Column() {
+        // 背景颜色
+        Text('背景颜色')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor('#B0FFFFFF')
+          .width('100%')
+          .margin({ bottom: 4 })
+        Row({ space: 4 }) {
+          this.PresentationColorSwatch('#1A1A1A')
+          this.PresentationColorSwatch('#2C3E50')
+          this.PresentationColorSwatch('#1B5E20')
+          this.PresentationColorSwatch('#4A148C')
+          this.PresentationColorSwatch('#F5F5F5')
+        }
+        .width('100%')
+        .margin({ bottom: 12 })
+
+        // 网格开关
+        Row() {
+          Text('网格显示')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor('#FFFFFF')
+            .layoutWeight(1)
+          Toggle({ type: ToggleType.Switch, isOn: this.showGrid })
+            .onChange((on: boolean) => {
+              this.onGridToggleChanged(on);
+            })
+        }
+        .width('100%')
+        .margin({ bottom: 12 })
+
+        // 环境光强度
+        Column() {
+          Row() {
+            Text('环境光强度')
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor('#FFFFFF')
+              .layoutWeight(1)
+            Text(`${this.lightIntensity}%`)
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor('#B0FFFFFF')
+          }
+          .width('100%')
+          .margin({ bottom: 4 })
+          Slider({ value: this.lightIntensity, min: 0, max: 100, style: SliderStyle.OutSet })
+            .width('100%')
+            .onChange((value: number, mode: SliderChangeMode) => {
+              this.onLightIntensitySliderChange(value);
+              if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+                this.onLightIntensitySliderChangeEnd(value);
+              }
+            })
+        }
+        .width('100%')
+        .alignItems(HorizontalAlign.Start)
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Start)
+    }
+    .width('100%')
+    .height('100%')
+    .scrollable(ScrollDirection.Vertical)
+    .scrollBar(BarState.Off)
+    .align(Alignment.TopStart)
+  }
+
+  /** HUD 场景背景色块 */
+  @Builder
+  PresentationColorSwatch(color: string) {
+    Stack() {
+      if (this.backgroundOption === color) {
+        Text('✓')
+          .fontSize(12)
+          .fontColor(color === '#F5F5F5' ? '#1A1A1A' : '#FFFFFF')
+      }
+    }
+    .width(28)
+    .height(28)
+    .borderRadius($r('app.float.app_radius_sm'))
+    .backgroundColor(color)
+    .border({
+      width: this.backgroundOption === color ? 2 : 1,
+      color: this.backgroundOption === color ? '#FFFFFF' : '#80FFFFFF'
+    })
+    .margin({ right: 4 })
+    .onClick(() => {
+      this.onBackgroundColorSelected(color);
+    })
+  }
+
+  /** HUD 底部快捷操作条 (根据当前 Tab 显示关键操作) */
+  @Builder
+  PresentationBottomActions() {
+    Row({ space: 8 }) {
+      if (this.presentationControlTab === 0) {
+        // 模型: 聚焦 + 重置
+        this.PresentationActionButton('聚焦', () => { this.onFocusButton(); }, false)
+        this.PresentationActionButton('重置', () => { this.onResetButton(); }, this.resetButtonDisabled)
+      } else if (this.presentationControlTab === 1) {
+        // 姿势: 应用姿势 + 恢复姿势
+        this.PresentationActionButton('应用姿势',
+          () => { this.onApplyPoseClick(); },
+          !(this.selectedPoseId.length > 0
+            && this.debugModelState === 'READY'
+            && !this.poseImporting
+            && !this.poseApplying))
+        this.PresentationActionButton('恢复姿势',
+          () => { this.onResetPoseClick(); },
+          !(this.appliedPoseId.length > 0
+            && this.debugModelState === 'READY'
+            && !this.poseApplying))
+      } else if (this.presentationControlTab === 2) {
+        // 动画: 播放 + 暂停 + 停止
+        this.PresentationActionButton('播放',
+          () => { this.onAnimationPlayButton(); },
+          !this.isAnimationPlayButtonEnabled())
+        this.PresentationActionButton('暂停',
+          () => { this.onAnimationPauseButton(); },
+          !this.isAnimationPauseButtonEnabled())
+        this.PresentationActionButton('停止',
+          () => { this.onAnimationStopButton(); },
+          !this.isAnimationStopButtonEnabled())
+      } else if (this.presentationControlTab === 3) {
+        // 表情: 设置表情 + 清除表情
+        this.PresentationActionButton('设置表情',
+          () => { this.onSetExpressionClick(); },
+          !(this.debugModelState === 'READY'
+            && this.selectedExpressionName.length > 0
+            && this.expressionManagerReady
+            && !this.expressionLoading))
+        this.PresentationActionButton('清除表情',
+          () => { this.onResetExpressionClick(); },
+          !(this.appliedExpressionName.length > 0 && !this.expressionLoading))
+      } else if (this.presentationControlTab === 4) {
+        // 场景: 截图 + 相机重置
+        this.PresentationActionButton('截图', () => { this.onScreenshotButton(); }, false)
+        this.PresentationActionButton('相机重置',
+          () => { this.onResetButton(); }, this.resetButtonDisabled)
+      }
+    }
+    .width('auto')
+    .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+    .backgroundColor('#99000000')
+    .borderRadius($r('app.float.app_radius_md'))
+    .margin({
+      left: $r('app.float.app_spacing_16'),
+      right: $r('app.float.app_spacing_16'),
+      bottom: this.navigationBarHeight + 16
+    })
+  }
+
+  /** HUD 底部操作按钮 */
+  @Builder
+  PresentationActionButton(label: string, action: () => void, disabled: boolean) {
+    Text(label)
+      .fontSize($r('app.float.app_font_caption'))
+      .fontColor(disabled ? '#80FFFFFF' : '#FFFFFF')
+      .backgroundColor(disabled ? '#33000000' : '#66FFFFFF')
+      .borderRadius($r('app.float.app_radius_sm'))
+      .height(36)
+      .padding({ left: 16, right: 16 })
+      .textAlign(TextAlign.Center)
       .opacity(disabled ? 0.5 : 1.0)
       .enabled(!disabled)
       .onClick(() => {
