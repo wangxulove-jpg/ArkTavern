@@ -111,6 +111,7 @@ import {
   ArkWebAvatarAiCapabilitySnapshot,
   ArkWebAvatarAiToolName,
   ArkWebAvatarAiToolErrorCode,
+  ArkWebAvatarAiToolPermissionModeConst,
   AVATAR_TOOL_MAX_ROUNDS,
   AVATAR_TOOL_MAX_CALLS_PER_TURN,
 } from '../avatarai/ArkWebAvatarAiToolTypes';
@@ -132,6 +133,27 @@ import {
   ArkWebAvatarDialogueRhythmPolicy,
   AVATAR_DIALOGUE_RHYTHM_POLICY_VERSION,
 } from '../avatarai/ArkWebAvatarDialogueRhythmPolicy';
+import {
+  NativeToolCallingSupport,
+  NativeToolCallingSupportConst,
+  NativeToolCallingDecisionSource,
+  NativeToolCallingDecisionSourceConst,
+  NativeToolCallingErrorCode,
+  NativeToolCallingErrorCodeConst,
+  NativeToolCallingProbeResult,
+  NativeToolCallingProbeTool,
+  NATIVE_TOOL_PROBE_TOOL_NAME,
+  NATIVE_TOOL_PROBE_TOOL_DESCRIPTION,
+  NATIVE_TOOL_PROBE_TOOL_PARAMETERS_JSON,
+  AvatarToolIntegrationState,
+  AvatarToolIntegrationStateConst,
+  ProviderInfoSnapshot,
+  ValidateProbeToolCallResult,
+  createInitialProbeResult,
+  buildNativeToolCallingProbeTool,
+  generateProbeToken,
+  validateProbeToolCall
+} from '../avatarai/NativeToolCallingCapability';
 
 const LOG_TAG: string = 'ChatService';
 
@@ -195,15 +217,23 @@ export interface ChatServiceCallbacks {
 
 /**
  * Phase 4A-3: Avatar Tool Calling 状态 (供 UI 显示)。
+ *
+ * Phase 4A-3R 扩展:
+ *   - integrationState: Tool Integration 接线状态 (CONNECTED/NOT_CONNECTED/FAILED/DISPOSED)
+ *   - nativeToolCallingSupport: 原生 Tool Calling 四态支持状态
+ *   - decisionSource: 判断来源
+ *   - probeErrorCode: 探测失败错误码
+ *   - probeErrorMessage: 探测失败错误信息
+ *   - providerType / providerDisplayName / currentModelId: 当前 Provider 信息 (不含敏感字段)
  */
 export interface AvatarToolCallingStatus {
-  /** 当前 Provider 是否支持原生 Tool Calling */
+  /** 当前 Provider 是否支持原生 Tool Calling (Phase 4A-3R: 仅作 PROVIDER_DECLARATION 参考, 真实状态看 nativeToolCallingSupport) */
   providerSupported: boolean;
   /** 当前权限模式 (DENY / READ_ONLY / CONTROL_THIS_CHAT) */
   permissionMode: string;
   /** 注入的工具数量 */
   toolCount: number;
-  /** 当前模型能力是否就绪 */
+  /** 当前模型能力是否就绪 (Avatar 能力, 与 Provider 工具支持独立) */
   capabilityReady: boolean;
   /** 最后工具名称 */
   lastToolName: string;
@@ -211,6 +241,33 @@ export interface AvatarToolCallingStatus {
   lastToolResult: string;
   /** 最后错误 */
   lastToolError: string;
+  /** Phase 4A-3R: Tool Integration 接线状态 */
+  integrationState: string;
+  /** Phase 4A-3R: 原生 Tool Calling 四态支持状态 (SUPPORTED/UNSUPPORTED/UNKNOWN/MISCONFIGURED) */
+  nativeToolCallingSupport: string;
+  /** Phase 4A-3R: 判断来源 (RUNTIME_PROBE/PROVIDER_DECLARATION/STATIC_REGISTRY/UNKNOWN) */
+  decisionSource: string;
+  /** Phase 4A-3R: 探测失败错误码 (空字符串表示未探测或成功) */
+  probeErrorCode: string;
+  /** Phase 4A-3R: 探测失败错误信息 */
+  probeErrorMessage: string;
+  /** Phase 4A-3R: Provider 类型 (openai/deepseek/openrouter/claude/gemini) */
+  providerType: string;
+  /** Phase 4A-3R: Provider 显示名称 (用户配置) */
+  providerDisplayName: string;
+  /** Phase 4A-3R: 当前模型 ID */
+  currentModelId: string;
+}
+
+/**
+ * Phase 4A-3R: 只读 Avatar 工具烟雾测试返回结果。
+ */
+export interface ReadOnlyAvatarToolSmokeTestResult {
+  success: boolean;
+  errorCode: string;
+  errorMessage: string;
+  finalTextSnippet: string;
+  toolCallId: string;
 }
 
 /** 默认流式请求选项 */
@@ -368,6 +425,34 @@ export class ChatService {
   /** 当前 Provider 是否支持原生 Tool Calling (每次请求开始时刷新) */
   private currentProviderSupportsToolCalling: boolean = false;
 
+  // ===== Phase 4A-3R: Native Tool Calling 四态支持 =====
+  /**
+   * Phase 4A-3R: Tool Integration 接线状态。
+   *
+   * - NOT_CONNECTED: ChatPage 未调用 setAvatarToolIntegration (初始值)
+   * - CONNECTED: 已调用 setAvatarToolIntegration, 所有依赖已注入
+   * - FAILED: 接线抛出异常
+   * - DISPOSED: 页面已 aboutToDisappear, Integration 已 dispose
+   */
+  private avatarToolIntegrationState: string = 'NOT_CONNECTED';
+  /**
+   * Phase 4A-3R: 原生 Tool Calling 四态支持状态。
+   *
+   * - UNKNOWN: 默认初始值, 尚未实际验证
+   * - SUPPORTED: 真实探测成功
+   * - UNSUPPORTED: Provider 或模型明确拒绝 tools
+   * - MISCONFIGURED: 本地 Integration / Adapter / Parser 缺失
+   */
+  private nativeToolCallingSupport: string = 'UNKNOWN';
+  /** Phase 4A-3R: 判断来源 (RUNTIME_PROBE / PROVIDER_DECLARATION / STATIC_REGISTRY / UNKNOWN) */
+  private nativeToolCallingDecisionSource: string = 'UNKNOWN';
+  /** Phase 4A-3R: 探测失败错误码 (空字符串表示未探测或成功) */
+  private nativeToolCallingProbeErrorCode: string = '';
+  /** Phase 4A-3R: 探测失败错误信息 */
+  private nativeToolCallingProbeErrorMessage: string = '';
+  /** Phase 4A-3R: 最近一次探测结果 (null 表示尚未探测) */
+  private lastProbeResult: NativeToolCallingProbeResult | null = null;
+
   // ===== Phase 4C-1: Avatar 对话演出策略集成 =====
   /**
    * Phase 4C-1: Avatar 对话演出策略 Builder (可选, 由 ChatPage 注入)。
@@ -503,6 +588,107 @@ export class ChatService {
     this.avatarDialogueStrategyBuilder = strategyBuilder;
     this.avatarDialogueSessionState = sessionState;
     this.avatarDialogueRhythmPolicy = rhythmPolicy;
+    // Phase 4A-3R: 更新 Integration 接线状态
+    if (registry !== null
+      && permissionController !== null
+      && executor !== null
+      && runtime !== null
+      && snapshotProvider !== null) {
+      this.avatarToolIntegrationState = AvatarToolIntegrationStateConst.CONNECTED;
+      Logger.info(LOG_TAG, 'setAvatarToolIntegration: state=CONNECTED');
+    } else {
+      this.avatarToolIntegrationState = AvatarToolIntegrationStateConst.NOT_CONNECTED;
+      Logger.info(LOG_TAG, 'setAvatarToolIntegration: state=NOT_CONNECTED (some deps null)');
+    }
+  }
+
+  /**
+   * Phase 4A-3R: 清空 Avatar Tool Integration (页面退出时调用)。
+   *
+   * - 权限恢复 DENY
+   * - 清空所有依赖引用
+   * - 接线状态变为 DISPOSED
+   * - 不停止用户手动发起的演出 (由 StageController 负责)
+   * - 不 dispose 应用级 Bridge / AssetLibrary
+   */
+  clearAvatarToolIntegration(): void {
+    // 权限恢复 DENY
+    if (this.avatarPermissionController !== null) {
+      try {
+        this.avatarPermissionController.setPermissionMode('DENY', (): void => {});
+      } catch (e) {
+        Logger.warn(LOG_TAG, 'clearAvatarToolIntegration: setPermissionMode DENY failed: ' + String(e));
+      }
+    }
+    this.avatarToolRegistry = null;
+    this.avatarPermissionController = null;
+    this.avatarToolExecutor = null;
+    this.avatarExecutorRuntime = null;
+    this.avatarSnapshotProvider = null;
+    this.avatarDialogueStrategyBuilder = null;
+    this.avatarDialogueSessionState = null;
+    this.avatarDialogueRhythmPolicy = null;
+    this.avatarToolIntegrationState = AvatarToolIntegrationStateConst.DISPOSED;
+    // 重置 Provider 支持状态为 UNKNOWN (下次进入页面重新探测)
+    this.currentProviderSupportsToolCalling = false;
+    this.nativeToolCallingSupport = NativeToolCallingSupportConst.UNKNOWN;
+    this.nativeToolCallingDecisionSource = NativeToolCallingDecisionSourceConst.UNKNOWN;
+    this.nativeToolCallingProbeErrorCode = '';
+    this.nativeToolCallingProbeErrorMessage = '';
+    this.lastProbeResult = null;
+    Logger.info(LOG_TAG, 'clearAvatarToolIntegration: state=DISPOSED');
+  }
+
+  /**
+   * Phase 4A-3R: 获取 Tool Integration 接线状态。
+   */
+  getAvatarToolIntegrationState(): string {
+    return this.avatarToolIntegrationState;
+  }
+
+  /**
+   * Phase 4A-3R: 获取原生 Tool Calling 四态支持状态。
+   */
+  getNativeToolCallingSupport(): string {
+    return this.nativeToolCallingSupport;
+  }
+
+  /**
+   * Phase 4A-3R: 获取最近一次探测结果 (null 表示尚未探测)。
+   */
+  getNativeToolCallingProbeResult(): NativeToolCallingProbeResult | null {
+    return this.lastProbeResult;
+  }
+
+  /**
+   * Phase 4A-3R: 获取当前 Provider 信息快照 (不含敏感字段)。
+   */
+  async getProviderInfoSnapshot(): Promise<ProviderInfoSnapshot> {
+    try {
+      const config: ProviderConfig | null = await this.modelService.getCurrentConfig();
+      if (config === null) {
+        const empty: ProviderInfoSnapshot = {
+          providerType: '',
+          providerDisplayName: '',
+          currentModelId: ''
+        };
+        return empty;
+      }
+      const snapshot: ProviderInfoSnapshot = {
+        providerType: config.type,
+        providerDisplayName: config.name,
+        currentModelId: config.modelName
+      };
+      return snapshot;
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'getProviderInfoSnapshot failed: ' + String(e));
+      const fallback: ProviderInfoSnapshot = {
+        providerType: '',
+        providerDisplayName: '',
+        currentModelId: ''
+      };
+      return fallback;
+    }
   }
 
   /**
@@ -511,8 +697,16 @@ export class ChatService {
    * - 所有依赖已注入
    * - 当前 Provider 支持原生 Tool Calling
    * - 权限不是 DENY
+   *
+   * Phase 4A-3R: 增加 Integration 接线状态和 Native Tool Calling 四态 Gate
+   *   - 接线状态非 CONNECTED → 返回 false
+   *   - nativeToolCallingSupport 非 SUPPORTED → 返回 false (UNKNOWN 也不允许注入)
    */
   isAvatarToolCallingAvailable(): boolean {
+    // Phase 4A-3R: 接线状态检查
+    if (this.avatarToolIntegrationState !== AvatarToolIntegrationStateConst.CONNECTED) {
+      return false;
+    }
     if (this.avatarToolRegistry === null
       || this.avatarPermissionController === null
       || this.avatarToolExecutor === null
@@ -523,11 +717,17 @@ export class ChatService {
     if (!this.currentProviderSupportsToolCalling) {
       return false;
     }
+    // Phase 4A-3R: 必须真实探测成功才能注入工具
+    if (this.nativeToolCallingSupport !== NativeToolCallingSupportConst.SUPPORTED) {
+      return false;
+    }
     return this.avatarPermissionController.canInjectTools();
   }
 
   /**
    * Phase 4A-3: 获取当前 Avatar Tool Calling 状态 (供 UI 显示)。
+   *
+   * Phase 4A-3R: 返回 integrationState / nativeToolCallingSupport / decisionSource / probe 错误信息 / Provider 信息。
    */
   getAvatarToolCallingStatus(): AvatarToolCallingStatus {
     const supported: boolean = this.currentProviderSupportsToolCalling;
@@ -544,6 +744,8 @@ export class ChatService {
     const snapshot: ArkWebAvatarAiCapabilitySnapshot | null =
       this.avatarSnapshotProvider !== null ? this.avatarSnapshotProvider() : null;
     const capabilityReady: boolean = snapshot !== null;
+    // Phase 4A-3R: 同步获取 Provider 信息 (异步方法不能用 @State, 这里用空字符串占位,
+    // ChatPage 单独通过 getProviderInfoSnapshot 异步刷新)
     return {
       providerSupported: supported,
       permissionMode: permissionMode,
@@ -551,7 +753,15 @@ export class ChatService {
       capabilityReady: capabilityReady,
       lastToolName: this.lastAvatarToolName,
       lastToolResult: this.lastAvatarToolResult,
-      lastToolError: this.lastAvatarToolError
+      lastToolError: this.lastAvatarToolError,
+      integrationState: this.avatarToolIntegrationState,
+      nativeToolCallingSupport: this.nativeToolCallingSupport,
+      decisionSource: this.nativeToolCallingDecisionSource,
+      probeErrorCode: this.nativeToolCallingProbeErrorCode,
+      probeErrorMessage: this.nativeToolCallingProbeErrorMessage,
+      providerType: '',
+      providerDisplayName: '',
+      currentModelId: ''
     };
   }
 
@@ -1879,6 +2089,11 @@ export class ChatService {
     // 启动超时保护(携带 context 用于迟到 timer 判断)
     this.startStartTimer(assistantId, callbacks, context);
 
+    // Phase 4A-3R 修复: 每次生成开始时刷新 Provider Tool Calling 支持状态 + 重置 Turn 临时状态
+    // 缺失此调用会导致 currentProviderSupportsToolCalling 永远为 false, 工具永不注入
+    await this.refreshProviderToolCallingSupport();
+    this.resetAvatarToolTurnState();
+
     // 创建请求级 Preset 快照(每次请求开始时读取一次)
     let snapshot: PromptPresetRequestSnapshot;
     try {
@@ -2695,6 +2910,17 @@ export class ChatService {
       || this.avatarSnapshotProvider === null) {
       return null;
     }
+    // Phase 4A-3R Gate: Tool Integration 未连接或 Provider 非 SUPPORTED 时不注入策略
+    // - 即使 4C-2 策略文件存在, 也不允许在未验证 Provider 支持的情况下注入
+    // - 防止 UI 误显示"策略已注入"
+    if (this.avatarToolIntegrationState !== AvatarToolIntegrationStateConst.CONNECTED) {
+      Logger.info(LOG_TAG, `buildAvatarDialogueStrategy: skip (integrationState=${this.avatarToolIntegrationState})`);
+      return null;
+    }
+    if (this.nativeToolCallingSupport !== NativeToolCallingSupportConst.SUPPORTED) {
+      Logger.info(LOG_TAG, `buildAvatarDialogueStrategy: skip (nativeToolCallingSupport=${this.nativeToolCallingSupport})`);
+      return null;
+    }
 
     const permissionMode: string = this.avatarPermissionController.getPermissionMode();
     const snapshot: ArkWebAvatarAiCapabilitySnapshot | null = this.avatarSnapshotProvider();
@@ -2818,6 +3044,469 @@ export class ChatService {
         Logger.warn(LOG_TAG, 'sessionState dispose threw: ' + String(e));
       }
     }
+  }
+
+  // ===== Phase 4A-3R: 原生 Tool Calling 探测与只读烟雾测试 =====
+
+  /**
+   * Phase 4A-3R: 探测当前 Provider 是否真正支持原生 Tool Calling。
+   *
+   * 流程:
+   *   1. 检查 Integration 接线状态 (非 CONNECTED → MISCONFIGURED)
+   *   2. 检查 Provider 声明 (supportsToolCalling() = false → UNSUPPORTED)
+   *   3. 构造探测工具 (ark_tool_capability_probe) 和随机 token
+   *   4. 发起流式请求 (tools + tool_choice='auto')
+   *   5. 检测返回是否包含结构化 tool_calls (排除正文 JSON / Markdown JSON)
+   *   6. 校验 toolCallId / toolName / arguments.token
+   *   7. 全部通过 → SUPPORTED; 任何一步失败 → 对应错误码
+   *
+   * 不写入:
+   *   - 聊天历史 / 消息数据库 / 角色记忆 / 世界书 / 用户可见对话 / Avatar 演出历史
+   *
+   * @returns 探测结果 (包含 success / support / decisionSource / errorCode / errorMessage)
+   */
+  async probeNativeToolCalling(): Promise<NativeToolCallingProbeResult> {
+    const probeToken: string = generateProbeToken();
+    const requestId: string = `probe-${Date.now()}-${probeToken}`;
+    Logger.info(LOG_TAG, `probeNativeToolCalling: start, requestId=${requestId}, token=${probeToken}`);
+
+    // 1. Integration 接线检查
+    if (this.avatarToolIntegrationState !== AvatarToolIntegrationStateConst.CONNECTED) {
+      return this.buildProbeFailure(
+        NativeToolCallingSupportConst.MISCONFIGURED,
+        NativeToolCallingErrorCodeConst.INTEGRATION_NOT_CONNECTED,
+        `Avatar Tool Integration not connected (state=${this.avatarToolIntegrationState}).`,
+        0,
+        requestId
+      );
+    }
+
+    // 2. Provider 声明检查
+    let providerDeclared: boolean = false;
+    try {
+      providerDeclared = await this.modelService.supportsToolCallingForCurrentProvider();
+    } catch (e) {
+      return this.buildProbeFailure(
+        NativeToolCallingSupportConst.MISCONFIGURED,
+        NativeToolCallingErrorCodeConst.PROVIDER_MISCONFIGURED,
+        `Provider config resolve failed: ${e instanceof Error ? e.message : String(e)}`,
+        0,
+        requestId
+      );
+    }
+    if (!providerDeclared) {
+      this.currentProviderSupportsToolCalling = false;
+      return this.buildProbeFailure(
+        NativeToolCallingSupportConst.UNSUPPORTED,
+        NativeToolCallingErrorCodeConst.PROVIDER_UNSUPPORTED,
+        'Provider declared no native tool calling support (supportsToolCalling()=false).',
+        0,
+        requestId
+      );
+    }
+    this.currentProviderSupportsToolCalling = true;
+
+    // 3. 构造探测请求
+    const probeTool: ArkWebChatToolDefinition = {
+      name: NATIVE_TOOL_PROBE_TOOL_NAME,
+      description: NATIVE_TOOL_PROBE_TOOL_DESCRIPTION,
+      inputSchemaJson: NATIVE_TOOL_PROBE_TOOL_PARAMETERS_JSON
+    };
+    const probeNow: number = Date.now();
+    const probeMessages: ChatMessage[] = [
+      createChatMessage(`probe-system-${requestId}`, ChatRole.System,
+        'You are a tool calling capability probe. Call the provided tool with the supplied token. Do not output the token as text.',
+        probeNow),
+      createChatMessage(`probe-user-${requestId}`, ChatRole.User,
+        `Please call ark_tool_capability_probe with token="${probeToken}".`,
+        probeNow)
+    ];
+    const probeOptions: ChatRequestOptions = {
+      temperature: 0.0,
+      topP: 1.0,
+      maxTokens: 256,
+      stream: true,
+      tools: [probeTool]
+    };
+
+    // 4. 发起流式请求并等待结果
+    let streamResult: ChatStreamResult | null = null;
+    let streamError: NetworkError | null = null;
+    try {
+      streamResult = await new Promise<ChatStreamResult>((resolve, reject): void => {
+        const callbacks: ChatStreamCallbacks = {
+          onDelta: (_delta: ChatDelta): void => {
+            // 探测请求忽略 delta (不写入任何状态)
+          },
+          onComplete: (result: ChatStreamResult): void => {
+            resolve(result);
+          },
+          onError: (error: NetworkError): void => {
+            reject(error);
+          }
+        };
+        this.currentHandle = this.modelService.streamCurrentChat(probeMessages, probeOptions, callbacks);
+      });
+    } catch (e) {
+      streamError = e as NetworkError;
+    }
+
+    if (streamError !== null) {
+      // NetworkError 无 code 字段, 使用 statusCode (number) 转为字符串
+      const errStatusCode: number | undefined = streamError!.statusCode;
+      const errCode: string = errStatusCode !== undefined ? String(errStatusCode) : '';
+      const errMsg: string = streamError!.message !== undefined ? streamError!.message : String(streamError);
+      // HTTP 400/404 通常表示 Provider 或模型不支持 tools
+      if (errCode === '400' || errCode === '404' || errCode === 'HTTP_400' || errCode === 'HTTP_404') {
+        return this.buildProbeFailure(
+          NativeToolCallingSupportConst.UNSUPPORTED,
+          NativeToolCallingErrorCodeConst.PROVIDER_UNSUPPORTED,
+          `Provider rejected tools (HTTP ${errCode}): ${errMsg}`,
+          parseInt(errCode.replace('HTTP_', ''), 10) || 0,
+          requestId
+        );
+      }
+      return this.buildProbeFailure(
+        NativeToolCallingSupportConst.MISCONFIGURED,
+        NativeToolCallingErrorCodeConst.PROVIDER_MISCONFIGURED,
+        `Probe request failed: ${errMsg} (code=${errCode})`,
+        0,
+        requestId
+      );
+    }
+
+    if (streamResult === null) {
+      return this.buildProbeFailure(
+        NativeToolCallingSupportConst.MISCONFIGURED,
+        NativeToolCallingErrorCodeConst.UNKNOWN_ERROR,
+        'Probe returned null result.',
+        0,
+        requestId
+      );
+    }
+
+    // 5. 检测结构化 tool_calls
+    const toolCalls: ArkWebChatToolCall[] | undefined = streamResult.toolCalls;
+    if (toolCalls === undefined || toolCalls.length === 0) {
+      // 检查是否正文包含 JSON (拒绝文本模拟)
+      const content: string = streamResult.content;
+      if (content.length > 0 && (content.includes('"token"') || content.includes('ark_tool_capability_probe'))) {
+        return this.buildProbeFailure(
+          NativeToolCallingSupportConst.UNSUPPORTED,
+          NativeToolCallingErrorCodeConst.TEXT_SIMULATION_REJECTED,
+          'Provider returned tool call in text content instead of structured tool_calls.',
+          0,
+          requestId
+        );
+      }
+      return this.buildProbeFailure(
+        NativeToolCallingSupportConst.UNSUPPORTED,
+        NativeToolCallingErrorCodeConst.MODEL_UNSUPPORTED,
+        'Provider returned no structured tool_calls.',
+        0,
+        requestId
+      );
+    }
+
+    // 6. 校验第一个 tool call (探测工具)
+    const firstCall: ArkWebChatToolCall = toolCalls[0];
+    const validationResult: ValidateProbeToolCallResult = validateProbeToolCall(
+      firstCall.toolCallId,
+      firstCall.name,
+      firstCall.argumentsJson,
+      probeToken
+    );
+    if (!validationResult.valid) {
+      return this.buildProbeFailure(
+        NativeToolCallingSupportConst.MISCONFIGURED,
+        validationResult.errorCode,
+        validationResult.errorMessage,
+        0,
+        requestId
+      );
+    }
+
+    // 7. 全部通过, 标记 SUPPORTED
+    const successResult: NativeToolCallingProbeResult = {
+      success: true,
+      support: NativeToolCallingSupportConst.SUPPORTED,
+      decisionSource: NativeToolCallingDecisionSourceConst.RUNTIME_PROBE,
+      errorCode: NativeToolCallingErrorCodeConst.UNKNOWN_ERROR,
+      errorMessage: '',
+      probedToolCallId: firstCall.toolCallId,
+      probedToolName: firstCall.name,
+      returnedToken: probeToken,
+      httpStatus: 200,
+      requestId: requestId,
+      probedAt: Date.now()
+    };
+    this.lastProbeResult = successResult;
+    this.nativeToolCallingSupport = NativeToolCallingSupportConst.SUPPORTED;
+    this.nativeToolCallingDecisionSource = NativeToolCallingDecisionSourceConst.RUNTIME_PROBE;
+    this.nativeToolCallingProbeErrorCode = '';
+    this.nativeToolCallingProbeErrorMessage = '';
+    Logger.info(LOG_TAG, `probeNativeToolCalling: SUCCESS, requestId=${requestId}`);
+    return successResult;
+  }
+
+  /**
+   * Phase 4A-3R: 构建探测失败结果并更新内部状态。
+   */
+  private buildProbeFailure(
+    support: NativeToolCallingSupport,
+    errorCode: NativeToolCallingErrorCode,
+    errorMessage: string,
+    httpStatus: number,
+    requestId: string
+  ): NativeToolCallingProbeResult {
+    const result: NativeToolCallingProbeResult = {
+      success: false,
+      support: support,
+      decisionSource: NativeToolCallingDecisionSourceConst.RUNTIME_PROBE,
+      errorCode: errorCode,
+      errorMessage: errorMessage,
+      probedToolCallId: '',
+      probedToolName: '',
+      returnedToken: '',
+      httpStatus: httpStatus,
+      requestId: requestId,
+      probedAt: Date.now()
+    };
+    this.lastProbeResult = result;
+    this.nativeToolCallingSupport = support;
+    this.nativeToolCallingDecisionSource = NativeToolCallingDecisionSourceConst.RUNTIME_PROBE;
+    this.nativeToolCallingProbeErrorCode = errorCode;
+    this.nativeToolCallingProbeErrorMessage = errorMessage;
+    Logger.warn(LOG_TAG, `probeNativeToolCalling: FAILED, support=${support}, errorCode=${errorCode}, requestId=${requestId}`);
+    return result;
+  }
+
+  /**
+   * Phase 4A-3R: 运行只读 Avatar 工具烟雾测试 (avatar_get_state)。
+   *
+   * 前置条件:
+   *   - Tool Integration 已连接
+   *   - nativeToolCallingSupport === SUPPORTED
+   *   - 权限为 READ_ONLY 或 CONTROL_THIS_CHAT
+   *
+   * 流程:
+   *   1. 临时构造只读请求 (tools=[avatar_get_state], tool_choice='auto')
+   *   2. 发起流式请求, 等待 Provider 返回 avatar_get_state tool call
+   *   3. 通过 ToolExecutor 执行 avatar_get_state
+   *   4. 将 tool result 回传 Provider 续写下一轮
+   *   5. 等待 Provider 返回最终普通文本
+   *
+   * 不播放动作, 不修改模型, 不写入聊天历史。
+   *
+   * @returns 烟雾测试结果 (success / errorCode / errorMessage / finalText 摘要)
+   */
+  async runReadOnlyAvatarToolSmokeTest(): Promise<ReadOnlyAvatarToolSmokeTestResult> {
+    Logger.info(LOG_TAG, 'runReadOnlyAvatarToolSmokeTest: start');
+
+    // 前置条件检查
+    if (this.avatarToolIntegrationState !== AvatarToolIntegrationStateConst.CONNECTED) {
+      const r: ReadOnlyAvatarToolSmokeTestResult = {
+        success: false,
+        errorCode: NativeToolCallingErrorCodeConst.INTEGRATION_NOT_CONNECTED,
+        errorMessage: `Avatar Tool Integration not connected (state=${this.avatarToolIntegrationState}).`,
+        finalTextSnippet: '',
+        toolCallId: ''
+      };
+      return r;
+    }
+    if (this.nativeToolCallingSupport !== NativeToolCallingSupportConst.SUPPORTED) {
+      const r: ReadOnlyAvatarToolSmokeTestResult = {
+        success: false,
+        errorCode: NativeToolCallingErrorCodeConst.PROVIDER_UNSUPPORTED,
+        errorMessage: `Native tool calling not supported (support=${this.nativeToolCallingSupport}). Run probe first.`,
+        finalTextSnippet: '',
+        toolCallId: ''
+      };
+      return r;
+    }
+    if (this.avatarToolExecutor === null || this.avatarPermissionController === null
+      || this.avatarSnapshotProvider === null || this.avatarExecutorRuntime === null) {
+      const r: ReadOnlyAvatarToolSmokeTestResult = {
+        success: false,
+        errorCode: NativeToolCallingErrorCodeConst.INTEGRATION_NOT_CONNECTED,
+        errorMessage: 'Tool executor dependencies not injected.',
+        finalTextSnippet: '',
+        toolCallId: ''
+      };
+      return r;
+    }
+    const permissionMode: string = this.avatarPermissionController.getPermissionMode();
+    if (permissionMode !== 'READ_ONLY' && permissionMode !== 'CONTROL_THIS_CHAT') {
+      const r: ReadOnlyAvatarToolSmokeTestResult = {
+        success: false,
+        errorCode: NativeToolCallingErrorCodeConst.UNKNOWN_ERROR,
+        errorMessage: `Permission mode must be READ_ONLY or CONTROL_THIS_CHAT (current=${permissionMode}).`,
+        finalTextSnippet: '',
+        toolCallId: ''
+      };
+      return r;
+    }
+
+    // 构造只读工具列表 (只注入 avatar_get_state)
+    const snapshot: ArkWebAvatarAiCapabilitySnapshot | null = this.avatarSnapshotProvider();
+    const allTools: ArkWebChatToolDefinition[] = this.avatarToolRegistry!.buildToolDefinitions(snapshot, 'READ_ONLY');
+    const readOnlyTools: ArkWebChatToolDefinition[] = allTools.filter((t: ArkWebChatToolDefinition): boolean =>
+      t.name === 'avatar_get_state');
+    if (readOnlyTools.length === 0) {
+      const r: ReadOnlyAvatarToolSmokeTestResult = {
+        success: false,
+        errorCode: NativeToolCallingErrorCodeConst.UNKNOWN_ERROR,
+        errorMessage: 'avatar_get_state tool not available.',
+        finalTextSnippet: '',
+        toolCallId: ''
+      };
+      return r;
+    }
+
+    // 第一轮: 发起请求, 等待 Provider 返回 tool call
+    const now1: number = Date.now();
+    const smokeMessages: ChatMessage[] = [
+      createChatMessage(`smoke-system-${now1}`, ChatRole.System,
+        'You are a tool calling smoke test. Call avatar_get_state to inspect the avatar state.', now1),
+      createChatMessage(`smoke-user-${now1}`, ChatRole.User,
+        'Call avatar_get_state and tell me the result.', now1)
+    ];
+    const smokeOptions: ChatRequestOptions = {
+      temperature: 0.0,
+      topP: 1.0,
+      maxTokens: 512,
+      stream: true,
+      tools: readOnlyTools
+    };
+
+    let firstResult: ChatStreamResult | null = null;
+    try {
+      firstResult = await new Promise<ChatStreamResult>((resolve, reject): void => {
+        const callbacks: ChatStreamCallbacks = {
+          onDelta: (_delta: ChatDelta): void => {},
+          onComplete: (result: ChatStreamResult): void => { resolve(result); },
+          onError: (error: NetworkError): void => { reject(error); }
+        };
+        this.currentHandle = this.modelService.streamCurrentChat(smokeMessages, smokeOptions, callbacks);
+      });
+    } catch (e) {
+      const err: NetworkError = e as NetworkError;
+      const r: ReadOnlyAvatarToolSmokeTestResult = {
+        success: false,
+        errorCode: NativeToolCallingErrorCodeConst.PROVIDER_MISCONFIGURED,
+        errorMessage: `Smoke test first round failed: ${err.message !== undefined ? err.message : String(err)}`,
+        finalTextSnippet: '',
+        toolCallId: ''
+      };
+      return r;
+    }
+
+    const toolCalls: ArkWebChatToolCall[] | undefined = firstResult.toolCalls;
+    if (toolCalls === undefined || toolCalls.length === 0) {
+      const r: ReadOnlyAvatarToolSmokeTestResult = {
+        success: false,
+        errorCode: NativeToolCallingErrorCodeConst.MODEL_UNSUPPORTED,
+        errorMessage: 'Provider did not return avatar_get_state tool call.',
+        finalTextSnippet: firstResult.content.substring(0, 200),
+        toolCallId: ''
+      };
+      return r;
+    }
+
+    // 执行 avatar_get_state
+    const toolCall: ArkWebChatToolCall = toolCalls[0];
+    if (toolCall.name !== 'avatar_get_state') {
+      const r: ReadOnlyAvatarToolSmokeTestResult = {
+        success: false,
+        errorCode: NativeToolCallingErrorCodeConst.TEXT_SIMULATION_REJECTED,
+        errorMessage: `Provider returned wrong tool name: ${toolCall.name}`,
+        finalTextSnippet: '',
+        toolCallId: toolCall.toolCallId
+      };
+      return r;
+    }
+    const toolContext: ArkWebAvatarAiToolContext = {
+      chatTurnId: `smoke-${Date.now()}`,
+      snapshot: snapshot,
+      permissionMode: 'READ_ONLY'
+    };
+    let toolResult: ArkWebChatToolExecutionResult;
+    try {
+      toolResult = await this.avatarToolExecutor.execute(toolContext, toolCall);
+    } catch (e) {
+      const r: ReadOnlyAvatarToolSmokeTestResult = {
+        success: false,
+        errorCode: NativeToolCallingErrorCodeConst.UNKNOWN_ERROR,
+        errorMessage: `avatar_get_state execution failed: ${e instanceof Error ? e.message : String(e)}`,
+        finalTextSnippet: '',
+        toolCallId: toolCall.toolCallId
+      };
+      return r;
+    }
+    if (!toolResult.success) {
+      const r: ReadOnlyAvatarToolSmokeTestResult = {
+        success: false,
+        errorCode: toolResult.errorCode.length > 0 ? toolResult.errorCode : NativeToolCallingErrorCodeConst.UNKNOWN_ERROR,
+        errorMessage: `avatar_get_state execution failed: ${toolResult.errorMessage}`,
+        finalTextSnippet: '',
+        toolCallId: toolCall.toolCallId
+      };
+      return r;
+    }
+
+    // 第二轮: 回传 tool result, 等待最终文本
+    // 注意: ChatMessage 无 toolCalls/toolCallId 字段, 此处用 priorToolCalls + toolResults 传递
+    const now2: number = Date.now();
+    const assistantMsg: ChatMessage = createChatMessage(
+      `smoke-assistant-${now2}`, ChatRole.Assistant, '', now2);
+    const toolMsg: ChatMessage = createChatMessage(
+      `smoke-tool-${now2}`, ChatRole.System, toolResult.resultJson, now2);
+    const secondMessages: ChatMessage[] = [
+      ...smokeMessages,
+      assistantMsg,
+      toolMsg
+    ];
+    const secondOptions: ChatRequestOptions = {
+      temperature: 0.0,
+      topP: 1.0,
+      maxTokens: 512,
+      stream: true,
+      tools: readOnlyTools,
+      priorToolCalls: [toolCall],
+      toolResults: [toolResult]
+    };
+
+    let finalResult: ChatStreamResult | null = null;
+    try {
+      finalResult = await new Promise<ChatStreamResult>((resolve, reject): void => {
+        const callbacks: ChatStreamCallbacks = {
+          onDelta: (_delta: ChatDelta): void => {},
+          onComplete: (result: ChatStreamResult): void => { resolve(result); },
+          onError: (error: NetworkError): void => { reject(error); }
+        };
+        this.currentHandle = this.modelService.streamCurrentChat(secondMessages, secondOptions, callbacks);
+      });
+    } catch (e) {
+      const err: NetworkError = e as NetworkError;
+      const r: ReadOnlyAvatarToolSmokeTestResult = {
+        success: false,
+        errorCode: NativeToolCallingErrorCodeConst.RESULT_CONTINUATION_MISSING,
+        errorMessage: `Smoke test second round failed: ${err.message !== undefined ? err.message : String(err)}`,
+        finalTextSnippet: '',
+        toolCallId: toolCall.toolCallId
+      };
+      return r;
+    }
+
+    Logger.info(LOG_TAG, `runReadOnlyAvatarToolSmokeTest: SUCCESS, toolCallId=${toolCall.toolCallId}`);
+    const okResult: ReadOnlyAvatarToolSmokeTestResult = {
+      success: true,
+      errorCode: '',
+      errorMessage: '',
+      finalTextSnippet: finalResult.content.substring(0, 200),
+      toolCallId: toolCall.toolCallId
+    };
+    return okResult;
   }
 
   /**

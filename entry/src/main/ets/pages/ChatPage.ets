@@ -87,6 +87,15 @@ import {
   ArkWebAvatarAiExpressionCapability,
   AI_CAPABILITY_EXPRESSION_DISPLAY_NAMES
 } from '../vrmviewer/ArkWebAvatarAiTypes';
+import {
+  ArkWebAvatarToolIntegration,
+  ArkWebAvatarToolIntegrationRuntime,
+  ArkWebAvatarToolIntegrationRuntimeImpl
+} from '../avatarai/ArkWebAvatarToolIntegration';
+import {
+  ArkWebAvatarToolPerformanceExecutionResult,
+  ArkWebAvatarToolExecutorBusinessState
+} from '../avatarai/ArkWebAvatarAiToolExecutor';
 
 const LOG_TAG: string = 'ChatPage';
 
@@ -263,6 +272,18 @@ struct ChatPage {
   @State avatarRhythmStatusText: string = '';
   /** Phase 4C-2: Avatar 对话演出节奏策略版本 (BALANCED_V1 或空) */
   @State avatarRhythmPolicyVersion: string = '';
+  /** Phase 4A-3R: Avatar Tool Integration 实例 (页面生命周期内单例) */
+  private avatarToolIntegration: ArkWebAvatarToolIntegration | null = null;
+  /** Phase 4A-3R: Provider 信息快照 (异步刷新) */
+  @State providerInfoText: string = '';
+  /** Phase 4A-3R: 探测中状态 (true 时按钮禁用) */
+  @State probeRunning: boolean = false;
+  /** Phase 4A-3R: 烟雾测试中状态 (true 时按钮禁用) */
+  @State smokeTestRunning: boolean = false;
+  /** Phase 4A-3R: 最近一次探测结果摘要 (供 UI 显示) */
+  @State probeResultText: string = '';
+  /** Phase 4A-3R: 最近一次烟雾测试结果摘要 (供 UI 显示) */
+  @State smokeTestResultText: string = '';
   /** 模型大小滑动条值 (fillRatio, 0.3~0.98, 默认 0.78) */
   @State avatarModelFillRatio: number = 0.78;
   /**
@@ -435,6 +456,28 @@ struct ChatPage {
       }
       this.chatEndpointId = '';
     }
+    // Phase 4A-3R: 销毁 Avatar Tool Integration (页面生命周期内单例)
+    // - 权限恢复 DENY (避免跨页面残留)
+    // - 清空 Registry / Executor / SessionState 等组件实例
+    // - 不 dispose 应用级 Bridge / AssetLibrary
+    // - 必须在 viewModel.dispose 之前调用, 避免 ChatService 被销毁后调用 clearAvatarToolIntegration
+    if (this.avatarToolIntegration !== null) {
+      try {
+        this.avatarToolIntegration!.dispose();
+      } catch (e) {
+        Logger.warn(LOG_TAG, 'avatarToolIntegration dispose failed: ' +
+          (e instanceof Error ? e.message : String(e)));
+      }
+      this.avatarToolIntegration = null;
+    }
+    if (this.viewModel !== null) {
+      try {
+        this.viewModel!.clearAvatarToolIntegration();
+      } catch (e) {
+        Logger.warn(LOG_TAG, 'clearAvatarToolIntegration failed: ' +
+          (e instanceof Error ? e.message : String(e)));
+      }
+    }
     // Phase 4B-1: Avatar Stage 控制器由 ChatAvatarStage 组件销毁
     // 这里仅清除引用, 不调用 dispose (避免重复销毁)
     this.avatarStageController = null;
@@ -560,6 +603,233 @@ struct ChatPage {
       Logger.warn(LOG_TAG, 'setAvatarToolPermission failed: ' +
         (e instanceof Error ? e.message : String(e)));
     }
+  }
+
+  /**
+   * Phase 4A-3R: 连接 Avatar Tool Integration (在 onControllerReady 后调用)。
+   *
+   * 流程:
+   *   1. 创建 ArkWebAvatarToolIntegration 实例 (页面生命周期内单例)
+   *   2. 构造 ArkWebAvatarToolIntegrationRuntime, 复用 ChatAvatarStageController:
+   *      - snapshotProvider: 返回 this.aiCapabilitySnapshot (MODEL_READY 后非空)
+   *      - publishPerformanceForToolCall: 复用 publishPerformanceFromPanel
+   *      - publishPerformanceForToolCallAndWait: 复用 publishPerformanceFromPanelAndWait
+   *      - stopPerformanceForToolCall: 复用 cancelPerformance
+   *      - getAvatarBusinessState: 从 getRuntimeSnapshot 映射
+   *   3. 调用 integration.connect(runtime)
+   *   4. 调用 chatService.setAvatarToolIntegration(...buildIntegrationParams())
+   *   5. 刷新 Provider 信息和 Avatar Tool Calling 状态
+   *
+   * 不创建第二套 Avatar Runtime (模型加载器 / 动画加载器 / PerformanceController / ShotDirector)。
+   * 不 dispose 应用级 AvatarChatBridge / 持久化 AssetLibrary。
+   */
+  private connectAvatarToolIntegration(): void {
+    if (this.viewModel === null) {
+      Logger.warn(LOG_TAG, 'connectAvatarToolIntegration: viewModel null, skip.');
+      return;
+    }
+    if (this.avatarStageController === null) {
+      Logger.warn(LOG_TAG, 'connectAvatarToolIntegration: avatarStageController null, skip.');
+      return;
+    }
+    // 已连接则跳过 (避免 onControllerReady 重复调用)
+    if (this.avatarToolIntegration !== null
+      && this.avatarToolIntegration!.isConnected()) {
+      return;
+    }
+    try {
+      const integration: ArkWebAvatarToolIntegration = new ArkWebAvatarToolIntegration();
+      const self: ChatPage = this;
+      const controllerRef: ArkWebChatAvatarStageController = this.avatarStageController!;
+      const snapshotProviderFn: () => ArkWebAvatarAiCapabilitySnapshot | null = (): ArkWebAvatarAiCapabilitySnapshot | null => {
+        return self.aiCapabilitySnapshot;
+      };
+      const publishPerformanceFn: (turnId: string, hintJson: string) => Promise<boolean> =
+        (_turnId: string, hintJson: string): Promise<boolean> => {
+          if (self.avatarStageController === null) {
+            return Promise.resolve(false);
+          }
+          return self.avatarStageController!.publishPerformanceFromPanel(hintJson);
+        };
+      const publishPerformanceAndWaitFn: (turnId: string, hintJson: string) => Promise<ArkWebAvatarToolPerformanceExecutionResult> =
+        (_turnId: string, hintJson: string): Promise<ArkWebAvatarToolPerformanceExecutionResult> => {
+          if (self.avatarStageController === null) {
+            const errResult: ArkWebAvatarToolPerformanceExecutionResult = {
+              accepted: false,
+              success: false,
+              errorCode: 'AVATAR_STAGE_NULL',
+              errorMessage: 'avatarStageController null'
+            };
+            return Promise.resolve(errResult);
+          }
+          return self.avatarStageController!.publishPerformanceFromPanelAndWait(hintJson)
+            .then((panelResult: ArkWebPanelPerformanceResult): ArkWebAvatarToolPerformanceExecutionResult => {
+              const okResult: ArkWebAvatarToolPerformanceExecutionResult = {
+                accepted: panelResult.accepted,
+                success: panelResult.executed,
+                errorCode: panelResult.errorCode,
+                errorMessage: panelResult.errorMessage
+              };
+              return okResult;
+            })
+            .catch((e: Object): ArkWebAvatarToolPerformanceExecutionResult => {
+              const msg: string = e instanceof Error ? e.message : String(e);
+              const errResult2: ArkWebAvatarToolPerformanceExecutionResult = {
+                accepted: false,
+                success: false,
+                errorCode: 'PUBLISH_AND_WAIT_THREW',
+                errorMessage: msg
+              };
+              return errResult2;
+            });
+        };
+      const stopPerformanceFn: (reason: string) => Promise<void> =
+        (_reason: string): Promise<void> => {
+          if (self.avatarStageController === null) {
+            return Promise.resolve();
+          }
+          return self.avatarStageController!.cancelPerformance();
+        };
+      const getAvatarBusinessStateFn: () => ArkWebAvatarToolExecutorBusinessState =
+        (): ArkWebAvatarToolExecutorBusinessState => {
+          if (self.avatarStageController === null) {
+            const emptyState: ArkWebAvatarToolExecutorBusinessState = {
+              connected: false,
+              modelReady: false,
+              modelDisplayName: '',
+              shot: 'IDLE',
+              performanceState: 'IDLE',
+              motionType: '',
+              motionId: '',
+              expressionId: ''
+            };
+            return emptyState;
+          }
+          const snap: ArkWebChatAvatarStageRuntimeSnapshot =
+            controllerRef.getRuntimeSnapshot();
+          const state: ArkWebAvatarToolExecutorBusinessState = {
+            connected: snap.stageState === 'MODEL_READY',
+            modelReady: snap.stageState === 'MODEL_READY',
+            modelDisplayName: snap.activeModelDisplayName,
+            shot: snap.currentShot,
+            performanceState: snap.lastLifecycleState.length > 0
+              ? snap.lastLifecycleState : 'IDLE',
+            motionType: snap.animationRuntimeState.length > 0 ? 'animation' : '',
+            motionId: snap.currentActionId,
+            expressionId: snap.currentExpressionId
+          };
+          return state;
+        };
+      const runtime: ArkWebAvatarToolIntegrationRuntime = new ArkWebAvatarToolIntegrationRuntimeImpl(
+        snapshotProviderFn,
+        publishPerformanceFn,
+        publishPerformanceAndWaitFn,
+        stopPerformanceFn,
+        getAvatarBusinessStateFn
+      );
+      integration.connect(runtime);
+      this.avatarToolIntegration = integration;
+      // 注入到 ChatService (通过 ViewModel 透传, 不直接访问 chatService)
+      this.viewModel!.setAvatarToolIntegration(integration.buildIntegrationParams());
+      Logger.info(LOG_TAG, 'connectAvatarToolIntegration: integration connected.');
+      // 刷新 Provider 信息和 Avatar Tool Calling 状态
+      this.refreshProviderInfoSnapshot();
+      this.refreshAvatarToolCallingStatus();
+    } catch (e) {
+      Logger.error(LOG_TAG, 'connectAvatarToolIntegration failed: ' +
+        (e instanceof Error ? e.message : String(e)));
+    }
+  }
+
+  /**
+   * Phase 4A-3R: 异步刷新当前 Provider 信息快照 (不含敏感字段)。
+   *
+   * 显示 Provider 类型 / 显示名称 / 当前模型 ID, 供 AI 面板展示。
+   * 不显示: API Key / Authorization / 完整 Base URL / 请求正文。
+   */
+  private refreshProviderInfoSnapshot(): void {
+    if (this.viewModel === null) {
+      this.providerInfoText = '';
+      return;
+    }
+    this.viewModel!.getProviderInfoSnapshot().then((info): void => {
+      const parts: string[] = [];
+      if (info.providerType.length > 0) {
+        parts.push(`类型:${info.providerType}`);
+      }
+      if (info.providerDisplayName.length > 0) {
+        parts.push(`名称:${info.providerDisplayName}`);
+      }
+      if (info.currentModelId.length > 0) {
+        parts.push(`模型:${info.currentModelId}`);
+      }
+      this.providerInfoText = parts.join(' | ');
+      // 同步刷新 Avatar Tool Calling 状态 (providerInfo 不在 AvatarToolCallingStatus 内)
+      this.refreshAvatarToolCallingStatus();
+    }).catch((e: Object): void => {
+      Logger.warn(LOG_TAG, 'refreshProviderInfoSnapshot failed: ' +
+        (e instanceof Error ? e.message : String(e)));
+      this.providerInfoText = '';
+    });
+  }
+
+  /**
+   * Phase 4A-3R: 用户点击"测试 Tool Calling"按钮触发原生能力探测。
+   *
+   * - 不写入聊天历史 / 消息数据库 / Avatar 演出历史
+   * - 成功: nativeToolCallingSupport = SUPPORTED, 刷新 UI
+   * - 失败: 显示具体错误码 (不会只显示"测试失败")
+   */
+  private probeToolCallingCapability(): void {
+    if (this.viewModel === null || this.probeRunning) {
+      return;
+    }
+    this.probeRunning = true;
+    this.probeResultText = '正在测试...';
+    this.viewModel!.probeNativeToolCalling().then((result): void => {
+      this.probeRunning = false;
+      if (result.success) {
+        this.probeResultText = `Provider Tool Calling:支持 | 来源:${result.decisionSource}`;
+      } else {
+        this.probeResultText = `Provider Tool Calling:不支持 | 错误:${result.errorCode} | ${result.errorMessage}`;
+      }
+      // 刷新 Avatar Tool Calling 状态以反映新的支持状态
+      this.refreshAvatarToolCallingStatus();
+    }).catch((e: Object): void => {
+      this.probeRunning = false;
+      const msg: string = e instanceof Error ? e.message : String(e);
+      this.probeResultText = `Provider Tool Calling:测试异常 | ${msg}`;
+      Logger.warn(LOG_TAG, 'probeToolCallingCapability failed: ' + msg);
+      this.refreshAvatarToolCallingStatus();
+    });
+  }
+
+  /**
+   * Phase 4A-3R: 用户点击"测试 Avatar 只读工具"按钮触发只读烟雾测试。
+   *
+   * - 调用 avatar_get_state 工具, 不播放动作, 不修改模型
+   * - 经过 ChatService 工具循环 / Tool Registry / PermissionController / Tool Executor
+   * - 工具结果返回 Provider, 最终得到普通文本
+   */
+  private runReadOnlyAvatarToolSmokeTest(): void {
+    if (this.viewModel === null || this.smokeTestRunning) {
+      return;
+    }
+    this.smokeTestRunning = true;
+    this.smokeTestResultText = '正在测试...';
+    this.viewModel!.runReadOnlyAvatarToolSmokeTest().then((result): void => {
+      this.smokeTestRunning = false;
+      if (result.success) {
+        this.smokeTestResultText = `Avatar 只读工具:通过 | toolCallId:${result.toolCallId} | 文本:${result.finalTextSnippet}`;
+      } else {
+        this.smokeTestResultText = `Avatar 只读工具:失败 | 错误:${result.errorCode} | ${result.errorMessage}`;
+      }
+    }).catch((e: Object): void => {
+      this.smokeTestRunning = false;
+      const msg: string = e instanceof Error ? e.message : String(e);
+      this.smokeTestResultText = `Avatar 只读工具:测试异常 | ${msg}`;
+      Logger.warn(LOG_TAG, 'runReadOnlyAvatarToolSmokeTest failed: ' + msg);
+    });
   }
 
   /**
@@ -895,6 +1165,8 @@ struct ChatPage {
               // 模型就绪后刷新能力快照
               if (state === 'MODEL_READY') {
                 self.refreshAiCapabilitySnapshot();
+                // Phase 4A-3R: 模型就绪后刷新 Provider 信息和 Avatar Tool Calling 状态
+                self.refreshProviderInfoSnapshot();
               }
             };
             listener.onModelNameChangedFn = (displayName: string): void => {
@@ -904,6 +1176,8 @@ struct ChatPage {
             controller.setEventListener(listener);
             // 初始快照
             this.avatarStageSnapshot = controller.getRuntimeSnapshot();
+            // Phase 4A-3R: 控制器就绪后连接 Avatar Tool Integration
+            this.connectAvatarToolIntegration();
           }
         })
 
@@ -1212,6 +1486,7 @@ struct ChatPage {
         if (this.aiPanelVisible) {
           this.refreshAiCapabilitySnapshot();
           this.verifyAvatarEndpoint();
+          this.refreshProviderInfoSnapshot();
           this.refreshAvatarToolCallingStatus();
         }
       })
@@ -1678,15 +1953,16 @@ struct ChatPage {
   }
 
   /**
-   * Phase 4A-3: AI 模型权限区块 (Avatar Tool Calling 权限控制)。
+   * Phase 4A-3R: AI 模型权限区块 (Avatar Tool Calling 权限控制)。
    *
-   * Phase 4C-2: 修正状态文案语义, 区分以下四种场景:
-   *   - Provider 不支持: Provider 不支持 / 工具 不可用 / 能力 未启用 / 策略 未注入
-   *   - 权限 DENY: AI 模型访问 不允许 / 工具 未启用 / 能力 未启用 / 策略 未注入
-   *   - READ_ONLY: 工具 2 个 / 能力 已就绪 / 策略 只读
-   *   - CONTROL_THIS_CHAT: 工具 4 个 / 能力 已就绪 / 策略 BALANCED V1 (已注入)
+   * Phase 4A-3R 修正:
+   *   - Avatar 能力状态与 Provider 工具状态分离
+   *   - Provider Tool Calling 改为四态 (SUPPORTED/UNSUPPORTED/UNKNOWN/MISCONFIGURED)
+   *   - 增加 Tool Integration 接线状态显示
+   *   - 增加"测试 Tool Calling"和"测试 Avatar 只读工具"按钮
+   *   - 权限按钮根据 Integration 状态和支持状态启用/禁用
    *
-   * 权限为 DENY 时, AI 面板手动按钮仍可使用 (手动按钮属用户操作)。
+   * 手动 AI 面板按钮始终可用, 不受 AI 权限限制。
    */
   @Builder
   avatarToolPermissionBlock() {
@@ -1698,19 +1974,56 @@ struct ChatPage {
         .width('100%')
         .margin({ bottom: 4 })
 
-      // Phase 4C-2: 文案语义修正 — Provider 支持状态
-      Row() {
-        Text(`Provider：${this.avatarToolStatus !== null && this.avatarToolStatus!.providerSupported ? '支持' : '不支持'}`)
+      // Phase 4A-3R: Provider 信息 (类型/名称/模型)
+      if (this.providerInfoText.length > 0) {
+        Text(this.providerInfoText)
           .fontSize(11)
-          .fontColor(this.avatarToolStatus !== null && this.avatarToolStatus!.providerSupported
+          .fontColor($r('app.color.app_text_secondary'))
+          .width('100%')
+          .margin({ top: 2 })
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+
+      // Phase 4A-3R: 工具接线状态 + Provider Tool Calling 四态
+      Row() {
+        Text(`工具接线:${this.buildIntegrationStateText()}`)
+          .fontSize(11)
+          .fontColor(this.isIntegrationConnected()
             ? $r('app.color.app_text_secondary')
             : $r('app.color.app_danger'))
           .layoutWeight(1)
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-        // Phase 4C-2: 工具数量显示根据 Provider 支持和权限模式区分
+        Text(`Provider Tool Calling:${this.buildNativeToolCallingSupportText()}`)
+          .fontSize(11)
+          .fontColor(this.buildNativeToolCallingSupportColor())
+          .layoutWeight(1)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .width('100%')
+
+      // Phase 4A-3R: Avatar 能力状态 (独立于 Provider 工具状态)
+      Text(this.buildAvatarCapabilityText())
+        .fontSize(11)
+        .fontColor($r('app.color.app_text_secondary'))
+        .width('100%')
+        .margin({ top: 2 })
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+      // Phase 4A-3R: 工具数量 + 策略状态
+      Row() {
         Text(this.buildToolCountText())
+          .fontSize(11)
+          .fontColor($r('app.color.app_text_secondary'))
+          .layoutWeight(1)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+        Text(this.buildStrategyInjectionText())
           .fontSize(11)
           .fontColor($r('app.color.app_text_secondary'))
           .layoutWeight(1)
@@ -1718,15 +2031,7 @@ struct ChatPage {
           .textOverflow({ overflow: TextOverflow.Ellipsis })
       }
       .width('100%')
-
-      // Phase 4C-2: 能力状态文案修正 — 不再使用"未就绪"以避免被理解为模型资产加载失败
-      Text(this.buildCapabilityText())
-        .fontSize(11)
-        .fontColor($r('app.color.app_text_secondary'))
-        .width('100%')
-        .margin({ top: 2 })
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
+      .margin({ top: 2 })
 
       if (this.avatarToolStatus !== null && this.avatarToolStatus!.lastToolError.length > 0) {
         Text(`错误：${this.avatarToolStatus!.lastToolError}`)
@@ -1738,16 +2043,18 @@ struct ChatPage {
           .textOverflow({ overflow: TextOverflow.Ellipsis })
       }
 
-      // Phase 4C-2: 策略注入状态 (简洁单行)
-      Text(this.buildStrategyInjectionText())
-        .fontSize(11)
-        .fontColor($r('app.color.app_text_secondary'))
-        .width('100%')
-        .margin({ top: 2 })
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
+      // Phase 4A-3R: 权限按钮提示 (未连接/UNKNOWN/UNSUPPORTED/MISCONFIGURED 时显示原因)
+      if (!this.arePermissionButtonsEnabled()) {
+        Text(this.buildPermissionButtonHint())
+          .fontSize(11)
+          .fontColor($r('app.color.app_danger'))
+          .width('100%')
+          .margin({ top: 2 })
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
 
-      // 权限切换按钮 (三档)
+      // 权限切换按钮 (三档, 根据 Integration 和支持状态启用/禁用)
       Row() {
         Button('不允许')
           .type(ButtonType.Normal)
@@ -1760,6 +2067,7 @@ struct ChatPage {
           .height(28)
           .layoutWeight(1)
           .margin({ right: 2 })
+          .enabled(true) // DENY 始终可用
           .onClick(() => {
             this.setAvatarToolPermission('DENY');
           })
@@ -1775,6 +2083,7 @@ struct ChatPage {
           .height(28)
           .layoutWeight(1)
           .margin({ left: 2, right: 2 })
+          .enabled(this.arePermissionButtonsEnabled())
           .onClick(() => {
             this.setAvatarToolPermission('READ_ONLY');
           })
@@ -1790,12 +2099,67 @@ struct ChatPage {
           .height(28)
           .layoutWeight(1)
           .margin({ left: 2 })
+          .enabled(this.arePermissionButtonsEnabled())
           .onClick(() => {
             this.setAvatarToolPermission('CONTROL_THIS_CHAT');
           })
       }
       .width('100%')
       .margin({ top: 4 })
+
+      // Phase 4A-3R: 测试 Tool Calling 按钮
+      Button(this.probeRunning ? '正在测试 Tool Calling...' : '测试 Tool Calling')
+        .type(ButtonType.Normal)
+        .borderRadius($r('app.float.app_radius_sm'))
+        .backgroundColor('rgba(255,255,255,0.12)')
+        .fontColor($r('app.color.app_text_primary'))
+        .fontSize(11)
+        .width('100%')
+        .height(28)
+        .margin({ top: 4 })
+        .enabled(!this.probeRunning && this.isIntegrationConnected())
+        .onClick(() => {
+          this.probeToolCallingCapability();
+        })
+
+      // Phase 4A-3R: 探测结果显示
+      if (this.probeResultText.length > 0) {
+        Text(this.probeResultText)
+          .fontSize(11)
+          .fontColor($r('app.color.app_text_secondary'))
+          .width('100%')
+          .margin({ top: 2 })
+          .maxLines(3)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+
+      // Phase 4A-3R: 测试 Avatar 只读工具按钮 (仅 SUPPORTED 时可用)
+      Button(this.smokeTestRunning ? '正在测试 Avatar 只读工具...' : '测试 Avatar 只读工具')
+        .type(ButtonType.Normal)
+        .borderRadius($r('app.float.app_radius_sm'))
+        .backgroundColor('rgba(255,255,255,0.12)')
+        .fontColor($r('app.color.app_text_primary'))
+        .fontSize(11)
+        .width('100%')
+        .height(28)
+        .margin({ top: 4 })
+        .enabled(!this.smokeTestRunning
+          && this.isIntegrationConnected()
+          && this.getNativeToolCallingSupportState() === 'SUPPORTED')
+        .onClick(() => {
+          this.runReadOnlyAvatarToolSmokeTest();
+        })
+
+      // Phase 4A-3R: 烟雾测试结果显示
+      if (this.smokeTestResultText.length > 0) {
+        Text(this.smokeTestResultText)
+          .fontSize(11)
+          .fontColor($r('app.color.app_text_secondary'))
+          .width('100%')
+          .margin({ top: 2 })
+          .maxLines(3)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
     }
     .width('100%')
     .padding(8)
@@ -1805,65 +2169,172 @@ struct ChatPage {
   }
 
   /**
-   * Phase 4C-2: 构建工具数量显示文案。
-   *
-   * - Provider 不支持: 工具：不可用
-   * - 权限 DENY: 工具：未启用
-   * - READ_ONLY: 工具：2 个
-   * - CONTROL_THIS_CHAT: 工具：4 个
+   * Phase 4A-3R: 判断 Tool Integration 是否已连接。
    */
-  private buildToolCountText(): string {
-    if (this.avatarToolStatus === null) {
-      return '工具：未启用';
+  private isIntegrationConnected(): boolean {
+    if (this.viewModel === null) {
+      return false;
     }
-    if (!this.avatarToolStatus!.providerSupported) {
-      return '工具：不可用';
+    try {
+      return this.viewModel!.getAvatarToolIntegrationState() === 'CONNECTED';
+    } catch (_e) {
+      return false;
     }
-    if (this.avatarToolPermissionMode === 'DENY') {
-      return '工具：未启用';
-    }
-    return `工具：${this.avatarToolStatus!.toolCount} 个`;
   }
 
   /**
-   * Phase 4C-2: 构建能力状态显示文案。
-   *
-   * - Provider 不支持: 能力：未启用
-   * - 权限 DENY: 能力：未启用
-   * - READ_ONLY/CONTROL_THIS_CHAT: 能力：已就绪 / 能力：未就绪 (仅模型未加载时)
-   *
-   * 不再使用"未就绪"来描述 Provider 不支持或权限 DENY 场景,
-   * 避免被理解为模型资产加载失败。
+   * Phase 4A-3R: 获取当前原生 Tool Calling 四态支持状态。
    */
-  private buildCapabilityText(): string {
+  private getNativeToolCallingSupportState(): string {
+    if (this.viewModel === null) {
+      return 'UNKNOWN';
+    }
+    try {
+      return this.viewModel!.getNativeToolCallingSupport();
+    } catch (_e) {
+      return 'UNKNOWN';
+    }
+  }
+
+  /**
+   * Phase 4A-3R: 构建 Tool Integration 接线状态文案。
+   */
+  private buildIntegrationStateText(): string {
+    if (this.viewModel === null) {
+      return '未连接';
+    }
+    try {
+      const state: string = this.viewModel!.getAvatarToolIntegrationState();
+      if (state === 'CONNECTED') {
+        return '已连接';
+      } else if (state === 'NOT_CONNECTED') {
+        return '未连接';
+      } else if (state === 'FAILED') {
+        return '接线失败';
+      } else if (state === 'DISPOSED') {
+        return '已销毁';
+      }
+      return state;
+    } catch (_e) {
+      return '未连接';
+    }
+  }
+
+  /**
+   * Phase 4A-3R: 构建原生 Tool Calling 四态支持状态文案。
+   *
+   * 禁止 UNKNOWN 显示为"不支持"。
+   */
+  private buildNativeToolCallingSupportText(): string {
+    const support: string = this.getNativeToolCallingSupportState();
+    if (support === 'SUPPORTED') {
+      return '支持';
+    } else if (support === 'UNSUPPORTED') {
+      return '不支持';
+    } else if (support === 'MISCONFIGURED') {
+      return '配置错误';
+    }
+    return '尚未验证';
+  }
+
+  /**
+   * Phase 4A-3R: 构建原生 Tool Calling 四态支持状态颜色。
+   */
+  private buildNativeToolCallingSupportColor(): ResourceColor {
+    const support: string = this.getNativeToolCallingSupportState();
+    if (support === 'SUPPORTED') {
+      return $r('app.color.app_text_secondary');
+    } else if (support === 'UNKNOWN') {
+      return $r('app.color.app_text_secondary');
+    }
+    return $r('app.color.app_danger');
+  }
+
+  /**
+   * Phase 4A-3R: 构建 Avatar 能力状态文案 (独立于 Provider 工具状态)。
+   *
+   * Avatar 能力只看模型是否就绪, 与 Provider 是否支持工具无关。
+   */
+  private buildAvatarCapabilityText(): string {
     if (this.avatarToolStatus === null) {
-      return '能力：未启用';
+      return 'Avatar 能力：未启用';
     }
-    if (!this.avatarToolStatus!.providerSupported) {
-      return '能力：未启用';
-    }
-    if (this.avatarToolPermissionMode === 'DENY') {
-      return '能力：未启用';
-    }
-    // READ_ONLY / CONTROL_THIS_CHAT 且 Provider 支持: 显示真实就绪状态
     const capabilityText: string = this.avatarToolStatus!.capabilityReady ? '已就绪' : '未就绪';
     const toolSuffix: string = this.avatarToolStatus!.lastToolName.length > 0
       ? ` | 最后工具：${this.avatarToolStatus!.lastToolName}` : '';
-    return `能力：${capabilityText}${toolSuffix}`;
+    return `Avatar 能力：${capabilityText}${toolSuffix}`;
   }
 
   /**
-   * Phase 4C-2: 构建策略注入状态文案。
+   * Phase 4A-3R: 判断权限按钮 (只读/控制本次聊天) 是否可启用。
    *
-   * - Provider 不支持: 策略：未注入
+   * - Tool Integration 未连接: 禁用
+   * - UNKNOWN: 禁用 (需先测试 Tool Calling)
+   * - UNSUPPORTED: 禁用
+   * - MISCONFIGURED: 禁用
+   * - SUPPORTED: 启用
+   *
+   * DENY 按钮始终可用。
+   */
+  private arePermissionButtonsEnabled(): boolean {
+    if (!this.isIntegrationConnected()) {
+      return false;
+    }
+    return this.getNativeToolCallingSupportState() === 'SUPPORTED';
+  }
+
+  /**
+   * Phase 4A-3R: 构建权限按钮禁用时的提示文案。
+   */
+  private buildPermissionButtonHint(): string {
+    if (!this.isIntegrationConnected()) {
+      return '原因：Avatar Tool Integration 尚未连接';
+    }
+    const support: string = this.getNativeToolCallingSupportState();
+    if (support === 'UNKNOWN') {
+      return '原因：请先点击"测试 Tool Calling"验证 Provider 支持';
+    } else if (support === 'UNSUPPORTED') {
+      return '原因：当前 Provider 或模型不支持原生 Tool Calling';
+    } else if (support === 'MISCONFIGURED') {
+      return '原因：工具适配未配置';
+    }
+    return '';
+  }
+
+  /**
+   * Phase 4A-3R: 构建工具数量显示文案。
+   *
+   * - Integration 未连接 / 非 SUPPORTED: 工具：0
+   * - 权限 DENY: 工具：0
+   * - READ_ONLY: 工具：2
+   * - CONTROL_THIS_CHAT: 工具：4
+   */
+  private buildToolCountText(): string {
+    if (!this.arePermissionButtonsEnabled()) {
+      return '工具：0';
+    }
+    if (this.avatarToolPermissionMode === 'DENY') {
+      return '工具：0';
+    }
+    if (this.avatarToolStatus === null) {
+      return '工具：0';
+    }
+    return `工具：${this.avatarToolStatus!.toolCount}`;
+  }
+
+  /**
+   * Phase 4A-3R: 构建策略注入状态文案。
+   *
+   * - Integration 未连接 / 非 SUPPORTED: 策略：未注入
    * - 权限 DENY: 策略：未注入
    * - READ_ONLY: 策略：只读
    * - CONTROL_THIS_CHAT: 策略：BALANCED V1 (已注入)
    */
   private buildStrategyInjectionText(): string {
-    if (this.avatarToolStatus === null
-      || !this.avatarToolStatus!.providerSupported
-      || this.avatarToolPermissionMode === 'DENY') {
+    if (!this.arePermissionButtonsEnabled()) {
+      return '策略：未注入';
+    }
+    if (this.avatarToolPermissionMode === 'DENY') {
       return '策略：未注入';
     }
     if (this.avatarToolPermissionMode === 'READ_ONLY') {

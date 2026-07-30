@@ -16,7 +16,7 @@
  * - messages 始终以新引用赋值,确保 ArkUI 检测到变化
  */
 
-import { ChatService, ChatState, ChatServiceCallbacks, AvatarToolCallingStatus } from '../services/ChatService';
+import { ChatService, ChatState, ChatServiceCallbacks, AvatarToolCallingStatus, ReadOnlyAvatarToolSmokeTestResult } from '../services/ChatService';
 import { ArkWebAvatarDialogueStrategyStatus } from '../avatarai/ArkWebAvatarDialogueStrategyTypes';
 import { ModelService } from '../services/ModelService';
 import { ChatMessage, ChatMessageStatus } from '../models/ChatMessage';
@@ -39,6 +39,21 @@ import {
   ArkWebAvatarChatFinalResult,
   ArkWebAvatarChatFinalResultSource
 } from '../services/avatar/ArkWebAvatarChatBridgeTypes';
+import { ArkWebAvatarAiToolRegistry } from '../avatarai/ArkWebAvatarAiToolRegistry';
+import { ArkWebAvatarAiToolPermissionController } from '../avatarai/ArkWebAvatarAiToolPermissionController';
+import {
+  ArkWebAvatarAiToolExecutor,
+  ArkWebAvatarAiToolExecutorRuntime
+} from '../avatarai/ArkWebAvatarAiToolExecutor';
+import { ArkWebAvatarAiCapabilitySnapshot } from '../vrmviewer/ArkWebAvatarAiTypes';
+import { ArkWebAvatarDialogueStrategyBuilder } from '../avatarai/ArkWebAvatarDialogueStrategyBuilder';
+import { ArkWebAvatarDialogueSessionState } from '../avatarai/ArkWebAvatarDialogueSessionState';
+import { ArkWebAvatarDialogueRhythmPolicy } from '../avatarai/ArkWebAvatarDialogueRhythmPolicy';
+import { ArkWebAvatarToolIntegrationParams } from '../avatarai/ArkWebAvatarToolIntegration';
+import {
+  ProviderInfoSnapshot,
+  NativeToolCallingProbeResult
+} from '../avatarai/NativeToolCallingCapability';
 
 const LOG_TAG: string = 'ChatViewModel';
 
@@ -1090,6 +1105,87 @@ export class ChatViewModel {
    */
   disposeAvatarDialogueSessionState(): void {
     this.chatService.disposeAvatarDialogueSessionState();
+  }
+
+  // ===== Phase 4A-3R: Avatar Tool Integration 生命周期与探测 =====
+
+  /**
+   * Phase 4A-3R: 设置 Avatar Tool Integration (页面进入时调用)。
+   *
+   * 透传到 ChatService.setAvatarToolIntegration。
+   * 任一参数为 null 时不启用 Avatar Tool Calling, 普通聊天保持原行为。
+   */
+  setAvatarToolIntegration(params: ArkWebAvatarToolIntegrationParams): void {
+    this.chatService.setAvatarToolIntegration(
+      params.registry,
+      params.permissionController,
+      params.executor,
+      params.runtime,
+      params.snapshotProvider,
+      params.strategyBuilder,
+      params.sessionState,
+      params.rhythmPolicy
+    );
+  }
+
+  /**
+   * Phase 4A-3R: 清空 Avatar Tool Integration (页面退出时调用)。
+   *
+   * - 权限恢复 DENY
+   * - 清空所有依赖引用
+   * - 接线状态变为 DISPOSED
+   */
+  clearAvatarToolIntegration(): void {
+    this.chatService.clearAvatarToolIntegration();
+  }
+
+  /**
+   * Phase 4A-3R: 获取 Tool Integration 接线状态。
+   *
+   * 返回: 'CONNECTED' / 'NOT_CONNECTED' / 'FAILED' / 'DISPOSED'
+   */
+  getAvatarToolIntegrationState(): string {
+    return this.chatService.getAvatarToolIntegrationState();
+  }
+
+  /**
+   * Phase 4A-3R: 获取原生 Tool Calling 四态支持状态。
+   *
+   * 返回: 'SUPPORTED' / 'UNSUPPORTED' / 'UNKNOWN' / 'MISCONFIGURED'
+   */
+  getNativeToolCallingSupport(): string {
+    return this.chatService.getNativeToolCallingSupport();
+  }
+
+  /**
+   * Phase 4A-3R: 获取当前 Provider 信息快照 (异步)。
+   *
+   * 返回: { providerType, providerDisplayName, currentModelId } (不含敏感字段)
+   */
+  async getProviderInfoSnapshot(): Promise<ProviderInfoSnapshot> {
+    return this.chatService.getProviderInfoSnapshot();
+  }
+
+  /**
+   * Phase 4A-3R: 探测当前 Provider 是否真正支持原生 Tool Calling。
+   *
+   * - 用户主动点击"测试 Tool Calling"按钮时调用
+   * - 不写入聊天历史 / 消息数据库 / Avatar 演出历史
+   * - 成功: nativeToolCallingSupport = SUPPORTED
+   * - 失败: 返回详细错误码 (不会只显示"测试失败")
+   */
+  async probeNativeToolCalling(): Promise<NativeToolCallingProbeResult> {
+    return this.chatService.probeNativeToolCalling();
+  }
+
+  /**
+   * Phase 4A-3R: 运行只读 Avatar 工具烟雾测试 (avatar_get_state)。
+   *
+   * 前置条件: nativeToolCallingSupport === SUPPORTED 且权限为 READ_ONLY / CONTROL_THIS_CHAT。
+   * 不播放动作, 不修改模型, 不写入聊天历史。
+   */
+  async runReadOnlyAvatarToolSmokeTest(): Promise<ReadOnlyAvatarToolSmokeTestResult> {
+    return this.chatService.runReadOnlyAvatarToolSmokeTest();
   }
 
   dispose(): void {

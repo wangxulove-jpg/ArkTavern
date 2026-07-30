@@ -213,48 +213,29 @@ export class ArkWebAvatarAssetLibrary {
       return true;
     }
 
-    // 1. 创建资产根目录 (已存在则跳过, 避免 mkdir 抛 "File exists")
-    if (!(await this.dirExists(this.assetsRootDir))) {
-      try {
-        await fileIo.mkdir(this.assetsRootDir, true);
-      } catch (e) {
-        const msg: string = e instanceof Error ? e.message : String(e);
-        console.warn(`[ArkWebAvatarAssetLibrary] mkdir assetsRoot failed: ${msg}`);
-        return false;
-      }
+    console.info(`[ArkWebAvatarAssetLibrary] doEnsureInit: assetsRootDir=${this.assetsRootDir}`);
+
+    // 1. 创建资产根目录
+    //    使用 ensureDirExists: 直接 mkdir(recursive=true), 忽略 "File exists"。
+    //    不使用 dirExists 预检, 因为 fileIo.access 在某些场景下可能误报,
+    //    导致跳过 mkdir 但目录实际不存在。
+    if (!(await this.ensureDirExists(this.assetsRootDir, 'assetsRootDir'))) {
+      return false;
     }
 
     // 2. 创建模型子目录
-    if (!(await this.dirExists(this.modelsDir))) {
-      try {
-        await fileIo.mkdir(this.modelsDir, true);
-      } catch (e) {
-        const msg: string = e instanceof Error ? e.message : String(e);
-        console.warn(`[ArkWebAvatarAssetLibrary] mkdir modelsDir failed: ${msg}`);
-        return false;
-      }
+    if (!(await this.ensureDirExists(this.modelsDir, 'modelsDir'))) {
+      return false;
     }
 
     // 2b. 创建动画子目录 (Phase 3C-1)
-    if (!(await this.dirExists(this.animationsDir))) {
-      try {
-        await fileIo.mkdir(this.animationsDir, true);
-      } catch (e) {
-        const msg: string = e instanceof Error ? e.message : String(e);
-        console.warn(`[ArkWebAvatarAssetLibrary] mkdir animationsDir failed: ${msg}`);
-        return false;
-      }
+    if (!(await this.ensureDirExists(this.animationsDir, 'animationsDir'))) {
+      return false;
     }
 
     // 2c. 创建姿势子目录 (Phase 3D-1)
-    if (!(await this.dirExists(this.posesDir))) {
-      try {
-        await fileIo.mkdir(this.posesDir, true);
-      } catch (e) {
-        const msg: string = e instanceof Error ? e.message : String(e);
-        console.warn(`[ArkWebAvatarAssetLibrary] mkdir posesDir failed: ${msg}`);
-        return false;
-      }
+    if (!(await this.ensureDirExists(this.posesDir, 'posesDir'))) {
+      return false;
     }
 
     // 3. 检查 library.json 是否存在
@@ -1225,6 +1206,13 @@ export class ArkWebAvatarAssetLibrary {
    * - 保留旧 library.json
    */
   private async atomicWriteLibrary(data: ArkWebAvatarAssetLibraryData): Promise<boolean> {
+    // 0. 防御性确保 assetsRootDir 存在 (修复第一次导入时 mkdir 静默失败导致 write .part 报
+    //    "No such file or directory" 的问题)
+    //    使用 ensureDirExists: mkdir + stat 验证, 不依赖 fileIo.access 预检。
+    if (!(await this.ensureDirExists(this.assetsRootDir, 'assetsRootDir(atomicWrite)'))) {
+      return false;
+    }
+
     // 1. 序列化
     let json: string;
     try {
@@ -1266,7 +1254,7 @@ export class ArkWebAvatarAssetLibrary {
       }
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
-      console.warn(`[ArkWebAvatarAssetLibrary] write .part failed: ${msg}`);
+      console.warn(`[ArkWebAvatarAssetLibrary] write .part failed: ${msg} path=${this.libraryPartFilePath}`);
       if (file !== null) {
         await this.closeFile(file);
         file = null;
@@ -1683,6 +1671,48 @@ export class ArkWebAvatarAssetLibrary {
       await fileIo.access(dirPath);
       return true;
     } catch (_e) {
+      return false;
+    }
+  }
+
+  /**
+   * 确保目录存在: 直接 mkdir(recursive=true), 忽略 "File exists" 错误,
+   * 然后用 stat 验证目录确实存在且类型为目录。
+   *
+   * 替代旧的 dirExists 预检 + mkdir 模式。
+   * 旧模式问题: fileIo.access 在某些场景下可能误报(返回成功但目录实际不存在),
+   * 导致跳过 mkdir, 后续 open CREATE 失败 "No such file or directory"。
+   *
+   * @param dirPath 目录绝对路径
+   * @param label 诊断日志标签 (如 'assetsRootDir')
+   * @returns true=目录存在且可用; false=创建或验证失败
+   */
+  private async ensureDirExists(dirPath: string, label: string): Promise<boolean> {
+    // 1. 直接 mkdir, 忽略 "File exists" (目录已存在是正常情况)
+    try {
+      await fileIo.mkdir(dirPath, true);
+      console.info(`[ArkWebAvatarAssetLibrary] mkdir ${label} ok: ${dirPath}`);
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      // "File exists" 是预期行为 (目录已存在), 不视为错误
+      if (msg.indexOf('exist') >= 0 || msg.indexOf('File exists') >= 0) {
+        console.info(`[ArkWebAvatarAssetLibrary] mkdir ${label} (already exists): ${dirPath}`);
+      } else {
+        console.warn(`[ArkWebAvatarAssetLibrary] mkdir ${label} failed: ${msg} path=${dirPath}`);
+        // 不直接 return false, 继续用 stat 验证 (mkdir 可能实际成功了但抛了警告)
+      }
+    }
+
+    // 2. 用 stat 验证目录确实存在 (stat 成功即说明路径有效)
+    //    不判断 isDirectory: 该属性/方法在不同 SDK 版本签名不一致,
+    //    且 mkdir(recursive=true) 成功后必为目录, 无需额外校验。
+    try {
+      const stat: fileIo.Stat = await fileIo.stat(dirPath);
+      console.info(`[ArkWebAvatarAssetLibrary] stat ${label} ok: size=${stat.size} path=${dirPath}`);
+      return true;
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      console.warn(`[ArkWebAvatarAssetLibrary] stat ${label} failed after mkdir: ${msg} path=${dirPath}`);
       return false;
     }
   }

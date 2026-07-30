@@ -1202,6 +1202,12 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
    *
    * 只在 MODEL_READY 状态下调用 fitAvatarFullBody。
    * 失败时保留模型, 不隐藏 Stage。
+   *
+   * Phase 4A-3R 修复: 用户手动选择脸部聚焦 (MANUAL_FACE_RESET_VIEW) 后,
+   * 键盘弹出导致尺寸变化超过阈值时, 不应强制切回全身构图。
+   * 脸部镜头 (smoothResetCamera) 基于固定 Figure 基准, Web 端 resize handler
+   * 会自动调整 aspect ratio, 无需重新调用相机方法。
+   * 仅 AUTO / MANUAL_FULL_BODY 模式下重新执行 fitAvatarFullBody。
    */
   async refitFullBody(): Promise<void> {
     if (this.disposed) {
@@ -1211,6 +1217,12 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
       return;
     }
     if (this.stageWidth <= 0 || this.stageHeight <= 0) {
+      return;
+    }
+    // 手动脸部模式下跳过全身构图, 避免键盘弹出触发镜头切换
+    if (this.shotDirector !== null &&
+      this.shotDirector.getControlMode() === 'MANUAL_FACE_RESET_VIEW') {
+      console.info(LOG_TAG, 'refitFullBody skipped: MANUAL_FACE_RESET_VIEW mode');
       return;
     }
     await this.fitFullBodyInternal();
