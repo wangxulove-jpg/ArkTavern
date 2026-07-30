@@ -1341,6 +1341,136 @@ export class ViewerCore {
     return this.scene.getSettings();
   }
 
+  // ===== Phase 4B-1: Runtime 渲染 Profile =====
+
+  /**
+   * Phase 4B-1: 设置渲染 Profile (VIEWER / CHAT_STAGE)。
+   *
+   * 委托给 ViewerScene.setRenderProfile,同时:
+   *   - CHAT_STAGE: 禁用相机控制(模型不响应拖拽/缩放,聊天手势优先)
+   *   - VIEWER: 恢复相机控制到上次状态
+   *
+   * 不修改三个业务 Runtime Controller。
+   *
+   * @param {string} profile 'VIEWER' | 'CHAT_STAGE'
+   * @returns {{success: boolean, profile?: string, error?: {code: string, message: string}}}
+   */
+  setRenderProfile(profile) {
+    if (this._state !== STATE_READY) {
+      return {
+        success: false,
+        error: makeError(ERR_VIEWER_NOT_READY, 'Viewer state is ' + this._state + ', expected READY', this._state, true)
+      };
+    }
+    if (!this.scene) {
+      return {
+        success: false,
+        error: makeError(ERR_SCENE_INITIALIZATION_FAILED, 'Scene not initialized', this._state, false)
+      };
+    }
+    var result = this.scene.setRenderProfile(profile);
+    if (!result.success) {
+      return {
+        success: false,
+        error: makeError(result.error || 'RENDER_PROFILE_FAILED',
+          'setRenderProfile failed: ' + (result.error || 'unknown'), this._state, false)
+      };
+    }
+    // CHAT_STAGE: 禁用相机控制(聊天手势优先,模型不响应拖拽/缩放)
+    // VIEWER: 恢复相机控制(enabled=true,与历史行为一致)
+    if (this.camera) {
+      if (profile === 'CHAT_STAGE') {
+        this.camera.setControlsEnabled(false);
+      } else {
+        this.camera.setControlsEnabled(true);
+      }
+    }
+    return { success: true, profile: result.profile };
+  }
+
+  /**
+   * Phase 4B-1: 获取当前渲染 Profile。
+   *
+   * @returns {{success: boolean, profile?: string, error?: {code: string, message: string}}}
+   */
+  getRenderProfile() {
+    if (this._state !== STATE_READY) {
+      return {
+        success: false,
+        error: makeError(ERR_VIEWER_NOT_READY, 'Viewer state is ' + this._state + ', expected READY', this._state, true)
+      };
+    }
+    if (!this.scene) {
+      return {
+        success: false,
+        error: makeError(ERR_SCENE_INITIALIZATION_FAILED, 'Scene not initialized', this._state, false)
+      };
+    }
+    return this.scene.getRenderProfile();
+  }
+
+  /**
+   * Phase 4B-1: 聊天页面默认全身构图。
+   *
+   * 基于当前模型 BoundingBox / BoundingSphere / 相机 FOV / 视口宽高,
+   * 调整相机 position / target / distance,使模型全身可见:
+   *   - 头顶保留少量安全区(margin=1.15)
+   *   - 脚部保持可见
+   *   - 尽量完整显示身体
+   *   - 模型不超出左右边界
+   *
+   * 禁止:
+   *   - 修改 VRM scene scale
+   *   - 修改 VRM scene position
+   *
+   * 允许:
+   *   - camera position / target / distance
+   *
+   * 复用 ViewerCamera.focusOnObject,仅传入全身构图专用选项:
+   *   - margin: 1.15 (头顶安全区 + 脚部可见余量)
+   *   - preserveDirection: false (使用默认正前方 (0,0,1) 方向,确保正面构图)
+   *   - preserveControlsEnabled: true (保持 CHAT_STAGE 下 controls.enabled=false)
+   *
+   * @returns {{success: boolean, state?: object, bounds?: object, error?: {code: string, message: string}}}
+   */
+  fitAvatarFullBody() {
+    if (this._state !== STATE_READY) {
+      return {
+        success: false,
+        error: makeError(ERR_VIEWER_NOT_READY, 'Viewer state is ' + this._state + ', expected READY', this._state, true)
+      };
+    }
+    if (!this.camera) {
+      return {
+        success: false,
+        error: makeError(ERR_CAMERA_INITIALIZATION_FAILED, 'Camera not initialized', this._state, true)
+      };
+    }
+    if (!this.modelLoader) {
+      return {
+        success: false,
+        error: makeError('MODEL_LOADER_NOT_INITIALIZED', 'ModelLoader not initialized', this._state, false)
+      };
+    }
+    var currentVrm = this.modelLoader.getCurrentVrm();
+    if (!currentVrm || !currentVrm.scene) {
+      return {
+        success: false,
+        error: makeError('CAMERA_FOCUS_MODEL_NOT_LOADED', 'No current VRM loaded', this._state, false)
+      };
+    }
+    // 全身构图:margin=1.15 提供头顶安全区 + 脚部可见余量,
+    // preserveDirection=false 强制正面构图(避免从侧面/斜角看模型),
+    // preserveControlsEnabled=true 保持 CHAT_STAGE 下 controls.enabled=false。
+    var result = this.camera.focusOnObject(currentVrm.scene, {
+      action: 'FIT_FULL_BODY',
+      margin: 1.15,
+      preserveDirection: false,
+      preserveControlsEnabled: true
+    });
+    return result;
+  }
+
   // ===== Phase 2F: 环境贴图 API =====
 
   /**

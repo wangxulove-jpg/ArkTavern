@@ -553,6 +553,88 @@ if (window.__arkTavernBootstrapState) {
       });
     },
 
+    // ===== Phase 4B-1: Runtime 渲染 Profile =====
+
+    /**
+     * Phase 4B-1: 设置渲染 Profile (VIEWER / CHAT_STAGE)。
+     *
+     * @param {string} profile 'VIEWER' | 'CHAT_STAGE'
+     * @returns {string} JSON 结果
+     *   成功:{"success": true, "state": "READY", "profile": "CHAT_STAGE"}
+     *   失败:{"success": false, "state": "...", "error": {...}}
+     */
+    setRenderProfile: function (profile) {
+      return callViewer(function (v) {
+        if (typeof profile !== 'string' || (profile !== 'VIEWER' && profile !== 'CHAT_STAGE')) {
+          return {
+            success: false,
+            state: v.getState(),
+            error: {
+              code: 'INVALID_ARGUMENT',
+              phase: v.getState(),
+              message: 'profile must be VIEWER or CHAT_STAGE',
+              recoverable: false
+            }
+          };
+        }
+        var result = v.setRenderProfile(profile);
+        if (result && result.success) {
+          return { success: true, state: v.getState(), profile: result.profile };
+        }
+        return {
+          success: false,
+          state: v.getState(),
+          error: result && result.error ? result.error : { code: 'RENDER_PROFILE_FAILED', message: 'setRenderProfile failed' }
+        };
+      });
+    },
+
+    /**
+     * Phase 4B-1: 获取当前渲染 Profile。
+     *
+     * @returns {string} JSON 结果
+     *   成功:{"success": true, "state": "READY", "profile": "VIEWER"|"CHAT_STAGE"}
+     *   失败:{"success": false, "state": "...", "error": {...}}
+     */
+    getRenderProfile: function () {
+      return callViewer(function (v) {
+        var result = v.getRenderProfile();
+        if (result && result.success) {
+          return { success: true, state: v.getState(), profile: result.profile };
+        }
+        return {
+          success: false,
+          state: v.getState(),
+          error: result && result.error ? result.error : { code: 'RENDER_PROFILE_FAILED', message: 'getRenderProfile failed' }
+        };
+      });
+    },
+
+    /**
+     * Phase 4B-1: 聊天页面默认全身构图。
+     *
+     * 基于当前模型 BoundingBox / BoundingSphere / 相机 FOV / 视口宽高,
+     * 调整相机 position / target / distance,使模型全身可见。
+     * 不修改 VRM scene scale 或 position。
+     *
+     * @returns {string} JSON 结果
+     *   成功:{"success": true, "state": "READY", "cameraState": {...}, "bounds": {...}}
+     *   失败:{"success": false, "state": "...", "error": {...}}
+     */
+    fitAvatarFullBody: function () {
+      return callViewer(function (v) {
+        var result = v.fitAvatarFullBody();
+        if (result && result.success) {
+          return { success: true, state: v.getState(), cameraState: result.state, bounds: result.bounds };
+        }
+        return {
+          success: false,
+          state: v.getState(),
+          error: result && result.error ? result.error : { code: 'FIT_FULL_BODY_FAILED', message: 'fitAvatarFullBody failed' }
+        };
+      });
+    },
+
     // ===== Phase 2B: 平滑重置 =====
 
     /**

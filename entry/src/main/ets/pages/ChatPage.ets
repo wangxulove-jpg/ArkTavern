@@ -66,8 +66,45 @@ import { ChatSessionListPanel } from '../components/ChatSessionListPanel';
 import { Character } from '../models/Character';
 import { Logger } from '../utils/Logger';
 import { ArkWebAvatarChatBridge } from '../services/avatar/ArkWebAvatarChatBridge';
+import { ChatAvatarStage } from '../components/avatar/ChatAvatarStage';
+import {
+  ArkWebChatAvatarStageController,
+  ChatAvatarStageState,
+  ChatAvatarStageEventListener
+} from '../vrmviewer/ArkWebChatAvatarStageController';
+import {
+  ArkWebAvatarAiCapabilitySnapshot,
+  ArkWebAvatarAiAnimationCapability,
+  ArkWebAvatarAiPoseCapability,
+  ArkWebAvatarAiExpressionCapability,
+  AI_CAPABILITY_EXPRESSION_DISPLAY_NAMES
+} from '../vrmviewer/ArkWebAvatarAiTypes';
 
 const LOG_TAG: string = 'ChatPage';
+
+/**
+ * ChatAvatarStage 事件监听器实现 (ArkTS 不允许对象字面量实现接口, 必须用类)。
+ *
+ * 通过闭包注入回调, 让 ChatPage 在 aboutToAppear 中绑定 @State 更新。
+ */
+class ChatAvatarStageListenerImpl implements ChatAvatarStageEventListener {
+  onStateChangedFn: ((state: ChatAvatarStageState, detail: string) => void) | null = null;
+  onModelNameChangedFn: ((displayName: string) => void) | null = null;
+
+  onStateChanged(state: ChatAvatarStageState, detail: string): void {
+    const fn = this.onStateChangedFn;
+    if (fn !== null) {
+      fn(state, detail);
+    }
+  }
+
+  onModelNameChanged(displayName: string): void {
+    const fn = this.onModelNameChangedFn;
+    if (fn !== null) {
+      fn(displayName);
+    }
+  }
+}
 
 @Entry
 @Component
@@ -184,6 +221,19 @@ struct ChatPage {
   /** Phase 4A-2: endpointId 自增计数器 (进程内唯一) */
   private static chatEndpointCounter: number = 0;
 
+  /** Phase 4B-1: Avatar Stage 控制器 (透明 VRM 模型展示) */
+  @State avatarStageController: ArkWebChatAvatarStageController | null = null;
+  /** Phase 4B-1: 模型显示开关 (false 时隐藏 Stage 但不销毁模型) */
+  @State chatAvatarVisible: boolean = true;
+  /** Phase 4B-1: AI 面板可见性 (右上角 AI 按钮切换) */
+  @State aiPanelVisible: boolean = false;
+  /** Phase 4B-1: AI 能力快照 (动作/姿势/表情列表, 供 AI 面板展示) */
+  @State aiCapabilitySnapshot: ArkWebAvatarAiCapabilitySnapshot | null = null;
+  /** Phase 4B-1: 当前 Stage 状态 (供 AI 面板显示模型名/状态) */
+  @State avatarStageState: ChatAvatarStageState = ChatAvatarStageState.IDLE;
+  /** Phase 4B-1: 当前模型显示名 (供 AI 面板显示) */
+  @State avatarModelDisplayName: string = '';
+
   aboutToAppear(): void {
     const modelService = AppServices.getModelService();
     const characterService = AppServices.getCharacterService();
@@ -254,6 +304,12 @@ struct ChatPage {
       Logger.warn(LOG_TAG, 'registerChatEndpoint failed: ' +
         (e instanceof Error ? e.message : String(e)));
     }
+
+    // Phase 4B-1: Avatar Stage 控制器由 ChatAvatarStage 组件内部创建
+    // ChatPage 通过 onControllerReady 回调获取控制器引用, 用于:
+    //   - AI 面板调用 publishPerformanceFromPanel / cancelPerformance / getCapabilitySnapshot
+    //   - 监听状态变化 (onStateChanged / onModelNameChanged)
+    // 控制器生命周期由 ChatAvatarStage 组件管理 (aboutToAppear 创建 / aboutToDisappear 销毁)
   }
 
   /**
@@ -332,6 +388,11 @@ struct ChatPage {
       }
       this.chatEndpointId = '';
     }
+    // Phase 4B-1: Avatar Stage 控制器由 ChatAvatarStage 组件销毁
+    // 这里仅清除引用, 不调用 dispose (避免重复销毁)
+    this.avatarStageController = null;
+    this.aiCapabilitySnapshot = null;
+    this.aiPanelVisible = false;
     // 注销深色模式监听器
     if (this.darkModeListener !== null) {
       try {
@@ -353,6 +414,125 @@ struct ChatPage {
     this.dataSource.clear();
     const v: number = AppStorage.get<number>('chatListVersion') ?? 0;
     AppStorage.setOrCreate<number>('chatListVersion', v + 1);
+  }
+
+  // ===== Phase 4B-1: AI 面板辅助方法 =====
+
+  /**
+   * 刷新 AI 能力快照 (供 AI 面板展示动作/姿势/表情列表)。
+   *
+   * 触发时机:
+   *   - 模型 READY (onStateChanged 回调)
+   *   - AI 面板打开
+   *   - 用户手动刷新 (未来)
+   */
+  private refreshAiCapabilitySnapshot(): void {
+    if (this.avatarStageController === null) {
+      this.aiCapabilitySnapshot = null;
+      return;
+    }
+    const controller: ArkWebChatAvatarStageController = this.avatarStageController!;
+    controller.getCapabilitySnapshot().then((snapshot: ArkWebAvatarAiCapabilitySnapshot | null) => {
+      this.aiCapabilitySnapshot = snapshot;
+    }).catch((e: Object) => {
+      Logger.warn(LOG_TAG, 'refreshAiCapabilitySnapshot failed: ' +
+        (e instanceof Error ? e.message : String(e)));
+      this.aiCapabilitySnapshot = null;
+    });
+  }
+
+  /**
+   * 触发动画演出 (source = CHAT_AI_PANEL)。
+   *
+   * 构建 performanceHintJson:
+   *   { "motionType": "animation", "motionId": "<actionId>", "durationMs": 5000,
+   *     "returnPolicy": "DEFAULT_POSE" }
+   */
+  private triggerAnimation(actionId: string): void {
+    const hintJson: string = JSON.stringify({
+      motionType: 'animation',
+      motionId: actionId,
+      expressionId: '',
+      expressionWeight: 0,
+      durationMs: 5000,
+      interruptPolicy: 'REPLACE',
+      returnPolicy: 'DEFAULT_POSE'
+    });
+    this.publishPanelPerformance(hintJson);
+  }
+
+  /**
+   * 触发姿势演出 (source = CHAT_AI_PANEL)。
+   *
+   * 构建 performanceHintJson:
+   *   { "motionType": "pose", "motionId": "<poseId>", "durationMs": 5000,
+   *     "returnPolicy": "DEFAULT_POSE" }
+   */
+  private triggerPose(poseId: string): void {
+    const hintJson: string = JSON.stringify({
+      motionType: 'pose',
+      motionId: poseId,
+      expressionId: '',
+      expressionWeight: 0,
+      durationMs: 5000,
+      interruptPolicy: 'REPLACE',
+      returnPolicy: 'DEFAULT_POSE'
+    });
+    this.publishPanelPerformance(hintJson);
+  }
+
+  /**
+   * 触发表情演出 (source = CHAT_AI_PANEL)。
+   *
+   * 构建 performanceHintJson:
+   *   { "motionType": "none", "motionId": "", "expressionId": "<expressionId>",
+   *     "expressionWeight": 1.0, "durationMs": 3000, "returnPolicy": "KEEP" }
+   */
+  private triggerExpression(expressionId: string): void {
+    const hintJson: string = JSON.stringify({
+      motionType: 'none',
+      motionId: '',
+      expressionId: expressionId,
+      expressionWeight: 1.0,
+      durationMs: 3000,
+      interruptPolicy: 'REPLACE',
+      returnPolicy: 'KEEP'
+    });
+    this.publishPanelPerformance(hintJson);
+  }
+
+  /**
+   * 停止当前演出 (调用 LifecycleController.cancelCurrent)。
+   */
+  private stopAvatarPerformance(): void {
+    if (this.avatarStageController === null) {
+      return;
+    }
+    this.avatarStageController!.cancelPerformance().catch((e: Object) => {
+      Logger.warn(LOG_TAG, 'stopAvatarPerformance failed: ' +
+        (e instanceof Error ? e.message : String(e)));
+    });
+  }
+
+  /**
+   * 通过 AvatarChatBridge 发布演出消息 (source = CHAT_AI_PANEL)。
+   *
+   * 流程:
+   *   1. controller.publishPerformanceFromPanel(hintJson)
+   *   2. Bridge 投递回当前 Avatar endpoint (本页面的 Stage 控制器)
+   *   3. Stage 控制器经 LifecycleController → PerformanceController 执行演出
+   *
+   * 错误隔离: 演出失败不影响聊天文本显示, 仅记录日志。
+   */
+  private publishPanelPerformance(hintJson: string): void {
+    if (this.avatarStageController === null) {
+      Logger.warn(LOG_TAG, 'publishPanelPerformance: avatarStageController null');
+      return;
+    }
+    this.avatarStageController!.publishPerformanceFromPanel(hintJson).catch((e: Object) => {
+      Logger.warn(LOG_TAG, 'publishPanelPerformance failed: ' +
+        (e instanceof Error ? e.message : String(e)));
+    });
   }
 
   onPageShow(): void {
@@ -422,6 +602,33 @@ struct ChatPage {
             .backgroundColor('rgba(0,0,0,' + (this.chatBgConfig!.dim / 100).toString() + ')')
             .hitTestBehavior(HitTestMode.Transparent)
         }
+
+        // ===== Phase 4B-1: Avatar Stage 层 (透明 VRM 模型, 位于背景之上、消息列表之下) =====
+        // - 保留用户当前背景图片, 不修改背景透明度
+        // - 透明效果由 Web 端 CHAT_STAGE profile 实现 (renderer alpha=true, scene.background=null)
+        // - 不响应触摸 (hitTestBehavior=Transparent), 让触摸穿透到下层消息列表
+        // - visible=false 时隐藏 Stage 但不销毁模型 (visibility=Hidden 保留布局)
+        // - 控制器由组件内部创建, 通过 onControllerReady 回调暴露给 ChatPage
+        ChatAvatarStage({
+          visible: this.chatAvatarVisible,
+          onControllerReady: (controller: ArkWebChatAvatarStageController): void => {
+            this.avatarStageController = controller;
+            // 设置事件监听器, 接收状态变化和模型名变化
+            const self: ChatPage = this;
+            const listener: ChatAvatarStageListenerImpl = new ChatAvatarStageListenerImpl();
+            listener.onStateChangedFn = (state: ChatAvatarStageState, _detail: string): void => {
+              self.avatarStageState = state;
+              // 模型就绪后刷新能力快照
+              if (state === ChatAvatarStageState.MODEL_READY) {
+                self.refreshAiCapabilitySnapshot();
+              }
+            };
+            listener.onModelNameChangedFn = (displayName: string): void => {
+              self.avatarModelDisplayName = displayName;
+            };
+            controller.setEventListener(listener);
+          }
+        })
 
         // ===== 底层:消息列表 + 浮动按钮 =====
         Column() {
@@ -541,6 +748,15 @@ struct ChatPage {
         // 顶栏 Column 透明:让下层消息列表完全可见,顶栏背景由 topBar Row 自己带
         // hitTestBehavior=Transparent 让顶栏下方空白区域点击穿透到消息列表
         .hitTestBehavior(HitTestMode.Transparent)
+
+        // ===== Phase 4B-1: AI 控制面板浮层 (紧凑半透明, 右侧对齐) =====
+        // - 不使用全屏 Dialog 和遮罩
+        // - 顶部显示模型显示开关
+        // - 分组显示动作/姿势/表情能力列表
+        // - 点击能力时构建 performanceHint 并通过 AvatarChatBridge 发布 (source=CHAT_AI_PANEL)
+        if (this.aiPanelVisible) {
+          this.aiControlPanel()
+        }
 
         // ===== 浮层:输入栏(底部对齐,悬浮胶囊式) =====
         // 外层 Column 透明,只负责把 inputArea 推到底部对齐位置;
@@ -696,6 +912,29 @@ struct ChatPage {
         this.chatAppearancePanelVisible = !this.chatAppearancePanelVisible;
       })
 
+      // Phase 4B-1: AI 按钮 (打开/关闭 AI 控制面板)
+      // - 不直接隐藏聊天内容, 仅切换 AI 面板可见性
+      // - 面板为紧凑半透明浮层, 位于右上角按钮下方
+      Stack() {
+        Text('AI')
+          .fontSize(13)
+          .fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.app_text_primary'))
+      }
+      .width(40)
+      .height(40)
+      .margin({ right: 4 })
+      .borderRadius($r('app.float.app_radius_sm'))
+      .backgroundColor(this.aiPanelVisible
+        ? $r('app.color.app_surface_2') : Color.Transparent)
+      .onClick(() => {
+        this.aiPanelVisible = !this.aiPanelVisible;
+        // 打开面板时刷新能力快照
+        if (this.aiPanelVisible) {
+          this.refreshAiCapabilitySnapshot();
+        }
+      })
+
       // 更多按钮(纯图标,无背景无边框)
       Stack() {
         SymbolGlyph($r('sys.symbol.more'))
@@ -715,6 +954,174 @@ struct ChatPage {
     .padding({ left: 4, right: 4, top: this.statusBarHeight + 4, bottom: 4 })
     .alignItems(VerticalAlign.Center)
     // 背景层分离:顶栏不设 backgroundColor,透出 Index 根背景,避免形成与状态栏区域的色差。
+  }
+
+  // ===== Phase 4B-1: AI 控制面板 (紧凑半透明浮层) =====
+
+  @Builder
+  aiControlPanel() {
+    // 面板容器:靠右,不覆盖整屏,半透明背景,无全屏遮罩
+    Row() {
+      Scroll() {
+        Column() {
+          // 标题行:模型名 + 模型显示开关 + 关闭按钮
+          Row() {
+            Text(this.avatarModelDisplayName.length > 0
+              ? this.avatarModelDisplayName : '未加载模型')
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_text_primary'))
+              .layoutWeight(1)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+            // 模型显示开关 (Toggle)
+            Toggle({ type: ToggleType.Switch, isOn: this.chatAvatarVisible })
+              .selectedColor($r('app.color.app_accent'))
+              .scale({ x: 0.8, y: 0.8 })
+              .onChange((isOn: boolean) => {
+                this.chatAvatarVisible = isOn;
+              })
+
+            // 关闭按钮
+            Stack() {
+              SymbolGlyph($r('sys.symbol.xmark'))
+                .fontSize(14)
+                .fontColor([$r('app.color.app_text_secondary')])
+            }
+            .width(28)
+            .height(28)
+            .margin({ left: 4 })
+            .onClick(() => {
+              this.aiPanelVisible = false;
+            })
+          }
+          .width('100%')
+          .margin({ bottom: 8 })
+
+          // 无能力快照时提示
+          if (this.aiCapabilitySnapshot === null) {
+            Text('暂无可用能力 (需先在 VRM Viewer 导入模型/动作/姿势/表情)')
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_text_tertiary'))
+              .width('100%')
+              .textAlign(TextAlign.Center)
+              .padding({ top: 16, bottom: 16 })
+          } else {
+            // 动作分组
+            if (this.aiCapabilitySnapshot!.animations.length > 0) {
+              Column() {
+                Text('动作')
+                  .fontSize($r('app.float.app_font_caption'))
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor($r('app.color.app_text_secondary'))
+                  .width('100%')
+                  .margin({ top: 8, bottom: 4 })
+                ForEach(this.aiCapabilitySnapshot!.animations,
+                  (anim: ArkWebAvatarAiAnimationCapability) => {
+                    this.aiCapabilityButton(
+                      anim.displayName + (anim.isDefaultIdle ? ' (默认)' : ''),
+                      () => this.triggerAnimation(anim.actionId)
+                    )
+                  },
+                  (anim: ArkWebAvatarAiAnimationCapability) => anim.actionId
+                )
+              }
+              .width('100%')
+            }
+
+            // 姿势分组
+            if (this.aiCapabilitySnapshot!.poses.length > 0) {
+              Column() {
+                Text('姿势')
+                  .fontSize($r('app.float.app_font_caption'))
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor($r('app.color.app_text_secondary'))
+                  .width('100%')
+                  .margin({ top: 8, bottom: 4 })
+                ForEach(this.aiCapabilitySnapshot!.poses,
+                  (pose: ArkWebAvatarAiPoseCapability) => {
+                    this.aiCapabilityButton(
+                      pose.displayName + (pose.isDefaultPose ? ' (默认)' : ''),
+                      () => this.triggerPose(pose.poseId)
+                    )
+                  },
+                  (pose: ArkWebAvatarAiPoseCapability) => pose.poseId
+                )
+              }
+              .width('100%')
+            }
+
+            // 表情分组
+            if (this.aiCapabilitySnapshot!.expressions.length > 0) {
+              Column() {
+                Text('表情')
+                  .fontSize($r('app.float.app_font_caption'))
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor($r('app.color.app_text_secondary'))
+                  .width('100%')
+                  .margin({ top: 8, bottom: 4 })
+                ForEach(this.aiCapabilitySnapshot!.expressions,
+                  (exp: ArkWebAvatarAiExpressionCapability) => {
+                    if (exp.available) {
+                      this.aiCapabilityButton(
+                        AI_CAPABILITY_EXPRESSION_DISPLAY_NAMES[exp.expressionId] ?? exp.expressionId,
+                        () => this.triggerExpression(exp.expressionId)
+                      )
+                    }
+                  },
+                  (exp: ArkWebAvatarAiExpressionCapability) => exp.expressionId
+                )
+              }
+              .width('100%')
+            }
+          }
+
+          // 停止演出按钮
+          Button('停止演出')
+            .type(ButtonType.Normal)
+            .borderRadius($r('app.float.app_radius_sm'))
+            .backgroundColor($r('app.color.app_danger'))
+            .fontColor(Color.White)
+            .fontSize($r('app.float.app_font_caption'))
+            .width('100%')
+            .height(32)
+            .margin({ top: 8 })
+            .onClick(() => {
+              this.stopAvatarPerformance();
+            })
+        }
+        .width('100%')
+        .padding(12)
+      }
+      .scrollBar(BarState.Off)
+      .layoutWeight(1)
+    }
+    .width('50%')
+    .height('55%')
+    .backgroundColor('rgba(30,30,30,0.85)')
+    .borderRadius($r('app.float.app_radius_md'))
+    .border({ width: 1, color: 'rgba(255,255,255,0.1)' })
+    // 靠右对齐, 避开顶栏按钮
+    .margin({ top: this.statusBarHeight + 52, right: 8 })
+    // 面板自身接收触摸, 不穿透到下层
+    .hitTestBehavior(HitTestMode.Default)
+  }
+
+  /** AI 能力按钮 (点击触发演出) */
+  @Builder
+  aiCapabilityButton(label: string, onClick: () => void) {
+    Button(label)
+      .type(ButtonType.Normal)
+      .borderRadius($r('app.float.app_radius_sm'))
+      .backgroundColor('rgba(255,255,255,0.08)')
+      .fontColor($r('app.color.app_text_primary'))
+      .fontSize($r('app.float.app_font_caption'))
+      .width('100%')
+      .height(32)
+      .margin({ top: 4 })
+      .onClick(() => {
+        onClick();
+      })
   }
 
   // ===== 显示设置面板(气泡不透明度 + 字体配色) =====

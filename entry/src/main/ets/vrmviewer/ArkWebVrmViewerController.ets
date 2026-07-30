@@ -201,6 +201,68 @@ export class ArkWebVrmViewerController implements ArkWebViewerBridgeListener {
     }
   }
 
+  // ===== Phase 4B-1: Runtime 渲染 Profile =====
+
+  /**
+   * Phase 4B-1: 设置渲染 Profile (VIEWER / CHAT_STAGE)。
+   *
+   * CHAT_STAGE: renderer alpha=true, clearAlpha=0, scene.background=null,
+   *             Grid 隐藏, Canvas 透明, 相机控制禁用。
+   * VIEWER: 恢复深色实体背景与相机控制。
+   *
+   * @param profile 'VIEWER' | 'CHAT_STAGE'
+   * @returns JSON 字符串,形如 {"success": true, "state": "READY", "profile": "CHAT_STAGE"}
+   */
+  async setRenderProfile(profile: string): Promise<string> {
+    if (this.disposed) {
+      return JSON.stringify({ success: false, error: 'disposed' });
+    }
+    try {
+      return await this.jsCaller.setRenderProfile(profile);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return JSON.stringify({ success: false, error: msg });
+    }
+  }
+
+  /**
+   * Phase 4B-1: 获取当前渲染 Profile。
+   *
+   * @returns JSON 字符串,形如 {"success": true, "state": "READY", "profile": "VIEWER"}
+   */
+  async getRenderProfile(): Promise<string> {
+    if (this.disposed) {
+      return JSON.stringify({ success: false, error: 'disposed' });
+    }
+    try {
+      return await this.jsCaller.getRenderProfile();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return JSON.stringify({ success: false, error: msg });
+    }
+  }
+
+  /**
+   * Phase 4B-1: 聊天页面默认全身构图。
+   *
+   * 基于模型 BoundingBox / BoundingSphere / FOV / 视口,调整相机使全身可见。
+   * 不修改 VRM scene scale 或 position。
+   *
+   * @returns JSON 字符串,形如
+   *   {"success": true, "state": "READY", "cameraState": {...}, "bounds": {...}}
+   */
+  async fitAvatarFullBody(): Promise<string> {
+    if (this.disposed) {
+      return JSON.stringify({ success: false, error: 'disposed' });
+    }
+    try {
+      return await this.jsCaller.fitAvatarFullBody();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return JSON.stringify({ success: false, error: msg });
+    }
+  }
+
   // ===== Phase 2B: 平滑重置 =====
 
   /**

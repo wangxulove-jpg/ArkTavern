@@ -34,6 +34,21 @@
  *
  * Phase 1A:仅使用 UNINITIALIZED / INITIALIZING / READY / FAILED / DISPOSING / DISPOSED。
  */
+/**
+ * Runtime 渲染 Profile (Phase 4B-1)。
+ *
+ * 同一个 vrmviewer 页面在不同宿主场景下需要不同渲染表现:
+ *   - VIEWER: VRM Viewer 普通模式,深色实体背景,Grid 可见,Canvas 不透明
+ *   - CHAT_STAGE: 聊天页面透明 Avatar Stage,Scene 背景为 null,
+ *     Canvas 透明,Grid 隐藏,相机控制默认禁用
+ *
+ * Profile 切换不修改三个业务 Runtime Controller,只影响 Scene/Core/Renderer。
+ */
+export enum ArkWebRenderProfile {
+  VIEWER = 'VIEWER',
+  CHAT_STAGE = 'CHAT_STAGE'
+}
+
 export enum ArkWebViewerState {
   /** 初始状态,Web 组件尚未加载完成。 */
   UNINITIALIZED = 'UNINITIALIZED',

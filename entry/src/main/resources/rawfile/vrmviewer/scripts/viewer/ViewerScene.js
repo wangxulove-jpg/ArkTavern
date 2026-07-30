@@ -249,6 +249,37 @@ export class ViewerScene {
     this.environmentErrorMessage = '';
     /** @type {THREE.Color|null} 保存的纯色背景(Skybox 开启前) */
     this._savedBackgroundColor = null;
+
+    // ===== Phase 4B-1: Runtime 渲染 Profile =====
+    /**
+     * 当前渲染 Profile (VIEWER / CHAT_STAGE)。
+     *
+     * - VIEWER (默认): 深色实体背景,Grid 可由用户切换,Canvas 不透明
+     * - CHAT_STAGE: 聊天页面透明 Avatar Stage,Scene 背景为 null,
+     *   Canvas 透明,Grid 隐藏,测试辅助物隐藏
+     *
+     * Profile 切换不修改三个业务 Runtime Controller,只影响 Scene/Renderer。
+     *
+     * @type {string}
+     */
+    this.renderProfile = 'VIEWER';
+    /**
+     * Phase 4B-1: 切换到 CHAT_STAGE 前保存的 scene.background (THREE.Color)。
+     *
+     * 切回 VIEWER 时恢复,避免丢失用户设置的背景色。
+     * 仅在 renderProfile === 'CHAT_STAGE' 时为非 null 占位。
+     *
+     * @type {THREE.Color|null}
+     */
+    this._savedBackgroundForChatStage = null;
+    /**
+     * Phase 4B-1: 切换到 CHAT_STAGE 前保存的 gridHelper.visible 状态。
+     *
+     * 切回 VIEWER 时恢复。CHAT_STAGE 期间强制隐藏。
+     *
+     * @type {boolean}
+     */
+    this._savedGridVisibleForChatStage = false;
   }
 
   /**
@@ -271,8 +302,11 @@ export class ViewerScene {
     // Figure: new WebGLRenderer({ antialias: true })
     // Figure: setPixelRatio(1), outputEncoding = sRGBEncoding
     // 0.176 适配:用 outputColorSpace = SRGBColorSpace 替代废弃的 outputEncoding
+    // Phase 4B-1: alpha=true 允许 CHAT_STAGE Profile 通过 setClearAlpha(0) 实现透明。
+    //   VIEWER 模式默认 clearAlpha=1(不透明),行为与 alpha=false 一致。
+    //   CHAT_STAGE 模式 setClearAlpha(0) + scene.background=null 实现 WebGL Canvas 透明。
     try {
-      this.renderer = new THREE.WebGLRenderer({ antialias: true });
+      this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     } catch (e) {
       var webglErr = new Error('WebGL not supported: ' + (e && e.message ? e.message : String(e)));
       webglErr.code = WEBGL_NOT_SUPPORTED;
@@ -281,6 +315,8 @@ export class ViewerScene {
     this.renderer.setPixelRatio(1);
     // 0.176 推荐 API,等效于 Figure 的 outputEncoding = sRGBEncoding
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    // 默认 clearAlpha=1 (VIEWER 模式不透明)。CHAT_STAGE 由 setRenderProfile 改为 0。
+    this.renderer.setClearAlpha(1);
     // false: 不更新 canvas 的 CSS style,由我们手动控制
     this.renderer.setSize(width, height, false);
     this.renderer.domElement.className = 'viewer-canvas';
@@ -500,6 +536,131 @@ export class ViewerScene {
       return { success: false, error: SCENE_INITIALIZATION_FAILED };
     }
     return { success: true, visible: !!this.gridHelper.visible };
+  }
+
+  // ===== Phase 4B-1: Runtime 渲染 Profile =====
+
+  /**
+   * Phase 4B-1: 设置渲染 Profile。
+   *
+   * 同一个 vrmviewer 页面在不同宿主场景下需要不同渲染表现:
+   *   - VIEWER: VRM Viewer 普通模式,深色实体背景,Grid 可由用户切换,Canvas 不透明
+   *   - CHAT_STAGE: 聊天页面透明 Avatar Stage,Scene 背景为 null,
+   *     Canvas 透明,Grid 隐藏,测试辅助物隐藏
+   *
+   * 透明效果来源:
+   *   - renderer alpha = true
+   *   - renderer clear alpha = 0
+   *   - scene.background = null
+   *   - html / body / .viewer-stage / canvas 背景透明(由 body class 控制)
+   *
+   * 禁止:
+   *   - 通过 renderer.setClearAlpha 之外的 CSS opacity 制造透明
+   *   - 永久改变所有页面背景
+   *
+   * 切换为 CHAT_STAGE 时:
+   *   - 保存当前 scene.background (THREE.Color) 到 _savedBackgroundForChatStage
+   *   - 保存当前 gridHelper.visible 到 _savedGridVisibleForChatStage
+   *   - 设置 renderer alpha=true, clearAlpha=0
+   *   - scene.background = null
+   *   - 隐藏 gridHelper
+   *   - 隐藏 testObject
+   *   - 为 body 添加 'chat-stage' class (CSS 控制透明)
+   *
+   * 切回 VIEWER 时:
+   *   - 恢复 renderer alpha=false, clearAlpha=1
+   *   - 恢复 scene.background (从 _savedBackgroundForChatStage)
+   *   - 恢复 gridHelper.visible (从 _savedGridVisibleForChatStage)
+   *   - 移除 body 'chat-stage' class
+   *
+   * @param {string} profile 'VIEWER' | 'CHAT_STAGE'
+   * @returns {{success: boolean, profile?: string, error?: string}}
+   */
+  setRenderProfile(profile) {
+    if (this._disposed) {
+      return { success: false, error: 'SCENE_DISPOSED' };
+    }
+    if (!this.renderer || !this.scene) {
+      return { success: false, error: SCENE_INITIALIZATION_FAILED };
+    }
+    if (profile !== 'VIEWER' && profile !== 'CHAT_STAGE') {
+      return { success: false, error: 'INVALID_ARGUMENT' };
+    }
+    // 相同 Profile 不重复切换(避免覆盖已保存的状态)
+    if (this.renderProfile === profile) {
+      return { success: true, profile: this.renderProfile };
+    }
+
+    if (profile === 'CHAT_STAGE') {
+      // 保存当前背景(仅当 background 是 THREE.Color 时,避免保存环境纹理引用)
+      if (this.scene.background instanceof THREE.Color) {
+        this._savedBackgroundForChatStage = this.scene.background.clone();
+      } else {
+        // background 为环境纹理或 null 时,用 backgroundColor 构造 Color 保存
+        this._savedBackgroundForChatStage = new THREE.Color(this.backgroundColor);
+      }
+      // 保存当前 gridHelper.visible
+      if (this.gridHelper) {
+        this._savedGridVisibleForChatStage = !!this.gridHelper.visible;
+      }
+      // renderer 透明
+      this.renderer.setClearAlpha(0);
+      // scene.background = null (透明)
+      this.scene.background = null;
+      // 隐藏 gridHelper
+      if (this.gridHelper) {
+        this.gridHelper.visible = false;
+      }
+      // 隐藏 testObject(若存在)
+      if (this.testObject) {
+        this.testObject.visible = false;
+      }
+      // body 添加 chat-stage class (CSS 控制透明)
+      try {
+        if (typeof document !== 'undefined' && document.body) {
+          document.body.classList.add('chat-stage');
+        }
+      } catch (e) { /* ignore */ }
+      this.renderProfile = 'CHAT_STAGE';
+    } else {
+      // 切回 VIEWER
+      this.renderer.setClearAlpha(1);
+      // 恢复 scene.background
+      if (this._savedBackgroundForChatStage !== null) {
+        this.scene.background = this._savedBackgroundForChatStage.clone();
+        this._savedBackgroundForChatStage = null;
+      } else {
+        this.scene.background = new THREE.Color(this.backgroundColor);
+      }
+      // 恢复 gridHelper.visible
+      if (this.gridHelper) {
+        this.gridHelper.visible = this._savedGridVisibleForChatStage;
+      }
+      // 恢复 testObject(若存在,默认隐藏,由 ENABLE_DEBUG_TEST_CUBE 控制)
+      if (this.testObject) {
+        this.testObject.visible = false;
+      }
+      // 移除 body chat-stage class
+      try {
+        if (typeof document !== 'undefined' && document.body) {
+          document.body.classList.remove('chat-stage');
+        }
+      } catch (e) { /* ignore */ }
+      this.renderProfile = 'VIEWER';
+    }
+    return { success: true, profile: this.renderProfile };
+  }
+
+  /**
+   * Phase 4B-1: 获取当前渲染 Profile。
+   *
+   * @returns {{success: boolean, profile?: string, error?: string}}
+   */
+  getRenderProfile() {
+    if (this._disposed) {
+      return { success: false, error: 'SCENE_DISPOSED' };
+    }
+    return { success: true, profile: this.renderProfile };
   }
 
   /**

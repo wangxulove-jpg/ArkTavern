@@ -257,6 +257,48 @@ export class ArkWebViewerJsCaller {
     return this.call('focusCameraOnCurrentModel');
   }
 
+  // ===== Phase 4B-1: Runtime 渲染 Profile =====
+
+  /**
+   * Phase 4B-1: 调用 window.arkTavernViewerBridge.setRenderProfile(profile)
+   *
+   * 设置渲染 Profile (VIEWER / CHAT_STAGE)。
+   * CHAT_STAGE: renderer alpha=true, clearAlpha=0, scene.background=null,
+   *             Grid 隐藏, Canvas 透明, 相机控制禁用。
+   * VIEWER: 恢复深色实体背景与相机控制。
+   *
+   * @param profile 'VIEWER' | 'CHAT_STAGE'
+   * @returns JSON 字符串,形如 {"success": true, "state": "READY", "profile": "CHAT_STAGE"}
+   */
+  async setRenderProfile(profile: string): Promise<string> {
+    return this.callWithStringArg('setRenderProfile', profile);
+  }
+
+  /**
+   * Phase 4B-1: 调用 window.arkTavernViewerBridge.getRenderProfile()
+   *
+   * 获取当前渲染 Profile。
+   *
+   * @returns JSON 字符串,形如 {"success": true, "state": "READY", "profile": "VIEWER"}
+   */
+  async getRenderProfile(): Promise<string> {
+    return this.call('getRenderProfile');
+  }
+
+  /**
+   * Phase 4B-1: 调用 window.arkTavernViewerBridge.fitAvatarFullBody()
+   *
+   * 聊天页面默认全身构图。基于模型 BoundingBox / BoundingSphere / FOV / 视口,
+   * 调整相机 position / target / distance,使模型全身可见。
+   * 不修改 VRM scene scale 或 position。
+   *
+   * @returns JSON 字符串,形如
+   *   {"success": true, "state": "READY", "cameraState": {...}, "bounds": {...}}
+   */
+  async fitAvatarFullBody(): Promise<string> {
+    return this.call('fitAvatarFullBody');
+  }
+
   /**
    * Phase 2A-2: 调用 window.arkTavernViewerBridge.getCameraState()
    *

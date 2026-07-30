@@ -29312,6 +29312,9 @@ void main() {
       this.environmentErrorCode = "";
       this.environmentErrorMessage = "";
       this._savedBackgroundColor = null;
+      this.renderProfile = "VIEWER";
+      this._savedBackgroundForChatStage = null;
+      this._savedGridVisibleForChatStage = false;
     }
     /**
      * 初始化 Renderer / Scene / Lights / 测试物体。
@@ -29329,7 +29332,7 @@ void main() {
       var width = container.clientWidth || 1;
       var height = container.clientHeight || 1;
       try {
-        this.renderer = new WebGLRenderer({ antialias: true });
+        this.renderer = new WebGLRenderer({ antialias: true, alpha: true });
       } catch (e) {
         var webglErr = new Error("WebGL not supported: " + (e && e.message ? e.message : String(e)));
         webglErr.code = WEBGL_NOT_SUPPORTED;
@@ -29337,6 +29340,7 @@ void main() {
       }
       this.renderer.setPixelRatio(1);
       this.renderer.outputColorSpace = SRGBColorSpace;
+      this.renderer.setClearAlpha(1);
       this.renderer.setSize(width, height, false);
       this.renderer.domElement.className = "viewer-canvas";
       this.renderer.domElement.style.display = "block";
@@ -29527,6 +29531,115 @@ void main() {
         return { success: false, error: SCENE_INITIALIZATION_FAILED };
       }
       return { success: true, visible: !!this.gridHelper.visible };
+    }
+    // ===== Phase 4B-1: Runtime 渲染 Profile =====
+    /**
+     * Phase 4B-1: 设置渲染 Profile。
+     *
+     * 同一个 vrmviewer 页面在不同宿主场景下需要不同渲染表现:
+     *   - VIEWER: VRM Viewer 普通模式,深色实体背景,Grid 可由用户切换,Canvas 不透明
+     *   - CHAT_STAGE: 聊天页面透明 Avatar Stage,Scene 背景为 null,
+     *     Canvas 透明,Grid 隐藏,测试辅助物隐藏
+     *
+     * 透明效果来源:
+     *   - renderer alpha = true
+     *   - renderer clear alpha = 0
+     *   - scene.background = null
+     *   - html / body / .viewer-stage / canvas 背景透明(由 body class 控制)
+     *
+     * 禁止:
+     *   - 通过 renderer.setClearAlpha 之外的 CSS opacity 制造透明
+     *   - 永久改变所有页面背景
+     *
+     * 切换为 CHAT_STAGE 时:
+     *   - 保存当前 scene.background (THREE.Color) 到 _savedBackgroundForChatStage
+     *   - 保存当前 gridHelper.visible 到 _savedGridVisibleForChatStage
+     *   - 设置 renderer alpha=true, clearAlpha=0
+     *   - scene.background = null
+     *   - 隐藏 gridHelper
+     *   - 隐藏 testObject
+     *   - 为 body 添加 'chat-stage' class (CSS 控制透明)
+     *
+     * 切回 VIEWER 时:
+     *   - 恢复 renderer alpha=false, clearAlpha=1
+     *   - 恢复 scene.background (从 _savedBackgroundForChatStage)
+     *   - 恢复 gridHelper.visible (从 _savedGridVisibleForChatStage)
+     *   - 移除 body 'chat-stage' class
+     *
+     * @param {string} profile 'VIEWER' | 'CHAT_STAGE'
+     * @returns {{success: boolean, profile?: string, error?: string}}
+     */
+    setRenderProfile(profile) {
+      if (this._disposed) {
+        return { success: false, error: "SCENE_DISPOSED" };
+      }
+      if (!this.renderer || !this.scene) {
+        return { success: false, error: SCENE_INITIALIZATION_FAILED };
+      }
+      if (profile !== "VIEWER" && profile !== "CHAT_STAGE") {
+        return { success: false, error: "INVALID_ARGUMENT" };
+      }
+      if (this.renderProfile === profile) {
+        return { success: true, profile: this.renderProfile };
+      }
+      if (profile === "CHAT_STAGE") {
+        if (this.scene.background instanceof Color) {
+          this._savedBackgroundForChatStage = this.scene.background.clone();
+        } else {
+          this._savedBackgroundForChatStage = new Color(this.backgroundColor);
+        }
+        if (this.gridHelper) {
+          this._savedGridVisibleForChatStage = !!this.gridHelper.visible;
+        }
+        this.renderer.setClearAlpha(0);
+        this.scene.background = null;
+        if (this.gridHelper) {
+          this.gridHelper.visible = false;
+        }
+        if (this.testObject) {
+          this.testObject.visible = false;
+        }
+        try {
+          if (typeof document !== "undefined" && document.body) {
+            document.body.classList.add("chat-stage");
+          }
+        } catch (e) {
+        }
+        this.renderProfile = "CHAT_STAGE";
+      } else {
+        this.renderer.setClearAlpha(1);
+        if (this._savedBackgroundForChatStage !== null) {
+          this.scene.background = this._savedBackgroundForChatStage.clone();
+          this._savedBackgroundForChatStage = null;
+        } else {
+          this.scene.background = new Color(this.backgroundColor);
+        }
+        if (this.gridHelper) {
+          this.gridHelper.visible = this._savedGridVisibleForChatStage;
+        }
+        if (this.testObject) {
+          this.testObject.visible = false;
+        }
+        try {
+          if (typeof document !== "undefined" && document.body) {
+            document.body.classList.remove("chat-stage");
+          }
+        } catch (e) {
+        }
+        this.renderProfile = "VIEWER";
+      }
+      return { success: true, profile: this.renderProfile };
+    }
+    /**
+     * Phase 4B-1: 获取当前渲染 Profile。
+     *
+     * @returns {{success: boolean, profile?: string, error?: string}}
+     */
+    getRenderProfile() {
+      if (this._disposed) {
+        return { success: false, error: "SCENE_DISPOSED" };
+      }
+      return { success: true, profile: this.renderProfile };
     }
     /**
      * Phase 2A-1: 设置主方向光强度。
@@ -47249,6 +47362,131 @@ void main() {
       }
       return this.scene.getSettings();
     }
+    // ===== Phase 4B-1: Runtime 渲染 Profile =====
+    /**
+     * Phase 4B-1: 设置渲染 Profile (VIEWER / CHAT_STAGE)。
+     *
+     * 委托给 ViewerScene.setRenderProfile,同时:
+     *   - CHAT_STAGE: 禁用相机控制(模型不响应拖拽/缩放,聊天手势优先)
+     *   - VIEWER: 恢复相机控制到上次状态
+     *
+     * 不修改三个业务 Runtime Controller。
+     *
+     * @param {string} profile 'VIEWER' | 'CHAT_STAGE'
+     * @returns {{success: boolean, profile?: string, error?: {code: string, message: string}}}
+     */
+    setRenderProfile(profile) {
+      if (this._state !== STATE_READY) {
+        return {
+          success: false,
+          error: makeError4(ERR_VIEWER_NOT_READY, "Viewer state is " + this._state + ", expected READY", this._state, true)
+        };
+      }
+      if (!this.scene) {
+        return {
+          success: false,
+          error: makeError4(ERR_SCENE_INITIALIZATION_FAILED, "Scene not initialized", this._state, false)
+        };
+      }
+      var result = this.scene.setRenderProfile(profile);
+      if (!result.success) {
+        return {
+          success: false,
+          error: makeError4(
+            result.error || "RENDER_PROFILE_FAILED",
+            "setRenderProfile failed: " + (result.error || "unknown"),
+            this._state,
+            false
+          )
+        };
+      }
+      if (this.camera) {
+        if (profile === "CHAT_STAGE") {
+          this.camera.setControlsEnabled(false);
+        } else {
+          this.camera.setControlsEnabled(true);
+        }
+      }
+      return { success: true, profile: result.profile };
+    }
+    /**
+     * Phase 4B-1: 获取当前渲染 Profile。
+     *
+     * @returns {{success: boolean, profile?: string, error?: {code: string, message: string}}}
+     */
+    getRenderProfile() {
+      if (this._state !== STATE_READY) {
+        return {
+          success: false,
+          error: makeError4(ERR_VIEWER_NOT_READY, "Viewer state is " + this._state + ", expected READY", this._state, true)
+        };
+      }
+      if (!this.scene) {
+        return {
+          success: false,
+          error: makeError4(ERR_SCENE_INITIALIZATION_FAILED, "Scene not initialized", this._state, false)
+        };
+      }
+      return this.scene.getRenderProfile();
+    }
+    /**
+     * Phase 4B-1: 聊天页面默认全身构图。
+     *
+     * 基于当前模型 BoundingBox / BoundingSphere / 相机 FOV / 视口宽高,
+     * 调整相机 position / target / distance,使模型全身可见:
+     *   - 头顶保留少量安全区(margin=1.15)
+     *   - 脚部保持可见
+     *   - 尽量完整显示身体
+     *   - 模型不超出左右边界
+     *
+     * 禁止:
+     *   - 修改 VRM scene scale
+     *   - 修改 VRM scene position
+     *
+     * 允许:
+     *   - camera position / target / distance
+     *
+     * 复用 ViewerCamera.focusOnObject,仅传入全身构图专用选项:
+     *   - margin: 1.15 (头顶安全区 + 脚部可见余量)
+     *   - preserveDirection: false (使用默认正前方 (0,0,1) 方向,确保正面构图)
+     *   - preserveControlsEnabled: true (保持 CHAT_STAGE 下 controls.enabled=false)
+     *
+     * @returns {{success: boolean, state?: object, bounds?: object, error?: {code: string, message: string}}}
+     */
+    fitAvatarFullBody() {
+      if (this._state !== STATE_READY) {
+        return {
+          success: false,
+          error: makeError4(ERR_VIEWER_NOT_READY, "Viewer state is " + this._state + ", expected READY", this._state, true)
+        };
+      }
+      if (!this.camera) {
+        return {
+          success: false,
+          error: makeError4(ERR_CAMERA_INITIALIZATION_FAILED, "Camera not initialized", this._state, true)
+        };
+      }
+      if (!this.modelLoader) {
+        return {
+          success: false,
+          error: makeError4("MODEL_LOADER_NOT_INITIALIZED", "ModelLoader not initialized", this._state, false)
+        };
+      }
+      var currentVrm = this.modelLoader.getCurrentVrm();
+      if (!currentVrm || !currentVrm.scene) {
+        return {
+          success: false,
+          error: makeError4("CAMERA_FOCUS_MODEL_NOT_LOADED", "No current VRM loaded", this._state, false)
+        };
+      }
+      var result = this.camera.focusOnObject(currentVrm.scene, {
+        action: "FIT_FULL_BODY",
+        margin: 1.15,
+        preserveDirection: false,
+        preserveControlsEnabled: true
+      });
+      return result;
+    }
     // ===== Phase 2F: 环境贴图 API =====
     /**
      * Phase 2F: 初始化环境贴图。
@@ -49190,6 +49428,84 @@ void main() {
             success: false,
             state: v.getState(),
             error: result && result.error ? result.error : { code: "CAMERA_STATE_FAILED", message: "getCameraState failed" }
+          };
+        });
+      },
+      // ===== Phase 4B-1: Runtime 渲染 Profile =====
+      /**
+       * Phase 4B-1: 设置渲染 Profile (VIEWER / CHAT_STAGE)。
+       *
+       * @param {string} profile 'VIEWER' | 'CHAT_STAGE'
+       * @returns {string} JSON 结果
+       *   成功:{"success": true, "state": "READY", "profile": "CHAT_STAGE"}
+       *   失败:{"success": false, "state": "...", "error": {...}}
+       */
+      setRenderProfile: function(profile) {
+        return callViewer(function(v) {
+          if (typeof profile !== "string" || profile !== "VIEWER" && profile !== "CHAT_STAGE") {
+            return {
+              success: false,
+              state: v.getState(),
+              error: {
+                code: "INVALID_ARGUMENT",
+                phase: v.getState(),
+                message: "profile must be VIEWER or CHAT_STAGE",
+                recoverable: false
+              }
+            };
+          }
+          var result = v.setRenderProfile(profile);
+          if (result && result.success) {
+            return { success: true, state: v.getState(), profile: result.profile };
+          }
+          return {
+            success: false,
+            state: v.getState(),
+            error: result && result.error ? result.error : { code: "RENDER_PROFILE_FAILED", message: "setRenderProfile failed" }
+          };
+        });
+      },
+      /**
+       * Phase 4B-1: 获取当前渲染 Profile。
+       *
+       * @returns {string} JSON 结果
+       *   成功:{"success": true, "state": "READY", "profile": "VIEWER"|"CHAT_STAGE"}
+       *   失败:{"success": false, "state": "...", "error": {...}}
+       */
+      getRenderProfile: function() {
+        return callViewer(function(v) {
+          var result = v.getRenderProfile();
+          if (result && result.success) {
+            return { success: true, state: v.getState(), profile: result.profile };
+          }
+          return {
+            success: false,
+            state: v.getState(),
+            error: result && result.error ? result.error : { code: "RENDER_PROFILE_FAILED", message: "getRenderProfile failed" }
+          };
+        });
+      },
+      /**
+       * Phase 4B-1: 聊天页面默认全身构图。
+       *
+       * 基于当前模型 BoundingBox / BoundingSphere / 相机 FOV / 视口宽高,
+       * 调整相机 position / target / distance,使模型全身可见。
+       * 不修改 VRM scene scale 或 position。
+       *
+       * @returns {string} JSON 结果
+       *   成功:{"success": true, "state": "READY", "cameraState": {...}, "bounds": {...}}
+       *   失败:{"success": false, "state": "...", "error": {...}}
+       */
+      fitAvatarFullBody: function() {
+        return callViewer(function(v) {
+          var result = v.fitAvatarFullBody();
+          if (result && result.success) {
+            return { success: true, state: v.getState(), cameraState: result.state, bounds: result.bounds };
+          }
+          return {
+            success: false,
+            state: v.getState(),
+            error: result && result.error ? result.error : { code: "FIT_FULL_BODY_FAILED", message: "fitAvatarFullBody failed" }
           };
         });
       },

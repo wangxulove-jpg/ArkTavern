@@ -121,13 +121,15 @@ export class ArkWebAvatarChatBridgeErrorCode {
  *
  * - SINGLE_CHAT: 真实单人聊天页面发布的最终消息
  * - AI_TAB_MANUAL_TEST: AI Tab 手动测试入口发布的结果
+ * - CHAT_AI_PANEL: 聊天页面 AI 控制面板手动点击动作/姿势/表情发布的结果 (Phase 4B-1)
  *
  * 其他来源 (群体聊天 / 历史回放 / 自动化测试) 留待后续阶段扩展,
- * 本阶段只允许这两个常量。
+ * 本阶段只允许这三个常量。
  */
 export class ArkWebAvatarChatFinalResultSource {
   static readonly SINGLE_CHAT: string = 'SINGLE_CHAT';
   static readonly AI_TAB_MANUAL_TEST: string = 'AI_TAB_MANUAL_TEST';
+  static readonly CHAT_AI_PANEL: string = 'CHAT_AI_PANEL';
 }
 
 /**

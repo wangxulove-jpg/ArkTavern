@@ -5,6 +5,10 @@
  * - 仅占位文本样式,验证 ArkWeb 渲染。
  * - 暗背景 #222222,与 Figure 默认背景一致。
  *
+ * Phase 4B-1:
+ * - 增加 body.chat-stage 透明模式,供聊天页面 Avatar Stage 使用。
+ * - 透明模式不影响普通 VRM Viewer 模式(VIEWER Profile)。
+ *
  * Reference:
  * - figure-main: style/palette.css(暗背景风格参考)
  */
@@ -102,4 +106,32 @@ body {
   color: rgba(255, 255, 255, 0.8);
   line-height: 1.5;
   word-break: break-word;
+}
+
+/**
+ * Phase 4B-1: CHAT_STAGE 透明模式
+ *
+ * 当 ViewerScene.setRenderProfile('CHAT_STAGE') 被调用时,
+ * body 会被添加 'chat-stage' class,以下规则生效:
+ *   - html / body / .viewer-stage / .viewer-canvas 背景全部透明
+ *   - 配合 renderer alpha=true + clearAlpha=0 + scene.background=null
+ *     实现背景图片持续可见 + 透明 WebGL Canvas + VRM 模型
+ *
+ * 禁止:
+ *   - 通过此 class 修改普通 Viewer 模式的背景
+ *   - 添加任何不透明遮罩
+ *
+ * 普通模式(body 无 chat-stage class)保持 #222222 暗背景不变。
+ */
+body.chat-stage,
+body.chat-stage html,
+body.chat-stage .viewer-stage,
+body.chat-stage .viewer-canvas {
+  background: transparent !important;
+}
+
+/* 隐藏占位文本与错误覆盖层(CHAT_STAGE 不显示错误遮罩) */
+body.chat-stage .viewer-placeholder,
+body.chat-stage .viewer-error-overlay {
+  display: none !important;
 }
