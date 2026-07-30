@@ -57,7 +57,9 @@ import {
   ArkWebAvatarModelAsset,
   ArkWebAvatarAnimationAsset,
   ArkWebAvatarPoseAsset,
-  AssetLibraryErrorCode
+  AssetLibraryErrorCode,
+  ArkWebExpressionAliasBusinessId,
+  ExpressionAliasErrorCode
 } from './ArkWebAvatarAssetTypes';
 import { ASSET_LIBRARY_SCHEMA_VERSION } from './ArkWebAvatarAssetTypes';
 
@@ -940,6 +942,191 @@ export class ArkWebAvatarAssetLibrary {
     return this.disposed;
   }
 
+  // ===== Phase 3E-2: 表情别名映射操作 =====
+
+  /**
+   * 获取指定模型的表情别名映射 (Phase 3E-2)。
+   *
+   * 返回业务 expressionId → 模型真实 expressionName 的映射副本。
+   * 旧模型记录缺少字段时兼容为空对象。
+   *
+   * @param modelId 模型 ID
+   * @returns 映射副本; modelId 不存在或失败返回空对象
+   */
+  async getExpressionAliases(modelId: string): Promise<Record<string, string>> {
+    if (this.disposed) {
+      return {};
+    }
+    const data: ArkWebAvatarAssetLibraryData | null = await this.readLibrary();
+    if (data === null) {
+      return {};
+    }
+    for (let i = 0; i < data.models.length; i++) {
+      if (data.models[i].modelId === modelId) {
+        // 返回副本, 防止外部修改内部状态
+        const src: Record<string, string> = data.models[i].expressionAliases;
+        const result: Record<string, string> = {};
+        const keys: string[] = Object.keys(src);
+        for (let j = 0; j < keys.length; j++) {
+          const k: string = keys[j];
+          result[k] = src[k];
+        }
+        return result;
+      }
+    }
+    return {};
+  }
+
+  /**
+   * 设置表情别名映射 (Phase 3E-2)。
+   *
+   * 验证 (规范 §三十三):
+   * - modelId 存在于 models 中
+   * - expressionId 属于固定业务 ID (neutral/happy/angry/sad/relaxed/surprised)
+   * - expressionName 非空字符串
+   *
+   * 实际 Expression 是否存在由运行时再次验证 (本方法只持久化映射元数据)。
+   *
+   * @returns 成功返回 true; 失败返回 false
+   */
+  async setExpressionAlias(modelId: string, expressionId: string, expressionName: string): Promise<boolean> {
+    if (this.disposed) {
+      return false;
+    }
+    if (!ArkWebExpressionAliasBusinessId.isValid(expressionId)) {
+      console.warn(`[ArkWebAvatarAssetLibrary] setExpressionAlias invalid expressionId: ${expressionId}`);
+      return false;
+    }
+    if (typeof expressionName !== 'string' || expressionName.length === 0) {
+      console.warn(`[ArkWebAvatarAssetLibrary] setExpressionAlias invalid expressionName`);
+      return false;
+    }
+    const data: ArkWebAvatarAssetLibraryData | null = await this.readLibrary();
+    if (data === null) {
+      return false;
+    }
+    let foundIdx: number = -1;
+    for (let i = 0; i < data.models.length; i++) {
+      if (data.models[i].modelId === modelId) {
+        foundIdx = i;
+        break;
+      }
+    }
+    if (foundIdx < 0) {
+      console.warn(`[ArkWebAvatarAssetLibrary] setExpressionAlias modelId not found: ${modelId}`);
+      return false;
+    }
+    const oldModel: ArkWebAvatarModelAsset = data.models[foundIdx];
+    // 构造新的 expressionAliases 副本
+    const newAliases: Record<string, string> = {};
+    const oldKeys: string[] = Object.keys(oldModel.expressionAliases);
+    for (let i = 0; i < oldKeys.length; i++) {
+      newAliases[oldKeys[i]] = oldModel.expressionAliases[oldKeys[i]];
+    }
+    newAliases[expressionId] = expressionName;
+
+    const updatedModel: ArkWebAvatarModelAsset = {
+      modelId: oldModel.modelId,
+      resourceId: oldModel.resourceId,
+      displayName: oldModel.displayName,
+      relativePath: oldModel.relativePath,
+      mimeType: oldModel.mimeType,
+      byteLength: oldModel.byteLength,
+      createdAt: oldModel.createdAt,
+      updatedAt: Date.now(),
+      expressionAliases: newAliases
+    };
+    const newModels: ArkWebAvatarModelAsset[] = data.models.slice();
+    newModels[foundIdx] = updatedModel;
+    const newData: ArkWebAvatarAssetLibraryData = {
+      schemaVersion: ASSET_LIBRARY_SCHEMA_VERSION,
+      activeModelId: data.activeModelId,
+      models: newModels,
+      animations: data.animations,
+      defaultIdleActionId: data.defaultIdleActionId,
+      poses: data.poses,
+      defaultPoseId: data.defaultPoseId
+    };
+    const writeOk: boolean = await this.atomicWriteLibrary(newData);
+    if (!writeOk) {
+      return false;
+    }
+    this.inMemoryData = newData;
+    console.info(`[ArkWebAvatarAssetLibrary] setExpressionAlias ok modelId=${modelId} id=${expressionId} name=${expressionName}`);
+    return true;
+  }
+
+  /**
+   * 取消表情别名映射 (Phase 3E-2)。
+   *
+   * @returns 成功返回 true; 失败返回 false
+   */
+  async clearExpressionAlias(modelId: string, expressionId: string): Promise<boolean> {
+    if (this.disposed) {
+      return false;
+    }
+    if (!ArkWebExpressionAliasBusinessId.isValid(expressionId)) {
+      console.warn(`[ArkWebAvatarAssetLibrary] clearExpressionAlias invalid expressionId: ${expressionId}`);
+      return false;
+    }
+    const data: ArkWebAvatarAssetLibraryData | null = await this.readLibrary();
+    if (data === null) {
+      return false;
+    }
+    let foundIdx: number = -1;
+    for (let i = 0; i < data.models.length; i++) {
+      if (data.models[i].modelId === modelId) {
+        foundIdx = i;
+        break;
+      }
+    }
+    if (foundIdx < 0) {
+      console.warn(`[ArkWebAvatarAssetLibrary] clearExpressionAlias modelId not found: ${modelId}`);
+      return false;
+    }
+    const oldModel: ArkWebAvatarModelAsset = data.models[foundIdx];
+    const oldKeys: string[] = Object.keys(oldModel.expressionAliases);
+    // 若无该映射, 直接成功 (幂等)
+    if (oldKeys.indexOf(expressionId) === -1) {
+      return true;
+    }
+    const newAliases: Record<string, string> = {};
+    for (let i = 0; i < oldKeys.length; i++) {
+      if (oldKeys[i] !== expressionId) {
+        newAliases[oldKeys[i]] = oldModel.expressionAliases[oldKeys[i]];
+      }
+    }
+    const updatedModel: ArkWebAvatarModelAsset = {
+      modelId: oldModel.modelId,
+      resourceId: oldModel.resourceId,
+      displayName: oldModel.displayName,
+      relativePath: oldModel.relativePath,
+      mimeType: oldModel.mimeType,
+      byteLength: oldModel.byteLength,
+      createdAt: oldModel.createdAt,
+      updatedAt: Date.now(),
+      expressionAliases: newAliases
+    };
+    const newModels: ArkWebAvatarModelAsset[] = data.models.slice();
+    newModels[foundIdx] = updatedModel;
+    const newData: ArkWebAvatarAssetLibraryData = {
+      schemaVersion: ASSET_LIBRARY_SCHEMA_VERSION,
+      activeModelId: data.activeModelId,
+      models: newModels,
+      animations: data.animations,
+      defaultIdleActionId: data.defaultIdleActionId,
+      poses: data.poses,
+      defaultPoseId: data.defaultPoseId
+    };
+    const writeOk: boolean = await this.atomicWriteLibrary(newData);
+    if (!writeOk) {
+      return false;
+    }
+    this.inMemoryData = newData;
+    console.info(`[ArkWebAvatarAssetLibrary] clearExpressionAlias ok modelId=${modelId} id=${expressionId}`);
+    return true;
+  }
+
   // ===== 内部方法 =====
 
   /**
@@ -1259,6 +1446,11 @@ export class ArkWebAvatarAssetLibrary {
     if (typeof updatedAtObj !== 'number' || !Number.isFinite(updatedAtObj)) {
       return null;
     }
+    // Phase 3E-2: expressionAliases 向后兼容
+    // 旧模型记录缺少字段时兼容为空对象。
+    // 字段存在但非 object (如 null/array) 视为空对象 (不返回 null, 保持向前兼容)。
+    const expressionAliasesObj: Object | undefined = o['expressionAliases'];
+    const expressionAliases: Record<string, string> = this.coerceExpressionAliases(expressionAliasesObj);
     return {
       modelId: modelId as string,
       resourceId: resourceId as string,
@@ -1267,8 +1459,34 @@ export class ArkWebAvatarAssetLibrary {
       mimeType: mimeType as string,
       byteLength: byteLengthObj as number,
       createdAt: createdAtObj as number,
-      updatedAt: updatedAtObj as number
+      updatedAt: updatedAtObj as number,
+      expressionAliases: expressionAliases
     };
+  }
+
+  /**
+   * 把 expressionAliases 字段强制为 Record<string, string> (Phase 3E-2)。
+   *
+   * 向后兼容策略:
+   * - undefined / null: 返回空对象 (旧模型记录无此字段)
+   * - 非对象 (number/string/array): 返回空对象
+   * - 对象: 遍历 own enumerable, 只保留 string→string 项
+   */
+  private coerceExpressionAliases(obj: Object | undefined): Record<string, string> {
+    const result: Record<string, string> = {};
+    if (obj === undefined || obj === null || typeof obj !== 'object' || Array.isArray(obj)) {
+      return result;
+    }
+    const src: Record<string, Object> = obj as Record<string, Object>;
+    const keys: string[] = Object.keys(src);
+    for (let i = 0; i < keys.length; i++) {
+      const k: string = keys[i];
+      const v: Object | undefined = src[k];
+      if (typeof k === 'string' && k.length > 0 && typeof v === 'string' && v.length > 0) {
+        result[k] = v;
+      }
+    }
+    return result;
   }
 
   /**

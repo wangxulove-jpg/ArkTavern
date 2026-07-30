@@ -14,9 +14,16 @@
  *   - 不做语音口型同步 (Lip Sync)
  *   - 不做 Blink 自动眨眼
  *   - 不做多表情混合编辑器
- *   - 不做表情时间轴 / 淡入淡出 / 持久化映射
+ *   - 不做表情时间轴 / 淡入淡出
  *   - 不做动作与表情联动
  *   - 不假定所有模型都支持 happy/angry/sad/relaxed/surprised/neutral
+ *
+ * Phase 3E-2 扩展:
+ *   - 临时表情 (setTemporaryExpression / cancelTemporaryExpression)
+ *   - 别名解析 (resolveExpressionAlias / setExpressionByAlias / setTemporaryExpressionByAlias)
+ *   - 持久化映射由 ArkTS AssetLibrary 管理, JS 端只接收 aliases 对象
+ *   - generation 防过期: 模型替换 / dispose / 新任务使旧 timeout 失效
+ *   - 不新增 Frame Loop 或轮询, 仅使用单次 setTimeout
  *
  * Expression API (确认自 vendor/pixiv/three-vrm.module.js 3.5.5):
  *   - vrm.expressionManager -> VRMExpressionManager | null
@@ -75,8 +82,32 @@ export var ExpressionErrorCode = {
   NAME_INVALID: 'EXPRESSION_NAME_INVALID',
   NOT_FOUND: 'EXPRESSION_NOT_FOUND',
   WEIGHT_INVALID: 'EXPRESSION_WEIGHT_INVALID',
-  APPLY_FAILED: 'EXPRESSION_APPLY_FAILED'
+  APPLY_FAILED: 'EXPRESSION_APPLY_FAILED',
+  // Phase 3E-2
+  ALIAS_NOT_RESOLVED: 'EXPRESSION_ALIAS_NOT_RESOLVED',
+  DURATION_INVALID: 'EXPRESSION_DURATION_INVALID',
+  RESTORE_POLICY_INVALID: 'EXPRESSION_RESTORE_POLICY_INVALID',
+  TEMPORARY_APPLY_FAILED: 'EXPRESSION_TEMPORARY_APPLY_FAILED'
 };
+
+// ===== Phase 3E-2: 临时表情恢复策略 =====
+export var TemporaryRestorePolicy = {
+  PREVIOUS: 'PREVIOUS',
+  RESET: 'RESET'
+};
+
+/**
+ * Phase 3E-2: 表情别名固定业务 ID。
+ * 不同模型仍只使用其真实存在的 Expression, 通过 aliases 映射解析。
+ * 不得假定模型一定支持其中任何项。
+ */
+var EXPRESSION_ALIAS_BUSINESS_IDS = ['neutral', 'happy', 'angry', 'sad', 'relaxed', 'surprised'];
+
+/**
+ * Phase 3E-2: 临时表情持续时间范围 (ms)。
+ */
+var TEMPORARY_DURATION_MIN_MS = 100;
+var TEMPORARY_DURATION_MAX_MS = 30000;
 
 /**
  * VRMExpressionPresetName 完整列表 (来自 three-vrm 3.5.5)。
@@ -134,6 +165,24 @@ export class ViewerExpressionController {
       : function () { return null; };
     /** @type {boolean} 是否已销毁 */
     this._disposed = false;
+
+    // ===== Phase 3E-2: 临时表情状态 =====
+    /** @type {number} 临时表情代次 (每次新任务/取消/模型替换/dispose 自增, 用于让旧 timeout 失效) */
+    this.temporaryGeneration = 0;
+    /** @type {number|null} 当前临时表情的 setTimeout 句柄 */
+    this.temporaryTimer = null;
+    /** @type {string} 当前临时表情名 (空字符串表示无临时表情) */
+    this.temporaryExpressionName = '';
+    /** @type {number} 当前临时表情权重 */
+    this.temporaryExpressionWeight = 0;
+    /** @type {number} 临时表情到期时间戳 (0 表示无任务) */
+    this.temporaryExpiresAt = 0;
+    /** @type {string} 恢复策略 (PREVIOUS / RESET) */
+    this.temporaryRestorePolicy = TemporaryRestorePolicy.PREVIOUS;
+    /** @type {string} 临时表情开始前保存的业务表情名 */
+    this.restoreExpressionName = '';
+    /** @type {number} 临时表情开始前保存的业务表情权重 */
+    this.restoreExpressionWeight = 0;
   }
 
   /**
@@ -312,6 +361,10 @@ export class ViewerExpressionController {
         error: makeError(ExpressionErrorCode.CONTROLLER_DISPOSED, 'controller disposed')
       };
     }
+    // Phase 3E-2: 手动设置表情必须取消旧临时任务 (规范 §三十四)
+    // 注意: setTemporaryExpression 在调用 setExpression 前已 _cancelTemporaryInternal,
+    //       此处再取消是幂等的 (无临时任务可取消)。
+    this._cancelTemporaryInternal();
     if (!this.currentVrm) {
       this._recordFailure(ExpressionErrorCode.VRM_MISSING, 'currentVrm is null');
       return {
@@ -446,6 +499,8 @@ export class ViewerExpressionController {
         error: makeError(ExpressionErrorCode.CONTROLLER_DISPOSED, 'controller disposed')
       };
     }
+    // Phase 3E-2: 手动清除表情必须取消旧临时任务 (规范 §三十四)
+    this._cancelTemporaryInternal();
     if (!this.currentVrm) {
       this._recordFailure(ExpressionErrorCode.VRM_MISSING, 'currentVrm is null');
       return {
@@ -560,7 +615,16 @@ export class ViewerExpressionController {
         currentExpressionWeight: this.currentExpressionWeight,
         lastErrorCode: this.lastErrorCode,
         lastErrorMessage: this.lastErrorMessage,
-        lipSyncChannelsPreserved: this.lipSyncChannelsPreserved
+        lipSyncChannelsPreserved: this.lipSyncChannelsPreserved,
+        // Phase 3E-2
+        temporaryExpressionName: this.temporaryExpressionName,
+        temporaryExpressionWeight: this.temporaryExpressionWeight,
+        temporaryExpiresAt: this.temporaryExpiresAt,
+        temporaryRestorePolicy: this.temporaryRestorePolicy,
+        restoreExpressionName: this.restoreExpressionName,
+        restoreExpressionWeight: this.restoreExpressionWeight,
+        temporaryGeneration: this.temporaryGeneration,
+        temporaryTimerActive: this.temporaryTimer !== null
       }
     };
   }
@@ -587,8 +651,11 @@ export class ViewerExpressionController {
    * 用于模型替换 / unbindVrm / dispose。
    *
    * 不保存旧 Expression 实例。
+   * Phase 3E-2: 同时取消临时表情 timeout 并清空临时状态, generation++ 使旧 timeout 失效。
    */
   _clearInternalState() {
+    // Phase 3E-2: 取消临时表情 (generation++ 使任何已调度的 timeout 失效)
+    this._cancelTemporaryInternal();
     this.currentVrm = null;
     this.availableExpressions = [];
     this.currentExpressionName = '';
@@ -599,6 +666,351 @@ export class ViewerExpressionController {
     if (this._state !== ExpressionState.DISPOSED) {
       this._state = ExpressionState.UNBOUND;
     }
+  }
+
+  // ===== Phase 3E-2: 临时表情 =====
+
+  /**
+   * Phase 3E-2: 设置临时表情。
+   *
+   * 流程 (规范 §三十四):
+   *   1. 取消旧临时任务 (generation++)
+   *   2. 保存当前表情和权重 (用于 PREVIOUS 恢复)
+   *   3. 设置临时表情 (复用 setExpression 逻辑, 失败回滚状态)
+   *   4. 创建单次 setTimeout(durationMs)
+   *   5. 到期检查 generation:
+   *      - PREVIOUS: 恢复之前表情
+   *      - RESET: 清除业务表情 (resetExpression)
+   *
+   * 验证:
+   *   - Controller 未 dispose
+   *   - VRM 已绑定 / expressionManager 存在 (由 setExpression 内部校验)
+   *   - name 非空字符串
+   *   - 表达式真实存在
+   *   - weight 是有限数字, 范围 0~1
+   *   - durationMs 是有限整数, 范围 100..30000
+   *   - restorePolicy ∈ {PREVIOUS, RESET}
+   *
+   * 以下情况必须取消旧任务:
+   *   - 设置新的临时表情
+   *   - 手动设置表情 (setExpression)
+   *   - 手动清除表情 (resetExpression)
+   *   - 模型替换 (unbindVrm)
+   *   - Controller dispose
+   *
+   * @param {string} name 表情名 (模型真实 expressionName, 非业务 ID)
+   * @param {number} weight 权重 0~1
+   * @param {number} durationMs 持续时间 100..30000 ms
+   * @param {string} restorePolicy PREVIOUS | RESET
+   * @returns {{success: boolean, state?: ExpressionState, temporaryExpressionName?: string, temporaryExpressionWeight?: number, expiresAt?: number, error?: object}}
+   */
+  setTemporaryExpression(name, weight, durationMs, restorePolicy) {
+    if (this._disposed) {
+      return {
+        success: false,
+        state: ExpressionState.DISPOSED,
+        error: makeError(ExpressionErrorCode.CONTROLLER_DISPOSED, 'controller disposed')
+      };
+    }
+    // 参数校验
+    if (typeof name !== 'string' || name.length === 0) {
+      this._recordFailure(ExpressionErrorCode.NAME_INVALID, 'name must be a non-empty string');
+      return {
+        success: false,
+        state: this._state,
+        error: makeError(ExpressionErrorCode.NAME_INVALID, 'name must be a non-empty string')
+      };
+    }
+    if (typeof weight !== 'number' || !isFinite(weight) || weight < 0 || weight > 1) {
+      this._recordFailure(ExpressionErrorCode.WEIGHT_INVALID, 'weight must be a finite number in [0, 1]');
+      return {
+        success: false,
+        state: this._state,
+        error: makeError(ExpressionErrorCode.WEIGHT_INVALID, 'weight must be a finite number in [0, 1]')
+      };
+    }
+    if (typeof durationMs !== 'number' || !isFinite(durationMs) ||
+        durationMs < TEMPORARY_DURATION_MIN_MS || durationMs > TEMPORARY_DURATION_MAX_MS) {
+      this._recordFailure(ExpressionErrorCode.DURATION_INVALID,
+        'durationMs must be a finite number in [' + TEMPORARY_DURATION_MIN_MS + ', ' + TEMPORARY_DURATION_MAX_MS + ']');
+      return {
+        success: false,
+        state: this._state,
+        error: makeError(ExpressionErrorCode.DURATION_INVALID,
+          'durationMs must be in [' + TEMPORARY_DURATION_MIN_MS + ', ' + TEMPORARY_DURATION_MAX_MS + '], got ' + durationMs)
+      };
+    }
+    if (restorePolicy !== TemporaryRestorePolicy.PREVIOUS && restorePolicy !== TemporaryRestorePolicy.RESET) {
+      this._recordFailure(ExpressionErrorCode.RESTORE_POLICY_INVALID,
+        'restorePolicy must be PREVIOUS or RESET, got ' + restorePolicy);
+      return {
+        success: false,
+        state: this._state,
+        error: makeError(ExpressionErrorCode.RESTORE_POLICY_INVALID,
+          'restorePolicy must be PREVIOUS or RESET, got ' + restorePolicy)
+      };
+    }
+
+    // 1. 取消旧临时任务 (generation++, 清空临时状态)
+    this._cancelTemporaryInternal();
+
+    // 2. 保存当前表情和权重 (用于 PREVIOUS 恢复)
+    this.restoreExpressionName = this.currentExpressionName;
+    this.restoreExpressionWeight = this.currentExpressionWeight;
+
+    // 3. 设置临时表情 (复用 setExpression, 失败回滚 restore 字段)
+    var applyResult = this.setExpression(name, weight);
+    if (!applyResult.success) {
+      // setExpression 已 _recordFailure, 这里只回滚 restore 字段
+      this.restoreExpressionName = '';
+      this.restoreExpressionWeight = 0;
+      return {
+        success: false,
+        state: this._state,
+        error: applyResult.error || makeError(ExpressionErrorCode.TEMPORARY_APPLY_FAILED, 'setExpression failed')
+      };
+    }
+
+    // 4. 记录临时状态 + 创建单次 timeout
+    var myGeneration = this.temporaryGeneration;
+    this.temporaryExpressionName = name;
+    this.temporaryExpressionWeight = weight;
+    this.temporaryRestorePolicy = restorePolicy;
+    this.temporaryExpiresAt = Date.now() + durationMs;
+    var self = this;
+    this.temporaryTimer = setTimeout(function () {
+      self._onTemporaryTimeout(myGeneration);
+    }, durationMs);
+
+    return {
+      success: true,
+      state: this._state,
+      temporaryExpressionName: this.temporaryExpressionName,
+      temporaryExpressionWeight: this.temporaryExpressionWeight,
+      expiresAt: this.temporaryExpiresAt
+    };
+  }
+
+  /**
+   * Phase 3E-2: 取消当前临时表情。
+   *
+   * 行为:
+   *   - generation++ 使旧 timeout 失效
+   *   - 清除 setTimeout 句柄
+   *   - 清空临时状态字段
+   *   - 不恢复任何表情 (不调用 setExpression / resetExpression)
+   *   - 不改变 currentExpressionName / currentExpressionWeight
+   *
+   * @returns {{success: boolean, state: ExpressionState}}
+   */
+  cancelTemporaryExpression() {
+    if (this._disposed) {
+      return {
+        success: false,
+        state: ExpressionState.DISPOSED,
+        error: makeError(ExpressionErrorCode.CONTROLLER_DISPOSED, 'controller disposed')
+      };
+    }
+    this._cancelTemporaryInternal();
+    return { success: true, state: this._state };
+  }
+
+  /**
+   * Phase 3E-2: 内部取消临时表情 (无 dispose 检查)。
+   * generation++ 使任何已调度的 timeout 失效, 清空临时状态字段。
+   */
+  _cancelTemporaryInternal() {
+    this.temporaryGeneration++;
+    if (this.temporaryTimer !== null) {
+      try {
+        clearTimeout(this.temporaryTimer);
+      } catch (_e) {
+        // 忽略
+      }
+      this.temporaryTimer = null;
+    }
+    this.temporaryExpressionName = '';
+    this.temporaryExpressionWeight = 0;
+    this.temporaryExpiresAt = 0;
+    this.temporaryRestorePolicy = TemporaryRestorePolicy.PREVIOUS;
+    this.restoreExpressionName = '';
+    this.restoreExpressionWeight = 0;
+  }
+
+  /**
+   * Phase 3E-2: 临时表情 timeout 回调。
+   *
+   * 检查 generation:
+   *   - 不匹配: 旧任务, 忽略 (不做任何事)
+   *   - 匹配: 按 restorePolicy 恢复
+   *     - PREVIOUS: 恢复之前表情 (若有) 或 resetExpression
+   *     - RESET: 清除业务表情 (resetExpression)
+   *
+   * 恢复后清空临时状态字段。
+   */
+  _onTemporaryTimeout(generation) {
+    if (this._disposed) return;
+    if (generation !== this.temporaryGeneration) {
+      // 旧任务, 忽略
+      return;
+    }
+    var policy = this.temporaryRestorePolicy;
+    var restoreName = this.restoreExpressionName;
+    var restoreWeight = this.restoreExpressionWeight;
+
+    // 清空临时状态 (在恢复前清空, 避免 resetExpression/setExpression 的 _cancelTemporaryInternal 干扰)
+    this.temporaryTimer = null;
+    this.temporaryExpressionName = '';
+    this.temporaryExpressionWeight = 0;
+    this.temporaryExpiresAt = 0;
+    this.temporaryRestorePolicy = TemporaryRestorePolicy.PREVIOUS;
+    this.restoreExpressionName = '';
+    this.restoreExpressionWeight = 0;
+    // generation 不自增 (复用当前代次, 因为 timeout 已自然结束)
+
+    if (policy === TemporaryRestorePolicy.RESET) {
+      // RESET: 清除业务表情
+      this.resetExpression();
+    } else {
+      // PREVIOUS: 恢复之前表情
+      if (restoreName && restoreName.length > 0) {
+        // 恢复到之前表情和权重
+        this.setExpression(restoreName, restoreWeight);
+      } else {
+        // 之前无表情, 清除
+        this.resetExpression();
+      }
+    }
+  }
+
+  /**
+   * Phase 3E-2: 获取临时表情状态 (只读)。
+   * @returns {{success: boolean, temporaryExpressionName: string, temporaryExpressionWeight: number, temporaryExpiresAt: number, temporaryRestorePolicy: string, restoreExpressionName: string, restoreExpressionWeight: number, temporaryGeneration: number}}
+   */
+  getTemporaryExpressionState() {
+    return {
+      success: true,
+      temporaryExpressionName: this.temporaryExpressionName,
+      temporaryExpressionWeight: this.temporaryExpressionWeight,
+      temporaryExpiresAt: this.temporaryExpiresAt,
+      temporaryRestorePolicy: this.temporaryRestorePolicy,
+      restoreExpressionName: this.restoreExpressionName,
+      restoreExpressionWeight: this.restoreExpressionWeight,
+      temporaryGeneration: this.temporaryGeneration
+    };
+  }
+
+  // ===== Phase 3E-2: 别名解析 =====
+
+  /**
+   * Phase 3E-2: 解析业务 expressionId 到模型真实 expressionName。
+   *
+   * 规则 (规范 §三十三):
+   *   1. 优先使用持久化映射 aliases[expressionId]
+   *   2. 没有映射时尝试同名 Expression (getExpression(expressionId))
+   *   3. 仍不存在则返回 null (调用方返回 EXPRESSION_ALIAS_NOT_RESOLVED)
+   *
+   * 不得假定模型一定支持预设表情。
+   *
+   * @param {string} expressionId 业务 ID (neutral/happy/angry/sad/relaxed/surprised)
+   * @param {object} aliases 持久化映射 { expressionId: expressionName }
+   * @returns {string|null} 模型真实 expressionName, 无法解析返回 null
+   */
+  resolveExpressionAlias(expressionId, aliases) {
+    if (this._disposed) return null;
+    if (typeof expressionId !== 'string' || expressionId.length === 0) return null;
+    if (!this.currentVrm) return null;
+    var manager = this.currentVrm.expressionManager;
+    if (!manager) return null;
+
+    // 1. 优先使用持久化映射
+    if (aliases && typeof aliases === 'object' && !Array.isArray(aliases)) {
+      var mapped = aliases[expressionId];
+      if (typeof mapped === 'string' && mapped.length > 0) {
+        // 验证映射的真实 expressionName 是否存在于当前模型
+        if (typeof manager.getExpression === 'function' && manager.getExpression(mapped)) {
+          return mapped;
+        }
+      }
+    }
+
+    // 2. 没有映射或映射无效时, 尝试同名 Expression
+    if (typeof manager.getExpression === 'function' && manager.getExpression(expressionId)) {
+      return expressionId;
+    }
+
+    // 3. 仍不存在
+    return null;
+  }
+
+  /**
+   * Phase 3E-2: 通过业务 expressionId 设置表情。
+   *
+   * 流程:
+   *   1. resolveExpressionAlias 解析真实 expressionName
+   *   2. 无法解析返回 EXPRESSION_ALIAS_NOT_RESOLVED
+   *   3. 调用 setExpression(name, weight)
+   *
+   * @param {string} expressionId 业务 ID
+   * @param {object} aliases 持久化映射
+   * @param {number} weight 权重 0~1
+   * @returns {{success: boolean, state?: ExpressionState, name?: string, weight?: number, error?: object}}
+   */
+  setExpressionByAlias(expressionId, aliases, weight) {
+    if (this._disposed) {
+      return {
+        success: false,
+        state: ExpressionState.DISPOSED,
+        error: makeError(ExpressionErrorCode.CONTROLLER_DISPOSED, 'controller disposed')
+      };
+    }
+    var resolvedName = this.resolveExpressionAlias(expressionId, aliases);
+    if (resolvedName === null) {
+      this._recordFailure(ExpressionErrorCode.ALIAS_NOT_RESOLVED,
+        'cannot resolve expressionId: ' + expressionId);
+      return {
+        success: false,
+        state: this._state,
+        error: makeError(ExpressionErrorCode.ALIAS_NOT_RESOLVED,
+          'cannot resolve expressionId: ' + expressionId)
+      };
+    }
+    // setExpression 会取消旧临时任务 (通过 _cancelTemporaryInternal? 不会, setExpression 不取消临时任务)
+    // 规范要求: "手动设置表情"必须取消旧 timeout。setExpression 内部不取消, 这里显式取消。
+    this._cancelTemporaryInternal();
+    return this.setExpression(resolvedName, weight);
+  }
+
+  /**
+   * Phase 3E-2: 通过业务 expressionId 设置临时表情。
+   *
+   * @param {string} expressionId 业务 ID
+   * @param {object} aliases 持久化映射
+   * @param {number} weight 权重 0~1
+   * @param {number} durationMs 持续时间 100..30000 ms
+   * @param {string} restorePolicy PREVIOUS | RESET
+   * @returns {{success: boolean, state?: ExpressionState, temporaryExpressionName?: string, temporaryExpressionWeight?: number, expiresAt?: number, error?: object}}
+   */
+  setTemporaryExpressionByAlias(expressionId, aliases, weight, durationMs, restorePolicy) {
+    if (this._disposed) {
+      return {
+        success: false,
+        state: ExpressionState.DISPOSED,
+        error: makeError(ExpressionErrorCode.CONTROLLER_DISPOSED, 'controller disposed')
+      };
+    }
+    var resolvedName = this.resolveExpressionAlias(expressionId, aliases);
+    if (resolvedName === null) {
+      this._recordFailure(ExpressionErrorCode.ALIAS_NOT_RESOLVED,
+        'cannot resolve expressionId: ' + expressionId);
+      return {
+        success: false,
+        state: this._state,
+        error: makeError(ExpressionErrorCode.ALIAS_NOT_RESOLVED,
+          'cannot resolve expressionId: ' + expressionId)
+      };
+    }
+    return this.setTemporaryExpression(resolvedName, weight, durationMs, restorePolicy);
   }
 
   /**

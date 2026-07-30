@@ -123,6 +123,187 @@ if (window.__arkTavernBootstrapState) {
     }
   }
 
+  // ===== Phase 3E-2: 表情别名与临时表情参数解析 =====
+
+  /**
+   * 禁止字段白名单 (与 setExpression 保持一致, 禁止路径相关字段)。
+   */
+  var EXPRESSION_FORBIDDEN_FIELDS = ['absolutePath', 'relativePath', 'filesDir', 'fileDescriptor', 'sourceUri', 'cachePath'];
+
+  function makeExpressionError(code, message) {
+    return { success: false, error: { code: code, message: message } };
+  }
+
+  /**
+   * 解析 setTemporaryExpression 参数 JSON。
+   * 成功返回 { name, weight, durationMs, restorePolicy }
+   * 失败返回 { error: <errorObject> }
+   */
+  function parseTemporaryExpressionParams(paramsJson) {
+    if (typeof paramsJson !== 'string' || paramsJson.length === 0) {
+      return { error: makeExpressionError('EXPRESSION_NAME_INVALID', 'paramsJson must be a non-empty string') };
+    }
+    var params;
+    try {
+      params = JSON.parse(paramsJson);
+    } catch (e) {
+      return { error: makeExpressionError('EXPRESSION_NAME_INVALID',
+        'paramsJson is not valid JSON: ' + (e && e.message ? e.message : String(e))) };
+    }
+    if (!params || typeof params !== 'object' || Array.isArray(params)) {
+      return { error: makeExpressionError('EXPRESSION_NAME_INVALID', 'paramsJson parsed to non-object') };
+    }
+    for (var i = 0; i < EXPRESSION_FORBIDDEN_FIELDS.length; i++) {
+      if (Object.prototype.hasOwnProperty.call(params, EXPRESSION_FORBIDDEN_FIELDS[i])) {
+        return { error: makeExpressionError('EXPRESSION_NAME_INVALID',
+          'Forbidden field present: ' + EXPRESSION_FORBIDDEN_FIELDS[i]) };
+      }
+    }
+    if (typeof params.name !== 'string' || params.name.length === 0) {
+      return { error: makeExpressionError('EXPRESSION_NAME_INVALID', 'params.name must be a non-empty string') };
+    }
+    if (typeof params.weight !== 'number' || !isFinite(params.weight) || params.weight < 0 || params.weight > 1) {
+      return { error: makeExpressionError('EXPRESSION_WEIGHT_INVALID',
+        'params.weight must be a finite number in [0, 1]') };
+    }
+    if (typeof params.durationMs !== 'number' || !isFinite(params.durationMs) ||
+        params.durationMs < 100 || params.durationMs > 30000) {
+      return { error: makeExpressionError('EXPRESSION_DURATION_INVALID',
+        'params.durationMs must be in [100, 30000], got ' + params.durationMs) };
+    }
+    if (params.restorePolicy !== 'PREVIOUS' && params.restorePolicy !== 'RESET') {
+      return { error: makeExpressionError('EXPRESSION_RESTORE_POLICY_INVALID',
+        'params.restorePolicy must be PREVIOUS or RESET, got ' + params.restorePolicy) };
+    }
+    return { name: params.name, weight: params.weight, durationMs: params.durationMs, restorePolicy: params.restorePolicy };
+  }
+
+  /**
+   * 校验 aliases 字段: 必须是对象 (非数组), key/value 均为非空字符串。
+   */
+  function validateAliases(aliases) {
+    if (aliases === undefined || aliases === null) {
+      return {}; // 允许缺失, 视为空映射
+    }
+    if (typeof aliases !== 'object' || Array.isArray(aliases)) {
+      return null; // 非法
+    }
+    // 过滤为只含 string→string 的对象
+    var result = {};
+    var keys = Object.keys(aliases);
+    for (var i = 0; i < keys.length; i++) {
+      var k = keys[i];
+      var v = aliases[k];
+      if (typeof k === 'string' && k.length > 0 && typeof v === 'string' && v.length > 0) {
+        result[k] = v;
+      }
+    }
+    return result;
+  }
+
+  /**
+   * 解析 setExpressionByAlias 参数 JSON。
+   */
+  function parseAliasParams(paramsJson) {
+    if (typeof paramsJson !== 'string' || paramsJson.length === 0) {
+      return { error: makeExpressionError('EXPRESSION_NAME_INVALID', 'paramsJson must be a non-empty string') };
+    }
+    var params;
+    try {
+      params = JSON.parse(paramsJson);
+    } catch (e) {
+      return { error: makeExpressionError('EXPRESSION_NAME_INVALID',
+        'paramsJson is not valid JSON: ' + (e && e.message ? e.message : String(e))) };
+    }
+    if (!params || typeof params !== 'object' || Array.isArray(params)) {
+      return { error: makeExpressionError('EXPRESSION_NAME_INVALID', 'paramsJson parsed to non-object') };
+    }
+    for (var i = 0; i < EXPRESSION_FORBIDDEN_FIELDS.length; i++) {
+      if (Object.prototype.hasOwnProperty.call(params, EXPRESSION_FORBIDDEN_FIELDS[i])) {
+        return { error: makeExpressionError('EXPRESSION_NAME_INVALID',
+          'Forbidden field present: ' + EXPRESSION_FORBIDDEN_FIELDS[i]) };
+      }
+    }
+    if (typeof params.expressionId !== 'string' || params.expressionId.length === 0) {
+      return { error: makeExpressionError('EXPRESSION_NAME_INVALID', 'params.expressionId must be a non-empty string') };
+    }
+    var aliases = validateAliases(params.aliases);
+    if (aliases === null) {
+      return { error: makeExpressionError('EXPRESSION_NAME_INVALID', 'params.aliases must be an object') };
+    }
+    if (typeof params.weight !== 'number' || !isFinite(params.weight) || params.weight < 0 || params.weight > 1) {
+      return { error: makeExpressionError('EXPRESSION_WEIGHT_INVALID',
+        'params.weight must be a finite number in [0, 1]') };
+    }
+    return { expressionId: params.expressionId, aliases: aliases, weight: params.weight };
+  }
+
+  /**
+   * 解析 setTemporaryExpressionByAlias 参数 JSON。
+   */
+  function parseTemporaryAliasParams(paramsJson) {
+    var base = parseAliasParams(paramsJson);
+    if (base.error) {
+      return base;
+    }
+    // base 已解析 expressionId/aliases/weight, 还需 durationMs/restorePolicy
+    var params;
+    try {
+      params = JSON.parse(paramsJson);
+    } catch (e) {
+      return { error: makeExpressionError('EXPRESSION_NAME_INVALID', 're-parse failed') };
+    }
+    if (typeof params.durationMs !== 'number' || !isFinite(params.durationMs) ||
+        params.durationMs < 100 || params.durationMs > 30000) {
+      return { error: makeExpressionError('EXPRESSION_DURATION_INVALID',
+        'params.durationMs must be in [100, 30000], got ' + params.durationMs) };
+    }
+    if (params.restorePolicy !== 'PREVIOUS' && params.restorePolicy !== 'RESET') {
+      return { error: makeExpressionError('EXPRESSION_RESTORE_POLICY_INVALID',
+        'params.restorePolicy must be PREVIOUS or RESET, got ' + params.restorePolicy) };
+    }
+    return {
+      expressionId: base.expressionId,
+      aliases: base.aliases,
+      weight: base.weight,
+      durationMs: params.durationMs,
+      restorePolicy: params.restorePolicy
+    };
+  }
+
+  /**
+   * 解析 resolveExpressionAlias 参数 JSON。
+   */
+  function parseResolveAliasParams(paramsJson) {
+    if (typeof paramsJson !== 'string' || paramsJson.length === 0) {
+      return { error: makeExpressionError('EXPRESSION_NAME_INVALID', 'paramsJson must be a non-empty string') };
+    }
+    var params;
+    try {
+      params = JSON.parse(paramsJson);
+    } catch (e) {
+      return { error: makeExpressionError('EXPRESSION_NAME_INVALID',
+        'paramsJson is not valid JSON: ' + (e && e.message ? e.message : String(e))) };
+    }
+    if (!params || typeof params !== 'object' || Array.isArray(params)) {
+      return { error: makeExpressionError('EXPRESSION_NAME_INVALID', 'paramsJson parsed to non-object') };
+    }
+    for (var i = 0; i < EXPRESSION_FORBIDDEN_FIELDS.length; i++) {
+      if (Object.prototype.hasOwnProperty.call(params, EXPRESSION_FORBIDDEN_FIELDS[i])) {
+        return { error: makeExpressionError('EXPRESSION_NAME_INVALID',
+          'Forbidden field present: ' + EXPRESSION_FORBIDDEN_FIELDS[i]) };
+      }
+    }
+    if (typeof params.expressionId !== 'string' || params.expressionId.length === 0) {
+      return { error: makeExpressionError('EXPRESSION_NAME_INVALID', 'params.expressionId must be a non-empty string') };
+    }
+    var aliases = validateAliases(params.aliases);
+    if (aliases === null) {
+      return { error: makeExpressionError('EXPRESSION_NAME_INVALID', 'params.aliases must be an object') };
+    }
+    return { expressionId: params.expressionId, aliases: aliases };
+  }
+
   // ===== Phase 1D-2C-2A: 启动诊断记录 =====
   // 委托 global.arkTavernVrmRuntimeDiagnostics keeper(ViewerBridge.js 注册)。
   // 记录启动链路:ARKWEB_PAGE_END / JS_BRIDGE_BOUND / INITIALIZE_REQUESTED /
@@ -1736,10 +1917,126 @@ if (window.__arkTavernBootstrapState) {
         var result = v.getExpressionDebugState();
         return { success: true, debugState: result.debugState };
       });
+    },
+
+    // ===== Phase 3E-2 — 表情别名映射、临时表情与自动恢复 (规范 §三十三 / §三十四) =====
+
+    /**
+     * Phase 3E-2: 设置临时表情。
+     *
+     * 参数为 JSON 字符串, 避免向 JavaScript 传文件路径或模型内部对象:
+     *   {"name": "happy", "weight": 1, "durationMs": 2500, "restorePolicy": "PREVIOUS"}
+     *
+     * 验证:
+     *   - name 非空字符串
+     *   - weight 有限数字 0~1
+     *   - durationMs 有限数字 100..30000
+     *   - restorePolicy ∈ {PREVIOUS, RESET}
+     *
+     * 表情错误不得改变 ViewerState / ModelState / AnimationState / PoseState。
+     *
+     * @param {string} paramsJson
+     * @returns {string} JSON 结果
+     */
+    setTemporaryExpression: function (paramsJson) {
+      var parsed = parseTemporaryExpressionParams(paramsJson);
+      if (parsed.error) {
+        return jsonResult(parsed.error);
+      }
+      return callViewer(function (v) {
+        return v.setTemporaryExpression(
+          parsed.name, parsed.weight, parsed.durationMs, parsed.restorePolicy
+        );
+      });
+    },
+
+    /**
+     * Phase 3E-2: 取消当前临时表情。
+     *
+     * 不恢复任何表情, 只清空临时状态并使旧 timeout 失效。
+     *
+     * @returns {string} JSON 结果
+     */
+    cancelTemporaryExpression: function () {
+      return callViewer(function (v) {
+        return v.cancelTemporaryExpression();
+      });
+    },
+
+    /**
+     * Phase 3E-2: 获取临时表情状态 (只读)。
+     *
+     * @returns {string} JSON 结果
+     */
+    getTemporaryExpressionState: function () {
+      return callViewer(function (v) {
+        return v.getTemporaryExpressionState();
+      });
+    },
+
+    /**
+     * Phase 3E-2: 通过业务 expressionId 设置表情 (使用持久化别名映射)。
+     *
+     * 参数 JSON:
+     *   {"expressionId": "happy", "aliases": {"happy":"Joy"}, "weight": 1}
+     *
+     * @param {string} paramsJson
+     * @returns {string} JSON 结果
+     */
+    setExpressionByAlias: function (paramsJson) {
+      var parsed = parseAliasParams(paramsJson);
+      if (parsed.error) {
+        return jsonResult(parsed.error);
+      }
+      return callViewer(function (v) {
+        return v.setExpressionByAlias(parsed.expressionId, parsed.aliases, parsed.weight);
+      });
+    },
+
+    /**
+     * Phase 3E-2: 通过业务 expressionId 设置临时表情。
+     *
+     * 参数 JSON:
+     *   {"expressionId":"happy","aliases":{"happy":"Joy"},"weight":1,
+     *    "durationMs":2500,"restorePolicy":"PREVIOUS"}
+     *
+     * @param {string} paramsJson
+     * @returns {string} JSON 结果
+     */
+    setTemporaryExpressionByAlias: function (paramsJson) {
+      var parsed = parseTemporaryAliasParams(paramsJson);
+      if (parsed.error) {
+        return jsonResult(parsed.error);
+      }
+      return callViewer(function (v) {
+        return v.setTemporaryExpressionByAlias(
+          parsed.expressionId, parsed.aliases, parsed.weight,
+          parsed.durationMs, parsed.restorePolicy
+        );
+      });
+    },
+
+    /**
+     * Phase 3E-2: 解析业务 expressionId 到模型真实 expressionName。
+     *
+     * 参数 JSON:
+     *   {"expressionId":"happy","aliases":{"happy":"Joy"}}
+     *
+     * @param {string} paramsJson
+     * @returns {string} JSON 结果
+     */
+    resolveExpressionAlias: function (paramsJson) {
+      var parsed = parseResolveAliasParams(paramsJson);
+      if (parsed.error) {
+        return jsonResult(parsed.error);
+      }
+      return callViewer(function (v) {
+        return v.resolveExpressionAlias(parsed.expressionId, parsed.aliases);
+      });
     }
   };
 
-  console.log('[App] arkTavernViewerBridge registered (Phase 1B + 1D-2A + 1D-2B-1 + 1D-2B-2 + 1D-2C-1 + 1D-2C-2A + 2A-1 + 2F + 3A + 3D-2 + 3E-1, delegates to ViewerCore + preparedResource keeper + probe + userModelLoadCoordinator + runtimeDiagnostics keeper + cameraControls + sceneSettings + animationController + poseController + expressionController)');
+  console.log('[App] arkTavernViewerBridge registered (Phase 1B + 1D-2A + 1D-2B-1 + 1D-2B-2 + 1D-2C-1 + 1D-2C-2A + 2A-1 + 2F + 3A + 3D-2 + 3E-1 + 3E-2, delegates to ViewerCore + preparedResource keeper + probe + userModelLoadCoordinator + runtimeDiagnostics keeper + cameraControls + sceneSettings + animationController + poseController + expressionController)');
 
   // Phase 1D-2C-2A: 记录 JS_BRIDGE_BOUND(Bridge 已注册到 window)
   emitStartupDiagnostic('JS_BRIDGE_BOUND', '', 'arkTavernViewerBridge registered');

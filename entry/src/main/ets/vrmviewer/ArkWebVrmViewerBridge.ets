@@ -893,6 +893,87 @@ export class ArkWebViewerJsCaller {
     return this.call('getExpressionDebugState');
   }
 
+  /**
+   * Phase 3E-2: 调用 window.arkTavernViewerBridge.setTemporaryExpression(paramsJson)
+   *
+   * 设置临时表情,到期后按 restorePolicy 恢复或清除。
+   *
+   * @param paramsJson JSON 字符串 {name, weight, durationMs, restorePolicy}
+   * @returns JSON 字符串
+   *   {"success": true, "state": "APPLIED", "temporaryExpressionName": "...",
+   *    "temporaryExpressionWeight": 1, "expiresAt": <timestamp>}
+   */
+  async setTemporaryExpression(paramsJson: string): Promise<string> {
+    return this.callWithStringArg('setTemporaryExpression', paramsJson);
+  }
+
+  /**
+   * Phase 3E-2: 调用 window.arkTavernViewerBridge.cancelTemporaryExpression()
+   *
+   * 取消当前临时表情,使旧 timeout 失效,清空临时状态。
+   * 不恢复任何表情,不改变 currentExpressionName / currentExpressionWeight。
+   *
+   * @returns JSON 字符串 {"success": true, "state": "..."}
+   */
+  async cancelTemporaryExpression(): Promise<string> {
+    return this.call('cancelTemporaryExpression');
+  }
+
+  /**
+   * Phase 3E-2: 调用 window.arkTavernViewerBridge.getTemporaryExpressionState()
+   *
+   * 获取临时表情状态快照(只读)。
+   *
+   * @returns JSON 字符串
+   *   {"success": true, "temporaryExpressionName": "...",
+   *    "temporaryExpressionWeight": 1, "temporaryExpiresAt": <ts>,
+   *    "temporaryRestorePolicy": "PREVIOUS", "restoreExpressionName": "...",
+   *    "restoreExpressionWeight": 0, "temporaryGeneration": <n>}
+   */
+  async getTemporaryExpressionState(): Promise<string> {
+    return this.call('getTemporaryExpressionState');
+  }
+
+  /**
+   * Phase 3E-2: 调用 window.arkTavernViewerBridge.setExpressionByAlias(paramsJson)
+   *
+   * 通过业务 expressionId 设置表情,使用持久化别名映射解析真实 expressionName。
+   *
+   * @param paramsJson JSON 字符串 {expressionId, aliases, weight}
+   * @returns JSON 字符串 {"success": true, "state": "APPLIED", "name": "...", "weight": 1}
+   */
+  async setExpressionByAlias(paramsJson: string): Promise<string> {
+    return this.callWithStringArg('setExpressionByAlias', paramsJson);
+  }
+
+  /**
+   * Phase 3E-2: 调用 window.arkTavernViewerBridge.setTemporaryExpressionByAlias(paramsJson)
+   *
+   * 通过业务 expressionId 设置临时表情。
+   *
+   * @param paramsJson JSON 字符串 {expressionId, aliases, weight, durationMs, restorePolicy}
+   * @returns JSON 字符串
+   *   {"success": true, "state": "APPLIED", "temporaryExpressionName": "...",
+   *    "temporaryExpressionWeight": 1, "expiresAt": <ts>}
+   */
+  async setTemporaryExpressionByAlias(paramsJson: string): Promise<string> {
+    return this.callWithStringArg('setTemporaryExpressionByAlias', paramsJson);
+  }
+
+  /**
+   * Phase 3E-2: 调用 window.arkTavernViewerBridge.resolveExpressionAlias(paramsJson)
+   *
+   * 解析业务 expressionId 到模型真实 expressionName。
+   *
+   * @param paramsJson JSON 字符串 {expressionId, aliases}
+   * @returns JSON 字符串
+   *   - 成功: {"success": true, "expressionName": "Joy"}
+   *   - 失败: {"success": false, "error": {"code": "EXPRESSION_ALIAS_NOT_RESOLVED", ...}}
+   */
+  async resolveExpressionAlias(paramsJson: string): Promise<string> {
+    return this.callWithStringArg('resolveExpressionAlias', paramsJson);
+  }
+
   private async call(methodName: string): Promise<string> {
     const fn = this.runJs;
     if (fn === null) {

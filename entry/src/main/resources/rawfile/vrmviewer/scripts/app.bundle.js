@@ -45119,8 +45119,19 @@ void main() {
     NAME_INVALID: "EXPRESSION_NAME_INVALID",
     NOT_FOUND: "EXPRESSION_NOT_FOUND",
     WEIGHT_INVALID: "EXPRESSION_WEIGHT_INVALID",
-    APPLY_FAILED: "EXPRESSION_APPLY_FAILED"
+    APPLY_FAILED: "EXPRESSION_APPLY_FAILED",
+    // Phase 3E-2
+    ALIAS_NOT_RESOLVED: "EXPRESSION_ALIAS_NOT_RESOLVED",
+    DURATION_INVALID: "EXPRESSION_DURATION_INVALID",
+    RESTORE_POLICY_INVALID: "EXPRESSION_RESTORE_POLICY_INVALID",
+    TEMPORARY_APPLY_FAILED: "EXPRESSION_TEMPORARY_APPLY_FAILED"
   };
+  var TemporaryRestorePolicy = {
+    PREVIOUS: "PREVIOUS",
+    RESET: "RESET"
+  };
+  var TEMPORARY_DURATION_MIN_MS = 100;
+  var TEMPORARY_DURATION_MAX_MS = 3e4;
   var VRM_PRESET_NAMES = [
     "aa",
     "ih",
@@ -45160,6 +45171,14 @@ void main() {
         return null;
       };
       this._disposed = false;
+      this.temporaryGeneration = 0;
+      this.temporaryTimer = null;
+      this.temporaryExpressionName = "";
+      this.temporaryExpressionWeight = 0;
+      this.temporaryExpiresAt = 0;
+      this.temporaryRestorePolicy = TemporaryRestorePolicy.PREVIOUS;
+      this.restoreExpressionName = "";
+      this.restoreExpressionWeight = 0;
     }
     /**
      * 初始化控制器。幂等。
@@ -45322,6 +45341,7 @@ void main() {
           error: makeError3(ExpressionErrorCode.CONTROLLER_DISPOSED, "controller disposed")
         };
       }
+      this._cancelTemporaryInternal();
       if (!this.currentVrm) {
         this._recordFailure(ExpressionErrorCode.VRM_MISSING, "currentVrm is null");
         return {
@@ -45445,6 +45465,7 @@ void main() {
           error: makeError3(ExpressionErrorCode.CONTROLLER_DISPOSED, "controller disposed")
         };
       }
+      this._cancelTemporaryInternal();
       if (!this.currentVrm) {
         this._recordFailure(ExpressionErrorCode.VRM_MISSING, "currentVrm is null");
         return {
@@ -45550,7 +45571,16 @@ void main() {
           currentExpressionWeight: this.currentExpressionWeight,
           lastErrorCode: this.lastErrorCode,
           lastErrorMessage: this.lastErrorMessage,
-          lipSyncChannelsPreserved: this.lipSyncChannelsPreserved
+          lipSyncChannelsPreserved: this.lipSyncChannelsPreserved,
+          // Phase 3E-2
+          temporaryExpressionName: this.temporaryExpressionName,
+          temporaryExpressionWeight: this.temporaryExpressionWeight,
+          temporaryExpiresAt: this.temporaryExpiresAt,
+          temporaryRestorePolicy: this.temporaryRestorePolicy,
+          restoreExpressionName: this.restoreExpressionName,
+          restoreExpressionWeight: this.restoreExpressionWeight,
+          temporaryGeneration: this.temporaryGeneration,
+          temporaryTimerActive: this.temporaryTimer !== null
         }
       };
     }
@@ -45573,8 +45603,10 @@ void main() {
      * 用于模型替换 / unbindVrm / dispose。
      *
      * 不保存旧 Expression 实例。
+     * Phase 3E-2: 同时取消临时表情 timeout 并清空临时状态, generation++ 使旧 timeout 失效。
      */
     _clearInternalState() {
+      this._cancelTemporaryInternal();
       this.currentVrm = null;
       this.availableExpressions = [];
       this.currentExpressionName = "";
@@ -45585,6 +45617,326 @@ void main() {
       if (this._state !== ExpressionState.DISPOSED) {
         this._state = ExpressionState.UNBOUND;
       }
+    }
+    // ===== Phase 3E-2: 临时表情 =====
+    /**
+     * Phase 3E-2: 设置临时表情。
+     *
+     * 流程 (规范 §三十四):
+     *   1. 取消旧临时任务 (generation++)
+     *   2. 保存当前表情和权重 (用于 PREVIOUS 恢复)
+     *   3. 设置临时表情 (复用 setExpression 逻辑, 失败回滚状态)
+     *   4. 创建单次 setTimeout(durationMs)
+     *   5. 到期检查 generation:
+     *      - PREVIOUS: 恢复之前表情
+     *      - RESET: 清除业务表情 (resetExpression)
+     *
+     * 验证:
+     *   - Controller 未 dispose
+     *   - VRM 已绑定 / expressionManager 存在 (由 setExpression 内部校验)
+     *   - name 非空字符串
+     *   - 表达式真实存在
+     *   - weight 是有限数字, 范围 0~1
+     *   - durationMs 是有限整数, 范围 100..30000
+     *   - restorePolicy ∈ {PREVIOUS, RESET}
+     *
+     * 以下情况必须取消旧任务:
+     *   - 设置新的临时表情
+     *   - 手动设置表情 (setExpression)
+     *   - 手动清除表情 (resetExpression)
+     *   - 模型替换 (unbindVrm)
+     *   - Controller dispose
+     *
+     * @param {string} name 表情名 (模型真实 expressionName, 非业务 ID)
+     * @param {number} weight 权重 0~1
+     * @param {number} durationMs 持续时间 100..30000 ms
+     * @param {string} restorePolicy PREVIOUS | RESET
+     * @returns {{success: boolean, state?: ExpressionState, temporaryExpressionName?: string, temporaryExpressionWeight?: number, expiresAt?: number, error?: object}}
+     */
+    setTemporaryExpression(name, weight, durationMs, restorePolicy) {
+      if (this._disposed) {
+        return {
+          success: false,
+          state: ExpressionState.DISPOSED,
+          error: makeError3(ExpressionErrorCode.CONTROLLER_DISPOSED, "controller disposed")
+        };
+      }
+      if (typeof name !== "string" || name.length === 0) {
+        this._recordFailure(ExpressionErrorCode.NAME_INVALID, "name must be a non-empty string");
+        return {
+          success: false,
+          state: this._state,
+          error: makeError3(ExpressionErrorCode.NAME_INVALID, "name must be a non-empty string")
+        };
+      }
+      if (typeof weight !== "number" || !isFinite(weight) || weight < 0 || weight > 1) {
+        this._recordFailure(ExpressionErrorCode.WEIGHT_INVALID, "weight must be a finite number in [0, 1]");
+        return {
+          success: false,
+          state: this._state,
+          error: makeError3(ExpressionErrorCode.WEIGHT_INVALID, "weight must be a finite number in [0, 1]")
+        };
+      }
+      if (typeof durationMs !== "number" || !isFinite(durationMs) || durationMs < TEMPORARY_DURATION_MIN_MS || durationMs > TEMPORARY_DURATION_MAX_MS) {
+        this._recordFailure(
+          ExpressionErrorCode.DURATION_INVALID,
+          "durationMs must be a finite number in [" + TEMPORARY_DURATION_MIN_MS + ", " + TEMPORARY_DURATION_MAX_MS + "]"
+        );
+        return {
+          success: false,
+          state: this._state,
+          error: makeError3(
+            ExpressionErrorCode.DURATION_INVALID,
+            "durationMs must be in [" + TEMPORARY_DURATION_MIN_MS + ", " + TEMPORARY_DURATION_MAX_MS + "], got " + durationMs
+          )
+        };
+      }
+      if (restorePolicy !== TemporaryRestorePolicy.PREVIOUS && restorePolicy !== TemporaryRestorePolicy.RESET) {
+        this._recordFailure(
+          ExpressionErrorCode.RESTORE_POLICY_INVALID,
+          "restorePolicy must be PREVIOUS or RESET, got " + restorePolicy
+        );
+        return {
+          success: false,
+          state: this._state,
+          error: makeError3(
+            ExpressionErrorCode.RESTORE_POLICY_INVALID,
+            "restorePolicy must be PREVIOUS or RESET, got " + restorePolicy
+          )
+        };
+      }
+      this._cancelTemporaryInternal();
+      this.restoreExpressionName = this.currentExpressionName;
+      this.restoreExpressionWeight = this.currentExpressionWeight;
+      var applyResult = this.setExpression(name, weight);
+      if (!applyResult.success) {
+        this.restoreExpressionName = "";
+        this.restoreExpressionWeight = 0;
+        return {
+          success: false,
+          state: this._state,
+          error: applyResult.error || makeError3(ExpressionErrorCode.TEMPORARY_APPLY_FAILED, "setExpression failed")
+        };
+      }
+      var myGeneration = this.temporaryGeneration;
+      this.temporaryExpressionName = name;
+      this.temporaryExpressionWeight = weight;
+      this.temporaryRestorePolicy = restorePolicy;
+      this.temporaryExpiresAt = Date.now() + durationMs;
+      var self2 = this;
+      this.temporaryTimer = setTimeout(function() {
+        self2._onTemporaryTimeout(myGeneration);
+      }, durationMs);
+      return {
+        success: true,
+        state: this._state,
+        temporaryExpressionName: this.temporaryExpressionName,
+        temporaryExpressionWeight: this.temporaryExpressionWeight,
+        expiresAt: this.temporaryExpiresAt
+      };
+    }
+    /**
+     * Phase 3E-2: 取消当前临时表情。
+     *
+     * 行为:
+     *   - generation++ 使旧 timeout 失效
+     *   - 清除 setTimeout 句柄
+     *   - 清空临时状态字段
+     *   - 不恢复任何表情 (不调用 setExpression / resetExpression)
+     *   - 不改变 currentExpressionName / currentExpressionWeight
+     *
+     * @returns {{success: boolean, state: ExpressionState}}
+     */
+    cancelTemporaryExpression() {
+      if (this._disposed) {
+        return {
+          success: false,
+          state: ExpressionState.DISPOSED,
+          error: makeError3(ExpressionErrorCode.CONTROLLER_DISPOSED, "controller disposed")
+        };
+      }
+      this._cancelTemporaryInternal();
+      return { success: true, state: this._state };
+    }
+    /**
+     * Phase 3E-2: 内部取消临时表情 (无 dispose 检查)。
+     * generation++ 使任何已调度的 timeout 失效, 清空临时状态字段。
+     */
+    _cancelTemporaryInternal() {
+      this.temporaryGeneration++;
+      if (this.temporaryTimer !== null) {
+        try {
+          clearTimeout(this.temporaryTimer);
+        } catch (_e) {
+        }
+        this.temporaryTimer = null;
+      }
+      this.temporaryExpressionName = "";
+      this.temporaryExpressionWeight = 0;
+      this.temporaryExpiresAt = 0;
+      this.temporaryRestorePolicy = TemporaryRestorePolicy.PREVIOUS;
+      this.restoreExpressionName = "";
+      this.restoreExpressionWeight = 0;
+    }
+    /**
+     * Phase 3E-2: 临时表情 timeout 回调。
+     *
+     * 检查 generation:
+     *   - 不匹配: 旧任务, 忽略 (不做任何事)
+     *   - 匹配: 按 restorePolicy 恢复
+     *     - PREVIOUS: 恢复之前表情 (若有) 或 resetExpression
+     *     - RESET: 清除业务表情 (resetExpression)
+     *
+     * 恢复后清空临时状态字段。
+     */
+    _onTemporaryTimeout(generation) {
+      if (this._disposed) return;
+      if (generation !== this.temporaryGeneration) {
+        return;
+      }
+      var policy = this.temporaryRestorePolicy;
+      var restoreName = this.restoreExpressionName;
+      var restoreWeight = this.restoreExpressionWeight;
+      this.temporaryTimer = null;
+      this.temporaryExpressionName = "";
+      this.temporaryExpressionWeight = 0;
+      this.temporaryExpiresAt = 0;
+      this.temporaryRestorePolicy = TemporaryRestorePolicy.PREVIOUS;
+      this.restoreExpressionName = "";
+      this.restoreExpressionWeight = 0;
+      if (policy === TemporaryRestorePolicy.RESET) {
+        this.resetExpression();
+      } else {
+        if (restoreName && restoreName.length > 0) {
+          this.setExpression(restoreName, restoreWeight);
+        } else {
+          this.resetExpression();
+        }
+      }
+    }
+    /**
+     * Phase 3E-2: 获取临时表情状态 (只读)。
+     * @returns {{success: boolean, temporaryExpressionName: string, temporaryExpressionWeight: number, temporaryExpiresAt: number, temporaryRestorePolicy: string, restoreExpressionName: string, restoreExpressionWeight: number, temporaryGeneration: number}}
+     */
+    getTemporaryExpressionState() {
+      return {
+        success: true,
+        temporaryExpressionName: this.temporaryExpressionName,
+        temporaryExpressionWeight: this.temporaryExpressionWeight,
+        temporaryExpiresAt: this.temporaryExpiresAt,
+        temporaryRestorePolicy: this.temporaryRestorePolicy,
+        restoreExpressionName: this.restoreExpressionName,
+        restoreExpressionWeight: this.restoreExpressionWeight,
+        temporaryGeneration: this.temporaryGeneration
+      };
+    }
+    // ===== Phase 3E-2: 别名解析 =====
+    /**
+     * Phase 3E-2: 解析业务 expressionId 到模型真实 expressionName。
+     *
+     * 规则 (规范 §三十三):
+     *   1. 优先使用持久化映射 aliases[expressionId]
+     *   2. 没有映射时尝试同名 Expression (getExpression(expressionId))
+     *   3. 仍不存在则返回 null (调用方返回 EXPRESSION_ALIAS_NOT_RESOLVED)
+     *
+     * 不得假定模型一定支持预设表情。
+     *
+     * @param {string} expressionId 业务 ID (neutral/happy/angry/sad/relaxed/surprised)
+     * @param {object} aliases 持久化映射 { expressionId: expressionName }
+     * @returns {string|null} 模型真实 expressionName, 无法解析返回 null
+     */
+    resolveExpressionAlias(expressionId, aliases) {
+      if (this._disposed) return null;
+      if (typeof expressionId !== "string" || expressionId.length === 0) return null;
+      if (!this.currentVrm) return null;
+      var manager = this.currentVrm.expressionManager;
+      if (!manager) return null;
+      if (aliases && typeof aliases === "object" && !Array.isArray(aliases)) {
+        var mapped = aliases[expressionId];
+        if (typeof mapped === "string" && mapped.length > 0) {
+          if (typeof manager.getExpression === "function" && manager.getExpression(mapped)) {
+            return mapped;
+          }
+        }
+      }
+      if (typeof manager.getExpression === "function" && manager.getExpression(expressionId)) {
+        return expressionId;
+      }
+      return null;
+    }
+    /**
+     * Phase 3E-2: 通过业务 expressionId 设置表情。
+     *
+     * 流程:
+     *   1. resolveExpressionAlias 解析真实 expressionName
+     *   2. 无法解析返回 EXPRESSION_ALIAS_NOT_RESOLVED
+     *   3. 调用 setExpression(name, weight)
+     *
+     * @param {string} expressionId 业务 ID
+     * @param {object} aliases 持久化映射
+     * @param {number} weight 权重 0~1
+     * @returns {{success: boolean, state?: ExpressionState, name?: string, weight?: number, error?: object}}
+     */
+    setExpressionByAlias(expressionId, aliases, weight) {
+      if (this._disposed) {
+        return {
+          success: false,
+          state: ExpressionState.DISPOSED,
+          error: makeError3(ExpressionErrorCode.CONTROLLER_DISPOSED, "controller disposed")
+        };
+      }
+      var resolvedName = this.resolveExpressionAlias(expressionId, aliases);
+      if (resolvedName === null) {
+        this._recordFailure(
+          ExpressionErrorCode.ALIAS_NOT_RESOLVED,
+          "cannot resolve expressionId: " + expressionId
+        );
+        return {
+          success: false,
+          state: this._state,
+          error: makeError3(
+            ExpressionErrorCode.ALIAS_NOT_RESOLVED,
+            "cannot resolve expressionId: " + expressionId
+          )
+        };
+      }
+      this._cancelTemporaryInternal();
+      return this.setExpression(resolvedName, weight);
+    }
+    /**
+     * Phase 3E-2: 通过业务 expressionId 设置临时表情。
+     *
+     * @param {string} expressionId 业务 ID
+     * @param {object} aliases 持久化映射
+     * @param {number} weight 权重 0~1
+     * @param {number} durationMs 持续时间 100..30000 ms
+     * @param {string} restorePolicy PREVIOUS | RESET
+     * @returns {{success: boolean, state?: ExpressionState, temporaryExpressionName?: string, temporaryExpressionWeight?: number, expiresAt?: number, error?: object}}
+     */
+    setTemporaryExpressionByAlias(expressionId, aliases, weight, durationMs, restorePolicy) {
+      if (this._disposed) {
+        return {
+          success: false,
+          state: ExpressionState.DISPOSED,
+          error: makeError3(ExpressionErrorCode.CONTROLLER_DISPOSED, "controller disposed")
+        };
+      }
+      var resolvedName = this.resolveExpressionAlias(expressionId, aliases);
+      if (resolvedName === null) {
+        this._recordFailure(
+          ExpressionErrorCode.ALIAS_NOT_RESOLVED,
+          "cannot resolve expressionId: " + expressionId
+        );
+        return {
+          success: false,
+          state: this._state,
+          error: makeError3(
+            ExpressionErrorCode.ALIAS_NOT_RESOLVED,
+            "cannot resolve expressionId: " + expressionId
+          )
+        };
+      }
+      return this.setTemporaryExpression(resolvedName, weight, durationMs, restorePolicy);
     }
     /**
      * 记录失败 (设置 state=FAILED + 错误码/消息)。
@@ -46446,6 +46798,127 @@ void main() {
         };
       }
       return this.expressionController.getExpressionDebugState();
+    }
+    // ===== Phase 3E-2: 临时表情与别名 =====
+    /**
+     * Phase 3E-2: 设置临时表情。
+     *
+     * 委托给 ViewerExpressionController.setTemporaryExpression。
+     * 模型未 READY 返回 EXPRESSION_VRM_MISSING。
+     *
+     * @param {string} name 模型真实 expressionName
+     * @param {number} weight 0~1
+     * @param {number} durationMs 100..30000
+     * @param {string} restorePolicy PREVIOUS | RESET
+     * @returns {{success: boolean, state?: ExpressionState, temporaryExpressionName?: string, temporaryExpressionWeight?: number, expiresAt?: number, error?: object}}
+     */
+    setTemporaryExpression(name, weight, durationMs, restorePolicy) {
+      if (!this.expressionController) {
+        return {
+          success: false,
+          error: { code: "EXPRESSION_VRM_MISSING", message: "expressionController not initialized" }
+        };
+      }
+      if (!this.expressionController.expressionManagerReady) {
+        return {
+          success: false,
+          error: { code: "EXPRESSION_VRM_MISSING", message: "expressionManager not ready" }
+        };
+      }
+      return this.expressionController.setTemporaryExpression(name, weight, durationMs, restorePolicy);
+    }
+    /**
+     * Phase 3E-2: 取消临时表情。
+     */
+    cancelTemporaryExpression() {
+      if (!this.expressionController) {
+        return { success: true, state: ExpressionState.UNBOUND };
+      }
+      return this.expressionController.cancelTemporaryExpression();
+    }
+    /**
+     * Phase 3E-2: 获取临时表情状态。
+     */
+    getTemporaryExpressionState() {
+      if (!this.expressionController) {
+        return {
+          success: true,
+          temporaryExpressionName: "",
+          temporaryExpressionWeight: 0,
+          temporaryExpiresAt: 0,
+          temporaryRestorePolicy: "PREVIOUS",
+          restoreExpressionName: "",
+          restoreExpressionWeight: 0,
+          temporaryGeneration: 0
+        };
+      }
+      return this.expressionController.getTemporaryExpressionState();
+    }
+    /**
+     * Phase 3E-2: 通过业务 expressionId 设置表情 (使用持久化别名映射)。
+     *
+     * @param {string} expressionId 业务 ID
+     * @param {object} aliases 持久化映射 { expressionId: expressionName }
+     * @param {number} weight 0~1
+     */
+    setExpressionByAlias(expressionId, aliases, weight) {
+      if (!this.expressionController) {
+        return {
+          success: false,
+          error: { code: "EXPRESSION_VRM_MISSING", message: "expressionController not initialized" }
+        };
+      }
+      if (!this.expressionController.expressionManagerReady) {
+        return {
+          success: false,
+          error: { code: "EXPRESSION_VRM_MISSING", message: "expressionManager not ready" }
+        };
+      }
+      return this.expressionController.setExpressionByAlias(expressionId, aliases, weight);
+    }
+    /**
+     * Phase 3E-2: 通过业务 expressionId 设置临时表情。
+     */
+    setTemporaryExpressionByAlias(expressionId, aliases, weight, durationMs, restorePolicy) {
+      if (!this.expressionController) {
+        return {
+          success: false,
+          error: { code: "EXPRESSION_VRM_MISSING", message: "expressionController not initialized" }
+        };
+      }
+      if (!this.expressionController.expressionManagerReady) {
+        return {
+          success: false,
+          error: { code: "EXPRESSION_VRM_MISSING", message: "expressionManager not ready" }
+        };
+      }
+      return this.expressionController.setTemporaryExpressionByAlias(expressionId, aliases, weight, durationMs, restorePolicy);
+    }
+    /**
+     * Phase 3E-2: 解析业务 expressionId 到模型真实 expressionName。
+     * @returns {{success: boolean, expressionName?: string|null, error?: object}}
+     */
+    resolveExpressionAlias(expressionId, aliases) {
+      if (!this.expressionController) {
+        return {
+          success: false,
+          error: { code: "EXPRESSION_VRM_MISSING", message: "expressionController not initialized" }
+        };
+      }
+      if (!this.expressionController.expressionManagerReady) {
+        return {
+          success: false,
+          error: { code: "EXPRESSION_VRM_MISSING", message: "expressionManager not ready" }
+        };
+      }
+      var resolved = this.expressionController.resolveExpressionAlias(expressionId, aliases);
+      if (resolved === null) {
+        return {
+          success: false,
+          error: { code: "EXPRESSION_ALIAS_NOT_RESOLVED", message: "cannot resolve expressionId: " + expressionId }
+        };
+      }
+      return { success: true, expressionName: resolved };
     }
     // ===== Phase 2A-1: Camera Controls enable/disable =====
     /**
@@ -48138,6 +48611,178 @@ void main() {
         return JSON.stringify({ success: false, error: { code: "JSON_SERIALIZE_FAILED", message: String(e) } });
       }
     }
+    var EXPRESSION_FORBIDDEN_FIELDS = ["absolutePath", "relativePath", "filesDir", "fileDescriptor", "sourceUri", "cachePath"];
+    function makeExpressionError(code, message) {
+      return { success: false, error: { code, message } };
+    }
+    function parseTemporaryExpressionParams(paramsJson) {
+      if (typeof paramsJson !== "string" || paramsJson.length === 0) {
+        return { error: makeExpressionError("EXPRESSION_NAME_INVALID", "paramsJson must be a non-empty string") };
+      }
+      var params;
+      try {
+        params = JSON.parse(paramsJson);
+      } catch (e) {
+        return { error: makeExpressionError(
+          "EXPRESSION_NAME_INVALID",
+          "paramsJson is not valid JSON: " + (e && e.message ? e.message : String(e))
+        ) };
+      }
+      if (!params || typeof params !== "object" || Array.isArray(params)) {
+        return { error: makeExpressionError("EXPRESSION_NAME_INVALID", "paramsJson parsed to non-object") };
+      }
+      for (var i = 0; i < EXPRESSION_FORBIDDEN_FIELDS.length; i++) {
+        if (Object.prototype.hasOwnProperty.call(params, EXPRESSION_FORBIDDEN_FIELDS[i])) {
+          return { error: makeExpressionError(
+            "EXPRESSION_NAME_INVALID",
+            "Forbidden field present: " + EXPRESSION_FORBIDDEN_FIELDS[i]
+          ) };
+        }
+      }
+      if (typeof params.name !== "string" || params.name.length === 0) {
+        return { error: makeExpressionError("EXPRESSION_NAME_INVALID", "params.name must be a non-empty string") };
+      }
+      if (typeof params.weight !== "number" || !isFinite(params.weight) || params.weight < 0 || params.weight > 1) {
+        return { error: makeExpressionError(
+          "EXPRESSION_WEIGHT_INVALID",
+          "params.weight must be a finite number in [0, 1]"
+        ) };
+      }
+      if (typeof params.durationMs !== "number" || !isFinite(params.durationMs) || params.durationMs < 100 || params.durationMs > 3e4) {
+        return { error: makeExpressionError(
+          "EXPRESSION_DURATION_INVALID",
+          "params.durationMs must be in [100, 30000], got " + params.durationMs
+        ) };
+      }
+      if (params.restorePolicy !== "PREVIOUS" && params.restorePolicy !== "RESET") {
+        return { error: makeExpressionError(
+          "EXPRESSION_RESTORE_POLICY_INVALID",
+          "params.restorePolicy must be PREVIOUS or RESET, got " + params.restorePolicy
+        ) };
+      }
+      return { name: params.name, weight: params.weight, durationMs: params.durationMs, restorePolicy: params.restorePolicy };
+    }
+    function validateAliases(aliases) {
+      if (aliases === void 0 || aliases === null) {
+        return {};
+      }
+      if (typeof aliases !== "object" || Array.isArray(aliases)) {
+        return null;
+      }
+      var result = {};
+      var keys = Object.keys(aliases);
+      for (var i = 0; i < keys.length; i++) {
+        var k = keys[i];
+        var v = aliases[k];
+        if (typeof k === "string" && k.length > 0 && typeof v === "string" && v.length > 0) {
+          result[k] = v;
+        }
+      }
+      return result;
+    }
+    function parseAliasParams(paramsJson) {
+      if (typeof paramsJson !== "string" || paramsJson.length === 0) {
+        return { error: makeExpressionError("EXPRESSION_NAME_INVALID", "paramsJson must be a non-empty string") };
+      }
+      var params;
+      try {
+        params = JSON.parse(paramsJson);
+      } catch (e) {
+        return { error: makeExpressionError(
+          "EXPRESSION_NAME_INVALID",
+          "paramsJson is not valid JSON: " + (e && e.message ? e.message : String(e))
+        ) };
+      }
+      if (!params || typeof params !== "object" || Array.isArray(params)) {
+        return { error: makeExpressionError("EXPRESSION_NAME_INVALID", "paramsJson parsed to non-object") };
+      }
+      for (var i = 0; i < EXPRESSION_FORBIDDEN_FIELDS.length; i++) {
+        if (Object.prototype.hasOwnProperty.call(params, EXPRESSION_FORBIDDEN_FIELDS[i])) {
+          return { error: makeExpressionError(
+            "EXPRESSION_NAME_INVALID",
+            "Forbidden field present: " + EXPRESSION_FORBIDDEN_FIELDS[i]
+          ) };
+        }
+      }
+      if (typeof params.expressionId !== "string" || params.expressionId.length === 0) {
+        return { error: makeExpressionError("EXPRESSION_NAME_INVALID", "params.expressionId must be a non-empty string") };
+      }
+      var aliases = validateAliases(params.aliases);
+      if (aliases === null) {
+        return { error: makeExpressionError("EXPRESSION_NAME_INVALID", "params.aliases must be an object") };
+      }
+      if (typeof params.weight !== "number" || !isFinite(params.weight) || params.weight < 0 || params.weight > 1) {
+        return { error: makeExpressionError(
+          "EXPRESSION_WEIGHT_INVALID",
+          "params.weight must be a finite number in [0, 1]"
+        ) };
+      }
+      return { expressionId: params.expressionId, aliases, weight: params.weight };
+    }
+    function parseTemporaryAliasParams(paramsJson) {
+      var base = parseAliasParams(paramsJson);
+      if (base.error) {
+        return base;
+      }
+      var params;
+      try {
+        params = JSON.parse(paramsJson);
+      } catch (e) {
+        return { error: makeExpressionError("EXPRESSION_NAME_INVALID", "re-parse failed") };
+      }
+      if (typeof params.durationMs !== "number" || !isFinite(params.durationMs) || params.durationMs < 100 || params.durationMs > 3e4) {
+        return { error: makeExpressionError(
+          "EXPRESSION_DURATION_INVALID",
+          "params.durationMs must be in [100, 30000], got " + params.durationMs
+        ) };
+      }
+      if (params.restorePolicy !== "PREVIOUS" && params.restorePolicy !== "RESET") {
+        return { error: makeExpressionError(
+          "EXPRESSION_RESTORE_POLICY_INVALID",
+          "params.restorePolicy must be PREVIOUS or RESET, got " + params.restorePolicy
+        ) };
+      }
+      return {
+        expressionId: base.expressionId,
+        aliases: base.aliases,
+        weight: base.weight,
+        durationMs: params.durationMs,
+        restorePolicy: params.restorePolicy
+      };
+    }
+    function parseResolveAliasParams(paramsJson) {
+      if (typeof paramsJson !== "string" || paramsJson.length === 0) {
+        return { error: makeExpressionError("EXPRESSION_NAME_INVALID", "paramsJson must be a non-empty string") };
+      }
+      var params;
+      try {
+        params = JSON.parse(paramsJson);
+      } catch (e) {
+        return { error: makeExpressionError(
+          "EXPRESSION_NAME_INVALID",
+          "paramsJson is not valid JSON: " + (e && e.message ? e.message : String(e))
+        ) };
+      }
+      if (!params || typeof params !== "object" || Array.isArray(params)) {
+        return { error: makeExpressionError("EXPRESSION_NAME_INVALID", "paramsJson parsed to non-object") };
+      }
+      for (var i = 0; i < EXPRESSION_FORBIDDEN_FIELDS.length; i++) {
+        if (Object.prototype.hasOwnProperty.call(params, EXPRESSION_FORBIDDEN_FIELDS[i])) {
+          return { error: makeExpressionError(
+            "EXPRESSION_NAME_INVALID",
+            "Forbidden field present: " + EXPRESSION_FORBIDDEN_FIELDS[i]
+          ) };
+        }
+      }
+      if (typeof params.expressionId !== "string" || params.expressionId.length === 0) {
+        return { error: makeExpressionError("EXPRESSION_NAME_INVALID", "params.expressionId must be a non-empty string") };
+      }
+      var aliases = validateAliases(params.aliases);
+      if (aliases === null) {
+        return { error: makeExpressionError("EXPRESSION_NAME_INVALID", "params.aliases must be an object") };
+      }
+      return { expressionId: params.expressionId, aliases };
+    }
     function emitStartupDiagnostic(stage, code, message) {
       var keeper = global.arkTavernVrmRuntimeDiagnostics;
       if (!keeper || typeof keeper.record !== "function") {
@@ -49639,9 +50284,124 @@ void main() {
           var result = v.getExpressionDebugState();
           return { success: true, debugState: result.debugState };
         });
+      },
+      // ===== Phase 3E-2 — 表情别名映射、临时表情与自动恢复 (规范 §三十三 / §三十四) =====
+      /**
+       * Phase 3E-2: 设置临时表情。
+       *
+       * 参数为 JSON 字符串, 避免向 JavaScript 传文件路径或模型内部对象:
+       *   {"name": "happy", "weight": 1, "durationMs": 2500, "restorePolicy": "PREVIOUS"}
+       *
+       * 验证:
+       *   - name 非空字符串
+       *   - weight 有限数字 0~1
+       *   - durationMs 有限数字 100..30000
+       *   - restorePolicy ∈ {PREVIOUS, RESET}
+       *
+       * 表情错误不得改变 ViewerState / ModelState / AnimationState / PoseState。
+       *
+       * @param {string} paramsJson
+       * @returns {string} JSON 结果
+       */
+      setTemporaryExpression: function(paramsJson) {
+        var parsed = parseTemporaryExpressionParams(paramsJson);
+        if (parsed.error) {
+          return jsonResult(parsed.error);
+        }
+        return callViewer(function(v) {
+          return v.setTemporaryExpression(
+            parsed.name,
+            parsed.weight,
+            parsed.durationMs,
+            parsed.restorePolicy
+          );
+        });
+      },
+      /**
+       * Phase 3E-2: 取消当前临时表情。
+       *
+       * 不恢复任何表情, 只清空临时状态并使旧 timeout 失效。
+       *
+       * @returns {string} JSON 结果
+       */
+      cancelTemporaryExpression: function() {
+        return callViewer(function(v) {
+          return v.cancelTemporaryExpression();
+        });
+      },
+      /**
+       * Phase 3E-2: 获取临时表情状态 (只读)。
+       *
+       * @returns {string} JSON 结果
+       */
+      getTemporaryExpressionState: function() {
+        return callViewer(function(v) {
+          return v.getTemporaryExpressionState();
+        });
+      },
+      /**
+       * Phase 3E-2: 通过业务 expressionId 设置表情 (使用持久化别名映射)。
+       *
+       * 参数 JSON:
+       *   {"expressionId": "happy", "aliases": {"happy":"Joy"}, "weight": 1}
+       *
+       * @param {string} paramsJson
+       * @returns {string} JSON 结果
+       */
+      setExpressionByAlias: function(paramsJson) {
+        var parsed = parseAliasParams(paramsJson);
+        if (parsed.error) {
+          return jsonResult(parsed.error);
+        }
+        return callViewer(function(v) {
+          return v.setExpressionByAlias(parsed.expressionId, parsed.aliases, parsed.weight);
+        });
+      },
+      /**
+       * Phase 3E-2: 通过业务 expressionId 设置临时表情。
+       *
+       * 参数 JSON:
+       *   {"expressionId":"happy","aliases":{"happy":"Joy"},"weight":1,
+       *    "durationMs":2500,"restorePolicy":"PREVIOUS"}
+       *
+       * @param {string} paramsJson
+       * @returns {string} JSON 结果
+       */
+      setTemporaryExpressionByAlias: function(paramsJson) {
+        var parsed = parseTemporaryAliasParams(paramsJson);
+        if (parsed.error) {
+          return jsonResult(parsed.error);
+        }
+        return callViewer(function(v) {
+          return v.setTemporaryExpressionByAlias(
+            parsed.expressionId,
+            parsed.aliases,
+            parsed.weight,
+            parsed.durationMs,
+            parsed.restorePolicy
+          );
+        });
+      },
+      /**
+       * Phase 3E-2: 解析业务 expressionId 到模型真实 expressionName。
+       *
+       * 参数 JSON:
+       *   {"expressionId":"happy","aliases":{"happy":"Joy"}}
+       *
+       * @param {string} paramsJson
+       * @returns {string} JSON 结果
+       */
+      resolveExpressionAlias: function(paramsJson) {
+        var parsed = parseResolveAliasParams(paramsJson);
+        if (parsed.error) {
+          return jsonResult(parsed.error);
+        }
+        return callViewer(function(v) {
+          return v.resolveExpressionAlias(parsed.expressionId, parsed.aliases);
+        });
       }
     };
-    console.log("[App] arkTavernViewerBridge registered (Phase 1B + 1D-2A + 1D-2B-1 + 1D-2B-2 + 1D-2C-1 + 1D-2C-2A + 2A-1 + 2F + 3A + 3D-2 + 3E-1, delegates to ViewerCore + preparedResource keeper + probe + userModelLoadCoordinator + runtimeDiagnostics keeper + cameraControls + sceneSettings + animationController + poseController + expressionController)");
+    console.log("[App] arkTavernViewerBridge registered (Phase 1B + 1D-2A + 1D-2B-1 + 1D-2B-2 + 1D-2C-1 + 1D-2C-2A + 2A-1 + 2F + 3A + 3D-2 + 3E-1 + 3E-2, delegates to ViewerCore + preparedResource keeper + probe + userModelLoadCoordinator + runtimeDiagnostics keeper + cameraControls + sceneSettings + animationController + poseController + expressionController)");
     emitStartupDiagnostic("JS_BRIDGE_BOUND", "", "arkTavernViewerBridge registered");
     async function onDomReady() {
       emitStartupDiagnostic("ARKWEB_PAGE_END", "", "DOM ready, page loaded");

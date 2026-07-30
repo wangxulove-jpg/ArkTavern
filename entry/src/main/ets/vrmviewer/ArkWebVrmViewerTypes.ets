@@ -427,7 +427,14 @@ export class ArkWebViewerConfig {
     'setExpression',
     'resetExpression',
     'getExpressionState',
-    'getExpressionDebugState'
+    'getExpressionDebugState',
+    // Phase 3E-2 — 表情别名映射、临时表情与自动恢复
+    'setTemporaryExpression',
+    'cancelTemporaryExpression',
+    'getTemporaryExpressionState',
+    'setExpressionByAlias',
+    'setTemporaryExpressionByAlias',
+    'resolveExpressionAlias'
   ];
 
   /** Bridge 方法白名单:JavaScript → ArkTS。 */
@@ -1523,6 +1530,121 @@ export class ArkWebExpressionErrorCode {
   static readonly WEIGHT_INVALID: string = 'EXPRESSION_WEIGHT_INVALID';
   /** 应用表情失败 (setValue / update 抛出异常) */
   static readonly APPLY_FAILED: string = 'EXPRESSION_APPLY_FAILED';
+  /** Phase 3E-2: 业务 expressionId 无法解析到模型真实 expressionName */
+  static readonly ALIAS_NOT_RESOLVED: string = 'EXPRESSION_ALIAS_NOT_RESOLVED';
+  /** Phase 3E-2: durationMs 超出 100..30000 范围 */
+  static readonly DURATION_INVALID: string = 'EXPRESSION_DURATION_INVALID';
+  /** Phase 3E-2: restorePolicy 非 PREVIOUS / RESET */
+  static readonly RESTORE_POLICY_INVALID: string = 'EXPRESSION_RESTORE_POLICY_INVALID';
+  /** Phase 3E-2: 临时表情应用失败 (setExpression 在临时上下文中失败) */
+  static readonly TEMPORARY_APPLY_FAILED: string = 'EXPRESSION_TEMPORARY_APPLY_FAILED';
+}
+
+/**
+ * Phase 3E-2: 临时表情恢复策略 (与 Web 端 TemporaryRestorePolicy 对齐)。
+ *
+ * - PREVIOUS: 到期恢复临时表情开始前的业务表情 (若无则 resetExpression)
+ * - RESET: 到期清除业务表情 (resetExpression)
+ */
+export class ArkWebTemporaryRestorePolicy {
+  static readonly PREVIOUS: string = 'PREVIOUS';
+  static readonly RESET: string = 'RESET';
+
+  static isValid(value: string): boolean {
+    return value === ArkWebTemporaryRestorePolicy.PREVIOUS ||
+      value === ArkWebTemporaryRestorePolicy.RESET;
+  }
+}
+
+/**
+ * Phase 3E-2: 传给 JavaScript setTemporaryExpression 的受控参数。
+ *
+ * 序列化为 JSON 字符串后传给 Web 端。
+ * 不得包含 absolutePath / relativePath / filesDir / 文件描述符 / 原始 URI。
+ */
+export interface ArkWebSetTemporaryExpressionParams {
+  /** 表情名 (必须真实存在于 expressionManager,非业务 ID) */
+  name: string;
+  /** 权重 (0..1) */
+  weight: number;
+  /** 持续时间 (100..30000 ms) */
+  durationMs: number;
+  /** 恢复策略 (PREVIOUS / RESET) */
+  restorePolicy: string;
+}
+
+/**
+ * Phase 3E-2: 传给 JavaScript setExpressionByAlias 的受控参数。
+ *
+ * 序列化为 JSON 字符串后传给 Web 端。
+ * aliases 由 ArkTS AssetLibrary.getExpressionAliases 读取,不直接由 UI 构造。
+ */
+export interface ArkWebSetExpressionByAliasParams {
+  /** 业务 expressionId (neutral/happy/angry/sad/relaxed/surprised) */
+  expressionId: string;
+  /** 持久化别名映射 (业务 ID → 模型真实 expressionName) */
+  aliases: Record<string, string>;
+  /** 权重 (0..1) */
+  weight: number;
+}
+
+/**
+ * Phase 3E-2: 传给 JavaScript setTemporaryExpressionByAlias 的受控参数。
+ */
+export interface ArkWebSetTemporaryExpressionByAliasParams {
+  /** 业务 expressionId (neutral/happy/angry/sad/relaxed/surprised) */
+  expressionId: string;
+  /** 持久化别名映射 */
+  aliases: Record<string, string>;
+  /** 权重 (0..1) */
+  weight: number;
+  /** 持续时间 (100..30000 ms) */
+  durationMs: number;
+  /** 恢复策略 (PREVIOUS / RESET) */
+  restorePolicy: string;
+}
+
+/**
+ * Phase 3E-2: 传给 JavaScript resolveExpressionAlias 的受控参数。
+ */
+export interface ArkWebResolveExpressionAliasParams {
+  /** 业务 expressionId */
+  expressionId: string;
+  /** 持久化别名映射 */
+  aliases: Record<string, string>;
+}
+
+/**
+ * Phase 3E-2: resolveExpressionAlias 返回值。
+ *
+ * success=true 时 resolvedName 为模型真实 expressionName;
+ * success=false 时 resolvedName 为空字符串。
+ */
+export interface ArkWebExpressionAliasResolution {
+  success: boolean;
+  resolvedName: string;
+}
+
+/**
+ * Phase 3E-2: 临时表情状态快照 (getTemporaryExpressionState 返回值)。
+ *
+ * 供 UI 显示和测试验证。
+ */
+export interface ArkWebTemporaryExpressionState {
+  /** 当前临时表情名 (空字符串表示无临时表情) */
+  temporaryExpressionName: string;
+  /** 当前临时表情权重 */
+  temporaryExpressionWeight: number;
+  /** 临时表情到期时间戳 (0 表示无任务) */
+  temporaryExpiresAt: number;
+  /** 恢复策略 (PREVIOUS / RESET) */
+  temporaryRestorePolicy: string;
+  /** 临时表情开始前保存的业务表情名 */
+  restoreExpressionName: string;
+  /** 临时表情开始前保存的业务表情权重 */
+  restoreExpressionWeight: number;
+  /** 临时表情代次 */
+  temporaryGeneration: number;
 }
 
 /**
@@ -1577,6 +1699,22 @@ export interface ArkWebExpressionDebugState {
   lastErrorMessage: string;
   /** 口型通道是否保留 (YES=true / NO=false) */
   lipSyncChannelsPreserved: boolean;
+  /** Phase 3E-2: 当前临时表情名 (空字符串表示无临时表情) */
+  temporaryExpressionName: string;
+  /** Phase 3E-2: 当前临时表情权重 */
+  temporaryExpressionWeight: number;
+  /** Phase 3E-2: 临时表情到期时间戳 (0 表示无任务) */
+  temporaryExpiresAt: number;
+  /** Phase 3E-2: 临时表情恢复策略 (PREVIOUS / RESET) */
+  temporaryRestorePolicy: string;
+  /** Phase 3E-2: 临时表情开始前保存的业务表情名 */
+  restoreExpressionName: string;
+  /** Phase 3E-2: 临时表情开始前保存的业务表情权重 */
+  restoreExpressionWeight: number;
+  /** Phase 3E-2: 临时表情代次 (用于让旧 timeout 失效) */
+  temporaryGeneration: number;
+  /** Phase 3E-2: 是否有活跃的 setTimeout 句柄 */
+  temporaryTimerActive: boolean;
 }
 
 /**
@@ -1703,9 +1841,72 @@ export function parseExpressionDebugState(jsonStr: string): ArkWebExpressionDebu
         ? (debugObj['currentExpressionWeight'] as number) : 0,
       lastErrorCode: (debugObj['lastErrorCode'] as string) || '',
       lastErrorMessage: (debugObj['lastErrorMessage'] as string) || '',
-      lipSyncChannelsPreserved: debugObj['lipSyncChannelsPreserved'] !== false
+      lipSyncChannelsPreserved: debugObj['lipSyncChannelsPreserved'] !== false,
+      // Phase 3E-2: 临时表情字段
+      temporaryExpressionName: (debugObj['temporaryExpressionName'] as string) || '',
+      temporaryExpressionWeight: typeof debugObj['temporaryExpressionWeight'] === 'number'
+        ? (debugObj['temporaryExpressionWeight'] as number) : 0,
+      temporaryExpiresAt: typeof debugObj['temporaryExpiresAt'] === 'number'
+        ? (debugObj['temporaryExpiresAt'] as number) : 0,
+      temporaryRestorePolicy: (debugObj['temporaryRestorePolicy'] as string) || 'PREVIOUS',
+      restoreExpressionName: (debugObj['restoreExpressionName'] as string) || '',
+      restoreExpressionWeight: typeof debugObj['restoreExpressionWeight'] === 'number'
+        ? (debugObj['restoreExpressionWeight'] as number) : 0,
+      temporaryGeneration: typeof debugObj['temporaryGeneration'] === 'number'
+        ? (debugObj['temporaryGeneration'] as number) : 0,
+      temporaryTimerActive: !!debugObj['temporaryTimerActive']
     };
   } catch (e) {
     return null;
+  }
+}
+
+/**
+ * Phase 3E-2: 解析 getTemporaryExpressionState 返回的 JSON 字符串。
+ * 解析失败时返回 null。
+ */
+export function parseTemporaryExpressionState(jsonStr: string): ArkWebTemporaryExpressionState | null {
+  try {
+    const obj: Record<string, Object> = JSON.parse(jsonStr) as Record<string, Object>;
+    return {
+      temporaryExpressionName: (obj['temporaryExpressionName'] as string) || '',
+      temporaryExpressionWeight: typeof obj['temporaryExpressionWeight'] === 'number'
+        ? (obj['temporaryExpressionWeight'] as number) : 0,
+      temporaryExpiresAt: typeof obj['temporaryExpiresAt'] === 'number'
+        ? (obj['temporaryExpiresAt'] as number) : 0,
+      temporaryRestorePolicy: (obj['temporaryRestorePolicy'] as string) || 'PREVIOUS',
+      restoreExpressionName: (obj['restoreExpressionName'] as string) || '',
+      restoreExpressionWeight: typeof obj['restoreExpressionWeight'] === 'number'
+        ? (obj['restoreExpressionWeight'] as number) : 0,
+      temporaryGeneration: typeof obj['temporaryGeneration'] === 'number'
+        ? (obj['temporaryGeneration'] as number) : 0
+    };
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * Phase 3E-2: 解析 resolveExpressionAlias 返回的 JSON 字符串。
+ *
+ * ViewerCore.resolveExpressionAlias 返回:
+ *   - 成功: { success: true, expressionName: "Joy" }
+ *   - 失败: { success: false, error: { code, message } }
+ *
+ * 解析失败或 success=false 时 resolvedName 为空字符串。
+ */
+export function parseExpressionAliasResolution(jsonStr: string): ArkWebExpressionAliasResolution {
+  try {
+    const obj: Record<string, Object> = JSON.parse(jsonStr) as Record<string, Object>;
+    if (!obj['success']) {
+      return { success: false, resolvedName: '' };
+    }
+    const name: string = (obj['expressionName'] as string) || '';
+    if (name.length > 0) {
+      return { success: true, resolvedName: name };
+    }
+    return { success: false, resolvedName: '' };
+  } catch (e) {
+    return { success: false, resolvedName: '' };
   }
 }

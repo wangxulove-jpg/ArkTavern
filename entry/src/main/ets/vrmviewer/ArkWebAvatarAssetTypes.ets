@@ -37,6 +37,8 @@ export const ASSET_LIBRARY_SCHEMA_VERSION: number = 1;
  * - byteLength: 文件大小 (字节)
  * - createdAt: 创建时间戳 (ms)
  * - updatedAt: 更新时间戳 (ms)
+ * - expressionAliases: Phase 3E-2 表情别名映射 (业务 expressionId → 模型真实 expressionName)
+ *   旧模型记录缺少字段时兼容为空对象。
  *
  * 禁止字段:
  * - absolutePath
@@ -54,6 +56,8 @@ export interface ArkWebAvatarModelAsset {
   byteLength: number;
   createdAt: number;
   updatedAt: number;
+  /** Phase 3E-2: 表情别名映射 (业务 expressionId → 模型真实 expressionName)。旧记录缺失时兼容为空对象。 */
+  expressionAliases: Record<string, string>;
 }
 
 /**
@@ -394,4 +398,51 @@ export enum DefaultPoseRestoreState {
   EMPTY = 'EMPTY',
   FAILED = 'FAILED',
   DISPOSED = 'DISPOSED'
+}
+
+/**
+ * 表情别名固定业务 ID (Phase 3E-2)。
+ *
+ * 这 6 个 ID 是业务层固定语义,所有模型使用相同 ID。
+ * 不同模型仍只使用其真实存在的 Expression,通过 expressionAliases 映射。
+ *
+ * 不得假定模型一定支持其中任何项;无法解析时返回 EXPRESSION_ALIAS_NOT_RESOLVED。
+ */
+export class ArkWebExpressionAliasBusinessId {
+  static readonly NEUTRAL: string = 'neutral';
+  static readonly HAPPY: string = 'happy';
+  static readonly ANGRY: string = 'angry';
+  static readonly SAD: string = 'sad';
+  static readonly RELAXED: string = 'relaxed';
+  static readonly SURPRISED: string = 'surprised';
+
+  /** 全部允许的业务 ID。 */
+  static readonly ALL: string[] = ['neutral', 'happy', 'angry', 'sad', 'relaxed', 'surprised'];
+
+  /** 判断 expressionId 是否为合法业务 ID。 */
+  static isValid(expressionId: string): boolean {
+    return typeof expressionId === 'string' && ArkWebExpressionAliasBusinessId.ALL.indexOf(expressionId) !== -1;
+  }
+}
+
+/**
+ * 表情别名管理错误码 (Phase 3E-2)。
+ *
+ * 覆盖:
+ * - 设置/取消别名映射时的清单写入失败
+ * - modelId 不存在 / expressionId 非法 / expressionName 非空校验失败
+ *
+ * 失败策略: 别名操作失败不修改 ViewerState / ModelState / AnimationState / PoseState。
+ */
+export class ExpressionAliasErrorCode {
+  /** modelId 在清单 models 中找不到。 */
+  static readonly EXPRESSION_ALIAS_MODEL_NOT_FOUND: string = 'EXPRESSION_ALIAS_MODEL_NOT_FOUND';
+  /** expressionId 不属于固定业务 ID (neutral/happy/angry/sad/relaxed/surprised)。 */
+  static readonly EXPRESSION_ALIAS_BUSINESS_ID_INVALID: string = 'EXPRESSION_ALIAS_BUSINESS_ID_INVALID';
+  /** expressionName 为空或非字符串。 */
+  static readonly EXPRESSION_ALIAS_NAME_INVALID: string = 'EXPRESSION_ALIAS_NAME_INVALID';
+  /** 清单写入失败。 */
+  static readonly EXPRESSION_ALIAS_WRITE_FAILED: string = 'EXPRESSION_ALIAS_WRITE_FAILED';
+  /** AssetLibrary 已销毁。 */
+  static readonly EXPRESSION_ALIAS_DISPOSED: string = 'EXPRESSION_ALIAS_DISPOSED';
 }

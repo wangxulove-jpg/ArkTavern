@@ -262,7 +262,8 @@ export class ArkWebPersistentModelStore {
         mimeType: mimeType,
         byteLength: sourceSize,
         createdAt: now,
-        updatedAt: now
+        updatedAt: now,
+        expressionAliases: {}
       };
 
       // 10. 提交到 AssetLibrary

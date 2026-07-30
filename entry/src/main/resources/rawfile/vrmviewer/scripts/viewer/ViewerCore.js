@@ -1054,6 +1054,134 @@ export class ViewerCore {
     return this.expressionController.getExpressionDebugState();
   }
 
+  // ===== Phase 3E-2: 临时表情与别名 =====
+
+  /**
+   * Phase 3E-2: 设置临时表情。
+   *
+   * 委托给 ViewerExpressionController.setTemporaryExpression。
+   * 模型未 READY 返回 EXPRESSION_VRM_MISSING。
+   *
+   * @param {string} name 模型真实 expressionName
+   * @param {number} weight 0~1
+   * @param {number} durationMs 100..30000
+   * @param {string} restorePolicy PREVIOUS | RESET
+   * @returns {{success: boolean, state?: ExpressionState, temporaryExpressionName?: string, temporaryExpressionWeight?: number, expiresAt?: number, error?: object}}
+   */
+  setTemporaryExpression(name, weight, durationMs, restorePolicy) {
+    if (!this.expressionController) {
+      return {
+        success: false,
+        error: { code: 'EXPRESSION_VRM_MISSING', message: 'expressionController not initialized' }
+      };
+    }
+    if (!this.expressionController.expressionManagerReady) {
+      return {
+        success: false,
+        error: { code: 'EXPRESSION_VRM_MISSING', message: 'expressionManager not ready' }
+      };
+    }
+    return this.expressionController.setTemporaryExpression(name, weight, durationMs, restorePolicy);
+  }
+
+  /**
+   * Phase 3E-2: 取消临时表情。
+   */
+  cancelTemporaryExpression() {
+    if (!this.expressionController) {
+      return { success: true, state: ExpressionState.UNBOUND };
+    }
+    return this.expressionController.cancelTemporaryExpression();
+  }
+
+  /**
+   * Phase 3E-2: 获取临时表情状态。
+   */
+  getTemporaryExpressionState() {
+    if (!this.expressionController) {
+      return {
+        success: true,
+        temporaryExpressionName: '',
+        temporaryExpressionWeight: 0,
+        temporaryExpiresAt: 0,
+        temporaryRestorePolicy: 'PREVIOUS',
+        restoreExpressionName: '',
+        restoreExpressionWeight: 0,
+        temporaryGeneration: 0
+      };
+    }
+    return this.expressionController.getTemporaryExpressionState();
+  }
+
+  /**
+   * Phase 3E-2: 通过业务 expressionId 设置表情 (使用持久化别名映射)。
+   *
+   * @param {string} expressionId 业务 ID
+   * @param {object} aliases 持久化映射 { expressionId: expressionName }
+   * @param {number} weight 0~1
+   */
+  setExpressionByAlias(expressionId, aliases, weight) {
+    if (!this.expressionController) {
+      return {
+        success: false,
+        error: { code: 'EXPRESSION_VRM_MISSING', message: 'expressionController not initialized' }
+      };
+    }
+    if (!this.expressionController.expressionManagerReady) {
+      return {
+        success: false,
+        error: { code: 'EXPRESSION_VRM_MISSING', message: 'expressionManager not ready' }
+      };
+    }
+    return this.expressionController.setExpressionByAlias(expressionId, aliases, weight);
+  }
+
+  /**
+   * Phase 3E-2: 通过业务 expressionId 设置临时表情。
+   */
+  setTemporaryExpressionByAlias(expressionId, aliases, weight, durationMs, restorePolicy) {
+    if (!this.expressionController) {
+      return {
+        success: false,
+        error: { code: 'EXPRESSION_VRM_MISSING', message: 'expressionController not initialized' }
+      };
+    }
+    if (!this.expressionController.expressionManagerReady) {
+      return {
+        success: false,
+        error: { code: 'EXPRESSION_VRM_MISSING', message: 'expressionManager not ready' }
+      };
+    }
+    return this.expressionController.setTemporaryExpressionByAlias(expressionId, aliases, weight, durationMs, restorePolicy);
+  }
+
+  /**
+   * Phase 3E-2: 解析业务 expressionId 到模型真实 expressionName。
+   * @returns {{success: boolean, expressionName?: string|null, error?: object}}
+   */
+  resolveExpressionAlias(expressionId, aliases) {
+    if (!this.expressionController) {
+      return {
+        success: false,
+        error: { code: 'EXPRESSION_VRM_MISSING', message: 'expressionController not initialized' }
+      };
+    }
+    if (!this.expressionController.expressionManagerReady) {
+      return {
+        success: false,
+        error: { code: 'EXPRESSION_VRM_MISSING', message: 'expressionManager not ready' }
+      };
+    }
+    var resolved = this.expressionController.resolveExpressionAlias(expressionId, aliases);
+    if (resolved === null) {
+      return {
+        success: false,
+        error: { code: 'EXPRESSION_ALIAS_NOT_RESOLVED', message: 'cannot resolve expressionId: ' + expressionId }
+      };
+    }
+    return { success: true, expressionName: resolved };
+  }
+
   // ===== Phase 2A-1: Camera Controls enable/disable =====
 
   /**

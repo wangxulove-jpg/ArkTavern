@@ -1289,6 +1289,157 @@ export class ArkWebVrmViewerController implements ArkWebViewerBridgeListener {
     }
   }
 
+  /**
+   * Phase 3E-2: 设置临时表情。
+   *
+   * 通过 Bridge 调用 Web 端 ViewerCore.setTemporaryExpression(name, weight, durationMs, restorePolicy)。
+   * 到期后按 restorePolicy 恢复 (PREVIOUS) 或清除 (RESET) 业务表情。
+   *
+   * 不直接访问 vrm.expressionManager / VRMExpression / Three.js。
+   *
+   * @param paramsJson JSON 字符串 {name, weight, durationMs, restorePolicy}
+   * @returns JSON 字符串
+   *   {"success": true, "state": "APPLIED", "temporaryExpressionName": "...",
+   *    "temporaryExpressionWeight": 1, "expiresAt": <ts>}
+   */
+  async setTemporaryExpression(paramsJson: string): Promise<string> {
+    if (this.disposed) {
+      const disposedError: ArkWebBridgeErrorPayload = { code: 'DISPOSED', message: 'controller disposed' };
+      const disposedResponse: ArkWebBridgeFailedResponse = { success: false, error: disposedError };
+      return JSON.stringify(disposedResponse);
+    }
+    try {
+      return await this.jsCaller.setTemporaryExpression(paramsJson);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const failedError: ArkWebBridgeErrorPayload = { code: 'TEMPORARY_EXPRESSION_SET_FAILED', message: msg };
+      const failedResponse: ArkWebBridgeFailedResponse = { success: false, error: failedError };
+      return JSON.stringify(failedResponse);
+    }
+  }
+
+  /**
+   * Phase 3E-2: 取消当前临时表情。
+   *
+   * 使旧 timeout 失效,清空临时状态字段。
+   * 不恢复任何表情,不改变 currentExpressionName / currentExpressionWeight。
+   *
+   * @returns JSON 字符串 {"success": true, "state": "..."}
+   */
+  async cancelTemporaryExpression(): Promise<string> {
+    if (this.disposed) {
+      const disposedError: ArkWebBridgeErrorPayload = { code: 'DISPOSED', message: 'controller disposed' };
+      const disposedResponse: ArkWebBridgeFailedResponse = { success: false, error: disposedError };
+      return JSON.stringify(disposedResponse);
+    }
+    try {
+      return await this.jsCaller.cancelTemporaryExpression();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const failedError: ArkWebBridgeErrorPayload = { code: 'TEMPORARY_EXPRESSION_CANCEL_FAILED', message: msg };
+      const failedResponse: ArkWebBridgeFailedResponse = { success: false, error: failedError };
+      return JSON.stringify(failedResponse);
+    }
+  }
+
+  /**
+   * Phase 3E-2: 获取临时表情状态快照(只读)。
+   *
+   * @returns JSON 字符串
+   *   {"success": true, "temporaryExpressionName": "...",
+   *    "temporaryExpressionWeight": 1, "temporaryExpiresAt": <ts>,
+   *    "temporaryRestorePolicy": "PREVIOUS", ...}
+   */
+  async getTemporaryExpressionState(): Promise<string> {
+    if (this.disposed) {
+      const disposedError: ArkWebBridgeErrorPayload = { code: 'DISPOSED', message: 'controller disposed' };
+      const disposedResponse: ArkWebBridgeFailedResponse = { success: false, error: disposedError };
+      return JSON.stringify(disposedResponse);
+    }
+    try {
+      return await this.jsCaller.getTemporaryExpressionState();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const failedError: ArkWebBridgeErrorPayload = { code: 'TEMPORARY_EXPRESSION_STATE_QUERY_FAILED', message: msg };
+      const failedResponse: ArkWebBridgeFailedResponse = { success: false, error: failedError };
+      return JSON.stringify(failedResponse);
+    }
+  }
+
+  /**
+   * Phase 3E-2: 通过业务 expressionId 设置表情。
+   *
+   * 使用持久化别名映射 aliases 解析真实 expressionName,然后调用 setExpression。
+   * 别名解析优先级:持久化映射 → 同名 Expression → 失败 (EXPRESSION_ALIAS_NOT_RESOLVED)。
+   *
+   * @param paramsJson JSON 字符串 {expressionId, aliases, weight}
+   * @returns JSON 字符串 {"success": true, "state": "APPLIED", "name": "...", "weight": 1}
+   */
+  async setExpressionByAlias(paramsJson: string): Promise<string> {
+    if (this.disposed) {
+      const disposedError: ArkWebBridgeErrorPayload = { code: 'DISPOSED', message: 'controller disposed' };
+      const disposedResponse: ArkWebBridgeFailedResponse = { success: false, error: disposedError };
+      return JSON.stringify(disposedResponse);
+    }
+    try {
+      return await this.jsCaller.setExpressionByAlias(paramsJson);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const failedError: ArkWebBridgeErrorPayload = { code: 'EXPRESSION_BY_ALIAS_SET_FAILED', message: msg };
+      const failedResponse: ArkWebBridgeFailedResponse = { success: false, error: failedError };
+      return JSON.stringify(failedResponse);
+    }
+  }
+
+  /**
+   * Phase 3E-2: 通过业务 expressionId 设置临时表情。
+   *
+   * @param paramsJson JSON 字符串 {expressionId, aliases, weight, durationMs, restorePolicy}
+   * @returns JSON 字符串
+   *   {"success": true, "state": "APPLIED", "temporaryExpressionName": "...", "expiresAt": <ts>}
+   */
+  async setTemporaryExpressionByAlias(paramsJson: string): Promise<string> {
+    if (this.disposed) {
+      const disposedError: ArkWebBridgeErrorPayload = { code: 'DISPOSED', message: 'controller disposed' };
+      const disposedResponse: ArkWebBridgeFailedResponse = { success: false, error: disposedError };
+      return JSON.stringify(disposedResponse);
+    }
+    try {
+      return await this.jsCaller.setTemporaryExpressionByAlias(paramsJson);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const failedError: ArkWebBridgeErrorPayload = { code: 'TEMPORARY_EXPRESSION_BY_ALIAS_SET_FAILED', message: msg };
+      const failedResponse: ArkWebBridgeFailedResponse = { success: false, error: failedError };
+      return JSON.stringify(failedResponse);
+    }
+  }
+
+  /**
+   * Phase 3E-2: 解析业务 expressionId 到模型真实 expressionName。
+   *
+   * 仅查询,不设置表情。用于 UI 显示映射是否有效。
+   *
+   * @param paramsJson JSON 字符串 {expressionId, aliases}
+   * @returns JSON 字符串
+   *   - 成功: {"success": true, "expressionName": "Joy"}
+   *   - 失败: {"success": false, "error": {"code": "EXPRESSION_ALIAS_NOT_RESOLVED", ...}}
+   */
+  async resolveExpressionAlias(paramsJson: string): Promise<string> {
+    if (this.disposed) {
+      const disposedError: ArkWebBridgeErrorPayload = { code: 'DISPOSED', message: 'controller disposed' };
+      const disposedResponse: ArkWebBridgeFailedResponse = { success: false, error: disposedError };
+      return JSON.stringify(disposedResponse);
+    }
+    try {
+      return await this.jsCaller.resolveExpressionAlias(paramsJson);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const failedError: ArkWebBridgeErrorPayload = { code: 'EXPRESSION_ALIAS_RESOLVE_FAILED', message: msg };
+      const failedResponse: ArkWebBridgeFailedResponse = { success: false, error: failedError };
+      return JSON.stringify(failedResponse);
+    }
+  }
+
   // ===== Web 组件生命周期回调 =====
 
   /**

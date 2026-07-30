@@ -71,9 +71,18 @@ import {
   ArkWebExpressionState,
   ArkWebExpressionErrorCode,
   ArkWebSetExpressionParams,
+  ArkWebSetTemporaryExpressionParams,
+  ArkWebSetExpressionByAliasParams,
+  ArkWebSetTemporaryExpressionByAliasParams,
+  ArkWebResolveExpressionAliasParams,
+  ArkWebExpressionAliasResolution,
+  ArkWebTemporaryExpressionState,
+  ArkWebTemporaryRestorePolicy,
   parseAvailableExpressions,
   parseExpressionState,
-  parseExpressionDebugState
+  parseExpressionDebugState,
+  parseTemporaryExpressionState,
+  parseExpressionAliasResolution
 } from '../vrmviewer/ArkWebVrmViewerTypes';
 import {
   ArkWebViewerEventListener,
@@ -148,7 +157,9 @@ import {
   PersistentPoseErrorCode,
   PoseImportErrorCode,
   DefaultPoseErrorCode,
-  DefaultPoseRestoreState
+  DefaultPoseRestoreState,
+  ExpressionAliasErrorCode,
+  ArkWebExpressionAliasBusinessId
 } from '../vrmviewer/ArkWebAvatarAssetTypes';
 
 /**
@@ -694,6 +705,38 @@ struct VrmViewerPage {
   /** 口型通道是否保留 (true=YES / false=NO)。 */
   @State expressionLipSyncPreserved: boolean = true;
 
+  // ===== Phase 3E-2 — 表情别名映射与临时表情 =====
+  /** 持久化别名映射 (业务 expressionId → 模型真实 expressionName)。模型 READY 后从 AssetLibrary 读取,不自动设置表情。 */
+  @State expressionAliasMap: Record<string, string> = {};
+  /** 别名映射操作错误码 (成功时为空字符串)。 */
+  @State expressionAliasErrorCode: string = '';
+  /** 别名映射操作错误消息。 */
+  @State expressionAliasErrorMessage: string = '';
+  /** 别名映射操作进行中标志。 */
+  @State expressionAliasOperating: boolean = false;
+  /** 临时表情测试 - 持续时间选项 (1000 / 2500 / 5000 ms)。 */
+  @State temporaryExpressionDurationMs: number = 2500;
+  /** 临时表情测试 - 恢复策略 (PREVIOUS / RESET)。 */
+  @State temporaryExpressionRestorePolicy: string = 'PREVIOUS';
+  /** 临时表情测试 - 当前临时表情名 (空字符串表示无临时表情)。 */
+  @State temporaryExpressionName: string = '';
+  /** 临时表情测试 - 当前临时表情权重。 */
+  @State temporaryExpressionWeight: number = 0;
+  /** 临时表情测试 - 到期时间戳 (0 表示无任务)。 */
+  @State temporaryExpressionExpiresAt: number = 0;
+  /** 临时表情测试 - 是否有活跃的 setTimeout 句柄。 */
+  @State temporaryExpressionTimerActive: boolean = false;
+  /** 临时表情测试 - 代次 (用于让旧 timeout 失效)。 */
+  @State temporaryExpressionGeneration: number = 0;
+  /** 临时表情测试 - 操作错误码。 */
+  @State temporaryExpressionErrorCode: string = '';
+  /** 临时表情测试 - 操作错误消息。 */
+  @State temporaryExpressionErrorMessage: string = '';
+  /** 临时表情测试 - 操作进行中标志。 */
+  @State temporaryExpressionOperating: boolean = false;
+  /** 别名映射 - 当前选中的业务 ID (用于绑定/取消)。 */
+  @State expressionAliasSelectedBusinessId: string = 'happy';
+
   // ===== Phase 3B — 模型自动恢复与持久化资产目录 =====
   /** 资产库状态(READY / EMPTY / FAILED / DISPOSED) */
   @State assetLibraryState: string = 'IDLE';
@@ -1060,6 +1103,22 @@ struct VrmViewerPage {
     this.appliedExpressionName = '';
     this.appliedExpressionWeight = 0;
     this.expressionLipSyncPreserved = true;
+    // Phase 3E-2: 清空临时表情运行时状态 (Viewer 已 dispose, JS 端 timeout 随页面销毁;
+    //             此处仅清空 ArkTS 侧镜像, 保留持久化别名映射在 library.json 中)
+    this.temporaryExpressionName = '';
+    this.temporaryExpressionWeight = 0;
+    this.temporaryExpressionExpiresAt = 0;
+    this.temporaryExpressionTimerActive = false;
+    this.temporaryExpressionGeneration++;
+    this.temporaryExpressionErrorCode = '';
+    this.temporaryExpressionErrorMessage = '';
+    this.temporaryExpressionOperating = false;
+    // 别名映射运行时镜像清空 (持久化数据保留在 library.json, 下次进入重新读取)
+    this.expressionAliasMap = {};
+    this.expressionAliasErrorCode = '';
+    this.expressionAliasErrorMessage = '';
+    this.expressionAliasOperating = false;
+    this.expressionAliasSelectedBusinessId = 'happy';
     // Phase 3B:13. 销毁 Phase 3B 持久化资源(不删除 filesDir 下的模型文件与 library.json)
     // 标记 restoreDisposed 阻止异步恢复回调
     this.restoreDisposed = true;
@@ -1508,6 +1567,8 @@ struct VrmViewerPage {
         this.scheduleDefaultPoseRestore();
         // Phase 3E-1: 模型 READY 后自动读取表情列表 (不自动设置任何表情)
         this.refreshAvailableExpressions();
+        // Phase 3E-2: 模型 READY 后只恢复映射元数据, 不自动设置表情
+        this.loadExpressionAliasMap();
       }
       // Scene 设置
       this.debugCameraControlsEnabled = scene['cameraControlsEnabled'] === true;
@@ -1772,6 +1833,319 @@ struct VrmViewerPage {
     } finally {
       this.expressionLoading = false;
     }
+  }
+
+  // ===== Phase 3E-2 — 表情别名映射与临时表情辅助方法 =====
+
+  /**
+   * Phase 3E-2: 模型 READY 后从 AssetLibrary 读取持久化别名映射。
+   *
+   * 仅恢复元数据,不自动设置任何表情。
+   * 旧模型记录缺少 expressionAliases 字段时兼容为空对象。
+   */
+  private loadExpressionAliasMap(): void {
+    if (this.assetLibrary === null) {
+      console.warn('[ExpressionAlias] assetLibrary not initialized');
+      return;
+    }
+    if (this.activeModelId.length === 0) {
+      console.warn('[ExpressionAlias] activeModelId empty, skip load');
+      return;
+    }
+    const lib: ArkWebAvatarAssetLibrary = this.assetLibrary;
+    const modelId: string = this.activeModelId;
+    lib.getExpressionAliases(modelId).then((aliases: Record<string, string>) => {
+      const result: Record<string, string> = {};
+      const keys: string[] = Object.keys(aliases);
+      for (let i = 0; i < keys.length; i++) {
+        const k: string = keys[i];
+        if (ArkWebExpressionAliasBusinessId.isValid(k)) {
+          const v: string = aliases[k];
+          if (typeof v === 'string' && v.length > 0) {
+            result[k] = v;
+          }
+        }
+      }
+      this.expressionAliasMap = result;
+      this.expressionAliasErrorCode = '';
+      this.expressionAliasErrorMessage = '';
+      console.info(`[ExpressionAlias] loaded ${Object.keys(result).length} aliases for model=${modelId}`);
+    }).catch((e: Object) => {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      this.expressionAliasMap = {};
+      this.expressionAliasErrorCode = ExpressionAliasErrorCode.EXPRESSION_ALIAS_WRITE_FAILED;
+      this.expressionAliasErrorMessage = `读取别名映射失败: ${msg}`;
+      console.warn('[ExpressionAlias] loadExpressionAliasMap failed: ' + msg);
+    });
+  }
+
+  /**
+   * Phase 3E-2: 绑定一个真实 Expression 到固定业务 ID。
+   *
+   * 验证:
+   *   - expressionId 属于固定业务 ID (neutral/happy/angry/sad/relaxed/surprised)
+   *   - expressionName 非空
+   *   - modelId 存在 (AssetLibrary 内部再次校验)
+   *
+   * 实际 Expression 是否存在由运行时再次验证 (setExpressionByAlias 会通过 resolveExpressionAlias 检查)。
+   */
+  private async saveExpressionAlias(expressionId: string, expressionName: string): Promise<void> {
+    if (this.expressionAliasOperating) {
+      return;
+    }
+    if (!ArkWebExpressionAliasBusinessId.isValid(expressionId)) {
+      this.expressionAliasErrorCode = ExpressionAliasErrorCode.EXPRESSION_ALIAS_BUSINESS_ID_INVALID;
+      this.expressionAliasErrorMessage = `非法业务 ID: ${expressionId}`;
+      promptAction.showToast({ message: `非法业务 ID: ${expressionId}` });
+      return;
+    }
+    if (typeof expressionName !== 'string' || expressionName.length === 0) {
+      this.expressionAliasErrorCode = ExpressionAliasErrorCode.EXPRESSION_ALIAS_NAME_INVALID;
+      this.expressionAliasErrorMessage = '表情名不能为空';
+      promptAction.showToast({ message: '表情名不能为空' });
+      return;
+    }
+    if (this.assetLibrary === null) {
+      this.expressionAliasErrorCode = ExpressionAliasErrorCode.EXPRESSION_ALIAS_DISPOSED;
+      this.expressionAliasErrorMessage = 'AssetLibrary 已释放';
+      promptAction.showToast({ message: 'AssetLibrary 已释放' });
+      return;
+    }
+    if (this.activeModelId.length === 0) {
+      this.expressionAliasErrorCode = ExpressionAliasErrorCode.EXPRESSION_ALIAS_MODEL_NOT_FOUND;
+      this.expressionAliasErrorMessage = '当前无活动模型';
+      promptAction.showToast({ message: '当前无活动模型' });
+      return;
+    }
+
+    this.expressionAliasOperating = true;
+    this.expressionAliasErrorCode = '';
+    this.expressionAliasErrorMessage = '';
+    try {
+      const ok: boolean = await this.assetLibrary.setExpressionAlias(
+        this.activeModelId, expressionId, expressionName);
+      if (ok) {
+        const newMap: Record<string, string> = {};
+        const keys: string[] = Object.keys(this.expressionAliasMap);
+        for (let i = 0; i < keys.length; i++) {
+          newMap[keys[i]] = this.expressionAliasMap[keys[i]];
+        }
+        newMap[expressionId] = expressionName;
+        this.expressionAliasMap = newMap;
+        promptAction.showToast({ message: `已绑定 ${expressionId} → ${expressionName}` });
+      } else {
+        this.expressionAliasErrorCode = ExpressionAliasErrorCode.EXPRESSION_ALIAS_WRITE_FAILED;
+        this.expressionAliasErrorMessage = '写入持久化失败';
+        promptAction.showToast({ message: '绑定失败' });
+      }
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      this.expressionAliasErrorCode = ExpressionAliasErrorCode.EXPRESSION_ALIAS_WRITE_FAILED;
+      this.expressionAliasErrorMessage = msg;
+      promptAction.showToast({ message: `绑定异常: ${msg}` });
+    } finally {
+      this.expressionAliasOperating = false;
+    }
+  }
+
+  /**
+   * Phase 3E-2: 取消业务 ID 的映射。
+   */
+  private async clearExpressionAlias(expressionId: string): Promise<void> {
+    if (this.expressionAliasOperating) {
+      return;
+    }
+    if (!ArkWebExpressionAliasBusinessId.isValid(expressionId)) {
+      return;
+    }
+    if (this.assetLibrary === null) {
+      return;
+    }
+    if (this.activeModelId.length === 0) {
+      return;
+    }
+
+    this.expressionAliasOperating = true;
+    this.expressionAliasErrorCode = '';
+    this.expressionAliasErrorMessage = '';
+    try {
+      const ok: boolean = await this.assetLibrary.clearExpressionAlias(this.activeModelId, expressionId);
+      if (ok) {
+        const newMap: Record<string, string> = {};
+        const keys: string[] = Object.keys(this.expressionAliasMap);
+        for (let i = 0; i < keys.length; i++) {
+          if (keys[i] !== expressionId) {
+            newMap[keys[i]] = this.expressionAliasMap[keys[i]];
+          }
+        }
+        this.expressionAliasMap = newMap;
+        promptAction.showToast({ message: `已取消 ${expressionId} 映射` });
+      } else {
+        this.expressionAliasErrorCode = ExpressionAliasErrorCode.EXPRESSION_ALIAS_WRITE_FAILED;
+        this.expressionAliasErrorMessage = '取消映射失败';
+        promptAction.showToast({ message: '取消映射失败' });
+      }
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      this.expressionAliasErrorCode = ExpressionAliasErrorCode.EXPRESSION_ALIAS_WRITE_FAILED;
+      this.expressionAliasErrorMessage = msg;
+      promptAction.showToast({ message: `取消异常: ${msg}` });
+    } finally {
+      this.expressionAliasOperating = false;
+    }
+  }
+
+  /**
+   * Phase 3E-2: 播放临时表情。
+   *
+   * 通过 Bridge 调用 Web 端 setTemporaryExpression。
+   * 流程: 保存当前表情 → 设置临时表情 → 创建单次 timeout → 到期检查 generation → 恢复或清除。
+   *
+   * 参数范围:
+   *   - weight: 0..1
+   *   - durationMs: 100..30000
+   *   - restorePolicy: PREVIOUS / RESET
+   */
+  private async playTemporaryExpression(name: string, weight: number): Promise<void> {
+    if (this.temporaryExpressionOperating) {
+      return;
+    }
+    if (this.debugModelState !== 'READY') {
+      this.temporaryExpressionErrorCode = 'TEMPORARY_VRM_MISSING';
+      this.temporaryExpressionErrorMessage = `模型未就绪 (state=${this.debugModelState})`;
+      promptAction.showToast({ message: '模型未就绪' });
+      return;
+    }
+    if (!this.expressionManagerReady) {
+      this.temporaryExpressionErrorCode = 'TEMPORARY_MANAGER_MISSING';
+      this.temporaryExpressionErrorMessage = 'Expression Manager 未就绪';
+      promptAction.showToast({ message: 'Expression Manager 未就绪' });
+      return;
+    }
+    if (typeof name !== 'string' || name.length === 0) {
+      this.temporaryExpressionErrorCode = 'TEMPORARY_NAME_INVALID';
+      this.temporaryExpressionErrorMessage = '表情名为空';
+      promptAction.showToast({ message: '请先选择表情' });
+      return;
+    }
+    if (!ArkWebTemporaryRestorePolicy.isValid(this.temporaryExpressionRestorePolicy)) {
+      this.temporaryExpressionErrorCode = 'TEMPORARY_POLICY_INVALID';
+      this.temporaryExpressionErrorMessage = `非法恢复策略: ${this.temporaryExpressionRestorePolicy}`;
+      promptAction.showToast({ message: '非法恢复策略' });
+      return;
+    }
+
+    this.temporaryExpressionOperating = true;
+    this.temporaryExpressionErrorCode = '';
+    this.temporaryExpressionErrorMessage = '';
+    try {
+      const params: ArkWebSetTemporaryExpressionParams = {
+        name: name,
+        weight: weight,
+        durationMs: this.temporaryExpressionDurationMs,
+        restorePolicy: this.temporaryExpressionRestorePolicy
+      };
+      const paramsJson: string = JSON.stringify(params);
+      console.info(`[TemporaryExpression] play: name=${name}, weight=${weight}, duration=${this.temporaryExpressionDurationMs}, policy=${this.temporaryExpressionRestorePolicy}`);
+      const resultJson: string = await this.arkWebController.setTemporaryExpression(paramsJson);
+      const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
+      if (obj['success'] === true) {
+        this.temporaryExpressionName = (obj['temporaryExpressionName'] as string) || name;
+        this.temporaryExpressionWeight = typeof obj['temporaryExpressionWeight'] === 'number'
+          ? (obj['temporaryExpressionWeight'] as number) : weight;
+        this.temporaryExpressionExpiresAt = typeof obj['expiresAt'] === 'number'
+          ? (obj['expiresAt'] as number) : 0;
+        this.temporaryExpressionTimerActive = this.temporaryExpressionExpiresAt > 0;
+        this.temporaryExpressionGeneration++;
+        promptAction.showToast({
+          message: `临时表情: ${name} (${this.temporaryExpressionDurationMs}ms, ${this.temporaryExpressionRestorePolicy})`
+        });
+        this.refreshAvailableExpressions();
+      } else {
+        const errObj: Record<string, Object> = (obj['error'] as Record<string, Object>) ||
+          {} as Record<string, Object>;
+        this.temporaryExpressionErrorCode = (errObj['code'] as string) || 'TEMPORARY_SET_FAILED';
+        this.temporaryExpressionErrorMessage = (errObj['message'] as string) || '';
+        promptAction.showToast({ message: `临时表情失败: ${this.temporaryExpressionErrorCode}` });
+        this.refreshTemporaryExpressionState();
+      }
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      this.temporaryExpressionErrorCode = 'TEMPORARY_SET_FAILED';
+      this.temporaryExpressionErrorMessage = msg;
+      promptAction.showToast({ message: `临时表情异常: ${msg}` });
+    } finally {
+      this.temporaryExpressionOperating = false;
+    }
+  }
+
+  /**
+   * Phase 3E-2: 取消临时表情。
+   *
+   * 取消后:
+   *   - JS 端 clearTimeout 当前 timeout
+   *   - temporaryGeneration++ 使任何在途 timeout 失效
+   *   - 保留 restoreExpression* (调用方决定是否恢复)
+   *   - 不自动恢复或清除业务表情 (由 cancelTemporaryExpression 内部决定)
+   */
+  private async cancelTemporaryExpressionClick(): Promise<void> {
+    if (this.temporaryExpressionOperating) {
+      return;
+    }
+    if (this.temporaryExpressionName.length === 0 && !this.temporaryExpressionTimerActive) {
+      return;
+    }
+
+    this.temporaryExpressionOperating = true;
+    this.temporaryExpressionErrorCode = '';
+    this.temporaryExpressionErrorMessage = '';
+    try {
+      console.info('[TemporaryExpression] cancel');
+      const resultJson: string = await this.arkWebController.cancelTemporaryExpression();
+      const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
+      if (obj['success'] === true) {
+        this.temporaryExpressionName = '';
+        this.temporaryExpressionWeight = 0;
+        this.temporaryExpressionExpiresAt = 0;
+        this.temporaryExpressionTimerActive = false;
+        this.temporaryExpressionGeneration++;
+        promptAction.showToast({ message: '已取消临时表情' });
+        this.refreshAvailableExpressions();
+      } else {
+        const errObj: Record<string, Object> = (obj['error'] as Record<string, Object>) ||
+          {} as Record<string, Object>;
+        this.temporaryExpressionErrorCode = (errObj['code'] as string) || 'TEMPORARY_CANCEL_FAILED';
+        this.temporaryExpressionErrorMessage = (errObj['message'] as string) || '';
+        promptAction.showToast({ message: `取消失败: ${this.temporaryExpressionErrorCode}` });
+      }
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      this.temporaryExpressionErrorCode = 'TEMPORARY_CANCEL_FAILED';
+      this.temporaryExpressionErrorMessage = msg;
+      promptAction.showToast({ message: `取消异常: ${msg}` });
+    } finally {
+      this.temporaryExpressionOperating = false;
+    }
+  }
+
+  /**
+   * Phase 3E-2: 查询 Web 端临时表情状态 (供 UI 显示与测试验证)。
+   */
+  private refreshTemporaryExpressionState(): void {
+    this.arkWebController.getTemporaryExpressionState().then((resultJson: string) => {
+      const state: ArkWebTemporaryExpressionState | null = parseTemporaryExpressionState(resultJson);
+      if (state === null) {
+        return;
+      }
+      this.temporaryExpressionName = state.temporaryExpressionName;
+      this.temporaryExpressionWeight = state.temporaryExpressionWeight;
+      this.temporaryExpressionExpiresAt = state.temporaryExpiresAt;
+      this.temporaryExpressionTimerActive = state.temporaryExpiresAt > 0;
+      this.temporaryExpressionGeneration = state.temporaryGeneration;
+    }).catch((e: Object) => {
+      console.warn('[VrmViewerPage] refreshTemporaryExpressionState exception: ' +
+        (e instanceof Error ? e.message : String(e)));
+    });
   }
 
   /**
@@ -7952,8 +8326,364 @@ struct VrmViewerPage {
           })
       }
       .width('100%')
+
+      // ===== Phase 3E-2: 表情别名映射 =====
+      this.AliasMappingSection()
+
+      // ===== Phase 3E-2: 临时表情测试 =====
+      this.TemporaryExpressionSection()
     }
     .width('100%')
+  }
+
+  /**
+   * Phase 3E-2: 表情别名映射区域。
+   *
+   * 操作:
+   *   - 选择一个真实 Expression (复用 selectedExpressionName)
+   *   - 选择目标业务 ID (neutral/happy/angry/sad/relaxed/surprised)
+   *   - 绑定 / 取消映射
+   *
+   * 显示当前映射, 不显示模型路径或内部对象。
+   */
+  @Builder
+  AliasMappingSection() {
+    Divider()
+      .color($r('app.color.app_divider'))
+      .margin({ top: 16, bottom: 16 })
+
+    Text('表情别名映射')
+      .fontSize($r('app.float.app_font_subtitle'))
+      .fontWeight(FontWeight.Medium)
+      .fontColor($r('app.color.app_text_primary'))
+      .margin({ bottom: 8 })
+
+    Text('将固定业务 ID 绑定到当前模型真实存在的 Expression, 持久化到 library.json。')
+      .fontSize($r('app.float.app_font_caption'))
+      .fontColor($r('app.color.app_text_secondary'))
+      .width('100%')
+      .margin({ bottom: 12 })
+
+    // 当前选中的真实表情
+    Row() {
+      Text('真实表情:')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_secondary'))
+      Text(this.selectedExpressionName.length > 0 ? this.selectedExpressionName : '未选择')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor(this.selectedExpressionName.length > 0
+          ? $r('app.color.app_text_primary')
+          : $r('app.color.app_text_tertiary'))
+        .margin({ left: 8 })
+    }
+    .width('100%')
+    .margin({ bottom: 8 })
+
+    // 选择业务 ID
+    Text('目标业务 ID')
+      .fontSize($r('app.float.app_font_caption'))
+      .fontColor($r('app.color.app_text_secondary'))
+      .width('100%')
+      .margin({ bottom: 4 })
+
+    Row({ space: 6 }) {
+      ForEach(ArkWebExpressionAliasBusinessId.ALL, (id: string) => {
+        Button(id)
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor(this.expressionAliasSelectedBusinessId === id
+            ? $r('app.color.app_text_primary')
+            : $r('app.color.app_text_secondary'))
+          .backgroundColor(this.expressionAliasSelectedBusinessId === id
+            ? $r('app.color.app_surface_2')
+            : $r('app.color.app_surface_1'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(28)
+          .layoutWeight(1)
+          .onClick(() => {
+            this.expressionAliasSelectedBusinessId = id;
+          })
+      }, (id: string) => id)
+    }
+    .width('100%')
+    .margin({ bottom: 12 })
+
+    // 当前映射列表
+    Text('当前映射')
+      .fontSize($r('app.float.app_font_caption'))
+      .fontColor($r('app.color.app_text_secondary'))
+      .width('100%')
+      .margin({ bottom: 4 })
+
+    if (Object.keys(this.expressionAliasMap).length === 0) {
+      Text('无映射 (旧模型记录兼容为空)')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_tertiary'))
+        .width('100%')
+        .margin({ bottom: 8 })
+    } else {
+      List({ space: 4 }) {
+        ForEach(Object.keys(this.expressionAliasMap), (id: string) => {
+          ListItem() {
+            Row() {
+              Text(`${id} → ${this.expressionAliasMap[id]}`)
+                .fontSize($r('app.float.app_font_caption'))
+                .fontColor($r('app.color.app_text_primary'))
+                .layoutWeight(1)
+              Button('取消')
+                .fontSize($r('app.float.app_font_caption'))
+                .fontColor($r('app.color.app_text_primary'))
+                .backgroundColor($r('app.color.app_surface_1'))
+                .borderRadius($r('app.float.app_radius_sm'))
+                .height(24)
+                .enabled(!this.expressionAliasOperating)
+                .onClick(() => {
+                  this.clearExpressionAlias(id);
+                })
+            }
+            .width('100%')
+            .padding({ top: 4, bottom: 4, left: 8, right: 8 })
+          }
+        }, (id: string) => id)
+      }
+      .width('100%')
+      .margin({ bottom: 8 })
+      .alignListItem(ListItemAlign.Center)
+    }
+
+    // 操作按钮
+    Row() {
+      Button('绑定映射')
+        .fontSize($r('app.float.app_font_body'))
+        .fontColor($r('app.color.app_text_primary'))
+        .backgroundColor($r('app.color.app_surface_2'))
+        .borderRadius($r('app.float.app_radius_sm'))
+        .height(36)
+        .layoutWeight(1)
+        .enabled(this.debugModelState === 'READY'
+          && this.expressionManagerReady
+          && this.selectedExpressionName.length > 0
+          && this.expressionAliasSelectedBusinessId.length > 0
+          && !this.expressionAliasOperating)
+        .onClick(() => {
+          this.saveExpressionAlias(this.expressionAliasSelectedBusinessId, this.selectedExpressionName);
+        })
+
+      Button('重新载入')
+        .fontSize($r('app.float.app_font_body'))
+        .fontColor($r('app.color.app_text_primary'))
+        .backgroundColor($r('app.color.app_surface_2'))
+        .borderRadius($r('app.float.app_radius_sm'))
+        .height(36)
+        .layoutWeight(1)
+        .margin({ left: 8 })
+        .enabled(this.activeModelId.length > 0
+          && !this.expressionAliasOperating)
+        .onClick(() => {
+          this.loadExpressionAliasMap();
+        })
+    }
+    .width('100%')
+    .margin({ bottom: 8 })
+
+    // 错误显示
+    if (this.expressionAliasErrorCode.length > 0) {
+      Text(`错误: ${this.expressionAliasErrorCode}`)
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_tertiary'))
+        .width('100%')
+        .margin({ bottom: 4 })
+      if (this.expressionAliasErrorMessage.length > 0) {
+        Text(this.expressionAliasErrorMessage)
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_tertiary'))
+          .width('100%')
+          .margin({ bottom: 8 })
+      }
+    }
+  }
+
+  /**
+   * Phase 3E-2: 临时表情测试区域。
+   *
+   * 操作:
+   *   - 选择真实 Expression (复用 selectedExpressionName 与 selectedExpressionWeight)
+   *   - 选择持续时间 (1000 / 2500 / 5000 ms)
+   *   - 选择恢复策略 (PREVIOUS / RESET)
+   *   - 播放 / 取消临时表情
+   */
+  @Builder
+  TemporaryExpressionSection() {
+    Divider()
+      .color($r('app.color.app_divider'))
+      .margin({ top: 16, bottom: 16 })
+
+    Text('临时表情测试')
+      .fontSize($r('app.float.app_font_subtitle'))
+      .fontWeight(FontWeight.Medium)
+      .fontColor($r('app.color.app_text_primary'))
+      .margin({ bottom: 8 })
+
+    Text('设置临时表情并在到期后自动恢复或清除, 使用 generation 防止旧 timeout 干扰。')
+      .fontSize($r('app.float.app_font_caption'))
+      .fontColor($r('app.color.app_text_secondary'))
+      .width('100%')
+      .margin({ bottom: 12 })
+
+    // 当前临时表情状态
+    Row() {
+      Text('当前临时:')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_secondary'))
+      Text(this.temporaryExpressionName.length > 0
+        ? `${this.temporaryExpressionName} (${this.temporaryExpressionWeight.toFixed(2)})`
+        : '无')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor(this.temporaryExpressionName.length > 0
+          ? $r('app.color.app_text_primary')
+          : $r('app.color.app_text_tertiary'))
+        .margin({ left: 8 })
+    }
+    .width('100%')
+    .margin({ bottom: 4 })
+
+    Row() {
+      Text('代次:')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_secondary'))
+      Text(`${this.temporaryExpressionGeneration}`)
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_primary'))
+        .margin({ left: 8 })
+      Text(this.temporaryExpressionTimerActive ? '  (运行中)' : '  (空闲)')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_tertiary'))
+        .margin({ left: 8 })
+    }
+    .width('100%')
+    .margin({ bottom: 12 })
+
+    // 持续时间
+    Text('持续时间')
+      .fontSize($r('app.float.app_font_caption'))
+      .fontColor($r('app.color.app_text_secondary'))
+      .width('100%')
+      .margin({ bottom: 4 })
+
+    Row({ space: 8 }) {
+      ForEach([1000, 2500, 5000], (ms: number) => {
+        Button(`${ms}ms`)
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor(this.temporaryExpressionDurationMs === ms
+            ? $r('app.color.app_text_primary')
+            : $r('app.color.app_text_secondary'))
+          .backgroundColor(this.temporaryExpressionDurationMs === ms
+            ? $r('app.color.app_surface_2')
+            : $r('app.color.app_surface_1'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(28)
+          .layoutWeight(1)
+          .onClick(() => {
+            this.temporaryExpressionDurationMs = ms;
+          })
+      }, (ms: number) => `${ms}`)
+    }
+    .width('100%')
+    .margin({ bottom: 12 })
+
+    // 恢复策略
+    Text('恢复策略')
+      .fontSize($r('app.float.app_font_caption'))
+      .fontColor($r('app.color.app_text_secondary'))
+      .width('100%')
+      .margin({ bottom: 4 })
+
+    Row({ space: 8 }) {
+      ForEach(['PREVIOUS', 'RESET'], (policy: string) => {
+        Button(policy)
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor(this.temporaryExpressionRestorePolicy === policy
+            ? $r('app.color.app_text_primary')
+            : $r('app.color.app_text_secondary'))
+          .backgroundColor(this.temporaryExpressionRestorePolicy === policy
+            ? $r('app.color.app_surface_2')
+            : $r('app.color.app_surface_1'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(28)
+          .layoutWeight(1)
+          .onClick(() => {
+            this.temporaryExpressionRestorePolicy = policy;
+          })
+      }, (policy: string) => policy)
+    }
+    .width('100%')
+    .margin({ bottom: 12 })
+
+    // 操作按钮
+    Row() {
+      Button('播放临时表情')
+        .fontSize($r('app.float.app_font_body'))
+        .fontColor($r('app.color.app_text_primary'))
+        .backgroundColor($r('app.color.app_surface_2'))
+        .borderRadius($r('app.float.app_radius_sm'))
+        .height(36)
+        .layoutWeight(1)
+        .enabled(this.debugModelState === 'READY'
+          && this.expressionManagerReady
+          && this.selectedExpressionName.length > 0
+          && !this.temporaryExpressionOperating)
+        .onClick(() => {
+          this.playTemporaryExpression(this.selectedExpressionName, this.selectedExpressionWeight);
+        })
+
+      Button('取消临时表情')
+        .fontSize($r('app.float.app_font_body'))
+        .fontColor($r('app.color.app_text_primary'))
+        .backgroundColor($r('app.color.app_surface_2'))
+        .borderRadius($r('app.float.app_radius_sm'))
+        .height(36)
+        .layoutWeight(1)
+        .margin({ left: 8 })
+        .enabled(this.temporaryExpressionName.length > 0
+          && !this.temporaryExpressionOperating)
+        .onClick(() => {
+          this.cancelTemporaryExpressionClick();
+        })
+    }
+    .width('100%')
+    .margin({ bottom: 8 })
+
+    Row() {
+      Button('刷新状态')
+        .fontSize($r('app.float.app_font_body'))
+        .fontColor($r('app.color.app_text_primary'))
+        .backgroundColor($r('app.color.app_surface_2'))
+        .borderRadius($r('app.float.app_radius_sm'))
+        .height(36)
+        .layoutWeight(1)
+        .enabled(this.debugModelState === 'READY'
+          && !this.temporaryExpressionOperating)
+        .onClick(() => {
+          this.refreshTemporaryExpressionState();
+        })
+    }
+    .width('100%')
+    .margin({ bottom: 8 })
+
+    // 错误显示
+    if (this.temporaryExpressionErrorCode.length > 0) {
+      Text(`错误: ${this.temporaryExpressionErrorCode}`)
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_tertiary'))
+        .width('100%')
+        .margin({ bottom: 4 })
+      if (this.temporaryExpressionErrorMessage.length > 0) {
+        Text(this.temporaryExpressionErrorMessage)
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_tertiary'))
+          .width('100%')
+          .margin({ bottom: 8 })
+      }
+    }
   }
 
   /**
