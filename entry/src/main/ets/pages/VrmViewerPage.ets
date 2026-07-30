@@ -161,6 +161,22 @@ import {
   ExpressionAliasErrorCode,
   ArkWebExpressionAliasBusinessId
 } from '../vrmviewer/ArkWebAvatarAssetTypes';
+import {
+  ArkWebAvatarPerformanceCommand,
+  ArkWebAvatarPerformanceRuntime,
+  ArkWebPerformanceState,
+  ArkWebPerformanceResult,
+  ArkWebPerformanceDebugState,
+  ArkWebPerformanceMotionType,
+  ArkWebPerformanceReturnPolicy,
+  PerformanceErrorCode,
+  validatePerformanceCommand
+} from '../vrmviewer/ArkWebAvatarPerformanceTypes';
+import { ArkWebAvatarPerformanceController } from '../vrmviewer/ArkWebAvatarPerformanceController';
+import {
+  ArkWebVrmViewerPagePerformanceRuntime,
+  ArkWebVrmViewerPagePerformanceRuntimeDeps
+} from '../vrmviewer/ArkWebVrmViewerPagePerformanceRuntime';
 
 /**
  * 传给 JavaScript loadVrmaResource 的资源 JSON 载荷。
@@ -737,6 +753,42 @@ struct VrmViewerPage {
   /** 别名映射 - 当前选中的业务 ID (用于绑定/取消)。 */
   @State expressionAliasSelectedBusinessId: string = 'happy';
 
+  // ===== Phase 3F-1 — 统一角色演出系统 =====
+  /** PerformanceController 实例 (aboutToAppear 创建, disposeViewer 销毁) */
+  @State performanceController: ArkWebAvatarPerformanceController | null = null;
+  /** 演出状态 */
+  @State performanceState: ArkWebPerformanceState = ArkWebPerformanceState.IDLE;
+  /** 演出 generation */
+  @State performanceGeneration: number = 0;
+  /** 当前命令 ID */
+  @State performanceCommandId: string = '';
+  /** 当前动作类型 */
+  @State performanceMotionType: string = '';
+  /** 当前动作 ID (actionId / poseId) */
+  @State performanceMotionId: string = '';
+  /** 当前表情业务 ID */
+  @State performanceExpressionId: string = '';
+  /** 当前表情权重 */
+  @State performanceExpressionWeight: number = 0;
+  /** 到期时间戳 */
+  @State performanceExpiresAt: number = 0;
+  /** 恢复 timeout 是否活动 */
+  @State performanceRestoreTimerActive: boolean = false;
+  /** 最近错误码 */
+  @State performanceLastErrorCode: string = '';
+  /** 最近错误消息 */
+  @State performanceLastErrorMessage: string = '';
+  /** 演出测试 - 操作进行中标志 */
+  @State performanceOperating: boolean = false;
+  /** 演出测试 - 选中的动作类型 (animation / pose / none) */
+  @State performanceTestMotionType: ArkWebPerformanceMotionType = 'none';
+  /** 演出测试 - 选中的持续时间 */
+  @State performanceTestDurationMs: number = 2500;
+  /** 演出测试 - 选中的恢复策略 */
+  @State performanceTestReturnPolicy: ArkWebPerformanceReturnPolicy = 'DEFAULT_POSE';
+  /** 演出测试 - 选中的业务表情 ID (空表示不设置表情) */
+  @State performanceTestExpressionId: string = 'happy';
+
   // ===== Phase 3B — 模型自动恢复与持久化资产目录 =====
   /** 资产库状态(READY / EMPTY / FAILED / DISPOSED) */
   @State assetLibraryState: string = 'IDLE';
@@ -927,7 +979,116 @@ struct VrmViewerPage {
       this.loadPoseAssetsFromLibrary();
     }
 
+    // Phase 3F-1:创建统一演出控制器 (注入 AssetLibrary 和 Runtime 回调)
+    // Runtime 回调复用页面现有方法, 不复制底层实现
+    if (this.performanceController === null && this.assetLibrary !== null) {
+      const runtime: ArkWebAvatarPerformanceRuntime = this.createPerformanceRuntime();
+      this.performanceController = new ArkWebAvatarPerformanceController(this.assetLibrary, runtime);
+    }
+
     // Web 组件加载由 build() 触发,初始化在 onPageEnd 回调中完成
+  }
+
+  /**
+   * Phase 3F-1: 创建演出 Runtime 回调。
+   *
+   * 复用页面现有方法, 不复制底层实现:
+   *   - stopAnimation → arkWebController.stopAnimation
+   *   - playAnimationById → loadAnimationByActionId + playAnimation
+   *   - applyPoseById → readPoseDataAsJson + applyPose
+   *   - resetPose → arkWebController.resetPose
+   *   - restoreDefaultPose → defaultPoseId + applyPose (无默认则 resetPose)
+   *   - setTemporaryExpressionByAlias → arkWebController.setTemporaryExpressionByAlias
+   *   - cancelTemporaryExpression → arkWebController.cancelTemporaryExpression
+   */
+  private createPerformanceRuntime(): ArkWebAvatarPerformanceRuntime {
+    const self: VrmViewerPage = this;
+    const deps: ArkWebVrmViewerPagePerformanceRuntimeDeps = {
+      getArkWebController: (): ArkWebVrmViewerController | null => self.arkWebController,
+      getAssetLibrary: (): ArkWebAvatarAssetLibrary | null => self.assetLibrary,
+      getPersistentPoseStore: (): ArkWebPersistentPoseStore | null => self.persistentPoseStore,
+      getExpressionAliasMap: (): Record<string, string> => self.expressionAliasMap,
+      getDebugAnimationState: (): string => self.debugAnimationState,
+      loadAnimationByActionId: (actionId: string): Promise<boolean> => self.loadAnimationByActionId(actionId),
+      waitForAnimationReady: (timeoutMs: number): Promise<boolean> => self.waitForAnimationReady(timeoutMs),
+      resetPoseInternal: (): Promise<boolean> => self.resetPoseInternal(),
+      applyPoseByIdInternal: (poseId: string): Promise<boolean> => self.applyPoseByIdInternal(poseId)
+    };
+    return new ArkWebVrmViewerPagePerformanceRuntime(deps);
+  }
+
+  /**
+   * Phase 3F-1: 内部 resetPose 调用 (供 Runtime 回调使用)。
+   */
+  private async resetPoseInternal(): Promise<boolean> {
+    if (this.arkWebController === null) {
+      return false;
+    }
+    try {
+      const resultJson: string = await this.arkWebController.resetPose();
+      const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
+      return obj['success'] === true;
+    } catch (e) {
+      console.warn('[PerformanceRuntime] resetPoseInternal failed: ' +
+        (e instanceof Error ? e.message : String(e)));
+      return false;
+    }
+  }
+
+  /**
+   * Phase 3F-1: 内部 applyPoseById 调用 (供 Runtime 回调使用)。
+   *
+   * 复用 readPoseDataAsJson + applyPose, 不复制 JSON 骨骼转换逻辑。
+   */
+  private async applyPoseByIdInternal(poseId: string): Promise<boolean> {
+    if (this.arkWebController === null || this.persistentPoseStore === null) {
+      return false;
+    }
+    try {
+      const poseJson: string = await this.persistentPoseStore.readPoseDataAsJson(poseId);
+      if (poseJson.length === 0) {
+        console.warn(`[PerformanceRuntime] applyPoseByIdInternal: poseJson empty: ${poseId}`);
+        return false;
+      }
+      const resultJson: string = await this.arkWebController.applyPose(poseJson);
+      const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
+      return obj['success'] === true;
+    } catch (e) {
+      console.warn('[PerformanceRuntime] applyPoseByIdInternal failed: ' +
+        (e instanceof Error ? e.message : String(e)));
+      return false;
+    }
+  }
+
+  /**
+   * Phase 3F-1: 等待动画进入 READY 状态。
+   *
+   * 复用 animationLoadPolling 机制, 不引入第二个轮询。
+   * 上限 timeoutMs 后放弃 (不阻塞 PerformanceController 主流程)。
+   */
+  private async waitForAnimationReady(timeoutMs: number): Promise<boolean> {
+    const startTick: number = Date.now();
+    while (Date.now() - startTick < timeoutMs) {
+      if (this.debugAnimationState === 'READY') {
+        return true;
+      }
+      if (this.debugAnimationState === 'FAILED') {
+        return false;
+      }
+      // 刷新状态 (复用 refreshAnimationDebugState, 不启动新的 setInterval)
+      if (this.arkWebController !== null) {
+        try {
+          const resultJson: string = await this.arkWebController.getAnimationDebugState();
+          this.parseAnimationDebugState(resultJson);
+        } catch (e) {
+          console.warn('[PerformanceRuntime] waitForAnimationReady poll failed: ' +
+            (e instanceof Error ? e.message : String(e)));
+        }
+      }
+      // 短暂让步 (避免阻塞 UI, 不引入 setInterval)
+      await new Promise<void>((resolve: Function) => setTimeout(resolve, 100));
+    }
+    return this.debugAnimationState === 'READY';
   }
 
   aboutToDisappear(): void {
@@ -1119,6 +1280,25 @@ struct VrmViewerPage {
     this.expressionAliasErrorMessage = '';
     this.expressionAliasOperating = false;
     this.expressionAliasSelectedBusinessId = 'happy';
+    // Phase 3F-1: 销毁 PerformanceController (不删除动作 / 姿势 / 表情别名 / library.json)
+    // 内部 performanceGeneration++ 使任何在途 timeout 失效
+    // best-effort cancelTemporaryExpression + stopAnimation (不等待)
+    if (this.performanceController !== null) {
+      this.performanceController.dispose();
+      this.performanceController = null;
+    }
+    this.performanceState = ArkWebPerformanceState.DISPOSED;
+    this.performanceGeneration++;
+    this.performanceCommandId = '';
+    this.performanceMotionType = '';
+    this.performanceMotionId = '';
+    this.performanceExpressionId = '';
+    this.performanceExpressionWeight = 0;
+    this.performanceExpiresAt = 0;
+    this.performanceRestoreTimerActive = false;
+    this.performanceLastErrorCode = '';
+    this.performanceLastErrorMessage = '';
+    this.performanceOperating = false;
     // Phase 3B:13. 销毁 Phase 3B 持久化资源(不删除 filesDir 下的模型文件与 library.json)
     // 标记 restoreDisposed 阻止异步恢复回调
     this.restoreDisposed = true;
@@ -8332,6 +8512,9 @@ struct VrmViewerPage {
 
       // ===== Phase 3E-2: 临时表情测试 =====
       this.TemporaryExpressionSection()
+
+      // ===== Phase 3F-1: 统一演出测试 =====
+      this.PerformanceSection()
     }
     .width('100%')
   }
@@ -8684,6 +8867,422 @@ struct VrmViewerPage {
           .margin({ bottom: 8 })
       }
     }
+  }
+
+  /**
+   * Phase 3F-1: 统一演出测试区域。
+   *
+   * 操作:
+   *   - 选择演出类型 (animation / pose / none)
+   *   - 选择持续时间 (1000 / 2500 / 5000 ms)
+   *   - 选择恢复策略 (DEFAULT_POSE / RESET / KEEP)
+   *   - 选择业务表情 ID (可选)
+   *   - 执行演出 / 停止演出
+   *
+   * 显示:
+   *   - Performance State / Command ID / Motion Type / Motion ID /
+   *     Expression ID / Expires At / Last Error
+   */
+  @Builder
+  PerformanceSection() {
+    Divider()
+      .color($r('app.color.app_divider'))
+      .margin({ top: 16, bottom: 16 })
+
+    Text('统一演出测试 (Phase 3F-1)')
+      .fontSize($r('app.float.app_font_subtitle'))
+      .fontWeight(FontWeight.Medium)
+      .fontColor($r('app.color.app_text_primary'))
+      .margin({ bottom: 8 })
+
+    Text('统一调度动作 / 姿势 / 临时表情, 到期按策略恢复。')
+      .fontSize($r('app.float.app_font_caption'))
+      .fontColor($r('app.color.app_text_secondary'))
+      .width('100%')
+      .margin({ bottom: 12 })
+
+    // 当前演出状态
+    Row() {
+      Text('Performance State:')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_secondary'))
+      Text(this.performanceState)
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor(this.performanceState === 'ACTIVE'
+          ? $r('app.color.model_settings_success')
+          : (this.performanceState === 'FAILED' || this.performanceState === 'DISPOSED'
+            ? $r('app.color.app_text_tertiary')
+            : $r('app.color.app_text_primary')))
+        .margin({ left: 8 })
+    }
+    .width('100%')
+    .margin({ bottom: 4 })
+
+    Row() {
+      Text('Command ID:')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_secondary'))
+      Text(this.performanceCommandId.length > 0 ? this.performanceCommandId : '-')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_primary'))
+        .margin({ left: 8 })
+    }
+    .width('100%')
+    .margin({ bottom: 4 })
+
+    Row() {
+      Text('Motion Type:')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_secondary'))
+      Text(this.performanceMotionType.length > 0 ? this.performanceMotionType : '-')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_primary'))
+        .margin({ left: 8 })
+    }
+    .width('100%')
+    .margin({ bottom: 4 })
+
+    Row() {
+      Text('Motion ID:')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_secondary'))
+      Text(this.performanceMotionId.length > 0 ? this.performanceMotionId : '-')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_primary'))
+        .margin({ left: 8 })
+    }
+    .width('100%')
+    .margin({ bottom: 4 })
+
+    Row() {
+      Text('Expression ID:')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_secondary'))
+      Text(this.performanceExpressionId.length > 0 ? this.performanceExpressionId : '-')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_primary'))
+        .margin({ left: 8 })
+    }
+    .width('100%')
+    .margin({ bottom: 4 })
+
+    Row() {
+      Text('Expires At:')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_secondary'))
+      Text(this.performanceExpiresAt > 0 ? String(this.performanceExpiresAt) : '-')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_primary'))
+        .margin({ left: 8 })
+    }
+    .width('100%')
+    .margin({ bottom: 4 })
+
+    if (this.performanceLastErrorCode.length > 0) {
+      Row() {
+        Text('Last Error:')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+        Text(this.performanceLastErrorCode)
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_tertiary'))
+          .margin({ left: 8 })
+      }
+      .width('100%')
+      .margin({ bottom: 4 })
+    }
+
+    Divider()
+      .color($r('app.color.app_divider'))
+      .margin({ top: 8, bottom: 12 })
+
+    // 演出类型选择
+    Text('演出类型')
+      .fontSize($r('app.float.app_font_body'))
+      .fontColor($r('app.color.app_text_primary'))
+      .margin({ bottom: 8 })
+
+    Row({ space: 8 }) {
+      ForEach(['animation', 'pose', 'none'] as ArkWebPerformanceMotionType[], (t: ArkWebPerformanceMotionType) => {
+        Button(t)
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor(this.performanceTestMotionType === t
+            ? $r('app.color.app_text_primary')
+            : $r('app.color.app_text_secondary'))
+          .backgroundColor(this.performanceTestMotionType === t
+            ? $r('app.color.app_surface_2')
+            : $r('app.color.app_surface_1'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(36)
+          .layoutWeight(1)
+          .onClick(() => {
+            this.performanceTestMotionType = t;
+          })
+      })
+    }
+    .width('100%')
+    .margin({ bottom: 12 })
+
+    // 持续时间选择
+    Text('持续时间 (ms)')
+      .fontSize($r('app.float.app_font_body'))
+      .fontColor($r('app.color.app_text_primary'))
+      .margin({ bottom: 8 })
+
+    Row({ space: 8 }) {
+      ForEach([1000, 2500, 5000], (d: number) => {
+        Button(String(d))
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor(this.performanceTestDurationMs === d
+            ? $r('app.color.app_text_primary')
+            : $r('app.color.app_text_secondary'))
+          .backgroundColor(this.performanceTestDurationMs === d
+            ? $r('app.color.app_surface_2')
+            : $r('app.color.app_surface_1'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(36)
+          .layoutWeight(1)
+          .onClick(() => {
+            this.performanceTestDurationMs = d;
+          })
+      })
+    }
+    .width('100%')
+    .margin({ bottom: 12 })
+
+    // 恢复策略选择
+    Text('恢复策略')
+      .fontSize($r('app.float.app_font_body'))
+      .fontColor($r('app.color.app_text_primary'))
+      .margin({ bottom: 8 })
+
+    Row({ space: 8 }) {
+      ForEach(['DEFAULT_POSE', 'RESET', 'KEEP'] as ArkWebPerformanceReturnPolicy[], (p: ArkWebPerformanceReturnPolicy) => {
+        Button(p)
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor(this.performanceTestReturnPolicy === p
+            ? $r('app.color.app_text_primary')
+            : $r('app.color.app_text_secondary'))
+          .backgroundColor(this.performanceTestReturnPolicy === p
+            ? $r('app.color.app_surface_2')
+            : $r('app.color.app_surface_1'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(36)
+          .layoutWeight(1)
+          .onClick(() => {
+            this.performanceTestReturnPolicy = p;
+          })
+      })
+    }
+    .width('100%')
+    .margin({ bottom: 12 })
+
+    // 表情 ID 选择 (可选)
+    Text('业务表情 ID (可选)')
+      .fontSize($r('app.float.app_font_body'))
+      .fontColor($r('app.color.app_text_primary'))
+      .margin({ bottom: 8 })
+
+    Row({ space: 6 }) {
+      Button('无')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor(this.performanceTestExpressionId.length === 0
+          ? $r('app.color.app_text_primary')
+          : $r('app.color.app_text_secondary'))
+        .backgroundColor(this.performanceTestExpressionId.length === 0
+          ? $r('app.color.app_surface_2')
+          : $r('app.color.app_surface_1'))
+        .borderRadius($r('app.float.app_radius_sm'))
+        .height(32)
+        .layoutWeight(1)
+        .onClick(() => {
+          this.performanceTestExpressionId = '';
+        })
+      ForEach(ArkWebExpressionAliasBusinessId.ALL, (id: string) => {
+        Button(id)
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor(this.performanceTestExpressionId === id
+            ? $r('app.color.app_text_primary')
+            : $r('app.color.app_text_secondary'))
+          .backgroundColor(this.performanceTestExpressionId === id
+            ? $r('app.color.app_surface_2')
+            : $r('app.color.app_surface_1'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(32)
+          .layoutWeight(1)
+          .onClick(() => {
+            this.performanceTestExpressionId = id;
+          })
+      })
+    }
+    .width('100%')
+    .margin({ bottom: 16 })
+
+    // 执行 / 停止按钮
+    Row({ space: 8 }) {
+      Button('执行演出')
+        .fontSize($r('app.float.app_font_body'))
+        .fontColor($r('app.color.app_text_primary'))
+        .backgroundColor($r('app.color.app_surface_2'))
+        .borderRadius($r('app.float.app_radius_sm'))
+        .height(40)
+        .layoutWeight(1)
+        .enabled(this.performanceController !== null
+          && !this.performanceOperating
+          && this.debugModelState === 'READY')
+        .onClick(() => {
+          this.onExecutePerformanceClick();
+        })
+      Button('停止演出')
+        .fontSize($r('app.float.app_font_body'))
+        .fontColor($r('app.color.app_text_primary'))
+        .backgroundColor($r('app.color.app_surface_2'))
+        .borderRadius($r('app.float.app_radius_sm'))
+        .height(40)
+        .layoutWeight(1)
+        .enabled(this.performanceController !== null
+          && !this.performanceOperating
+          && this.performanceState !== 'IDLE'
+          && this.performanceState !== 'DISPOSED')
+        .onClick(() => {
+          this.onStopPerformanceClick();
+        })
+    }
+    .width('100%')
+    .margin({ bottom: 8 })
+  }
+
+  /**
+   * Phase 3F-1: 执行演出按钮处理。
+   *
+   * 根据 performanceTestMotionType 选择 motionId:
+   *   - animation → selectedActionId
+   *   - pose → selectedPoseId
+   *   - none → 空字符串
+   *
+   * 表情权重固定为 1 (满权重)。
+   */
+  private async onExecutePerformanceClick(): Promise<void> {
+    if (this.performanceController === null) {
+      this.performanceLastErrorCode = PerformanceErrorCode.CONTROLLER_DISPOSED;
+      this.performanceLastErrorMessage = 'PerformanceController 未初始化';
+      promptAction.showToast({ message: 'PerformanceController 未初始化' });
+      return;
+    }
+    if (this.performanceOperating) {
+      return;
+    }
+    if (this.debugModelState !== 'READY') {
+      this.performanceLastErrorCode = PerformanceErrorCode.COMMAND_INVALID;
+      this.performanceLastErrorMessage = `模型未就绪 (state=${this.debugModelState})`;
+      promptAction.showToast({ message: '模型未就绪' });
+      return;
+    }
+
+    // 根据 motionType 确定 motionId
+    let motionId: string = '';
+    if (this.performanceTestMotionType === 'animation') {
+      motionId = this.selectedActionId;
+      if (motionId.length === 0) {
+        promptAction.showToast({ message: '请先选择一个动作' });
+        return;
+      }
+    } else if (this.performanceTestMotionType === 'pose') {
+      motionId = this.selectedPoseId;
+      if (motionId.length === 0) {
+        promptAction.showToast({ message: '请先选择一个姿势' });
+        return;
+      }
+    }
+
+    const commandId: string = `perf_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+    const cmd: ArkWebAvatarPerformanceCommand = {
+      commandId: commandId,
+      motionType: this.performanceTestMotionType,
+      motionId: motionId,
+      expressionId: this.performanceTestExpressionId,
+      expressionWeight: 1,
+      durationMs: this.performanceTestDurationMs,
+      interruptPolicy: 'REPLACE',
+      returnPolicy: this.performanceTestReturnPolicy
+    };
+
+    this.performanceOperating = true;
+    this.performanceLastErrorCode = '';
+    this.performanceLastErrorMessage = '';
+    try {
+      console.info(`[Performance] execute: cmd=${commandId}, motionType=${cmd.motionType}, motionId=${motionId}, exp=${cmd.expressionId}, duration=${cmd.durationMs}, returnPolicy=${cmd.returnPolicy}`);
+      const result: ArkWebPerformanceResult =
+        await this.performanceController.executeCommand(cmd);
+      this.syncPerformanceDebugState();
+      if (result.success) {
+        promptAction.showToast({
+          message: `演出已启动: ${cmd.motionType}${motionId.length > 0 ? ' ' + motionId : ''} (${cmd.durationMs}ms, ${cmd.returnPolicy})`
+        });
+      } else {
+        promptAction.showToast({
+          message: `演出失败: ${result.errorCode}`
+        });
+      }
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      this.performanceLastErrorCode = PerformanceErrorCode.MOTION_APPLY_FAILED;
+      this.performanceLastErrorMessage = msg;
+      promptAction.showToast({ message: `演出异常: ${msg}` });
+    } finally {
+      this.performanceOperating = false;
+    }
+  }
+
+  /**
+   * Phase 3F-1: 停止演出按钮处理。
+   *
+   * 调用 PerformanceController.stopPerformance, 内部:
+   *   - performanceGeneration++
+   *   - 清除 restoreTimer
+   *   - cancelTemporaryExpression + stopAnimation
+   *   - state = IDLE
+   */
+  private async onStopPerformanceClick(): Promise<void> {
+    if (this.performanceController === null) {
+      return;
+    }
+    if (this.performanceOperating) {
+      return;
+    }
+    this.performanceOperating = true;
+    try {
+      await this.performanceController.stopPerformance();
+      this.syncPerformanceDebugState();
+      promptAction.showToast({ message: '演出已停止' });
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      promptAction.showToast({ message: `停止异常: ${msg}` });
+    } finally {
+      this.performanceOperating = false;
+    }
+  }
+
+  /**
+   * Phase 3F-1: 同步 PerformanceController 调试状态到 @State。
+   */
+  private syncPerformanceDebugState(): void {
+    if (this.performanceController === null) {
+      this.performanceState = ArkWebPerformanceState.DISPOSED;
+      return;
+    }
+    const debug: ArkWebPerformanceDebugState = this.performanceController.getDebugState();
+    this.performanceState = debug.state;
+    this.performanceGeneration = debug.performanceGeneration;
+    this.performanceCommandId = debug.currentCommandId;
+    this.performanceMotionType = debug.currentMotionType;
+    this.performanceMotionId = debug.currentMotionId;
+    this.performanceExpressionId = debug.currentExpressionId;
+    this.performanceExpressionWeight = debug.currentExpressionWeight;
+    this.performanceExpiresAt = debug.expiresAt;
+    this.performanceRestoreTimerActive = debug.restoreTimerActive;
+    this.performanceLastErrorCode = debug.lastErrorCode;
+    this.performanceLastErrorMessage = debug.lastErrorMessage;
   }
 
   /**
