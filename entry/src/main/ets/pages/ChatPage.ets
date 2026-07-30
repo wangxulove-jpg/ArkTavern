@@ -34,13 +34,26 @@ import { ChatMessageDataSource } from '../components/ChatMessageDataSource';
 import { ChatMessageActionSheet, MessageAction } from '../components/ChatMessageActionSheet';
 import { ChatMoreMenuSheet } from '../components/ChatMoreMenuSheet';
 import { CharacterImageView } from '../components/CharacterImageView';
-import { promptAction, router, window } from '@kit.ArkUI';
+import { promptAction, router, window, mediaquery } from '@kit.ArkUI';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { common } from '@kit.AbilityKit';
 import { KeyCode } from '@kit.InputKit';
 import { inputMethod } from '@kit.IMEKit';
 import { AppServices } from '../services/AppServices';
 import { ChatTextStyle } from '../utils/ChatTextStyleSettings';
+import {
+  ChatTextColorMode,
+  ChatMarkdownColorTheme,
+  DEFAULT_ASSISTANT_TEXT_COLOR,
+  DEFAULT_MARKDOWN_ACCENT_COLOR,
+  DEFAULT_USER_TEXT_COLOR,
+  DEFAULT_SECONDARY_TEXT_COLOR,
+  getLightColorTheme,
+  getDarkColorTheme,
+  getCustomColorTheme,
+  isValidHexColor,
+  normalizeHexColor
+} from '../utils/ChatTextColorTheme';
 import { ChatBackgroundConfig } from '../services/ChatBackgroundService';
 import { ContextBudgetViewModel } from '../viewmodels/ContextBudgetViewModel';
 import { ChatArchiveViewModel } from '../viewmodels/ChatArchiveViewModel';
@@ -129,6 +142,41 @@ struct ChatPage {
   /** T-CHAT.1: 导出进行中提示 */
   @State archiveBusy: boolean = false;
 
+  /** 气泡背景不透明度(0.40~0.90,默认 0.65,仅控制背景 Alpha) */
+  @State chatBubbleOpacity: number = 0.65;
+
+  /**
+   * 字体配色模式(AUTO / LIGHT / DARK / CUSTOM)。
+   * 默认 AUTO:保持 ChatRichText 默认资源颜色。
+   * 与 chatBubbleOpacity 完全独立:模式只控制文字颜色,不影响气泡背景透明度。
+   * 本阶段仅页面生命周期内保存,不持久化。
+   */
+  @State chatTextColorMode: string = ChatTextColorMode.AUTO;
+
+  /** 自定义模式下助手正文颜色(#RRGGBB,默认 DARK 模式色值) */
+  @State chatAssistantTextColor: string = DEFAULT_ASSISTANT_TEXT_COLOR;
+
+  /** 自定义模式下 Markdown 强调色(#RRGGBB,默认品牌蓝) */
+  @State chatMarkdownAccentColor: string = DEFAULT_MARKDOWN_ACCENT_COLOR;
+
+  /** 自定义模式下用户消息文字颜色(#RRGGBB,默认白色) */
+  @State chatUserTextColor: string = DEFAULT_USER_TEXT_COLOR;
+
+  /** 自定义模式下次级文字颜色(#RRGGBB,默认深灰) */
+  @State chatSecondaryTextColor: string = DEFAULT_SECONDARY_TEXT_COLOR;
+
+  /** 显示设置面板可见性(轻量卡片,非 Dialog) */
+  @State chatAppearancePanelVisible: boolean = false;
+
+  /** 当前是否为深色模式(用于动态计算气泡背景 RGB) */
+  @State isDarkMode: boolean = false;
+
+  /** 深色模式媒体查询监听器(aboutToDisappear 注销) */
+  private darkModeListener: mediaquery.MediaQueryListener | null = null;
+
+  /** 气泡不透明度持久化 Preferences key */
+  private static readonly PREF_KEY_BUBBLE_OPACITY: string = 'chat_bubble_opacity';
+
   aboutToAppear(): void {
     const modelService = AppServices.getModelService();
     const characterService = AppServices.getCharacterService();
@@ -185,10 +233,85 @@ struct ChatPage {
       this.loadCurrentCharacterAvatar();
     }
     this.registerKeyboardListener();
+    this.registerDarkModeListener();
+    this.loadPersistedBubbleOpacity();
+  }
+
+  /**
+   * 从 Preferences 读取持久化的气泡不透明度。
+   * 读取失败或未初始化时静默使用默认值 0.65。
+   */
+  private loadPersistedBubbleOpacity(): void {
+    try {
+      const prefs = AppServices.getAppPreferences();
+      if (!prefs.isInitialized()) {
+        return;
+      }
+      prefs.getString(ChatPage.PREF_KEY_BUBBLE_OPACITY, '0.65')
+        .then((value: string): void => {
+          const parsed: number = parseFloat(value);
+          if (Number.isFinite(parsed)) {
+            this.chatBubbleOpacity = this.normalizeChatBubbleOpacity(parsed);
+          }
+        })
+        .catch((_e: Object): void => {
+          // 读取失败静默使用默认值
+        });
+    } catch (_e) {
+      // AppServices 未初始化时静默使用默认值
+    }
+  }
+
+  /**
+   * 将气泡不透明度持久化到 Preferences。
+   * 写入失败静默忽略(不影响 UI 交互)。
+   */
+  private persistBubbleOpacity(value: number): void {
+    try {
+      const prefs = AppServices.getAppPreferences();
+      if (!prefs.isInitialized()) {
+        return;
+      }
+      prefs.putString(ChatPage.PREF_KEY_BUBBLE_OPACITY, value.toString())
+        .catch((_e: Object): void => {
+          // 写入失败静默忽略
+        });
+    } catch (_e) {
+      // AppServices 未初始化时静默忽略
+    }
+  }
+
+  /**
+   * 注册深色模式监听器,实时更新 isDarkMode 状态。
+   * 用于动态计算气泡背景 RGB(light/dark 资源值不同)。
+   */
+  private registerDarkModeListener(): void {
+    try {
+      const listener = mediaquery.matchMediaSync('(dark-mode: true)');
+      this.isDarkMode = listener.matches;
+      listener.on('change', (result: mediaquery.MediaQueryResult): void => {
+        this.isDarkMode = result.matches;
+      });
+      this.darkModeListener = listener;
+    } catch (_e) {
+      // mediaquery 不可用时默认浅色模式
+      this.isDarkMode = false;
+    }
   }
 
   aboutToDisappear(): void {
     this.unregisterKeyboardListener();
+    // 注销深色模式监听器
+    if (this.darkModeListener !== null) {
+      try {
+        this.darkModeListener.off('change');
+      } catch (_e) {
+        // 忽略注销失败
+      }
+      this.darkModeListener = null;
+    }
+    // 关闭显示设置面板
+    this.chatAppearancePanelVisible = false;
     if (this.viewModel !== null) {
       this.viewModel!.dispose();
       this.viewModel = null;
@@ -321,6 +444,30 @@ struct ChatPage {
         .width('100%')
         .height('100%')
 
+        // ===== 顶部渐变层(增强状态栏图标和顶部文字可读性) =====
+        // 不响应触摸:hitTestBehavior(Transparent)
+        // 不改变背景图片透明度:仅本层自身带渐变背景
+        // 仅覆盖状态栏和顶部过渡区域(高度 = 状态栏高度 + 渐变过渡区 112vp)
+        Column() {
+          Column()
+            .width('100%')
+            .height(this.statusBarHeight + 112)
+            .linearGradient({
+              angle: 180,
+              colors: [
+                [$r('app.color.chat_top_gradient_start'), 0.0],
+                [$r('app.color.chat_top_gradient_mid'), 0.5],
+                [$r('app.color.chat_top_gradient_end'), 1.0]
+              ]
+            })
+            .hitTestBehavior(HitTestMode.Transparent)
+        }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.Start)
+        .alignItems(HorizontalAlign.Center)
+        .hitTestBehavior(HitTestMode.Transparent)
+
         // ===== 浮层:顶栏(顶部对齐,半透明背景) =====
         // 注意:Stack 默认 alignContent=Center,若 Column 只设 width 不设 height,
         // 会被居中显示(顶栏/输入栏"集中在中间"的根因)。
@@ -328,6 +475,9 @@ struct ChatPage {
         // 同时 hitTestBehavior=Transparent 让空白区域点击穿透到下层消息列表。
         Column() {
           this.topBar()
+
+          // 显示设置面板(气泡不透明度)
+          this.chatAppearancePanel()
 
           // 错误提示条
           if (this.viewModel !== null && this.viewModel!.errorMessage.length > 0) {
@@ -499,6 +649,22 @@ struct ChatPage {
       // 占位:让汉堡按钮和更多按钮分布在两侧(已按用户要求移除头像和角色名)
       Blank()
 
+      // 显示按钮(打开气泡不透明度设置卡片)
+      Stack() {
+        SymbolGlyph($r('sys.symbol.textformat'))
+          .fontSize(20)
+          .fontColor([$r('app.color.app_text_primary')])
+      }
+      .width(40)
+      .height(40)
+      .margin({ right: 4 })
+      .borderRadius($r('app.float.app_radius_sm'))
+      .backgroundColor(this.chatAppearancePanelVisible
+        ? $r('app.color.app_surface_2') : Color.Transparent)
+      .onClick(() => {
+        this.chatAppearancePanelVisible = !this.chatAppearancePanelVisible;
+      })
+
       // 更多按钮(纯图标,无背景无边框)
       Stack() {
         SymbolGlyph($r('sys.symbol.more'))
@@ -520,6 +686,508 @@ struct ChatPage {
     // 背景层分离:顶栏不设 backgroundColor,透出 Index 根背景,避免形成与状态栏区域的色差。
   }
 
+  // ===== 显示设置面板(气泡不透明度 + 字体配色) =====
+
+  @Builder
+  chatAppearancePanel() {
+    if (this.chatAppearancePanelVisible) {
+      // 面板容器:靠右,不覆盖整屏,半透明背景,无全屏遮罩
+      Row() {
+        Scroll() {
+          Column() {
+            // 标题行
+            Row() {
+              Text('显示设置')
+                .fontSize($r('app.float.app_font_body'))
+                .fontWeight(FontWeight.Medium)
+                .fontColor($r('app.color.app_text_primary'))
+              Blank()
+              // 关闭按钮
+              Stack() {
+                SymbolGlyph($r('sys.symbol.xmark'))
+                  .fontSize(14)
+                  .fontColor([$r('app.color.app_text_secondary')])
+              }
+              .width(28)
+              .height(28)
+              .borderRadius(14)
+              .onClick(() => {
+                this.chatAppearancePanelVisible = false;
+              })
+            }
+            .width('100%')
+            .alignItems(VerticalAlign.Center)
+            .margin({ bottom: 12 })
+
+            // ===== 气泡不透明度 =====
+            Row() {
+              Text('气泡不透明度')
+                .fontSize($r('app.float.app_font_caption'))
+                .fontColor($r('app.color.app_text_secondary'))
+              Blank()
+              Text(`${Math.round(this.chatBubbleOpacity * 100)}%`)
+                .fontSize($r('app.float.app_font_caption'))
+                .fontWeight(FontWeight.Medium)
+                .fontColor($r('app.color.app_text_primary'))
+            }
+            .width('100%')
+            .alignItems(VerticalAlign.Center)
+            .margin({ bottom: 8 })
+
+            Slider({
+              value: Math.round(this.chatBubbleOpacity * 100),
+              min: 0,
+              max: 100,
+              step: 5,
+              style: SliderStyle.OutSet
+            })
+              .blockColor($r('app.color.app_accent'))
+              .trackColor($r('app.color.app_surface_2'))
+              .selectedColor($r('app.color.app_accent'))
+              .width('100%')
+              .onChange((value: number, mode: SliderChangeMode) => {
+                const opacity: number = this.normalizeChatBubbleOpacity(value / 100);
+                this.chatBubbleOpacity = opacity;
+                if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+                  this.persistBubbleOpacity(opacity);
+                }
+              })
+
+            Row() {
+              Text('0%')
+                .fontSize(11)
+                .fontColor($r('app.color.app_text_secondary'))
+              Blank()
+              Text('100%')
+                .fontSize(11)
+                .fontColor($r('app.color.app_text_secondary'))
+            }
+            .width('100%')
+            .margin({ top: 4 })
+
+            Divider()
+              .color($r('app.color.app_divider'))
+              .margin({ top: 16, bottom: 12 })
+
+            // ===== 文字配色模式 =====
+            Row() {
+              Text('文字配色')
+                .fontSize($r('app.float.app_font_caption'))
+                .fontColor($r('app.color.app_text_secondary'))
+              Blank()
+            }
+            .width('100%')
+            .alignItems(VerticalAlign.Center)
+            .margin({ bottom: 8 })
+
+            // 模式按钮:自动 / 浅色 / 深色 / 自定义
+            Row({ space: 6 }) {
+              ForEach([
+                ChatTextColorMode.AUTO,
+                ChatTextColorMode.LIGHT,
+                ChatTextColorMode.DARK,
+                ChatTextColorMode.CUSTOM
+              ], (mode: string) => {
+                Button(this.getModeLabel(mode))
+                  .fontSize($r('app.float.app_font_caption'))
+                  .fontColor(this.chatTextColorMode === mode
+                    ? $r('app.color.app_on_accent')
+                    : $r('app.color.app_text_primary'))
+                  .backgroundColor(this.chatTextColorMode === mode
+                    ? $r('app.color.app_accent')
+                    : $r('app.color.app_surface_2'))
+                  .borderRadius(14)
+                  .height(28)
+                  .padding({ left: 10, right: 10 })
+                  .onClick(() => {
+                    this.setChatTextColorMode(mode);
+                  })
+              }, (mode: string) => mode)
+            }
+            .width('100%')
+
+            // 对比度辅助提示
+            Text('气泡较透明时建议使用浅色文字,气泡较不透明时可使用深色文字')
+              .fontSize(10)
+              .fontColor($r('app.color.app_text_tertiary'))
+              .width('100%')
+              .margin({ top: 8 })
+
+            // 快捷按钮:适合深色背景 / 适合浅色背景
+            Row({ space: 8 }) {
+              Button('适合深色背景')
+                .fontSize(11)
+                .fontColor(this.chatTextColorMode === ChatTextColorMode.LIGHT
+                  ? $r('app.color.app_on_accent')
+                  : $r('app.color.app_accent'))
+                .backgroundColor(this.chatTextColorMode === ChatTextColorMode.LIGHT
+                  ? $r('app.color.app_accent')
+                  : Color.Transparent)
+                .border({
+                  width: 1,
+                  color: $r('app.color.app_accent')
+                })
+                .borderRadius(12)
+                .height(24)
+                .padding({ left: 8, right: 8 })
+                .onClick(() => {
+                  this.setChatTextColorMode(ChatTextColorMode.LIGHT);
+                })
+              Button('适合浅色背景')
+                .fontSize(11)
+                .fontColor(this.chatTextColorMode === ChatTextColorMode.DARK
+                  ? $r('app.color.app_on_accent')
+                  : $r('app.color.app_accent'))
+                .backgroundColor(this.chatTextColorMode === ChatTextColorMode.DARK
+                  ? $r('app.color.app_accent')
+                  : Color.Transparent)
+                .border({
+                  width: 1,
+                  color: $r('app.color.app_accent')
+                })
+                .borderRadius(12)
+                .height(24)
+                .padding({ left: 8, right: 8 })
+                .onClick(() => {
+                  this.setChatTextColorMode(ChatTextColorMode.DARK);
+                })
+            }
+            .width('100%')
+            .margin({ top: 8 })
+
+            // ===== 自定义配色(仅在 CUSTOM 模式下显示)=====
+            if (this.chatTextColorMode === ChatTextColorMode.CUSTOM) {
+              Divider()
+                .color($r('app.color.app_divider'))
+                .margin({ top: 12, bottom: 12 })
+
+              Text('自定义配色')
+                .fontSize($r('app.float.app_font_caption'))
+                .fontWeight(FontWeight.Medium)
+                .fontColor($r('app.color.app_text_primary'))
+                .width('100%')
+                .margin({ bottom: 8 })
+
+              // 正文颜色
+              this.colorSwatchRow('正文颜色', 'body', this.chatAssistantTextColor)
+
+              // Markdown 强调色
+              this.colorSwatchRow('Markdown 强调色', 'accent', this.chatMarkdownAccentColor)
+
+              // 次级文字颜色
+              this.colorSwatchRow('次级文字', 'secondary', this.chatSecondaryTextColor)
+
+              // 用户消息文字
+              this.colorSwatchRow('用户消息文字', 'user', this.chatUserTextColor)
+            }
+
+            Divider()
+              .color($r('app.color.app_divider'))
+              .margin({ top: 12, bottom: 12 })
+
+            // ===== 预览区域 =====
+            Text('预览')
+              .fontSize($r('app.float.app_font_caption'))
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.app_text_primary'))
+              .width('100%')
+              .margin({ bottom: 6 })
+
+            this.fontColorPreviewArea()
+
+            // ===== 恢复默认按钮 =====
+            Row({ space: 8 }) {
+              Button('恢复默认')
+                .fontSize($r('app.float.app_font_caption'))
+                .fontColor($r('app.color.app_accent'))
+                .backgroundColor(Color.Transparent)
+                .borderRadius(8)
+                .height(32)
+                .padding({ left: 12, right: 12 })
+                .enabled(!this.isChatTextColorDefault())
+                .onClick(() => {
+                  this.resetChatTextColor();
+                })
+              Button('全部恢复默认')
+                .fontSize($r('app.float.app_font_caption'))
+                .fontColor($r('app.color.app_text_secondary'))
+                .backgroundColor(Color.Transparent)
+                .borderRadius(8)
+                .height(32)
+                .padding({ left: 12, right: 12 })
+                .enabled(this.chatBubbleOpacity !== 0.65 || !this.isChatTextColorDefault())
+                .onClick(() => {
+                  this.resetAllAppearance();
+                })
+            }
+            .width('100%')
+            .margin({ top: 12 })
+          }
+          .width('100%')
+          .padding(16)
+        }
+        .width('70%')
+        .height('70%')
+        .scrollBar(BarState.Auto)
+        .backgroundColor(this.isDarkMode ? '#CC2A2A2A' : '#E6FFFFFF')
+        .borderRadius(16)
+        .shadow({ radius: 12, color: 'rgba(0,0,0,0.15)', offsetX: 0, offsetY: 4 })
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.End)
+      .padding({ right: 12, top: this.statusBarHeight + 52 })
+      .hitTestBehavior(HitTestMode.Transparent)
+    }
+  }
+
+  /**
+   * 颜色色块行:标签 + 预设色块 + Hex 输入。
+   * 仅在 CUSTOM 模式下渲染。
+   * 色块点击即应用,Hex 输入失焦时校验并提交(非法值不提交)。
+   */
+  @Builder
+  colorSwatchRow(label: string, target: 'body' | 'accent' | 'user' | 'secondary', currentColor: string) {
+    Column() {
+      Row() {
+        Text(label)
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+        Blank()
+        // 当前颜色预览圆点
+        Stack()
+          .width(16)
+          .height(16)
+          .borderRadius(8)
+          .backgroundColor(currentColor)
+          .border({ width: 1, color: $r('app.color.app_divider') })
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+      .margin({ bottom: 6 })
+
+      // 预设色块
+      Flex({ wrap: FlexWrap.Wrap }) {
+        ForEach(this.presetSwatches, (swatch: string) => {
+          Stack() {
+            if (currentColor.toUpperCase() === swatch.toUpperCase()) {
+              // 选中标记:勾选
+              Text('✓')
+                .fontSize(12)
+                .fontColor(swatch.toUpperCase() === '#FFFFFF' || swatch.toUpperCase() === '#E5E7EB' || swatch.toUpperCase() === '#90CAF9' || swatch.toUpperCase() === '#FFC107'
+                  ? '#171717' : '#FFFFFF')
+                .fontWeight(FontWeight.Bold)
+            }
+          }
+          .width(24)
+          .height(24)
+          .borderRadius(12)
+          .backgroundColor(swatch)
+          .border({
+            width: currentColor.toUpperCase() === swatch.toUpperCase() ? 2 : 1,
+            color: currentColor.toUpperCase() === swatch.toUpperCase()
+              ? $r('app.color.app_accent')
+              : $r('app.color.app_divider')
+          })
+          .margin({ right: 8, bottom: 6 })
+          .onClick(() => {
+            this.setCustomColor(target, swatch);
+          })
+        }, (swatch: string, index: number) => swatch + index.toString())
+      }
+      .width('100%')
+
+      // Hex 输入框
+      Row() {
+        TextInput({ text: currentColor, placeholder: '#RRGGBB' })
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_primary'))
+          .backgroundColor($r('app.color.app_surface_2'))
+          .borderRadius(8)
+          .height(32)
+          .layoutWeight(1)
+          .onChange((value: string) => {
+            // 实时校验:合法时立即提交,非法值不提交
+            const normalized: string | null = normalizeHexColor(value);
+            if (normalized !== null) {
+              this.setCustomColor(target, normalized);
+            }
+          })
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+    }
+    .width('100%')
+    .margin({ bottom: 10 })
+  }
+
+  /**
+   * 字体配色预览区域(固定演示文本,不发送消息,不调用网络)。
+   * 颜色根据当前模式实时计算,立即更新。
+   */
+  @Builder
+  fontColorPreviewArea() {
+    Column({ space: 6 }) {
+      // 正文预览
+      Row() {
+        Text('正文预览')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor(this.getPreviewBodyColor())
+      }
+      .width('100%')
+
+      // 强调文字(模拟 Markdown 加粗)
+      Row() {
+        Text('强调文字')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontWeight(FontWeight.Bold)
+          .fontColor(this.getPreviewAccentColor())
+      }
+      .width('100%')
+
+      // 链接文字
+      Row() {
+        Text('链接文字')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor(this.getPreviewAccentColor())
+      }
+      .width('100%')
+
+      // 次级文字(旁白/引用)
+      Row() {
+        Text('次级文字(旁白)')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor(this.getPreviewSecondaryColor())
+      }
+      .width('100%')
+
+      // 用户消息预览(右对齐,带气泡背景)
+      Row() {
+        Text('用户消息')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor(this.getPreviewUserColor())
+          .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+          .backgroundColor(this.computeUserBubbleColor())
+          .borderRadius(10)
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.End)
+    }
+    .width('100%')
+    .padding(10)
+    .backgroundColor(this.computeAssistantBubbleColor())
+    .borderRadius(10)
+  }
+
+  /**
+   * 计算预览区域助手气泡背景色(基于当前气泡不透明度)。
+   * 字体配色与气泡不透明度相互独立:此处仅用于预览背景渲染,
+   * 不影响字体颜色,也不受字体模式影响。
+   * 浅色模式下基底为白色,深色模式下基底为深灰,叠加 chatBubbleOpacity。
+   */
+  private computeAssistantBubbleColor(): string {
+    const alpha: number = this.chatBubbleOpacity;
+    if (this.isDarkMode) {
+      // 深色模式:深灰底 0x2A2A2A,叠加 Alpha
+      const r: number = Math.round(0x2A * alpha + 0x00 * (1 - alpha));
+      const g: number = Math.round(0x2A * alpha + 0x00 * (1 - alpha));
+      const b: number = Math.round(0x2A * alpha + 0x00 * (1 - alpha));
+      return `#${this.toHex2(r)}${this.toHex2(g)}${this.toHex2(b)}`;
+    }
+    // 浅色模式:白底 0xFFFFFF,叠加 Alpha 向透明过渡(与 0x000000 混合)
+    const r: number = Math.round(0xFF * alpha + 0xFF * (1 - alpha));
+    const g: number = Math.round(0xFF * alpha + 0xFF * (1 - alpha));
+    const b: number = Math.round(0xFF * alpha + 0xFF * (1 - alpha));
+    return `#${this.toHex2(r)}${this.toHex2(g)}${this.toHex2(b)}`;
+  }
+
+  /**
+   * 计算预览区域用户气泡背景色(品牌蓝 + 当前不透明度)。
+   * 用户气泡背景与字体颜色独立,保持品牌色基调。
+   */
+  private computeUserBubbleColor(): string {
+    const alpha: number = this.chatBubbleOpacity;
+    // 品牌蓝 0x5B7CFA,叠加 Alpha
+    const r: number = Math.round(0x5B * alpha + 0x00 * (1 - alpha));
+    const g: number = Math.round(0x7C * alpha + 0x00 * (1 - alpha));
+    const b: number = Math.round(0xFA * alpha + 0x00 * (1 - alpha));
+    return `#${this.toHex2(r)}${this.toHex2(g)}${this.toHex2(b)}`;
+  }
+
+  /** 将 0~255 整数转为 2 位大写 Hex */
+  private toHex2(value: number): string {
+    const clamped: number = Math.max(0, Math.min(255, Math.round(value)));
+    const hex: string = clamped.toString(16).toUpperCase();
+    return hex.length === 1 ? '0' + hex : hex;
+  }
+
+  /**
+   * 获取预览区域正文颜色。
+   * AUTO 模式使用默认色值,DARK/CUSTOM 使用对应主题色值。
+   */
+  private getPreviewBodyColor(): string {
+    if (this.chatTextColorMode === ChatTextColorMode.LIGHT) {
+      return '#FFFFFF';
+    }
+    if (this.chatTextColorMode === ChatTextColorMode.DARK) {
+      return DEFAULT_ASSISTANT_TEXT_COLOR;
+    }
+    if (this.chatTextColorMode === ChatTextColorMode.CUSTOM) {
+      return isValidHexColor(this.chatAssistantTextColor)
+        ? this.chatAssistantTextColor.toUpperCase()
+        : DEFAULT_ASSISTANT_TEXT_COLOR;
+    }
+    // AUTO:使用默认深色正文(预览固定展示)
+    return DEFAULT_ASSISTANT_TEXT_COLOR;
+  }
+
+  /** 获取预览区域强调色 */
+  private getPreviewAccentColor(): string {
+    if (this.chatTextColorMode === ChatTextColorMode.LIGHT) {
+      return '#90CAF9';
+    }
+    if (this.chatTextColorMode === ChatTextColorMode.DARK) {
+      return DEFAULT_MARKDOWN_ACCENT_COLOR;
+    }
+    if (this.chatTextColorMode === ChatTextColorMode.CUSTOM) {
+      return isValidHexColor(this.chatMarkdownAccentColor)
+        ? this.chatMarkdownAccentColor.toUpperCase()
+        : DEFAULT_MARKDOWN_ACCENT_COLOR;
+    }
+    return DEFAULT_MARKDOWN_ACCENT_COLOR;
+  }
+
+  /** 获取预览区域次级文字颜色 */
+  private getPreviewSecondaryColor(): string {
+    if (this.chatTextColorMode === ChatTextColorMode.LIGHT) {
+      return '#E5E7EB';
+    }
+    if (this.chatTextColorMode === ChatTextColorMode.DARK) {
+      return DEFAULT_SECONDARY_TEXT_COLOR;
+    }
+    if (this.chatTextColorMode === ChatTextColorMode.CUSTOM) {
+      return isValidHexColor(this.chatSecondaryTextColor)
+        ? this.chatSecondaryTextColor.toUpperCase()
+        : DEFAULT_SECONDARY_TEXT_COLOR;
+    }
+    return DEFAULT_SECONDARY_TEXT_COLOR;
+  }
+
+  /** 获取预览区域用户消息颜色 */
+  private getPreviewUserColor(): string {
+    if (this.chatTextColorMode === ChatTextColorMode.LIGHT) {
+      return '#FFFFFF';
+    }
+    if (this.chatTextColorMode === ChatTextColorMode.DARK) {
+      return DEFAULT_USER_TEXT_COLOR;
+    }
+    if (this.chatTextColorMode === ChatTextColorMode.CUSTOM) {
+      return isValidHexColor(this.chatUserTextColor)
+        ? this.chatUserTextColor.toUpperCase()
+        : DEFAULT_USER_TEXT_COLOR;
+    }
+    return DEFAULT_USER_TEXT_COLOR;
+  }
+
   // ===== 消息列表 =====
 
   @Builder
@@ -536,6 +1204,9 @@ struct ChatPage {
                 showAvatar: state.source !== ChatMessageSource.CharacterFirstMessage,
                 settings: this.chatTextStyle,
                 senderCharacterId: this.character !== null ? this.character!.id : '',
+                colorTheme: this.getCurrentColorTheme(),
+                bubbleOpacity: this.chatBubbleOpacity,
+                isDarkMode: this.isDarkMode,
                 onLongPress: (target: ChatMessage): void => {
                   this.actionSheetMsg = target;
                   this.showActionSheet = true;
@@ -583,7 +1254,7 @@ struct ChatPage {
                         .margin({ left: 4 })
                     }
                   }
-                  .backgroundColor($r('app.color.app_surface_2'))
+                  .backgroundColor(this.computeRegenerateButtonColor())
                   .borderRadius(14)
                   .height(28)
                   .padding({ left: 12, right: 12 })
@@ -608,7 +1279,7 @@ struct ChatPage {
       .padding({
         left: $r('app.float.app_spacing_12'),
         right: $r('app.float.app_spacing_12'),
-        top: 4,
+        top: this.statusBarHeight + 12,
         bottom: 0
       })
       .onAreaChange(() => {
@@ -1869,6 +2540,154 @@ struct ChatPage {
       return;
     }
     this.viewModel!.regenerateAssistantMessage(messageId);
+  }
+
+  /**
+   * 将气泡不透明度 clamp 到 [0.0, 1.0]。
+   * 非有限值(NaN/Infinity)恢复为默认 0.65。
+   * Slider 范围为 0~100%,允许完全透明到完全不透明。
+   */
+  private normalizeChatBubbleOpacity(value: number): number {
+    if (!Number.isFinite(value)) {
+      return 0.65;
+    }
+    if (value < 0.0) {
+      return 0.0;
+    }
+    if (value > 1.0) {
+      return 1.0;
+    }
+    return value;
+  }
+
+  /** 恢复默认气泡不透明度 */
+  private resetChatBubbleOpacity(): void {
+    this.chatBubbleOpacity = 0.65;
+    this.persistBubbleOpacity(this.chatBubbleOpacity);
+  }
+
+  // ===== 字体配色主题 =====
+
+  /**
+   * 根据当前 chatTextColorMode 计算传入 ChatRichText 的颜色主题。
+   * - AUTO:返回 null(使用默认资源颜色)
+   * - LIGHT:返回预设浅色主题
+   * - DARK:返回预设深色主题
+   * - CUSTOM:使用用户选择的 4 个颜色值构造主题
+   *
+   * 返回 null 时,ChatRichText 保持原有解析与颜色行为,不做任何覆盖。
+   */
+  private getCurrentColorTheme(): ChatMarkdownColorTheme | null {
+    if (this.chatTextColorMode === ChatTextColorMode.LIGHT) {
+      return getLightColorTheme();
+    }
+    if (this.chatTextColorMode === ChatTextColorMode.DARK) {
+      return getDarkColorTheme();
+    }
+    if (this.chatTextColorMode === ChatTextColorMode.CUSTOM) {
+      return getCustomColorTheme(
+        this.chatAssistantTextColor,
+        this.chatSecondaryTextColor,
+        this.chatMarkdownAccentColor,
+        this.chatUserTextColor
+      );
+    }
+    // AUTO 或未知模式
+    return null;
+  }
+
+  /**
+   * 切换字体配色模式。
+   * 不修改 chatBubbleOpacity,保持两者完全独立。
+   */
+  private setChatTextColorMode(mode: string): void {
+    this.chatTextColorMode = mode;
+  }
+
+  /**
+   * 设置自定义颜色项。
+   * 仅在 CUSTOM 模式下生效,非法值不提交。
+   * 自动转为大写,禁止 Alpha 与 CSS 函数。
+   */
+  private setCustomColor(target: 'body' | 'accent' | 'user' | 'secondary', color: string): void {
+    const normalized: string | null = normalizeHexColor(color);
+    if (normalized === null) {
+      return;
+    }
+    if (target === 'body') {
+      this.chatAssistantTextColor = normalized;
+    } else if (target === 'accent') {
+      this.chatMarkdownAccentColor = normalized;
+    } else if (target === 'user') {
+      this.chatUserTextColor = normalized;
+    } else if (target === 'secondary') {
+      this.chatSecondaryTextColor = normalized;
+    }
+  }
+
+  /**
+   * 恢复默认字体配色。
+   * 模式恢复 AUTO,4 个颜色值恢复默认。
+   * 不修改 chatBubbleOpacity。
+   */
+  private resetChatTextColor(): void {
+    this.chatTextColorMode = ChatTextColorMode.AUTO;
+    this.chatAssistantTextColor = DEFAULT_ASSISTANT_TEXT_COLOR;
+    this.chatMarkdownAccentColor = DEFAULT_MARKDOWN_ACCENT_COLOR;
+    this.chatUserTextColor = DEFAULT_USER_TEXT_COLOR;
+    this.chatSecondaryTextColor = DEFAULT_SECONDARY_TEXT_COLOR;
+  }
+
+  /**
+   * 全部恢复默认(气泡不透明度 + 字体配色)。
+   */
+  private resetAllAppearance(): void {
+    this.resetChatBubbleOpacity();
+    this.resetChatTextColor();
+  }
+
+  /** 判断字体配色是否处于默认状态(用于"恢复默认"按钮 enabled 状态) */
+  private isChatTextColorDefault(): boolean {
+    return this.chatTextColorMode === ChatTextColorMode.AUTO
+      && this.chatAssistantTextColor === DEFAULT_ASSISTANT_TEXT_COLOR
+      && this.chatMarkdownAccentColor === DEFAULT_MARKDOWN_ACCENT_COLOR
+      && this.chatUserTextColor === DEFAULT_USER_TEXT_COLOR
+      && this.chatSecondaryTextColor === DEFAULT_SECONDARY_TEXT_COLOR;
+  }
+
+  /** 获取模式按钮显示文本 */
+  private getModeLabel(mode: string): string {
+    if (mode === ChatTextColorMode.AUTO) {
+      return '自动';
+    }
+    if (mode === ChatTextColorMode.LIGHT) {
+      return '浅色';
+    }
+    if (mode === ChatTextColorMode.DARK) {
+      return '深色';
+    }
+    return '自定义';
+  }
+
+  /**
+   * 预设色块列表(白色/浅灰/深灰/黑色/品牌蓝/浅蓝/暖黄色)。
+   * 用于自定义模式下的颜色选择,避免引入未经验证的 ColorPicker API。
+   */
+  private readonly presetSwatches: string[] = [
+    '#FFFFFF', '#E5E7EB', '#4B5563', '#171717',
+    '#1976D2', '#90CAF9', '#FFC107'
+  ];
+
+  /**
+   * 重新生成按钮背景色:RGB 保持 surface_2 浅色/深色值,Alpha = chatBubbleOpacity。
+   * light: #F0F1F4, dark: #3A3A3A
+   */
+  private computeRegenerateButtonColor(): string {
+    const rgb: string = this.isDarkMode ? '3A3A3A' : 'F0F1F4';
+    const clamped: number = Math.max(0, Math.min(255, Math.round(this.chatBubbleOpacity * 255)));
+    const hex: string = clamped.toString(16).toUpperCase();
+    const alphaHex: string = hex.length === 1 ? '0' + hex : hex;
+    return '#' + alphaHex + rgb;
   }
 
   private openEditUserDialog(messageId: string, originalContent: string): void {

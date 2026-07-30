@@ -22,19 +22,39 @@
     },
     {
       "name": "chat_user_bubble",
-      "value": "#5B7CFA"
+      "value": "#CC5B7CFA"
     },
     {
       "name": "chat_user_text",
       "value": "#FFFFFF"
     },
     {
+      "name": "chat_user_border",
+      "value": "#33FFFFFF"
+    },
+    {
       "name": "chat_assistant_bubble",
-      "value": "#FFFFFF"
+      "value": "#B3FFFFFF"
+    },
+    {
+      "name": "chat_assistant_border",
+      "value": "#33000000"
     },
     {
       "name": "chat_assistant_shadow",
       "value": "#0F000000"
+    },
+    {
+      "name": "chat_top_gradient_start",
+      "value": "#73000000"
+    },
+    {
+      "name": "chat_top_gradient_mid",
+      "value": "#2E000000"
+    },
+    {
+      "name": "chat_top_gradient_end",
+      "value": "#00000000"
     },
     {
       "name": "chat_status_stopped_bg",
@@ -127,6 +147,54 @@
     {
       "name": "chat_text_system",
       "value": "#999999"
+    },
+    {
+      "name": "worldbook_page_background",
+      "value": "#F5F5F5"
+    },
+    {
+      "name": "worldbook_card_background",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "worldbook_card_border",
+      "value": "#E5E5E5"
+    },
+    {
+      "name": "worldbook_text_primary",
+      "value": "#1A1A1A"
+    },
+    {
+      "name": "worldbook_text_secondary",
+      "value": "#595959"
+    },
+    {
+      "name": "worldbook_text_muted",
+      "value": "#8C8C8C"
+    },
+    {
+      "name": "worldbook_action_primary",
+      "value": "#5B7CFA"
+    },
+    {
+      "name": "worldbook_action_warning",
+      "value": "#E67E22"
+    },
+    {
+      "name": "worldbook_action_danger",
+      "value": "#D32F2F"
+    },
+    {
+      "name": "worldbook_selected_background",
+      "value": "#E8EEFF"
+    },
+    {
+      "name": "worldbook_entry_background",
+      "value": "#F7F7F8"
+    },
+    {
+      "name": "worldbook_disabled_badge",
+      "value": "#9E9E9E"
     }
   ]
 }

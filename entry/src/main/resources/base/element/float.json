@@ -49,6 +49,22 @@
       "value": "16vp"
     },
     {
+      "name": "chat_top_gradient_height",
+      "value": "112vp"
+    },
+    {
+      "name": "chat_bubble_padding_h",
+      "value": "16vp"
+    },
+    {
+      "name": "chat_bubble_padding_v",
+      "value": "13vp"
+    },
+    {
+      "name": "chat_bubble_border_width",
+      "value": "1vp"
+    },
+    {
       "name": "app_font_title",
       "value": "26fp"
     },

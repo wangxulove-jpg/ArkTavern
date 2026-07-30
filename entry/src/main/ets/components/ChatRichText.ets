@@ -28,6 +28,7 @@
 import { ChatTextSegment, parseChatText, ChatTextParserOptions } from '../parser/ChatTextParser';
 import { getCharacterColor } from '../utils/ChatPalette';
 import { ChatTextStyle } from '../utils/ChatTextStyleSettings';
+import { ChatMarkdownColorTheme } from '../utils/ChatTextColorTheme';
 
 /** 发送者类型 */
 export type ChatSenderType = 'user' | 'assistant' | 'character' | 'narrator' | 'system';
@@ -60,6 +61,13 @@ export struct ChatRichText {
   @Prop @Watch('onStreamingChange') isStreaming: boolean = false;
   /** 文本样式设置(@Watch 触发重新解析) */
   @Prop @Watch('onSettingsChange') settings: ChatTextStyle | null = null;
+  /**
+   * 字体颜色主题(null 表示 AUTO 模式,使用默认资源颜色)。
+   * 非 null 时覆盖 getSegmentColor 的颜色查询,不改变解析行为、节点结构、
+   * 字体粗细、链接行为或换行逻辑。
+   * @Watch 触发重新解析,确保缓存 key 包含主题指纹。
+   */
+  @Prop @Watch('onThemeChange') colorTheme: ChatMarkdownColorTheme | null = null;
   /** 是否可选择(长按复制) */
   @Prop selectable: boolean = true;
 
@@ -105,6 +113,15 @@ export struct ChatRichText {
    * @Watch 回调:settings 变化时立即重新解析。
    */
   private onSettingsChange(): void {
+    this.doParse();
+  }
+
+  /**
+   * @Watch 回调:colorTheme 变化时立即重新解析。
+   * 主题切换(AUTO ↔ LIGHT/DARK/CUSTOM)需要重新应用颜色。
+   * 解析逻辑本身不变,但缓存 key 包含主题指纹,会生成新的片段列表。
+   */
+  private onThemeChange(): void {
     this.doParse();
   }
 
@@ -223,8 +240,9 @@ export struct ChatRichText {
   }
 
   /**
-   * 构建缓存 key(包含 content hash + 设置指纹 + senderCharacterId)。
+   * 构建缓存 key(包含 content hash + 设置指纹 + senderCharacterId + 主题指纹)。
    * 任何影响渲染的设置变化都会导致 key 变化,确保缓存正确隔离。
+   * 主题指纹参与 key,避免 AUTO/LIGHT/DARK/CUSTOM 切换后命中旧缓存。
    */
   private buildCacheKey(contentHash: number, settings: ChatTextStyle): string {
     return contentHash.toString() + '_'
@@ -234,7 +252,21 @@ export struct ChatRichText {
       + settings.fontSize.toString() + '_'
       + settings.lineHeight.toString() + '_'
       + settings.quoteStyle + '_'
-      + settings.codeStyle;
+      + settings.codeStyle + '_'
+      + this.buildThemeFingerprint();
+  }
+
+  /**
+   * 构建颜色主题指纹(参与缓存 key)。
+   * AUTO 模式(null)返回 'auto',其他模式返回各颜色字段(已为大写 #RRGGBB)。
+   */
+  private buildThemeFingerprint(): string {
+    const t: ChatMarkdownColorTheme | null = this.colorTheme;
+    if (t === null) {
+      return 'auto';
+    }
+    return t.bodyColor + '|' + t.secondaryColor + '|' + t.accentColor + '|'
+      + t.linkColor + '|' + t.codeColor + '|' + t.quoteColor + '|' + t.userColor;
   }
 
   /**
@@ -253,6 +285,15 @@ export struct ChatRichText {
 
   /**
    * 获取片段对应的字体颜色。
+   *
+   * 主题优先级:
+   * 1. colorTheme === null(AUTO 模式):使用默认资源颜色 $r('app.color.*')(保持原行为)
+   * 2. colorTheme !== null(LIGHT/DARK/CUSTOM):按 colorRole 映射到主题字段
+   *
+   * 角色独立颜色(对白 + character senderType)在两种模式下都保留,
+   * 因为它由 ChatPalette 按角色 ID 解析,不属于 Markdown 语义颜色。
+   *
+   * 不改变解析行为、节点结构、字体粗细、链接行为或换行逻辑。
    */
   private getSegmentColor(seg: ChatTextSegment): ResourceColor {
     // 角色独立颜色优先(对白)
@@ -260,35 +301,73 @@ export struct ChatRichText {
       return getCharacterColor(this.senderCharacterId);
     }
 
+    // AUTO 模式:使用默认资源颜色(保持原行为)
+    if (this.colorTheme === null) {
+      switch (seg.colorRole) {
+        case 'emphasis':
+          return $r('app.color.chat_text_emphasis');
+        case 'secondary':
+          return $r('app.color.chat_text_secondary');
+        case 'dialogue':
+          return $r('app.color.chat_text_dialogue');
+        case 'narrator':
+          return $r('app.color.chat_text_narrator');
+        case 'action':
+          return $r('app.color.chat_text_action');
+        case 'code':
+          return $r('app.color.chat_text_code');
+        case 'link':
+          return $r('app.color.chat_text_link');
+        case 'quote':
+          return $r('app.color.chat_text_quote');
+        case 'system':
+          return $r('app.color.chat_text_system');
+        case 'character':
+          return $r('app.color.chat_text_dialogue');
+        default:
+          // 根据 senderType 选择默认色
+          if (this.senderType === 'user') {
+            return $r('app.color.chat_user_text');
+          } else if (this.senderType === 'system') {
+            return $r('app.color.chat_text_system');
+          }
+          return $r('app.color.chat_text_primary');
+      }
+    }
+
+    // LIGHT / DARK / CUSTOM 模式:按 colorRole 映射到主题字段
+    const theme: ChatMarkdownColorTheme = this.colorTheme;
     switch (seg.colorRole) {
       case 'emphasis':
-        return $r('app.color.chat_text_emphasis');
+        return theme.accentColor;
       case 'secondary':
-        return $r('app.color.chat_text_secondary');
+        return theme.secondaryColor;
       case 'dialogue':
-        return $r('app.color.chat_text_dialogue');
+        // 对白在主题模式下使用正文色(无独立对白字段)
+        return theme.bodyColor;
       case 'narrator':
-        return $r('app.color.chat_text_narrator');
       case 'action':
-        return $r('app.color.chat_text_action');
+        // 旁白/动作归入次级文字
+        return theme.secondaryColor;
       case 'code':
-        return $r('app.color.chat_text_code');
+        return theme.codeColor;
       case 'link':
-        return $r('app.color.chat_text_link');
+        return theme.linkColor;
       case 'quote':
-        return $r('app.color.chat_text_quote');
+        return theme.quoteColor;
       case 'system':
-        return $r('app.color.chat_text_system');
+        // 系统消息在主题模式下使用次级文字色
+        return theme.secondaryColor;
       case 'character':
-        return $r('app.color.chat_text_dialogue');
+        return theme.bodyColor;
       default:
         // 根据 senderType 选择默认色
         if (this.senderType === 'user') {
-          return $r('app.color.chat_user_text');
+          return theme.userColor;
         } else if (this.senderType === 'system') {
-          return $r('app.color.chat_text_system');
+          return theme.secondaryColor;
         }
-        return $r('app.color.chat_text_primary');
+        return theme.bodyColor;
     }
   }
 

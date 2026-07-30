@@ -32,6 +32,7 @@ import { ChatRole } from '../models/ChatRole';
 import { CharacterImageView } from './CharacterImageView';
 import { ChatRichText, ChatSenderType } from './ChatRichText';
 import { ChatTextStyle } from '../utils/ChatTextStyleSettings';
+import { ChatMarkdownColorTheme } from '../utils/ChatTextColorTheme';
 import { ChatMessageRenderState } from '../models/ChatMessageRenderState';
 
 @Component
@@ -52,6 +53,55 @@ export struct ChatMessageBubble {
   settings: ChatTextStyle | null = null;
   /** 发送者角色 ID(用于角色独立颜色) */
   senderCharacterId: string = '';
+  /**
+   * 字体颜色主题(null 表示 AUTO 模式,使用默认资源颜色)。
+   * 非 null 时覆盖 ChatRichText 的片段颜色查询,
+   * 不改变解析行为、节点结构、字体粗细、链接行为或换行逻辑。
+   * 与 bubbleOpacity 完全独立:主题只控制文字颜色,bubbleOpacity 只控制气泡背景 Alpha。
+   */
+  colorTheme: ChatMarkdownColorTheme | null = null;
+  /** 气泡背景不透明度(0.40~0.90,仅控制背景 Alpha,不影响文字/头像/按钮) */
+  @Prop bubbleOpacity: number = 1.0;
+  /** 当前是否为深色模式(用于动态计算气泡背景 RGB) */
+  @Prop isDarkMode: boolean = false;
+
+  /**
+   * 将 Alpha(0~1) 转为两位 16 进制字符串(大写)。
+   * clamp 到 [0, 255] 后取整。
+   */
+  private alphaToHex(alpha: number): string {
+    const clamped: number = Math.max(0, Math.min(255, Math.round(alpha * 255)));
+    const hex: string = clamped.toString(16).toUpperCase();
+    return hex.length === 1 ? '0' + hex : hex;
+  }
+
+  /**
+   * 助手气泡背景色:RGB 保持资源浅色/深色值,Alpha = bubbleOpacity。
+   * light: #FFFFFF, dark: #2A2A2A
+   */
+  private computeAssistantBubbleColor(): string {
+    const rgb: string = this.isDarkMode ? '2A2A2A' : 'FFFFFF';
+    return '#' + this.alphaToHex(this.bubbleOpacity) + rgb;
+  }
+
+  /**
+   * 用户气泡背景色:RGB 保持品牌蓝,Alpha = min(bubbleOpacity + 0.08, 0.95)。
+   * light: #5B7CFA, dark: #7B9BFF
+   */
+  private computeUserBubbleColor(): string {
+    const rgb: string = this.isDarkMode ? '7B9BFF' : '5B7CFA';
+    const alpha: number = Math.min(this.bubbleOpacity + 0.08, 0.95);
+    return '#' + this.alphaToHex(alpha) + rgb;
+  }
+
+  /**
+   * 重新生成按钮背景色:复用助手气泡 RGB,Alpha = bubbleOpacity。
+   * 用于失败重试按钮的半透明背景。
+   */
+  private computeRegenerateButtonColor(): string {
+    const rgb: string = this.isDarkMode ? '3A3A3A' : 'F0F1F4';
+    return '#' + this.alphaToHex(this.bubbleOpacity) + rgb;
+  }
 
   build() {
     if (this.renderState.role === ChatRole.System) {
@@ -84,6 +134,7 @@ export struct ChatMessageBubble {
           senderCharacterId: '',
           isStreaming: false,
           settings: this.settings,
+          colorTheme: this.colorTheme,
           selectable: true
         })
       }
@@ -107,16 +158,26 @@ export struct ChatMessageBubble {
           senderCharacterId: '',
           isStreaming: false,
           settings: this.settings,
+          colorTheme: this.colorTheme,
           selectable: true
         })
       }
-      .constraintSize({ maxWidth: '94%' })
-      .backgroundColor($r('app.color.chat_user_bubble'))
+      .constraintSize({ maxWidth: '88%' })
+      .backgroundColor(this.computeUserBubbleColor())
+      .border({
+        width: $r('app.float.chat_bubble_border_width'),
+        color: $r('app.color.chat_user_border')
+      })
       .borderRadius({
         topLeft: 16, topRight: 16,
         bottomLeft: 16, bottomRight: 6
       })
-      .padding({ left: 16, right: 16, top: 11, bottom: 11 })
+      .padding({
+        left: $r('app.float.chat_bubble_padding_h'),
+        right: $r('app.float.chat_bubble_padding_h'),
+        top: $r('app.float.chat_bubble_padding_v'),
+        bottom: $r('app.float.chat_bubble_padding_v')
+      })
       .gesture(
         LongPressGesture()
           .onAction(() => {
@@ -164,6 +225,7 @@ export struct ChatMessageBubble {
             senderCharacterId: this.senderCharacterId,
             isStreaming: this.renderState.isStreaming,
             settings: this.settings,
+            colorTheme: this.colorTheme,
             selectable: true
           })
         }
@@ -217,12 +279,21 @@ export struct ChatMessageBubble {
           .margin({ top: 6 })
         }
       }
-      .backgroundColor($r('app.color.chat_assistant_bubble'))
+      .backgroundColor(this.computeAssistantBubbleColor())
+      .border({
+        width: $r('app.float.chat_bubble_border_width'),
+        color: $r('app.color.chat_assistant_border')
+      })
       .borderRadius({
         topLeft: 6, topRight: 16,
         bottomLeft: 16, bottomRight: 16
       })
-      .padding({ left: 16, right: 16, top: 11, bottom: 11 })
+      .padding({
+        left: $r('app.float.chat_bubble_padding_h'),
+        right: $r('app.float.chat_bubble_padding_h'),
+        top: $r('app.float.chat_bubble_padding_v'),
+        bottom: $r('app.float.chat_bubble_padding_v')
+      })
       .constraintSize({ maxWidth: '94%' })
       .alignItems(HorizontalAlign.Start)
       // 微阴影:让 Assistant 气泡在浅色背景上有浮起感

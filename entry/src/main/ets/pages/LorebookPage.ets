@@ -18,11 +18,24 @@ import { Lorebook, LorebookEntry } from '../models/Lorebook';
 import { AppServices } from '../services/AppServices';
 import { router } from '@kit.ArkUI';
 
-const COLOR_CURRENT: string = '#5B7CFA';
-const COLOR_DISABLED: string = '#999999';
-const COLOR_DIVIDER: string = '#E0E0E0';
-const COLOR_ERROR: string = '#E74C3C';
-const COLOR_ENTRY_BG: string = '#F5F5F5';
+/**
+ * 颜色资源引用(全部通过 $r('app.color.worldbook_*') 主题资源访问,
+ * 不在组件中散落十六进制颜色,确保浅色/深色模式自动切换)。
+ *
+ * 主题资源清单:
+ * - worldbook_page_background:页面背景
+ * - worldbook_card_background:世界书卡片背景
+ * - worldbook_card_border:卡片边框
+ * - worldbook_text_primary:主文字(标题/正文)
+ * - worldbook_text_secondary:次级文字(摘要/数量)
+ * - worldbook_text_muted:静音文字(禁用状态)
+ * - worldbook_action_primary:主操作色(编辑/新建条目)
+ * - worldbook_action_warning:警告色(Selective 标签)
+ * - worldbook_action_danger:危险色(删除)
+ * - worldbook_selected_background:选中态背景(设为当前)
+ * - worldbook_entry_background:条目行背景
+ * - worldbook_disabled_badge:禁用徽章颜色
+ */
 
 @Entry
 @Component
@@ -74,7 +87,7 @@ struct LorebookPage {
         if (this.viewModel !== null && this.viewModel.errorMessage.length > 0) {
           Text(this.viewModel.errorMessage)
             .fontSize(13)
-            .fontColor(COLOR_ERROR)
+            .fontColor($r('app.color.worldbook_action_danger'))
             .width('100%')
             .padding({ left: 16, right: 16, top: 8, bottom: 4 })
         }
@@ -137,7 +150,7 @@ struct LorebookPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('sys.color.ohos_id_color_sub_background'))
+    .backgroundColor($r('app.color.worldbook_page_background'))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 
@@ -172,8 +185,8 @@ struct LorebookPage {
             if (this.currentLorebookId === lb.id) {
               Text($r('app.string.lorebook_current_badge'))
                 .fontSize(11)
-                .fontColor(Color.White)
-                .backgroundColor(COLOR_CURRENT)
+                .fontColor($r('app.color.app_on_accent'))
+                .backgroundColor($r('app.color.worldbook_action_primary'))
                 .borderRadius(8)
                 .padding({ left: 6, right: 6, top: 2, bottom: 2 })
                 .margin({ right: 6 })
@@ -181,8 +194,8 @@ struct LorebookPage {
             if (!lb.enabled) {
               Text($r('app.string.lorebook_disabled'))
                 .fontSize(11)
-                .fontColor(COLOR_DISABLED)
-                .border({ width: 1, color: COLOR_DISABLED, style: BorderStyle.Solid })
+                .fontColor($r('app.color.worldbook_disabled_badge'))
+                .border({ width: 1, color: $r('app.color.worldbook_disabled_badge'), style: BorderStyle.Solid })
                 .borderRadius(8)
                 .padding({ left: 6, right: 6, top: 2, bottom: 2 })
                 .margin({ right: 6 })
@@ -190,8 +203,8 @@ struct LorebookPage {
             Text(lb.name)
               .fontSize(15)
               .fontColor(lb.enabled
-                ? $r('sys.color.ohos_id_color_text_primary')
-                : COLOR_DISABLED)
+                ? $r('app.color.worldbook_text_primary')
+                : $r('app.color.worldbook_text_muted'))
               .fontWeight(FontWeight.Medium)
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -202,7 +215,7 @@ struct LorebookPage {
           if (lb.description.length > 0) {
             Text(lb.description)
               .fontSize(12)
-              .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+              .fontColor($r('app.color.worldbook_text_secondary'))
               .maxLines(2)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .margin({ top: 4 })
@@ -213,7 +226,7 @@ struct LorebookPage {
             Text(this.viewModel !== null
               ? this.viewModel.getEntryCountText(lb) : '')
               .fontSize(11)
-              .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+              .fontColor($r('app.color.worldbook_text_secondary'))
               .margin({ top: 4 })
           }
           .width('100%')
@@ -225,7 +238,7 @@ struct LorebookPage {
         Image($r('sys.media.ohos_ic_public_arrow_down'))
           .width(16)
           .height(16)
-          .fillColor($r('sys.color.ohos_id_color_text_secondary'))
+          .fillColor($r('app.color.worldbook_text_secondary'))
           .margin({ left: 8 })
           .rotate({
             angle: this.viewModel !== null
@@ -238,7 +251,7 @@ struct LorebookPage {
           })
       }
       .width('100%')
-      .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+      .padding({ left: 14, right: 14, top: 12, bottom: 10 })
       .onClick(() => {
         if (this.viewModel !== null) {
           this.viewModel.toggleExpand(lb.id);
@@ -249,10 +262,15 @@ struct LorebookPage {
       Row() {
         Button($r('app.string.lorebook_set_current'))
           .fontSize(12)
-          .backgroundColor(Color.Transparent)
-          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+          .backgroundColor(this.currentLorebookId === lb.id
+            ? $r('app.color.worldbook_selected_background')
+            : Color.Transparent)
+          .fontColor(this.currentLorebookId === lb.id
+            ? $r('app.color.worldbook_action_primary')
+            : $r('app.color.worldbook_text_secondary'))
           .height(28)
-          .padding({ left: 6, right: 6 })
+          .padding({ left: 8, right: 8 })
+          .borderRadius(6)
           .onClick(() => {
             if (this.viewModel !== null) {
               this.viewModel.setCurrentLorebook(
@@ -264,9 +282,9 @@ struct LorebookPage {
         Button($r('app.string.lorebook_edit'))
           .fontSize(12)
           .backgroundColor(Color.Transparent)
-          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+          .fontColor($r('app.color.worldbook_action_primary'))
           .height(28)
-          .padding({ left: 6, right: 6 })
+          .padding({ left: 8, right: 8 })
           .onClick(() => {
             if (this.viewModel !== null) {
               this.viewModel.showEditLorebookDialog(lb);
@@ -278,9 +296,11 @@ struct LorebookPage {
           : $r('app.string.lorebook_enable'))
           .fontSize(12)
           .backgroundColor(Color.Transparent)
-          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+          .fontColor(lb.enabled
+            ? $r('app.color.worldbook_action_warning')
+            : $r('app.color.worldbook_action_primary'))
           .height(28)
-          .padding({ left: 6, right: 6 })
+          .padding({ left: 8, right: 8 })
           .onClick(() => {
             if (this.viewModel !== null) {
               this.viewModel.toggleLorebookEnabled(lb);
@@ -290,9 +310,9 @@ struct LorebookPage {
         Button($r('app.string.lorebook_delete'))
           .fontSize(12)
           .backgroundColor(Color.Transparent)
-          .fontColor(COLOR_ERROR)
+          .fontColor($r('app.color.worldbook_action_danger'))
           .height(28)
-          .padding({ left: 6, right: 6 })
+          .padding({ left: 8, right: 8 })
           .onClick(() => {
             if (this.viewModel !== null) {
               this.viewModel.deleteTargetLorebook = lb;
@@ -300,21 +320,21 @@ struct LorebookPage {
           })
       }
       .width('100%')
-      .padding({ left: 8, right: 8, bottom: 6 })
+      .padding({ left: 8, right: 8, bottom: 8 })
       .justifyContent(FlexAlign.SpaceEvenly)
 
       // 条目列表(展开时显示)
       if (this.viewModel !== null
         && this.viewModel.expandedLorebookId === lb.id) {
         Divider()
-          .color(COLOR_DIVIDER)
+          .color($r('app.color.worldbook_card_border'))
           .width('100%')
           .height(1)
 
         if (lb.entries.length === 0) {
           Text($r('app.string.lorebook_no_entries'))
             .fontSize(13)
-            .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+            .fontColor($r('app.color.worldbook_text_secondary'))
             .padding(16)
             .width('100%')
             .textAlign(TextAlign.Center)
@@ -327,7 +347,7 @@ struct LorebookPage {
         Button($r('app.string.lorebook_new_entry'))
           .fontSize(12)
           .backgroundColor(Color.Transparent)
-          .fontColor(COLOR_CURRENT)
+          .fontColor($r('app.color.worldbook_action_primary'))
           .height(32)
           .width('100%')
           .onClick(() => {
@@ -338,8 +358,9 @@ struct LorebookPage {
       }
     }
     .width('100%')
-    .backgroundColor($r('sys.color.ohos_id_color_background'))
-    .borderRadius(8)
+    .backgroundColor($r('app.color.worldbook_card_background'))
+    .border({ width: 1, color: $r('app.color.worldbook_card_border') })
+    .borderRadius(10)
     .margin({ left: 12, right: 12, top: 8 })
   }
 
@@ -354,8 +375,8 @@ struct LorebookPage {
             if (!entry.enabled) {
               Text($r('app.string.lorebook_disabled'))
                 .fontSize(10)
-                .fontColor(COLOR_DISABLED)
-                .border({ width: 1, color: COLOR_DISABLED, style: BorderStyle.Solid })
+                .fontColor($r('app.color.worldbook_disabled_badge'))
+                .border({ width: 1, color: $r('app.color.worldbook_disabled_badge'), style: BorderStyle.Solid })
                 .borderRadius(6)
                 .padding({ left: 4, right: 4, top: 1, bottom: 1 })
                 .margin({ right: 4 })
@@ -363,8 +384,8 @@ struct LorebookPage {
             Text(entry.name)
               .fontSize(13)
               .fontColor(entry.enabled
-                ? $r('sys.color.ohos_id_color_text_primary')
-                : COLOR_DISABLED)
+                ? $r('app.color.worldbook_text_primary')
+                : $r('app.color.worldbook_text_muted'))
               .fontWeight(FontWeight.Medium)
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -376,19 +397,19 @@ struct LorebookPage {
             if (entry.constant) {
               Text('恒定')
                 .fontSize(10)
-                .fontColor(COLOR_CURRENT)
+                .fontColor($r('app.color.worldbook_action_primary'))
                 .margin({ right: 4 })
             }
             if (entry.selective) {
               Text('Selective')
                 .fontSize(10)
-                .fontColor('#E67E22')
+                .fontColor($r('app.color.worldbook_action_warning'))
                 .margin({ right: 4 })
             }
             if (entry.keys.length > 0) {
               Text(entry.keys.join(', '))
                 .fontSize(10)
-                .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+                .fontColor($r('app.color.worldbook_text_secondary'))
                 .maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
                 .margin({ right: 4 })
@@ -396,11 +417,11 @@ struct LorebookPage {
             if (this.viewModel !== null) {
               Text('P' + entry.priority.toString())
                 .fontSize(10)
-                .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+                .fontColor($r('app.color.worldbook_text_secondary'))
                 .margin({ right: 4 })
               Text(this.viewModel.getPositionText(entry.position))
                 .fontSize(10)
-                .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+                .fontColor($r('app.color.worldbook_text_secondary'))
             }
           }
           .width('100%')
@@ -412,9 +433,9 @@ struct LorebookPage {
         Button($r('app.string.lorebook_edit'))
           .fontSize(11)
           .backgroundColor(Color.Transparent)
-          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+          .fontColor($r('app.color.worldbook_action_primary'))
           .height(24)
-          .padding({ left: 4, right: 4 })
+          .padding({ left: 6, right: 6 })
           .onClick(() => {
             if (this.viewModel !== null) {
               this.viewModel.showEditEntryDialog(lorebookId, entry);
@@ -424,9 +445,9 @@ struct LorebookPage {
         Button($r('app.string.lorebook_delete'))
           .fontSize(11)
           .backgroundColor(Color.Transparent)
-          .fontColor(COLOR_ERROR)
+          .fontColor($r('app.color.worldbook_action_danger'))
           .height(24)
-          .padding({ left: 4, right: 4 })
+          .padding({ left: 6, right: 6 })
           .onClick(() => {
             if (this.viewModel !== null) {
               this.viewModel.deleteTargetEntry = entry;
@@ -435,12 +456,13 @@ struct LorebookPage {
           })
       }
       .width('100%')
-      .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+      .padding({ left: 12, right: 12, top: 8, bottom: 8 })
     }
     .width('100%')
-    .backgroundColor(COLOR_ENTRY_BG)
-    .margin({ left: 12, right: 12, bottom: 4 })
-    .borderRadius(6)
+    .backgroundColor($r('app.color.worldbook_entry_background'))
+    .border({ width: 1, color: $r('app.color.worldbook_card_border') })
+    .margin({ left: 12, right: 12, bottom: 6 })
+    .borderRadius(8)
   }
 
   // ===== 世界书编辑对话框 =====
@@ -844,7 +866,7 @@ struct LorebookPage {
 
         Button($r('app.string.lorebook_delete'))
           .fontSize(14)
-          .backgroundColor(COLOR_ERROR)
+          .backgroundColor($r('app.color.worldbook_action_danger'))
           .borderRadius(20)
           .layoutWeight(1)
           .height(40)
@@ -913,7 +935,7 @@ struct LorebookPage {
 
         Button($r('app.string.lorebook_delete'))
           .fontSize(14)
-          .backgroundColor(COLOR_ERROR)
+          .backgroundColor($r('app.color.worldbook_action_danger'))
           .borderRadius(20)
           .layoutWeight(1)
           .height(40)
