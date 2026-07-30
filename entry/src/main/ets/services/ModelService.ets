@@ -440,7 +440,10 @@ export class ModelService {
       maxTokens: options.maxTokens,
       stream: options.stream,
       reasoningEffort: options.reasoningEffort,
-      responseFormatJson: options.responseFormatJson
+      responseFormatJson: options.responseFormatJson,
+      tools: options.tools,
+      toolResults: options.toolResults,
+      priorToolCalls: options.priorToolCalls
     };
 
     const provider: AiProvider = this.resolveProvider(config);
@@ -494,6 +497,25 @@ export class ModelService {
       );
     }
     return this.providerFactory.create(config.type);
+  }
+
+  /**
+   * Phase 4A-3: 查询当前 Provider 是否支持原生 Tool Calling。
+   *
+   * - 用于 ChatService 决定是否注入 tools
+   * - 不支持时, 普通聊天完全保持原行为
+   * - 调用方应在请求开始前调用 (异步读取当前配置)
+   */
+  async supportsToolCallingForCurrentProvider(): Promise<boolean> {
+    this.requireInitialized();
+    try {
+      const config: ProviderConfig = await this.resolveCurrentConfigForRequest();
+      const provider: AiProvider = this.resolveProvider(config);
+      return provider.supportsToolCalling();
+    } catch (e) {
+      // 配置解析失败: 不支持 (兜底)
+      return false;
+    }
   }
 
   private requireInitialized(): void {

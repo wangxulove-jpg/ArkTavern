@@ -10,15 +10,21 @@
  * - 不包含 UI 状态
  *
  * 本阶段不加入:
- * - tools / functions
  * - images / audio
- * - response_format
  * - SillyTavern Prompt
  * - Character / Lorebook
+ *
+ * Phase 4A-3 已加入:
+ * - tools / toolResults (项目内部统一类型, Provider Adapter 负责协议转换)
  */
 
 import { ChatMessage } from './ChatMessage';
 import { TEMPERATURE_DEFAULT, TOP_P_DEFAULT, MAX_TOKENS_DEFAULT } from './ProviderConfig';
+import {
+  ArkWebChatToolDefinition,
+  ArkWebChatToolCall,
+  ArkWebChatToolExecutionResult
+} from '../avatarai/ArkWebAvatarAiToolTypes';
 
 /**
  * 聊天请求选项(不含 model,由 ModelService 填充)。
@@ -47,6 +53,28 @@ export interface ChatRequestOptions {
    * - 要求 prompt 中必须包含 "JSON" 字样,否则部分 Provider 会报错
    */
   readonly responseFormatJson?: boolean;
+  /**
+   * Phase 4A-3: 工具定义列表 (可选)。
+   *
+   * - Provider 不支持原生 Tool Calling 时,此字段被忽略
+   * - Provider 支持时, Adapter 将其转换为 Provider 协议格式
+   * - 空数组或不传: 不注入工具
+   */
+  readonly tools?: ArkWebChatToolDefinition[];
+  /**
+   * Phase 4A-3: 上一轮工具执行结果 (可选)。
+   *
+   * 当上一轮 AI 返回 tool_calls 并已执行后, 将结果作为工具结果消息回传继续对话。
+   * Provider Adapter 负责转换为 Provider 协议格式 (如 OpenAI 的 role:"tool" 消息)。
+   */
+  readonly toolResults?: ArkWebChatToolExecutionResult[];
+  /**
+   * Phase 4A-3: 上一轮 AI 返回的工具调用 (可选)。
+   *
+   * 用于在工具结果回传时, 将 assistant 的 tool_calls 一并放回 messages 中
+   * (OpenAI 协议要求 assistant 消息包含 tool_calls, 然后是 role:"tool" 消息)。
+   */
+  readonly priorToolCalls?: ArkWebChatToolCall[];
 }
 
 /**
@@ -79,6 +107,26 @@ export interface ChatRequest {
    * - Provider 不支持时自动忽略
    */
   readonly responseFormatJson?: boolean;
+  /**
+   * Phase 4A-3: 工具定义列表 (可选)。
+   *
+   * Provider 不支持原生 Tool Calling 时,此字段被忽略。
+   * Provider 支持时, Adapter 转换为 Provider 协议格式并注入请求。
+   */
+  readonly tools?: ArkWebChatToolDefinition[];
+  /**
+   * Phase 4A-3: 上一轮工具执行结果 (可选)。
+   *
+   * Provider Adapter 负责转换为 Provider 协议格式的工具结果消息。
+   */
+  readonly toolResults?: ArkWebChatToolExecutionResult[];
+  /**
+   * Phase 4A-3: 上一轮 AI 返回的工具调用 (可选)。
+   *
+   * 用于在工具结果回传时, 将 assistant 的 tool_calls 一并放回 messages 中
+   * (OpenAI 协议要求 assistant 消息包含 tool_calls, 然后是 role:"tool" 消息)。
+   */
+  readonly priorToolCalls?: ArkWebChatToolCall[];
 }
 
 /**

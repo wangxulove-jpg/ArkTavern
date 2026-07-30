@@ -7,6 +7,11 @@
  * - FACE_RESET_VIEW 复用现有重置按钮的相机方法 (smoothResetCamera)
  * - FULL_BODY 复用现有 fitAvatarFullBody
  *
+ * Phase 4B-2R2 新增:
+ * - ArkWebAvatarShotControlMode: AUTO / MANUAL_FULL_BODY / MANUAL_FACE_RESET_VIEW
+ * - 手动模式下不自动切换镜头, 用户手动选择优先于自动导演
+ * - 镜头缩放倍率通过 runtime.adjustCameraZoom 实现, 不修改 model.transform
+ *
  * 禁止:
  * - 头部 BoundingBox 计算
  * - 脸部骨骼/眼睛位置计算
@@ -26,6 +31,24 @@ import { ArkWebAvatarPerformanceCommand } from './ArkWebAvatarPerformanceTypes';
  * 禁止扩展第三个镜头类型。禁止硬编码自定义脸部坐标。
  */
 export type ArkWebAvatarShot = 'FULL_BODY' | 'FACE_RESET_VIEW';
+
+/**
+ * Phase 4B-2R2: 镜头控制模式。
+ *
+ * - AUTO: 自动导演 (animation/pose → FULL_BODY, expression-only → FACE_RESET_VIEW)
+ * - MANUAL_FULL_BODY: 用户手动选择全身, 后续演出不切换镜头
+ * - MANUAL_FACE_RESET_VIEW: 用户手动选择脸部, 后续演出不切换镜头
+ *
+ * 手动模式优先级:
+ * - prepareForCommand 不调用 transitionToShot
+ * - 表情恢复到期不切换镜头
+ * - 停止/失败不切换镜头
+ * - 模型 READY / Stage 重新显示 按当前模式决定目标镜头
+ */
+export type ArkWebAvatarShotControlMode =
+  'AUTO'
+  | 'MANUAL_FULL_BODY'
+  | 'MANUAL_FACE_RESET_VIEW';
 
 /**
  * Shot Director 状态机。
@@ -109,6 +132,8 @@ export interface ArkWebAvatarShotRuntimeSnapshot {
   hasExpressionReturnTimer: boolean;
   /** 表情恢复定时器关联的 commandId */
   expressionReturnCommandId: string;
+  /** Phase 4B-2R2: 当前镜头控制模式 */
+  controlMode: ArkWebAvatarShotControlMode;
 }
 
 /**

@@ -24,6 +24,7 @@
  */
 
 import { NetworkError } from './NetworkError';
+import { ArkWebChatToolCall } from '../avatarai/ArkWebAvatarAiToolTypes';
 
 /**
  * 流式状态。
@@ -112,6 +113,15 @@ export interface ChatStreamResult {
    * 不修改: 请求 URL / 请求体 / API Key / 流式解析协议 / 重试 / 重新生成。
    */
   readonly performanceHintJson?: string;
+  /**
+   * Phase 4A-3: Provider 原生返回的工具调用列表 (可选)。
+   *
+   * - 由 Provider Adapter 从流式响应中累积解析得到 (按 toolCallId 拼接 arguments 增量)
+   * - finishReason="tool_calls" 时, 此字段包含完整工具调用列表
+   * - ChatService 在收到 toolCalls 后, 先执行工具, 再将结果作为 toolResults 回传继续对话
+   * - 不解析聊天正文 / Markdown / JSON 代码块
+   */
+  readonly toolCalls?: ArkWebChatToolCall[];
 }
 
 /**

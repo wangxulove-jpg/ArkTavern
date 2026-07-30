@@ -603,6 +603,71 @@ export class ViewerCamera {
     return { success: true, state: this._buildCameraState() };
   }
 
+  // ===== Phase 4B-2R2: 相机缩放倍率 =====
+
+  /**
+   * Phase 4B-2R2: 应用相机缩放倍率。
+   *
+   * 通过缩短相机到目标点距离实现视觉放大, 不修改 model.scene.position / scale / 骨骼。
+   *
+   * 公式:
+   *   offset = camera.position - controls.target
+   *   scaledOffset = offset / multiplier
+   *   camera.position = controls.target + scaledOffset
+   *
+   * 然后调用 updateCameraClipping 重新计算 near/far/minDistance/maxDistance。
+   *
+   * @param {number} multiplier 缩放倍率 (0.5 ~ 3.0)
+   *   - 1.0: 无变化
+   *   - 2.0: 相机距离缩短至 1/2, 模型视觉放大 2 倍
+   *   - 3.0: 相机距离缩短至 1/3, 模型视觉放大 3 倍
+   * @returns {{success: boolean, state?: object, multiplier?: number, error?: string}}
+   */
+  applyCameraZoomMultiplier(multiplier) {
+    if (this._disposed) {
+      return { success: false, error: CAMERA_DISPOSED };
+    }
+    if (!this.camera || !this.controls) {
+      return { success: false, error: CAMERA_NOT_INITIALIZED };
+    }
+    // 严格数值校验
+    if (typeof multiplier !== 'number' || !isFinite(multiplier) || multiplier <= 0) {
+      return { success: false, error: 'INVALID_ZOOM_MULTIPLIER' };
+    }
+    // 钳制到 [0.5, 3.0]
+    var safeMultiplier = Math.max(0.5, Math.min(3.0, multiplier));
+
+    var offset = new THREE.Vector3().subVectors(this.camera.position, this.controls.target);
+    // 避免除零或极端值
+    if (offset.lengthSq() < 1e-12) {
+      return { success: false, error: CAMERA_FOCUS_BOUNDS_INVALID };
+    }
+    var scaledOffset = offset.divideScalar(safeMultiplier);
+    var newPosition = new THREE.Vector3().addVectors(this.controls.target, scaledOffset);
+
+    // 保存 controls.enabled
+    var savedEnabled = this.controls.enabled;
+    this.camera.position.copy(newPosition);
+    this.controls.update();
+
+    // 重新计算裁剪范围 (使用 null 让 updateCameraClipping 使用上次缓存的 radius)
+    try {
+      this.updateCameraClipping(null, 'APPLY_ZOOM');
+    } catch (e) {
+      // 忽略裁剪计算错误, 不阻塞缩放
+    }
+
+    if (savedEnabled !== undefined) {
+      this.controls.enabled = savedEnabled;
+    }
+
+    return {
+      success: true,
+      state: this._buildCameraState(),
+      multiplier: safeMultiplier
+    };
+  }
+
   // ===== Final Acceptance Fix: 相机裁剪范围统一更新 =====
 
   /**

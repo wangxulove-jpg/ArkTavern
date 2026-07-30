@@ -26,6 +26,7 @@ import {
   ArkWebBridgeFailedResponse,
   ArkWebCameraTransitionState,
   ArkWebCameraTransitionStateResponse,
+  ArkWebCameraZoomMultiplierParams,
   ArkWebFitAvatarFullBodyParams,
   ArkWebModelState,
   ArkWebViewerConfig,
@@ -268,6 +269,36 @@ export class ArkWebVrmViewerController implements ArkWebViewerBridgeListener {
         paramsJson = JSON.stringify(params);
       }
       return await this.jsCaller.fitAvatarFullBody(paramsJson);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return JSON.stringify({ success: false, error: msg });
+    }
+  }
+
+  /**
+   * Phase 4B-2R2: 应用相机缩放倍率。
+   *
+   * 通过调整相机到目标点的距离实现视觉缩放,不修改模型 transform。
+   * multiplier 范围 0.5~3.0:
+   *   - 1.0: 无变化 (默认)
+   *   - 2.0: 模型视觉放大 2 倍
+   *   - 3.0: 模型视觉放大 3 倍
+   *
+   * 非法值会被自动 clamp 到合法范围。
+   *
+   * @param multiplier 缩放倍率 (0.5~3.0)
+   * @returns JSON 字符串,形如
+   *   {"success": true, "state": "READY", "cameraState": {...}, "multiplier": 1.5}
+   */
+  async applyCameraZoomMultiplier(multiplier: number): Promise<string> {
+    if (this.disposed) {
+      return JSON.stringify({ success: false, error: 'disposed' });
+    }
+    try {
+      const safeMultiplier: number = Math.max(0.5, Math.min(3.0, multiplier));
+      const params: ArkWebCameraZoomMultiplierParams = { multiplier: safeMultiplier };
+      const paramsJson: string = JSON.stringify(params);
+      return await this.jsCaller.applyCameraZoomMultiplier(paramsJson);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       return JSON.stringify({ success: false, error: msg });

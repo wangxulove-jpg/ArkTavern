@@ -26,6 +26,29 @@ export interface OpenAiDeltaResult {
   readonly finishReason?: string;
   /** 解析错误信息(可选,不含敏感数据) */
   readonly parseError?: string;
+  /**
+   * Phase 4A-3: 工具调用增量片段列表 (可选)。
+   *
+   * - OpenAI 流式协议中, tool_calls 按 index 分组, arguments 是增量字符串
+   * - 首次出现时包含 id 和 function.name, 后续仅包含 function.arguments 增量
+   * - 上层 (OpenAIStreamSession) 按 index 累积, 完成后转为 ArkWebChatToolCall
+   */
+  readonly toolCallDeltas?: OpenAiToolCallDelta[];
+}
+
+/**
+ * Phase 4A-3: OpenAI 工具调用增量片段 (来自 delta.tool_calls[i])。
+ *
+ * - index: 用于在多次 delta 中关联同一个工具调用
+ * - id: 工具调用 ID (仅首次出现, 后续为空字符串)
+ * - name: 工具名 (仅首次出现, 后续为空字符串)
+ * - argumentsDelta: 参数 JSON 增量片段 (多次出现, 上层按 index 累积拼接)
+ */
+export interface OpenAiToolCallDelta {
+  readonly index: number;
+  readonly id: string;
+  readonly name: string;
+  readonly argumentsDelta: string;
 }
 
 /**
@@ -163,6 +186,9 @@ function parseChoice(choice: Object): OpenAiDeltaResult {
     // delta.role 事件:可能有 content 也可能没有
   }
 
+  // Phase 4A-3: 提取 delta.tool_calls 增量
+  const toolCallDeltas: OpenAiToolCallDelta[] | undefined = extractToolCallDeltas(delta);
+
   const result: OpenAiDeltaResult = {
     content: content,
     hasContent: hasContent,
@@ -170,6 +196,15 @@ function parseChoice(choice: Object): OpenAiDeltaResult {
   };
 
   if (finishReason !== undefined && finishReason !== null && finishReason !== 'null') {
+    if (toolCallDeltas !== undefined) {
+      return {
+        content: result.content,
+        hasContent: result.hasContent,
+        done: false,
+        finishReason: finishReason,
+        toolCallDeltas: toolCallDeltas
+      };
+    }
     // 使用展开方式构造,避免对象字面量类型问题
     return {
       content: result.content,
@@ -179,7 +214,85 @@ function parseChoice(choice: Object): OpenAiDeltaResult {
     };
   }
 
+  if (toolCallDeltas !== undefined) {
+    return {
+      content: result.content,
+      hasContent: result.hasContent,
+      done: false,
+      toolCallDeltas: toolCallDeltas
+    };
+  }
+
   return result;
+}
+
+/**
+ * Phase 4A-3: 从 delta 对象提取 tool_calls 增量片段数组。
+ *
+ * OpenAI 流式协议:
+ *   "delta": {
+ *     "tool_calls": [
+ *       {
+ *         "index": 0,
+ *         "id": "call_abc",        // 首次出现
+ *         "type": "function",
+ *         "function": {
+ *           "name": "avatar_perform",     // 首次出现
+ *           "arguments": "{\"motion"      // 增量片段
+ *         }
+ *       }
+ *     ]
+ *   }
+ *
+ * @param delta delta 对象
+ * @returns 增量数组;无 tool_calls 字段返回 undefined
+ */
+function extractToolCallDeltas(delta: Record<string, Object>): OpenAiToolCallDelta[] | undefined {
+  const toolCallsVal: Object | undefined = delta['tool_calls'];
+  if (toolCallsVal === undefined || toolCallsVal === null) {
+    return undefined;
+  }
+  if (!Array.isArray(toolCallsVal)) {
+    return undefined;
+  }
+  const arr: Object[] = toolCallsVal as Object[];
+  if (arr.length === 0) {
+    return undefined;
+  }
+  const result: OpenAiToolCallDelta[] = [];
+  for (let i = 0; i < arr.length; i++) {
+    const item: Object = arr[i];
+    if (!isObject(item)) {
+      continue;
+    }
+    const record: Record<string, Object> = item as Record<string, Object>;
+    // index
+    const indexVal: Object | undefined = record['index'];
+    let indexNum: number = 0;
+    if (typeof indexVal === 'number') {
+      indexNum = indexVal;
+    }
+    // id (可选, 仅首次出现)
+    const idVal: Object | undefined = record['id'];
+    const idStr: string = typeof idVal === 'string' ? idVal : '';
+    // function (含 name + arguments 增量)
+    const functionObj: Record<string, Object> | null = getObjectField(record, 'function');
+    let nameStr: string = '';
+    let argumentsDelta: string = '';
+    if (functionObj !== null) {
+      const nameVal: Object | undefined = functionObj['name'];
+      nameStr = typeof nameVal === 'string' ? nameVal : '';
+      const argsVal: Object | undefined = functionObj['arguments'];
+      argumentsDelta = typeof argsVal === 'string' ? argsVal : '';
+    }
+    result.push({
+      index: indexNum,
+      id: idStr,
+      name: nameStr,
+      argumentsDelta: argumentsDelta
+    });
+  }
+  return result.length > 0 ? result : undefined;
 }
 
 /**

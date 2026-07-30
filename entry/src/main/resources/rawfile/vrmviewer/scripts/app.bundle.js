@@ -31471,6 +31471,58 @@ void main() {
       }
       return { success: true, state: this._buildCameraState() };
     }
+    // ===== Phase 4B-2R2: 相机缩放倍率 =====
+    /**
+     * Phase 4B-2R2: 应用相机缩放倍率。
+     *
+     * 通过缩短相机到目标点距离实现视觉放大, 不修改 model.scene.position / scale / 骨骼。
+     *
+     * 公式:
+     *   offset = camera.position - controls.target
+     *   scaledOffset = offset / multiplier
+     *   camera.position = controls.target + scaledOffset
+     *
+     * 然后调用 updateCameraClipping 重新计算 near/far/minDistance/maxDistance。
+     *
+     * @param {number} multiplier 缩放倍率 (0.5 ~ 3.0)
+     *   - 1.0: 无变化
+     *   - 2.0: 相机距离缩短至 1/2, 模型视觉放大 2 倍
+     *   - 3.0: 相机距离缩短至 1/3, 模型视觉放大 3 倍
+     * @returns {{success: boolean, state?: object, multiplier?: number, error?: string}}
+     */
+    applyCameraZoomMultiplier(multiplier) {
+      if (this._disposed) {
+        return { success: false, error: CAMERA_DISPOSED };
+      }
+      if (!this.camera || !this.controls) {
+        return { success: false, error: CAMERA_NOT_INITIALIZED };
+      }
+      if (typeof multiplier !== "number" || !isFinite(multiplier) || multiplier <= 0) {
+        return { success: false, error: "INVALID_ZOOM_MULTIPLIER" };
+      }
+      var safeMultiplier = Math.max(0.5, Math.min(3, multiplier));
+      var offset = new Vector3().subVectors(this.camera.position, this.controls.target);
+      if (offset.lengthSq() < 1e-12) {
+        return { success: false, error: CAMERA_FOCUS_BOUNDS_INVALID };
+      }
+      var scaledOffset = offset.divideScalar(safeMultiplier);
+      var newPosition = new Vector3().addVectors(this.controls.target, scaledOffset);
+      var savedEnabled = this.controls.enabled;
+      this.camera.position.copy(newPosition);
+      this.controls.update();
+      try {
+        this.updateCameraClipping(null, "APPLY_ZOOM");
+      } catch (e) {
+      }
+      if (savedEnabled !== void 0) {
+        this.controls.enabled = savedEnabled;
+      }
+      return {
+        success: true,
+        state: this._buildCameraState(),
+        multiplier: safeMultiplier
+      };
+    }
     // ===== Final Acceptance Fix: 相机裁剪范围统一更新 =====
     /**
      * Final Acceptance Fix: 统一更新相机裁剪范围 (near/far) 和 controls 距离限制。
@@ -47503,6 +47555,44 @@ void main() {
       });
       return result;
     }
+    /**
+     * Phase 4B-2R2: 应用相机缩放倍率。
+     *
+     * 通过缩短相机到目标点距离实现视觉放大, 不修改 model.scene.position / scale / 骨骼。
+     *
+     * 倍率范围 0.5 ~ 3.0:
+     *   - 1.0: 无变化
+     *   - 2.0: 相机距离缩短至 1/2, 模型视觉放大 2 倍
+     *   - 3.0: 相机距离缩短至 1/3, 模型视觉放大 3 倍
+     *
+     * @param {number} multiplier 缩放倍率
+     * @returns {{success: boolean, state?: object, multiplier?: number, error?: {code: string, message: string}}}
+     */
+    applyCameraZoomMultiplier(multiplier) {
+      if (this._state !== STATE_READY) {
+        return {
+          success: false,
+          error: makeError4(ERR_VIEWER_NOT_READY, "Viewer state is " + this._state + ", expected READY", this._state, true)
+        };
+      }
+      if (!this.camera) {
+        return {
+          success: false,
+          error: makeError4(ERR_CAMERA_INITIALIZATION_FAILED, "Camera not initialized", this._state, true)
+        };
+      }
+      var result = this.camera.applyCameraZoomMultiplier(multiplier);
+      if (result && result.success) {
+        return { success: true, state: result.state, multiplier: result.multiplier };
+      }
+      return {
+        success: false,
+        error: {
+          code: "ZOOM_MULTIPLIER_FAILED",
+          message: result && result.error ? String(result.error) : "applyCameraZoomMultiplier failed"
+        }
+      };
+    }
     // ===== Phase 2F: 环境贴图 API =====
     /**
      * Phase 2F: 初始化环境贴图。
@@ -49532,6 +49622,45 @@ void main() {
             success: false,
             state: v.getState(),
             error: result && result.error ? result.error : { code: "FIT_FULL_BODY_FAILED", message: "fitAvatarFullBody failed" }
+          };
+        });
+      },
+      /**
+       * Phase 4B-2R2: 应用相机缩放倍率。
+       *
+       * 通过缩短相机到目标点距离实现视觉放大, 不修改 model.scene.position / scale / 骨骼。
+       *
+       * @param {string} paramsJson JSON 字符串 { multiplier: number }
+       *   - multiplier: 0.5 ~ 3.0 (1.0=无变化, 3.0=放大3倍)
+       * @returns {string} JSON 结果
+       *   成功: {"success": true, "state": "READY", "cameraState": {...}, "multiplier": number}
+       *   失败: {"success": false, "state": "...", "error": {...}}
+       */
+      applyCameraZoomMultiplier: function(paramsJson) {
+        var multiplier = 1;
+        if (typeof paramsJson === "string" && paramsJson.length > 0) {
+          try {
+            var parsed = JSON.parse(paramsJson);
+            if (parsed && typeof parsed.multiplier === "number") {
+              multiplier = parsed.multiplier;
+            }
+          } catch (e) {
+          }
+        }
+        return callViewer(function(v) {
+          var result = v.applyCameraZoomMultiplier(multiplier);
+          if (result && result.success) {
+            return {
+              success: true,
+              state: v.getState(),
+              cameraState: result.state,
+              multiplier: result.multiplier
+            };
+          }
+          return {
+            success: false,
+            state: v.getState(),
+            error: result && result.error ? typeof result.error === "string" ? { code: "ZOOM_MULTIPLIER_FAILED", message: result.error } : result.error : { code: "ZOOM_MULTIPLIER_FAILED", message: "applyCameraZoomMultiplier failed" }
           };
         });
       },

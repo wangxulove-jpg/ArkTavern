@@ -112,6 +112,7 @@ import {
 } from './ArkWebAvatarShotDirector';
 import {
   ArkWebAvatarShot,
+  ArkWebAvatarShotControlMode,
   ArkWebAvatarShotDirectorState,
   ArkWebAvatarShotRuntime,
   ArkWebAvatarShotRuntimeSnapshot
@@ -248,6 +249,50 @@ export interface ArkWebChatAvatarStageRuntimeSnapshot {
   lastTurnId: string;
   defaultPoseRestored: boolean;
   chatFullBodyReferenceBoundsRecorded: boolean;
+  // Phase 4B-2R2: 运行时诊断扩展字段
+  /** 当前相机缩放倍率 (0.5~3.0) */
+  cameraZoomMultiplier: number;
+  /** 当前正在加载的动画 actionId (LOADING 时) */
+  animationLoadActionId: string;
+  /** 动画加载错误码 (失败时) */
+  animationLoadErrorCode: string;
+  /** 最后一次 Lifecycle 执行状态 */
+  lastLifecycleState: string;
+}
+
+/**
+ * Phase 4B-2R2: AI 面板演出真实执行结果。
+ *
+ * 不再将 Bridge 接受视为播放成功。面板必须等待真实 Lifecycle 执行结果。
+ * - accepted: Bridge.publishFinalResult 是否接受 (true 表示已入队/投递)
+ * - executed: Lifecycle.submitFinalAssistantResult 是否成功 (true 表示演出已开始执行)
+ * - lifecycleState: 执行后 Lifecycle 状态
+ * - animationState / poseState / expressionState: Runtime Debug State 快照
+ * - errorCode / errorMessage: 失败时的错误信息
+ *
+ * 超时错误码: CHAT_PANEL_PERFORMANCE_TIMEOUT (35s)
+ */
+export interface ArkWebPanelPerformanceResult {
+  /** Bridge.publishFinalResult 是否接受 */
+  accepted: boolean;
+  /** Lifecycle.submitFinalAssistantResult 是否成功执行 */
+  executed: boolean;
+  /** 当前 Turn ID */
+  turnId: string;
+  /** 当前 Command ID (Lifecycle 映射后, 失败时可能为空) */
+  commandId: string;
+  /** Lifecycle 执行后状态 */
+  lifecycleState: string;
+  /** 动画 Runtime 状态 (LOADING/READY/PLAYING/FAILED 等) */
+  animationState: string;
+  /** 姿势 Runtime 状态 (IDLE/APPLYING/APPLIED/FAILED 等) */
+  poseState: string;
+  /** 表情 Runtime 状态 (IDLE/APPLYING/APPLIED/EXPIRED/FAILED 等) */
+  expressionState: string;
+  /** 错误码 (失败时) */
+  errorCode: string;
+  /** 错误消息 (失败时) */
+  errorMessage: string;
 }
 
 /**
@@ -284,6 +329,31 @@ const PROBE_POLL_TOTAL_TIMEOUT_MS: number = 4500;
  *   - 根据当前动作伸展范围持续缩放镜头
  */
 const CHAT_FULL_BODY_FILL_RATIO: number = 0.78;
+
+/**
+ * Phase 4B-2R2: 相机缩放倍率范围。
+ *
+ * 通过调整相机到目标点的距离实现视觉缩放, 不修改模型 transform。
+ *   - 0.5: 模型视觉缩小至 1/2
+ *   - 1.0: 默认 (无变化)
+ *   - 3.0: 模型视觉放大 3 倍 (允许部分身体超出屏幕)
+ *
+ * 步进 0.1, 默认 1.0。
+ */
+const CHAT_CAMERA_ZOOM_MULTIPLIER_MIN: number = 0.5;
+const CHAT_CAMERA_ZOOM_MULTIPLIER_MAX: number = 3.0;
+const CHAT_CAMERA_ZOOM_MULTIPLIER_DEFAULT: number = 1.0;
+const CHAT_CAMERA_ZOOM_MULTIPLIER_STEP: number = 0.1;
+
+/**
+ * Phase 4B-2R2: AI 面板演出真实执行结果等待超时 (毫秒)。
+ *
+ * 面板调用 publishPerformanceFromPanelAndWait 后, 等待 Lifecycle 真实执行结果的最长时间。
+ * 超时后返回 CHAT_PANEL_PERFORMANCE_TIMEOUT 错误。
+ * 取 35 秒 (大于动画 READY 等待超时 30 秒 + 执行开销)。
+ */
+const CHAT_PANEL_PERFORMANCE_TIMEOUT_MS: number = 35000;
+const CHAT_PANEL_PERFORMANCE_TIMEOUT_ERROR: string = 'CHAT_PANEL_PERFORMANCE_TIMEOUT';
 
 /**
  * Phase 4B-2R: 动画 READY 等待超时 (与 VrmViewerPage 对齐)。
@@ -346,6 +416,27 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
   private stageWidth: number = 0;
   /** Stage 高度 (vp, 由组件 onAreaChange 报告) */
   private stageHeight: number = 0;
+  /** 当前模型 fillRatio (用户可通过滑动条调节, 默认 0.78) */
+  private currentFillRatio: number = CHAT_FULL_BODY_FILL_RATIO;
+  /** Phase 4B-2R2: 相机缩放倍率 (用户可通过滑动条调节, 默认 1.0)。
+   *
+   * 范围 0.5~3.0, 1.0 为默认。通过调整相机距离实现, 不修改模型 transform。
+   * 在当前 ChatPage 生命周期内, 镜头切换 / 演出 / 停止 / 失败 / 模型隐藏重新显示
+   * 都不会重置此倍率。仅在模型重新加载时恢复默认 1.0。
+   */
+  private cameraZoomMultiplier: number = CHAT_CAMERA_ZOOM_MULTIPLIER_DEFAULT;
+
+  /**
+   * Phase 4B-2R2: AI 面板演出真实执行结果 pending map。
+   *
+   * key: turnId
+   * value: resolver 函数, 由 onBridgeFinalResult 在 Lifecycle 执行完成后调用。
+   *
+   * 不再将 Bridge 接受视为播放成功, 面板通过 publishPerformanceFromPanelAndWait
+   * 等待真实 Lifecycle 执行结果。
+   */
+  private pendingPanelPerformanceResolvers: Map<string, (result: ArkWebPanelPerformanceResult) => void> =
+    new Map<string, (result: ArkWebPanelPerformanceResult) => void>();
   /** 最近错误码 */
   private lastErrorCode: string = '';
   /** 最近错误消息 */
@@ -367,6 +458,24 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
   private expressionAliasMap: Record<string, string> = {} as Record<string, string>;
   /** Phase 4B-2R: 动画调试状态字符串 (LOADING/READY/FAILED 等, 来自 getAnimationDebugState) */
   private debugAnimationStateStr: string = 'NOT_REQUESTED';
+  /**
+   * Phase 4B-2R2: 动画加载 Promise (single promise, 同 action 并发点击复用)。
+   *
+   * - 同 action 并发点击: 复用同一个 Promise, 不重复发起加载
+   * - 不同 action 并发点击: 递增 generation, 启动新加载, 旧结果按 generation 丢弃
+   * - READY/FAILED/超时: 清除 Promise, 允许再次点击
+   *
+   * 禁止永久卡在 LOADING: 失败后状态应为 FAILED 或 NOT_REQUESTED。
+   */
+  private animationLoadPromise: Promise<boolean> | null = null;
+  /** Phase 4B-2R2: 当前 animationLoadPromise 对应的 actionId */
+  private animationLoadActionId: string = '';
+  /** Phase 4B-2R2: 动画加载代次 (防止旧加载结果覆盖新状态) */
+  private animationLoadGeneration: number = 0;
+  /** Phase 4B-2R2: 已加载完成的 actionId (Web state === READY 时记录, 允许直接播放) */
+  private loadedActionId: string = '';
+  /** Phase 4B-2R2: 动画加载错误码 (失败时记录, 供诊断显示) */
+  private animationLoadErrorCode: string = '';
   /** Phase 4B-2R: AI 面板 Turn ID 递增计数器 (独立于 endpointCounter) */
   private static panelTurnIdCounter: number = 0;
   /** Phase 4B-2R: 页面实例 ID (用于 Turn ID 生成) */
@@ -402,6 +511,8 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
   private lastPublishErrorMessage: string = '';
   /** 最后一次 Turn ID */
   private lastTurnId: string = '';
+  /** Phase 4B-2R2: 最后一次 Lifecycle 执行状态 (供诊断显示) */
+  private lastLifecycleState: string = 'IDLE';
   /** 模型 READY 后是否已恢复默认姿势 */
   private defaultPoseRestored: boolean = false;
   /** 稳定全身参考 Bounds 是否已记录 (模型 READY + 默认姿势恢复后) */
@@ -520,7 +631,11 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
       lastPublishErrorMessage: this.lastPublishErrorMessage,
       lastTurnId: this.lastTurnId,
       defaultPoseRestored: this.defaultPoseRestored,
-      chatFullBodyReferenceBoundsRecorded: this.chatFullBodyReferenceBoundsRecorded
+      chatFullBodyReferenceBoundsRecorded: this.chatFullBodyReferenceBoundsRecorded,
+      cameraZoomMultiplier: this.cameraZoomMultiplier,
+      animationLoadActionId: this.animationLoadActionId,
+      animationLoadErrorCode: this.animationLoadErrorCode,
+      lastLifecycleState: this.lastLifecycleState
     };
   }
 
@@ -776,6 +891,10 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
    * 缺少此拦截会导致 ModelResourceProvider 注册的 URL 无法被 Web 端访问,
    * 资源探测 (probePreparedModelResource) 失败, 模型不可见。
    *
+   * Phase 4B-2R2 修复: 必须同时拦截 AnimationResourceProvider 注册的 URL,
+   * 否则 Web 端请求动画资源时被放行, 触发 "Web page load error",
+   * 导致动画状态变 FAILED, 演出执行失败 (DIALOGUE_LIFECYCLE_EXECUTE_FAILED)。
+   *
    * @returns WebResourceResponse (拦截并返回本地文件) 或 null (放行,交由 Web 默认处理)
    */
   interceptResourceRequest(
@@ -783,18 +902,29 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
     method: string,
     requestHeaders: Array<Header>
   ): WebResourceResponse | null {
-    if (this.disposed || this.resourceProvider === null) {
+    if (this.disposed) {
       return null;
     }
-    if (!this.resourceProvider.matchesRequest(url)) {
+    // Phase 1D-2A: 模型资源拦截
+    if (this.resourceProvider !== null && this.resourceProvider.matchesRequest(url)) {
+      const result = this.resourceProvider.handleRequest(url, method, requestHeaders);
+      if (result.response !== null) {
+        return result.response;
+      }
+      console.warn(LOG_TAG,
+        `model resource handleRequest returned null: ${result.errorCode} ${result.errorMessage}`);
       return null;
     }
-    const result = this.resourceProvider.handleRequest(url, method, requestHeaders);
-    if (result.response !== null) {
-      return result.response;
+    // Phase 4B-2R2: 动画资源拦截 (独立于模型 Provider)
+    if (this.animationResourceProvider !== null && this.animationResourceProvider.matchesRequest(url)) {
+      const animResult = this.animationResourceProvider.handleRequest(url, method, requestHeaders);
+      if (animResult.response !== null) {
+        return animResult.response;
+      }
+      console.warn(LOG_TAG,
+        `animation resource handleRequest returned null: ${animResult.errorCode} ${animResult.errorMessage}`);
+      return null;
     }
-    console.warn(LOG_TAG,
-      `resource handleRequest returned null: ${result.errorCode} ${result.errorMessage}`);
     return null;
   }
 
@@ -866,6 +996,165 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
         (e instanceof Error ? e.message : String(e)));
       return false;
     }
+  }
+
+  /**
+   * Phase 4B-2R2: AI 面板发布演出并等待真实执行结果。
+   *
+   * 不再将 Bridge 接受视为播放成功。流程:
+   *   1. 生成新 Turn ID
+   *   2. 建立 pending result Promise (key = turnId)
+   *   3. 调用 Bridge.publishFinalResult()
+   *   4. Bridge 投递到 onBridgeFinalResult
+   *   5. onBridgeFinalResult 调用 Lifecycle.submitFinalAssistantResult (真实执行)
+   *   6. 执行完成后 resolve pending result
+   *   7. 面板收到真实结果 (accepted + executed + runtime states + error)
+   *
+   * 超时: 35 秒, 超时返回 CHAT_PANEL_PERFORMANCE_TIMEOUT。
+   * 页面销毁必须清理所有 pending result (dispose 中调用 clearPendingPanelPerformanceResolvers)。
+   *
+   * @param performanceHintJson 演出 hint JSON
+   * @returns 真实执行结果 (accepted/execution/runtime states/error)
+   */
+  async publishPerformanceFromPanelAndWait(
+    performanceHintJson: string
+  ): Promise<ArkWebPanelPerformanceResult> {
+    if (this.disposed) {
+      const errResult: ArkWebPanelPerformanceResult = {
+        accepted: false,
+        executed: false,
+        turnId: '',
+        commandId: '',
+        lifecycleState: 'DISPOSED',
+        animationState: this.debugAnimationStateStr,
+        poseState: this.poseRuntimeState,
+        expressionState: this.expressionRuntimeState,
+        errorCode: 'CHAT_STAGE_DISPOSED',
+        errorMessage: 'stage disposed'
+      };
+      return errResult;
+    }
+
+    const turnId: string = this.generatePanelTurnId();
+    this.lastTurnId = turnId;
+
+    // 建立 pending result Promise
+    const resultPromise: Promise<ArkWebPanelPerformanceResult> = new Promise(
+      (resolve: (result: ArkWebPanelPerformanceResult) => void): void => {
+        this.pendingPanelPerformanceResolvers.set(turnId, resolve);
+      }
+    );
+
+    // 超时保护 (35s)
+    const timeoutPromise: Promise<ArkWebPanelPerformanceResult> = new Promise(
+      (resolve: (result: ArkWebPanelPerformanceResult) => void): void => {
+        setTimeout((): void => {
+          const resolver = this.pendingPanelPerformanceResolvers.get(turnId);
+          if (resolver !== undefined) {
+            this.pendingPanelPerformanceResolvers.delete(turnId);
+            console.warn(LOG_TAG,
+              `publishPerformanceFromPanelAndWait timeout: turnId=${turnId}`);
+            resolve({
+              accepted: true,
+              executed: false,
+              turnId: turnId,
+              commandId: '',
+              lifecycleState: this.dialogueLifecycle !== null
+                ? this.dialogueLifecycle.getState() : 'DISPOSED',
+              animationState: this.debugAnimationStateStr,
+              poseState: this.poseRuntimeState,
+              expressionState: this.expressionRuntimeState,
+              errorCode: CHAT_PANEL_PERFORMANCE_TIMEOUT_ERROR,
+              errorMessage: `面板演出执行超时 (${CHAT_PANEL_PERFORMANCE_TIMEOUT_MS}ms)`
+            });
+          }
+        }, CHAT_PANEL_PERFORMANCE_TIMEOUT_MS);
+      }
+    );
+
+    // 调用 Bridge.publishFinalResult (会触发 onBridgeFinalResult → Lifecycle 真实执行)
+    const result: ArkWebAvatarChatFinalResult = {
+      turnId: turnId,
+      performanceHintJson: performanceHintJson,
+      finalizedAt: Date.now(),
+      source: ArkWebAvatarChatFinalResultSource.CHAT_AI_PANEL
+    };
+
+    let bridgeAccepted: boolean = false;
+    try {
+      bridgeAccepted = await ArkWebAvatarChatBridge.getInstance().publishFinalResult(result);
+    } catch (e) {
+      bridgeAccepted = false;
+      this.lastPublishResult = 'THREW';
+      this.lastPublishErrorCode = 'PUBLISH_THREW';
+      this.lastPublishErrorMessage = e instanceof Error ? e.message : String(e);
+    }
+
+    if (!bridgeAccepted) {
+      // Bridge 拒绝, 立即返回 (清理 pending resolver)
+      this.pendingPanelPerformanceResolvers.delete(turnId);
+      this.lastPublishResult = 'REJECTED';
+      const bridgeState: string = ArkWebAvatarChatBridge.getInstance().getConnectionState();
+      const pendingCount: number = ArkWebAvatarChatBridge.getInstance().getPendingCount();
+      this.lastPublishErrorCode = `BRIDGE_REJECTED(state=${bridgeState},pending=${pendingCount})`;
+      this.lastPublishErrorMessage = `publishFinalResult returned false, turnId=${turnId}`;
+      const rejectedResult: ArkWebPanelPerformanceResult = {
+        accepted: false,
+        executed: false,
+        turnId: turnId,
+        commandId: '',
+        lifecycleState: this.dialogueLifecycle !== null
+          ? this.dialogueLifecycle.getState() : 'IDLE',
+        animationState: this.debugAnimationStateStr,
+        poseState: this.poseRuntimeState,
+        expressionState: this.expressionRuntimeState,
+        errorCode: this.lastPublishErrorCode,
+        errorMessage: this.lastPublishErrorMessage
+      };
+      return rejectedResult;
+    }
+
+    this.lastPublishResult = 'OK';
+    this.lastPublishErrorCode = '';
+    this.lastPublishErrorMessage = '';
+
+    // 等待真实执行结果或超时
+    const finalResult: ArkWebPanelPerformanceResult =
+      await Promise.race([resultPromise, timeoutPromise]);
+    return finalResult;
+  }
+
+  /**
+   * Phase 4B-2R2: 清理所有 pending panel performance resolvers (页面销毁时调用)。
+   *
+   * 不等待真实执行结果, 直接返回 DISPOSED 错误。
+   */
+  private clearPendingPanelPerformanceResolvers(): void {
+    if (this.pendingPanelPerformanceResolvers.size === 0) {
+      return;
+    }
+    const disposedResult: ArkWebPanelPerformanceResult = {
+      accepted: true,
+      executed: false,
+      turnId: '',
+      commandId: '',
+      lifecycleState: 'DISPOSED',
+      animationState: this.debugAnimationStateStr,
+      poseState: this.poseRuntimeState,
+      expressionState: this.expressionRuntimeState,
+      errorCode: 'CHAT_STAGE_DISPOSED',
+      errorMessage: 'stage disposed during panel performance wait'
+    };
+    this.pendingPanelPerformanceResolvers.forEach(
+      (resolver: (result: ArkWebPanelPerformanceResult) => void): void => {
+        try {
+          resolver(disposedResult);
+        } catch (_e) {
+          // 忽略 resolver 异常
+        }
+      }
+    );
+    this.pendingPanelPerformanceResolvers.clear();
   }
 
   /**
@@ -950,7 +1239,15 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
     this.modelRestoreGeneration++;
     this.restoreStarted = false;
     this.modelRestoreInProgress = false;
+    // Phase 4B-2R2: 清理动画加载状态 (generation++ 让旧加载结果过期)
+    this.animationLoadGeneration++;
+    this.animationLoadPromise = null;
+    this.animationLoadActionId = '';
+    this.loadedActionId = '';
     console.info(LOG_TAG, 'dispose');
+
+    // Phase 4B-2R2: 清理 pending panel performance resolvers (不阻塞销毁)
+    this.clearPendingPanelPerformanceResolvers();
 
     // 1. 注销 Avatar endpoint
     this.unregisterAvatarEndpoint();
@@ -1683,14 +1980,14 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
       return;
     }
     try {
-      // Phase 4B-2R: fillRatio=0.78, 模型占垂直约 78%, 头顶和脚部保留少量空间
-      const resultJson: string = await this.arkWebController.fitAvatarFullBody(CHAT_FULL_BODY_FILL_RATIO);
+      // 使用 currentFillRatio (用户可通过滑动条调节, 默认 0.78)
+      const resultJson: string = await this.arkWebController.fitAvatarFullBody(this.currentFillRatio);
       if (this.disposed) {
         return;
       }
       const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
       if (obj['success'] === true) {
-        console.info(LOG_TAG, 'fitAvatarFullBody ok (fillRatio=' + CHAT_FULL_BODY_FILL_RATIO + ')');
+        console.info(LOG_TAG, 'fitAvatarFullBody ok (fillRatio=' + this.currentFillRatio + ')');
         // 清除 fit 失败错误
         if (this.lastErrorCode === ArkWebChatAvatarStageErrorCode.CHAT_STAGE_FULL_BODY_FIT_FAILED) {
           this.lastErrorCode = '';
@@ -1720,6 +2017,8 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
    *
    * 调用 arkWebController.fitAvatarFullBody (Phase 4B-1 已有)。
    * 复用现有 API, 不创建第二套相机系统。
+   *
+   * Phase 4B-2R2: 切换完成后应用当前 cameraZoomMultiplier, 保持用户设置的倍率。
    */
   private async shotTransitionToFullBody(): Promise<boolean> {
     if (this.disposed) {
@@ -1729,12 +2028,20 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
       return false;
     }
     try {
-      const resultJson: string = await this.arkWebController.fitAvatarFullBody();
+      // 使用 currentFillRatio 保持与用户滑动条设置一致, 避免切换镜头时模型变小
+      console.info(LOG_TAG, 'shotTransitionToFullBody: fillRatio=' + this.currentFillRatio);
+      const resultJson: string = await this.arkWebController.fitAvatarFullBody(this.currentFillRatio);
       if (this.disposed) {
         return false;
       }
       const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
-      return obj['success'] === true;
+      const ok: boolean = obj['success'] === true;
+      console.info(LOG_TAG, 'shotTransitionToFullBody: result ok=' + ok + ' fillRatio=' + this.currentFillRatio);
+      // Phase 4B-2R2: 应用当前缩放倍率 (保持用户设置, 不重置)
+      if (ok && Math.abs(this.cameraZoomMultiplier - 1.0) > 0.001) {
+        await this.applyCameraZoomInternal('SHOT_FULL_BODY');
+      }
+      return ok;
     } catch (e) {
       console.warn(LOG_TAG, 'shotTransitionToFullBody threw: ' +
         (e instanceof Error ? e.message : String(e)));
@@ -1747,6 +2054,8 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
    *
    * 调用 arkWebController.smoothResetCamera (与重置按钮相同的方法)。
    * 复用现有平滑重置 API, 不硬编码第二套脸部相机坐标。
+   *
+   * Phase 4B-2R2: 切换完成后应用当前 cameraZoomMultiplier, 保持用户设置的倍率。
    */
   private async shotTransitionToResetView(): Promise<boolean> {
     if (this.disposed) {
@@ -1762,11 +2071,48 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
         return false;
       }
       const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
-      return obj['success'] === true;
+      const ok: boolean = obj['success'] === true;
+      // Phase 4B-2R2: 应用当前缩放倍率 (保持用户设置, 不重置)
+      if (ok && Math.abs(this.cameraZoomMultiplier - 1.0) > 0.001) {
+        await this.applyCameraZoomInternal('SHOT_RESET_VIEW');
+      }
+      return ok;
     } catch (e) {
       console.warn(LOG_TAG, 'shotTransitionToResetView threw: ' +
         (e instanceof Error ? e.message : String(e)));
       return false;
+    }
+  }
+
+  /**
+   * Phase 4B-2R2: 内部应用相机缩放倍率。
+   *
+   * 不修改 cameraZoomMultiplier 字段, 只将其应用到当前相机位置。
+   * 供 shotTransitionToFullBody / shotTransitionToResetView / setCameraZoomMultiplier 调用。
+   *
+   * @param reason 调用原因 (诊断用)
+   */
+  private async applyCameraZoomInternal(reason: string): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
+    if (this.arkWebController.getState() !== ArkWebViewerState.READY) {
+      return;
+    }
+    try {
+      const resultJson: string =
+        await this.arkWebController.applyCameraZoomMultiplier(this.cameraZoomMultiplier);
+      if (this.disposed) {
+        return;
+      }
+      const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
+      const ok: boolean = obj['success'] === true;
+      if (!ok) {
+        console.warn(LOG_TAG, `applyCameraZoomInternal(${reason}) failed: ${resultJson}`);
+      }
+    } catch (e) {
+      console.warn(LOG_TAG, `applyCameraZoomInternal(${reason}) threw: ` +
+        (e instanceof Error ? e.message : String(e)));
     }
   }
 
@@ -1796,13 +2142,22 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
   // ===== Phase 4B-2R: 共享 Runtime 依赖方法 (与 VrmViewerPage 一致) =====
 
   /**
-   * Phase 4B-2R: 按 actionId 加载动画 (与 VrmViewerPage.loadAnimationByActionId 一致)。
+   * Phase 4B-2R2: 按 actionId 加载动画 (与 VrmViewerPage.loadAnimationByActionId 一致)。
    *
    * 流程:
-   *   1. assetLibrary.findAnimation(actionId)
-   *   2. persistentAnimationStore.resolveAbsolutePath
-   *   3. animationResourceProvider.registerPersistentAsset
-   *   4. arkWebController.loadAnimationResource
+   *   1. 已加载同一动作 (loadedActionId === actionId 且 Web state === READY) → 直接返回 true
+   *   2. 同 action LOADING → 复用 animationLoadPromise (不重复发起)
+   *   3. 不同 action LOADING → 递增 generation, 启动新加载, 旧结果按 generation 丢弃
+   *   4. assetLibrary.findAnimation(actionId)
+   *   5. persistentAnimationStore.resolveAbsolutePath
+   *   6. animationResourceProvider.registerPersistentAsset
+   *   7. arkWebController.loadAnimationResource
+   *
+   * Phase 4B-2R2 修复:
+   * - 不再仅凭本地 LOADING 拒绝, 先调用 getAnimationDebugState 刷新 Web 状态
+   * - 同 action 并发点击复用 Promise
+   * - 失败/超时清理 Promise, 状态不得永久停留在 LOADING
+   * - 不同 action 递增 generation, 旧结果按 generation 丢弃
    *
    * 不复制 VRMA 加载轮询逻辑, 轮询由 waitForAnimationReady 处理。
    */
@@ -1822,33 +2177,120 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
       console.warn(LOG_TAG, 'loadAnimationByActionId: viewer not READY');
       return false;
     }
-    if (this.debugAnimationStateStr === 'LOADING') {
-      console.warn(LOG_TAG, 'loadAnimationByActionId: animation LOADING, skip');
-      return false;
+
+    // Phase 4B-2R2: 已加载同一动作且 Web state === READY → 直接返回 true (无需再次加载)
+    if (this.loadedActionId === actionId && this.debugAnimationStateStr === 'READY') {
+      console.info(LOG_TAG, `loadAnimationByActionId: already loaded and READY: ${actionId}`);
+      return true;
     }
 
+    // Phase 4B-2R2: 本地状态为 LOADING 时先刷新 Web 端状态 (不直接拒绝)
+    if (this.debugAnimationStateStr === 'LOADING') {
+      try {
+        const refreshJson: string = await this.arkWebController.getAnimationDebugState();
+        if (this.disposed) {
+          return false;
+        }
+        this.parseAnimationDebugState(refreshJson);
+      } catch (e) {
+        console.warn(LOG_TAG, 'loadAnimationByActionId: refresh state failed: ' +
+          (e instanceof Error ? e.message : String(e)));
+      }
+      // 读取刷新后的最新状态到本地变量, 避免 ArkTS 在 if 块内将字段类型收窄为 'LOADING' 字面量
+      const refreshedState: string = this.debugAnimationStateStr;
+      // 刷新后若已 READY 且是同一 action → 直接返回 true
+      if (refreshedState === 'READY' && this.loadedActionId === actionId) {
+        console.info(LOG_TAG, `loadAnimationByActionId: refreshed to READY: ${actionId}`);
+        return true;
+      }
+      // 刷新后若已 FAILED → 清理 Promise, 允许重新加载
+      if (refreshedState === 'FAILED' || refreshedState === 'NOT_REQUESTED'
+          || refreshedState === 'IDLE' || refreshedState === 'STOPPED') {
+        console.info(LOG_TAG,
+          `loadAnimationByActionId: recovered from stale LOADING, now ${refreshedState}`);
+        this.animationLoadPromise = null;
+        this.animationLoadActionId = '';
+      }
+    }
+
+    // Phase 4B-2R2: 同 action 正在加载 → 复用同一个 Promise
+    if (this.animationLoadPromise !== null && this.animationLoadActionId === actionId) {
+      console.info(LOG_TAG, `loadAnimationByActionId: reuse pending promise for ${actionId}`);
+      return await this.animationLoadPromise;
+    }
+
+    // Phase 4B-2R2: 不同 action 正在加载 → 递增 generation, 启动新加载
+    this.animationLoadGeneration++;
+    const myGeneration: number = this.animationLoadGeneration;
+    this.animationLoadActionId = actionId;
+    this.debugAnimationStateStr = 'LOADING';
+
+    const loadPromise: Promise<boolean> = this.executeAnimationLoad(actionId, myGeneration);
+    this.animationLoadPromise = loadPromise;
+
+    try {
+      const ok: boolean = await loadPromise;
+      // generation 检查: 旧加载结果不得覆盖新状态
+      if (myGeneration !== this.animationLoadGeneration) {
+        console.info(LOG_TAG,
+          `loadAnimationByActionId: stale generation ${myGeneration}, current ${this.animationLoadGeneration}, discard`);
+        return false;
+      }
+      if (ok) {
+        this.loadedActionId = actionId;
+      } else {
+        // 失败后状态应为 FAILED, 不得永久卡在 LOADING
+        this.debugAnimationStateStr = 'FAILED';
+      }
+      return ok;
+    } catch (e) {
+      if (myGeneration === this.animationLoadGeneration) {
+        this.debugAnimationStateStr = 'FAILED';
+      }
+      console.warn(LOG_TAG, 'loadAnimationByActionId threw: ' +
+        (e instanceof Error ? e.message : String(e)));
+      return false;
+    } finally {
+      // Phase 4B-2R2: 清理 Promise (READY/FAILED/超时都允许再次点击)
+      if (myGeneration === this.animationLoadGeneration) {
+        this.animationLoadPromise = null;
+        this.animationLoadActionId = '';
+      }
+    }
+  }
+
+  /**
+   * Phase 4B-2R2: 执行动画加载 (内部方法, 由 loadAnimationByActionId 调用)。
+   *
+   * 不修改 animationLoadPromise 字段, 只执行实际加载逻辑。
+   * 调用方负责 generation 检查和 Promise 清理。
+   */
+  private async executeAnimationLoad(actionId: string, generation: number): Promise<boolean> {
     // 1. 查找资产
     const asset: ArkWebAvatarAnimationAsset | null =
-      await this.assetLibrary.findAnimation(actionId);
+      await this.assetLibrary!.findAnimation(actionId);
     if (asset === null) {
-      console.warn(LOG_TAG, `loadAnimationByActionId: animation not found: ${actionId}`);
+      console.warn(LOG_TAG, `executeAnimationLoad: animation not found: ${actionId}`);
+      this.animationLoadErrorCode = 'ANIMATION_ACTION_NOT_FOUND';
       return false;
     }
 
     // 2. 解析绝对路径
-    const absolutePath: string = this.persistentAnimationStore.resolveAbsolutePath(asset.relativePath);
+    const absolutePath: string = this.persistentAnimationStore!.resolveAbsolutePath(asset.relativePath);
     if (absolutePath.length === 0) {
-      console.warn(LOG_TAG, `loadAnimationByActionId: unsafe path: ${asset.relativePath}`);
+      console.warn(LOG_TAG, `executeAnimationLoad: unsafe path: ${asset.relativePath}`);
+      this.animationLoadErrorCode = 'ANIMATION_PATH_RESOLVE_FAILED';
       return false;
     }
 
     // 3. 注册到 Provider
     let publicResource: WebAnimationResource;
     try {
-      publicResource = this.animationResourceProvider.registerPersistentAsset(asset, absolutePath);
+      publicResource = this.animationResourceProvider!.registerPersistentAsset(asset, absolutePath);
     } catch (e) {
-      console.warn(LOG_TAG, 'loadAnimationByActionId: provider register failed: ' +
+      console.warn(LOG_TAG, 'executeAnimationLoad: provider register failed: ' +
         (e instanceof Error ? e.message : String(e)));
+      this.animationLoadErrorCode = 'ANIMATION_PROVIDER_REGISTER_FAILED';
       return false;
     }
 
@@ -1864,6 +2306,12 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
 
     try {
       const resultJson: string = await this.arkWebController.loadAnimationResource(resourceJson);
+      // generation 检查
+      if (generation !== this.animationLoadGeneration) {
+        console.info(LOG_TAG, 'executeAnimationLoad: stale generation, discard');
+        this.animationLoadErrorCode = 'ANIMATION_LOAD_STALE';
+        return false;
+      }
       if (this.disposed) {
         return false;
       }
@@ -1872,24 +2320,33 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
         const errObj = parsed['error'] as Record<string, Object>;
         const errorCode: string = errObj ? (errObj['code'] as string) || 'UNKNOWN' : 'UNKNOWN';
         const msg: string = errObj ? (errObj['message'] as string) || '' : '';
-        console.warn(LOG_TAG, `loadAnimationByActionId: load failed: ${errorCode} ${msg}`);
+        console.warn(LOG_TAG, `executeAnimationLoad: load failed: ${errorCode} ${msg}`);
+        this.debugAnimationStateStr = 'FAILED';
+        this.animationLoadErrorCode = 'ANIMATION_LOAD_REQUEST_FAILED';
         return false;
       }
       this.debugAnimationStateStr = 'LOADING';
-      console.info(LOG_TAG, `loadAnimationByActionId ok: ${actionId}`);
+      this.animationLoadErrorCode = '';
+      console.info(LOG_TAG, `executeAnimationLoad ok: ${actionId} gen=${generation}`);
       return true;
     } catch (e) {
-      console.warn(LOG_TAG, 'loadAnimationByActionId threw: ' +
+      console.warn(LOG_TAG, 'executeAnimationLoad threw: ' +
         (e instanceof Error ? e.message : String(e)));
+      this.debugAnimationStateStr = 'FAILED';
+      this.animationLoadErrorCode = 'ANIMATION_LOAD_REQUEST_FAILED';
       return false;
     }
   }
 
   /**
-   * Phase 4B-2R: 等待动画进入 READY 状态 (与 VrmViewerPage.waitForAnimationReady 一致)。
+   * Phase 4B-2R2: 等待动画进入 READY 状态 (与 VrmViewerPage.waitForAnimationReady 一致)。
    *
    * 复用 getAnimationDebugState 轮询, 不引入第二个轮询机制。
    * 状态: LOADING → READY / FAILED, 上限 timeoutMs 后放弃。
+   *
+   * Phase 4B-2R2 修复:
+   * - 超时后状态设为 FAILED (不得永久停留在 LOADING)
+   * - READY 时记录 loadedActionId (允许后续直接播放同一动作)
    */
   private async waitForAnimationReady(timeoutMs: number): Promise<boolean> {
     const startTick: number = Date.now();
@@ -1909,14 +2366,23 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
           (e instanceof Error ? e.message : String(e)));
       }
       if (this.debugAnimationStateStr === 'READY') {
+        // Phase 4B-2R2: READY 时记录 loadedActionId
+        if (this.animationLoadActionId.length > 0) {
+          this.loadedActionId = this.animationLoadActionId;
+        }
         return true;
       }
       if (this.debugAnimationStateStr === 'FAILED') {
+        this.animationLoadErrorCode = 'ANIMATION_RUNTIME_FAILED';
         return false;
       }
       await this.delay(ANIMATION_READY_POLL_INTERVAL_MS);
     }
-    return this.debugAnimationStateStr === 'READY';
+    // Phase 4B-2R2: 超时后状态设为 FAILED (不得永久停留在 LOADING)
+    console.warn(LOG_TAG, `waitForAnimationReady timeout (${timeoutMs}ms), set FAILED`);
+    this.debugAnimationStateStr = 'FAILED';
+    this.animationLoadErrorCode = 'ANIMATION_READY_TIMEOUT';
+    return false;
   }
 
   /**
@@ -2231,6 +2697,122 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
   }
 
   /**
+   * 调节模型大小 (通过 fillRatio 重新构图)。
+   *
+   * 更新 currentFillRatio 并重新执行 fitAvatarFullBody。
+   * fillRatio 越大模型越大 (0.3=较小, 0.98=几乎填满垂直空间)。
+   * 仅在 MODEL_READY 状态下生效。
+   *
+   * @param fillRatio 模型垂直占比 (0.3 ~ 0.98)
+   */
+  async adjustModelFillRatio(fillRatio: number): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
+    // 钳制到合法范围
+    let ratio: number = fillRatio;
+    if (ratio < 0.3) {
+      ratio = 0.3;
+    }
+    if (ratio > 0.98) {
+      ratio = 0.98;
+    }
+    this.currentFillRatio = ratio;
+    // 仅在 READY 状态下重新构图
+    if (this.arkWebController.getState() !== ArkWebViewerState.READY) {
+      return;
+    }
+    if (this.stageWidth <= 0 || this.stageHeight <= 0) {
+      return;
+    }
+    try {
+      const resultJson: string = await this.arkWebController.fitAvatarFullBody(this.currentFillRatio);
+      if (this.disposed) {
+        return;
+      }
+      const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
+      if (obj['success'] === true) {
+        console.info(LOG_TAG, 'adjustModelFillRatio ok (fillRatio=' + this.currentFillRatio + ')');
+        // Phase 4B-2R2: 重新构图后应用当前缩放倍率 (保持用户设置)
+        if (Math.abs(this.cameraZoomMultiplier - 1.0) > 0.001) {
+          await this.applyCameraZoomInternal('ADJUST_FILL_RATIO');
+        }
+      } else {
+        console.warn(LOG_TAG, 'adjustModelFillRatio failed: ' + resultJson);
+      }
+    } catch (e) {
+      console.warn(LOG_TAG, 'adjustModelFillRatio threw: ' +
+        (e instanceof Error ? e.message : String(e)));
+    }
+  }
+
+  /**
+   * Phase 4B-2R2: 设置相机缩放倍率。
+   *
+   * 更新 cameraZoomMultiplier 并立即应用到当前相机位置。
+   * 不修改模型 transform, 只调整相机到目标点的距离。
+   *
+   * 范围 0.5~3.0, 1.0 为默认。非法值会被自动 clamp 到合法范围。
+   *
+   * @param multiplier 缩放倍率
+   */
+  async setCameraZoomMultiplier(multiplier: number): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
+    const safeMultiplier: number = Math.max(
+      CHAT_CAMERA_ZOOM_MULTIPLIER_MIN,
+      Math.min(CHAT_CAMERA_ZOOM_MULTIPLIER_MAX, multiplier)
+    );
+    this.cameraZoomMultiplier = safeMultiplier;
+    console.info(LOG_TAG, `setCameraZoomMultiplier: ${safeMultiplier}`);
+    await this.applyCameraZoomInternal('SET_ZOOM');
+  }
+
+  /**
+   * Phase 4B-2R2: 获取当前相机缩放倍率。
+   */
+  getCameraZoomMultiplier(): number {
+    return this.cameraZoomMultiplier;
+  }
+
+  /**
+   * Phase 4B-2R2: 获取相机缩放倍率范围与步进。
+   *
+   * @returns [min, max, default, step]
+   */
+  getCameraZoomMultiplierRange(): [number, number, number, number] {
+    return [
+      CHAT_CAMERA_ZOOM_MULTIPLIER_MIN,
+      CHAT_CAMERA_ZOOM_MULTIPLIER_MAX,
+      CHAT_CAMERA_ZOOM_MULTIPLIER_DEFAULT,
+      CHAT_CAMERA_ZOOM_MULTIPLIER_STEP
+    ];
+  }
+
+  /**
+   * Phase 4B-2R2: 设置镜头控制模式 (AUTO / MANUAL_FULL_BODY / MANUAL_FACE_RESET_VIEW)。
+   *
+   * @param mode 控制模式
+   */
+  setShotControlMode(mode: ArkWebAvatarShotControlMode): void {
+    if (this.disposed || this.shotDirector === null) {
+      return;
+    }
+    this.shotDirector.setControlMode(mode);
+  }
+
+  /**
+   * Phase 4B-2R2: 获取当前镜头控制模式。
+   */
+  getShotControlMode(): ArkWebAvatarShotControlMode {
+    if (this.shotDirector === null) {
+      return 'AUTO';
+    }
+    return this.shotDirector.getControlMode();
+  }
+
+  /**
    * Phase 4B-2: Stage 从隐藏切换为显示时由组件层调用。
    *
    * 通知 ShotDirector 恢复 FULL_BODY (不恢复隐藏前的脸部镜头)。
@@ -2293,19 +2875,113 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
   private async onBridgeFinalResult(result: ArkWebAvatarChatFinalResult): Promise<void> {
     if (this.disposed || this.dialogueLifecycle === null) {
       console.warn(LOG_TAG, `onBridgeFinalResult skipped: disposed=${this.disposed}`);
+      // Phase 4B-2R2: 即使 disposed 也要 resolve pending result
+      this.resolvePendingPanelPerformance(result.turnId, false,
+        'CHAT_STAGE_DISPOSED', 'stage disposed or lifecycle null');
       return;
     }
     // Phase 4B-2R: 解析 hint 更新跟踪字段 (显示用, 执行状态来自 Runtime Debug State)
     this.updateTrackingFromHint(result.performanceHintJson);
+    let executed: boolean = false;
+    let errorCode: string = '';
+    let errorMessage: string = '';
     try {
-      await this.dialogueLifecycle.submitFinalAssistantResult(
+      executed = await this.dialogueLifecycle.submitFinalAssistantResult(
         result.turnId,
         result.performanceHintJson,
         this.activeModelId
       );
+      if (!executed) {
+        errorCode = this.dialogueLifecycle.getLastErrorCode();
+        errorMessage = this.dialogueLifecycle.getLastErrorMessage();
+      }
     } catch (e) {
-      console.warn(LOG_TAG, 'onBridgeFinalResult threw: ' +
+      executed = false;
+      errorCode = 'ON_BRIDGE_FINAL_THREW';
+      errorMessage = e instanceof Error ? e.message : String(e);
+      console.warn(LOG_TAG, 'onBridgeFinalResult threw: ' + errorMessage);
+    }
+    // Phase 4B-2R2: 记录最后 Lifecycle 状态供诊断显示
+    if (this.dialogueLifecycle !== null) {
+      this.lastLifecycleState = this.dialogueLifecycle.getState().toString();
+    }
+    // Phase 4B-2R2: 刷新 Runtime Debug State 后 resolve pending result
+    await this.refreshRuntimeDebugStates();
+    this.resolvePendingPanelPerformance(result.turnId, executed, errorCode, errorMessage);
+  }
+
+  /**
+   * Phase 4B-2R2: 刷新动画/姿势/表情 Runtime Debug State。
+   *
+   * 在 onBridgeFinalResult 执行完成后调用, 收集真实 Runtime 状态供面板显示。
+   */
+  private async refreshRuntimeDebugStates(): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
+    if (this.arkWebController.getState() !== ArkWebViewerState.READY) {
+      return;
+    }
+    try {
+      const animJson: string = await this.arkWebController.getAnimationDebugState();
+      if (!this.disposed) {
+        this.parseAnimationDebugState(animJson);
+      }
+    } catch (e) {
+      console.warn(LOG_TAG, 'refreshRuntimeDebugStates anim failed: ' +
         (e instanceof Error ? e.message : String(e)));
+    }
+    try {
+      await this.refreshPoseDebugState();
+    } catch (e) {
+      console.warn(LOG_TAG, 'refreshRuntimeDebugStates pose failed: ' +
+        (e instanceof Error ? e.message : String(e)));
+    }
+    try {
+      await this.refreshExpressionDebugState();
+    } catch (e) {
+      console.warn(LOG_TAG, 'refreshRuntimeDebugStates expr failed: ' +
+        (e instanceof Error ? e.message : String(e)));
+    }
+  }
+
+  /**
+   * Phase 4B-2R2: resolve pending panel performance result。
+   *
+   * 如果 turnId 对应的 resolver 存在, 调用它并清理。
+   * 不存在则 no-op (可能是 publishPerformanceFromPanel 旧路径或超时已触发)。
+   */
+  private resolvePendingPanelPerformance(
+    turnId: string,
+    executed: boolean,
+    errorCode: string,
+    errorMessage: string
+  ): void {
+    const resolver = this.pendingPanelPerformanceResolvers.get(turnId);
+    if (resolver === undefined) {
+      return;
+    }
+    this.pendingPanelPerformanceResolvers.delete(turnId);
+    const lifecycleState: string = this.dialogueLifecycle !== null
+      ? this.dialogueLifecycle.getState() : 'DISPOSED';
+    const commandId: string = this.dialogueLifecycle !== null
+      ? this.dialogueLifecycle.getCurrentCommandId() : '';
+    const panelResult: ArkWebPanelPerformanceResult = {
+      accepted: true,
+      executed: executed,
+      turnId: turnId,
+      commandId: commandId,
+      lifecycleState: lifecycleState,
+      animationState: this.debugAnimationStateStr,
+      poseState: this.poseRuntimeState,
+      expressionState: this.expressionRuntimeState,
+      errorCode: errorCode,
+      errorMessage: errorMessage
+    };
+    try {
+      resolver(panelResult);
+    } catch (_e) {
+      // 忽略 resolver 异常
     }
   }
 

@@ -92,6 +92,39 @@ import {
 import { PromptPreset } from '../models/PromptPreset';
 import { generateUuid } from '../utils/Uuid';
 import { Logger } from '../utils/Logger';
+import {
+  ArkWebAvatarAiToolRegistry,
+} from '../avatarai/ArkWebAvatarAiToolRegistry';
+import {
+  ArkWebAvatarAiToolPermissionController,
+} from '../avatarai/ArkWebAvatarAiToolPermissionController';
+import {
+  ArkWebAvatarAiToolExecutor,
+  ArkWebAvatarAiToolExecutorRuntime,
+  ArkWebAvatarToolExecutorBusinessState,
+} from '../avatarai/ArkWebAvatarAiToolExecutor';
+import {
+  ArkWebChatToolDefinition,
+  ArkWebChatToolCall,
+  ArkWebChatToolExecutionResult,
+  ArkWebAvatarAiToolContext,
+  ArkWebAvatarAiCapabilitySnapshot,
+  ArkWebAvatarAiToolName,
+  ArkWebAvatarAiToolErrorCode,
+  AVATAR_TOOL_MAX_ROUNDS,
+  AVATAR_TOOL_MAX_CALLS_PER_TURN,
+} from '../avatarai/ArkWebAvatarAiToolTypes';
+import {
+  ArkWebAvatarDialogueStrategyBuilder,
+} from '../avatarai/ArkWebAvatarDialogueStrategyBuilder';
+import {
+  ArkWebAvatarDialogueStrategyInput,
+  ArkWebAvatarDialogueStrategyResult,
+  ArkWebAvatarDialogueStrategyStatus,
+  AVATAR_DIALOGUE_STRATEGY_VERSION,
+  AVATAR_STRATEGY_MAX_PERFORM_PER_TURN,
+  ArkWebAvatarDialogueStrategyModeConst,
+} from '../avatarai/ArkWebAvatarDialogueStrategyTypes';
 
 const LOG_TAG: string = 'ChatService';
 
@@ -151,6 +184,26 @@ export interface ChatServiceCallbacks {
     assistantMessageId: string,
     performanceHintJson: string
   ) => void;
+}
+
+/**
+ * Phase 4A-3: Avatar Tool Calling 状态 (供 UI 显示)。
+ */
+export interface AvatarToolCallingStatus {
+  /** 当前 Provider 是否支持原生 Tool Calling */
+  providerSupported: boolean;
+  /** 当前权限模式 (DENY / READ_ONLY / CONTROL_THIS_CHAT) */
+  permissionMode: string;
+  /** 注入的工具数量 */
+  toolCount: number;
+  /** 当前模型能力是否就绪 */
+  capabilityReady: boolean;
+  /** 最后工具名称 */
+  lastToolName: string;
+  /** 最后工具结果 (简短) */
+  lastToolResult: string;
+  /** 最后错误 */
+  lastToolError: string;
 }
 
 /** 默认流式请求选项 */
@@ -294,6 +347,65 @@ export class ChatService {
   /** AppPreferences(用于读取全局用户称呼,v9 引入) */
   private readonly appPreferences: AppPreferences | null;
 
+  // ===== Phase 4A-3: Avatar Tool Calling 集成 =====
+  /** Avatar 工具注册表 (可选, 未注入时不启用 Tool Calling) */
+  private avatarToolRegistry: ArkWebAvatarAiToolRegistry | null = null;
+  /** Avatar 工具权限控制器 (可选) */
+  private avatarPermissionController: ArkWebAvatarAiToolPermissionController | null = null;
+  /** Avatar 工具执行器 (可选) */
+  private avatarToolExecutor: ArkWebAvatarAiToolExecutor | null = null;
+  /** Avatar 工具执行运行时回调 (可选, 由 ChatPage 注入) */
+  private avatarExecutorRuntime: ArkWebAvatarAiToolExecutorRuntime | null = null;
+  /** 能力快照提供器 (可选, 由 ChatPage 注入, 返回当前模型能力) */
+  private avatarSnapshotProvider: (() => ArkWebAvatarAiCapabilitySnapshot | null) | null = null;
+  /** 当前 Provider 是否支持原生 Tool Calling (每次请求开始时刷新) */
+  private currentProviderSupportsToolCalling: boolean = false;
+
+  // ===== Phase 4C-1: Avatar 对话演出策略集成 =====
+  /**
+   * Phase 4C-1: Avatar 对话演出策略 Builder (可选, 由 ChatPage 注入)。
+   *
+   * - 当 Avatar Tool Calling 可用时, 在 buildRequestMessages 中构建策略系统指令
+   * - 策略作为独立 system message 注入, 不修改角色卡 / 世界书 / 预设
+   * - 策略只参与当前请求, 不持久化
+   */
+  private avatarDialogueStrategyBuilder: ArkWebAvatarDialogueStrategyBuilder | null = null;
+  /**
+   * Phase 4C-1: 最近一次构建的策略结果 (供 UI 显示状态摘要)。
+   *
+   * 每次请求开始时刷新, 失败时为 null。
+   */
+  private lastAvatarStrategyResult: ArkWebAvatarDialogueStrategyResult | null = null;
+  /**
+   * Phase 4A-3: 当前 Turn 是否已执行原生 Avatar Tool Call。
+   *
+   * - true 时, 助手最终完成回调忽略 performanceHintJson
+   * - 优先级: 原生 Tool Calling > performanceHintJson metadata > 无演出
+   * - 在 sendMessage/regenerate 开始时重置为 false
+   */
+  private nativeAvatarToolExecutedForTurn: boolean = false;
+  /**
+   * Phase 4A-3: 当前 Turn 已执行的工具轮次。
+   *
+   * - 每次工具结果回传后递增
+   * - 超过 AVATAR_TOOL_MAX_ROUNDS (3) 时停止执行工具, 允许 AI 返回文本错误说明
+   */
+  private avatarToolRoundCount: number = 0;
+  /**
+   * Phase 4A-3: 当前 Turn 已执行的工具调用总数 (跨轮次累计)。
+   *
+   * - 超过 AVATAR_TOOL_MAX_CALLS_PER_TURN (4) 时停止执行工具
+   */
+  private avatarToolCallCountForTurn: number = 0;
+  /**
+   * Phase 4A-3: 当前 Turn 缓存的工具调用和结果 (用于工具结果回传)。
+   *
+   * - 每次轮次完成后清空 priorToolCalls/toolResults 之前的缓存
+   * - 在 Tool Calling 循环中传递给下一轮请求
+   */
+  private pendingToolResultsForNextRound: ArkWebChatToolExecutionResult[] = [];
+  private pendingToolCallsForNextRound: ArkWebChatToolCall[] = [];
+
   constructor(
     modelService: ModelService,
     lorebookService: LorebookService | null = null,
@@ -325,6 +437,125 @@ export class ChatService {
     this.appPreferences = appPreferences;
     this.recentMessageSelector = recentMessageSelector;
   }
+
+  /**
+   * Phase 4A-3: 注入 Avatar Tool Calling 集成组件。
+   *
+   * 由 ChatPage 在 aboutToAppear 时调用, 注入:
+   * - Registry: 工具定义和参数校验
+   * - PermissionController: 权限模式管理
+   * - Executor: 工具执行
+   * - Runtime: Avatar 业务状态读取和演出发布回调
+   * - SnapshotProvider: 当前模型能力快照
+   *
+   * 任一为 null 时不启用 Avatar Tool Calling, 普通聊天保持原行为。
+   *
+   * @param registry 工具注册表
+   * @param permissionController 权限控制器
+   * @param executor 工具执行器
+   * @param runtime 执行运行时回调
+   * @param snapshotProvider 能力快照提供器
+   * @param strategyBuilder 对话演出策略 Builder (Phase 4C-1, 可选)
+   */
+  setAvatarToolIntegration(
+    registry: ArkWebAvatarAiToolRegistry | null,
+    permissionController: ArkWebAvatarAiToolPermissionController | null,
+    executor: ArkWebAvatarAiToolExecutor | null,
+    runtime: ArkWebAvatarAiToolExecutorRuntime | null,
+    snapshotProvider: (() => ArkWebAvatarAiCapabilitySnapshot | null) | null,
+    strategyBuilder: ArkWebAvatarDialogueStrategyBuilder | null = null
+  ): void {
+    this.avatarToolRegistry = registry;
+    this.avatarPermissionController = permissionController;
+    this.avatarToolExecutor = executor;
+    this.avatarExecutorRuntime = runtime;
+    this.avatarSnapshotProvider = snapshotProvider;
+    this.avatarDialogueStrategyBuilder = strategyBuilder;
+  }
+
+  /**
+   * Phase 4A-3: 查询当前 Avatar Tool Calling 是否可用。
+   *
+   * - 所有依赖已注入
+   * - 当前 Provider 支持原生 Tool Calling
+   * - 权限不是 DENY
+   */
+  isAvatarToolCallingAvailable(): boolean {
+    if (this.avatarToolRegistry === null
+      || this.avatarPermissionController === null
+      || this.avatarToolExecutor === null
+      || this.avatarExecutorRuntime === null
+      || this.avatarSnapshotProvider === null) {
+      return false;
+    }
+    if (!this.currentProviderSupportsToolCalling) {
+      return false;
+    }
+    return this.avatarPermissionController.canInjectTools();
+  }
+
+  /**
+   * Phase 4A-3: 获取当前 Avatar Tool Calling 状态 (供 UI 显示)。
+   */
+  getAvatarToolCallingStatus(): AvatarToolCallingStatus {
+    const supported: boolean = this.currentProviderSupportsToolCalling;
+    const permissionMode: string = this.avatarPermissionController !== null
+      ? this.avatarPermissionController.getPermissionMode()
+      : 'DENY';
+    let toolCount: number = 0;
+    if (this.avatarToolRegistry !== null && this.avatarSnapshotProvider !== null) {
+      const snapshot: ArkWebAvatarAiCapabilitySnapshot | null = this.avatarSnapshotProvider();
+      const tools: ArkWebChatToolDefinition[] = this.avatarToolRegistry.buildToolDefinitions(
+        snapshot, permissionMode);
+      toolCount = tools.length;
+    }
+    const snapshot: ArkWebAvatarAiCapabilitySnapshot | null =
+      this.avatarSnapshotProvider !== null ? this.avatarSnapshotProvider() : null;
+    const capabilityReady: boolean = snapshot !== null;
+    return {
+      providerSupported: supported,
+      permissionMode: permissionMode,
+      toolCount: toolCount,
+      capabilityReady: capabilityReady,
+      lastToolName: this.lastAvatarToolName,
+      lastToolResult: this.lastAvatarToolResult,
+      lastToolError: this.lastAvatarToolError
+    };
+  }
+
+  /**
+   * Phase 4A-3: 设置 Avatar Tool Calling 权限模式 (UI 调用)。
+   *
+   * - 权限降级时, 通过 LifecycleController.cancelCurrent('AI_PERMISSION_REVOKED')
+   *   停止当前 AI 发起的演出 (不影响用户手动发起的演出)
+   * - 权限只在当前聊天页面生命周期内保存
+   *
+   * @param mode 目标权限模式 (DENY / READ_ONLY / CONTROL_THIS_CHAT)
+   */
+  setAvatarPermissionMode(mode: string): void {
+    if (this.avatarPermissionController === null) {
+      return;
+    }
+    const oldMode: string = this.avatarPermissionController.getPermissionMode();
+    this.avatarPermissionController.setPermissionMode(mode, (): void => {
+      // 权限降级回调: 停止当前 AI 发起的演出
+      if (this.avatarExecutorRuntime !== null) {
+        try {
+          this.avatarExecutorRuntime.stopPerformanceForToolCall('AI_PERMISSION_REVOKED');
+        } catch (e) {
+          Logger.warn(LOG_TAG, 'stopPerformanceForToolCall on downgrade threw: ' + String(e));
+        }
+      }
+    });
+    Logger.info(LOG_TAG, `setAvatarPermissionMode: ${oldMode} → ${mode}`);
+  }
+
+  /** 最近一次工具名 (UI 显示) */
+  private lastAvatarToolName: string = '';
+  /** 最近一次工具结果 (UI 显示, 简短) */
+  private lastAvatarToolResult: string = '';
+  /** 最近一次工具错误 (UI 显示) */
+  private lastAvatarToolError: string = '';
 
   /**
    * 初始化角色聊天上下文(无持久化版本)。
@@ -1541,71 +1772,33 @@ export class ChatService {
           Logger.warn(LOG_TAG, 'stale callback ignored type=complete');
           return;
         }
-        // 不调用 flushPersistence() — persistFinalAssistant 已包含完整最终状态,
-        // 避免与 persistFinalAssistant 嵌套事务冲突(T-6.4A-R3)
-        const finalStatus: ChatMessageStatus = this.finalizeAssistant(
-          assistantId, result.content, ChatMessageStatus.Completed, undefined, callbacks
-        );
-        this.currentAssistantId = null;
-        // Phase 4A-2: 助手最终消息完成回调 (最小透传,不修改请求/协议/重试)
-        // - 只在非 Failed 时触发 (Failed 由 onError 路径处理)
-        // - 只透传 assistantMessageId + performanceHintJson,不传聊天正文/历史/Provider 信息
-        // - 回调异常不影响后续 persistFinalAssistant / setState 流程
-        if (finalStatus !== ChatMessageStatus.Failed
-            && callbacks.onAssistantMessageFinalized !== undefined) {
-          try {
-            const hintJson: string = result.performanceHintJson ?? '';
-            callbacks.onAssistantMessageFinalized(assistantId, hintJson);
-          } catch (e) {
-            Logger.warn(LOG_TAG, 'onAssistantMessageFinalized threw: ' +
+        // Phase 4A-3: 检测 Provider 原生 Tool Calling
+        // - 有 toolCalls 时进入工具调用循环 (handleAvatarToolCalls)
+        // - 循环未继续 (continued=false) 或无 toolCalls 时走最终完成 (finalizeAssistantTurn)
+        // - 不解析聊天正文 / Markdown / JSON 代码块
+        if (result.toolCalls !== undefined && result.toolCalls.length > 0) {
+          this.handleAvatarToolCalls(
+            result, assistantId, callbacks, context, snapshot,
+            requestMessages, excludeId, perChatEffort
+          ).then((continued: boolean): void => {
+            if (!continued) {
+              this.finalizeAssistantTurn(
+                assistantId, result, callbacks, context, operationId
+              );
+            }
+          }).catch((e: Object): void => {
+            Logger.warn(LOG_TAG, 'handleAvatarToolCalls threw: ' +
               (e instanceof Error ? e.message : String(e)));
-          }
+            this.finalizeAssistantTurn(
+              assistantId, result, callbacks, context, operationId
+            );
+          });
+          return;
         }
-        // 持久化最终状态,完成后才清理上下文(防止 Completed 被 normalize 误转为 Cancelled)
-        this.persistFinalAssistant(assistantId).then((): void => {
-          // Swipe:更新摘要生成标志
-          if (context.kind === ChatGenerationKind.SwipeCandidate) {
-            this.updateSwipeSummaryGeneratingFlag(false);
-          }
-          // 更新 Chat 活跃时间(完成一次新生成)
-          this.persistChatActivity();
-          // 清理活动上下文(最终状态持久化完成后才清理)
-          this.clearActiveGeneration(operationId);
-          // 更新 lastAssistantMessageId(setState 前更新,确保 onStateChanged 读到正确值)
-          this.updateLastAssistantMessageId();
-          // 空回复时 finalizeAssistant 返回 Failed,state 也应为 Failed
-          if (finalStatus === ChatMessageStatus.Failed) {
-            this.setState(ChatState.Failed, callbacks);
-            callbacks.onError('模型返回了空回复,请重试');
-          } else {
-            this.setState(ChatState.Completed, callbacks);
-          }
-          // 长期记忆增量总结触发(仅 NormalResponse 触发,Swipe 不影响主历史)
-          // 异步触发,失败不影响已完成状态
-          if (context.kind === ChatGenerationKind.NormalResponse) {
-            this.triggerMemorySummaryAsync();
-          } else if (context.kind === ChatGenerationKind.SwipeCandidate) {
-            // v12: Swipe 候选生成完成后,失效该 Assistant position 之后的记忆
-            // 新候选内容已替代旧候选,旧摘要可能不准确
-            // 失败不阻塞,只记录 warn
-            this.invalidateMemoryFromMessagePosition(assistantId);
-          }
-        }).catch((_e: Object): void => {
-          // 持久化失败时仍清理上下文,避免状态卡死
-          this.clearActiveGeneration(operationId);
-          this.updateLastAssistantMessageId();
-          if (context.kind === ChatGenerationKind.SwipeCandidate) {
-            // Swipe 持久化失败:DB Candidate 仍为 Streaming,重载后变为 Cancelled
-            Logger.warn(LOG_TAG, 'SwipeRuntime | stage=final_persist_failed');
-            this.setState(ChatState.Failed, callbacks);
-            callbacks.onError('候选回复持久化失败,请重试');
-          } else if (finalStatus === ChatMessageStatus.Failed) {
-            this.setState(ChatState.Failed, callbacks);
-            callbacks.onError('模型返回了空回复,请重试');
-          } else {
-            this.setState(ChatState.Completed, callbacks);
-          }
-        });
+        // 无工具调用: 走最终完成流程 (统一路径, 内部处理 performanceHintJson 冲突)
+        this.finalizeAssistantTurn(
+          assistantId, result, callbacks, context, operationId
+        );
       },
       onError: (error: NetworkError): void => {
         this.clearStartTimer();
@@ -1715,7 +1908,10 @@ export class ChatService {
         ? snapshot.generationSettings.maxOutputTokens
         : DEFAULT_OPTIONS.maxTokens,
       stream: true,
-      reasoningEffort: perChatEffort
+      reasoningEffort: perChatEffort,
+      tools: this.buildAvatarToolsForRequest(),
+      toolResults: [],
+      priorToolCalls: []
     };
 
     try {
@@ -1730,6 +1926,406 @@ export class ChatService {
       this.clearStartTimer();
       handleStartFailure(String(e));
     }
+  }
+
+  /**
+   * Phase 4A-3: 构建 Avatar 工具定义列表 (注入到请求)。
+   *
+   * - 当前 Provider 不支持 Tool Calling → 返回 undefined
+   * - 权限为 DENY → 返回 undefined
+   * - 能力快照为 null → 返回空数组 (Provider 仍可正常聊天, AI 不调用工具)
+   * - 否则按权限返回工具定义
+   */
+  private buildAvatarToolsForRequest(): ArkWebChatToolDefinition[] | undefined {
+    if (!this.isAvatarToolCallingAvailable()) {
+      return undefined;
+    }
+    if (this.avatarToolRegistry === null || this.avatarSnapshotProvider === null) {
+      return undefined;
+    }
+    const snapshot: ArkWebAvatarAiCapabilitySnapshot | null = this.avatarSnapshotProvider();
+    const permissionMode: string = this.avatarPermissionController!.getPermissionMode();
+    return this.avatarToolRegistry.buildToolDefinitions(snapshot, permissionMode);
+  }
+
+  /**
+   * Phase 4A-3: 刷新当前 Provider 是否支持原生 Tool Calling。
+   *
+   * 在每次 sendMessage/regenerate 开始时调用。
+   * 失败时默认为 false (普通聊天保持原行为)。
+   */
+  private async refreshProviderToolCallingSupport(): Promise<void> {
+    try {
+      this.currentProviderSupportsToolCalling =
+        await this.modelService.supportsToolCallingForCurrentProvider();
+    } catch (e) {
+      this.currentProviderSupportsToolCalling = false;
+    }
+  }
+
+  /**
+   * Phase 4A-3: 重置当前 Turn 的 Avatar Tool Calling 临时状态。
+   *
+   * 在 sendMessage/regenerate 开始时调用。
+   */
+  private resetAvatarToolTurnState(): void {
+    this.nativeAvatarToolExecutedForTurn = false;
+    this.avatarToolRoundCount = 0;
+    this.avatarToolCallCountForTurn = 0;
+    this.pendingToolResultsForNextRound = [];
+    this.pendingToolCallsForNextRound = [];
+    this.lastAvatarToolName = '';
+    this.lastAvatarToolResult = '';
+    this.lastAvatarToolError = '';
+    // Phase 4C-1: 清除上一 Turn 的策略结果 (重新生成时重新构建最新能力快照)
+    this.lastAvatarStrategyResult = null;
+  }
+
+  /**
+   * Phase 4A-3: 处理 Provider 返回的工具调用。
+   *
+   * 在 onComplete 中检测到 result.toolCalls 时调用。
+   *
+   * 流程:
+   *   1. 校验是否可执行 (Provider 支持 + 权限允许 + 未超轮次限制)
+   *   2. 顺序执行每个工具调用 (禁止并行)
+   *   3. 收集工具执行结果
+   *   4. 递增 avatarToolRoundCount
+   *   5. 构建下一轮请求 (带 toolResults + priorToolCalls)
+   *   6. 启动下一轮流式请求
+   *
+   * 超过限制时:
+   *   - 不执行工具
+   *   - 以 result.content 作为最终助手文本 (允许 AI 返回错误说明)
+   *   - 触发 onAssistantMessageFinalized (跳过 performanceHintJson)
+   *
+   * @returns true 表示已发起下一轮请求 (调用方不应再触发最终完成);
+   *          false 表示未发起下一轮 (调用方继续走最终完成流程)
+   */
+  private async handleAvatarToolCalls(
+    result: ChatStreamResult,
+    assistantId: string,
+    callbacks: ChatServiceCallbacks,
+    context: ActiveGenerationContext,
+    snapshot: PromptPresetRequestSnapshot,
+    requestMessages: ChatMessage[],
+    excludeId: string | undefined,
+    perChatEffort: string
+  ): Promise<boolean> {
+    if (this.disposed) {
+      return false;
+    }
+    if (this.avatarToolExecutor === null || this.avatarPermissionController === null
+      || this.avatarSnapshotProvider === null || this.avatarExecutorRuntime === null) {
+      return false;
+    }
+    const toolCalls: ArkWebChatToolCall[] | undefined = result.toolCalls;
+    if (toolCalls === undefined || toolCalls.length === 0) {
+      return false;
+    }
+
+    // 校验轮次限制
+    if (this.avatarToolRoundCount >= AVATAR_TOOL_MAX_ROUNDS) {
+      Logger.warn(LOG_TAG,
+        `AvatarTool round limit reached: ${this.avatarToolRoundCount}`);
+      this.lastAvatarToolError = 'AVATAR_TOOL_ROUND_LIMIT';
+      // 不执行工具, 继续走最终完成流程 (允许 AI 返回文本错误说明)
+      return false;
+    }
+
+    // 校验工具调用次数限制 (本次 toolCalls 数量 + 已执行数量)
+    if (this.avatarToolCallCountForTurn + toolCalls.length > AVATAR_TOOL_MAX_CALLS_PER_TURN) {
+      Logger.warn(LOG_TAG,
+        `AvatarTool call limit exceeded: ${this.avatarToolCallCountForTurn}+${toolCalls.length}`);
+      this.lastAvatarToolError = 'AVATAR_TOOL_ROUND_LIMIT';
+      return false;
+    }
+
+    // 顺序执行工具调用 (禁止并行执行多个 Avatar 演出)
+    const snapshotCap: ArkWebAvatarAiCapabilitySnapshot | null = this.avatarSnapshotProvider();
+    const toolContext: ArkWebAvatarAiToolContext = {
+      chatTurnId: assistantId,
+      snapshot: snapshotCap,
+      permissionMode: this.avatarPermissionController.getPermissionMode()
+    };
+
+    const executionResults: ArkWebChatToolExecutionResult[] = [];
+    for (let i = 0; i < toolCalls.length; i++) {
+      if (this.disposed) {
+        return false;
+      }
+      // 权限降级检查 (CONTROL_THIS_CHAT → DENY 时阻止后续工具调用)
+      if (!this.avatarPermissionController.canControlAvatar()
+        && (toolCalls[i].name === ArkWebAvatarAiToolName.AVATAR_PERFORM
+          || toolCalls[i].name === ArkWebAvatarAiToolName.AVATAR_STOP)) {
+        const deniedResult: ArkWebChatToolExecutionResult = {
+          toolCallId: toolCalls[i].toolCallId,
+          name: toolCalls[i].name,
+          success: false,
+          resultJson: JSON.stringify({
+            success: false,
+            errorCode: ArkWebAvatarAiToolErrorCode.AVATAR_TOOL_PERMISSION_DENIED,
+            message: 'Permission downgraded, tool call denied.'
+          }),
+          errorCode: ArkWebAvatarAiToolErrorCode.AVATAR_TOOL_PERMISSION_DENIED,
+          errorMessage: 'Permission downgraded'
+        };
+        executionResults.push(deniedResult);
+        this.lastAvatarToolName = toolCalls[i].name;
+        this.lastAvatarToolError = 'PERMISSION_DENIED';
+        continue;
+      }
+
+      const execResult: ArkWebChatToolExecutionResult =
+        await this.avatarToolExecutor.execute(toolContext, toolCalls[i]);
+      executionResults.push(execResult);
+      this.avatarToolCallCountForTurn++;
+      this.lastAvatarToolName = toolCalls[i].name;
+      if (execResult.success) {
+        this.lastAvatarToolResult = 'OK';
+        this.lastAvatarToolError = '';
+        // 标记本 Turn 已执行原生 Tool Call (用于 performanceHintJson 冲突策略)
+        this.nativeAvatarToolExecutedForTurn = true;
+      } else {
+        this.lastAvatarToolResult = '';
+        this.lastAvatarToolError = execResult.errorCode;
+        // 工具调用失败但已被 AI 尝试: 仍视为 Tool Calling 路径, 不执行 metadata fallback
+        this.nativeAvatarToolExecutedForTurn = true;
+      }
+    }
+
+    // 缓存本轮工具调用和结果, 用于下一轮请求
+    this.pendingToolCallsForNextRound = this.pendingToolCallsForNextRound.concat(toolCalls);
+    this.pendingToolResultsForNextRound = this.pendingToolResultsForNextRound.concat(executionResults);
+    this.avatarToolRoundCount++;
+
+    // 启动下一轮请求 (带 toolResults + priorToolCalls)
+    try {
+      await this.continueWithToolResults(
+        assistantId, callbacks, context, snapshot, requestMessages, excludeId, perChatEffort
+      );
+      return true;
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'AvatarTool continueWithToolResults failed: ' + String(e));
+      return false;
+    }
+  }
+
+  /**
+   * Phase 4A-3: 使用工具结果继续下一轮流式请求。
+   *
+   * 复用 doStream 的请求构建逻辑, 但在 effectiveOptions 中注入:
+   * - tools: 同上一轮 (继续允许 AI 调用工具)
+   * - toolResults: 上一轮工具执行结果
+   * - priorToolCalls: 上一轮 AI 返回的工具调用 (用于回传 assistant tool_calls 消息)
+   */
+  private async continueWithToolResults(
+    assistantId: string,
+    callbacks: ChatServiceCallbacks,
+    context: ActiveGenerationContext,
+    snapshot: PromptPresetRequestSnapshot,
+    requestMessages: ChatMessage[],
+    excludeId: string | undefined,
+    perChatEffort: string
+  ): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
+
+    // 重新计算 Token 预算 (因为增加了 tool 消息)
+    await this.updateRequestPlan(requestMessages, snapshot.generationSettings);
+
+    if (this.lastTokenBudget !== undefined && this.lastTokenBudget.exceedsBudget) {
+      // 超预算: 终止 Tool Calling, 但不阻塞主流程
+      Logger.warn(LOG_TAG, 'AvatarTool continue exceeded budget');
+      return;
+    }
+
+    const effectiveOptions: ChatRequestOptions = {
+      temperature: snapshot.generationSettings.temperature !== undefined
+        ? snapshot.generationSettings.temperature
+        : DEFAULT_OPTIONS.temperature,
+      topP: snapshot.generationSettings.topP !== undefined
+        ? snapshot.generationSettings.topP
+        : DEFAULT_OPTIONS.topP,
+      maxTokens: snapshot.generationSettings.maxOutputTokens !== undefined
+        ? snapshot.generationSettings.maxOutputTokens
+        : DEFAULT_OPTIONS.maxTokens,
+      stream: true,
+      reasoningEffort: perChatEffort,
+      tools: this.buildAvatarToolsForRequest(),
+      toolResults: this.pendingToolResultsForNextRound,
+      priorToolCalls: this.pendingToolCallsForNextRound
+    };
+
+    // 创建新的 streamCallbacks (复用 doStream 的回调结构, 但 onComplete 内处理 toolCalls)
+    const operationId: number = context.operationId;
+    const isCurrent = (): boolean => this.isCurrentGeneration(context);
+
+    const streamCallbacks: ChatStreamCallbacks = {
+      onStart: (): void => {
+        this.clearStartTimer();
+      },
+      onDelta: (delta: ChatDelta): void => {
+        this.clearStartTimer();
+        if (this.disposed) {
+          return;
+        }
+        if (this.state !== ChatState.Streaming && this.state !== ChatState.Sending) {
+          return;
+        }
+        if (!isCurrent()) {
+          return;
+        }
+        this.appendDelta(assistantId, delta.content, callbacks);
+        this.schedulePersistenceFlush(assistantId);
+      },
+      onComplete: (result: ChatStreamResult): void => {
+        this.clearStartTimer();
+        if (this.disposed) {
+          return;
+        }
+        if (this.state !== ChatState.Streaming && this.state !== ChatState.Sending) {
+          return;
+        }
+        if (!isCurrent()) {
+          return;
+        }
+        // 检查是否有新的工具调用 (进入下一轮)
+        if (result.toolCalls !== undefined && result.toolCalls.length > 0) {
+          this.handleAvatarToolCalls(
+            result, assistantId, callbacks, context, snapshot, requestMessages, excludeId, perChatEffort
+          ).then((continued: boolean): void => {
+            if (!continued) {
+              // 未继续: 走最终完成流程
+              this.finalizeAssistantTurn(
+                assistantId, result, callbacks, context, operationId
+              );
+            }
+          }).catch((e: Object): void => {
+            Logger.warn(LOG_TAG, 'handleAvatarToolCalls threw: ' + String(e));
+            this.finalizeAssistantTurn(
+              assistantId, result, callbacks, context, operationId
+            );
+          });
+          return;
+        }
+        // 无工具调用: 走最终完成流程
+        this.finalizeAssistantTurn(
+          assistantId, result, callbacks, context, operationId
+        );
+      },
+      onError: (error: NetworkError): void => {
+        this.clearStartTimer();
+        if (this.disposed) {
+          return;
+        }
+        if (this.state === ChatState.Cancelled) {
+          return;
+        }
+        if (!isCurrent()) {
+          return;
+        }
+        this.finalizeAssistant(
+          assistantId, '', ChatMessageStatus.Failed, error.message, callbacks
+        );
+        this.currentAssistantId = null;
+        this.persistFinalAssistant(assistantId).then((): void => {
+          if (context.kind === ChatGenerationKind.SwipeCandidate) {
+            this.updateSwipeSummaryGeneratingFlag(false);
+          }
+          this.persistChatActivity();
+          this.clearActiveGeneration(operationId);
+          this.setState(ChatState.Failed, callbacks);
+          callbacks.onError(error.message);
+        }).catch((_e: Object): void => {
+          this.clearActiveGeneration(operationId);
+          this.setState(ChatState.Failed, callbacks);
+          callbacks.onError(error.message);
+        });
+      }
+    };
+
+    try {
+      const planMessages: ChatMessage[] = this.lastHistoryTrimResult !== undefined
+        ? this.lastHistoryTrimResult.messages
+        : requestMessages;
+      this.currentHandle = this.modelService.streamCurrentChat(
+        planMessages, effectiveOptions, streamCallbacks
+      );
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'continueWithToolResults streamCurrentChat threw: ' + String(e));
+    }
+  }
+
+  /**
+   * Phase 4A-3: 助手 Turn 最终完成流程 (统一处理原生 Tool Calling 和普通完成)。
+   *
+   * - 若 nativeAvatarToolExecutedForTurn = true, 跳过 performanceHintJson 发布
+   * - 否则正常透传 performanceHintJson
+   */
+  private finalizeAssistantTurn(
+    assistantId: string,
+    result: ChatStreamResult,
+    callbacks: ChatServiceCallbacks,
+    context: ActiveGenerationContext,
+    operationId: number
+  ): void {
+    if (this.disposed) {
+      return;
+    }
+    const finalStatus: ChatMessageStatus = this.finalizeAssistant(
+      assistantId, result.content, ChatMessageStatus.Completed, undefined, callbacks
+    );
+    this.currentAssistantId = null;
+
+    // Phase 4A-3: performanceHintJson 冲突策略
+    // 同一 Turn 已执行原生 Avatar Tool Call 时, 忽略 performanceHintJson
+    if (finalStatus !== ChatMessageStatus.Failed
+      && callbacks.onAssistantMessageFinalized !== undefined) {
+      try {
+        let hintJson: string = '';
+        if (!this.nativeAvatarToolExecutedForTurn) {
+          hintJson = result.performanceHintJson ?? '';
+        }
+        callbacks.onAssistantMessageFinalized(assistantId, hintJson);
+      } catch (e) {
+        Logger.warn(LOG_TAG, 'onAssistantMessageFinalized threw: ' +
+          (e instanceof Error ? e.message : String(e)));
+      }
+    }
+
+    this.persistFinalAssistant(assistantId).then((): void => {
+      if (context.kind === ChatGenerationKind.SwipeCandidate) {
+        this.updateSwipeSummaryGeneratingFlag(false);
+      }
+      this.persistChatActivity();
+      this.clearActiveGeneration(operationId);
+      this.updateLastAssistantMessageId();
+      if (finalStatus === ChatMessageStatus.Failed) {
+        this.setState(ChatState.Failed, callbacks);
+        callbacks.onError('模型返回了空回复,请重试');
+      } else {
+        this.setState(ChatState.Completed, callbacks);
+      }
+      if (context.kind === ChatGenerationKind.NormalResponse) {
+        this.triggerMemorySummaryAsync();
+      } else if (context.kind === ChatGenerationKind.SwipeCandidate) {
+        this.invalidateMemoryFromMessagePosition(assistantId);
+      }
+    }).catch((_e: Object): void => {
+      this.clearActiveGeneration(operationId);
+      this.updateLastAssistantMessageId();
+      if (context.kind === ChatGenerationKind.SwipeCandidate) {
+        this.setState(ChatState.Failed, callbacks);
+        callbacks.onError('候选回复持久化失败,请重试');
+      } else if (finalStatus === ChatMessageStatus.Failed) {
+        this.setState(ChatState.Failed, callbacks);
+        callbacks.onError('模型返回了空回复,请重试');
+      } else {
+        this.setState(ChatState.Completed, callbacks);
+      }
+    });
   }
 
   /**
@@ -1954,7 +2550,152 @@ export class ChatService {
     };
 
     const result: PromptBuildResult = this.promptBuilder.build(context);
-    return result.messages;
+
+    // Phase 4C-1: 注入 Avatar 对话演出策略 system message
+    // - 策略作为独立 system message 追加到 PromptBuilder 输出的消息列表末尾的 system 段后
+    // - 只在 Avatar Tool Calling 可用时注入
+    // - 不修改角色卡 / 世界书 / 预设 / 用户消息 / 助手消息
+    // - 不持久化, 只参与当前请求
+    const finalMessages: ChatMessage[] = this.injectAvatarDialogueStrategy(result.messages);
+    return finalMessages;
+  }
+
+  /**
+   * Phase 4C-1: 注入 Avatar 对话演出策略 system message。
+   *
+   * - 策略作为独立 system message 追加到请求消息列表
+   * - 只有 strategy.enabled = true 时才追加
+   * - 不修改原始角色设定文本 / 世界书 / 预设
+   * - 不写入用户消息 / 助手消息
+   * - 不持久化到聊天数据库
+   *
+   * 注入位置: 在最后一个 system message 之后, 第一个 user/assistant 消息之前
+   * (若找不到 system 消息, 则插入到列表头部)
+   *
+   * @param messages PromptBuilder 输出的消息列表
+   * @returns 追加策略 system message 后的消息列表 (不修改原数组)
+   */
+  private injectAvatarDialogueStrategy(messages: ChatMessage[]): ChatMessage[] {
+    // 刷新最近策略结果 (即使不注入也更新状态, 供 UI 显示)
+    this.lastAvatarStrategyResult = this.buildAvatarDialogueStrategy();
+
+    if (this.lastAvatarStrategyResult === null
+      || !this.lastAvatarStrategyResult.enabled
+      || this.lastAvatarStrategyResult.systemInstruction.length === 0) {
+      // 策略未启用: 不修改消息列表
+      return messages;
+    }
+
+    // 构建独立 system message (不写入数据库, 只参与当前请求)
+    const strategyMessage: ChatMessage = createChatMessage(
+      generateUuid(),
+      ChatRole.System,
+      this.lastAvatarStrategyResult.systemInstruction,
+      Date.now()
+    );
+
+    // 找到最后一个 system message 的位置
+    let lastSystemIndex: number = -1;
+    for (let i = 0; i < messages.length; i++) {
+      if (messages[i].role === ChatRole.System) {
+        lastSystemIndex = i;
+      } else {
+        // 遇到第一个非 system 消息后停止 (system 段通常在头部)
+        // 但仍继续扫描以处理中间可能存在的 system 段
+      }
+    }
+
+    const result: ChatMessage[] = [];
+    if (lastSystemIndex === -1) {
+      // 无 system 消息: 插入到头部
+      result.push(strategyMessage);
+      for (let i = 0; i < messages.length; i++) {
+        result.push(messages[i]);
+      }
+    } else {
+      // 在最后一个 system message 之后插入
+      for (let i = 0; i <= lastSystemIndex; i++) {
+        result.push(messages[i]);
+      }
+      result.push(strategyMessage);
+      for (let i = lastSystemIndex + 1; i < messages.length; i++) {
+        result.push(messages[i]);
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Phase 4C-1: 构建当前请求的 Avatar 对话演出策略。
+   *
+   * - 读取 Provider 支持状态 / 权限模式 / 能力快照
+   * - 调用 ArkWebAvatarDialogueStrategyBuilder.build
+   * - 失败时返回 null 或 enabled=false 的结果, 不阻塞普通文本聊天
+   *
+   * @returns 策略构建结果 (null 表示 Builder 未注入)
+   */
+  private buildAvatarDialogueStrategy(): ArkWebAvatarDialogueStrategyResult | null {
+    if (this.avatarDialogueStrategyBuilder === null) {
+      return null;
+    }
+    if (this.avatarToolRegistry === null
+      || this.avatarPermissionController === null
+      || this.avatarSnapshotProvider === null) {
+      return null;
+    }
+
+    const permissionMode: string = this.avatarPermissionController.getPermissionMode();
+    const snapshot: ArkWebAvatarAiCapabilitySnapshot | null = this.avatarSnapshotProvider();
+    const capabilityContext: string = this.avatarToolRegistry.buildCapabilityContext(snapshot);
+    const capabilityTruncated: boolean = capabilityContext.includes('...[truncated]');
+
+    const input: ArkWebAvatarDialogueStrategyInput = {
+      permissionMode: permissionMode,
+      providerSupportsToolCalling: this.currentProviderSupportsToolCalling,
+      capabilityContext: capabilityContext,
+      capabilityTruncated: capabilityTruncated
+    };
+
+    try {
+      return this.avatarDialogueStrategyBuilder.build(input);
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'buildAvatarDialogueStrategy threw: ' + String(e));
+      return null;
+    }
+  }
+
+  /**
+   * Phase 4C-1: 获取 Avatar 对话演出策略状态摘要 (供 UI 显示)。
+   *
+   * - 策略版本 / 模式 / 是否已注入 / 当前权限 / Provider 支持 / 能力数量 / 每 Turn 上限 / 最近错误
+   * - 不包含完整系统提示词
+   */
+  getAvatarDialogueStrategyStatus(): ArkWebAvatarDialogueStrategyStatus {
+    const result: ArkWebAvatarDialogueStrategyResult | null = this.lastAvatarStrategyResult;
+    const permissionMode: string = this.avatarPermissionController !== null
+      ? this.avatarPermissionController.getPermissionMode()
+      : 'DENY';
+
+    let capabilityCount: number = 0;
+    if (this.avatarSnapshotProvider !== null) {
+      const snapshot: ArkWebAvatarAiCapabilitySnapshot | null = this.avatarSnapshotProvider();
+      if (snapshot !== null) {
+        capabilityCount = snapshot.animations.length
+          + snapshot.poses.length
+          + snapshot.expressions.length;
+      }
+    }
+
+    return {
+      strategyVersion: AVATAR_DIALOGUE_STRATEGY_VERSION,
+      strategyMode: ArkWebAvatarDialogueStrategyModeConst.BALANCED,
+      injected: result !== null && result.enabled,
+      permissionMode: permissionMode,
+      providerSupported: this.currentProviderSupportsToolCalling,
+      capabilityCount: capabilityCount,
+      maxPerformPerTurn: AVATAR_STRATEGY_MAX_PERFORM_PER_TURN,
+      lastError: result !== null && !result.enabled ? result.errorMessage : ''
+    };
   }
 
   /**

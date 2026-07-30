@@ -795,6 +795,19 @@ export interface ArkWebFitAvatarFullBodyParams {
 }
 
 /**
+ * Phase 4B-2R2: 相机缩放倍率参数。
+ *
+ * multiplier 取值范围 0.5 ~ 3.0:
+ *   - 1.0: 无变化
+ *   - 2.0: 相机距离缩短至 1/2, 模型视觉放大 2 倍
+ *   - 3.0: 相机距离缩短至 1/3, 模型视觉放大 3 倍
+ */
+export interface ArkWebCameraZoomMultiplierParams {
+  /** 缩放倍率 (0.5 ~ 3.0) */
+  multiplier: number;
+}
+
+/**
  * Phase 2B: 平滑重置默认时长(秒) - ArkTavern 交互适配参数。
  */
 export const ARKWEB_CAMERA_SMOOTH_RESET_DEFAULT_DURATION: number = 0.45;

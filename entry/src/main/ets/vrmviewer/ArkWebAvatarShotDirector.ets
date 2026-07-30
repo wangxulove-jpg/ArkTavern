@@ -22,6 +22,7 @@
 
 import {
   ArkWebAvatarShot,
+  ArkWebAvatarShotControlMode,
   ArkWebAvatarShotDirectorState,
   ArkWebAvatarShotRuntime,
   ArkWebAvatarShotRuntimeSnapshot,
@@ -59,6 +60,8 @@ export class ArkWebAvatarShotDirector {
   private requestedShot: ArkWebAvatarShot = 'FULL_BODY';
   /** 当前状态 */
   private state: ArkWebAvatarShotDirectorState = 'IDLE';
+  /** Phase 4B-2R2: 镜头控制模式 (AUTO 默认, MANUAL 锁定当前镜头) */
+  private controlMode: ArkWebAvatarShotControlMode = 'AUTO';
 
   /** 表情恢复定时器 ID (-1 表示无) */
   private expressionReturnTimer: number = -1;
@@ -90,14 +93,42 @@ export class ArkWebAvatarShotDirector {
   // ===== 公开接口 =====
 
   /**
+   * Phase 4B-2R2: 设置镜头控制模式。
+   *
+   * @param mode 控制模式 (AUTO / MANUAL_FULL_BODY / MANUAL_FACE_RESET_VIEW)
+   */
+  setControlMode(mode: ArkWebAvatarShotControlMode): void {
+    if (this.disposed) {
+      return;
+    }
+    this.controlMode = mode;
+    console.info(LOG_TAG, `setControlMode: ${mode}`);
+  }
+
+  /**
+   * Phase 4B-2R2: 获取当前控制模式。
+   */
+  getControlMode(): ArkWebAvatarShotControlMode {
+    return this.controlMode;
+  }
+
+  /**
+   * Phase 4B-2R2: 判断当前是否为手动模式。
+   */
+  isManualMode(): boolean {
+    return this.controlMode !== 'AUTO';
+  }
+
+  /**
    * 准备镜头 (演出执行前调用)。
    *
    * 流程:
    * 1. 解析命令对应的目标镜头
    * 2. 命令非法 → 记录错误, 返回 false (不阻塞演出, 但镜头不切换)
-   * 3. 已处于目标镜头 → no-op, 返回 true
-   * 4. 平滑切换到目标镜头
-   * 5. 仅 expression-only 命令设置表情恢复定时器
+   * 3. Phase 4B-2R2: 手动模式下不切换镜头, 直接返回 true (允许演出继续)
+   * 4. 已处于目标镜头 → no-op, 返回 true
+   * 5. 平滑切换到目标镜头
+   * 6. 仅 expression-only 命令设置表情恢复定时器
    *
    * @param command 演出命令
    * @returns 镜头准备是否成功
@@ -118,6 +149,17 @@ export class ArkWebAvatarShotDirector {
     // 清除旧表情恢复定时器 (新命令可能不需要表情恢复)
     this.clearExpressionReturnTimer();
 
+    // Phase 4B-2R2: 手动模式下不切换镜头, 直接允许演出继续
+    if (this.isManualMode()) {
+      console.info(LOG_TAG,
+        `prepareForCommand: manual mode ${this.controlMode}, keep shot, command=${command.commandId}`);
+      // 仅 expression-only 命令仍设置恢复定时器 (用于表情状态恢复, 不切换镜头)
+      if (command.motionType === 'none' && command.expressionId.length > 0) {
+        this.scheduleExpressionReturn(command.commandId, command.durationMs);
+      }
+      return true;
+    }
+
     // 切换镜头
     const ok: boolean = await this.transitionToShot(targetShot, `PREPARE_COMMAND:${command.commandId}`);
     if (!ok) {
@@ -136,6 +178,8 @@ export class ArkWebAvatarShotDirector {
   /**
    * 演出停止时调用 (恢复 FULL_BODY)。
    *
+   * Phase 4B-2R2: 手动模式下不切换镜头, 只清除定时器。
+   *
    * @param reason 停止原因
    */
   async onPerformanceStopped(reason: string): Promise<void> {
@@ -143,11 +187,17 @@ export class ArkWebAvatarShotDirector {
       return;
     }
     this.clearExpressionReturnTimer();
+    if (this.isManualMode()) {
+      console.info(LOG_TAG, `onPerformanceStopped: manual mode, keep shot, reason=${reason}`);
+      return;
+    }
     await this.transitionToFullBody(`STOP:${reason}`);
   }
 
   /**
    * 演出失败时调用 (恢复 FULL_BODY)。
+   *
+   * Phase 4B-2R2: 手动模式下不切换镜头, 只清除定时器。
    *
    * @param reason 失败原因
    */
@@ -156,6 +206,10 @@ export class ArkWebAvatarShotDirector {
       return;
     }
     this.clearExpressionReturnTimer();
+    if (this.isManualMode()) {
+      console.info(LOG_TAG, `onPerformanceFailed: manual mode, keep shot, reason=${reason}`);
+      return;
+    }
     await this.transitionToFullBody(`FAILED:${reason}`);
   }
 
@@ -164,26 +218,43 @@ export class ArkWebAvatarShotDirector {
    *
    * 即使 currentShot 字段为 FULL_BODY, 也必须重新执行 fitAvatarFullBody,
    * 因为模型重新加载后相机位置可能已变化。
+   *
+   * Phase 4B-2R2: 模型重载时恢复默认 AUTO 模式和倍率 (由 StageController 调整倍率),
+   * 然后按当前模式决定目标镜头。
    */
   async onModelReady(): Promise<void> {
     if (this.disposed) {
       return;
     }
     this.clearExpressionReturnTimer();
-    // 强制重新执行 FULL_BODY (不使用 no-op 优化)
-    await this.executeFullBody('MODEL_READY');
+    // 模型 READY 时按当前模式决定目标镜头
+    if (this.controlMode === 'MANUAL_FACE_RESET_VIEW') {
+      await this.executeFullBody('MODEL_READY');
+      // 然后切换到脸部
+      await this.transitionToShot('FACE_RESET_VIEW', 'MODEL_READY_MANUAL_FACE');
+    } else {
+      // AUTO 或 MANUAL_FULL_BODY 都执行 FULL_BODY
+      await this.executeFullBody('MODEL_READY');
+    }
   }
 
   /**
-   * Stage 从隐藏切换为显示时调用 (恢复 FULL_BODY, 不恢复隐藏前的脸部镜头)。
+   * Stage 从隐藏切换为显示时调用。
+   *
+   * Phase 4B-2R2: 按当前模式决定目标镜头 (不再强制 FULL_BODY)。
    */
   async onStageVisible(): Promise<void> {
     if (this.disposed) {
       return;
     }
     this.clearExpressionReturnTimer();
-    // 强制重新执行 FULL_BODY (不使用 no-op 优化)
-    await this.executeFullBody('STAGE_VISIBLE');
+    if (this.controlMode === 'MANUAL_FACE_RESET_VIEW') {
+      // 强制重新执行脸部镜头 (不使用 no-op 优化)
+      await this.executeShot('FACE_RESET_VIEW', 'STAGE_VISIBLE_MANUAL_FACE');
+    } else {
+      // AUTO 或 MANUAL_FULL_BODY 都执行 FULL_BODY
+      await this.executeFullBody('STAGE_VISIBLE');
+    }
   }
 
   /**
@@ -239,7 +310,8 @@ export class ArkWebAvatarShotDirector {
       lastErrorCode: this.lastErrorCode,
       lastErrorMessage: this.lastErrorMessage,
       hasExpressionReturnTimer: this.expressionReturnTimer !== -1,
-      expressionReturnCommandId: this.expressionReturnCommandId
+      expressionReturnCommandId: this.expressionReturnCommandId,
+      controlMode: this.controlMode
     };
   }
 
@@ -412,6 +484,81 @@ export class ArkWebAvatarShotDirector {
   }
 
   /**
+   * Phase 4B-2R2: 强制重新执行指定镜头 (忽略 no-op 优化)。
+   *
+   * 用于 Stage 重新显示等场景: 即使 currentShot 字段已为目标, 也必须重新调用,
+   * 因为模型重新加载后相机位置可能已变化。
+   *
+   * @param targetShot 目标镜头
+   * @param reason 原因
+   */
+  private async executeShot(
+    targetShot: ArkWebAvatarShot,
+    reason: string
+  ): Promise<boolean> {
+    if (this.disposed) {
+      this.recordError(ShotDirectorErrorCode.SHOT_DIRECTOR_DISPOSED, 'director disposed');
+      return false;
+    }
+    if (!this.runtime.isModelReady()) {
+      this.recordError(ShotDirectorErrorCode.SHOT_CAMERA_NOT_READY, 'model not ready');
+      return false;
+    }
+    if (targetShot === 'FULL_BODY' && !this.runtime.isStageSizeValid()) {
+      this.recordError(ShotDirectorErrorCode.SHOT_CAMERA_NOT_READY, 'stage size invalid');
+      return false;
+    }
+
+    this.shotGeneration++;
+    const generation: number = this.shotGeneration;
+    this.requestedShot = targetShot;
+    this.state = 'TRANSITIONING';
+    this.lastTransitionReason = reason;
+    this.lastErrorCode = '';
+    this.lastErrorMessage = '';
+
+    try {
+      await this.runtime.cancelCameraTransition(`NEW_SHOT:${reason}`);
+    } catch (e) {
+      console.warn(LOG_TAG, 'cancelCameraTransition threw: ' +
+        (e instanceof Error ? e.message : String(e)));
+    }
+
+    if (generation !== this.shotGeneration || this.disposed) {
+      return false;
+    }
+
+    let ok: boolean = false;
+    try {
+      if (targetShot === 'FULL_BODY') {
+        ok = await this.runtime.transitionToFullBody();
+      } else {
+        ok = await this.runtime.transitionToResetView();
+      }
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      this.recordError(ShotDirectorErrorCode.SHOT_TRANSITION_FAILED, `threw: ${msg}`);
+      return false;
+    }
+
+    if (generation !== this.shotGeneration || this.disposed) {
+      return false;
+    }
+
+    if (!ok) {
+      this.recordError(ShotDirectorErrorCode.SHOT_TRANSITION_FAILED,
+        `runtime returned false for ${targetShot}`);
+      this.state = 'FAILED';
+      return false;
+    }
+
+    this.currentShot = targetShot;
+    this.state = targetShot === 'FULL_BODY' ? 'FULL_BODY' : 'FACE_RESET_VIEW';
+    console.info(LOG_TAG, `executeShot ok: ${targetShot}, reason=${reason}`);
+    return true;
+  }
+
+  /**
    * 设置表情恢复定时器。
    *
    * 仅在 expression-only 命令 (motionType=none + expressionId 非空) 时调用。
@@ -437,6 +584,8 @@ export class ArkWebAvatarShotDirector {
    * 表情恢复定时器触发回调。
    *
    * 检查 generation, 若已过期则忽略 (新命令/停止/重载已清除定时器)。
+   *
+   * Phase 4B-2R2: 手动模式下不切换镜头, 只记录日志。
    */
   private onExpressionReturnTimerFired(generation: number, commandId: string): void {
     this.expressionReturnTimer = -1;
@@ -450,7 +599,13 @@ export class ArkWebAvatarShotDirector {
       return;
     }
     console.info(LOG_TAG, `expression return: commandId=${commandId}`);
-    // 平滑恢复 FULL_BODY
+    // Phase 4B-2R2: 手动模式下保持当前镜头
+    if (this.isManualMode()) {
+      console.info(LOG_TAG,
+        `expression return: manual mode ${this.controlMode}, keep shot, commandId=${commandId}`);
+      return;
+    }
+    // AUTO 模式: 平滑恢复 FULL_BODY
     this.transitionToFullBody('EXPRESSION_COMPLETED').catch((e: Object): void => {
       console.warn(LOG_TAG, 'expression return transitionToFullBody threw: ' +
         (e instanceof Error ? e.message : String(e)));

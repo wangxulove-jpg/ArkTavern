@@ -1480,6 +1480,45 @@ export class ViewerCore {
     return result;
   }
 
+  /**
+   * Phase 4B-2R2: 应用相机缩放倍率。
+   *
+   * 通过缩短相机到目标点距离实现视觉放大, 不修改 model.scene.position / scale / 骨骼。
+   *
+   * 倍率范围 0.5 ~ 3.0:
+   *   - 1.0: 无变化
+   *   - 2.0: 相机距离缩短至 1/2, 模型视觉放大 2 倍
+   *   - 3.0: 相机距离缩短至 1/3, 模型视觉放大 3 倍
+   *
+   * @param {number} multiplier 缩放倍率
+   * @returns {{success: boolean, state?: object, multiplier?: number, error?: {code: string, message: string}}}
+   */
+  applyCameraZoomMultiplier(multiplier) {
+    if (this._state !== STATE_READY) {
+      return {
+        success: false,
+        error: makeError(ERR_VIEWER_NOT_READY, 'Viewer state is ' + this._state + ', expected READY', this._state, true)
+      };
+    }
+    if (!this.camera) {
+      return {
+        success: false,
+        error: makeError(ERR_CAMERA_INITIALIZATION_FAILED, 'Camera not initialized', this._state, true)
+      };
+    }
+    var result = this.camera.applyCameraZoomMultiplier(multiplier);
+    if (result && result.success) {
+      return { success: true, state: result.state, multiplier: result.multiplier };
+    }
+    return {
+      success: false,
+      error: {
+        code: 'ZOOM_MULTIPLIER_FAILED',
+        message: result && result.error ? String(result.error) : 'applyCameraZoomMultiplier failed'
+      }
+    };
+  }
+
   // ===== Phase 2F: 环境贴图 API =====
 
   /**

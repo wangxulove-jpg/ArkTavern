@@ -16,7 +16,8 @@
  * - messages 始终以新引用赋值,确保 ArkUI 检测到变化
  */
 
-import { ChatService, ChatState, ChatServiceCallbacks } from '../services/ChatService';
+import { ChatService, ChatState, ChatServiceCallbacks, AvatarToolCallingStatus } from '../services/ChatService';
+import { ArkWebAvatarDialogueStrategyStatus } from '../avatarai/ArkWebAvatarDialogueStrategyTypes';
 import { ModelService } from '../services/ModelService';
 import { ChatMessage, ChatMessageStatus } from '../models/ChatMessage';
 import { ChatRole } from '../models/ChatRole';
@@ -1019,6 +1020,40 @@ export class ChatViewModel {
     if (this.onMessagesUpdate !== undefined) {
       this.onMessagesUpdate([...this.messages]);
     }
+  }
+
+  // ===== Phase 4A-3: Avatar Tool Calling 权限控制 (UI 调用入口) =====
+
+  /**
+   * Phase 4A-3: 获取 Avatar Tool Calling 状态 (供 AI 面板显示)。
+   *
+   * 返回 Provider 支持情况、当前权限模式、注入工具数量、能力是否就绪、
+   * 最后工具名/结果/错误。
+   */
+  getAvatarToolCallingStatus(): AvatarToolCallingStatus {
+    return this.chatService.getAvatarToolCallingStatus();
+  }
+
+  /**
+   * Phase 4A-3: 设置 Avatar Tool Calling 权限模式。
+   *
+   * 权限降级时停止当前 AI 发起的演出, 不影响用户手动发起的演出。
+   * 权限只在当前聊天页面生命周期内保存, 页面退出恢复 DENY。
+   *
+   * @param mode 'DENY' / 'READ_ONLY' / 'CONTROL_THIS_CHAT'
+   */
+  setAvatarPermissionMode(mode: string): void {
+    this.chatService.setAvatarPermissionMode(mode);
+  }
+
+  /**
+   * Phase 4C-1: 获取 Avatar 对话演出策略状态摘要。
+   *
+   * 返回策略版本 / 模式 / 是否已注入 / 当前权限 / Provider 支持 / 能力数量 / 每 Turn 上限 / 最近错误。
+   * 不包含完整系统提示词。
+   */
+  getAvatarDialogueStrategyStatus(): ArkWebAvatarDialogueStrategyStatus {
+    return this.chatService.getAvatarDialogueStrategyStatus();
   }
 
   dispose(): void {

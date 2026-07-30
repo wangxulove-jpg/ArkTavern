@@ -20,10 +20,16 @@ import { ChatRole } from '../../models/ChatRole';
 
 /**
  * OpenAI Chat Completions 请求消息。
+ *
+ * Phase 4A-3 扩展:
+ * - tool_calls: 仅 role="assistant" 时使用, 回传上一轮 AI 的工具调用
+ * - tool_call_id: 仅 role="tool" 时使用, 关联到对应 tool_calls.id
  */
 export interface OpenAIRequestMessage {
   readonly role: string;
   readonly content: string;
+  readonly tool_calls?: Object[];
+  readonly tool_call_id?: string;
 }
 
 /**
@@ -44,6 +50,11 @@ export interface OpenAIResponseFormat {
  * response_format 为可选字段:
  * - undefined:不发送该字段
  * - {type: "json_object"}:强制 JSON 输出模式
+ *
+ * Phase 4A-3:
+ * - tools: 可选, 工具定义数组 (Provider Adapter 转换后注入)
+ * - tool_choice: 可选, "auto" / "none" / {type:"function", function:{name}}
+ *                当 tools 非空时, 默认发送 "auto"
  */
 export interface OpenAIChatRequestBody {
   readonly model: string;
@@ -54,6 +65,42 @@ export interface OpenAIChatRequestBody {
   readonly stream: boolean;
   readonly reasoning_effort?: string;
   readonly response_format?: OpenAIResponseFormat;
+  readonly tools?: Object[];
+  readonly tool_choice?: string;
+}
+
+/**
+ * OpenAI tool_calls 中的 function 对象 (Phase 4A-3)。
+ */
+export interface OpenAIToolCallFunctionPayload {
+  readonly name: string;
+  readonly arguments: string;
+}
+
+/**
+ * OpenAI tool_calls 数组中的对象 (Phase 4A-3)。
+ */
+export interface OpenAIToolCallPayload {
+  readonly id: string;
+  readonly type: string;
+  readonly function: OpenAIToolCallFunctionPayload;
+}
+
+/**
+ * OpenAI tools 数组中的 function 对象 (Phase 4A-3)。
+ */
+export interface OpenAIToolDefFunctionPayload {
+  readonly name: string;
+  readonly description: string;
+  readonly parameters: Object;
+}
+
+/**
+ * OpenAI tools 数组中的对象 (Phase 4A-3)。
+ */
+export interface OpenAIToolDefPayload {
+  readonly type: string;
+  readonly function: OpenAIToolDefFunctionPayload;
 }
 
 // ===== 响应体类型定义 =====

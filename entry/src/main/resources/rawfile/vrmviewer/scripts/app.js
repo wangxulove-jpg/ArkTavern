@@ -649,6 +649,47 @@ if (window.__arkTavernBootstrapState) {
       });
     },
 
+    /**
+     * Phase 4B-2R2: 应用相机缩放倍率。
+     *
+     * 通过缩短相机到目标点距离实现视觉放大, 不修改 model.scene.position / scale / 骨骼。
+     *
+     * @param {string} paramsJson JSON 字符串 { multiplier: number }
+     *   - multiplier: 0.5 ~ 3.0 (1.0=无变化, 3.0=放大3倍)
+     * @returns {string} JSON 结果
+     *   成功: {"success": true, "state": "READY", "cameraState": {...}, "multiplier": number}
+     *   失败: {"success": false, "state": "...", "error": {...}}
+     */
+    applyCameraZoomMultiplier: function (paramsJson) {
+      var multiplier = 1.0;
+      if (typeof paramsJson === 'string' && paramsJson.length > 0) {
+        try {
+          var parsed = JSON.parse(paramsJson);
+          if (parsed && typeof parsed.multiplier === 'number') {
+            multiplier = parsed.multiplier;
+          }
+        } catch (e) {
+          // 忽略 JSON 解析错误, 回退到默认 1.0
+        }
+      }
+      return callViewer(function (v) {
+        var result = v.applyCameraZoomMultiplier(multiplier);
+        if (result && result.success) {
+          return {
+            success: true,
+            state: v.getState(),
+            cameraState: result.state,
+            multiplier: result.multiplier
+          };
+        }
+        return {
+          success: false,
+          state: v.getState(),
+          error: result && result.error ? (typeof result.error === 'string' ? { code: 'ZOOM_MULTIPLIER_FAILED', message: result.error } : result.error) : { code: 'ZOOM_MULTIPLIER_FAILED', message: 'applyCameraZoomMultiplier failed' }
+        };
+      });
+    },
+
     // ===== Phase 2B: 平滑重置 =====
 
     /**

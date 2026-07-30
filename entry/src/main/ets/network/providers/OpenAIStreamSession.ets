@@ -38,10 +38,15 @@ import {
 } from '../../models/NetworkError';
 import { SseParser } from '../streaming/SseParser';
 import { SseEvent, SseParseError } from '../streaming/SseTypes';
-import { parseOpenAiDelta, OpenAiDeltaResult } from '../streaming/OpenAiSseDeltaParser';
+import {
+  parseOpenAiDelta,
+  OpenAiDeltaResult,
+  OpenAiToolCallDelta
+} from '../streaming/OpenAiSseDeltaParser';
 import { TransportCallbacks } from '../streaming/StreamTransportTypes';
 import { TransportRequestOptions, TransportAbortHandle } from '../streaming/HttpStreamTransport';
 import { Logger } from '../../utils/Logger';
+import { ArkWebChatToolCall } from '../../avatarai/ArkWebAvatarAiToolTypes';
 
 /** 日志标签 */
 const LOG_TAG: string = 'OpenAIStreamSession';
@@ -60,6 +65,19 @@ interface UsageFields {
 interface IdAndModel {
   readonly id: string;
   readonly model: string;
+}
+
+/**
+ * Phase 4A-3: 按 index 累积的工具调用条目。
+ *
+ * OpenAI 流式协议: tool_calls 按 index 分组, 首次包含 id + name,
+ * 后续仅包含 arguments 增量片段。累积完成后转为 ArkWebChatToolCall。
+ */
+interface AccumulatedToolCall {
+  index: number;
+  toolCallId: string;
+  name: string;
+  argumentsAccumulated: string;
 }
 
 /**
@@ -172,6 +190,13 @@ export class OpenAIStreamSession implements ChatStreamHandle {
   private errorFired: boolean = false;
   /** headers 收到前缓存的 chunks(等待 handleHeaders 后处理) */
   private pendingChunks: string[] = [];
+  /**
+   * Phase 4A-3: 按 index 累积的工具调用条目列表。
+   *
+   * 只在收到 delta.tool_calls 时累积, 完成后转为 ArkWebChatToolCall。
+   * 不解析聊天正文 / Markdown / JSON 代码块。
+   */
+  private accumulatedToolCalls: AccumulatedToolCall[] = [];
 
   /**
    * 启动流式会话。
@@ -415,6 +440,11 @@ export class OpenAIStreamSession implements ChatStreamHandle {
       this.finishReason = deltaResult.finishReason;
     }
 
+    // Phase 4A-3: 累积 tool_calls 增量 (按 index 关联, 不执行, 不解析正文)
+    if (deltaResult.toolCallDeltas !== undefined) {
+      this.accumulateToolCallDeltas(deltaResult.toolCallDeltas);
+    }
+
     // content delta
     if (deltaResult.hasContent && deltaResult.content.length > 0) {
       this.accumulatedContent += deltaResult.content;
@@ -429,6 +459,48 @@ export class OpenAIStreamSession implements ChatStreamHandle {
       this.safeOnDelta(delta);
     }
     // 空 content 或 role-only 事件不触发 onDelta,但不算错误
+  }
+
+  /**
+   * Phase 4A-3: 累积 tool_calls 增量片段。
+   *
+   * - 按 index 关联同一个工具调用
+   * - 首次出现时记录 id + name (后续覆盖忽略)
+   * - arguments 增量片段按顺序拼接
+   * - 不执行工具, 不解析半截 JSON
+   * - 完成后由 buildResult 转为 ArkWebChatToolCall 列表
+   */
+  private accumulateToolCallDeltas(deltas: OpenAiToolCallDelta[]): void {
+    for (let i = 0; i < deltas.length; i++) {
+      const d: OpenAiToolCallDelta = deltas[i];
+      // 查找已存在的 index
+      let entry: AccumulatedToolCall | null = null;
+      for (let j = 0; j < this.accumulatedToolCalls.length; j++) {
+        if (this.accumulatedToolCalls[j].index === d.index) {
+          entry = this.accumulatedToolCalls[j];
+          break;
+        }
+      }
+      if (entry === null) {
+        // 新增条目
+        const newEntry: AccumulatedToolCall = {
+          index: d.index,
+          toolCallId: d.id,
+          name: d.name,
+          argumentsAccumulated: d.argumentsDelta
+        };
+        this.accumulatedToolCalls.push(newEntry);
+      } else {
+        // 已有条目: 累积 arguments (id 和 name 只在首次出现, 后续为空字符串)
+        if (d.id.length > 0 && entry.toolCallId.length === 0) {
+          entry.toolCallId = d.id;
+        }
+        if (d.name.length > 0 && entry.name.length === 0) {
+          entry.name = d.name;
+        }
+        entry.argumentsAccumulated += d.argumentsDelta;
+      }
+    }
   }
 
   /**
@@ -550,6 +622,24 @@ export class OpenAIStreamSession implements ChatStreamHandle {
     const completionTokens: number | undefined = this.usage !== null ? this.usage.completionTokens : undefined;
     const totalTokens: number | undefined = this.usage !== null ? this.usage.totalTokens : undefined;
 
+    // Phase 4A-3: 将累积的 tool_calls 转为 ArkWebChatToolCall 列表
+    // 只在累积非空时输出, 顺序按 index
+    let toolCalls: ArkWebChatToolCall[] | undefined = undefined;
+    if (this.accumulatedToolCalls.length > 0) {
+      // 按 index 排序
+      const sorted: AccumulatedToolCall[] = this.accumulatedToolCalls.slice();
+      sorted.sort((a: AccumulatedToolCall, b: AccumulatedToolCall): number => a.index - b.index);
+      toolCalls = [];
+      for (let i = 0; i < sorted.length; i++) {
+        const entry: AccumulatedToolCall = sorted[i];
+        toolCalls.push({
+          toolCallId: entry.toolCallId,
+          name: entry.name,
+          argumentsJson: entry.argumentsAccumulated
+        });
+      }
+    }
+
     return {
       content: this.accumulatedContent,
       finishReason: this.finishReason,
@@ -561,7 +651,8 @@ export class OpenAIStreamSession implements ChatStreamHandle {
       chunkCount: this.chunkCount,
       eventCount: this.eventCount,
       deltaCount: this.deltaCount,
-      receivedDone: this.receivedDone
+      receivedDone: this.receivedDone,
+      toolCalls: toolCalls
     };
   }
 

@@ -83,6 +83,18 @@ export abstract class AiProvider {
     request: ChatRequest,
     callbacks: ChatStreamCallbacks
   ): ChatStreamHandle;
+
+  /**
+   * Phase 4A-3: 声明 Provider 是否支持原生 structured tool calling。
+   *
+   * - 默认返回 false (向后兼容)
+   * - 支持 Tool Calling 的 Provider (如 OpenAIProvider) 重写此方法返回 true
+   * - ChatService 只在 supported=true 时向 request 注入 tools
+   * - 不支持时, 普通聊天完全保持原行为
+   */
+  supportsToolCalling(): boolean {
+    return false;
+  }
 }
 
 /**

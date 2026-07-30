@@ -22,6 +22,8 @@
  */
 
 import { ChatViewModel } from '../viewmodels/ChatViewModel';
+import { AvatarToolCallingStatus } from '../services/ChatService';
+import { ArkWebAvatarDialogueStrategyStatus } from '../avatarai/ArkWebAvatarDialogueStrategyTypes';
 import { ChatMessage, ChatMessageStatus } from '../models/ChatMessage';
 import { ChatRole } from '../models/ChatRole';
 import { ChatMessageSource } from '../models/ChatMessageSource';
@@ -71,9 +73,11 @@ import {
   ArkWebChatAvatarStageController,
   ArkWebChatAvatarStageState,
   ArkWebChatAvatarStageRuntimeSnapshot,
+  ArkWebPanelPerformanceResult,
   ChatAvatarStageEventListener
 } from '../vrmviewer/ArkWebChatAvatarStageController';
 import {
+  ArkWebAvatarShotControlMode,
   ArkWebAvatarShotRuntimeSnapshot
 } from '../vrmviewer/ArkWebAvatarShotDirectorTypes';
 import {
@@ -241,12 +245,37 @@ struct ChatPage {
   @State avatarStageSnapshot: ArkWebChatAvatarStageRuntimeSnapshot | null = null;
   /** Phase 4B-2: 镜头导演运行时快照 (供 AI 面板镜头状态显示) */
   @State avatarShotSnapshot: ArkWebAvatarShotRuntimeSnapshot | null = null;
-  /** Phase 4B-2R: AI 面板按钮执行状态 (LOADING/PLAYING/APPLIED/FAILED/IDLE) */
+  /** Phase 4B-2R: AI 面板按钮执行状态 (REQUESTING/LOADING/READY/PLAYING/APPLIED/FAILED/IDLE) */
   @State aiPanelButtonStatus: string = 'IDLE';
   /** Phase 4B-2R: AI 面板当前操作能力 ID (actionId/poseId/expressionId) */
   @State aiPanelActiveCapabilityId: string = '';
   /** Phase 4B-2R: AI 面板最后错误码 (供按钮反馈显示) */
   @State aiPanelLastErrorCode: string = '';
+  /** Phase 4A-3: Avatar Tool Calling 权限模式 (DENY / READ_ONLY / CONTROL_THIS_CHAT) */
+  @State avatarToolPermissionMode: string = 'DENY';
+  /** Phase 4C-1: Avatar 对话演出策略状态 (供 AI 面板显示摘要) */
+  @State avatarStrategyStatus: ArkWebAvatarDialogueStrategyStatus | null = null;
+  /** Phase 4C-1: 是否展开策略摘要详情 */
+  @State avatarStrategySummaryExpanded: boolean = false;
+  /** Phase 4A-3: Avatar Tool Calling 状态快照 (供 AI 面板权限区显示) */
+  @State avatarToolStatus: AvatarToolCallingStatus | null = null;
+  /** 模型大小滑动条值 (fillRatio, 0.3~0.98, 默认 0.78) */
+  @State avatarModelFillRatio: number = 0.78;
+  /**
+   * Phase 4B-2R2: 相机缩放倍率 (0.5~3.0, 默认 1.0)。
+   *
+   * 通过调整相机距离实现视觉缩放, 不修改模型 transform。
+   * 在当前 ChatPage 生命周期内, 镜头切换 / 演出 / 停止 / 失败都不会重置倍率。
+   */
+  @State avatarCameraZoomMultiplier: number = 1.0;
+  /**
+   * Phase 4B-2R2: 镜头控制模式 (AUTO / MANUAL_FULL_BODY / MANUAL_FACE_RESET_VIEW)。
+   *
+   * AUTO: 自动导演 (animation/pose → FULL_BODY, expression-only → FACE_RESET_VIEW)
+   * MANUAL_FULL_BODY: 锁定全身镜头, 演出不改变镜头
+   * MANUAL_FACE_RESET_VIEW: 锁定脸部镜头, 演出不改变镜头
+   */
+  @State avatarShotControlMode: ArkWebAvatarShotControlMode = 'AUTO';
 
   aboutToAppear(): void {
     const modelService = AppServices.getModelService();
@@ -448,11 +477,65 @@ struct ChatPage {
     const controller: ArkWebChatAvatarStageController = this.avatarStageController!;
     controller.getCapabilitySnapshot().then((snapshot: ArkWebAvatarAiCapabilitySnapshot | null) => {
       this.aiCapabilitySnapshot = snapshot;
+      // Phase 4A-3: 同步刷新 Avatar Tool Calling 状态 (权限/工具数/能力就绪)
+      this.refreshAvatarToolCallingStatus();
     }).catch((e: Object) => {
       Logger.warn(LOG_TAG, 'refreshAiCapabilitySnapshot failed: ' +
         (e instanceof Error ? e.message : String(e)));
       this.aiCapabilitySnapshot = null;
     });
+  }
+
+  /**
+   * Phase 4A-3: 刷新 Avatar Tool Calling 状态 (供 AI 面板权限区显示)。
+   *
+   * 触发时机:
+   *   - AI 面板打开
+   *   - 能力快照刷新后
+   *   - 权限模式变更后
+   *   - 工具调用完成后
+   */
+  private refreshAvatarToolCallingStatus(): void {
+    if (this.viewModel === null) {
+      this.avatarToolStatus = null;
+      this.avatarStrategyStatus = null;
+      return;
+    }
+    try {
+      const status: AvatarToolCallingStatus =
+        this.viewModel!.getAvatarToolCallingStatus();
+      this.avatarToolStatus = status;
+      this.avatarToolPermissionMode = status.permissionMode;
+      // Phase 4C-1: 同步刷新策略状态摘要
+      this.avatarStrategyStatus = this.viewModel!.getAvatarDialogueStrategyStatus();
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'refreshAvatarToolCallingStatus failed: ' +
+        (e instanceof Error ? e.message : String(e)));
+      this.avatarToolStatus = null;
+      this.avatarStrategyStatus = null;
+    }
+  }
+
+  /**
+   * Phase 4A-3: 设置 Avatar Tool Calling 权限模式 (UI 调用)。
+   *
+   * - DENY: 不注入任何 Avatar 工具
+   * - READ_ONLY: 只注入 avatar_list_capabilities + avatar_get_state
+   * - CONTROL_THIS_CHAT: 注入全部四个工具
+   */
+  private setAvatarToolPermission(mode: string): void {
+    if (this.viewModel === null) {
+      return;
+    }
+    try {
+      this.viewModel!.setAvatarPermissionMode(mode);
+      this.avatarToolPermissionMode = mode;
+      // 刷新状态以反映工具数量变化
+      this.refreshAvatarToolCallingStatus();
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'setAvatarToolPermission failed: ' +
+        (e instanceof Error ? e.message : String(e)));
+    }
   }
 
   /**
@@ -483,27 +566,34 @@ struct ChatPage {
    *   { "motionType": "animation", "motionId": "<actionId>", "durationMs": 5000,
    *     "returnPolicy": "DEFAULT_POSE" }
    *
-   * Phase 4B-2R: 显示加载/播放/失败状态反馈, 不静默丢弃。
+   * Phase 4B-2R2: 不再将 Bridge 接受视为 PLAYING, 等待真实 Lifecycle 执行结果。
+   * 状态流转: REQUESTING → LOADING → READY → PLAYING / FAILED
    */
   private triggerAnimation(actionId: string): void {
     this.aiPanelActiveCapabilityId = actionId;
-    this.aiPanelButtonStatus = 'LOADING';
+    this.aiPanelButtonStatus = 'REQUESTING';
     this.aiPanelLastErrorCode = '';
     const hintJson: string = JSON.stringify({
+      version: 1,
       motionType: 'animation',
       motionId: actionId,
       expressionId: '',
       expressionWeight: 0,
       durationMs: 5000,
-      interruptPolicy: 'REPLACE',
       returnPolicy: 'DEFAULT_POSE'
     });
-    this.publishPanelPerformance(hintJson).then((ok: boolean) => {
-      if (ok) {
+    this.publishPanelPerformanceAndWait(hintJson).then((result: ArkWebPanelPerformanceResult) => {
+      if (result.executed && result.animationState === 'PLAYING') {
         this.aiPanelButtonStatus = 'PLAYING';
+      } else if (result.executed && result.animationState === 'READY') {
+        // Lifecycle 执行成功但动画状态仍为 READY (可能已开始播放但状态刷新延迟)
+        this.aiPanelButtonStatus = 'PLAYING';
+      } else if (result.executed && result.animationState === 'LOADING') {
+        // Lifecycle 执行成功但动画仍在加载 ( READY 等待超时前)
+        this.aiPanelButtonStatus = 'LOADING';
       } else {
         this.aiPanelButtonStatus = 'FAILED';
-        this.aiPanelLastErrorCode = this.resolvePanelErrorCode();
+        this.aiPanelLastErrorCode = result.errorCode || result.animationState || 'UNKNOWN';
       }
     }).catch((e: Object) => {
       this.aiPanelButtonStatus = 'FAILED';
@@ -519,27 +609,28 @@ struct ChatPage {
    *   { "motionType": "pose", "motionId": "<poseId>", "durationMs": 5000,
    *     "returnPolicy": "DEFAULT_POSE" }
    *
-   * Phase 4B-2R: 显示加载/应用/失败状态反馈, 不静默丢弃。
+   * Phase 4B-2R2: 不再将 Bridge 接受视为 APPLIED, 等待真实 Lifecycle 执行结果。
+   * 状态流转: REQUESTING → APPLIED / FAILED
    */
   private triggerPose(poseId: string): void {
     this.aiPanelActiveCapabilityId = poseId;
-    this.aiPanelButtonStatus = 'LOADING';
+    this.aiPanelButtonStatus = 'REQUESTING';
     this.aiPanelLastErrorCode = '';
     const hintJson: string = JSON.stringify({
+      version: 1,
       motionType: 'pose',
       motionId: poseId,
       expressionId: '',
       expressionWeight: 0,
       durationMs: 5000,
-      interruptPolicy: 'REPLACE',
       returnPolicy: 'DEFAULT_POSE'
     });
-    this.publishPanelPerformance(hintJson).then((ok: boolean) => {
-      if (ok) {
+    this.publishPanelPerformanceAndWait(hintJson).then((result: ArkWebPanelPerformanceResult) => {
+      if (result.executed) {
         this.aiPanelButtonStatus = 'APPLIED';
       } else {
         this.aiPanelButtonStatus = 'FAILED';
-        this.aiPanelLastErrorCode = this.resolvePanelErrorCode();
+        this.aiPanelLastErrorCode = result.errorCode || result.poseState || 'UNKNOWN';
       }
     }).catch((e: Object) => {
       this.aiPanelButtonStatus = 'FAILED';
@@ -555,11 +646,12 @@ struct ChatPage {
    *   { "motionType": "none", "motionId": "", "expressionId": "<expressionId>",
    *     "expressionWeight": 1.0, "durationMs": 3000, "returnPolicy": "KEEP" }
    *
-   * Phase 4B-2R: 显示加载/应用/失败状态反馈, 未映射时显示 EXPRESSION_ALIAS_NOT_RESOLVED。
+   * Phase 4B-2R2: 不再将 Bridge 接受视为 APPLIED, 等待真实 Lifecycle 执行结果。
+   * 状态流转: REQUESTING → APPLIED / FAILED
    */
   private triggerExpression(expressionId: string): void {
     this.aiPanelActiveCapabilityId = expressionId;
-    this.aiPanelButtonStatus = 'LOADING';
+    this.aiPanelButtonStatus = 'REQUESTING';
     this.aiPanelLastErrorCode = '';
     // 预检: 表情别名是否已映射 (避免静默失败)
     if (this.avatarStageController !== null) {
@@ -573,20 +665,20 @@ struct ChatPage {
       }
     }
     const hintJson: string = JSON.stringify({
+      version: 1,
       motionType: 'none',
       motionId: '',
       expressionId: expressionId,
       expressionWeight: 1.0,
       durationMs: 3000,
-      interruptPolicy: 'REPLACE',
       returnPolicy: 'KEEP'
     });
-    this.publishPanelPerformance(hintJson).then((ok: boolean) => {
-      if (ok) {
+    this.publishPanelPerformanceAndWait(hintJson).then((result: ArkWebPanelPerformanceResult) => {
+      if (result.executed) {
         this.aiPanelButtonStatus = 'APPLIED';
       } else {
         this.aiPanelButtonStatus = 'FAILED';
-        this.aiPanelLastErrorCode = this.resolvePanelErrorCode();
+        this.aiPanelLastErrorCode = result.errorCode || result.expressionState || 'UNKNOWN';
       }
     }).catch((e: Object) => {
       this.aiPanelButtonStatus = 'FAILED';
@@ -644,6 +736,50 @@ struct ChatPage {
       Logger.warn(LOG_TAG, 'publishPanelPerformance failed: ' +
         (e instanceof Error ? e.message : String(e)));
       return false;
+    });
+  }
+
+  /**
+   * Phase 4B-2R2: 通过 AvatarChatBridge 发布演出消息并等待真实执行结果。
+   *
+   * 不再将 Bridge 接受视为播放成功, 等待真实 Lifecycle 执行结果。
+   * 返回详细结果 (accepted/executed/runtime states/error)。
+   *
+   * 错误隔离: 演出失败不影响聊天文本显示, 仅记录日志。
+   */
+  private publishPanelPerformanceAndWait(hintJson: string): Promise<ArkWebPanelPerformanceResult> {
+    if (this.avatarStageController === null) {
+      Logger.warn(LOG_TAG, 'publishPanelPerformanceAndWait: avatarStageController null');
+      const errResult: ArkWebPanelPerformanceResult = {
+        accepted: false,
+        executed: false,
+        turnId: '',
+        commandId: '',
+        lifecycleState: 'IDLE',
+        animationState: 'IDLE',
+        poseState: 'IDLE',
+        expressionState: 'IDLE',
+        errorCode: 'AVATAR_STAGE_NULL',
+        errorMessage: 'avatarStageController null'
+      };
+      return Promise.resolve(errResult);
+    }
+    return this.avatarStageController!.publishPerformanceFromPanelAndWait(hintJson).catch((e: Object): ArkWebPanelPerformanceResult => {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      Logger.warn(LOG_TAG, 'publishPanelPerformanceAndWait failed: ' + msg);
+      const errResult: ArkWebPanelPerformanceResult = {
+        accepted: false,
+        executed: false,
+        turnId: '',
+        commandId: '',
+        lifecycleState: 'IDLE',
+        animationState: 'IDLE',
+        poseState: 'IDLE',
+        expressionState: 'IDLE',
+        errorCode: 'PUBLISH_AND_WAIT_THREW',
+        errorMessage: msg
+      };
+      return errResult;
     });
   }
 
@@ -1048,10 +1184,11 @@ struct ChatPage {
         ? $r('app.color.app_surface_2') : Color.Transparent)
       .onClick(() => {
         this.aiPanelVisible = !this.aiPanelVisible;
-        // 打开面板时刷新能力快照 + 验证 endpoint
+        // 打开面板时刷新能力快照 + 验证 endpoint + 刷新 Avatar Tool 状态
         if (this.aiPanelVisible) {
           this.refreshAiCapabilitySnapshot();
           this.verifyAvatarEndpoint();
+          this.refreshAvatarToolCallingStatus();
         }
       })
 
@@ -1081,101 +1218,171 @@ struct ChatPage {
   @Builder
   aiControlPanel() {
     // 面板容器:靠右,不覆盖整屏,半透明背景,无全屏遮罩
-    // Phase 4B-2R §第四项: 面板结构 = 固定顶部状态区 + 可滚动能力列表 + 固定底部停止按钮
+    // 面板结构 = 可滚动主区域 (状态区 + 能力列表) + 固定底部停止按钮
     Column() {
-      // ===== 固定顶部状态区 (标题 + 诊断 + 手动镜头按钮, 不随能力列表滚动) =====
-      Column() {
-        // 标题行:模型名 + 模型显示开关 + 关闭按钮
-        Row() {
-          Text(this.avatarModelDisplayName.length > 0
-            ? this.avatarModelDisplayName : '未加载模型')
-            .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_primary'))
-            .layoutWeight(1)
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-          // 模型显示开关 (Toggle)
-          Toggle({ type: ToggleType.Switch, isOn: this.chatAvatarVisible })
-            .selectedColor($r('app.color.app_accent'))
-            .scale({ x: 0.8, y: 0.8 })
-            .onChange((isOn: boolean) => {
-              this.chatAvatarVisible = isOn;
-            })
-
-          // 关闭按钮
-          Stack() {
-            SymbolGlyph($r('sys.symbol.xmark'))
-              .fontSize(14)
-              .fontColor([$r('app.color.app_text_secondary')])
-          }
-          .width(28)
-          .height(28)
-          .margin({ left: 4 })
-          .onClick(() => {
-            this.aiPanelVisible = false;
-          })
-        }
-        .width('100%')
-        .margin({ bottom: 8 })
-
-        // ===== Phase 4B-1R §第八项: 紧凑诊断信息 =====
-        this.stageDiagnosticBlock()
-
-        // Phase 4B-2R §第十二项: 运行时状态一致性 (来自 Runtime Debug State)
-        this.runtimeStatusBlock()
-
-        // 重新加载模型按钮 (Phase 4B-1R §第八项)
-        Button('重新加载模型')
-          .type(ButtonType.Normal)
-          .borderRadius($r('app.float.app_radius_sm'))
-          .backgroundColor('rgba(255,255,255,0.12)')
-          .fontColor($r('app.color.app_text_primary'))
-          .fontSize($r('app.float.app_font_caption'))
-          .width('100%')
-          .height(30)
-          .margin({ top: 6, bottom: 4 })
-          .onClick(() => {
-            this.reloadAvatarModel();
-          })
-
-        // Phase 4B-2: 镜头手动验证按钮 (只调用 ShotDirector, 不直接调用相机)
-        Row() {
-          Button('全身')
-            .type(ButtonType.Normal)
-            .borderRadius($r('app.float.app_radius_sm'))
-            .backgroundColor('rgba(255,255,255,0.12)')
-            .fontColor($r('app.color.app_text_primary'))
-            .fontSize($r('app.float.app_font_caption'))
-            .height(28)
-            .layoutWeight(1)
-            .margin({ right: 4 })
-            .onClick(() => {
-              this.transitionToFullBody();
-            })
-
-          Button('脸部（重置视角）')
-            .type(ButtonType.Normal)
-            .borderRadius($r('app.float.app_radius_sm'))
-            .backgroundColor('rgba(255,255,255,0.12)')
-            .fontColor($r('app.color.app_text_primary'))
-            .fontSize($r('app.float.app_font_caption'))
-            .height(28)
-            .layoutWeight(1)
-            .margin({ left: 4 })
-            .onClick(() => {
-              this.transitionToFaceResetView();
-            })
-        }
-        .width('100%')
-        .margin({ bottom: 8 })
-      }
-      .width('100%')
-      .padding({ left: 12, right: 12, top: 12, bottom: 4 })
-
-      // ===== 可滚动能力列表 (动作 / 姿势 / 表情) =====
+      // ===== 可滚动主区域 (标题 + 诊断 + 镜头按钮 + 模型大小滑动条 + 能力列表) =====
       Scroll() {
         Column() {
+          // 标题行:模型名 + 模型显示开关 + 关闭按钮
+          Row() {
+            Text(this.avatarModelDisplayName.length > 0
+              ? this.avatarModelDisplayName : '未加载模型')
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_text_primary'))
+              .layoutWeight(1)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+            // 模型显示开关 (Toggle)
+            Toggle({ type: ToggleType.Switch, isOn: this.chatAvatarVisible })
+              .selectedColor($r('app.color.app_accent'))
+              .scale({ x: 0.8, y: 0.8 })
+              .onChange((isOn: boolean) => {
+                this.chatAvatarVisible = isOn;
+              })
+
+            // 关闭按钮
+            Stack() {
+              SymbolGlyph($r('sys.symbol.xmark'))
+                .fontSize(14)
+                .fontColor([$r('app.color.app_text_secondary')])
+            }
+            .width(28)
+            .height(28)
+            .margin({ left: 4 })
+            .onClick(() => {
+              this.aiPanelVisible = false;
+            })
+          }
+          .width('100%')
+          .margin({ bottom: 8 })
+
+          // ===== Phase 4B-1R §第八项: 紧凑诊断信息 =====
+          this.stageDiagnosticBlock()
+
+          // Phase 4B-2R §第十二项: 运行时状态一致性 (来自 Runtime Debug State)
+          this.runtimeStatusBlock()
+
+          // Phase 4A-3: AI 模型权限区 (Avatar Tool Calling 权限控制)
+          this.avatarToolPermissionBlock()
+
+          // Phase 4C-1: Avatar 对话演出策略状态区
+          this.avatarDialogueStrategyBlock()
+
+          // 重新加载模型按钮 (Phase 4B-1R §第八项)
+          Button('重新加载模型')
+            .type(ButtonType.Normal)
+            .borderRadius($r('app.float.app_radius_sm'))
+            .backgroundColor('rgba(255,255,255,0.12)')
+            .fontColor($r('app.color.app_text_primary'))
+            .fontSize($r('app.float.app_font_caption'))
+            .width('100%')
+            .height(30)
+            .margin({ top: 6, bottom: 4 })
+            .onClick(() => {
+              this.reloadAvatarModel();
+            })
+
+          // Phase 4B-2R2: 镜头控制模式按钮 (自动 / 全身 / 脸部)
+          Row() {
+            Button('自动镜头')
+              .type(ButtonType.Normal)
+              .borderRadius($r('app.float.app_radius_sm'))
+              .backgroundColor(this.avatarShotControlMode === 'AUTO'
+                ? $r('app.color.app_accent') : 'rgba(255,255,255,0.12)')
+              .fontColor(this.avatarShotControlMode === 'AUTO'
+                ? $r('app.color.app_on_accent') : $r('app.color.app_text_primary'))
+              .fontSize($r('app.float.app_font_caption'))
+              .height(28)
+              .layoutWeight(1)
+              .margin({ right: 4 })
+              .onClick(() => {
+                this.setShotControlMode('AUTO');
+              })
+
+            Button('全身')
+              .type(ButtonType.Normal)
+              .borderRadius($r('app.float.app_radius_sm'))
+              .backgroundColor(this.avatarShotControlMode === 'MANUAL_FULL_BODY'
+                ? $r('app.color.app_accent') : 'rgba(255,255,255,0.12)')
+              .fontColor(this.avatarShotControlMode === 'MANUAL_FULL_BODY'
+                ? $r('app.color.app_on_accent') : $r('app.color.app_text_primary'))
+              .fontSize($r('app.float.app_font_caption'))
+              .height(28)
+              .layoutWeight(1)
+              .margin({ left: 2, right: 2 })
+              .onClick(() => {
+                this.setShotControlMode('MANUAL_FULL_BODY');
+                this.transitionToFullBody();
+              })
+
+            Button('脸部')
+              .type(ButtonType.Normal)
+              .borderRadius($r('app.float.app_radius_sm'))
+              .backgroundColor(this.avatarShotControlMode === 'MANUAL_FACE_RESET_VIEW'
+                ? $r('app.color.app_accent') : 'rgba(255,255,255,0.12)')
+              .fontColor(this.avatarShotControlMode === 'MANUAL_FACE_RESET_VIEW'
+                ? $r('app.color.app_on_accent') : $r('app.color.app_text_primary'))
+              .fontSize($r('app.float.app_font_caption'))
+              .height(28)
+              .layoutWeight(1)
+              .margin({ left: 4 })
+              .onClick(() => {
+                this.setShotControlMode('MANUAL_FACE_RESET_VIEW');
+                this.transitionToFaceResetView();
+              })
+          }
+          .width('100%')
+          .margin({ bottom: 8 })
+
+          // ===== Phase 4B-2R2: 模型大小滑动条 (fillRatio, 调整基础构图占比) =====
+          Row() {
+            Text('模型大小')
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_text_secondary'))
+              .width(56)
+            Slider({ value: this.avatarModelFillRatio, min: 0.3, max: 0.98, step: 0.01 })
+              .layoutWeight(1)
+              .selectedColor($r('app.color.app_accent'))
+              .trackColor('rgba(255,255,255,0.15)')
+              .blockColor($r('app.color.app_accent'))
+              .onChange((value: number, mode: SliderChangeMode) => {
+                this.avatarModelFillRatio = value;
+                if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+                  this.adjustAvatarModelSize(value);
+                }
+              })
+          }
+          .width('100%')
+          .margin({ bottom: 8 })
+
+          // ===== Phase 4B-2R2: 相机缩放倍率滑动条 (0.5×~3.0×) =====
+          Row() {
+            Text('缩放')
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_text_secondary'))
+              .width(56)
+            Slider({ value: this.avatarCameraZoomMultiplier, min: 0.5, max: 3.0, step: 0.1 })
+              .layoutWeight(1)
+              .selectedColor($r('app.color.app_accent'))
+              .trackColor('rgba(255,255,255,0.15)')
+              .blockColor($r('app.color.app_accent'))
+              .onChange((value: number, mode: SliderChangeMode) => {
+                this.avatarCameraZoomMultiplier = value;
+                if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+                  this.adjustCameraZoomMultiplier(value);
+                }
+              })
+            Text(this.formatZoomMultiplier(this.avatarCameraZoomMultiplier))
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_text_secondary'))
+              .width(40)
+              .textAlign(TextAlign.RIGHT)
+          }
+          .width('100%')
+          .margin({ bottom: 8 })
+
+          // ===== 能力列表 (动作 / 姿势 / 表情) =====
           // 无能力快照时提示
           if (this.aiCapabilitySnapshot === null) {
             Text('暂无可用能力 (需先在 VRM Viewer 导入模型/动作/姿势/表情)')
@@ -1255,7 +1462,7 @@ struct ChatPage {
           }
         }
         .width('100%')
-        .padding({ left: 12, right: 12, bottom: 4 })
+        .padding({ left: 12, right: 12, top: 12, bottom: 4 })
       }
       .scrollBar(BarState.Off)
       .layoutWeight(1)
@@ -1374,14 +1581,30 @@ struct ChatPage {
   @Builder
   runtimeStatusBlock() {
     Column() {
-      Text(`当前镜头: ${this.runtimeShotText()}`)
+      Text(`镜头模式: ${this.runtimeShotControlModeText()} | 镜头: ${this.runtimeShotText()}`)
         .fontSize(11)
         .fontColor($r('app.color.app_text_secondary'))
         .width('100%')
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
 
+      Text(`模型倍率: ${this.runtimeCameraZoomText()}`)
+        .fontSize(11)
+        .fontColor($r('app.color.app_text_secondary'))
+        .width('100%')
+        .margin({ top: 2 })
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+
       Text(`动作: ${this.runtimeActionText()} | 状态: ${this.runtimeAnimationStateText()}`)
+        .fontSize(11)
+        .fontColor($r('app.color.app_text_secondary'))
+        .width('100%')
+        .margin({ top: 2 })
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+      Text(`动画加载: ${this.runtimeAnimationLoadText()}`)
         .fontSize(11)
         .fontColor($r('app.color.app_text_secondary'))
         .width('100%')
@@ -1398,6 +1621,14 @@ struct ChatPage {
         .textOverflow({ overflow: TextOverflow.Ellipsis })
 
       Text(`表情: ${this.runtimeExpressionText()} | 状态: ${this.runtimeExpressionStateText()}`)
+        .fontSize(11)
+        .fontColor($r('app.color.app_text_secondary'))
+        .width('100%')
+        .margin({ top: 2 })
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+      Text(`Turn: ${this.runtimeLastTurnIdText()} | Lifecycle: ${this.runtimeLifecycleStateText()}`)
         .fontSize(11)
         .fontColor($r('app.color.app_text_secondary'))
         .width('100%')
@@ -1422,12 +1653,289 @@ struct ChatPage {
     .backgroundColor('rgba(255,255,255,0.05)')
   }
 
+  /**
+   * Phase 4A-3: AI 模型权限区块 (Avatar Tool Calling 权限控制)。
+   *
+   * 显示:
+   *   - 当前 Provider 是否支持 Tool Calling
+   *   - 注入工具数量
+   *   - 当前模型能力是否就绪
+   *   - 最后工具名称 / 结果 / 错误
+   *   - 三档权限切换按钮 (不允许 / 只读 / 控制本次聊天)
+   *
+   * 权限为 DENY 时, AI 面板手动按钮仍可使用 (手动按钮属用户操作)。
+   */
+  @Builder
+  avatarToolPermissionBlock() {
+    Column() {
+      Text('AI 模型权限')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.app_text_secondary'))
+        .width('100%')
+        .margin({ bottom: 4 })
+
+      // Provider 支持状态 + 工具数量 + 能力就绪
+      Row() {
+        Text(`Provider: ${this.avatarToolStatus !== null && this.avatarToolStatus!.providerSupported ? '支持' : '不支持'}`)
+          .fontSize(11)
+          .fontColor(this.avatarToolStatus !== null && this.avatarToolStatus!.providerSupported
+            ? $r('app.color.app_text_secondary')
+            : $r('app.color.app_danger'))
+          .layoutWeight(1)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+        Text(`工具: ${this.avatarToolStatus !== null ? this.avatarToolStatus!.toolCount : 0} 个`)
+          .fontSize(11)
+          .fontColor($r('app.color.app_text_secondary'))
+          .layoutWeight(1)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .width('100%')
+
+      // 能力就绪 + 最后工具名/结果/错误
+      Text(`能力: ${this.avatarToolStatus !== null && this.avatarToolStatus!.capabilityReady ? '就绪' : '未就绪'}${this.avatarToolStatus !== null && this.avatarToolStatus!.lastToolName.length > 0 ? ' | 最后工具: ' + this.avatarToolStatus!.lastToolName : ''}`)
+        .fontSize(11)
+        .fontColor($r('app.color.app_text_secondary'))
+        .width('100%')
+        .margin({ top: 2 })
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+      if (this.avatarToolStatus !== null && this.avatarToolStatus!.lastToolError.length > 0) {
+        Text(`错误: ${this.avatarToolStatus!.lastToolError}`)
+          .fontSize(11)
+          .fontColor($r('app.color.app_danger'))
+          .width('100%')
+          .margin({ top: 2 })
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+
+      // 权限切换按钮 (三档)
+      Row() {
+        Button('不允许')
+          .type(ButtonType.Normal)
+          .borderRadius($r('app.float.app_radius_sm'))
+          .backgroundColor(this.avatarToolPermissionMode === 'DENY'
+            ? $r('app.color.app_accent') : 'rgba(255,255,255,0.08)')
+          .fontColor(this.avatarToolPermissionMode === 'DENY'
+            ? Color.White : $r('app.color.app_text_primary'))
+          .fontSize(11)
+          .height(28)
+          .layoutWeight(1)
+          .margin({ right: 2 })
+          .onClick(() => {
+            this.setAvatarToolPermission('DENY');
+          })
+
+        Button('只读')
+          .type(ButtonType.Normal)
+          .borderRadius($r('app.float.app_radius_sm'))
+          .backgroundColor(this.avatarToolPermissionMode === 'READ_ONLY'
+            ? $r('app.color.app_accent') : 'rgba(255,255,255,0.08)')
+          .fontColor(this.avatarToolPermissionMode === 'READ_ONLY'
+            ? Color.White : $r('app.color.app_text_primary'))
+          .fontSize(11)
+          .height(28)
+          .layoutWeight(1)
+          .margin({ left: 2, right: 2 })
+          .onClick(() => {
+            this.setAvatarToolPermission('READ_ONLY');
+          })
+
+        Button('控制本次聊天')
+          .type(ButtonType.Normal)
+          .borderRadius($r('app.float.app_radius_sm'))
+          .backgroundColor(this.avatarToolPermissionMode === 'CONTROL_THIS_CHAT'
+            ? $r('app.color.app_accent') : 'rgba(255,255,255,0.08)')
+          .fontColor(this.avatarToolPermissionMode === 'CONTROL_THIS_CHAT'
+            ? Color.White : $r('app.color.app_text_primary'))
+          .fontSize(11)
+          .height(28)
+          .layoutWeight(1)
+          .margin({ left: 2 })
+          .onClick(() => {
+            this.setAvatarToolPermission('CONTROL_THIS_CHAT');
+          })
+      }
+      .width('100%')
+      .margin({ top: 4 })
+    }
+    .width('100%')
+    .padding(8)
+    .margin({ bottom: 4 })
+    .borderRadius($r('app.float.app_radius_sm'))
+    .backgroundColor('rgba(255,255,255,0.05)')
+  }
+
+  /**
+   * Phase 4C-1: Avatar 对话演出策略状态区块。
+   *
+   * 显示:
+   *   - 演出策略: BALANCED
+   *   - 策略版本: V1
+   *   - 策略已注入 / 未注入
+   *   - 折叠区域: 允许工具 / 每 Turn 上限 / 当前权限 / 当前能力数量
+   *
+   * 不显示完整系统提示词。
+   */
+  @Builder
+  avatarDialogueStrategyBlock() {
+    Column() {
+      Text('演出策略')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.app_text_secondary'))
+        .width('100%')
+        .margin({ bottom: 4 })
+
+      Row() {
+        Text(`策略: ${this.avatarStrategyStatus !== null ? this.avatarStrategyStatus!.strategyMode : 'BALANCED'}`)
+          .fontSize(11)
+          .fontColor($r('app.color.app_text_secondary'))
+          .layoutWeight(1)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+        Text(`版本: ${this.avatarStrategyStatus !== null ? this.avatarStrategyStatus!.strategyVersion.replace('AVATAR_DIALOGUE_STRATEGY_', '') : 'V1'}`)
+          .fontSize(11)
+          .fontColor($r('app.color.app_text_secondary'))
+          .layoutWeight(1)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .width('100%')
+
+      Text(`状态: ${this.avatarStrategyStatus !== null && this.avatarStrategyStatus!.injected ? '已注入' : '未注入'}${this.avatarStrategyStatus !== null && this.avatarStrategyStatus!.lastError.length > 0 ? ' | ' + this.avatarStrategyStatus!.lastError : ''}`)
+        .fontSize(11)
+        .fontColor(this.avatarStrategyStatus !== null && this.avatarStrategyStatus!.lastError.length > 0
+          ? $r('app.color.app_danger')
+          : $r('app.color.app_text_secondary'))
+        .width('100%')
+        .margin({ top: 2 })
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+      // 折叠区域: 查看策略摘要
+      Row() {
+        Text(this.avatarStrategySummaryExpanded ? '收起摘要' : '查看策略摘要')
+          .fontSize(11)
+          .fontColor($r('app.color.app_accent'))
+          .layoutWeight(1)
+        Text(this.avatarStrategySummaryExpanded ? '▲' : '▼')
+          .fontSize(11)
+          .fontColor($r('app.color.app_accent'))
+      }
+      .width('100%')
+      .margin({ top: 4 })
+      .onClick(() => {
+        this.avatarStrategySummaryExpanded = !this.avatarStrategySummaryExpanded;
+      })
+
+      if (this.avatarStrategySummaryExpanded && this.avatarStrategyStatus !== null) {
+        Column() {
+          Text(`当前权限: ${this.avatarStrategyStatus!.permissionMode}`)
+            .fontSize(11)
+            .fontColor($r('app.color.app_text_secondary'))
+            .width('100%')
+            .margin({ top: 2 })
+          Text(`Provider: ${this.avatarStrategyStatus!.providerSupported ? '支持' : '不支持'}`)
+            .fontSize(11)
+            .fontColor($r('app.color.app_text_secondary'))
+            .width('100%')
+            .margin({ top: 2 })
+          Text(`能力数量: ${this.avatarStrategyStatus!.capabilityCount}`)
+            .fontSize(11)
+            .fontColor($r('app.color.app_text_secondary'))
+            .width('100%')
+            .margin({ top: 2 })
+          Text(`每 Turn 演出上限: ${this.avatarStrategyStatus!.maxPerformPerTurn}`)
+            .fontSize(11)
+            .fontColor($r('app.color.app_text_secondary'))
+            .width('100%')
+            .margin({ top: 2 })
+        }
+        .width('100%')
+        .padding({ top: 4, bottom: 4 })
+        .margin({ top: 4 })
+        .borderRadius($r('app.float.app_radius_sm'))
+        .backgroundColor('rgba(255,255,255,0.04)')
+      }
+    }
+    .width('100%')
+    .padding(8)
+    .margin({ bottom: 4 })
+    .borderRadius($r('app.float.app_radius_sm'))
+    .backgroundColor('rgba(255,255,255,0.05)')
+  }
+
   /** Phase 4B-2R: 运行时辅助 - 当前镜头。 */
   private runtimeShotText(): string {
     if (this.avatarShotSnapshot === null) {
       return '-';
     }
     return this.avatarShotSnapshot!.currentShot;
+  }
+
+  /** Phase 4B-2R2: 运行时辅助 - 镜头控制模式 (AUTO / MANUAL_FULL_BODY / MANUAL_FACE)。 */
+  private runtimeShotControlModeText(): string {
+    if (this.avatarShotSnapshot === null) {
+      return 'AUTO';
+    }
+    const mode: string = this.avatarShotSnapshot!.controlMode;
+    if (mode === 'MANUAL_FULL_BODY') {
+      return 'MANUAL_FULL_BODY';
+    }
+    if (mode === 'MANUAL_FACE_RESET_VIEW') {
+      return 'MANUAL_FACE';
+    }
+    return 'AUTO';
+  }
+
+  /** Phase 4B-2R2: 运行时辅助 - 相机缩放倍率 (0.5×~3.0×)。 */
+  private runtimeCameraZoomText(): string {
+    if (this.avatarStageSnapshot === null) {
+      return '1.0×';
+    }
+    const m: number = this.avatarStageSnapshot!.cameraZoomMultiplier;
+    const fixed: number = Math.round(m * 10) / 10;
+    return `${fixed.toFixed(1)}×`;
+  }
+
+  /** Phase 4B-2R2: 运行时辅助 - 动画加载状态 (actionId + 错误码)。 */
+  private runtimeAnimationLoadText(): string {
+    if (this.avatarStageSnapshot === null) {
+      return '-';
+    }
+    const loadId: string = this.avatarStageSnapshot!.animationLoadActionId;
+    const errCode: string = this.avatarStageSnapshot!.animationLoadErrorCode;
+    if (loadId.length === 0 && errCode.length === 0) {
+      return '-';
+    }
+    if (errCode.length > 0) {
+      return `${loadId || '-'} | 错误: ${errCode}`;
+    }
+    return loadId.length > 0 ? loadId : '-';
+  }
+
+  /** Phase 4B-2R2: 运行时辅助 - 最后 Turn ID。 */
+  private runtimeLastTurnIdText(): string {
+    if (this.avatarStageSnapshot === null) {
+      return '-';
+    }
+    const t: string = this.avatarStageSnapshot!.lastTurnId;
+    return t.length > 0 ? t : '-';
+  }
+
+  /** Phase 4B-2R2: 运行时辅助 - 最后 Lifecycle 状态。 */
+  private runtimeLifecycleStateText(): string {
+    if (this.avatarStageSnapshot === null) {
+      return 'IDLE';
+    }
+    return this.avatarStageSnapshot!.lastLifecycleState;
   }
 
   /** Phase 4B-2R: 运行时辅助 - 当前动作显示名。 */
@@ -1647,6 +2155,69 @@ struct ChatPage {
         (e instanceof Error ? e.message : String(e)));
       this.avatarShotSnapshot = controller.getShotRuntimeSnapshot();
     });
+  }
+
+  /**
+   * 调节模型大小 (通过 fillRatio 重新构图)。
+   *
+   * 调用 controller.adjustModelFillRatio(fillRatio) 重新执行 fitAvatarFullBody。
+   * fillRatio 越大模型越大 (0.5=较小, 0.95=几乎填满)。
+   */
+  private adjustAvatarModelSize(fillRatio: number): void {
+    if (this.avatarStageController === null) {
+      Logger.warn(LOG_TAG, 'adjustAvatarModelSize: controller null');
+      return;
+    }
+    this.avatarStageController!.adjustModelFillRatio(fillRatio).catch((e: Object): void => {
+      Logger.warn(LOG_TAG, 'adjustAvatarModelSize failed: ' +
+        (e instanceof Error ? e.message : String(e)));
+    });
+  }
+
+  /**
+   * Phase 4B-2R2: 设置镜头控制模式。
+   *
+   * @param mode AUTO / MANUAL_FULL_BODY / MANUAL_FACE_RESET_VIEW
+   */
+  private setShotControlMode(mode: ArkWebAvatarShotControlMode): void {
+    if (this.avatarStageController === null) {
+      Logger.warn(LOG_TAG, 'setShotControlMode: controller null');
+      return;
+    }
+    this.avatarShotControlMode = mode;
+    this.avatarStageController!.setShotControlMode(mode);
+    this.avatarShotSnapshot = this.avatarStageController!.getShotRuntimeSnapshot();
+    Logger.info(LOG_TAG, `setShotControlMode: ${mode}`);
+  }
+
+  /**
+   * Phase 4B-2R2: 调节相机缩放倍率 (通过相机距离实现视觉缩放)。
+   *
+   * 调用 controller.setCameraZoomMultiplier(multiplier) 调整相机到目标点的距离。
+   * 不修改模型 transform, 不重置 fillRatio。
+   *
+   * @param multiplier 缩放倍率 (0.5~3.0)
+   */
+  private adjustCameraZoomMultiplier(multiplier: number): void {
+    if (this.avatarStageController === null) {
+      Logger.warn(LOG_TAG, 'adjustCameraZoomMultiplier: controller null');
+      return;
+    }
+    this.avatarStageController!.setCameraZoomMultiplier(multiplier).catch((e: Object): void => {
+      Logger.warn(LOG_TAG, 'adjustCameraZoomMultiplier failed: ' +
+        (e instanceof Error ? e.message : String(e)));
+    });
+  }
+
+  /**
+   * Phase 4B-2R2: 格式化缩放倍率显示文本。
+   *
+   * @param multiplier 缩放倍率
+   * @returns 格式化文本 (如 "1.0×")
+   */
+  private formatZoomMultiplier(multiplier: number): string {
+    const fixed: number = Math.round(multiplier * 10) / 10;
+    return `${fixed.toFixed(1)}×`;
   }
 
   // ===== 显示设置面板(气泡不透明度 + 字体配色) =====

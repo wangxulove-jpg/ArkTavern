@@ -308,6 +308,22 @@ export class ArkWebViewerJsCaller {
   }
 
   /**
+   * Phase 4B-2R2: 调用 window.arkTavernViewerBridge.applyCameraZoomMultiplier(paramsJson)
+   *
+   * 通过调整相机到目标点的距离实现视觉缩放,不修改模型 transform。
+   * 倍率范围 0.5~3.0,1.0 为默认。
+   *   - multiplier > 1: 相机靠近目标,模型视觉放大
+   *   - multiplier < 1: 相机远离目标,模型视觉缩小
+   *
+   * @param paramsJson JSON 字符串,形如 '{"multiplier":1.5}'
+   * @returns JSON 字符串,形如
+   *   {"success": true, "state": "READY", "cameraState": {...}, "multiplier": 1.5}
+   */
+  async applyCameraZoomMultiplier(paramsJson: string): Promise<string> {
+    return this.callWithStringArg('applyCameraZoomMultiplier', paramsJson);
+  }
+
+  /**
    * Phase 2A-2: 调用 window.arkTavernViewerBridge.getCameraState()
    *
    * 获取当前 Camera 状态(供 Debug Tab 显示)。

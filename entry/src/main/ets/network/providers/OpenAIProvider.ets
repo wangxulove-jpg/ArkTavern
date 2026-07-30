@@ -43,6 +43,10 @@ import {
   OpenAIRequestMessage,
   OpenAIChatResponseBody,
   OpenAIResponseFormat,
+  OpenAIToolCallPayload,
+  OpenAIToolCallFunctionPayload,
+  OpenAIToolDefPayload,
+  OpenAIToolDefFunctionPayload,
   roleToString,
   extractResponseBody,
   extractErrorDetail,
@@ -55,6 +59,11 @@ import {
   ChatStreamHandle
 } from '../../models/ChatStreamTypes';
 import { OpenAIStreamSession, StreamLauncher } from './OpenAIStreamSession';
+import {
+  ArkWebChatToolDefinition,
+  ArkWebChatToolCall,
+  ArkWebChatToolExecutionResult
+} from '../../avatarai/ArkWebAvatarAiToolTypes';
 
 /** 日志标签 */
 const LOG_TAG: string = 'OpenAIProvider';
@@ -93,6 +102,16 @@ export class OpenAIProvider extends AiProvider {
     this.httpClient = httpClient;
     this.providerKeyStore = providerKeyStore;
     this.streamLauncher = streamLauncher !== undefined ? streamLauncher : null;
+  }
+
+  /**
+   * Phase 4A-3: 声明 OpenAI-compatible Provider 支持原生 Tool Calling。
+   *
+   * OpenAI Chat Completions API 原生支持 tools / tool_calls 字段,
+   * 流式响应中通过 delta.tool_calls 增量返回工具调用。
+   */
+  supportsToolCalling(): boolean {
+    return true;
   }
 
   /**
@@ -365,14 +384,21 @@ export function validateRequest(request: ChatRequest): NetworkError | null {
  *   "temperature": 0.7,
  *   "top_p": 1.0,
  *   "max_tokens": 1024,
- *   "stream": false | true
+ *   "stream": false | true,
+ *   "tools": [...] (可选, Phase 4A-3),
+ *   "tool_choice": "auto" (可选, 当 tools 非空时)
  * }
+ *
+ * Phase 4A-3 工具结果回传:
+ * - request.priorToolCalls 非空时, 追加一条 assistant 消息 (含 tool_calls 字段)
+ * - request.toolResults 非空时, 每条结果追加一条 role:"tool" 消息
  *
  * @param request 聊天请求
  * @param forceStream 强制 stream 值(默认 false)
  * @returns JSON 字符串
  */
 export function buildRequestBody(request: ChatRequest, forceStream: boolean = false): string {
+  // 构建消息数组 (含工具结果回传消息)
   const messages: OpenAIRequestMessage[] = [];
   for (let i = 0; i < request.messages.length; i++) {
     const msg = request.messages[i];
@@ -380,6 +406,42 @@ export function buildRequestBody(request: ChatRequest, forceStream: boolean = fa
       role: roleToString(msg.role),
       content: msg.content
     });
+  }
+
+  // Phase 4A-3: 追加 assistant tool_calls 消息 (回传上一轮工具调用)
+  if (request.priorToolCalls !== undefined && request.priorToolCalls.length > 0) {
+    const toolCallsPayload: Object[] = [];
+    for (let i = 0; i < request.priorToolCalls.length; i++) {
+      const tc: ArkWebChatToolCall = request.priorToolCalls[i];
+      const funcPayload: OpenAIToolCallFunctionPayload = {
+        name: tc.name,
+        arguments: tc.argumentsJson
+      };
+      const callPayload: OpenAIToolCallPayload = {
+        id: tc.toolCallId,
+        type: 'function',
+        function: funcPayload
+      };
+      toolCallsPayload.push(callPayload);
+    }
+    // OpenAI 协议要求 assistant 消息包含 tool_calls 字段
+    messages.push({
+      role: 'assistant',
+      content: '',
+      tool_calls: toolCallsPayload
+    } as OpenAIRequestMessage);
+  }
+
+  // Phase 4A-3: 追加 tool 结果消息 (每条 toolResults 一条 role:"tool" 消息)
+  if (request.toolResults !== undefined && request.toolResults.length > 0) {
+    for (let i = 0; i < request.toolResults.length; i++) {
+      const tr: ArkWebChatToolExecutionResult = request.toolResults[i];
+      messages.push({
+        role: 'tool',
+        content: tr.resultJson,
+        tool_call_id: tr.toolCallId
+      } as OpenAIRequestMessage);
+    }
   }
 
   // 思考强度:空字符串或 undefined 不发送该字段;合法值才写入 body
@@ -390,6 +452,70 @@ export function buildRequestBody(request: ChatRequest, forceStream: boolean = fa
   const responseFormat: OpenAIResponseFormat | undefined = hasJsonFormat
     ? { type: 'json_object' }
     : undefined;
+
+  // Phase 4A-3: 工具定义 (转换为 OpenAI 格式)
+  const toolsPayload: Object[] | undefined = buildOpenAiToolsPayload(request.tools);
+  const hasTools: boolean = toolsPayload !== undefined;
+
+  if (hasEffort && hasJsonFormat && hasTools) {
+    const requestBody: OpenAIChatRequestBody = {
+      model: request.model,
+      messages: messages,
+      temperature: request.temperature,
+      top_p: request.topP,
+      max_tokens: request.maxTokens,
+      stream: forceStream,
+      reasoning_effort: effort as string,
+      response_format: responseFormat as OpenAIResponseFormat,
+      tools: toolsPayload as Object[],
+      tool_choice: 'auto'
+    };
+    return JSON.stringify(requestBody);
+  }
+
+  if (hasEffort && hasTools) {
+    const requestBody: OpenAIChatRequestBody = {
+      model: request.model,
+      messages: messages,
+      temperature: request.temperature,
+      top_p: request.topP,
+      max_tokens: request.maxTokens,
+      stream: forceStream,
+      reasoning_effort: effort as string,
+      tools: toolsPayload as Object[],
+      tool_choice: 'auto'
+    };
+    return JSON.stringify(requestBody);
+  }
+
+  if (hasJsonFormat && hasTools) {
+    const requestBody: OpenAIChatRequestBody = {
+      model: request.model,
+      messages: messages,
+      temperature: request.temperature,
+      top_p: request.topP,
+      max_tokens: request.maxTokens,
+      stream: forceStream,
+      response_format: responseFormat as OpenAIResponseFormat,
+      tools: toolsPayload as Object[],
+      tool_choice: 'auto'
+    };
+    return JSON.stringify(requestBody);
+  }
+
+  if (hasTools) {
+    const requestBody: OpenAIChatRequestBody = {
+      model: request.model,
+      messages: messages,
+      temperature: request.temperature,
+      top_p: request.topP,
+      max_tokens: request.maxTokens,
+      stream: forceStream,
+      tools: toolsPayload as Object[],
+      tool_choice: 'auto'
+    };
+    return JSON.stringify(requestBody);
+  }
 
   if (hasEffort && hasJsonFormat) {
     const requestBody: OpenAIChatRequestBody = {
@@ -441,6 +567,56 @@ export function buildRequestBody(request: ChatRequest, forceStream: boolean = fa
   };
 
   return JSON.stringify(requestBody);
+}
+
+/**
+ * Phase 4A-3: 将项目内部统一的 ArkWebChatToolDefinition 列表转换为 OpenAI tools 协议格式。
+ *
+ * 输出格式:
+ * [
+ *   {
+ *     "type": "function",
+ *     "function": {
+ *       "name": "avatar_perform",
+ *       "description": "...",
+ *       "parameters": {...}  // 从 inputSchemaJson 解析
+ *     }
+ *   }
+ * ]
+ *
+ * @param tools 项目内部工具定义列表 (可能为 undefined 或空数组)
+ * @returns OpenAI tools 数组; 无工具返回 undefined
+ */
+function buildOpenAiToolsPayload(
+  tools: ArkWebChatToolDefinition[] | undefined
+): Object[] | undefined {
+  if (tools === undefined || tools.length === 0) {
+    return undefined;
+  }
+  const payload: Object[] = [];
+  for (let i = 0; i < tools.length; i++) {
+    const tool: ArkWebChatToolDefinition = tools[i];
+    let parameters: Object = JSON.parse('{}');
+    if (tool.inputSchemaJson.length > 0) {
+      try {
+        parameters = JSON.parse(tool.inputSchemaJson);
+      } catch (e) {
+        // 解析失败: 用空对象兜底
+        parameters = JSON.parse('{}');
+      }
+    }
+    const funcPayload: OpenAIToolDefFunctionPayload = {
+      name: tool.name,
+      description: tool.description,
+      parameters: parameters
+    };
+    const toolPayload: OpenAIToolDefPayload = {
+      type: 'function',
+      function: funcPayload
+    };
+    payload.push(toolPayload);
+  }
+  return payload;
 }
 
 /**
