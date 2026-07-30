@@ -69,7 +69,8 @@ import { ArkWebAvatarChatBridge } from '../services/avatar/ArkWebAvatarChatBridg
 import { ChatAvatarStage } from '../components/avatar/ChatAvatarStage';
 import {
   ArkWebChatAvatarStageController,
-  ChatAvatarStageState,
+  ArkWebChatAvatarStageState,
+  ArkWebChatAvatarStageRuntimeSnapshot,
   ChatAvatarStageEventListener
 } from '../vrmviewer/ArkWebChatAvatarStageController';
 import {
@@ -88,10 +89,10 @@ const LOG_TAG: string = 'ChatPage';
  * 通过闭包注入回调, 让 ChatPage 在 aboutToAppear 中绑定 @State 更新。
  */
 class ChatAvatarStageListenerImpl implements ChatAvatarStageEventListener {
-  onStateChangedFn: ((state: ChatAvatarStageState, detail: string) => void) | null = null;
+  onStateChangedFn: ((state: ArkWebChatAvatarStageState, detail: string) => void) | null = null;
   onModelNameChangedFn: ((displayName: string) => void) | null = null;
 
-  onStateChanged(state: ChatAvatarStageState, detail: string): void {
+  onStateChanged(state: ArkWebChatAvatarStageState, detail: string): void {
     const fn = this.onStateChangedFn;
     if (fn !== null) {
       fn(state, detail);
@@ -229,10 +230,12 @@ struct ChatPage {
   @State aiPanelVisible: boolean = false;
   /** Phase 4B-1: AI 能力快照 (动作/姿势/表情列表, 供 AI 面板展示) */
   @State aiCapabilitySnapshot: ArkWebAvatarAiCapabilitySnapshot | null = null;
-  /** Phase 4B-1: 当前 Stage 状态 (供 AI 面板显示模型名/状态) */
-  @State avatarStageState: ChatAvatarStageState = ChatAvatarStageState.IDLE;
-  /** Phase 4B-1: 当前模型显示名 (供 AI 面板显示) */
+  /** Phase 4B-1R: 当前 Stage 状态 (供 AI 面板显示模型名/状态) */
+  @State avatarStageState: ArkWebChatAvatarStageState = 'CREATED';
+  /** Phase 4B-1R: 当前模型显示名 (供 AI 面板显示) */
   @State avatarModelDisplayName: string = '';
+  /** Phase 4B-1R: Stage 运行时快照 (供 AI 面板紧凑诊断显示) */
+  @State avatarStageSnapshot: ArkWebChatAvatarStageRuntimeSnapshot | null = null;
 
   aboutToAppear(): void {
     const modelService = AppServices.getModelService();
@@ -616,17 +619,21 @@ struct ChatPage {
             // 设置事件监听器, 接收状态变化和模型名变化
             const self: ChatPage = this;
             const listener: ChatAvatarStageListenerImpl = new ChatAvatarStageListenerImpl();
-            listener.onStateChangedFn = (state: ChatAvatarStageState, _detail: string): void => {
+            listener.onStateChangedFn = (state: ArkWebChatAvatarStageState, _detail: string): void => {
               self.avatarStageState = state;
+              self.avatarStageSnapshot = controller.getRuntimeSnapshot();
               // 模型就绪后刷新能力快照
-              if (state === ChatAvatarStageState.MODEL_READY) {
+              if (state === 'MODEL_READY') {
                 self.refreshAiCapabilitySnapshot();
               }
             };
             listener.onModelNameChangedFn = (displayName: string): void => {
               self.avatarModelDisplayName = displayName;
+              self.avatarStageSnapshot = controller.getRuntimeSnapshot();
             };
             controller.setEventListener(listener);
+            // 初始快照
+            this.avatarStageSnapshot = controller.getRuntimeSnapshot();
           }
         })
 
@@ -998,6 +1005,23 @@ struct ChatPage {
           .width('100%')
           .margin({ bottom: 8 })
 
+          // ===== Phase 4B-1R §第八项: 紧凑诊断信息 =====
+          this.stageDiagnosticBlock()
+
+          // 重新加载模型按钮 (Phase 4B-1R §第八项)
+          Button('重新加载模型')
+            .type(ButtonType.Normal)
+            .borderRadius($r('app.float.app_radius_sm'))
+            .backgroundColor('rgba(255,255,255,0.12)')
+            .fontColor($r('app.color.app_text_primary'))
+            .fontSize($r('app.float.app_font_caption'))
+            .width('100%')
+            .height(30)
+            .margin({ top: 6, bottom: 8 })
+            .onClick(() => {
+              this.reloadAvatarModel();
+            })
+
           // 无能力快照时提示
           if (this.aiCapabilitySnapshot === null) {
             Text('暂无可用能力 (需先在 VRM Viewer 导入模型/动作/姿势/表情)')
@@ -1122,6 +1146,124 @@ struct ChatPage {
       .onClick(() => {
         onClick();
       })
+  }
+
+  /**
+   * Phase 4B-1R §第八项: Stage 紧凑诊断信息块。
+   *
+   * 显示:
+   *   Stage：<state> / Viewer：<state> / 模型：<name|未加载>
+   *   Profile：<profile> / 尺寸：<w>x<h>
+   *   错误：<errorCode> (仅失败时显示)
+   */
+  @Builder
+  stageDiagnosticBlock() {
+    Column() {
+      Text(`Stage: ${this.avatarStageState} | Viewer: ${this.stageViewerStateText()} | 模型: ${this.stageModelText()}`)
+        .fontSize(11)
+        .fontColor($r('app.color.app_text_secondary'))
+        .width('100%')
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+      Text(`Profile: ${this.stageProfileText()} | 尺寸: ${this.stageSizeText()}`)
+        .fontSize(11)
+        .fontColor($r('app.color.app_text_secondary'))
+        .width('100%')
+        .margin({ top: 2 })
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+      if (this.stageErrorText().length > 0) {
+        Text(`错误: ${this.stageErrorText()}`)
+          .fontSize(11)
+          .fontColor($r('app.color.app_danger'))
+          .width('100%')
+          .margin({ top: 2 })
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+    }
+    .width('100%')
+    .padding(8)
+    .margin({ bottom: 4 })
+    .borderRadius($r('app.float.app_radius_sm'))
+    .backgroundColor('rgba(255,255,255,0.05)')
+  }
+
+  /** 诊断辅助: Viewer 状态文本。 */
+  private stageViewerStateText(): string {
+    if (this.avatarStageSnapshot === null) {
+      return '-';
+    }
+    const s: string = this.avatarStageSnapshot!.viewerState;
+    return s.length > 0 ? s : '-';
+  }
+
+  /** 诊断辅助: 模型状态/名称文本。 */
+  private stageModelText(): string {
+    if (this.avatarStageSnapshot === null) {
+      return '未加载';
+    }
+    const name: string = this.avatarStageSnapshot!.activeModelDisplayName;
+    if (name.length > 0) {
+      return name;
+    }
+    return this.avatarStageSnapshot!.modelState;
+  }
+
+  /** 诊断辅助: 渲染 Profile 文本。 */
+  private stageProfileText(): string {
+    if (this.avatarStageSnapshot === null) {
+      return '-';
+    }
+    const p: string = this.avatarStageSnapshot!.renderProfile;
+    return p.length > 0 ? p : '-';
+  }
+
+  /** 诊断辅助: Stage 尺寸文本。 */
+  private stageSizeText(): string {
+    if (this.avatarStageSnapshot === null) {
+      return '0x0';
+    }
+    const w: number = this.avatarStageSnapshot!.stageWidth;
+    const h: number = this.avatarStageSnapshot!.stageHeight;
+    return `${w}x${h}`;
+  }
+
+  /** 诊断辅助: 错误码文本 (仅在 FAILED/有错误码时显示)。 */
+  private stageErrorText(): string {
+    if (this.avatarStageSnapshot === null) {
+      return '';
+    }
+    const code: string = this.avatarStageSnapshot!.lastErrorCode;
+    return code.length > 0 ? code : '';
+  }
+
+  /**
+   * Phase 4B-1R §第八项: 重新加载模型按钮回调。
+   *
+   * 流程:
+   *   1. controller.reloadActiveModel() (内部 generation++ + 重新 startActiveModelRestore)
+   *   2. 刷新快照到 @State (触发诊断块刷新)
+   *
+   * 不删除持久模型 / library.json。
+   */
+  private reloadAvatarModel(): void {
+    if (this.avatarStageController === null) {
+      Logger.warn(LOG_TAG, 'reloadAvatarModel: controller null');
+      return;
+    }
+    const controller: ArkWebChatAvatarStageController = this.avatarStageController!;
+    // 立即刷新一次快照 (展示用户已点击)
+    this.avatarStageSnapshot = controller.getRuntimeSnapshot();
+    controller.reloadActiveModel().then((): void => {
+      this.avatarStageSnapshot = controller.getRuntimeSnapshot();
+    }).catch((e: Object): void => {
+      Logger.warn(LOG_TAG, 'reloadAvatarModel failed: ' +
+        (e instanceof Error ? e.message : String(e)));
+      this.avatarStageSnapshot = controller.getRuntimeSnapshot();
+    });
   }
 
   // ===== 显示设置面板(气泡不透明度 + 字体配色) =====

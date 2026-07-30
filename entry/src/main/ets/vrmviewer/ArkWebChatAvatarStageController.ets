@@ -1,21 +1,24 @@
 /**
- * ArkWebChatAvatarStageController — 单人聊天页面透明 Avatar Stage 控制器 (Phase 4B-1)
+ * ArkWebChatAvatarStageController — 单人聊天页面透明 Avatar Stage 控制器 (Phase 4B-1R)
  *
  * 职责:
  *   - 创建聊天页面专用 ArkWeb 实例 (复用 ArkWebVrmViewerController)
  *   - 加载本地 vrmviewer 页面 (与 VrmViewerPage 相同的 rawfile 资源)
- *   - onPageEnd 后调用 setRenderProfile('CHAT_STAGE') 进入透明渲染模式
- *   - AssetLibrary READY 时读取 activeModelId, 注册 Provider, 加载持久模型
- *   - 模型 READY 后调用 fitAvatarFullBody 完成全身构图
+ *   - onPageEnd 后等待 Viewer READY → setRenderProfile('CHAT_STAGE') → 确认 → startActiveModelRestore
+ *   - 严格初始化顺序: init → Web.onControllerAttached → Web.onPageEnd → Viewer READY → Profile → AssetLibrary → Restore
+ *   - active model 恢复链路: ensureInitialized → findActiveModel → validateModelFile → registerPersistentAsset →
+ *     prepareModelResource → getPreparedModelResource 回读 → probePreparedModelResource → 轮询 VERIFIED →
+ *     loadPreparedModelResource → 轮询 READY → MODEL_READY → fitAvatarFullBody
+ *   - 维护详细运行时状态 (stageState / viewerState / modelState / renderProfile / size / errorCode)
  *   - 注册 Avatar endpoint 到 ArkWebAvatarChatBridge (覆盖式)
- *   - 通过 LifecycleController 消费 Bridge 投递的 performanceHint
- *   - 提供 getCapabilitySnapshot / cancelPerformance 给 AI 面板调用
+ *   - 提供 getCapabilitySnapshot / cancelPerformance / reloadActiveModel 给 AI 面板调用
  *
  * 不做的事:
  *   - 不复制 VRM Loader / AnimationMixer / ExpressionManager 等底层实现
  *   - 不修改背景图片 / Scene 背景色 (透明由 Web 端 CHAT_STAGE profile 完成)
  *   - 不实现真实 AI Tool Calling / 镜头导演 / 脸部特写
- *   - 不创建 setInterval 轮询 (尺寸变化由组件 onAreaChange 触发)
+ *   - 不创建 setInterval 永久轮询 (仅有限次数的 readiness polling)
+ *   - 不把 loadPreparedModelResource 返回 success 等同于 MODEL_READY
  *
  * 复用模块:
  *   - ArkWebVrmViewerController (Web 实例 + Bridge 注册 + Viewer 状态机)
@@ -34,13 +37,15 @@
  *   - Web 组件 onControllerAttached → onWebControllerAttached()
  *   - Web 组件 onPageEnd → onWebPageEnd()
  *   - Viewer READY → onViewerReady() (setRenderProfile + startActiveModelRestore)
- *   - 模型 READY → onModelReady() (fitAvatarFullBody + 刷新能力快照)
+ *   - 模型 READY → fitAvatarFullBody + 刷新能力快照
  *   - ChatAvatarStage aboutToDisappear → dispose()
  *
  * Reference:
- *   - AGENTS.md Phase 4B-1 §页面层级 / §渲染 Profile / §模型自动恢复
- *   - VrmViewerPage.ets (startActiveModelRestore / processRestoredFile 参考)
- *   - ArkWebVrmViewerController.ets (Web 实例管理)
+ *   - AGENTS.md Phase 4B-1R §初始化顺序 / §模型恢复 / §MODEL_READY 等待
+ *   - VrmViewerPage.ets startActiveModelRestore / validateRegisterAndLoadPersistentAsset
+ *     / ensurePreparedModelResource / tryAutoProbeResource / waitForProbeVerified
+ *     / autoLoadCurrentModel / waitForLoadReady
+ *   - ArkWebVrmViewerController.ets (Web 实例管理 + probe/load polling 接口)
  */
 
 import { webview } from '@kit.ArkWeb';
@@ -96,48 +101,125 @@ import {
 const LOG_TAG: string = 'ChatAvatarStage';
 
 /**
- * Stage 状态 (供 UI 显示)。
+ * Stage 运行状态 (Phase 4B-1R §第一项)。
+ *
+ * 严格状态流转:
+ *   CREATED
+ *     ├─ init() → INITIALIZING
+ *     └─ dispose() → DISPOSED
+ *   INITIALIZING
+ *     ├─ Web.onControllerAttached → WEB_LOADING
+ *     └─ dispose() → DISPOSED
+ *   WEB_LOADING
+ *     ├─ Web.onPageEnd → WEB_READY
+ *     └─ dispose() → DISPOSED
+ *   WEB_READY
+ *     ├─ Viewer READY → VIEWER_READY
+ *     └─ dispose() → DISPOSED
+ *   VIEWER_READY
+ *     ├─ setRenderProfile(CHAT_STAGE) 成功 → PROFILE_READY
+ *     └─ dispose() → DISPOSED
+ *   PROFILE_READY
+ *     ├─ AssetLibrary.ensureInitialized 成功 → ASSET_LIBRARY_READY
+ *     └─ dispose() → DISPOSED
+ *   ASSET_LIBRARY_READY
+ *     ├─ findActiveModel → 有 → MODEL_RESOLVING
+ *     └─ findActiveModel → 无 → EMPTY
+ *   MODEL_RESOLVING
+ *     ├─ validate + register + prepare + probe + load + READY 等待 → MODEL_LOADING
+ *   MODEL_LOADING
+ *     ├─ getPreparedModelLoadResult state=READY → MODEL_READY
+ *     ├─ getPreparedModelLoadResult state=FAILED → FAILED
+ *     └─ 超时 → FAILED
+ *   MODEL_READY
+ *     ├─ dispose() → DISPOSED
+ *     └─ reloadActiveModel → MODEL_RESOLVING (generation++)
+ *   EMPTY
+ *     ├─ dispose() → DISPOSED
+ *     └─ reloadActiveModel → MODEL_RESOLVING
+ *   FAILED
+ *     ├─ dispose() → DISPOSED
+ *     └─ reloadActiveModel → MODEL_RESOLVING
+ *   任意 → DISPOSED (dispose 调用,不可恢复)
  */
-export enum ChatAvatarStageState {
-  /** 初始状态 / 未初始化 */
-  IDLE = 'IDLE',
-  /** Web 加载中 */
-  WEB_LOADING = 'WEB_LOADING',
-  /** Viewer 初始化中 */
-  VIEWER_INITIALIZING = 'VIEWER_INITIALIZING',
-  /** Viewer 就绪, 等待模型恢复 */
-  VIEWER_READY = 'VIEWER_READY',
-  /** 模型恢复中 */
-  MODEL_RESTORING = 'MODEL_RESTORING',
-  /** 模型就绪 */
-  MODEL_READY = 'MODEL_READY',
-  /** 无激活模型 */
-  EMPTY = 'EMPTY',
-  /** 失败 */
-  FAILED = 'FAILED',
-  /** 已销毁 */
-  DISPOSED = 'DISPOSED'
+export type ArkWebChatAvatarStageState =
+  'CREATED'
+  | 'INITIALIZING'
+  | 'WEB_LOADING'
+  | 'WEB_READY'
+  | 'VIEWER_READY'
+  | 'PROFILE_READY'
+  | 'ASSET_LIBRARY_READY'
+  | 'MODEL_RESOLVING'
+  | 'MODEL_LOADING'
+  | 'MODEL_READY'
+  | 'EMPTY'
+  | 'FAILED'
+  | 'DISPOSED';
+
+/**
+ * Stage 错误码 (Phase 4B-1R §第一项)。
+ */
+export class ArkWebChatAvatarStageErrorCode {
+  static readonly CHAT_STAGE_CONTEXT_MISSING: string = 'CHAT_STAGE_CONTEXT_MISSING';
+  static readonly CHAT_STAGE_WEB_NOT_READY: string = 'CHAT_STAGE_WEB_NOT_READY';
+  static readonly CHAT_STAGE_VIEWER_NOT_READY: string = 'CHAT_STAGE_VIEWER_NOT_READY';
+  static readonly CHAT_STAGE_PROFILE_FAILED: string = 'CHAT_STAGE_PROFILE_FAILED';
+  static readonly CHAT_STAGE_ASSET_LIBRARY_FAILED: string = 'CHAT_STAGE_ASSET_LIBRARY_FAILED';
+  static readonly CHAT_STAGE_ACTIVE_MODEL_EMPTY: string = 'CHAT_STAGE_ACTIVE_MODEL_EMPTY';
+  static readonly CHAT_STAGE_MODEL_RECORD_MISSING: string = 'CHAT_STAGE_MODEL_RECORD_MISSING';
+  static readonly CHAT_STAGE_MODEL_FILE_MISSING: string = 'CHAT_STAGE_MODEL_FILE_MISSING';
+  static readonly CHAT_STAGE_PROVIDER_REGISTER_FAILED: string = 'CHAT_STAGE_PROVIDER_REGISTER_FAILED';
+  static readonly CHAT_STAGE_MODEL_LOAD_FAILED: string = 'CHAT_STAGE_MODEL_LOAD_FAILED';
+  static readonly CHAT_STAGE_MODEL_READY_TIMEOUT: string = 'CHAT_STAGE_MODEL_READY_TIMEOUT';
+  static readonly CHAT_STAGE_SIZE_INVALID: string = 'CHAT_STAGE_SIZE_INVALID';
+  static readonly CHAT_STAGE_FULL_BODY_FIT_FAILED: string = 'CHAT_STAGE_FULL_BODY_FIT_FAILED';
+  static readonly CHAT_STAGE_RESTORE_STALE: string = 'CHAT_STAGE_RESTORE_STALE';
+}
+
+/**
+ * Stage 运行时快照 (供 AI 面板诊断显示)。
+ */
+export interface ArkWebChatAvatarStageRuntimeSnapshot {
+  stageState: ArkWebChatAvatarStageState;
+  viewerState: string;
+  modelState: string;
+  renderProfile: string;
+  activeModelId: string;
+  activeModelDisplayName: string;
+  resourceRegistered: boolean;
+  stageWidth: number;
+  stageHeight: number;
+  lastErrorCode: string;
+  lastErrorMessage: string;
+  restoreGeneration: number;
 }
 
 /**
  * Stage 事件监听器 (供 ChatAvatarStage 组件订阅状态变化)。
  */
 export interface ChatAvatarStageEventListener {
-  onStateChanged(state: ChatAvatarStageState, detail: string): void;
+  onStateChanged(state: ArkWebChatAvatarStageState, detail: string): void;
   onModelNameChanged(displayName: string): void;
 }
 
 /**
- * 单人聊天页面透明 Avatar Stage 控制器。
+ * 模型加载轮询参数 (Phase 4B-1R §第四项)。
  *
- * 使用方式:
- *   1. ChatAvatarStage aboutToAppear: controller.init(ctx)
- *   2. Web 组件 controller 属性: controller.getWebviewController()
- *   3. Web 组件 onControllerAttached: controller.onWebControllerAttached()
- *   4. Web 组件 onPageEnd: controller.onWebPageEnd()
- *   5. AI 面板点击能力: controller.publishPerformanceFromPanel(hintJson)
- *   6. AI 面板停止: controller.cancelPerformance()
- *   7. ChatAvatarStage aboutToDisappear: controller.dispose()
+ * - 间隔 100ms
+ * - 总时长不超过 15 秒
+ */
+const MODEL_READY_POLL_INTERVAL_MS: number = 100;
+const MODEL_READY_POLL_TOTAL_TIMEOUT_MS: number = 15000;
+
+/**
+ * 资源探测轮询参数 (与 VrmViewerPage 对齐)。
+ */
+const PROBE_POLL_INTERVAL_MS: number = 200;
+const PROBE_POLL_TOTAL_TIMEOUT_MS: number = 4500;
+
+/**
+ * 单人聊天页面透明 Avatar Stage 控制器。
  */
 export class ArkWebChatAvatarStageController implements ArkWebViewerEventListener {
   /** ArkWeb VRM Viewer 主控制器 (复用,不复制) */
@@ -150,7 +232,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
   private resourceProvider: ArkWebModelResourceProvider | null = null;
   /** 演出控制器 */
   private performanceController: ArkWebAvatarPerformanceController | null = null;
-  /** 演出运行时 (复用 VrmViewerPage 的 Runtime 实现) */
+  /** 演出运行时 */
   private performanceRuntime: ArkWebVrmViewerPagePerformanceRuntime | null = null;
   /** 对话演出映射器 */
   private dialogueMapper: ArkWebDialoguePerformanceMapper | null = null;
@@ -159,10 +241,35 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
   /** AI 能力目录 */
   private capabilityCatalog: ArkWebAvatarAiCapabilityCatalog | null = null;
 
+  // ===== 运行时状态 (Phase 4B-1R §第一项) =====
+
   /** 当前 Stage 状态 */
-  private currentState: ChatAvatarStageState = ChatAvatarStageState.IDLE;
+  private currentStageState: ArkWebChatAvatarStageState = 'CREATED';
   /** 状态详细描述 */
-  private currentDetail: string = '未初始化';
+  private currentDetail: string = '已创建';
+  /** Viewer 状态字符串 (来自 ArkWebViewerState) */
+  private viewerStateStr: string = '';
+  /** 模型状态字符串 (LOADING/READY/FAILED 等, 来自 getPreparedModelLoadResult) */
+  private modelStateStr: string = 'NOT_REQUESTED';
+  /** 当前渲染 Profile (VIEWER / CHAT_STAGE / 空字符串) */
+  private renderProfileStr: string = '';
+  /** 当前激活模型 ID (空字符串表示无) */
+  private activeModelId: string = '';
+  /** 当前激活模型显示名 */
+  private activeModelDisplayName: string = '';
+  /** Provider 是否已注册当前资源 */
+  private resourceRegistered: boolean = false;
+  /** Stage 宽度 (vp, 由组件 onAreaChange 报告) */
+  private stageWidth: number = 0;
+  /** Stage 高度 (vp, 由组件 onAreaChange 报告) */
+  private stageHeight: number = 0;
+  /** 最近错误码 */
+  private lastErrorCode: string = '';
+  /** 最近错误消息 */
+  private lastErrorMessage: string = '';
+  /** 恢复代次 (用于过期判断) */
+  private modelRestoreGeneration: number = 0;
+
   /** 事件监听器 (ChatAvatarStage 组件) */
   private eventListener: ChatAvatarStageEventListener | null = null;
   /** 是否已销毁 */
@@ -173,16 +280,9 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
   /** endpoint ID 计数器 (跨实例唯一) */
   private static endpointCounter: number = 0;
 
-  /** 当前激活模型 ID (空字符串表示无) */
-  private activeModelId: string = '';
-  /** 当前激活模型显示名 */
-  private activeModelDisplayName: string = '';
-
-  /** 模型恢复单次触发保护 */
-  private modelRestoreStarted: boolean = false;
-  /** 模型恢复代次 (用于过期判断) */
-  private modelRestoreGeneration: number = 0;
-  /** 模型恢复中 */
+  /** 模型恢复单次触发保护 (首次恢复启动后置 true, dispose 后重置) */
+  private restoreStarted: boolean = false;
+  /** 模型恢复进行中 */
   private modelRestoreInProgress: boolean = false;
 
   /** 已准备的资源 (供 loadPreparedModelResource 使用) */
@@ -190,6 +290,15 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
 
   /** 是否已应用 CHAT_STAGE 渲染 Profile */
   private chatStageProfileApplied: boolean = false;
+
+  /** init() 是否已完成 (创建依赖项) */
+  private initCompleted: boolean = false;
+  /** Web.onPageEnd 是否已触发 */
+  private pageEndReceived: boolean = false;
+  /** Viewer READY 是否已收到 */
+  private viewerReadyReceived: boolean = false;
+  /** restore 是否已被调度 (避免重复触发) */
+  private restoreScheduled: boolean = false;
 
   constructor() {
     this.arkWebController.setEventListener(this);
@@ -207,9 +316,9 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
     return this.arkWebController.getWebviewController();
   }
 
-  /** 获取当前状态。 */
-  getState(): ChatAvatarStageState {
-    return this.currentState;
+  /** 获取当前 Stage 状态。 */
+  getStageState(): ArkWebChatAvatarStageState {
+    return this.currentStageState;
   }
 
   /** 获取状态详细描述。 */
@@ -227,21 +336,128 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
     return this.activeModelId;
   }
 
+  /** 获取 Stage 宽度 (vp)。 */
+  getStageWidth(): number {
+    return this.stageWidth;
+  }
+
+  /** 获取 Stage 高度 (vp)。 */
+  getStageHeight(): number {
+    return this.stageHeight;
+  }
+
+  /** 获取最近错误码。 */
+  getLastErrorCode(): string {
+    return this.lastErrorCode;
+  }
+
+  /** 获取最近错误消息。 */
+  getLastErrorMessage(): string {
+    return this.lastErrorMessage;
+  }
+
   /**
-   * 初始化控制器 (在 ChatAvatarStage aboutToAppear 中调用)。
+   * 获取运行时快照 (供 AI 面板诊断显示)。
+   */
+  getRuntimeSnapshot(): ArkWebChatAvatarStageRuntimeSnapshot {
+    return {
+      stageState: this.currentStageState,
+      viewerState: this.viewerStateStr,
+      modelState: this.modelStateStr,
+      renderProfile: this.renderProfileStr,
+      activeModelId: this.activeModelId,
+      activeModelDisplayName: this.activeModelDisplayName,
+      resourceRegistered: this.resourceRegistered,
+      stageWidth: this.stageWidth,
+      stageHeight: this.stageHeight,
+      lastErrorCode: this.lastErrorCode,
+      lastErrorMessage: this.lastErrorMessage,
+      restoreGeneration: this.modelRestoreGeneration
+    };
+  }
+
+  /**
+   * 报告 Stage 尺寸变化 (由 ChatAvatarStage 组件 onAreaChange 调用)。
+   *
+   * 用于:
+   *   - 记录 stageWidth / stageHeight
+   *   - 尺寸有效且 MODEL_READY 时重新 fitAvatarFullBody (尺寸阈值过滤由组件层处理)
+   */
+  setStageSize(width: number, height: number): void {
+    this.stageWidth = width;
+    this.stageHeight = height;
+    if (width <= 0 || height <= 0) {
+      this.lastErrorCode = ArkWebChatAvatarStageErrorCode.CHAT_STAGE_SIZE_INVALID;
+      this.lastErrorMessage = `size invalid: ${width}x${height}`;
+      return;
+    }
+    // 清除尺寸无效错误
+    if (this.lastErrorCode === ArkWebChatAvatarStageErrorCode.CHAT_STAGE_SIZE_INVALID) {
+      this.lastErrorCode = '';
+      this.lastErrorMessage = '';
+    }
+    // MODEL_READY 时尺寸变化触发重新构图 (component 层已做阈值过滤)
+    if (this.currentStageState === 'MODEL_READY' && !this.disposed) {
+      this.fitFullBodyInternal().catch((e: Object): void => {
+        console.warn(LOG_TAG, 'refit on size change failed: ' +
+          (e instanceof Error ? e.message : String(e)));
+      });
+    }
+  }
+
+  /**
+   * 重新加载当前 active model (Phase 4B-1R §第八项)。
    *
    * 流程:
-   *   1. 创建 AssetLibrary / PersistentModelStore / ResourceProvider
-   *   2. 创建 PerformanceController + Runtime + Mapper + Lifecycle
-   *   3. 创建 AiCapabilityCatalog
-   *   4. 注册 Avatar endpoint 到 Bridge
-   *   5. 异步 ensureInitialized AssetLibrary
+   *   1. generation++ (使旧异步任务过期)
+   *   2. 清理 restoreStarted / restoreScheduled
+   *   3. 重新执行 startActiveModelRestore()
+   *
+   * 不删除持久模型 / library.json。
+   */
+  async reloadActiveModel(): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
+    if (this.modelRestoreInProgress) {
+      console.warn(LOG_TAG, 'reloadActiveModel: restore in progress, skip');
+      return;
+    }
+    console.info(LOG_TAG, 'reloadActiveModel: generation++');
+    this.modelRestoreGeneration++;
+    this.restoreStarted = false;
+    this.restoreScheduled = false;
+    this.lastErrorCode = '';
+    this.lastErrorMessage = '';
+    this.preparedResource = null;
+    this.resourceRegistered = false;
+    await this.startActiveModelRestore();
+  }
+
+  /**
+   * 初始化控制器 (Phase 4B-1R §第二项 严格初始化顺序 步骤 1-3)。
+   *
+   * 流程:
+   *   1. 创建 AssetLibrary / PersistentModelStore / Provider / Lifecycle
+   *   2. 注册 Avatar endpoint
+   *   3. 标记 initCompleted
+   *
+   * 不在此处启动模型恢复 (等待 Web.onPageEnd + Viewer READY)。
    */
   init(ctx: common.UIAbilityContext): void {
     if (this.disposed) {
       return;
     }
-    this.setState(ChatAvatarStageState.WEB_LOADING, '正在加载 Web Viewer...');
+    if (this.initCompleted) {
+      return;
+    }
+    if (ctx === null || ctx === undefined) {
+      this.lastErrorCode = ArkWebChatAvatarStageErrorCode.CHAT_STAGE_CONTEXT_MISSING;
+      this.lastErrorMessage = 'init ctx is null/undefined';
+      this.setStageState('FAILED', 'context missing');
+      return;
+    }
+    this.setStageState('INITIALIZING', '正在初始化依赖');
 
     // 1. 创建持久化资产库 (独立实例, 读取同一 filesDir 目录)
     if (this.assetLibrary === null) {
@@ -260,25 +476,21 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
       this.resourceProvider.setPersistentRootDir(this.assetLibrary.getAssetsRootDir());
     }
 
-    // 4. 创建演出运行时 (复用 VrmViewerPage 的 Runtime 实现)
+    // 4. 创建演出运行时
     if (this.performanceRuntime === null) {
       const self: ArkWebChatAvatarStageController = this;
       const deps: ArkWebVrmViewerPagePerformanceRuntimeDeps = {
         getArkWebController: (): ArkWebVrmViewerController | null => self.arkWebController,
         getAssetLibrary: (): ArkWebAvatarAssetLibrary | null => self.assetLibrary,
-        getPersistentPoseStore: (): null => null, // 聊天 Stage 不需要姿势存储
+        getPersistentPoseStore: (): null => null,
         getExpressionAliasMap: (): Record<string, string> => ({} as Record<string, string>),
         getDebugAnimationState: (): string => '',
         loadAnimationByActionId: (_actionId: string): Promise<boolean> => {
-          // 聊天 Stage 不支持动画导入流程, 由 PerformanceController 直接 playAnimationById
-          // 但 Runtime.playAnimationById 内部会调用此回调; 这里返回 true 跳过加载,
-          // 让 playAnimation 直接调用 (动画资源应在 VrmViewerPage 已导入)
           console.warn(LOG_TAG, 'loadAnimationByActionId called but not supported in chat stage');
           return Promise.resolve(true);
         },
         waitForAnimationReady: (_timeoutMs: number): Promise<boolean> => Promise.resolve(true),
         resetPoseInternal: (): Promise<boolean> => {
-          // 复用 arkWebController.resetPose
           return self.arkWebController.resetPose().then((json: string): boolean => {
             try {
               const obj: Record<string, Object> = JSON.parse(json) as Record<string, Object>;
@@ -289,8 +501,6 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
           });
         },
         applyPoseByIdInternal: (poseId: string): Promise<boolean> => {
-          // 聊天 Stage 不持久化姿势数据, 这里通过 readPoseDataAsJson + applyPose 实现
-          // 但本阶段不实现完整姿势应用, 返回 false 让 PerformanceController 记录失败
           console.warn(LOG_TAG, 'applyPoseByIdInternal not fully supported in chat stage: ' + poseId);
           return Promise.resolve(false);
         }
@@ -342,19 +552,9 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
     // 8. 注册 Avatar endpoint 到 Bridge (覆盖式)
     this.registerAvatarEndpoint();
 
-    // 9. 异步初始化 AssetLibrary (不阻塞 Web 加载)
-    if (this.assetLibrary !== null) {
-      this.assetLibrary.ensureInitialized().then((ok: boolean): void => {
-        if (ok) {
-          console.info(LOG_TAG, 'AssetLibrary initialized');
-        } else {
-          console.warn(LOG_TAG, 'AssetLibrary ensureInitialized failed');
-        }
-      }).catch((e: Object): void => {
-        console.warn(LOG_TAG, 'AssetLibrary init exception: ' +
-          (e instanceof Error ? e.message : String(e)));
-      });
-    }
+    this.initCompleted = true;
+    console.info(LOG_TAG, 'init completed');
+    // AssetLibrary 不在此处 ensureInitialized, 留待 startActiveModelRestore
   }
 
   /**
@@ -368,27 +568,55 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
   }
 
   /**
-   * Web 组件 onPageEnd 回调入口。
+   * Phase 4B-1R 修复: Web 组件 onInterceptRequest 资源拦截入口。
+   *
+   * ChatAvatarStage Web 组件必须设置 onInterceptRequest,
+   * 将 ark-tavern.local 资源请求映射到本地缓存文件。
+   * 缺少此拦截会导致 ModelResourceProvider 注册的 URL 无法被 Web 端访问,
+   * 资源探测 (probePreparedModelResource) 失败, 模型不可见。
+   *
+   * @returns WebResourceResponse (拦截并返回本地文件) 或 null (放行,交由 Web 默认处理)
+   */
+  interceptResourceRequest(
+    url: string,
+    method: string,
+    requestHeaders: Array<Header>
+  ): WebResourceResponse | null {
+    if (this.disposed || this.resourceProvider === null) {
+      return null;
+    }
+    if (!this.resourceProvider.matchesRequest(url)) {
+      return null;
+    }
+    const result = this.resourceProvider.handleRequest(url, method, requestHeaders);
+    if (result.response !== null) {
+      return result.response;
+    }
+    console.warn(LOG_TAG,
+      `resource handleRequest returned null: ${result.errorCode} ${result.errorMessage}`);
+    return null;
+  }
+
+  /**
+   * Web 组件 onPageEnd 回调入口 (Phase 4B-1R §第二项 步骤 5)。
    *
    * 触发 Viewer 初始化; Viewer READY 后由 onStateChanged 推进到下一步。
+   * 不在此处启动模型恢复 (必须等 Viewer READY + Profile 应用)。
    */
   async onWebPageEnd(): Promise<void> {
     if (this.disposed) {
       return;
     }
-    this.setState(ChatAvatarStageState.VIEWER_INITIALIZING, '正在初始化 Viewer...');
+    if (this.pageEndReceived) {
+      return;
+    }
+    this.pageEndReceived = true;
+    this.setStageState('WEB_READY', 'Web 页面加载完成,等待 Viewer 初始化');
     await this.arkWebController.onPageEnd();
   }
 
   /**
    * AI 面板发布演出 (source = CHAT_AI_PANEL)。
-   *
-   * 流程:
-   *   1. 生成稳定本地 Turn ID (chat-ai-panel-<timestamp>-<counter>)
-   *   2. 通过 AvatarChatBridge.publishFinalResult 投递
-   *   3. Bridge 投递回当前 Avatar endpoint (本控制器) → LifecycleController
-   *
-   * @param performanceHintJson 结构化 Hint JSON (motionType/motionId/expressionId 等)
    */
   async publishPerformanceFromPanel(performanceHintJson: string): Promise<boolean> {
     if (this.disposed) {
@@ -449,48 +677,47 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
   }
 
   /**
-   * 重新计算全身构图 (页面尺寸变化时调用)。
+   * 重新计算全身构图 (页面尺寸变化时由组件层调用)。
    *
-   * 防抖: 仅在 MODEL_READY 状态下调用 fitAvatarFullBody;
-   * 输入法弹出等小幅变化由组件层通过尺寸阈值过滤。
+   * 只在 MODEL_READY 状态下调用 fitAvatarFullBody。
+   * 失败时保留模型, 不隐藏 Stage。
    */
   async refitFullBody(): Promise<void> {
     if (this.disposed) {
       return;
     }
-    if (this.currentState !== ChatAvatarStageState.MODEL_READY) {
+    if (this.currentStageState !== 'MODEL_READY') {
       return;
     }
-    if (this.arkWebController.getState() !== ArkWebViewerState.READY) {
+    if (this.stageWidth <= 0 || this.stageHeight <= 0) {
       return;
     }
-    try {
-      const resultJson: string = await this.arkWebController.fitAvatarFullBody();
-      const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
-      if (obj['success'] !== true) {
-        console.warn(LOG_TAG, 'refitFullBody failed: ' + resultJson);
-      }
-    } catch (e) {
-      console.warn(LOG_TAG, 'refitFullBody threw: ' +
-        (e instanceof Error ? e.message : String(e)));
-    }
+    await this.fitFullBodyInternal();
   }
 
   /**
-   * 销毁控制器 (在 ChatAvatarStage aboutToDisappear 中调用)。
+   * 销毁控制器 (Phase 4B-1R §第九项 生命周期)。
    *
    * 流程:
-   *   1. 注销 Avatar endpoint
-   *   2. 销毁 LifecycleController / PerformanceController / Catalog
-   *   3. 销毁 ResourceProvider / PersistentModelStore (不删除 filesDir 数据)
-   *   4. 销毁 ArkWebController (销毁 Web 实例)
-   *   5. state = DISPOSED
+   *   1. generation++ (使所有异步任务过期)
+   *   2. disposed = true
+   *   3. 注销 Avatar endpoint
+   *   4. 销毁 LifecycleController / PerformanceController / Catalog
+   *   5. 销毁 ResourceProvider
+   *   6. 销毁 ArkWebController
+   *   7. state = DISPOSED
+   *
+   * 禁止旧异步结果在页面离开后提交 MODEL_READY。
    */
   dispose(): void {
     if (this.disposed) {
       return;
     }
     this.disposed = true;
+    // 关键: generation++ 让所有进行中的异步任务过期
+    this.modelRestoreGeneration++;
+    this.restoreStarted = false;
+    this.modelRestoreInProgress = false;
     console.info(LOG_TAG, 'dispose');
 
     // 1. 注销 Avatar endpoint
@@ -525,12 +752,12 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
       this.resourceProvider.dispose();
       this.resourceProvider = null;
     }
-    // 不销毁 AssetLibrary / PersistentModelStore (它们由 VrmViewerPage 主实例管理)
-    // 仅清除引用
     this.assetLibrary = null;
     this.persistentModelStore = null;
     this.performanceRuntime = null;
     this.dialogueMapper = null;
+    this.preparedResource = null;
+    this.resourceRegistered = false;
 
     // 4. 销毁 ArkWebController (销毁 Web 实例)
     try {
@@ -540,30 +767,42 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
         (e instanceof Error ? e.message : String(e)));
     }
 
-    this.setState(ChatAvatarStageState.DISPOSED, '已销毁');
+    this.setStageState('DISPOSED', '已销毁');
   }
 
   // ===== ArkWebViewerEventListener 实现 =====
 
   /**
-   * Viewer 状态变化回调。
+   * Viewer 状态变化回调 (Phase 4B-1R §第二项 步骤 6)。
    *
    * 关键转换:
-   *   - READY → 应用 CHAT_STAGE Profile + 启动模型恢复
-   *   - FAILED → 进入 FAILED 状态
+   *   - INITIALIZING → WEB_READY (Viewer 正在初始化)
+   *   - READY → VIEWER_READY + onViewerReady (setRenderProfile + startActiveModelRestore)
+   *   - FAILED → FAILED
    */
   onStateChanged(state: ArkWebViewerState, detail: string): void {
     if (this.disposed) {
       return;
     }
+    this.viewerStateStr = String(state);
     console.info(LOG_TAG, `Viewer state changed: ${state} detail=${detail}`);
     if (state === ArkWebViewerState.READY) {
-      this.setState(ChatAvatarStageState.VIEWER_READY, 'Viewer 就绪');
-      this.onViewerReady();
+      if (this.viewerReadyReceived) {
+        return;
+      }
+      this.viewerReadyReceived = true;
+      this.setStageState('VIEWER_READY', 'Viewer 就绪');
+      this.onViewerReady().catch((e: Object): void => {
+        console.warn(LOG_TAG, 'onViewerReady threw: ' +
+          (e instanceof Error ? e.message : String(e)));
+      });
     } else if (state === ArkWebViewerState.FAILED) {
-      this.setState(ChatAvatarStageState.FAILED, `Viewer 失败: ${detail}`);
+      this.lastErrorCode = ArkWebChatAvatarStageErrorCode.CHAT_STAGE_VIEWER_NOT_READY;
+      this.lastErrorMessage = `Viewer 失败: ${detail}`;
+      this.setStageState('FAILED', `Viewer 失败: ${detail}`);
     } else if (state === ArkWebViewerState.INITIALIZING) {
-      this.setState(ChatAvatarStageState.VIEWER_INITIALIZING, detail);
+      // 仍处于 WEB_READY 阶段, Viewer 正在初始化
+      this.setStageState('WEB_READY', `Viewer 初始化中: ${detail}`);
     }
   }
 
@@ -574,57 +813,127 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
   // ===== 内部方法 =====
 
   /**
-   * Viewer READY 后的处理。
+   * Viewer READY 后的处理 (Phase 4B-1R §第二项 步骤 7-10)。
    *
-   * 流程:
-   *   1. 应用 CHAT_STAGE 渲染 Profile (透明背景 + 关闭网格)
-   *   2. 启动模型自动恢复
+   * 严格顺序:
+   *   1. setRenderProfile(CHAT_STAGE)
+   *   2. 确认 getRenderProfile() === CHAT_STAGE
+   *   3. AssetLibrary.ensureInitialized
+   *   4. startActiveModelRestore
+   *
+   * 并发保护: 如果 onPageEnd 与 READY 几乎同时发生, 通过 viewerReadyReceived + restoreScheduled 保证只启动一次。
    */
   private async onViewerReady(): Promise<void> {
     if (this.disposed) {
       return;
     }
+    if (!this.initCompleted) {
+      console.warn(LOG_TAG, 'onViewerReady: init not completed yet, skip');
+      return;
+    }
+
     // 1. 应用 CHAT_STAGE Profile (幂等)
     if (!this.chatStageProfileApplied) {
       try {
-        const resultJson: string = await this.arkWebController.setRenderProfile(
+        const setResultJson: string = await this.arkWebController.setRenderProfile(
           ArkWebRenderProfile.CHAT_STAGE
         );
-        const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
-        if (obj['success'] === true) {
-          this.chatStageProfileApplied = true;
-          console.info(LOG_TAG, 'CHAT_STAGE profile applied');
-        } else {
-          console.warn(LOG_TAG, 'setRenderProfile failed: ' + resultJson);
+        if (this.disposed) {
+          return;
+        }
+        const setResult: Record<string, Object> = JSON.parse(setResultJson) as Record<string, Object>;
+        if (setResult['success'] !== true) {
+          this.lastErrorCode = ArkWebChatAvatarStageErrorCode.CHAT_STAGE_PROFILE_FAILED;
+          this.lastErrorMessage = `setRenderProfile failed: ${setResultJson}`;
+          this.setStageState('FAILED', 'CHAT_STAGE Profile 设置失败');
+          return;
         }
       } catch (e) {
-        console.warn(LOG_TAG, 'setRenderProfile threw: ' +
-          (e instanceof Error ? e.message : String(e)));
+        if (this.disposed) {
+          return;
+        }
+        this.lastErrorCode = ArkWebChatAvatarStageErrorCode.CHAT_STAGE_PROFILE_FAILED;
+        this.lastErrorMessage = 'setRenderProfile threw: ' +
+          (e instanceof Error ? e.message : String(e));
+        this.setStageState('FAILED', 'CHAT_STAGE Profile 异常');
+        return;
       }
+      this.chatStageProfileApplied = true;
+      console.info(LOG_TAG, 'CHAT_STAGE profile applied');
     }
 
-    // 2. 启动模型自动恢复
-    this.startActiveModelRestore();
+    // 2. 确认 getRenderProfile() === CHAT_STAGE
+    try {
+      const getResultJson: string = await this.arkWebController.getRenderProfile();
+      if (this.disposed) {
+        return;
+      }
+      const getResult: Record<string, Object> = JSON.parse(getResultJson) as Record<string, Object>;
+      const profile: string = (getResult['profile'] as string) || '';
+      this.renderProfileStr = profile;
+      if (profile !== ArkWebRenderProfile.CHAT_STAGE) {
+        this.lastErrorCode = ArkWebChatAvatarStageErrorCode.CHAT_STAGE_PROFILE_FAILED;
+        this.lastErrorMessage = `getRenderProfile mismatch: ${profile}`;
+        this.setStageState('FAILED', 'CHAT_STAGE Profile 确认失败');
+        return;
+      }
+    } catch (e) {
+      if (this.disposed) {
+        return;
+      }
+      this.lastErrorCode = ArkWebChatAvatarStageErrorCode.CHAT_STAGE_PROFILE_FAILED;
+      this.lastErrorMessage = 'getRenderProfile threw: ' +
+        (e instanceof Error ? e.message : String(e));
+      this.setStageState('FAILED', 'CHAT_STAGE Profile 回读异常');
+      return;
+    }
+    this.setStageState('PROFILE_READY', 'CHAT_STAGE Profile 就绪');
+
+    // 3. 启动模型自动恢复 (内部会 ensureInitialized AssetLibrary)
+    this.startActiveModelRestore().catch((e: Object): void => {
+      console.warn(LOG_TAG, 'startActiveModelRestore threw: ' +
+        (e instanceof Error ? e.message : String(e)));
+    });
   }
 
   /**
-   * 启动 activeModel 自动恢复 (参考 VrmViewerPage.startActiveModelRestore)。
+   * 启动 activeModel 自动恢复 (Phase 4B-1R §第三项)。
    *
-   * 流程:
-   *   1. 单次触发保护
-   *   2. 等待 AssetLibrary 初始化
-   *   3. 查找 activeModelId
-   *   4. 有 active model: 验证文件 → 注册 Provider → prepareModelResource → loadPreparedModelResource
-   *   5. 无 active model: 进入 EMPTY 状态 (Stage 保持透明)
+   * 严格流程:
+   *   1. 单次触发保护 + 并发保护
+   *   2. 检查 Viewer READY
+   *   3. generation++
+   *   4. AssetLibrary.ensureInitialized
+   *   5. findActiveModel
+   *   6. 无 active model → EMPTY
+   *   7. 有 → validateRegisterAndLoadPersistentAsset (含 probe + load + READY 等待)
+   *   8. 成功 → MODEL_READY → fitAvatarFullBody
    */
   private async startActiveModelRestore(): Promise<void> {
     if (this.disposed) {
       return;
     }
-    if (this.modelRestoreStarted) {
+    if (this.restoreStarted) {
+      console.info(LOG_TAG, 'startActiveModelRestore: already started, skip');
+      return;
+    }
+    if (this.restoreScheduled) {
+      return;
+    }
+    if (!this.initCompleted) {
+      console.warn(LOG_TAG, 'startActiveModelRestore: init not completed');
       return;
     }
     if (this.arkWebController.getState() !== ArkWebViewerState.READY) {
+      console.warn(LOG_TAG, 'startActiveModelRestore: viewer not ready');
+      this.lastErrorCode = ArkWebChatAvatarStageErrorCode.CHAT_STAGE_VIEWER_NOT_READY;
+      this.lastErrorMessage = `viewer state=${this.arkWebController.getState()}`;
+      return;
+    }
+    if (!this.chatStageProfileApplied) {
+      console.warn(LOG_TAG, 'startActiveModelRestore: profile not applied');
+      this.lastErrorCode = ArkWebChatAvatarStageErrorCode.CHAT_STAGE_PROFILE_FAILED;
+      this.lastErrorMessage = 'CHAT_STAGE profile not applied';
       return;
     }
     if (this.modelRestoreInProgress) {
@@ -632,36 +941,52 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
     }
     if (this.assetLibrary === null || this.persistentModelStore === null
         || this.resourceProvider === null) {
-      console.warn(LOG_TAG, 'startActiveModelRestore: deps null');
+      this.lastErrorCode = ArkWebChatAvatarStageErrorCode.CHAT_STAGE_CONTEXT_MISSING;
+      this.lastErrorMessage = 'deps null (assetLibrary/store/provider)';
+      this.setStageState('FAILED', '依赖缺失');
       return;
     }
 
-    this.modelRestoreStarted = true;
+    this.restoreStarted = true;
+    this.restoreScheduled = true;
     this.modelRestoreInProgress = true;
     this.modelRestoreGeneration++;
     const generation: number = this.modelRestoreGeneration;
-    this.setState(ChatAvatarStageState.MODEL_RESTORING, '正在恢复模型...');
+    this.lastErrorCode = '';
+    this.lastErrorMessage = '';
+    this.setStageState('ASSET_LIBRARY_READY', '正在恢复模型');
 
     try {
+      // 1. AssetLibrary.ensureInitialized
       const initOk: boolean = await this.assetLibrary.ensureInitialized();
       if (generation !== this.modelRestoreGeneration || this.disposed) {
+        this.lastErrorCode = ArkWebChatAvatarStageErrorCode.CHAT_STAGE_RESTORE_STALE;
+        this.lastErrorMessage = `stale after ensureInitialized gen=${generation}`;
         return;
       }
       if (!initOk) {
-        this.setState(ChatAvatarStageState.FAILED, 'AssetLibrary 初始化失败');
+        this.lastErrorCode = ArkWebChatAvatarStageErrorCode.CHAT_STAGE_ASSET_LIBRARY_FAILED;
+        this.lastErrorMessage = 'AssetLibrary ensureInitialized failed';
+        this.setStageState('FAILED', 'AssetLibrary 初始化失败');
         return;
       }
 
+      // 2. findActiveModel
       const activeAsset: ArkWebAvatarModelAsset | null = await this.assetLibrary.findActiveModel();
       if (generation !== this.modelRestoreGeneration || this.disposed) {
+        this.lastErrorCode = ArkWebChatAvatarStageErrorCode.CHAT_STAGE_RESTORE_STALE;
+        this.lastErrorMessage = `stale after findActiveModel gen=${generation}`;
         return;
       }
 
       if (activeAsset === null) {
-        // 无 active model, 进入空状态 (Stage 保持透明, 不报错)
+        // 无 active model
         this.activeModelId = '';
         this.activeModelDisplayName = '';
-        this.setState(ChatAvatarStageState.EMPTY, '无激活模型');
+        this.modelStateStr = 'EMPTY';
+        this.lastErrorCode = ArkWebChatAvatarStageErrorCode.CHAT_STAGE_ACTIVE_MODEL_EMPTY;
+        this.lastErrorMessage = '无激活模型 (需先在 VRM Viewer 导入模型)';
+        this.setStageState('EMPTY', '无激活模型');
         if (this.eventListener !== null) {
           this.eventListener.onModelNameChanged('');
         }
@@ -676,32 +1001,62 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
       }
       console.info(LOG_TAG, `active model found: id=${activeAsset.modelId} name=${activeAsset.displayName}`);
 
+      // 3. 验证 + 注册 + prepare + probe + load + READY 等待
+      this.setStageState('MODEL_RESOLVING', '验证并注册模型资源');
       const loaded: boolean = await this.validateRegisterAndLoadPersistentAsset(activeAsset, generation);
       if (generation !== this.modelRestoreGeneration || this.disposed) {
+        this.lastErrorCode = ArkWebChatAvatarStageErrorCode.CHAT_STAGE_RESTORE_STALE;
+        this.lastErrorMessage = `stale after load gen=${generation}`;
         return;
       }
       if (loaded) {
-        this.setState(ChatAvatarStageState.MODEL_READY, '模型就绪');
-        // 模型 READY 后立即全身构图
-        await this.fitFullBodyInternal();
+        this.modelStateStr = 'READY';
+        this.lastErrorCode = '';
+        this.lastErrorMessage = '';
+        this.setStageState('MODEL_READY', '模型就绪');
         console.info(LOG_TAG, 'active model restored successfully');
+        // MODEL_READY 后立即全身构图 (受尺寸有效性保护)
+        if (this.stageWidth > 0 && this.stageHeight > 0) {
+          await this.fitFullBodyInternal();
+        } else {
+          console.warn(LOG_TAG, 'fitAvatarFullBody skipped: size invalid, will retry on onAreaChange');
+        }
       }
+      // loaded=false 时错误码已在内部设置
     } catch (e) {
+      if (generation !== this.modelRestoreGeneration || this.disposed) {
+        this.lastErrorCode = ArkWebChatAvatarStageErrorCode.CHAT_STAGE_RESTORE_STALE;
+        this.lastErrorMessage = `stale exception gen=${generation}`;
+        return;
+      }
       const msg: string = e instanceof Error ? e.message : String(e);
-      this.setState(ChatAvatarStageState.FAILED, `恢复异常: ${msg}`);
+      this.lastErrorCode = ArkWebChatAvatarStageErrorCode.CHAT_STAGE_MODEL_LOAD_FAILED;
+      this.lastErrorMessage = `恢复异常: ${msg}`;
+      this.setStageState('FAILED', `恢复异常: ${msg}`);
     } finally {
       this.modelRestoreInProgress = false;
     }
   }
 
   /**
-   * 验证、注册并加载持久化模型资产 (参考 VrmViewerPage.validateRegisterAndLoadPersistentAsset)。
+   * 验证、注册并加载持久化模型资产 (Phase 4B-1R §第三项)。
+   *
+   * 严格流程 (对照 VrmViewerPage):
+   *   1. validateModelFile
+   *   2. registerPersistentAsset (Provider 必须绑定当前 Chat Stage WebView)
+   *   3. prepareModelResource + 回读 getPreparedModelResource
+   *   4. probePreparedModelResource + 轮询 VERIFIED
+   *   5. loadPreparedModelResource + 轮询 READY
+   *
+   * 不把 loadPreparedModelResource 返回 success 等同于 MODEL_READY。
    */
   private async validateRegisterAndLoadPersistentAsset(
     asset: ArkWebAvatarModelAsset,
     generation: number
   ): Promise<boolean> {
     if (this.disposed || this.persistentModelStore === null || this.resourceProvider === null) {
+      this.lastErrorCode = ArkWebChatAvatarStageErrorCode.CHAT_STAGE_CONTEXT_MISSING;
+      this.lastErrorMessage = 'store/provider null';
       return false;
     }
 
@@ -715,14 +1070,18 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
     }
     if (!validateOk) {
       const err: string = this.persistentModelStore.getLastError();
-      console.warn(LOG_TAG, `validate failed: ${err}`);
+      this.lastErrorCode = ArkWebChatAvatarStageErrorCode.CHAT_STAGE_MODEL_FILE_MISSING;
+      this.lastErrorMessage = `validate failed: ${err}`;
+      this.setStageState('FAILED', '模型文件验证失败');
       return false;
     }
 
-    // 2. 注册到 Provider
+    // 2. 注册到 Provider (绑定到当前 Chat Stage WebView)
     const absolutePath: string = this.persistentModelStore.resolveAbsolutePath(asset.relativePath);
     if (absolutePath.length === 0) {
-      console.warn(LOG_TAG, 'resolveAbsolutePath empty');
+      this.lastErrorCode = ArkWebChatAvatarStageErrorCode.CHAT_STAGE_MODEL_FILE_MISSING;
+      this.lastErrorMessage = 'resolveAbsolutePath empty';
+      this.setStageState('FAILED', '模型路径解析失败');
       return false;
     }
     let resource: WebModelResource;
@@ -734,70 +1093,350 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
       );
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
-      console.warn(LOG_TAG, `register failed: ${msg}`);
+      this.lastErrorCode = ArkWebChatAvatarStageErrorCode.CHAT_STAGE_PROVIDER_REGISTER_FAILED;
+      this.lastErrorMessage = `register failed: ${msg}`;
+      this.setStageState('FAILED', 'Provider 注册失败');
       return false;
     }
     if (generation !== this.modelRestoreGeneration || this.disposed) {
       return false;
     }
     this.preparedResource = resource;
+    this.resourceRegistered = true;
     console.info(LOG_TAG, `persistent asset registered: url=${resource.resourceUrl}`);
 
-    // 3. prepareModelResource (将资源元数据同步到 Web 端 keeper)
-    const resourceJson: string = JSON.stringify({
-      resourceUrl: resource.resourceUrl,
-      displayName: resource.displayName,
-      mimeType: resource.mimeType,
-      size: resource.size,
-      extension: resource.extension
-    });
-    const prepareResult: string = await this.arkWebController.prepareModelResource(resourceJson);
+    // 3. prepareModelResource (将资源元数据同步到 Web 端 keeper) + 回读
+    const preparePayload: Record<string, Object> = {
+      'resourceUrl': resource.resourceUrl,
+      'displayName': resource.displayName,
+      'mimeType': resource.mimeType,
+      'size': resource.size,
+      'extension': resource.extension,
+      'gltfDependencyState': resource.gltfDependencyState
+    };
+    const resourceJson: string = JSON.stringify(preparePayload);
+    let prepareResultJson: string;
     try {
-      const obj: Record<string, Object> = JSON.parse(prepareResult) as Record<string, Object>;
-      if (obj['success'] !== true) {
-        console.warn(LOG_TAG, `prepareModelResource failed: ${prepareResult}`);
+      prepareResultJson = await this.arkWebController.prepareModelResource(resourceJson);
+    } catch (e) {
+      if (generation !== this.modelRestoreGeneration || this.disposed) {
         return false;
       }
-    } catch (e) {
-      console.warn(LOG_TAG, `prepareModelResource result invalid: ${prepareResult}`);
+      const msg: string = e instanceof Error ? e.message : String(e);
+      this.lastErrorCode = ArkWebChatAvatarStageErrorCode.CHAT_STAGE_MODEL_LOAD_FAILED;
+      this.lastErrorMessage = `prepareModelResource threw: ${msg}`;
+      this.setStageState('FAILED', 'prepareModelResource 异常');
       return false;
     }
     if (generation !== this.modelRestoreGeneration || this.disposed) {
       return false;
     }
-
-    // 4. loadPreparedModelResource (触发实际加载)
-    const loadResult: string = await this.arkWebController.loadPreparedModelResource();
+    let prepareObj: Record<string, Object>;
     try {
-      const obj: Record<string, Object> = JSON.parse(loadResult) as Record<string, Object>;
-      if (obj['success'] !== true) {
-        console.warn(LOG_TAG, `loadPreparedModelResource failed: ${loadResult}`);
-        return false;
-      }
-    } catch (e) {
-      console.warn(LOG_TAG, `loadPreparedModelResource result invalid: ${loadResult}`);
+      prepareObj = JSON.parse(prepareResultJson) as Record<string, Object>;
+    } catch (_e) {
+      this.lastErrorCode = ArkWebChatAvatarStageErrorCode.CHAT_STAGE_MODEL_LOAD_FAILED;
+      this.lastErrorMessage = `prepareModelResource result invalid: ${prepareResultJson}`;
+      this.setStageState('FAILED', 'prepareModelResource 返回非 JSON');
+      return false;
+    }
+    if (prepareObj['success'] !== true) {
+      this.lastErrorCode = ArkWebChatAvatarStageErrorCode.CHAT_STAGE_MODEL_LOAD_FAILED;
+      this.lastErrorMessage = `prepareModelResource rejected: ${prepareResultJson}`;
+      this.setStageState('FAILED', 'prepareModelResource 被拒绝');
+      return false;
+    }
+    const prepareState: string = (prepareObj['state'] as string) || '';
+    if (prepareState !== 'RESOURCE_READY') {
+      this.lastErrorCode = ArkWebChatAvatarStageErrorCode.CHAT_STAGE_MODEL_LOAD_FAILED;
+      this.lastErrorMessage = `prepareModelResource state=${prepareState}`;
+      this.setStageState('FAILED', 'prepareModelResource state 非 RESOURCE_READY');
       return false;
     }
 
+    // 3.1 回读 getPreparedModelResource 验证 keeper 已保存
+    let readbackJson: string;
+    try {
+      readbackJson = await this.arkWebController.getPreparedModelResource();
+    } catch (e) {
+      if (generation !== this.modelRestoreGeneration || this.disposed) {
+        return false;
+      }
+      const msg: string = e instanceof Error ? e.message : String(e);
+      this.lastErrorCode = ArkWebChatAvatarStageErrorCode.CHAT_STAGE_MODEL_LOAD_FAILED;
+      this.lastErrorMessage = `getPreparedModelResource threw: ${msg}`;
+      return false;
+    }
+    if (generation !== this.modelRestoreGeneration || this.disposed) {
+      return false;
+    }
+    try {
+      const readbackObj: Record<string, Object> = JSON.parse(readbackJson) as Record<string, Object>;
+      if (readbackObj['success'] !== true) {
+        this.lastErrorCode = ArkWebChatAvatarStageErrorCode.CHAT_STAGE_MODEL_LOAD_FAILED;
+        this.lastErrorMessage = `getPreparedModelResource success=false: ${readbackJson}`;
+        return false;
+      }
+    } catch (_e) {
+      this.lastErrorCode = ArkWebChatAvatarStageErrorCode.CHAT_STAGE_MODEL_LOAD_FAILED;
+      this.lastErrorMessage = `getPreparedModelResource result invalid: ${readbackJson}`;
+      return false;
+    }
+    console.info(LOG_TAG, 'prepareModelResource verified (keeper saved)');
+
+    // 4. probePreparedModelResource + 轮询 VERIFIED
+    this.setStageState('MODEL_RESOLVING', '资源探测中');
+    let probeStartJson: string;
+    try {
+      probeStartJson = await this.arkWebController.probePreparedModelResource();
+    } catch (e) {
+      if (generation !== this.modelRestoreGeneration || this.disposed) {
+        return false;
+      }
+      const msg: string = e instanceof Error ? e.message : String(e);
+      this.lastErrorCode = ArkWebChatAvatarStageErrorCode.CHAT_STAGE_MODEL_LOAD_FAILED;
+      this.lastErrorMessage = `probePreparedModelResource threw: ${msg}`;
+      return false;
+    }
+    if (generation !== this.modelRestoreGeneration || this.disposed) {
+      return false;
+    }
+    if (probeStartJson.indexOf('"success":true') < 0 && probeStartJson.indexOf('"success": true') < 0) {
+      this.lastErrorCode = ArkWebChatAvatarStageErrorCode.CHAT_STAGE_MODEL_LOAD_FAILED;
+      this.lastErrorMessage = `probe start failed: ${probeStartJson}`;
+      this.setStageState('FAILED', '资源探测启动失败');
+      return false;
+    }
+
+    // 轮询探测结果
+    const probeOk: boolean = await this.waitForProbeVerified(generation, PROBE_POLL_TOTAL_TIMEOUT_MS);
+    if (generation !== this.modelRestoreGeneration || this.disposed) {
+      return false;
+    }
+    if (!probeOk) {
+      this.lastErrorCode = ArkWebChatAvatarStageErrorCode.CHAT_STAGE_MODEL_LOAD_FAILED;
+      this.lastErrorMessage = `probe not verified within ${PROBE_POLL_TOTAL_TIMEOUT_MS}ms`;
+      this.setStageState('FAILED', '资源探测未通过');
+      return false;
+    }
+    console.info(LOG_TAG, 'probe verified');
+
+    // 5. loadPreparedModelResource (触发实际加载)
+    this.setStageState('MODEL_LOADING', '模型加载中');
+    let loadStartJson: string;
+    try {
+      loadStartJson = await this.arkWebController.loadPreparedModelResource();
+    } catch (e) {
+      if (generation !== this.modelRestoreGeneration || this.disposed) {
+        return false;
+      }
+      const msg: string = e instanceof Error ? e.message : String(e);
+      this.lastErrorCode = ArkWebChatAvatarStageErrorCode.CHAT_STAGE_MODEL_LOAD_FAILED;
+      this.lastErrorMessage = `loadPreparedModelResource threw: ${msg}`;
+      this.setStageState('FAILED', '模型加载启动异常');
+      return false;
+    }
+    if (generation !== this.modelRestoreGeneration || this.disposed) {
+      return false;
+    }
+    if (loadStartJson.indexOf('"success":true') < 0 && loadStartJson.indexOf('"success": true') < 0) {
+      this.lastErrorCode = ArkWebChatAvatarStageErrorCode.CHAT_STAGE_MODEL_LOAD_FAILED;
+      this.lastErrorMessage = `load start failed: ${loadStartJson}`;
+      this.setStageState('FAILED', '模型加载启动失败');
+      return false;
+    }
+
+    // 6. 轮询加载结果 (Phase 4B-1R §第四项 - 等待真实 MODEL_READY)
+    const readyOk: boolean = await this.waitForModelLoadReady(generation, MODEL_READY_POLL_TOTAL_TIMEOUT_MS);
+    if (generation !== this.modelRestoreGeneration || this.disposed) {
+      return false;
+    }
+    if (!readyOk) {
+      this.lastErrorCode = ArkWebChatAvatarStageErrorCode.CHAT_STAGE_MODEL_READY_TIMEOUT;
+      this.lastErrorMessage = `model not READY within ${MODEL_READY_POLL_TOTAL_TIMEOUT_MS}ms`;
+      this.setStageState('FAILED', '模型 READY 等待超时');
+      return false;
+    }
+    console.info(LOG_TAG, 'model load READY confirmed via polling');
     return true;
   }
 
   /**
-   * 调用 fitAvatarFullBody 完成全身构图 (基于模型 BoundingBox, 不缩放模型)。
+   * 等待资源探测达到 VERIFIED 状态 (Phase 4B-1R §第三项)。
+   *
+   * 有限次数轮询:
+   *   - 间隔 200ms
+   *   - 总时长 4500ms
+   *   - VERIFIED → true
+   *   - FAILED → false
+   *   - 超时 → false
+   *   - generation 改变 / disposed → false
+   */
+  private async waitForProbeVerified(generation: number, timeoutMs: number): Promise<boolean> {
+    const startTime: number = Date.now();
+    while (Date.now() - startTime < timeoutMs) {
+      if (generation !== this.modelRestoreGeneration || this.disposed) {
+        return false;
+      }
+      let resultJson: string;
+      try {
+        resultJson = await this.arkWebController.getModelResourceProbeResult();
+      } catch (_e) {
+        await this.delay(PROBE_POLL_INTERVAL_MS);
+        continue;
+      }
+      if (generation !== this.modelRestoreGeneration || this.disposed) {
+        return false;
+      }
+      try {
+        const parsed: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
+        const resultObj: Object | undefined = parsed['result'];
+        if (resultObj === undefined || resultObj === null) {
+          await this.delay(PROBE_POLL_INTERVAL_MS);
+          continue;
+        }
+        const result: Record<string, Object> = resultObj as Record<string, Object>;
+        const stateStr: string = (result['state'] as string) || '';
+        if (stateStr === 'VERIFIED') {
+          return true;
+        }
+        if (stateStr === 'FAILED') {
+          return false;
+        }
+        // PROBING / NOT_PROBED 继续等待
+      } catch (_e) {
+        // 解析失败继续等待
+      }
+      await this.delay(PROBE_POLL_INTERVAL_MS);
+    }
+    return false;
+  }
+
+  /**
+   * 等待模型加载达到 READY 状态 (Phase 4B-1R §第四项)。
+   *
+   * 有限次数轮询:
+   *   - 间隔 100ms
+   *   - 总时长 15000ms
+   *   - READY → true (并更新 modelStateStr)
+   *   - FAILED / DISPOSED → false
+   *   - 超时 → false
+   *   - generation 改变 / disposed → false
+   *
+   * 通过 getPreparedModelLoadResult() 检查真实加载状态,
+   * 不把 loadPreparedModelResource 返回 success 等同于 MODEL_READY。
+   */
+  private async waitForModelLoadReady(generation: number, timeoutMs: number): Promise<boolean> {
+    const startTime: number = Date.now();
+    while (Date.now() - startTime < timeoutMs) {
+      if (generation !== this.modelRestoreGeneration || this.disposed) {
+        return false;
+      }
+      let resultJson: string;
+      try {
+        resultJson = await this.arkWebController.getPreparedModelLoadResult();
+      } catch (_e) {
+        await this.delay(MODEL_READY_POLL_INTERVAL_MS);
+        continue;
+      }
+      if (generation !== this.modelRestoreGeneration || this.disposed) {
+        return false;
+      }
+      try {
+        const parsed: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
+        if (parsed['success'] !== true) {
+          // Bridge 返回错误, 继续轮询 (可能是临时错误)
+          await this.delay(MODEL_READY_POLL_INTERVAL_MS);
+          continue;
+        }
+        const resultObj: Object | undefined = parsed['result'];
+        if (resultObj === undefined || resultObj === null) {
+          // 还没有结果, 继续轮询
+          await this.delay(MODEL_READY_POLL_INTERVAL_MS);
+          continue;
+        }
+        const result: Record<string, Object> = resultObj as Record<string, Object>;
+        const stateStr: string = (result['state'] as string) || 'NOT_REQUESTED';
+        this.modelStateStr = stateStr;
+        if (stateStr === 'READY') {
+          // 额外校验: displayName 非空 (来自 VrmViewerPage §第四项 等待条件)
+          const displayName: string = (result['modelDisplayName'] as string) || '';
+          if (displayName.length > 0) {
+            this.activeModelDisplayName = displayName;
+            if (this.eventListener !== null) {
+              this.eventListener.onModelNameChanged(displayName);
+            }
+          }
+          return true;
+        }
+        if (stateStr === 'FAILED' || stateStr === 'DISPOSED') {
+          const errCode: string = (result['errorCode'] as string) || '';
+          const errMsg: string = (result['errorMessage'] as string) || '';
+          this.lastErrorCode = ArkWebChatAvatarStageErrorCode.CHAT_STAGE_MODEL_LOAD_FAILED;
+          this.lastErrorMessage = `load ${stateStr}: ${errCode} ${errMsg}`;
+          return false;
+        }
+        // LOADING / NOT_REQUESTED 继续等待
+      } catch (_e) {
+        // 解析失败继续等待
+      }
+      await this.delay(MODEL_READY_POLL_INTERVAL_MS);
+    }
+    return false;
+  }
+
+  /**
+   * 调用 fitAvatarFullBody 完成全身构图 (Phase 4B-1R §第六项 调用时机)。
+   *
+   * 只在以下条件全部成立时调用:
+   *   - stageState = MODEL_READY
+   *   - stageWidth > 0
+   *   - stageHeight > 0
+   *   - 未 dispose
+   *   - restoreGeneration 仍有效 (此处简化为 disposed 检查, generation 检查在调用方)
+   *
+   * 失败时保留模型, 不隐藏 Stage, 不修改 model.scene.position/scale。
    */
   private async fitFullBodyInternal(): Promise<void> {
     if (this.disposed) {
       return;
     }
+    if (this.currentStageState !== 'MODEL_READY') {
+      return;
+    }
+    if (this.stageWidth <= 0 || this.stageHeight <= 0) {
+      this.lastErrorCode = ArkWebChatAvatarStageErrorCode.CHAT_STAGE_SIZE_INVALID;
+      this.lastErrorMessage = `fit skipped: size ${this.stageWidth}x${this.stageHeight}`;
+      return;
+    }
+    if (this.arkWebController.getState() !== ArkWebViewerState.READY) {
+      return;
+    }
     try {
       const resultJson: string = await this.arkWebController.fitAvatarFullBody();
+      if (this.disposed) {
+        return;
+      }
       const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
       if (obj['success'] === true) {
         console.info(LOG_TAG, 'fitAvatarFullBody ok');
+        // 清除 fit 失败错误
+        if (this.lastErrorCode === ArkWebChatAvatarStageErrorCode.CHAT_STAGE_FULL_BODY_FIT_FAILED) {
+          this.lastErrorCode = '';
+          this.lastErrorMessage = '';
+        }
       } else {
+        this.lastErrorCode = ArkWebChatAvatarStageErrorCode.CHAT_STAGE_FULL_BODY_FIT_FAILED;
+        this.lastErrorMessage = `fitAvatarFullBody failed: ${resultJson}`;
         console.warn(LOG_TAG, 'fitAvatarFullBody failed: ' + resultJson);
       }
     } catch (e) {
+      if (this.disposed) {
+        return;
+      }
+      this.lastErrorCode = ArkWebChatAvatarStageErrorCode.CHAT_STAGE_FULL_BODY_FIT_FAILED;
+      this.lastErrorMessage = 'fitAvatarFullBody threw: ' +
+        (e instanceof Error ? e.message : String(e));
       console.warn(LOG_TAG, 'fitAvatarFullBody threw: ' +
         (e instanceof Error ? e.message : String(e)));
     }
@@ -805,9 +1444,6 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
 
   /**
    * 注册 Avatar endpoint 到 Bridge (覆盖式)。
-   *
-   * handler 委托给 dialogueLifecycle.submitFinalAssistantResult,
-   * 不直接调用 PerformanceController / Mapper。
    */
   private registerAvatarEndpoint(): void {
     if (this.disposed) {
@@ -849,9 +1485,6 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
 
   /**
    * Bridge Avatar endpoint handler 入口。
-   *
-   * 委托给 dialogueLifecycle.submitFinalAssistantResult,
-   * 不直接调用 PerformanceController / Mapper。
    */
   private async onBridgeFinalResult(result: ArkWebAvatarChatFinalResult): Promise<void> {
     if (this.disposed || this.dialogueLifecycle === null) {
@@ -872,8 +1505,6 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
 
   /**
    * 生成稳定本地 Turn ID (chat-ai-panel-<timestamp>-<counter>)。
-   *
-   * 禁止使用动作名称作为 turnId。
    */
   private generatePanelTurnId(): string {
     ArkWebChatAvatarStageController.endpointCounter++;
@@ -881,11 +1512,23 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
   }
 
   /**
-   * 更新状态并通知监听器。
+   * 延迟工具 (有限次数轮询使用, 非 setInterval)。
    */
-  private setState(state: ChatAvatarStageState, detail: string): void {
-    this.currentState = state;
+  private delay(ms: number): Promise<void> {
+    return new Promise<void>((resolve: () => void) => {
+      setTimeout(() => {
+        resolve();
+      }, ms);
+    });
+  }
+
+  /**
+   * 更新 Stage 状态并通知监听器。
+   */
+  private setStageState(state: ArkWebChatAvatarStageState, detail: string): void {
+    this.currentStageState = state;
     this.currentDetail = detail;
+    console.info(LOG_TAG, `stageState=${state} detail=${detail}`);
     if (this.eventListener !== null) {
       this.eventListener.onStateChanged(state, detail);
     }

@@ -616,9 +616,18 @@ export class ViewerScene {
         this.testObject.visible = false;
       }
       // body 添加 chat-stage class (CSS 控制透明)
+      // Phase 4B-1R 修复: 同时设置 html 元素透明, 因为 CSS 选择器
+      // `body.chat-stage html` 无效 (html 是 body 的祖先, 不是后代)。
+      // 必须通过 JavaScript 直接设置 document.documentElement.style。
       try {
-        if (typeof document !== 'undefined' && document.body) {
-          document.body.classList.add('chat-stage');
+        if (typeof document !== 'undefined') {
+          if (document.documentElement) {
+            document.documentElement.style.background = 'transparent';
+          }
+          if (document.body) {
+            document.body.classList.add('chat-stage');
+            document.body.style.background = 'transparent';
+          }
         }
       } catch (e) { /* ignore */ }
       this.renderProfile = 'CHAT_STAGE';
@@ -640,10 +649,16 @@ export class ViewerScene {
       if (this.testObject) {
         this.testObject.visible = false;
       }
-      // 移除 body chat-stage class
+      // 移除 body chat-stage class, 恢复 html/body 的 inline style
       try {
-        if (typeof document !== 'undefined' && document.body) {
-          document.body.classList.remove('chat-stage');
+        if (typeof document !== 'undefined') {
+          if (document.documentElement) {
+            document.documentElement.style.background = '';
+          }
+          if (document.body) {
+            document.body.classList.remove('chat-stage');
+            document.body.style.background = '';
+          }
         }
       } catch (e) { /* ignore */ }
       this.renderProfile = 'VIEWER';

@@ -64,7 +64,7 @@ export type OnControllerReadyCallback = (controller: ArkWebChatAvatarStageContro
 @Component
 export struct ChatAvatarStage {
   /** 是否可见 (false 时隐藏 Stage 但不销毁模型) */
-  @Prop visible: boolean = true;
+  @Prop @Watch('onVisibleChanged') visible: boolean = true;
   /** 控制器就绪回调 (aboutToAppear 创建控制器后调用一次) */
   onControllerReady: OnControllerReadyCallback | null = null;
 
@@ -99,6 +99,26 @@ export struct ChatAvatarStage {
     }
   }
 
+  /**
+   * Phase 4B-1R §第五项: 可见性切换回调。
+   *
+   * 模型从关闭切换为开启时:
+   *   - 重新确认 Stage 尺寸 (已在 setStageSize 中维护)
+   *   - 如果 Model READY, 重新 fitAvatarFullBody (controller 内部会校验状态)
+   */
+  onVisibleChanged(): void {
+    if (this.controller === null) {
+      return;
+    }
+    if (this.visible) {
+      // 切回可见: 触发重新构图 (controller 内部检查 MODEL_READY + 尺寸有效性)
+      this.controller!.refitFullBody().catch((e: Object): void => {
+        console.warn(LOG_TAG, 'refit on visible toggle failed: ' +
+          (e instanceof Error ? e.message : String(e)));
+      });
+    }
+  }
+
   build() {
     if (this.controller === null) {
       // 控制器创建失败时不渲染
@@ -110,9 +130,15 @@ export struct ChatAvatarStage {
         })
           .width('100%')
           .height('100%')
-          // 透明背景: 不设置 backgroundColor, 让 Web 内容自身的透明生效
-          // 禁止使用 .opacity() 制造透明 (透明必须来自 Web 端 CHAT_STAGE profile)
-          .backgroundColor('transparent')
+          // Phase 4B-1R 透明背景修复:
+          // ArkWeb Web 组件必须使用 Color.Transparent (ARGB #00000000) 才能真正透明。
+          // CSS 字符串 'transparent' 不被 ArkUI 原生组件识别, 会被当作无效值,
+          // 导致 Web 容器使用默认不透明背景, 遮挡聊天页面背景图片。
+          // 透明效果链路:
+          //   Web 组件 backgroundColor = Color.Transparent (容器透明)
+          //   + Web 端 CHAT_STAGE Profile (renderer clearAlpha=0 + scene.background=null)
+          //   + CSS body.chat-stage { background: transparent !important }
+          .backgroundColor(Color.Transparent)
           .javaScriptAccess(true)
           .domStorageAccess(true)
           .fileAccess(true)
@@ -125,6 +151,23 @@ export struct ChatAvatarStage {
             if (this.controller !== null) {
               this.controller.onWebPageEnd();
             }
+          })
+          // Phase 4B-1R 修复: 资源请求拦截 (根本原因: 缺少此回调导致 ark-tavern.local
+          // 模型资源 URL 无法映射到本地文件, 资源探测失败, 模型不可见)
+          .onInterceptRequest((event: OnInterceptRequestEvent) => {
+            if (this.controller === null) {
+              return null;
+            }
+            const request: WebResourceRequest = event.request;
+            const url: string = request.getRequestUrl();
+            const method: string = request.getRequestMethod();
+            const requestHeaders: Array<Header> = request.getRequestHeader();
+            const response: WebResourceResponse | null =
+              this.controller!.interceptResourceRequest(url, method, requestHeaders);
+            if (response !== null) {
+              return response;
+            }
+            return null;
           })
           .onErrorReceive((_e) => {
             console.warn(LOG_TAG, 'Web page load error');
@@ -147,9 +190,9 @@ export struct ChatAvatarStage {
    * 处理尺寸变化。
    *
    * 防抖策略:
-   *   - 首次记录尺寸 (lastWidth/lastHeight 为 0)
+   *   - 始终向 controller 报告最新尺寸 (供诊断 + 全身构图使用)
    *   - 宽度或高度变化超过 RESIZE_THRESHOLD_VP 才触发 refitFullBody
-   *   - 输入法弹出等小幅变化被过滤
+   *   - 输入法弹出等小幅变化被过滤 (不触发 refit, 但仍更新 stageWidth/stageHeight)
    */
   private handleAreaChange(newArea: Area): void {
     if (this.controller === null) {
@@ -160,6 +203,8 @@ export struct ChatAvatarStage {
     if (newWidth <= 0 || newHeight <= 0) {
       return;
     }
+    // Phase 4B-1R §第五项: 始终向 controller 报告尺寸 (诊断 + MODEL_READY 后构图依赖此值)
+    this.controller!.setStageSize(newWidth, newHeight);
     // 首次记录
     if (this.lastWidth === 0 || this.lastHeight === 0) {
       this.lastWidth = newWidth;

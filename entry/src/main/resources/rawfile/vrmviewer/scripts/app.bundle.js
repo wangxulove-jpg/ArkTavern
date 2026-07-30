@@ -29600,8 +29600,14 @@ void main() {
           this.testObject.visible = false;
         }
         try {
-          if (typeof document !== "undefined" && document.body) {
-            document.body.classList.add("chat-stage");
+          if (typeof document !== "undefined") {
+            if (document.documentElement) {
+              document.documentElement.style.background = "transparent";
+            }
+            if (document.body) {
+              document.body.classList.add("chat-stage");
+              document.body.style.background = "transparent";
+            }
           }
         } catch (e) {
         }
@@ -29621,8 +29627,14 @@ void main() {
           this.testObject.visible = false;
         }
         try {
-          if (typeof document !== "undefined" && document.body) {
-            document.body.classList.remove("chat-stage");
+          if (typeof document !== "undefined") {
+            if (document.documentElement) {
+              document.documentElement.style.background = "";
+            }
+            if (document.body) {
+              document.body.classList.remove("chat-stage");
+              document.body.style.background = "";
+            }
           }
         } catch (e) {
         }
