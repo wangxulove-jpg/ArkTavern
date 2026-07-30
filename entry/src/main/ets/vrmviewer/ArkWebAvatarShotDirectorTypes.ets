@@ -60,15 +60,15 @@ export type ArkWebAvatarShotDirectorState =
  */
 export interface ArkWebAvatarShotRuntime {
   /** 平滑切换到全身构图 (调用 fitAvatarFullBody) */
-  transitionToFullBody(): Promise<boolean>;
+  transitionToFullBody: () => Promise<boolean>;
   /** 平滑切换到重置视角 (调用 smoothResetCamera, 与重置按钮相同) */
-  transitionToResetView(): Promise<boolean>;
+  transitionToResetView: () => Promise<boolean>;
   /** 取消正在进行的相机过渡 */
-  cancelCameraTransition(reason: string): Promise<boolean>;
+  cancelCameraTransition: (reason: string) => Promise<boolean>;
   /** 检查当前模型是否 READY */
-  isModelReady(): boolean;
+  isModelReady: () => boolean;
   /** 检查 Stage 尺寸是否有效 (>0) */
-  isStageSizeValid(): boolean;
+  isStageSizeValid: () => boolean;
 }
 
 /**
