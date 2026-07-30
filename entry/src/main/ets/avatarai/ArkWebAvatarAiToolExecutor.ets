@@ -48,22 +48,59 @@ import {
   ArkWebAvatarChatFinalResult,
   ArkWebAvatarChatFinalResultSource
 } from '../services/avatar/ArkWebAvatarChatBridgeTypes';
+import { ArkWebAvatarDialogueSessionState } from './ArkWebAvatarDialogueSessionState';
+import { ArkWebAvatarDialogueRhythmPolicy } from './ArkWebAvatarDialogueRhythmPolicy';
+import { ArkWebAvatarDialoguePerformanceSourceConst } from './ArkWebAvatarDialogueSessionStateTypes';
 
 const LOG_TAG: string = 'AvatarAiToolExecutor';
 
 /**
  * Tool Executor 依赖的运行时回调 (由 ChatPage 注入, 避免直接依赖 ChatAvatarStageController)。
+ *
+ * Phase 4C-2: 新增 publishPerformanceForToolCallAndWait, 返回真实 Lifecycle 执行结果,
+ * 用于让 SessionState 记录真实成功/失败 (Bridge accepted 不等于成功)。
  */
 export interface ArkWebAvatarAiToolExecutorRuntime {
-  /** 发布演出到 AvatarChatBridge (source = AI_TOOL_CALL) */
+  /** 发布演出到 AvatarChatBridge (source = AI_TOOL_CALL), 返回 Bridge 是否接受 */
   publishPerformanceForToolCall(
     turnId: string,
     performanceHintJson: string
   ): Promise<boolean>;
+  /**
+   * Phase 4C-2: 发布演出并等待真实 Lifecycle 执行结果。
+   *
+   * 返回值:
+   *   - success: Lifecycle.executePerformance 是否成功
+   *   - errorCode: 失败时的错误码
+   *   - errorMessage: 失败时的错误信息
+   *
+   * 如果 Runtime 未实现此方法 (返回 undefined), Executor 回退到 publishPerformanceForToolCall,
+   * 但 SessionState 不会记录真实结果 (视为 Bridge accepted 即成功)。
+   */
+  publishPerformanceForToolCallAndWait?(
+    turnId: string,
+    performanceHintJson: string
+  ): Promise<ArkWebAvatarToolPerformanceExecutionResult>;
   /** 停止当前 AI 发起的演出 */
   stopPerformanceForToolCall(reason: string): Promise<void>;
   /** 获取当前 Avatar 业务状态 (用于 avatar_get_state) */
   getAvatarBusinessState(): ArkWebAvatarToolExecutorBusinessState;
+}
+
+/**
+ * Phase 4C-2: 演出真实执行结果 (由 Runtime 回调返回)。
+ *
+ * 用于让 SessionState 记录真实成功/失败, 区分 Bridge accepted 与实际执行成功。
+ */
+export interface ArkWebAvatarToolPerformanceExecutionResult {
+  /** Bridge 是否接受 (true 表示已入队/投递) */
+  accepted: boolean;
+  /** Lifecycle.executePerformance 是否成功 (true 表示演出已开始执行) */
+  success: boolean;
+  /** 失败时的错误码 */
+  errorCode: string;
+  /** 失败时的错误信息 */
+  errorMessage: string;
 }
 
 /**
@@ -93,6 +130,10 @@ export class ArkWebAvatarAiToolExecutor {
   private permissionController: ArkWebAvatarAiToolPermissionController;
   /** 运行时回调 (由 ChatPage 注入) */
   private runtime: ArkWebAvatarAiToolExecutorRuntime;
+  /** Phase 4C-2: 会话演出状态 (可选, 由 ChatPage 注入) */
+  private sessionState: ArkWebAvatarDialogueSessionState | null;
+  /** Phase 4C-2: 节奏策略 (可选, 由 ChatPage 注入) */
+  private rhythmPolicy: ArkWebAvatarDialogueRhythmPolicy | null;
 
   /** 去重缓存 (chatTurnId + toolCallId → result) */
   private resultCache: ArkWebAvatarToolResultCacheEntry[] = [];
@@ -103,11 +144,15 @@ export class ArkWebAvatarAiToolExecutor {
   constructor(
     registry: ArkWebAvatarAiToolRegistry,
     permissionController: ArkWebAvatarAiToolPermissionController,
-    runtime: ArkWebAvatarAiToolExecutorRuntime
+    runtime: ArkWebAvatarAiToolExecutorRuntime,
+    sessionState: ArkWebAvatarDialogueSessionState | null = null,
+    rhythmPolicy: ArkWebAvatarDialogueRhythmPolicy | null = null
   ) {
     this.registry = registry;
     this.permissionController = permissionController;
     this.runtime = runtime;
+    this.sessionState = sessionState;
+    this.rhythmPolicy = rhythmPolicy;
   }
 
   /**
@@ -321,6 +366,10 @@ export class ArkWebAvatarAiToolExecutor {
    *
    * turnId 格式: avatar_tool_<chatTurnId>_<toolCallId>
    * source: AI_TOOL_CALL
+   *
+   * Phase 4C-2 新增:
+   *   - no-op 保护: 当前演出 ACTIVE 且新参数完全相同 → 返回 success, 不重播
+   *   - 状态回写: 真实 Lifecycle 执行完成后写入 SessionState (Bridge accepted 不等于成功)
    */
   private async executePerform(
     context: ArkWebAvatarAiToolContext,
@@ -337,6 +386,33 @@ export class ArkWebAvatarAiToolExecutor {
       return this.buildErrorResult(call, validationError[0], validationError[1]);
     }
 
+    // Phase 4C-2: no-op 保护 (当前演出 ACTIVE 且新参数完全相同)
+    if (this.sessionState !== null && this.rhythmPolicy !== null) {
+      const snapshot = this.sessionState.getSnapshot();
+      const decision = this.rhythmPolicy.evaluate(snapshot,
+        params.motionType, params.motionId, params.expressionId);
+      if (decision.isNoOp) {
+        // 不重播, 不报错, 返回 success
+        const resultJson: ArkWebAvatarPerformResultJson = {
+          success: true,
+          errorCode: '',
+          message: 'Avatar performance is already active.',
+          commandId: '',
+          noOp: true
+        };
+        console.info(LOG_TAG,
+          `executePerform no-op: ${decision.noOpReason} toolCallId=${call.toolCallId}`);
+        return {
+          toolCallId: call.toolCallId,
+          name: call.name,
+          success: true,
+          resultJson: JSON.stringify(resultJson),
+          errorCode: '',
+          errorMessage: ''
+        };
+      }
+    }
+
     // 构建 performanceHintJson (与 AI 面板按钮使用相同结构)
     const hintJson: string = JSON.stringify({
       motionType: params.motionType,
@@ -351,16 +427,70 @@ export class ArkWebAvatarAiToolExecutor {
     // 构建稳定的 Bridge turnId: avatar_tool_<chatTurnId>_<toolCallId>
     const turnId: string = `avatar_tool_${context.chatTurnId}_${call.toolCallId}`;
 
-    // 通过 Runtime 回调发布 (source = AI_TOOL_CALL)
-    const published: boolean = await this.runtime.publishPerformanceForToolCall(
-      turnId, hintJson);
+    // Phase 4C-2: 优先使用 publishPerformanceForToolCallAndWait, 获取真实执行结果
+    let realSuccess: boolean = false;
+    let realErrorCode: string = '';
+    let realErrorMessage: string = '';
+    let bridgeAccepted: boolean = false;
 
-    if (!published) {
+    if (this.runtime.publishPerformanceForToolCallAndWait !== undefined) {
+      try {
+        const execResult: ArkWebAvatarToolPerformanceExecutionResult =
+          await this.runtime.publishPerformanceForToolCallAndWait(turnId, hintJson);
+        bridgeAccepted = execResult.accepted;
+        realSuccess = execResult.success;
+        realErrorCode = execResult.errorCode;
+        realErrorMessage = execResult.errorMessage;
+      } catch (e) {
+        const msg: string = e instanceof Error ? e.message : String(e);
+        const resultJson: ArkWebAvatarPerformResultJson = {
+          success: false,
+          errorCode: ArkWebAvatarAiToolErrorCode.AVATAR_TOOL_EXECUTION_FAILED,
+          message: `publishPerformanceForToolCallAndWait threw: ${msg}`,
+          commandId: '',
+          noOp: false
+        };
+        return {
+          toolCallId: call.toolCallId,
+          name: call.name,
+          success: false,
+          resultJson: JSON.stringify(resultJson),
+          errorCode: ArkWebAvatarAiToolErrorCode.AVATAR_TOOL_EXECUTION_FAILED,
+          errorMessage: msg
+        };
+      }
+    } else {
+      // 回退路径: 仅获取 Bridge accepted (无法知道真实 Lifecycle 结果)
+      try {
+        bridgeAccepted = await this.runtime.publishPerformanceForToolCall(turnId, hintJson);
+        realSuccess = bridgeAccepted; // 回退路径: 视 Bridge accepted 为成功
+      } catch (e) {
+        const msg: string = e instanceof Error ? e.message : String(e);
+        const resultJson: ArkWebAvatarPerformResultJson = {
+          success: false,
+          errorCode: ArkWebAvatarAiToolErrorCode.AVATAR_TOOL_EXECUTION_FAILED,
+          message: `publishPerformanceForToolCall threw: ${msg}`,
+          commandId: '',
+          noOp: false
+        };
+        return {
+          toolCallId: call.toolCallId,
+          name: call.name,
+          success: false,
+          resultJson: JSON.stringify(resultJson),
+          errorCode: ArkWebAvatarAiToolErrorCode.AVATAR_TOOL_EXECUTION_FAILED,
+          errorMessage: msg
+        };
+      }
+    }
+
+    if (!bridgeAccepted) {
       const resultJson: ArkWebAvatarPerformResultJson = {
         success: false,
         errorCode: ArkWebAvatarAiToolErrorCode.AVATAR_TOOL_ENDPOINT_UNAVAILABLE,
         message: 'Avatar endpoint unavailable or bridge rejected.',
-        commandId: ''
+        commandId: '',
+        noOp: false
       };
       return {
         toolCallId: call.toolCallId,
@@ -372,19 +502,40 @@ export class ArkWebAvatarAiToolExecutor {
       };
     }
 
+    // Phase 4C-2: 回写真实执行结果到 SessionState
+    if (this.sessionState !== null) {
+      const assistantTurnIndex: number = this.sessionState.getAssistantTurnIndex();
+      this.sessionState.recordPerformance({
+        chatTurnId: context.chatTurnId,
+        toolCallId: call.toolCallId,
+        commandId: turnId,
+        motionType: params.motionType,
+        motionId: params.motionId,
+        expressionId: params.expressionId,
+        success: realSuccess,
+        errorCode: realErrorCode,
+        assistantTurnIndex: assistantTurnIndex,
+        executedAt: Date.now(),
+        source: ArkWebAvatarDialoguePerformanceSourceConst.AI_TOOL_CALL
+      });
+    }
+
+    const successMsg: string = realSuccess
+      ? 'Avatar performance started.' : `Performance execution failed: ${realErrorMessage}`;
     const resultJson: ArkWebAvatarPerformResultJson = {
-      success: true,
-      errorCode: '',
-      message: 'Avatar performance started.',
-      commandId: turnId
+      success: realSuccess,
+      errorCode: realErrorCode,
+      message: successMsg,
+      commandId: turnId,
+      noOp: false
     };
     return {
       toolCallId: call.toolCallId,
       name: call.name,
-      success: true,
+      success: realSuccess,
       resultJson: JSON.stringify(resultJson),
-      errorCode: '',
-      errorMessage: ''
+      errorCode: realErrorCode,
+      errorMessage: realErrorMessage
     };
   }
 
@@ -398,6 +549,15 @@ export class ArkWebAvatarAiToolExecutor {
   ): Promise<ArkWebChatToolExecutionResult> {
     try {
       await this.runtime.stopPerformanceForToolCall('AI_TOOL_STOP');
+      // Phase 4C-2: stop 成功后回写状态 (不计为角色演出, 仅重置当前状态)
+      if (this.sessionState !== null) {
+        try {
+          this.sessionState.recordStop(true, ArkWebAvatarDialoguePerformanceSourceConst.AI_TOOL_CALL);
+        } catch (e2) {
+          console.warn(LOG_TAG,
+            `recordStop threw: ${e2 instanceof Error ? e2.message : String(e2)}`);
+        }
+      }
       const resultJson: ArkWebAvatarStopResultJson = {
         success: true,
         errorCode: '',
@@ -413,6 +573,7 @@ export class ArkWebAvatarAiToolExecutor {
       };
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
+      // Phase 4C-2: stop 失败不重置状态 (仍认为有演出在进行)
       const resultJson: ArkWebAvatarStopResultJson = {
         success: false,
         errorCode: ArkWebAvatarAiToolErrorCode.AVATAR_TOOL_EXECUTION_FAILED,

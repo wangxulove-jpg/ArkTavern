@@ -125,6 +125,13 @@ import {
   AVATAR_STRATEGY_MAX_PERFORM_PER_TURN,
   ArkWebAvatarDialogueStrategyModeConst,
 } from '../avatarai/ArkWebAvatarDialogueStrategyTypes';
+import {
+  ArkWebAvatarDialogueSessionState,
+} from '../avatarai/ArkWebAvatarDialogueSessionState';
+import {
+  ArkWebAvatarDialogueRhythmPolicy,
+  AVATAR_DIALOGUE_RHYTHM_POLICY_VERSION,
+} from '../avatarai/ArkWebAvatarDialogueRhythmPolicy';
 
 const LOG_TAG: string = 'ChatService';
 
@@ -371,6 +378,25 @@ export class ChatService {
    */
   private avatarDialogueStrategyBuilder: ArkWebAvatarDialogueStrategyBuilder | null = null;
   /**
+   * Phase 4C-2: Avatar 对话演出会话状态 (可选, 由 ChatPage 注入)。
+   *
+   * - 只在当前 ChatPage 生命周期内保存, 不写入数据库 / Preferences / 角色卡 / 聊天消息
+   * - 助手最终回复完成时递增 assistantTurnIndex (流式 token / tool result 中间轮次不递增)
+   * - avatar_perform 真实执行完成后回写演出记录 (Bridge accepted 不等于成功)
+   * - avatar_stop 真实执行完成后重置当前状态为 IDLE
+   * - 策略 Builder 注入 buildStateSummary() 到 system message
+   * - AI 面板显示 getRhythmStatusText() 简洁节奏状态
+   */
+  private avatarDialogueSessionState: ArkWebAvatarDialogueSessionState | null = null;
+  /**
+   * Phase 4C-2: Avatar 对话演出节奏策略 (可选, 由 ChatPage 注入)。
+   *
+   * - 实现 BALANCED_V1 软决策 (不强制阻止 AI 调用工具)
+   * - 由 Tool Executor 在 executePerform 中评估 no-op 保护
+   * - 不解析聊天正文判断是否需要演出
+   */
+  private avatarDialogueRhythmPolicy: ArkWebAvatarDialogueRhythmPolicy | null = null;
+  /**
    * Phase 4C-1: 最近一次构建的策略结果 (供 UI 显示状态摘要)。
    *
    * 每次请求开始时刷新, 失败时为 null。
@@ -456,6 +482,8 @@ export class ChatService {
    * @param runtime 执行运行时回调
    * @param snapshotProvider 能力快照提供器
    * @param strategyBuilder 对话演出策略 Builder (Phase 4C-1, 可选)
+   * @param sessionState 对话演出会话状态 (Phase 4C-2, 可选)
+   * @param rhythmPolicy 对话演出节奏策略 (Phase 4C-2, 可选)
    */
   setAvatarToolIntegration(
     registry: ArkWebAvatarAiToolRegistry | null,
@@ -463,7 +491,9 @@ export class ChatService {
     executor: ArkWebAvatarAiToolExecutor | null,
     runtime: ArkWebAvatarAiToolExecutorRuntime | null,
     snapshotProvider: (() => ArkWebAvatarAiCapabilitySnapshot | null) | null,
-    strategyBuilder: ArkWebAvatarDialogueStrategyBuilder | null = null
+    strategyBuilder: ArkWebAvatarDialogueStrategyBuilder | null = null,
+    sessionState: ArkWebAvatarDialogueSessionState | null = null,
+    rhythmPolicy: ArkWebAvatarDialogueRhythmPolicy | null = null
   ): void {
     this.avatarToolRegistry = registry;
     this.avatarPermissionController = permissionController;
@@ -471,6 +501,8 @@ export class ChatService {
     this.avatarExecutorRuntime = runtime;
     this.avatarSnapshotProvider = snapshotProvider;
     this.avatarDialogueStrategyBuilder = strategyBuilder;
+    this.avatarDialogueSessionState = sessionState;
+    this.avatarDialogueRhythmPolicy = rhythmPolicy;
   }
 
   /**
@@ -2263,6 +2295,9 @@ export class ChatService {
    *
    * - 若 nativeAvatarToolExecutedForTurn = true, 跳过 performanceHintJson 发布
    * - 否则正常透传 performanceHintJson
+   *
+   * Phase 4C-2: 递增 SessionState.assistantTurnIndex (只在真实最终回复完成时递增,
+   * 流式 token / tool result 中间轮次不递增)。
    */
   private finalizeAssistantTurn(
     assistantId: string,
@@ -2278,6 +2313,16 @@ export class ChatService {
       assistantId, result.content, ChatMessageStatus.Completed, undefined, callbacks
     );
     this.currentAssistantId = null;
+
+    // Phase 4C-2: 递增助手 Turn 计数 (只在真实最终回复完成时, 不在流式 token 或 tool result 中间轮次)
+    // 必须在 finalizeAssistant 之后, 但在后续异步持久化之前, 保证状态一致
+    if (this.avatarDialogueSessionState !== null) {
+      try {
+        this.avatarDialogueSessionState.incrementAssistantTurn();
+      } catch (e) {
+        Logger.warn(LOG_TAG, 'incrementAssistantTurn threw: ' + String(e));
+      }
+    }
 
     // Phase 4A-3: performanceHintJson 冲突策略
     // 同一 Turn 已执行原生 Avatar Tool Call 时, 忽略 performanceHintJson
@@ -2632,6 +2677,13 @@ export class ChatService {
    * - 调用 ArkWebAvatarDialogueStrategyBuilder.build
    * - 失败时返回 null 或 enabled=false 的结果, 不阻塞普通文本聊天
    *
+   * Phase 4C-2: 注入会话演出状态摘要 (buildStateSummary), 让 AI 感知
+   * 当前演出状态和近期演出历史, 做出节奏感知的决策。
+   *
+   * - DENY / READ_ONLY: 不注入会话状态摘要 (无可用业务决策)
+   * - CONTROL_THIS_CHAT: 注入完整会话状态摘要
+   * - Provider 不支持: 不注入策略 (返回 enabled=false)
+   *
    * @returns 策略构建结果 (null 表示 Builder 未注入)
    */
   private buildAvatarDialogueStrategy(): ArkWebAvatarDialogueStrategyResult | null {
@@ -2649,11 +2701,26 @@ export class ChatService {
     const capabilityContext: string = this.avatarToolRegistry.buildCapabilityContext(snapshot);
     const capabilityTruncated: boolean = capabilityContext.includes('...[truncated]');
 
+    // Phase 4C-2: 注入会话演出状态摘要
+    // - 只有 CONTROL_THIS_CHAT 才注入完整状态 (READ_ONLY 也可注入只读状态)
+    // - DENY / Provider 不支持: 由 Builder 返回 enabled=false, 不进入此处逻辑
+    let sessionStateSummary: string = '';
+    if (this.avatarDialogueSessionState !== null
+      && permissionMode !== ArkWebAvatarAiToolPermissionModeConst.DENY) {
+      try {
+        sessionStateSummary = this.avatarDialogueSessionState.buildStateSummary();
+      } catch (e) {
+        Logger.warn(LOG_TAG, 'buildStateSummary threw: ' + String(e));
+        sessionStateSummary = '';
+      }
+    }
+
     const input: ArkWebAvatarDialogueStrategyInput = {
       permissionMode: permissionMode,
       providerSupportsToolCalling: this.currentProviderSupportsToolCalling,
       capabilityContext: capabilityContext,
-      capabilityTruncated: capabilityTruncated
+      capabilityTruncated: capabilityTruncated,
+      sessionStateSummary: sessionStateSummary
     };
 
     try {
@@ -2696,6 +2763,61 @@ export class ChatService {
       maxPerformPerTurn: AVATAR_STRATEGY_MAX_PERFORM_PER_TURN,
       lastError: result !== null && !result.enabled ? result.errorMessage : ''
     };
+  }
+
+  /**
+   * Phase 4C-2: 获取 Avatar 对话演出节奏状态文本 (供 AI 面板简洁显示)。
+   *
+   * 格式:
+   *   助手轮次：12
+   *   距上次演出：2 轮
+   *   连续演出：0
+   *   最近演出：Wave
+   *
+   * - 不展示完整 Prompt / 完整演出记录
+   * - 不暴露路径 / URL / resourceId / generation / 相机坐标
+   * - 未注入 SessionState 时返回空字符串 (UI 隐藏该区块)
+   */
+  getAvatarRhythmStatusText(): string {
+    if (this.avatarDialogueSessionState === null) {
+      return '';
+    }
+    try {
+      return this.avatarDialogueSessionState.getRhythmStatusText();
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'getRhythmStatusText threw: ' + String(e));
+      return '';
+    }
+  }
+
+  /**
+   * Phase 4C-2: 获取 Avatar 对话演出节奏策略版本 (供 UI 显示)。
+   *
+   * 返回 BALANCED_V1 或空字符串 (未注入时)。
+   */
+  getAvatarRhythmPolicyVersion(): string {
+    if (this.avatarDialogueRhythmPolicy === null) {
+      return '';
+    }
+    return AVATAR_DIALOGUE_RHYTHM_POLICY_VERSION;
+  }
+
+  /**
+   * Phase 4C-2: 销毁 Avatar 对话演出会话状态 (页面 aboutToDisappear 时调用)。
+   *
+   * - 清空会话演出历史和当前状态
+   * - 不停止用户手动发起的演出 (由 Stage 控制器负责)
+   * - 不影响权限控制器 / 工具执行器 (由各自 dispose 负责)
+   * - 不写入数据库 / Preferences / 聊天消息
+   */
+  disposeAvatarDialogueSessionState(): void {
+    if (this.avatarDialogueSessionState !== null) {
+      try {
+        this.avatarDialogueSessionState.dispose();
+      } catch (e) {
+        Logger.warn(LOG_TAG, 'sessionState dispose threw: ' + String(e));
+      }
+    }
   }
 
   /**

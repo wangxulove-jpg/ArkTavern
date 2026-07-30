@@ -309,12 +309,20 @@ export interface ArkWebAvatarPerformParams {
 
 /**
  * avatar_perform 工具执行结果 JSON (回传给 AI)。
+ *
+ * Phase 4C-2: 新增 noOp 字段, 用于相同活动演出 no-op 保护 (不重播, 不报错)。
  */
 export interface ArkWebAvatarPerformResultJson {
   success: boolean;
   errorCode: string;
   message: string;
   commandId: string;
+  /**
+   * Phase 4C-2: 是否为 no-op (当前演出 ACTIVE 且新参数完全相同)。
+   * - true: success=true, 不重播动画, 不报错
+   * - false: 正常执行
+   */
+  noOp: boolean;
 }
 
 /**

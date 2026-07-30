@@ -1056,6 +1056,42 @@ export class ChatViewModel {
     return this.chatService.getAvatarDialogueStrategyStatus();
   }
 
+  /**
+   * Phase 4C-2: 获取 Avatar 对话演出节奏状态文本 (供 AI 面板简洁显示)。
+   *
+   * 返回多行文本:
+   *   助手轮次：12
+   *   距上次演出：2 轮
+   *   连续演出：0
+   *   最近演出：Wave
+   *
+   * 未注入 SessionState 时返回空字符串 (UI 隐藏该区块)。
+   * 不展示完整 Prompt, 不暴露路径 / URL / resourceId。
+   */
+  getAvatarRhythmStatusText(): string {
+    return this.chatService.getAvatarRhythmStatusText();
+  }
+
+  /**
+   * Phase 4C-2: 获取 Avatar 对话演出节奏策略版本 (供 UI 显示)。
+   *
+   * 返回 BALANCED_V1 或空字符串 (未注入时)。
+   */
+  getAvatarRhythmPolicyVersion(): string {
+    return this.chatService.getAvatarRhythmPolicyVersion();
+  }
+
+  /**
+   * Phase 4C-2: 销毁 Avatar 对话演出会话状态 (页面 aboutToDisappear 时调用)。
+   *
+   * - 清空会话演出历史和当前状态
+   * - 不停止用户手动发起的演出 (由 Stage 控制器负责)
+   * - 不写入数据库 / Preferences / 聊天消息
+   */
+  disposeAvatarDialogueSessionState(): void {
+    this.chatService.disposeAvatarDialogueSessionState();
+  }
+
   dispose(): void {
     this.disposed = true;
     // 清理 pending flush,避免页面退出后回调到旧组件

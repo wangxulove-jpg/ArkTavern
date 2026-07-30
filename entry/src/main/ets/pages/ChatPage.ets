@@ -259,6 +259,10 @@ struct ChatPage {
   @State avatarStrategySummaryExpanded: boolean = false;
   /** Phase 4A-3: Avatar Tool Calling 状态快照 (供 AI 面板权限区显示) */
   @State avatarToolStatus: AvatarToolCallingStatus | null = null;
+  /** Phase 4C-2: Avatar 对话演出节奏状态文本 (供 AI 面板简洁显示) */
+  @State avatarRhythmStatusText: string = '';
+  /** Phase 4C-2: Avatar 对话演出节奏策略版本 (BALANCED_V1 或空) */
+  @State avatarRhythmPolicyVersion: string = '';
   /** 模型大小滑动条值 (fillRatio, 0.3~0.98, 默认 0.78) */
   @State avatarModelFillRatio: number = 0.78;
   /**
@@ -436,6 +440,15 @@ struct ChatPage {
     this.avatarStageController = null;
     this.aiCapabilitySnapshot = null;
     this.aiPanelVisible = false;
+    // Phase 4C-2: 销毁 Avatar 对话演出会话状态 (清空演出历史和当前状态, 不停止用户手动演出)
+    // 必须在 viewModel.dispose 之前调用, 因为 dispose 内部会销毁 ChatService
+    if (this.viewModel !== null) {
+      try {
+        this.viewModel!.disposeAvatarDialogueSessionState();
+      } catch (_e) {
+        // 忽略销毁失败, 避免阻塞页面退出
+      }
+    }
     // 注销深色模式监听器
     if (this.darkModeListener !== null) {
       try {
@@ -447,6 +460,9 @@ struct ChatPage {
     }
     // 关闭显示设置面板
     this.chatAppearancePanelVisible = false;
+    // Phase 4C-2: 清理本地节奏状态显示
+    this.avatarRhythmStatusText = '';
+    this.avatarRhythmPolicyVersion = '';
     if (this.viewModel !== null) {
       this.viewModel!.dispose();
       this.viewModel = null;
@@ -494,11 +510,14 @@ struct ChatPage {
    *   - 能力快照刷新后
    *   - 权限模式变更后
    *   - 工具调用完成后
+   *   - 助手 Turn 完成 (Phase 4C-2: 同步节奏状态文本)
    */
   private refreshAvatarToolCallingStatus(): void {
     if (this.viewModel === null) {
       this.avatarToolStatus = null;
       this.avatarStrategyStatus = null;
+      this.avatarRhythmStatusText = '';
+      this.avatarRhythmPolicyVersion = '';
       return;
     }
     try {
@@ -508,11 +527,16 @@ struct ChatPage {
       this.avatarToolPermissionMode = status.permissionMode;
       // Phase 4C-1: 同步刷新策略状态摘要
       this.avatarStrategyStatus = this.viewModel!.getAvatarDialogueStrategyStatus();
+      // Phase 4C-2: 同步刷新节奏状态文本和策略版本
+      this.avatarRhythmStatusText = this.viewModel!.getAvatarRhythmStatusText();
+      this.avatarRhythmPolicyVersion = this.viewModel!.getAvatarRhythmPolicyVersion();
     } catch (e) {
       Logger.warn(LOG_TAG, 'refreshAvatarToolCallingStatus failed: ' +
         (e instanceof Error ? e.message : String(e)));
       this.avatarToolStatus = null;
       this.avatarStrategyStatus = null;
+      this.avatarRhythmStatusText = '';
+      this.avatarRhythmPolicyVersion = '';
     }
   }
 
@@ -1656,12 +1680,11 @@ struct ChatPage {
   /**
    * Phase 4A-3: AI 模型权限区块 (Avatar Tool Calling 权限控制)。
    *
-   * 显示:
-   *   - 当前 Provider 是否支持 Tool Calling
-   *   - 注入工具数量
-   *   - 当前模型能力是否就绪
-   *   - 最后工具名称 / 结果 / 错误
-   *   - 三档权限切换按钮 (不允许 / 只读 / 控制本次聊天)
+   * Phase 4C-2: 修正状态文案语义, 区分以下四种场景:
+   *   - Provider 不支持: Provider 不支持 / 工具 不可用 / 能力 未启用 / 策略 未注入
+   *   - 权限 DENY: AI 模型访问 不允许 / 工具 未启用 / 能力 未启用 / 策略 未注入
+   *   - READ_ONLY: 工具 2 个 / 能力 已就绪 / 策略 只读
+   *   - CONTROL_THIS_CHAT: 工具 4 个 / 能力 已就绪 / 策略 BALANCED V1 (已注入)
    *
    * 权限为 DENY 时, AI 面板手动按钮仍可使用 (手动按钮属用户操作)。
    */
@@ -1675,9 +1698,9 @@ struct ChatPage {
         .width('100%')
         .margin({ bottom: 4 })
 
-      // Provider 支持状态 + 工具数量 + 能力就绪
+      // Phase 4C-2: 文案语义修正 — Provider 支持状态
       Row() {
-        Text(`Provider: ${this.avatarToolStatus !== null && this.avatarToolStatus!.providerSupported ? '支持' : '不支持'}`)
+        Text(`Provider：${this.avatarToolStatus !== null && this.avatarToolStatus!.providerSupported ? '支持' : '不支持'}`)
           .fontSize(11)
           .fontColor(this.avatarToolStatus !== null && this.avatarToolStatus!.providerSupported
             ? $r('app.color.app_text_secondary')
@@ -1686,7 +1709,8 @@ struct ChatPage {
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-        Text(`工具: ${this.avatarToolStatus !== null ? this.avatarToolStatus!.toolCount : 0} 个`)
+        // Phase 4C-2: 工具数量显示根据 Provider 支持和权限模式区分
+        Text(this.buildToolCountText())
           .fontSize(11)
           .fontColor($r('app.color.app_text_secondary'))
           .layoutWeight(1)
@@ -1695,8 +1719,8 @@ struct ChatPage {
       }
       .width('100%')
 
-      // 能力就绪 + 最后工具名/结果/错误
-      Text(`能力: ${this.avatarToolStatus !== null && this.avatarToolStatus!.capabilityReady ? '就绪' : '未就绪'}${this.avatarToolStatus !== null && this.avatarToolStatus!.lastToolName.length > 0 ? ' | 最后工具: ' + this.avatarToolStatus!.lastToolName : ''}`)
+      // Phase 4C-2: 能力状态文案修正 — 不再使用"未就绪"以避免被理解为模型资产加载失败
+      Text(this.buildCapabilityText())
         .fontSize(11)
         .fontColor($r('app.color.app_text_secondary'))
         .width('100%')
@@ -1705,7 +1729,7 @@ struct ChatPage {
         .textOverflow({ overflow: TextOverflow.Ellipsis })
 
       if (this.avatarToolStatus !== null && this.avatarToolStatus!.lastToolError.length > 0) {
-        Text(`错误: ${this.avatarToolStatus!.lastToolError}`)
+        Text(`错误：${this.avatarToolStatus!.lastToolError}`)
           .fontSize(11)
           .fontColor($r('app.color.app_danger'))
           .width('100%')
@@ -1713,6 +1737,15 @@ struct ChatPage {
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
       }
+
+      // Phase 4C-2: 策略注入状态 (简洁单行)
+      Text(this.buildStrategyInjectionText())
+        .fontSize(11)
+        .fontColor($r('app.color.app_text_secondary'))
+        .width('100%')
+        .margin({ top: 2 })
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
 
       // 权限切换按钮 (三档)
       Row() {
@@ -1772,6 +1805,80 @@ struct ChatPage {
   }
 
   /**
+   * Phase 4C-2: 构建工具数量显示文案。
+   *
+   * - Provider 不支持: 工具：不可用
+   * - 权限 DENY: 工具：未启用
+   * - READ_ONLY: 工具：2 个
+   * - CONTROL_THIS_CHAT: 工具：4 个
+   */
+  private buildToolCountText(): string {
+    if (this.avatarToolStatus === null) {
+      return '工具：未启用';
+    }
+    if (!this.avatarToolStatus!.providerSupported) {
+      return '工具：不可用';
+    }
+    if (this.avatarToolPermissionMode === 'DENY') {
+      return '工具：未启用';
+    }
+    return `工具：${this.avatarToolStatus!.toolCount} 个`;
+  }
+
+  /**
+   * Phase 4C-2: 构建能力状态显示文案。
+   *
+   * - Provider 不支持: 能力：未启用
+   * - 权限 DENY: 能力：未启用
+   * - READ_ONLY/CONTROL_THIS_CHAT: 能力：已就绪 / 能力：未就绪 (仅模型未加载时)
+   *
+   * 不再使用"未就绪"来描述 Provider 不支持或权限 DENY 场景,
+   * 避免被理解为模型资产加载失败。
+   */
+  private buildCapabilityText(): string {
+    if (this.avatarToolStatus === null) {
+      return '能力：未启用';
+    }
+    if (!this.avatarToolStatus!.providerSupported) {
+      return '能力：未启用';
+    }
+    if (this.avatarToolPermissionMode === 'DENY') {
+      return '能力：未启用';
+    }
+    // READ_ONLY / CONTROL_THIS_CHAT 且 Provider 支持: 显示真实就绪状态
+    const capabilityText: string = this.avatarToolStatus!.capabilityReady ? '已就绪' : '未就绪';
+    const toolSuffix: string = this.avatarToolStatus!.lastToolName.length > 0
+      ? ` | 最后工具：${this.avatarToolStatus!.lastToolName}` : '';
+    return `能力：${capabilityText}${toolSuffix}`;
+  }
+
+  /**
+   * Phase 4C-2: 构建策略注入状态文案。
+   *
+   * - Provider 不支持: 策略：未注入
+   * - 权限 DENY: 策略：未注入
+   * - READ_ONLY: 策略：只读
+   * - CONTROL_THIS_CHAT: 策略：BALANCED V1 (已注入)
+   */
+  private buildStrategyInjectionText(): string {
+    if (this.avatarToolStatus === null
+      || !this.avatarToolStatus!.providerSupported
+      || this.avatarToolPermissionMode === 'DENY') {
+      return '策略：未注入';
+    }
+    if (this.avatarToolPermissionMode === 'READ_ONLY') {
+      return '策略：只读';
+    }
+    // CONTROL_THIS_CHAT
+    if (this.avatarStrategyStatus !== null && this.avatarStrategyStatus!.injected) {
+      const rhythmVersion: string = this.avatarRhythmPolicyVersion.length > 0
+        ? this.avatarRhythmPolicyVersion : 'BALANCED_V1';
+      return `策略：${rhythmVersion}（已注入）`;
+    }
+    return '策略：BALANCED（未注入）';
+  }
+
+  /**
    * Phase 4C-1: Avatar 对话演出策略状态区块。
    *
    * 显示:
@@ -1779,6 +1886,12 @@ struct ChatPage {
    *   - 策略版本: V1
    *   - 策略已注入 / 未注入
    *   - 折叠区域: 允许工具 / 每 Turn 上限 / 当前权限 / 当前能力数量
+   *
+   * Phase 4C-2: 在策略状态后增加简洁节奏状态区块:
+   *   - 助手轮次：12
+   *   - 距上次演出：2 轮
+   *   - 连续演出：0
+   *   - 最近演出：Wave
    *
    * 不显示完整系统提示词。
    */
@@ -1793,14 +1906,14 @@ struct ChatPage {
         .margin({ bottom: 4 })
 
       Row() {
-        Text(`策略: ${this.avatarStrategyStatus !== null ? this.avatarStrategyStatus!.strategyMode : 'BALANCED'}`)
+        Text(`策略：${this.avatarStrategyStatus !== null ? this.avatarStrategyStatus!.strategyMode : 'BALANCED'}`)
           .fontSize(11)
           .fontColor($r('app.color.app_text_secondary'))
           .layoutWeight(1)
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-        Text(`版本: ${this.avatarStrategyStatus !== null ? this.avatarStrategyStatus!.strategyVersion.replace('AVATAR_DIALOGUE_STRATEGY_', '') : 'V1'}`)
+        Text(`版本：${this.avatarStrategyStatus !== null ? this.avatarStrategyStatus!.strategyVersion.replace('AVATAR_DIALOGUE_STRATEGY_', '') : 'V1'}`)
           .fontSize(11)
           .fontColor($r('app.color.app_text_secondary'))
           .layoutWeight(1)
@@ -1809,7 +1922,7 @@ struct ChatPage {
       }
       .width('100%')
 
-      Text(`状态: ${this.avatarStrategyStatus !== null && this.avatarStrategyStatus!.injected ? '已注入' : '未注入'}${this.avatarStrategyStatus !== null && this.avatarStrategyStatus!.lastError.length > 0 ? ' | ' + this.avatarStrategyStatus!.lastError : ''}`)
+      Text(`状态：${this.avatarStrategyStatus !== null && this.avatarStrategyStatus!.injected ? '已注入' : '未注入'}${this.avatarStrategyStatus !== null && this.avatarStrategyStatus!.lastError.length > 0 ? ' | ' + this.avatarStrategyStatus!.lastError : ''}`)
         .fontSize(11)
         .fontColor(this.avatarStrategyStatus !== null && this.avatarStrategyStatus!.lastError.length > 0
           ? $r('app.color.app_danger')
@@ -1818,6 +1931,22 @@ struct ChatPage {
         .margin({ top: 2 })
         .maxLines(2)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+      // Phase 4C-2: 简洁节奏状态显示 (仅在已注入策略且有节奏状态文本时显示)
+      if (this.avatarRhythmStatusText.length > 0
+        && this.avatarStrategyStatus !== null
+        && this.avatarStrategyStatus!.injected) {
+        Text(this.avatarRhythmStatusText)
+          .fontSize(11)
+          .fontColor($r('app.color.app_text_secondary'))
+          .width('100%')
+          .margin({ top: 4 })
+          .padding({ top: 4, bottom: 4, left: 6, right: 6 })
+          .borderRadius($r('app.float.app_radius_sm'))
+          .backgroundColor('rgba(255,255,255,0.04)')
+          .maxLines(4)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
 
       // 折叠区域: 查看策略摘要
       Row() {
@@ -1837,26 +1966,34 @@ struct ChatPage {
 
       if (this.avatarStrategySummaryExpanded && this.avatarStrategyStatus !== null) {
         Column() {
-          Text(`当前权限: ${this.avatarStrategyStatus!.permissionMode}`)
+          Text(`当前权限：${this.avatarStrategyStatus!.permissionMode}`)
             .fontSize(11)
             .fontColor($r('app.color.app_text_secondary'))
             .width('100%')
             .margin({ top: 2 })
-          Text(`Provider: ${this.avatarStrategyStatus!.providerSupported ? '支持' : '不支持'}`)
+          Text(`Provider：${this.avatarStrategyStatus!.providerSupported ? '支持' : '不支持'}`)
             .fontSize(11)
             .fontColor($r('app.color.app_text_secondary'))
             .width('100%')
             .margin({ top: 2 })
-          Text(`能力数量: ${this.avatarStrategyStatus!.capabilityCount}`)
+          Text(`能力数量：${this.avatarStrategyStatus!.capabilityCount}`)
             .fontSize(11)
             .fontColor($r('app.color.app_text_secondary'))
             .width('100%')
             .margin({ top: 2 })
-          Text(`每 Turn 演出上限: ${this.avatarStrategyStatus!.maxPerformPerTurn}`)
+          Text(`每 Turn 演出上限：${this.avatarStrategyStatus!.maxPerformPerTurn}`)
             .fontSize(11)
             .fontColor($r('app.color.app_text_secondary'))
             .width('100%')
             .margin({ top: 2 })
+          // Phase 4C-2: 节奏策略版本
+          if (this.avatarRhythmPolicyVersion.length > 0) {
+            Text(`节奏策略：${this.avatarRhythmPolicyVersion}`)
+              .fontSize(11)
+              .fontColor($r('app.color.app_text_secondary'))
+              .width('100%')
+              .margin({ top: 2 })
+          }
         }
         .width('100%')
         .padding({ top: 4, bottom: 4 })

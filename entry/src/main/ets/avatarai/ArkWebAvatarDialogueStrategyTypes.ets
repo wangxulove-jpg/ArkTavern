@@ -93,6 +93,15 @@ export interface ArkWebAvatarDialogueStrategyInput {
   capabilityContext: string;
   /** 能力上下文是否被截断 */
   capabilityTruncated: boolean;
+  /**
+   * Phase 4C-2: 会话演出状态摘要 (由 SessionState.buildStateSummary 生成)。
+   *
+   * - DENY / READ_ONLY: 仍可注入只读状态摘要
+   * - CONTROL_THIS_CHAT: 注入完整状态摘要供 AI 决策
+   * - Provider 不支持: 不注入
+   * - 空字符串: 不注入状态区块 (Builder 跳过)
+   */
+  sessionStateSummary: string;
 }
 
 // ===== 策略 Builder 输出 =====

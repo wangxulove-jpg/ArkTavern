@@ -110,9 +110,12 @@ export class ArkWebAvatarDialogueStrategyBuilder {
       ? ruleText.slice(0, AVATAR_STRATEGY_TEXT_MAX_LENGTH)
       : ruleText;
 
-    // 6. 组装完整系统指令 (规则 + 能力上下文)
+    // 6. 组装完整系统指令 (规则 + 会话状态 + 能力上下文)
     const systemInstruction: string = this.assembleSystemInstruction(
-      truncatedRuleText, input.capabilityContext, input.capabilityTruncated);
+      truncatedRuleText,
+      input.sessionStateSummary,
+      input.capabilityContext,
+      input.capabilityTruncated);
 
     const result: ArkWebAvatarDialogueStrategyResult = {
       enabled: true,
@@ -190,6 +193,18 @@ export class ArkWebAvatarDialogueStrategyBuilder {
     lines.push('- Avatar performance is OPTIONAL. Not every assistant reply needs an avatar_perform call.');
     lines.push(`- Use at most ${AVATAR_STRATEGY_MAX_PERFORM_PER_TURN} avatar_perform call per assistant turn.`);
     lines.push('- avatar_list_capabilities and avatar_get_state do NOT count toward the performance limit.');
+    lines.push('');
+    // Phase 4C-2: 节奏策略提示
+    lines.push('Rhythm guidance (BALANCED_V1):');
+    lines.push('- After an automatic performance, leave at least 1 assistant turn WITHOUT any avatar_perform before considering the next one.');
+    lines.push('- Do NOT perform on every consecutive assistant turn. If you already performed on the last 2 turns, default to NOT performing on the next turn.');
+    lines.push('- Do NOT select the same motionType + motionId that appears in the recent 3 successful performances, unless the user explicitly requested that motion.');
+    lines.push('- Do NOT repeat the same expressionId on consecutive assistant turns. If the avatar already holds that expression, do not call expression-only avatar_perform again.');
+    lines.push('- If the current performance is still ACTIVE and the new request would use identical parameters, do NOT call avatar_perform again (the system will treat it as a no-op).');
+    lines.push('- If the current performance is still ACTIVE and the new reply does not need a clearly different performance, keep the current performance.');
+    lines.push('- Do NOT call avatar_stop before every new reply. Existing REPLACE policy handles overlap.');
+    lines.push('- If the last avatar_perform failed with AVATAR_TOOL_CAPABILITY_NOT_FOUND, do NOT retry with the same IDs; call avatar_list_capabilities or pick a different real ID.');
+    lines.push('- When no suitable capability exists, prefer NOT performing over repeating the same motion.');
     lines.push('');
 
     // 适合演出的情况
@@ -287,21 +302,31 @@ export class ArkWebAvatarDialogueStrategyBuilder {
   }
 
   /**
-   * 组装完整系统指令 (规则 + 能力上下文)。
+   * 组装完整系统指令 (规则 + 会话状态 + 能力上下文)。
+   *
+   * Phase 4C-2: 在规则和能力上下文之间注入 [AVATAR_SESSION_STATE] 区块,
+   * 让 AI 看到当前演出状态和近期历史, 以做出节奏感知的决策。
    *
    * @param ruleText 规则文本 (已截断)
+   * @param sessionStateSummary 会话状态摘要 (空字符串则跳过)
    * @param capabilityContext 能力上下文
    * @param capabilityTruncated 能力上下文是否被截断
    * @returns 完整系统指令
    */
   private assembleSystemInstruction(
     ruleText: string,
+    sessionStateSummary: string,
     capabilityContext: string,
     capabilityTruncated: boolean
   ): string {
     const parts: string[] = [];
     parts.push(ruleText);
     parts.push('');
+    // Phase 4C-2: 注入会话演出状态摘要 (当前状态 + 近期历史)
+    if (sessionStateSummary.length > 0) {
+      parts.push(sessionStateSummary);
+      parts.push('');
+    }
     parts.push('Available capabilities:');
     parts.push(capabilityContext);
     if (capabilityTruncated) {
