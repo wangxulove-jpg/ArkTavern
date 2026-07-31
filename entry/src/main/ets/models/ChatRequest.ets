@@ -75,6 +75,14 @@ export interface ChatRequestOptions {
    * (OpenAI 协议要求 assistant 消息包含 tool_calls, 然后是 role:"tool" 消息)。
    */
   readonly priorToolCalls?: ArkWebChatToolCall[];
+  /**
+   * Phase 4D-8: 工具调用策略 (可选)。
+   *
+   * - 'auto' (默认): AI 自行决定是否调用工具
+   * - 'required': 强制 AI 必须调用至少一个工具 (用于 alwaysPerform 开关)
+   * Provider 不支持时自动回退为 'auto'。
+   */
+  readonly toolChoice?: string;
 }
 
 /**
@@ -127,6 +135,14 @@ export interface ChatRequest {
    * (OpenAI 协议要求 assistant 消息包含 tool_calls, 然后是 role:"tool" 消息)。
    */
   readonly priorToolCalls?: ArkWebChatToolCall[];
+  /**
+   * Phase 4D-8: 工具调用策略 (可选)。
+   *
+   * - 'auto' (默认): AI 自行决定是否调用工具
+   * - 'required': 强制 AI 必须调用至少一个工具 (用于 alwaysPerform 开关)
+   * Provider 不支持时自动回退为 'auto'。
+   */
+  readonly toolChoice?: string;
 }
 
 /**

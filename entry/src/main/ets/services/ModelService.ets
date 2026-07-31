@@ -443,7 +443,9 @@ export class ModelService {
       responseFormatJson: options.responseFormatJson,
       tools: options.tools,
       toolResults: options.toolResults,
-      priorToolCalls: options.priorToolCalls
+      priorToolCalls: options.priorToolCalls,
+      // Phase 4D-8: 透传工具调用策略 (alwaysPerform 开关依赖此字段)
+      toolChoice: options.toolChoice
     };
 
     const provider: AiProvider = this.resolveProvider(config);

@@ -436,3 +436,188 @@ export interface ArkWebAvatarAiToolContext {
   /** 当前权限模式 */
   permissionMode: string;
 }
+
+// ===== Phase 4D-3: 最后一次 Tool Call 摘要 =====
+
+/**
+ * Phase 4D-3: 最后一次 Avatar Tool Call 来源标识。
+ *
+ * - NATIVE_TOOL: AI 真实调用 Provider 原生 tool_calls (含 avatar_perform / avatar_get_state 等)
+ * - NONE: 当前 Turn 未发生任何 Avatar 工具调用 (AI 只返回普通文本)
+ *
+ * 注: LOCAL_FALLBACK / STRUCTURED_HINT 由 Coordinator 单独追踪, 不在此枚举中。
+ *     本字段只标识"AI 是否通过原生 Tool Calling 调用过 Avatar 工具"。
+ */
+export type LastAvatarToolCallSource = 'NATIVE_TOOL' | 'NONE';
+
+/**
+ * Phase 4D-3: LastAvatarToolCallSource 常量集合。
+ */
+export class LastAvatarToolCallSourceConst {
+  static readonly NATIVE_TOOL: LastAvatarToolCallSource = 'NATIVE_TOOL';
+  static readonly NONE: LastAvatarToolCallSource = 'NONE';
+}
+
+/**
+ * Phase 4D-3: 最后一次 Avatar Tool Call 执行摘要。
+ *
+ * 用于 UI 显示 "AI 是否实际调用 avatar_perform" 以及调用结果。
+ * 与 AvatarStage Runtime 快照 (动作/状态/最后结果) 解耦:
+ *   - 本摘要反映 "AI Tool Call 路径" 的执行结果
+ *   - AvatarStage 快照反映 "动画运行时" 的真实状态
+ *
+ * 不保存:
+ *   - 完整 argumentsJson (可能含敏感参数)
+ *   - 完整 resultJson (回传给 AI 的内容)
+ *   - API Key / Authorization
+ *
+ * 生命周期:
+ *   - 每次 Turn 开始时重置为 null (resetAvatarToolTurnState)
+ *   - handleAvatarToolCalls 循环中每次执行工具后更新
+ *   - Turn 结束后保留最后一条记录供 UI 查询, 直到下次 Turn 开始
+ */
+export interface LastAvatarToolCallSummary {
+  /** 来源 (NATIVE_TOOL / NONE) */
+  source: LastAvatarToolCallSource;
+  /** 工具调用 ID (Provider 分配) */
+  toolCallId: string;
+  /** 工具名 (avatar_perform / avatar_get_state / avatar_list_capabilities / avatar_stop) */
+  toolName: string;
+  /** motionType (animation / pose / none), 仅 avatar_perform 有值, 其余工具为空 */
+  motionType: string;
+  /** motionId (动作 ID), 仅 avatar_perform 且 motionType != 'none' 时有值 */
+  motionId: string;
+  /** expressionId (表情 ID), 仅 avatar_perform 且非空时有值 */
+  expressionId: string;
+  /** 执行是否成功 (Executor 返回) */
+  success: boolean;
+  /** 错误码 (失败时非空, 如 AVATAR_TOOL_PERMISSION_DENIED / AVATAR_TOOL_CAPABILITY_NOT_FOUND) */
+  errorCode: string;
+  /** 错误信息 (失败时非空, 简短可读) */
+  errorMessage: string;
+  /** 调用时间戳 (ms) */
+  calledAt: number;
+  /** 所属对话轮次 ID (与 chatTurnId 一致) */
+  turnId: string;
+}
+
+/**
+ * Phase 4D-3: 创建初始空摘要 (source=NONE)。
+ *
+ * 用于 Turn 开始时重置状态, 表示"本 Turn 尚未发生 Avatar 工具调用"。
+ */
+export function createEmptyLastAvatarToolCallSummary(): LastAvatarToolCallSummary {
+  return {
+    source: LastAvatarToolCallSourceConst.NONE,
+    toolCallId: '',
+    toolName: '',
+    motionType: '',
+    motionId: '',
+    expressionId: '',
+    success: false,
+    errorCode: '',
+    errorMessage: '',
+    calledAt: 0,
+    turnId: ''
+  };
+}
+
+/**
+ * Phase 4D-3: avatar_perform 参数解析结果。
+ *
+ * 从 argumentsJson 中提取 motionType / motionId / expressionId 三个关键字段,
+ * 用于 UI 显示 "AI 调用了什么动作"。
+ */
+export interface AvatarPerformArgumentsParseResult {
+  /** motionType (animation / pose / none), 解析失败为空 */
+  motionType: string;
+  /** motionId, 解析失败或 motionType=none 时为空 */
+  motionId: string;
+  /** expressionId, 解析失败或未提供时为空 */
+  expressionId: string;
+  /** 解析错误信息 (空表示成功) */
+  parseError: string;
+}
+
+/**
+ * Phase 4D-3: 从 avatar_perform 的 argumentsJson 解析关键参数。
+ *
+ * 仅提取 motionType / motionId / expressionId, 不做业务校验 (校验由 Executor 完成)。
+ * 解析失败时返回空字段 + parseError, 不抛异常。
+ *
+ * @param argumentsJson 工具参数 JSON 字符串
+ * @returns 解析结果 (永远返回对象, 不返回 null)
+ */
+export function parseAvatarPerformArguments(argumentsJson: string): AvatarPerformArgumentsParseResult {
+  const empty: AvatarPerformArgumentsParseResult = {
+    motionType: '',
+    motionId: '',
+    expressionId: '',
+    parseError: ''
+  };
+  if (argumentsJson.length === 0) {
+    empty.parseError = 'argumentsJson is empty';
+    return empty;
+  }
+  let parsed: Record<string, Object> | null = null;
+  try {
+    parsed = JSON.parse(argumentsJson) as Record<string, Object>;
+  } catch (e) {
+    empty.parseError = 'JSON parse failed: ' + (e instanceof Error ? e.message : String(e));
+    return empty;
+  }
+  if (parsed === null) {
+    empty.parseError = 'parsed to null';
+    return empty;
+  }
+  const motionTypeVal: Object | undefined = parsed['motionType'];
+  const motionIdVal: Object | undefined = parsed['motionId'];
+  const expressionIdVal: Object | undefined = parsed['expressionId'];
+  return {
+    motionType: motionTypeVal !== undefined ? String(motionTypeVal) : '',
+    motionId: motionIdVal !== undefined ? String(motionIdVal) : '',
+    expressionId: expressionIdVal !== undefined ? String(expressionIdVal) : '',
+    parseError: ''
+  };
+}
+
+/**
+ * Phase 4D-3: 从 ArkWebChatToolExecutionResult 构建 LastAvatarToolCallSummary。
+ *
+ * 用于 ChatService.handleAvatarToolCalls 循环中, 将执行结果转为摘要。
+ * 若工具名为 avatar_perform, 会解析 argumentsJson 提取动作参数;
+ * 其他工具 (avatar_get_state / avatar_list_capabilities / avatar_stop) 动作参数为空。
+ *
+ * @param toolCall 原始工具调用 (含 argumentsJson)
+ * @param execResult 执行结果
+ * @param turnId 对话轮次 ID
+ * @returns Tool Call 摘要
+ */
+export function buildLastAvatarToolCallSummary(
+  toolCall: ArkWebChatToolCall,
+  execResult: ArkWebChatToolExecutionResult,
+  turnId: string
+): LastAvatarToolCallSummary {
+  let motionType: string = '';
+  let motionId: string = '';
+  let expressionId: string = '';
+  if (toolCall.name === ArkWebAvatarAiToolName.AVATAR_PERFORM) {
+    const parsed: AvatarPerformArgumentsParseResult = parseAvatarPerformArguments(toolCall.argumentsJson);
+    motionType = parsed.motionType;
+    motionId = parsed.motionId;
+    expressionId = parsed.expressionId;
+  }
+  return {
+    source: LastAvatarToolCallSourceConst.NATIVE_TOOL,
+    toolCallId: toolCall.toolCallId,
+    toolName: toolCall.name,
+    motionType: motionType,
+    motionId: motionId,
+    expressionId: expressionId,
+    success: execResult.success,
+    errorCode: execResult.errorCode,
+    errorMessage: execResult.errorMessage,
+    calledAt: Date.now(),
+    turnId: turnId
+  };
+}

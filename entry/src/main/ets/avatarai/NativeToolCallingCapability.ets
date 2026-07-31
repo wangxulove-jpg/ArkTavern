@@ -345,3 +345,144 @@ export function validateProbeToolCall(
   };
   return okResult;
 }
+
+/**
+ * Phase 4D-2: 持久化的探测结果摘要 (存入 AppPreferences)。
+ *
+ * 只保存验证决策所需的最小字段, 不保存敏感信息。
+ *
+ * 不保存:
+ *   - API Key / Authorization / Base URL
+ *   - requestId (临时)
+ *   - returnedToken (临时, 每次探测随机)
+ *   - probedToolCallId (临时)
+ *   - 完整请求正文
+ *   - 权限模式 (每次进入页面由用户确认)
+ */
+export interface NativeToolCallingProbeResultPersisted {
+  /** 探测结果状态 (SUPPORTED / UNSUPPORTED; UNKNOWN/MISCONFIGURED 不持久化) */
+  support: NativeToolCallingSupport;
+  /** 判断来源 (RUNTIME_PROBE) */
+  decisionSource: NativeToolCallingDecisionSource;
+  /** 探测时间戳 (ms) */
+  probedAt: number;
+  /** 探测时的 Provider 类型 */
+  providerType: string;
+  /** 探测时的模型 ID */
+  modelId: string;
+  /** 探测时的错误码 (UNSUPPORTED 时记录, 用于 UI 显示) */
+  errorCode: NativeToolCallingErrorCode;
+  /** 探测时的错误信息摘要 (UNSUPPORTED 时记录, 用于 UI 显示) */
+  errorMessage: string;
+  /** Provider Adapter 版本 (当前固定 'v1', 用于未来失效旧记录) */
+  adapterVersion: string;
+}
+
+/**
+ * Phase 4D-2: 当前 Provider Adapter 版本常量。
+ *
+ * 升级 Adapter 协议时递增此版本, 自动使旧持久化记录失效。
+ */
+export const NATIVE_TOOL_ADAPTER_VERSION: string = 'v1';
+
+/**
+ * Phase 4D-2: 探测结果持久化有效期 (7 天, 单位 ms)。
+ *
+ * 超过此时间的持久化记录视为过期, 不加载, 需重新探测。
+ */
+export const NATIVE_TOOL_PROBE_PERSIST_TTL_MS: number = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Phase 4D-2: 持久化存储 Key 前缀。
+ *
+ * 完整 Key 格式: `ark_tool_probe_<providerType>_<modelId>`
+ * providerType 和 modelId 中的非字母数字字符会被替换为下划线。
+ */
+export const NATIVE_TOOL_PROBE_PREFS_KEY_PREFIX: string = 'ark_tool_probe_';
+
+/**
+ * Phase 4D-2: 构建持久化存储 Key。
+ *
+ * 格式: `ark_tool_probe_<safeProviderType>_<safeModelId>`
+ * 非法字符 (非字母数字) 替换为下划线, 转 lowercase。
+ *
+ * @param providerType Provider 类型
+ * @param modelId 模型 ID
+ * @returns 持久化 Key
+ */
+export function buildProbePersistKey(providerType: string, modelId: string): string {
+  const safeProvider: string = providerType.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
+  const safeModel: string = modelId.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
+  return `${NATIVE_TOOL_PROBE_PREFS_KEY_PREFIX}${safeProvider}_${safeModel}`;
+}
+
+/**
+ * Phase 4D-2: 从探测结果提取可持久化的摘要。
+ *
+ * 只持久化 SUPPORTED 和 UNSUPPORTED (这两种是确定结论)。
+ * UNKNOWN 和 MISCONFIGURED 不持久化 (临时状态, 需重新探测)。
+ *
+ * @param result 探测结果
+ * @param providerType Provider 类型
+ * @param modelId 模型 ID
+ * @returns 持久化摘要 (null 表示不持久化)
+ */
+export function extractPersistableProbeResult(
+  result: NativeToolCallingProbeResult,
+  providerType: string,
+  modelId: string
+): NativeToolCallingProbeResultPersisted | null {
+  // 只持久化确定结论
+  if (result.support !== NativeToolCallingSupportConst.SUPPORTED &&
+      result.support !== NativeToolCallingSupportConst.UNSUPPORTED) {
+    return null;
+  }
+  const persisted: NativeToolCallingProbeResultPersisted = {
+    support: result.support,
+    decisionSource: result.decisionSource,
+    probedAt: result.probedAt,
+    providerType: providerType,
+    modelId: modelId,
+    errorCode: result.errorCode,
+    errorMessage: result.errorMessage.length > 200
+      ? result.errorMessage.substring(0, 200)
+      : result.errorMessage,
+    adapterVersion: NATIVE_TOOL_ADAPTER_VERSION
+  };
+  return persisted;
+}
+
+/**
+ * Phase 4D-2: 检查持久化记录是否仍然有效。
+ *
+ * 失效条件:
+ *   - adapterVersion 与当前版本不匹配
+ *   - probedAt 距今超过 TTL
+ *   - providerType / modelId 与当前不匹配
+ *
+ * @param persisted 持久化记录
+ * @param currentProviderType 当前 Provider 类型
+ * @param currentModelId 当前模型 ID
+ * @returns true=有效, false=已失效 (需重新探测)
+ */
+export function isPersistedProbeResultValid(
+  persisted: NativeToolCallingProbeResultPersisted,
+  currentProviderType: string,
+  currentModelId: string
+): boolean {
+  // adapter 版本不匹配 → 失效
+  if (persisted.adapterVersion !== NATIVE_TOOL_ADAPTER_VERSION) {
+    return false;
+  }
+  // Provider / Model 变化 → 失效
+  if (persisted.providerType !== currentProviderType ||
+      persisted.modelId !== currentModelId) {
+    return false;
+  }
+  // 超过 TTL → 失效
+  const age: number = Date.now() - persisted.probedAt;
+  if (age < 0 || age > NATIVE_TOOL_PROBE_PERSIST_TTL_MS) {
+    return false;
+  }
+  return true;
+}

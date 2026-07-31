@@ -114,7 +114,15 @@ import {
   ArkWebAvatarAiToolPermissionModeConst,
   AVATAR_TOOL_MAX_ROUNDS,
   AVATAR_TOOL_MAX_CALLS_PER_TURN,
+  LastAvatarToolCallSummary,
+  LastAvatarToolCallSourceConst,
+  buildLastAvatarToolCallSummary,
+  createEmptyLastAvatarToolCallSummary,
 } from '../avatarai/ArkWebAvatarAiToolTypes';
+import {
+  ArkWebAvatarAiAnimationCapability,
+  ArkWebAvatarAiPoseCapability
+} from '../vrmviewer/ArkWebAvatarAiTypes';
 import {
   ArkWebAvatarDialogueStrategyBuilder,
 } from '../avatarai/ArkWebAvatarDialogueStrategyBuilder';
@@ -152,7 +160,12 @@ import {
   createInitialProbeResult,
   buildNativeToolCallingProbeTool,
   generateProbeToken,
-  validateProbeToolCall
+  validateProbeToolCall,
+  NativeToolCallingProbeResultPersisted,
+  NATIVE_TOOL_ADAPTER_VERSION,
+  buildProbePersistKey,
+  extractPersistableProbeResult,
+  isPersistedProbeResultValid
 } from '../avatarai/NativeToolCallingCapability';
 
 const LOG_TAG: string = 'ChatService';
@@ -165,6 +178,11 @@ const DEFAULT_USER_NAME: string = 'User';
 
 /** 全局用户称呼 Preferences key(v9 引入,存储在 AppPreferences 中的字符串) */
 export const GLOBAL_USER_NAME_KEY: string = 'global_user_name';
+
+/** Phase 4D-6: Avatar Tool 权限模式 Preferences key (全局持久化,跨页面生命周期保持) */
+const AVATAR_TOOL_PERMISSION_PREFS_KEY: string = 'ark_avatar_tool_permission';
+const AVATAR_LOOP_ANIMATION_PREFS_KEY: string = 'ark_avatar_loop_animation';
+const AVATAR_ALWAYS_PERFORM_PREFS_KEY: string = 'ark_avatar_always_perform';
 
 /** delta 持久化节流间隔(毫秒) */
 const PERSISTENCE_THROTTLE_MS: number = 400;
@@ -264,6 +282,8 @@ export interface AvatarToolCallingStatus {
   providerDisplayName: string;
   /** Phase 4A-3R: 当前模型 ID */
   currentModelId: string;
+  /** Phase 4D-3: 最后一次 Avatar Tool Call 摘要 (null 表示本 Turn 未发生 Avatar 工具调用) */
+  lastToolCallSummary: LastAvatarToolCallSummary | null;
 }
 
 /**
@@ -275,6 +295,92 @@ export interface ReadOnlyAvatarToolSmokeTestResult {
   errorMessage: string;
   finalTextSnippet: string;
   toolCallId: string;
+}
+
+/**
+ * Phase 4D-4: Avatar 动画运行时测试返回结果。
+ *
+ * 用于"测试动画运行时"按钮 (不经过 AI Provider, 直接测试 Tool Executor → Bridge → Lifecycle → PLAYING 链路)。
+ *
+ * 与 ReadOnlyAvatarToolSmokeTestResult 的区别:
+ *   - ReadOnlyAvatarToolSmokeTestResult: 经过 Provider (两轮请求), 测试 avatar_get_state, 不播放动作
+ *   - AvatarRuntimeSmokeTestResult: 不经过 Provider, 直接构造 avatar_perform, 测试完整动画播放链路
+ *
+ * 字段说明:
+ *   - success: 整体是否成功 (executor.execute 返回 success)
+ *   - errorCode / errorMessage: 失败时的错误信息
+ *   - toolCallId: 测试用的 toolCallId (自造, 如 'runtime-smoke-<timestamp>')
+ *   - motionType / motionId: 实际使用的动作参数 (从 snapshot 选取第一个可用动画)
+ *   - bridgeAccepted: Bridge 是否接受 (从 resultJson 解析)
+ *   - commandId: Executor 生成的命令 ID (avatar_tool_<chatTurnId>_<toolCallId>)
+ */
+export interface AvatarRuntimeSmokeTestResult {
+  success: boolean;
+  errorCode: string;
+  errorMessage: string;
+  toolCallId: string;
+  motionType: string;
+  motionId: string;
+  bridgeAccepted: boolean;
+  commandId: string;
+}
+
+/**
+ * Phase 4D-5: Provider AI 动画调用测试返回结果。
+ *
+ * 用于"测试 AI 动画调用"按钮 (经过真实 AI Provider, 触发 avatar_perform 工具调用, 测试完整端到端链路)。
+ *
+ * 与 ReadOnlyAvatarToolSmokeTestResult / AvatarRuntimeSmokeTestResult 的区别:
+ *   - ReadOnlyAvatarToolSmokeTestResult: 经过 Provider, 测试 avatar_get_state, 不播放动作
+ *   - AvatarRuntimeSmokeTestResult: 不经过 Provider, 直接构造 avatar_perform, 测试动画链路
+ *   - AiAvatarPerformSmokeTestResult: 经过 Provider, AI 真实返回 avatar_perform, 完整端到端链路
+ *
+ * 字段说明:
+ *   - success: 整体是否成功 (Provider 返回 avatar_perform 且 Executor 执行成功)
+ *   - errorCode / errorMessage: 失败时的错误信息
+ *   - toolCallId: Provider 分配的 toolCallId (非自造)
+ *   - motionType / motionId / expressionId: AI 实际调用的动作参数 (从 argumentsJson 解析)
+ *   - bridgeAccepted: Bridge 是否接受 (从 resultJson 解析)
+ *   - commandId: Executor 生成的命令 ID
+ *   - finalTextSnippet: 第二轮最终文本摘要 (前 200 字符, 失败时为空)
+ */
+export interface AiAvatarPerformSmokeTestResult {
+  success: boolean;
+  errorCode: string;
+  errorMessage: string;
+  toolCallId: string;
+  motionType: string;
+  motionId: string;
+  expressionId: string;
+  bridgeAccepted: boolean;
+  commandId: string;
+  finalTextSnippet: string;
+}
+
+/**
+ * Phase 4D-4: avatar_perform 参数 JSON (内部使用, 用于 runAvatarRuntimeSmokeTest 构造 argumentsJson)。
+ *
+ * 不导出, 只在 ChatService.ets 内部使用。
+ */
+interface AvatarPerformArgumentsJson {
+  motionType: string;
+  motionId: string;
+  expressionId: string;
+  expressionWeight: number;
+  durationMs: number;
+  returnPolicy: string;
+}
+
+/**
+ * Phase 4D-5: AI 返回的 avatar_perform 参数解析结果 (内部使用)。
+ *
+ * 不导出, 只在 ChatService.ets 内部使用。
+ */
+interface ParsedAvatarPerformArguments {
+  motionType: string;
+  motionId: string;
+  expressionId: string;
+  parseSuccess: boolean;
 }
 
 /** 默认流式请求选项 */
@@ -429,6 +535,8 @@ export class ChatService {
   private avatarExecutorRuntime: ArkWebAvatarAiToolExecutorRuntime | null = null;
   /** 能力快照提供器 (可选, 由 ChatPage 注入, 返回当前模型能力) */
   private avatarSnapshotProvider: (() => ArkWebAvatarAiCapabilitySnapshot | null) | null = null;
+  /** Phase 4D-8: 每次回复必调用动作开关 (开启时策略改为 REQUIRED, AI 每次回复必须调用 avatar_perform) */
+  private avatarAlwaysPerformEnabled: boolean = false;
   /** 当前 Provider 是否支持原生 Tool Calling (每次请求开始时刷新) */
   private currentProviderSupportsToolCalling: boolean = false;
 
@@ -777,7 +885,8 @@ export class ChatService {
       probeErrorMessage: this.nativeToolCallingProbeErrorMessage,
       providerType: '',
       providerDisplayName: '',
-      currentModelId: ''
+      currentModelId: '',
+      lastToolCallSummary: this.lastAvatarToolCallSummary
     };
   }
 
@@ -786,7 +895,7 @@ export class ChatService {
    *
    * - 权限降级时, 通过 LifecycleController.cancelCurrent('AI_PERMISSION_REVOKED')
    *   停止当前 AI 发起的演出 (不影响用户手动发起的演出)
-   * - 权限只在当前聊天页面生命周期内保存
+   * - 权限模式持久化到 AppPreferences, 跨页面生命周期保持 (Phase 4D-6)
    *
    * @param mode 目标权限模式 (DENY / READ_ONLY / CONTROL_THIS_CHAT)
    */
@@ -806,6 +915,198 @@ export class ChatService {
       }
     });
     Logger.info(LOG_TAG, `setAvatarPermissionMode: ${oldMode} → ${mode}`);
+    // Phase 4D-6: 持久化权限模式 (fire-and-forget, 失败不影响内存状态)
+    this.saveAvatarPermissionMode(mode);
+  }
+
+  /**
+   * Phase 4D-6: 持久化 Avatar Tool 权限模式到 AppPreferences。
+   *
+   * fire-and-forget 调用, 失败仅记日志, 不影响内存状态。
+   * 全局单一 key, 跨页面生命周期保持。
+   */
+  private saveAvatarPermissionMode(mode: string): void {
+    if (this.appPreferences === null) {
+      return;
+    }
+    this.appPreferences.putString(AVATAR_TOOL_PERMISSION_PREFS_KEY, mode).then((): void => {
+      Logger.info(LOG_TAG, `saveAvatarPermissionMode: persisted mode=${mode}`);
+    }).catch((e: Object): void => {
+      Logger.warn(LOG_TAG, 'saveAvatarPermissionMode failed: ' +
+        (e instanceof Error ? e.message : String(e)));
+    });
+  }
+
+  /**
+   * Phase 4D-6: 从 AppPreferences 加载 Avatar Tool 权限模式。
+   *
+   * 在 connectAvatarToolIntegration 后调用, 恢复上次的权限选择。
+   * 若无记录或加载失败, 返回 DENY (安全默认值)。
+   * 若权限已非默认 (已通过其他路径设置), 不覆盖。
+   *
+   * @returns 实际生效的权限模式
+   */
+  async loadAvatarPermissionMode(): Promise<string> {
+    // 若无 appPreferences, 返回当前内存值
+    if (this.appPreferences === null) {
+      const current: string = this.avatarPermissionController !== null
+        ? this.avatarPermissionController.getPermissionMode()
+        : ArkWebAvatarAiToolPermissionModeConst.DENY;
+      return current;
+    }
+    try {
+      const persisted: string = await this.appPreferences.getString(
+        AVATAR_TOOL_PERMISSION_PREFS_KEY, '');
+      if (persisted.length === 0) {
+        // 无记录, 保持默认 DENY
+        return ArkWebAvatarAiToolPermissionModeConst.DENY;
+      }
+      // 校验合法性
+      if (persisted !== ArkWebAvatarAiToolPermissionModeConst.DENY
+        && persisted !== ArkWebAvatarAiToolPermissionModeConst.READ_ONLY
+        && persisted !== ArkWebAvatarAiToolPermissionModeConst.CONTROL_THIS_CHAT) {
+        Logger.warn(LOG_TAG, `loadAvatarPermissionMode: invalid persisted mode=${persisted}, fallback DENY`);
+        return ArkWebAvatarAiToolPermissionModeConst.DENY;
+      }
+      // 应用到内存 (复用 setAvatarPermissionMode, 但避免递归持久化)
+      if (this.avatarPermissionController !== null) {
+        const oldMode: string = this.avatarPermissionController.getPermissionMode();
+        this.avatarPermissionController.setPermissionMode(persisted, (): void => {
+          if (this.avatarExecutorRuntime !== null) {
+            try {
+              this.avatarExecutorRuntime.stopPerformanceForToolCall('AI_PERMISSION_REVOKED');
+            } catch (e) {
+              Logger.warn(LOG_TAG, 'stopPerformanceForToolCall on load threw: ' + String(e));
+            }
+          }
+        });
+        Logger.info(LOG_TAG, `loadAvatarPermissionMode: ${oldMode} → ${persisted} (restored from prefs)`);
+      }
+      return persisted;
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'loadAvatarPermissionMode failed: ' +
+        (e instanceof Error ? e.message : String(e)));
+      return ArkWebAvatarAiToolPermissionModeConst.DENY;
+    }
+  }
+
+  /**
+   * Phase 4D-7: 设置 Avatar 动画循环播放开关。
+   *
+   * - enabled=true: avatar_perform 执行时强制 returnPolicy=KEEP, 动画持续循环
+   * - enabled=false: 使用 AI 传入的 returnPolicy
+   *
+   * 持久化到 AppPreferences, 跨页面生命周期保持。
+   *
+   * @param enabled 是否开启循环播放
+   */
+  setAvatarLoopAnimation(enabled: boolean): void {
+    if (this.avatarToolExecutor !== null) {
+      this.avatarToolExecutor.setLoopAnimationEnabled(enabled);
+    }
+    Logger.info(LOG_TAG, `setAvatarLoopAnimation: ${enabled}`);
+    this.saveAvatarLoopAnimation(enabled);
+  }
+
+  /**
+   * Phase 4D-7: 持久化循环播放开关到 AppPreferences。
+   */
+  private saveAvatarLoopAnimation(enabled: boolean): void {
+    if (this.appPreferences === null) {
+      return;
+    }
+    const value: string = enabled ? 'true' : 'false';
+    this.appPreferences.putString(AVATAR_LOOP_ANIMATION_PREFS_KEY, value).then((): void => {
+      Logger.info(LOG_TAG, `saveAvatarLoopAnimation: persisted=${value}`);
+    }).catch((e: Object): void => {
+      Logger.warn(LOG_TAG, 'saveAvatarLoopAnimation failed: ' +
+        (e instanceof Error ? e.message : String(e)));
+    });
+  }
+
+  /**
+   * Phase 4D-7: 从 AppPreferences 加载循环播放开关。
+   *
+   * 在 connectAvatarToolIntegration 后调用, 恢复上次设置。
+   *
+   * @returns 实际生效的开关状态
+   */
+  async loadAvatarLoopAnimation(): Promise<boolean> {
+    if (this.avatarToolExecutor === null) {
+      return false;
+    }
+    if (this.appPreferences === null) {
+      return this.avatarToolExecutor.isLoopAnimationEnabled();
+    }
+    try {
+      const persisted: string = await this.appPreferences.getString(
+        AVATAR_LOOP_ANIMATION_PREFS_KEY, '');
+      const enabled: boolean = persisted === 'true';
+      this.avatarToolExecutor.setLoopAnimationEnabled(enabled);
+      Logger.info(LOG_TAG, `loadAvatarLoopAnimation: restored=${enabled}`);
+      return enabled;
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'loadAvatarLoopAnimation failed: ' +
+        (e instanceof Error ? e.message : String(e)));
+      return false;
+    }
+  }
+
+  /**
+   * Phase 4D-8: 设置"每次回复必调用动作"开关。
+   *
+   * - enabled=true: 策略改为 REQUIRED, AI 每次回复都必须调用一次 avatar_perform
+   * - enabled=false: 保持 BALANCED 策略 (鼓励但不强制)
+   *
+   * 持久化到 AppPreferences, 跨页面生命周期保持。
+   *
+   * @param enabled 是否开启每次必调用
+   */
+  setAvatarAlwaysPerform(enabled: boolean): void {
+    this.avatarAlwaysPerformEnabled = enabled;
+    Logger.info(LOG_TAG, `setAvatarAlwaysPerform: ${enabled}`);
+    this.saveAvatarAlwaysPerform(enabled);
+  }
+
+  /**
+   * Phase 4D-8: 持久化"每次回复必调用动作"开关到 AppPreferences。
+   */
+  private saveAvatarAlwaysPerform(enabled: boolean): void {
+    if (this.appPreferences === null) {
+      return;
+    }
+    const value: string = enabled ? 'true' : 'false';
+    this.appPreferences.putString(AVATAR_ALWAYS_PERFORM_PREFS_KEY, value).then((): void => {
+      Logger.info(LOG_TAG, `saveAvatarAlwaysPerform: persisted=${value}`);
+    }).catch((e: Object): void => {
+      Logger.warn(LOG_TAG, 'saveAvatarAlwaysPerform failed: ' +
+        (e instanceof Error ? e.message : String(e)));
+    });
+  }
+
+  /**
+   * Phase 4D-8: 从 AppPreferences 加载"每次回复必调用动作"开关。
+   *
+   * 在 connectAvatarToolIntegration 后调用, 恢复上次设置。
+   *
+   * @returns 实际生效的开关状态
+   */
+  async loadAvatarAlwaysPerform(): Promise<boolean> {
+    if (this.appPreferences === null) {
+      return this.avatarAlwaysPerformEnabled;
+    }
+    try {
+      const persisted: string = await this.appPreferences.getString(
+        AVATAR_ALWAYS_PERFORM_PREFS_KEY, '');
+      const enabled: boolean = persisted === 'true';
+      this.avatarAlwaysPerformEnabled = enabled;
+      Logger.info(LOG_TAG, `loadAvatarAlwaysPerform: restored=${enabled}`);
+      return enabled;
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'loadAvatarAlwaysPerform failed: ' +
+        (e instanceof Error ? e.message : String(e)));
+      return false;
+    }
   }
 
   /** 最近一次工具名 (UI 显示) */
@@ -814,6 +1115,8 @@ export class ChatService {
   private lastAvatarToolResult: string = '';
   /** 最近一次工具错误 (UI 显示) */
   private lastAvatarToolError: string = '';
+  /** Phase 4D-3: 最后一次 Avatar Tool Call 摘要 (null 表示本 Turn 未发生 Avatar 工具调用) */
+  private lastAvatarToolCallSummary: LastAvatarToolCallSummary | null = null;
 
   /**
    * 初始化角色聊天上下文(无持久化版本)。
@@ -2030,6 +2333,11 @@ export class ChatService {
           Logger.warn(LOG_TAG, 'stale callback ignored type=complete');
           return;
         }
+        // Phase 4D-8 诊断: 记录 Provider 响应中的 toolCalls 情况
+        const tcCount: number = result.toolCalls !== undefined ? result.toolCalls.length : 0;
+        Logger.info(LOG_TAG, 'onComplete: toolCalls.count=' + tcCount
+          + ' alwaysPerform=' + this.avatarAlwaysPerformEnabled
+          + ' content.len=' + (result.content !== undefined ? result.content.length : 0));
         // Phase 4A-3: 检测 Provider 原生 Tool Calling
         // - 有 toolCalls 时进入工具调用循环 (handleAvatarToolCalls)
         // - 循环未继续 (continued=false) 或无 toolCalls 时走最终完成 (finalizeAssistantTurn)
@@ -2227,6 +2535,143 @@ export class ChatService {
   }
 
   /**
+   * Phase 4D-2: 加载持久化的探测结果 (如有)。
+   *
+   * 在页面进入 / Tool Integration 接线完成时调用。
+   *
+   * 仅当持久化记录仍然有效 (adapter 版本匹配、Provider+Model 未变、未过期) 时,
+   * 才恢复 nativeToolCallingSupport 状态为 SUPPORTED / UNSUPPORTED。
+   * 否则保持 UNKNOWN (需用户重新探测)。
+   *
+   * 不会自动覆盖 MISCONFIGURED 状态 (那是接线问题, 不是探测问题)。
+   *
+   * @returns true=已加载有效记录, false=无记录或已失效
+   */
+  async loadPersistedProbeResult(): Promise<boolean> {
+    if (this.appPreferences === null) {
+      Logger.info(LOG_TAG, 'loadPersistedProbeResult: appPreferences=null, skip');
+      return false;
+    }
+    try {
+      const snapshot: ProviderInfoSnapshot = await this.getProviderInfoSnapshot();
+      if (snapshot.providerType.length === 0 || snapshot.currentModelId.length === 0) {
+        Logger.info(LOG_TAG, 'loadPersistedProbeResult: provider/model empty, skip');
+        return false;
+      }
+      const key: string = buildProbePersistKey(snapshot.providerType, snapshot.currentModelId);
+      const json: string = await this.appPreferences.getString(key, '');
+      if (json.length === 0) {
+        Logger.info(LOG_TAG, `loadPersistedProbeResult: no record for key=${key}`);
+        return false;
+      }
+      const parsed: NativeToolCallingProbeResultPersisted = JSON.parse(json) as NativeToolCallingProbeResultPersisted;
+      if (!isPersistedProbeResultValid(parsed, snapshot.providerType, snapshot.currentModelId)) {
+        Logger.info(LOG_TAG, `loadPersistedProbeResult: record expired or mismatched, key=${key}`);
+        return false;
+      }
+      // 恢复状态
+      this.nativeToolCallingSupport = parsed.support;
+      this.nativeToolCallingDecisionSource = parsed.decisionSource;
+      this.nativeToolCallingProbeErrorCode = parsed.errorCode;
+      this.nativeToolCallingProbeErrorMessage = parsed.errorMessage;
+      // 重建 lastProbeResult (只填充持久化字段, 临时字段留空)
+      this.lastProbeResult = {
+        success: parsed.support === NativeToolCallingSupportConst.SUPPORTED,
+        support: parsed.support,
+        decisionSource: parsed.decisionSource,
+        errorCode: parsed.errorCode,
+        errorMessage: parsed.errorMessage,
+        probedToolCallId: '',
+        probedToolName: '',
+        returnedToken: '',
+        httpStatus: 0,
+        requestId: '',
+        probedAt: parsed.probedAt
+      };
+      Logger.info(LOG_TAG, `loadPersistedProbeResult: loaded support=${parsed.support} key=${key}`);
+      return true;
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'loadPersistedProbeResult failed: ' + (e instanceof Error ? e.message : String(e)));
+      return false;
+    }
+  }
+
+  /**
+   * Phase 4D-2: 保存探测结果到持久化存储。
+   *
+   * 在 probeNativeToolCalling() 成功或失败后调用。
+   * 只持久化 SUPPORTED 和 UNSUPPORTED (确定结论)。
+   * UNKNOWN 和 MISCONFIGURED 不持久化 (临时状态)。
+   *
+   * 失败时只记录日志, 不抛出 (持久化失败不影响内存状态)。
+   *
+   * @param result 探测结果
+   */
+  private async saveProbeResultToPrefs(result: NativeToolCallingProbeResult): Promise<void> {
+    if (this.appPreferences === null) {
+      return;
+    }
+    try {
+      const snapshot: ProviderInfoSnapshot = await this.getProviderInfoSnapshot();
+      if (snapshot.providerType.length === 0 || snapshot.currentModelId.length === 0) {
+        return;
+      }
+      const persisted: NativeToolCallingProbeResultPersisted | null = extractPersistableProbeResult(
+        result, snapshot.providerType, snapshot.currentModelId);
+      if (persisted === null) {
+        // UNKNOWN / MISCONFIGURED 不持久化
+        return;
+      }
+      const key: string = buildProbePersistKey(snapshot.providerType, snapshot.currentModelId);
+      const json: string = JSON.stringify(persisted);
+      await this.appPreferences.putString(key, json);
+      Logger.info(LOG_TAG, `saveProbeResultToPrefs: saved support=${persisted.support} key=${key}`);
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'saveProbeResultToPrefs failed: ' + (e instanceof Error ? e.message : String(e)));
+    }
+  }
+
+  /**
+   * Phase 4D-2: 清除当前 Provider+Model 的持久化探测记录。
+   *
+   * 在用户主动清除验证记录、或探测失败需要重新验证时调用。
+   * 同时重置内存状态为 UNKNOWN。
+   */
+  async clearPersistedProbeResult(): Promise<void> {
+    if (this.appPreferences === null) {
+      // 即使无 appPreferences, 也重置内存状态
+      this.resetNativeToolCallingStateToUnknown();
+      return;
+    }
+    try {
+      const snapshot: ProviderInfoSnapshot = await this.getProviderInfoSnapshot();
+      if (snapshot.providerType.length === 0 || snapshot.currentModelId.length === 0) {
+        this.resetNativeToolCallingStateToUnknown();
+        return;
+      }
+      const key: string = buildProbePersistKey(snapshot.providerType, snapshot.currentModelId);
+      await this.appPreferences.delete(key);
+      // 重置内存状态为 UNKNOWN
+      this.resetNativeToolCallingStateToUnknown();
+      Logger.info(LOG_TAG, `clearPersistedProbeResult: deleted key=${key}, state reset to UNKNOWN`);
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'clearPersistedProbeResult failed: ' + (e instanceof Error ? e.message : String(e)));
+      this.resetNativeToolCallingStateToUnknown();
+    }
+  }
+
+  /**
+   * Phase 4D-2: 重置原生 Tool Calling 状态为 UNKNOWN (内部方法)。
+   */
+  private resetNativeToolCallingStateToUnknown(): void {
+    this.nativeToolCallingSupport = NativeToolCallingSupportConst.UNKNOWN;
+    this.nativeToolCallingDecisionSource = NativeToolCallingDecisionSourceConst.UNKNOWN;
+    this.nativeToolCallingProbeErrorCode = '';
+    this.nativeToolCallingProbeErrorMessage = '';
+    this.lastProbeResult = null;
+  }
+
+  /**
    * Phase 4A-3: 重置当前 Turn 的 Avatar Tool Calling 临时状态。
    *
    * 在 sendMessage/regenerate 开始时调用。
@@ -2241,6 +2686,8 @@ export class ChatService {
     this.lastAvatarToolName = '';
     this.lastAvatarToolResult = '';
     this.lastAvatarToolError = '';
+    // Phase 4D-3: 清除上一 Turn 的 Tool Call 摘要 (本 Turn 尚未发生 Avatar 工具调用)
+    this.lastAvatarToolCallSummary = null;
     // Phase 4C-1: 清除上一 Turn 的策略结果 (重新生成时重新构建最新能力快照)
     this.lastAvatarStrategyResult = null;
   }
@@ -2342,6 +2789,9 @@ export class ChatService {
         executionResults.push(deniedResult);
         this.lastAvatarToolName = toolCalls[i].name;
         this.lastAvatarToolError = 'PERMISSION_DENIED';
+        // Phase 4D-3: 记录权限拒绝的 Tool Call 摘要 (供 UI 显示 AI 尝试过但被拒绝)
+        this.lastAvatarToolCallSummary = buildLastAvatarToolCallSummary(
+          toolCalls[i], deniedResult, assistantId);
         continue;
       }
 
@@ -2350,6 +2800,9 @@ export class ChatService {
       executionResults.push(execResult);
       this.avatarToolCallCountForTurn++;
       this.lastAvatarToolName = toolCalls[i].name;
+      // Phase 4D-3: 记录最后一次 Tool Call 摘要 (供 UI 显示 AI 实际调用了什么工具及结果)
+      this.lastAvatarToolCallSummary = buildLastAvatarToolCallSummary(
+        toolCalls[i], execResult, assistantId);
       if (execResult.success) {
         this.lastAvatarToolResult = 'OK';
         this.lastAvatarToolError = '';
@@ -2974,7 +3427,8 @@ export class ChatService {
       providerSupportsToolCalling: this.currentProviderSupportsToolCalling,
       capabilityContext: capabilityContext,
       capabilityTruncated: capabilityTruncated,
-      sessionStateSummary: sessionStateSummary
+      sessionStateSummary: sessionStateSummary,
+      alwaysPerform: this.avatarAlwaysPerformEnabled
     };
 
     try {
@@ -3274,6 +3728,10 @@ export class ChatService {
     this.nativeToolCallingProbeErrorCode = '';
     this.nativeToolCallingProbeErrorMessage = '';
     Logger.info(LOG_TAG, `probeNativeToolCalling: SUCCESS, requestId=${requestId}`);
+    // Phase 4D-2: 持久化探测结果 (失败不阻塞返回)
+    this.saveProbeResultToPrefs(successResult).catch((e: Object): void => {
+      Logger.warn(LOG_TAG, 'saveProbeResultToPrefs on success threw: ' + String(e));
+    });
     return successResult;
   }
 
@@ -3306,6 +3764,11 @@ export class ChatService {
     this.nativeToolCallingProbeErrorCode = errorCode;
     this.nativeToolCallingProbeErrorMessage = errorMessage;
     Logger.warn(LOG_TAG, `probeNativeToolCalling: FAILED, support=${support}, errorCode=${errorCode}, requestId=${requestId}`);
+    // Phase 4D-2: 只持久化 UNSUPPORTED (确定结论), UNKNOWN/MISCONFIGURED 不持久化
+    // (extractPersistableProbeResult 内部已过滤)
+    this.saveProbeResultToPrefs(result).catch((e: Object): void => {
+      Logger.warn(LOG_TAG, 'saveProbeResultToPrefs on failure threw: ' + String(e));
+    });
     return result;
   }
 
@@ -5380,5 +5843,517 @@ export class ChatService {
       Logger.error(LOG_TAG, 'reloadAfterExternalBranchChange failed: ' + msg);
       callbacks.onError('重新加载会话失败');
     }
+  }
+
+  /**
+   * Phase 4D-4: Avatar 动画运行时测试 (不经过 AI Provider)。
+   *
+   * 直接构造 avatar_perform 工具调用, 通过 Tool Executor 执行, 测试完整链路:
+   *   Tool Executor → AvatarChatBridge → LifecycleController → PerformanceController → 动画加载 → READY → PLAYING
+   *
+   * 与 runReadOnlyAvatarToolSmokeTest 的区别:
+   *   - 不调用 ModelService.streamCurrentChat (不经 Provider)
+   *   - 不要求 nativeToolCallingSupport === SUPPORTED (绕过 Provider 协议层)
+   *   - 测试 avatar_perform (演出工具), 不是 avatar_get_state (只读工具)
+   *   - 需要权限 CONTROL_THIS_CHAT (avatar_perform 需要写权限)
+   *
+   * 前置条件:
+   *   - avatarToolIntegrationState === CONNECTED
+   *   - avatarToolExecutor / avatarSnapshotProvider / avatarPermissionController 非空
+   *   - permissionMode === CONTROL_THIS_CHAT
+   *   - snapshot 非空且 animations.length > 0
+   *
+   * 失败时返回对应错误码, 不抛异常。
+   */
+  async runAvatarRuntimeSmokeTest(): Promise<AvatarRuntimeSmokeTestResult> {
+    // 1. 前置条件检查
+    if (this.avatarToolIntegrationState !== AvatarToolIntegrationStateConst.CONNECTED) {
+      return {
+        success: false, errorCode: 'AVATAR_TOOL_INTEGRATION_NOT_CONNECTED',
+        errorMessage: 'Tool Integration 未连接',
+        toolCallId: '', motionType: '', motionId: '',
+        bridgeAccepted: false, commandId: ''
+      };
+    }
+    if (this.avatarToolExecutor === null || this.avatarSnapshotProvider === null
+      || this.avatarPermissionController === null) {
+      return {
+        success: false, errorCode: 'AVATAR_TOOL_EXECUTOR_MISSING',
+        errorMessage: 'Executor / SnapshotProvider / PermissionController 未注入',
+        toolCallId: '', motionType: '', motionId: '',
+        bridgeAccepted: false, commandId: ''
+      };
+    }
+    const permissionMode: string = this.avatarPermissionController.getPermissionMode();
+    if (permissionMode !== ArkWebAvatarAiToolPermissionModeConst.CONTROL_THIS_CHAT) {
+      return {
+        success: false, errorCode: 'AVATAR_TOOL_PERMISSION_DENIED',
+        errorMessage: `权限不足: ${permissionMode}, 需要 CONTROL_THIS_CHAT`,
+        toolCallId: '', motionType: '', motionId: '',
+        bridgeAccepted: false, commandId: ''
+      };
+    }
+
+    // 2. 获取能力快照, 选取第一个可用动画
+    const snapshot: ArkWebAvatarAiCapabilitySnapshot | null = this.avatarSnapshotProvider();
+    if (snapshot === null) {
+      return {
+        success: false, errorCode: 'AVATAR_TOOL_CAPABILITY_NOT_FOUND',
+        errorMessage: '无能力快照 (模型未加载?)',
+        toolCallId: '', motionType: '', motionId: '',
+        bridgeAccepted: false, commandId: ''
+      };
+    }
+    if (snapshot.animations.length === 0) {
+      return {
+        success: false, errorCode: 'AVATAR_TOOL_CAPABILITY_NOT_FOUND',
+        errorMessage: '无可用动画',
+        toolCallId: '', motionType: '', motionId: '',
+        bridgeAccepted: false, commandId: ''
+      };
+    }
+    // 优先使用默认待机动作, 否则用第一个动画
+    const motionId: string = snapshot.defaultIdleActionId.length > 0
+      ? snapshot.defaultIdleActionId
+      : snapshot.animations[0].actionId;
+    const motionType: string = 'animation';
+
+    // 3. 构造 avatar_perform 工具调用 (不经过 Provider, 直接构造)
+    const timestamp: number = Date.now();
+    const toolCallId: string = `runtime-smoke-${timestamp}`;
+    const chatTurnId: string = `runtime-smoke-${timestamp}`;
+    const argumentsObj: AvatarPerformArgumentsJson = {
+      motionType: motionType,
+      motionId: motionId,
+      expressionId: '',
+      expressionWeight: 0,
+      durationMs: 3000,
+      returnPolicy: 'DEFAULT_POSE'
+    };
+    const toolCall: ArkWebChatToolCall = {
+      toolCallId: toolCallId,
+      name: ArkWebAvatarAiToolName.AVATAR_PERFORM,
+      argumentsJson: JSON.stringify(argumentsObj)
+    };
+    const toolContext: ArkWebAvatarAiToolContext = {
+      chatTurnId: chatTurnId,
+      snapshot: snapshot,
+      permissionMode: permissionMode
+    };
+
+    // 4. 直接调用 executor.execute (不经 Provider, 走完整 Tool Executor → Bridge → Lifecycle 链路)
+    Logger.info(LOG_TAG, `runAvatarRuntimeSmokeTest: motionType=${motionType}, motionId=${motionId}`);
+    let execResult: ArkWebChatToolExecutionResult;
+    try {
+      execResult = await this.avatarToolExecutor!.execute(toolContext, toolCall);
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      Logger.error(LOG_TAG, 'runAvatarRuntimeSmokeTest executor.execute threw: ' + msg);
+      return {
+        success: false, errorCode: 'AVATAR_TOOL_EXECUTION_FAILED',
+        errorMessage: 'Executor 执行异常: ' + msg,
+        toolCallId: toolCallId, motionType: motionType, motionId: motionId,
+        bridgeAccepted: false, commandId: ''
+      };
+    }
+
+    // 5. 从 resultJson 解析 commandId 和 bridgeAccepted
+    let bridgeAccepted: boolean = false;
+    let commandId: string = '';
+    try {
+      const parsed: Record<string, Object> = JSON.parse(execResult.resultJson) as Record<string, Object>;
+      const acceptedVal: Object | undefined = parsed['accepted'];
+      const commandIdVal: Object | undefined = parsed['commandId'];
+      if (acceptedVal !== undefined) {
+        bridgeAccepted = Boolean(acceptedVal);
+      }
+      if (commandIdVal !== undefined) {
+        commandId = String(commandIdVal);
+      }
+    } catch (e) {
+      // resultJson 解析失败不影响整体结果判断 (success 以 execResult.success 为准)
+      Logger.warn(LOG_TAG, 'runAvatarRuntimeSmokeTest resultJson parse failed: ' +
+        (e instanceof Error ? e.message : String(e)));
+    }
+
+    // 6. 返回结果
+    Logger.info(LOG_TAG, `runAvatarRuntimeSmokeTest: success=${execResult.success}, ` +
+      `bridgeAccepted=${bridgeAccepted}, commandId=${commandId}`);
+    return {
+      success: execResult.success,
+      errorCode: execResult.errorCode,
+      errorMessage: execResult.errorMessage,
+      toolCallId: toolCallId,
+      motionType: motionType,
+      motionId: motionId,
+      bridgeAccepted: bridgeAccepted,
+      commandId: commandId
+    };
+  }
+
+  /**
+   * Phase 4D-5: Provider AI 动画调用测试 (经过真实 AI Provider)。
+   *
+   * 通过发送特定提示词, 让 AI 返回 avatar_perform 工具调用, 测试完整端到端链路:
+   *   ChatService 请求 → Provider 收到 tools → Provider 返回 avatar_perform
+   *   → Tool Executor → AvatarChatBridge → LifecycleController → PerformanceController
+   *   → 动画加载 → READY → PLAYING
+   *
+   * 与 runReadOnlyAvatarToolSmokeTest 的区别:
+   *   - 测试 avatar_perform (演出工具), 不是 avatar_get_state (只读工具)
+   *   - 需要权限 CONTROL_THIS_CHAT (avatar_perform 需要写权限)
+   *   - 会实际播放动画 (用户可见)
+   *   - 提示词明确要求 AI 调用 avatar_perform
+   *
+   * 与 runAvatarRuntimeSmokeTest 的区别:
+   *   - 经过 AI Provider (要求 nativeToolCallingSupport === SUPPORTED)
+   *   - toolCallId 由 Provider 分配 (非自造)
+   *   - motionType / motionId 由 AI 决定 (从 argumentsJson 解析)
+   *   - 验证 AI 是否真的会调用 avatar_perform (而非系统构造)
+   *
+   * 故障层定位:
+   *   - 若 runAvatarRuntimeSmokeTest 成功且本测试失败, 问题在 Provider 层 (未调用工具/参数错误)
+   *   - 若 runAvatarRuntimeSmokeTest 失败, 不需本测试, 先修动画执行链
+   *
+   * 前置条件:
+   *   - avatarToolIntegrationState === CONNECTED
+   *   - nativeToolCallingSupport === SUPPORTED
+   *   - permissionMode === CONTROL_THIS_CHAT
+   *   - snapshot 非空且 animations.length > 0
+   *
+   * 不写入聊天历史 / 消息数据库 / Avatar 演出历史。
+   * 失败时返回对应错误码, 不抛异常。
+   */
+  async runAiAvatarPerformSmokeTest(): Promise<AiAvatarPerformSmokeTestResult> {
+    Logger.info(LOG_TAG, 'runAiAvatarPerformSmokeTest: start');
+
+    // 1. 前置条件检查
+    if (this.avatarToolIntegrationState !== AvatarToolIntegrationStateConst.CONNECTED) {
+      return {
+        success: false,
+        errorCode: NativeToolCallingErrorCodeConst.INTEGRATION_NOT_CONNECTED,
+        errorMessage: `Avatar Tool Integration not connected (state=${this.avatarToolIntegrationState}).`,
+        toolCallId: '', motionType: '', motionId: '', expressionId: '',
+        bridgeAccepted: false, commandId: '', finalTextSnippet: ''
+      };
+    }
+    if (this.nativeToolCallingSupport !== NativeToolCallingSupportConst.SUPPORTED) {
+      return {
+        success: false,
+        errorCode: NativeToolCallingErrorCodeConst.PROVIDER_UNSUPPORTED,
+        errorMessage: `Native tool calling not supported (support=${this.nativeToolCallingSupport}). Run probe first.`,
+        toolCallId: '', motionType: '', motionId: '', expressionId: '',
+        bridgeAccepted: false, commandId: '', finalTextSnippet: ''
+      };
+    }
+    if (this.avatarToolExecutor === null || this.avatarPermissionController === null
+      || this.avatarSnapshotProvider === null || this.avatarExecutorRuntime === null
+      || this.avatarToolRegistry === null) {
+      return {
+        success: false,
+        errorCode: NativeToolCallingErrorCodeConst.INTEGRATION_NOT_CONNECTED,
+        errorMessage: 'Tool executor dependencies not injected.',
+        toolCallId: '', motionType: '', motionId: '', expressionId: '',
+        bridgeAccepted: false, commandId: '', finalTextSnippet: ''
+      };
+    }
+    const permissionMode: string = this.avatarPermissionController.getPermissionMode();
+    if (permissionMode !== ArkWebAvatarAiToolPermissionModeConst.CONTROL_THIS_CHAT) {
+      return {
+        success: false,
+        errorCode: NativeToolCallingErrorCodeConst.UNKNOWN_ERROR,
+        errorMessage: `Permission mode must be CONTROL_THIS_CHAT (current=${permissionMode}).`,
+        toolCallId: '', motionType: '', motionId: '', expressionId: '',
+        bridgeAccepted: false, commandId: '', finalTextSnippet: ''
+      };
+    }
+
+    // 2. 获取能力快照, 选取目标动作 (用于提示词中告知 AI)
+    const snapshot: ArkWebAvatarAiCapabilitySnapshot | null = this.avatarSnapshotProvider();
+    if (snapshot === null) {
+      return {
+        success: false,
+        errorCode: NativeToolCallingErrorCodeConst.UNKNOWN_ERROR,
+        errorMessage: 'No capability snapshot (model not loaded?).',
+        toolCallId: '', motionType: '', motionId: '', expressionId: '',
+        bridgeAccepted: false, commandId: '', finalTextSnippet: ''
+      };
+    }
+    if (snapshot.animations.length === 0 && snapshot.poses.length === 0) {
+      return {
+        success: false,
+        errorCode: NativeToolCallingErrorCodeConst.UNKNOWN_ERROR,
+        errorMessage: 'No animations or poses available.',
+        toolCallId: '', motionType: '', motionId: '', expressionId: '',
+        bridgeAccepted: false, commandId: '', finalTextSnippet: ''
+      };
+    }
+
+    // 3. 构造工具列表 (CONTROL_THIS_CHAT 模式, 全部4个工具)
+    const allTools: ArkWebChatToolDefinition[] = this.avatarToolRegistry.buildToolDefinitions(
+      snapshot, ArkWebAvatarAiToolPermissionModeConst.CONTROL_THIS_CHAT);
+    if (allTools.length === 0) {
+      return {
+        success: false,
+        errorCode: NativeToolCallingErrorCodeConst.UNKNOWN_ERROR,
+        errorMessage: 'No tools available.',
+        toolCallId: '', motionType: '', motionId: '', expressionId: '',
+        bridgeAccepted: false, commandId: '', finalTextSnippet: ''
+      };
+    }
+
+    // 4. 构造提示词, 列出所有已导入的动画和姿势, 让 AI 自由选择一个执行
+    //    构建动画列表 (actionId + displayName)
+    let animListText: string = '';
+    for (let i = 0; i < snapshot.animations.length; i++) {
+      const a: ArkWebAvatarAiAnimationCapability = snapshot.animations[i];
+      animListText += `\n  - motionType="animation", motionId="${a.actionId}" (${a.displayName})`;
+    }
+    //    构建姿势列表 (poseId + displayName)
+    let poseListText: string = '';
+    for (let i = 0; i < snapshot.poses.length; i++) {
+      const p: ArkWebAvatarAiPoseCapability = snapshot.poses[i];
+      poseListText += `\n  - motionType="pose", motionId="${p.poseId}" (${p.displayName})`;
+    }
+    const now1: number = Date.now();
+    const smokeMessages: ChatMessage[] = [
+      createChatMessage(`ai-smoke-system-${now1}`, ChatRole.System,
+        `You are an avatar animation test assistant. Call the avatar_perform tool to make the avatar perform an action. ` +
+        `Choose any one from the available motions listed below.\n` +
+        `Available animations:\n${animListText.length > 0 ? animListText : '\n  (none)'}\n` +
+        `Available poses:\n${poseListText.length > 0 ? poseListText : '\n  (none)'}\n` +
+        `If no motion is available, call avatar_perform with motionType="none" and a valid expressionId.`,
+        now1),
+      createChatMessage(`ai-smoke-user-${now1}`, ChatRole.User,
+        `Pick any animation or pose from the list above and call avatar_perform now. Then describe what the avatar did in one sentence.`,
+        now1)
+    ];
+    const smokeOptions: ChatRequestOptions = {
+      temperature: 0.0,
+      topP: 1.0,
+      maxTokens: 512,
+      stream: true,
+      tools: allTools
+    };
+
+    // 5. 第一轮请求, 等待 Provider 返回 avatar_perform tool call
+    let firstResult: ChatStreamResult | null = null;
+    try {
+      firstResult = await new Promise<ChatStreamResult>((resolve, reject): void => {
+        const callbacks: ChatStreamCallbacks = {
+          onDelta: (_delta: ChatDelta): void => {},
+          onComplete: (result: ChatStreamResult): void => { resolve(result); },
+          onError: (error: NetworkError): void => { reject(error); }
+        };
+        this.currentHandle = this.modelService.streamCurrentChat(smokeMessages, smokeOptions, callbacks);
+      });
+    } catch (e) {
+      const err: NetworkError = e as NetworkError;
+      Logger.warn(LOG_TAG, `runAiAvatarPerformSmokeTest first round failed: ${err.message !== undefined ? err.message : String(err)}`);
+      return {
+        success: false,
+        errorCode: NativeToolCallingErrorCodeConst.PROVIDER_MISCONFIGURED,
+        errorMessage: `AI perform smoke test first round failed: ${err.message !== undefined ? err.message : String(err)}`,
+        toolCallId: '', motionType: '', motionId: '', expressionId: '',
+        bridgeAccepted: false, commandId: '', finalTextSnippet: ''
+      };
+    }
+
+    const toolCalls: ArkWebChatToolCall[] | undefined = firstResult.toolCalls;
+    if (toolCalls === undefined || toolCalls.length === 0) {
+      Logger.warn(LOG_TAG, 'runAiAvatarPerformSmokeTest: Provider did not return any tool call');
+      return {
+        success: false,
+        errorCode: NativeToolCallingErrorCodeConst.MODEL_UNSUPPORTED,
+        errorMessage: 'Provider did not return any tool call.',
+        toolCallId: '', motionType: '', motionId: '', expressionId: '',
+        bridgeAccepted: false, commandId: '',
+        finalTextSnippet: firstResult.content.substring(0, 200)
+      };
+    }
+
+    // 6. 找到 avatar_perform 工具调用 (AI 可能返回多个, 取第一个 avatar_perform)
+    let performIndex: number = -1;
+    for (let i = 0; i < toolCalls.length; i++) {
+      if (toolCalls[i].name === ArkWebAvatarAiToolName.AVATAR_PERFORM) {
+        performIndex = i;
+        break;
+      }
+    }
+    if (performIndex < 0) {
+      // 拼接 AI 返回的所有工具名 (用于错误消息)
+      let names: string = '';
+      for (let i = 0; i < toolCalls.length; i++) {
+        if (i > 0) {
+          names += ', ';
+        }
+        names += toolCalls[i].name;
+      }
+      Logger.warn(LOG_TAG, `runAiAvatarPerformSmokeTest: Provider returned wrong tool name(s): ${names}`);
+      return {
+        success: false,
+        errorCode: NativeToolCallingErrorCodeConst.TEXT_SIMULATION_REJECTED,
+        errorMessage: `Provider returned wrong tool name(s): ${names}, expected avatar_perform.`,
+        toolCallId: toolCalls[0].toolCallId,
+        motionType: '', motionId: '', expressionId: '',
+        bridgeAccepted: false, commandId: '', finalTextSnippet: ''
+      };
+    }
+    const performToolCall: ArkWebChatToolCall = toolCalls[performIndex];
+
+    // 7. 解析 AI 返回的 avatar_perform 参数
+    const parsedArgs: ParsedAvatarPerformArguments = parseAvatarPerformArgumentsFromJson(
+      performToolCall.argumentsJson);
+    if (!parsedArgs.parseSuccess) {
+      Logger.warn(LOG_TAG, `runAiAvatarPerformSmokeTest: failed to parse arguments: ${performToolCall.argumentsJson}`);
+      return {
+        success: false,
+        errorCode: NativeToolCallingErrorCodeConst.ARGUMENT_ASSEMBLY_FAILED,
+        errorMessage: `Failed to parse avatar_perform arguments: ${performToolCall.argumentsJson}`,
+        toolCallId: performToolCall.toolCallId,
+        motionType: '', motionId: '', expressionId: '',
+        bridgeAccepted: false, commandId: '', finalTextSnippet: ''
+      };
+    }
+
+    // 8. 执行 avatar_perform (经 Tool Executor → Bridge → Lifecycle → PLAYING)
+    const toolContext: ArkWebAvatarAiToolContext = {
+      chatTurnId: `ai-smoke-${now1}`,
+      snapshot: snapshot,
+      permissionMode: ArkWebAvatarAiToolPermissionModeConst.CONTROL_THIS_CHAT
+    };
+    let toolResult: ArkWebChatToolExecutionResult;
+    try {
+      toolResult = await this.avatarToolExecutor.execute(toolContext, performToolCall);
+    } catch (e) {
+      const msg: string = e instanceof Error ? e.message : String(e);
+      Logger.error(LOG_TAG, 'runAiAvatarPerformSmokeTest executor.execute threw: ' + msg);
+      return {
+        success: false,
+        errorCode: NativeToolCallingErrorCodeConst.UNKNOWN_ERROR,
+        errorMessage: `avatar_perform execution failed: ${msg}`,
+        toolCallId: performToolCall.toolCallId,
+        motionType: parsedArgs.motionType, motionId: parsedArgs.motionId,
+        expressionId: parsedArgs.expressionId,
+        bridgeAccepted: false, commandId: '', finalTextSnippet: ''
+      };
+    }
+    if (!toolResult.success) {
+      Logger.warn(LOG_TAG, `runAiAvatarPerformSmokeTest: executor returned failure: ${toolResult.errorCode}`);
+      return {
+        success: false,
+        errorCode: toolResult.errorCode.length > 0 ? toolResult.errorCode : NativeToolCallingErrorCodeConst.UNKNOWN_ERROR,
+        errorMessage: `avatar_perform execution failed: ${toolResult.errorMessage}`,
+        toolCallId: performToolCall.toolCallId,
+        motionType: parsedArgs.motionType, motionId: parsedArgs.motionId,
+        expressionId: parsedArgs.expressionId,
+        bridgeAccepted: false, commandId: '', finalTextSnippet: ''
+      };
+    }
+
+    // 9. 从 resultJson 解析 commandId 和 bridgeAccepted
+    let bridgeAccepted: boolean = false;
+    let commandId: string = '';
+    try {
+      const parsed: Record<string, Object> = JSON.parse(toolResult.resultJson) as Record<string, Object>;
+      const acceptedVal: Object | undefined = parsed['accepted'];
+      const commandIdVal: Object | undefined = parsed['commandId'];
+      if (acceptedVal !== undefined) {
+        bridgeAccepted = Boolean(acceptedVal);
+      }
+      if (commandIdVal !== undefined) {
+        commandId = String(commandIdVal);
+      }
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'runAiAvatarPerformSmokeTest resultJson parse failed: ' +
+        (e instanceof Error ? e.message : String(e)));
+    }
+
+    // 10. 第二轮: 回传 tool result, 等待最终文本 (失败不影响整体成功, avatar_perform 已执行)
+    const now2: number = Date.now();
+    const assistantMsg: ChatMessage = createChatMessage(
+      `ai-smoke-assistant-${now2}`, ChatRole.Assistant, '', now2);
+    const toolMsg: ChatMessage = createChatMessage(
+      `ai-smoke-tool-${now2}`, ChatRole.System, toolResult.resultJson, now2);
+    const secondMessages: ChatMessage[] = [
+      ...smokeMessages,
+      assistantMsg,
+      toolMsg
+    ];
+    const secondOptions: ChatRequestOptions = {
+      temperature: 0.0,
+      topP: 1.0,
+      maxTokens: 512,
+      stream: true,
+      tools: allTools,
+      priorToolCalls: [performToolCall],
+      toolResults: [toolResult]
+    };
+
+    let finalTextSnippet: string = '';
+    try {
+      const finalResult: ChatStreamResult = await new Promise<ChatStreamResult>((resolve, reject): void => {
+        const callbacks: ChatStreamCallbacks = {
+          onDelta: (_delta: ChatDelta): void => {},
+          onComplete: (result: ChatStreamResult): void => { resolve(result); },
+          onError: (error: NetworkError): void => { reject(error); }
+        };
+        this.currentHandle = this.modelService.streamCurrentChat(secondMessages, secondOptions, callbacks);
+      });
+      finalTextSnippet = finalResult.content.substring(0, 200);
+    } catch (e) {
+      const err: NetworkError = e as NetworkError;
+      Logger.warn(LOG_TAG, `runAiAvatarPerformSmokeTest second round failed: ${err.message !== undefined ? err.message : String(err)}`);
+      finalTextSnippet = '';
+    }
+
+    Logger.info(LOG_TAG, `runAiAvatarPerformSmokeTest: SUCCESS, toolCallId=${performToolCall.toolCallId}, commandId=${commandId}`);
+    return {
+      success: true,
+      errorCode: '',
+      errorMessage: '',
+      toolCallId: performToolCall.toolCallId,
+      motionType: parsedArgs.motionType,
+      motionId: parsedArgs.motionId,
+      expressionId: parsedArgs.expressionId,
+      bridgeAccepted: bridgeAccepted,
+      commandId: commandId,
+      finalTextSnippet: finalTextSnippet
+    };
+  }
+}
+
+/**
+ * Phase 4D-5: 从 AI 返回的 argumentsJson 解析 avatar_perform 参数。
+ *
+ * 仅提取 motionType / motionId / expressionId 三个字段用于 UI 显示。
+ * 不校验参数合法性 (由 Tool Executor 负责)。
+ *
+ * @param argumentsJson AI 返回的 argumentsJson 字符串
+ * @returns 解析结果, parseSuccess=false 表示 JSON 解析失败
+ */
+function parseAvatarPerformArgumentsFromJson(argumentsJson: string): ParsedAvatarPerformArguments {
+  if (argumentsJson.length === 0) {
+    return {
+      motionType: '', motionId: '', expressionId: '',
+      parseSuccess: false
+    };
+  }
+  try {
+    const parsed: Record<string, Object> = JSON.parse(argumentsJson) as Record<string, Object>;
+    const motionTypeVal: Object | undefined = parsed['motionType'];
+    const motionIdVal: Object | undefined = parsed['motionId'];
+    const expressionIdVal: Object | undefined = parsed['expressionId'];
+    return {
+      motionType: motionTypeVal !== undefined ? String(motionTypeVal) : '',
+      motionId: motionIdVal !== undefined ? String(motionIdVal) : '',
+      expressionId: expressionIdVal !== undefined ? String(expressionIdVal) : '',
+      parseSuccess: true
+    };
+  } catch (e) {
+    return {
+      motionType: '', motionId: '', expressionId: '',
+      parseSuccess: false
+    };
   }
 }

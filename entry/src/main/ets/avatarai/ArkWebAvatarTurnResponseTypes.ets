@@ -168,10 +168,16 @@ export const LOCAL_FALLBACK_EXPRESSION_ONLY_COMMAND: string = JSON.stringify(LOC
 
 /**
  * 本地兜底演出命令: 默认动作 + 可选表情。
+ *
+ * @param animationId 动画 actionId
+ * @param expressionId 表情 ID (可为空字符串)
+ * @param loop true 时 returnPolicy=KEEP (动画循环播放直到下一个 avatar_perform);
+ *             false 时 returnPolicy=DEFAULT_POSE (播放一次后恢复默认姿势)
  */
 export function buildLocalFallbackAnimationCommand(
   animationId: string,
-  expressionId: string
+  expressionId: string,
+  loop: boolean = false
 ): string {
   const cmd: ArkWebAvatarLocalFallbackCommand = {
     version: 1,
@@ -180,7 +186,7 @@ export function buildLocalFallbackAnimationCommand(
     expressionId: expressionId,
     expressionWeight: 1,
     durationMs: 2500,
-    returnPolicy: 'DEFAULT_POSE'
+    returnPolicy: loop ? 'KEEP' : 'DEFAULT_POSE'
   };
   return JSON.stringify(cmd);
 }

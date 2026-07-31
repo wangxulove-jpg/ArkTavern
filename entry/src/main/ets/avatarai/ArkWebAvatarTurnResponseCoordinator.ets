@@ -51,6 +51,7 @@ import {
   DIALOGUE_LOCAL_FALLBACK_SOURCE,
   ArkWebAvatarTurnResponseResultConst
 } from './ArkWebAvatarTurnResponseTypes';
+import { ArkWebAvatarAiCapabilitySnapshot } from '../vrmviewer/ArkWebAvatarAiTypes';
 
 const LOG_TAG: string = 'AvatarTurnResponseCoordinator';
 
@@ -94,6 +95,24 @@ export class ArkWebAvatarTurnResponseCoordinator {
 
   /** 本地兜底配置 */
   private fallbackConfig: ArkWebAvatarLocalFallbackConfig = DEFAULT_LOCAL_FALLBACK_CONFIG;
+  /**
+   * Phase 4D-8: 每次回复必调用动作模式。
+   *
+   * - true: AI 未调用工具时, 本地兜底从能力快照选首个可用动画播放 (而非恢复默认姿势)
+   * - false: 走原有兜底逻辑 (用户配置的默认动作 / 仅表情 / 默认姿势)
+   */
+  private alwaysPerformMode: boolean = false;
+
+  /**
+   * Phase 4D-7: 动画循环播放模式 (本地兜底路径)。
+   *
+   * - true: 兜底动画 returnPolicy=KEEP, VRMA 默认循环, 持续播放直到下一个 avatar_perform
+   * - false: 兜底动画 returnPolicy=DEFAULT_POSE, 播放一次后恢复默认姿势
+   *
+   * 注: Native Tool 路径的循环由 ArkWebAvatarAiToolExecutor.loopAnimationEnabled 控制,
+   *     此标志只影响 LOCAL_FALLBACK 兜底路径 (Bridge 直接投递, 不走 Executor)。
+   */
+  private loopAnimationMode: boolean = false;
 
   /** 最后回应来源 (供 AI 面板显示) */
   private lastResponseSource: ArkWebAvatarTurnResponseSource = ArkWebAvatarTurnResponseResultConst.SOURCE_NONE;
@@ -124,6 +143,63 @@ export class ArkWebAvatarTurnResponseCoordinator {
    */
   getFallbackConfig(): ArkWebAvatarLocalFallbackConfig {
     return this.fallbackConfig;
+  }
+
+  /**
+   * Phase 4D-8: 设置"每次回复必调用动作"模式。
+   *
+   * 开启后, 当 AI 未调用工具走 LOCAL_FALLBACK 兜底时,
+   * 从能力快照中选首个可用动画播放 (而非恢复默认姿势),
+   * 确保 AI 每次回复都有可见动画。
+   *
+   * @param enabled 是否开启
+   */
+  setAlwaysPerformMode(enabled: boolean): void {
+    this.alwaysPerformMode = enabled;
+    Logger.info(LOG_TAG, `setAlwaysPerformMode: ${enabled}`);
+  }
+
+  /**
+   * Phase 4D-8: 获取"每次回复必调用动作"模式状态。
+   */
+  isAlwaysPerformMode(): boolean {
+    return this.alwaysPerformMode;
+  }
+
+  /**
+   * Phase 4D-7: 设置本地兜底路径的动画循环播放模式。
+   *
+   * 开启后, LOCAL_FALLBACK 兜底动画使用 returnPolicy=KEEP,
+   * VRMA 默认循环, 持续播放直到下一个 avatar_perform 调用。
+   *
+   * @param enabled 是否循环播放
+   */
+  setLoopAnimationMode(enabled: boolean): void {
+    this.loopAnimationMode = enabled;
+    Logger.info(LOG_TAG, `setLoopAnimationMode: ${enabled}`);
+  }
+
+  /**
+   * Phase 4D-7: 获取本地兜底路径的动画循环播放模式状态。
+   */
+  isLoopAnimationMode(): boolean {
+    return this.loopAnimationMode;
+  }
+
+  /**
+   * Phase 4D-8: 注入/替换能力快照提供器。
+   *
+   * 由 ChatViewModel.setAvatarToolIntegration 在页面进入时注入,
+   * 在 clearAvatarToolIntegration 时置 null。
+   *
+   * alwaysPerformMode 依赖此 provider 从能力快照选首个可用动画,
+   * 若为 null, alwaysPerform 兜底会落到原有逻辑 (默认动作/表情/姿势)。
+   *
+   * @param provider 能力快照提供器, null 表示清空
+   */
+  setCapabilitySnapshotProvider(provider: ArkWebAvatarCapabilitySnapshotProvider | null): void {
+    this.capabilitySnapshotProvider = provider;
+    Logger.info(LOG_TAG, `setCapabilitySnapshotProvider: ${provider === null ? 'null' : 'injected'}`);
   }
 
   /**
@@ -321,15 +397,34 @@ export class ArkWebAvatarTurnResponseCoordinator {
   /**
    * 构建本地兜底演出命令 JSON。
    *
-   * 选择顺序见 executeLocalFallback。
+   * 选择顺序:
+   *   0. alwaysPerformMode=true → 从能力快照选首个非默认动画播放 (确保每次有可见动画)
+   *   1. 配置了默认动作 → animation + 可选表情
+   *   2. 配置了默认表情 → expression-only (保持镜头, returnPolicy=KEEP)
+   *   3. 都没有 → 恢复默认姿势 (最轻量)
+   *
+   * Phase 4D-7: 所有 animation 类命令的 returnPolicy 受 loopAnimationMode 控制:
+   *   - loopAnimationMode=true → KEEP (循环播放直到下一个 avatar_perform)
+   *   - loopAnimationMode=false → DEFAULT_POSE (播放一次后恢复默认姿势)
    */
   private buildLocalFallbackHintJson(): string {
     const animId: string = this.fallbackConfig.defaultResponseAnimationId;
     const exprId: string = this.fallbackConfig.defaultResponseExpressionId;
+    const loop: boolean = this.loopAnimationMode;
+
+    // 0. Phase 4D-8: alwaysPerformMode 优先从能力快照选首个可用动画
+    if (this.alwaysPerformMode) {
+      const pickedAnimId: string = this.pickFirstAvailableAnimationId();
+      if (pickedAnimId.length > 0) {
+        Logger.info(LOG_TAG, `buildLocalFallbackHintJson: alwaysPerform picked anim=${pickedAnimId} loop=${loop}`);
+        return buildLocalFallbackAnimationCommand(pickedAnimId, exprId, loop);
+      }
+      // 快照无可用动画, 落到原有逻辑
+    }
 
     // 1. 配置了默认动作 → animation + 可选表情
     if (animId.length > 0) {
-      return buildLocalFallbackAnimationCommand(animId, exprId);
+      return buildLocalFallbackAnimationCommand(animId, exprId, loop);
     }
     // 2. 配置了默认表情 → expression-only (保持镜头, returnPolicy=KEEP)
     if (exprId.length > 0) {
@@ -337,6 +432,43 @@ export class ArkWebAvatarTurnResponseCoordinator {
     }
     // 3. 都没有 → 恢复默认姿势 (最轻量)
     return LOCAL_FALLBACK_DEFAULT_POSE_COMMAND;
+  }
+
+  /**
+   * Phase 4D-8: 从能力快照中选首个非默认待机的动画 ID。
+   *
+   * 选择策略:
+   *   - 优先选非 isDefaultIdle 的动画 (避免选到待机动画, 待机动画没有可见效果)
+   *   - 若全部都是 isDefaultIdle, 选第一个
+   *   - 快照为 null 或 animations 为空 → 返回空字符串
+   *
+   * @returns 动画 actionId, 空字符串表示无可用动画
+   */
+  private pickFirstAvailableAnimationId(): string {
+    if (this.capabilitySnapshotProvider === null) {
+      return '';
+    }
+    const snapshotObj: Object | null = this.capabilitySnapshotProvider.getCapabilitySnapshot();
+    if (snapshotObj === null) {
+      return '';
+    }
+    const snapshot: ArkWebAvatarAiCapabilitySnapshot =
+      snapshotObj as ArkWebAvatarAiCapabilitySnapshot;
+    if (snapshot === undefined || snapshot === null) {
+      return '';
+    }
+    const animations = snapshot.animations;
+    if (animations === undefined || animations === null || animations.length === 0) {
+      return '';
+    }
+    // 优先选非默认待机动画
+    for (let i = 0; i < animations.length; i++) {
+      if (!animations[i].isDefaultIdle) {
+        return animations[i].actionId;
+      }
+    }
+    // 全部都是默认待机, 选第一个
+    return animations[0].actionId;
   }
 
   /**

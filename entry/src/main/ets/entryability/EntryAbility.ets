@@ -67,10 +67,12 @@ export default class EntryAbility extends UIAbility {
       }
       hilog.info(DOMAIN, 'testTag', 'Succeeded in loading the content.');
 
-      // 键盘避让模式设为 RESIZE:压缩页面高度,顶栏不动,输入框上移到键盘上方
+      // 键盘避让模式设为 OFFSET:上抬模式,配合组件级 expandSafeArea([SafeAreaType.KEYBOARD])
+      // 让背景/顶栏/Avatar 等固定层不上抬,只有未加 expandSafeArea 的输入栏被上抬到键盘上方。
+      // (RESIZE 会压缩百分比组件导致画面缩小;OFFSET 下 expandSafeArea(KEYBOARD) 才生效)
       try {
         windowStage.getMainWindowSync().getUIContext()
-          .setKeyboardAvoidMode(KeyboardAvoidMode.RESIZE);
+          .setKeyboardAvoidMode(KeyboardAvoidMode.OFFSET);
       } catch (e) {
         hilog.error(DOMAIN, 'testTag', 'setKeyboardAvoidMode failed: %{public}s', (e as Error).message);
       }

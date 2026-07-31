@@ -102,6 +102,14 @@ export interface ArkWebAvatarDialogueStrategyInput {
    * - 空字符串: 不注入状态区块 (Builder 跳过)
    */
   sessionStateSummary: string;
+  /**
+   * Phase 4D-8: 每次回复必调用动作开关。
+   *
+   * - true: 策略改为 REQUIRED, 无论回复内容都必须调用一次 avatar_perform,
+   *         移除节奏限制 (连续次数/重复 ID 等约束放宽)
+   * - false: 保持 BALANCED 策略 (鼓励但不强制, 有节奏限制)
+   */
+  alwaysPerform: boolean;
 }
 
 // ===== 策略 Builder 输出 =====

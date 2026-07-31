@@ -36,7 +36,7 @@ import { ChatMessageDataSource } from '../components/ChatMessageDataSource';
 import { ChatMessageActionSheet, MessageAction } from '../components/ChatMessageActionSheet';
 import { ChatMoreMenuSheet } from '../components/ChatMoreMenuSheet';
 import { CharacterImageView } from '../components/CharacterImageView';
-import { promptAction, router, window, mediaquery } from '@kit.ArkUI';
+import { promptAction, router, window, mediaquery, display } from '@kit.ArkUI';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { common } from '@kit.AbilityKit';
 import { KeyCode } from '@kit.InputKit';
@@ -96,6 +96,7 @@ import {
   ArkWebAvatarToolPerformanceExecutionResult,
   ArkWebAvatarToolExecutorBusinessState
 } from '../avatarai/ArkWebAvatarAiToolExecutor';
+import { LastAvatarToolCallSummary } from '../avatarai/ArkWebAvatarAiToolTypes';
 
 const LOG_TAG: string = 'ChatPage';
 
@@ -204,7 +205,7 @@ struct ChatPage {
    * 字体配色模式(AUTO / LIGHT / DARK / CUSTOM)。
    * 默认 AUTO:保持 ChatRichText 默认资源颜色。
    * 与 chatBubbleOpacity 完全独立:模式只控制文字颜色,不影响气泡背景透明度。
-   * 本阶段仅页面生命周期内保存,不持久化。
+   * 持久化到 Preferences,跨页面生命周期保持。
    */
   @State chatTextColorMode: string = ChatTextColorMode.AUTO;
 
@@ -231,6 +232,9 @@ struct ChatPage {
 
   /** 气泡不透明度持久化 Preferences key */
   private static readonly PREF_KEY_BUBBLE_OPACITY: string = 'chat_bubble_opacity';
+
+  /** 字体配色持久化 Preferences key (存储 JSON: mode + 4 个颜色值) */
+  private static readonly PREF_KEY_TEXT_COLOR: string = 'chat_text_color';
 
   /** Phase 4A-2: 本页面实例在 AvatarChatBridge 上的 endpointId (aboutToAppear 生成) */
   private chatEndpointId: string = '';
@@ -262,6 +266,12 @@ struct ChatPage {
   @State aiPanelLastErrorCode: string = '';
   /** Phase 4A-3: Avatar Tool Calling 权限模式 (DENY / READ_ONLY / CONTROL_THIS_CHAT) */
   @State avatarToolPermissionMode: string = 'DENY';
+  /** Phase 4D-7: 动画循环播放开关 (开启时强制 returnPolicy=KEEP, 动画持续循环) */
+  @State avatarLoopAnimation: boolean = false;
+  /** Phase 4D-8: 每次回复必调用动作开关 (开启时策略改为 REQUIRED, AI 每次回复必须调用 avatar_perform) */
+  @State avatarAlwaysPerform: boolean = false;
+  /** 键盘高度(vp),0 表示键盘未弹起。OFFSET 模式下用于消息列表底部占位与输入栏间距判断 */
+  @State keyboardHeight: number = 0;
   /** Phase 4C-1: Avatar 对话演出策略状态 (供 AI 面板显示摘要) */
   @State avatarStrategyStatus: ArkWebAvatarDialogueStrategyStatus | null = null;
   /** Phase 4C-1: 是否展开策略摘要详情 */
@@ -276,6 +286,40 @@ struct ChatPage {
   private avatarToolIntegration: ArkWebAvatarToolIntegration | null = null;
   /** Phase 4A-3R: Provider 信息快照 (异步刷新) */
   @State providerInfoText: string = '';
+  /**
+   * Phase 4D-2: 原生 Tool Calling 四态支持状态 (响应式副本)。
+   *
+   * 必须从 @State 读取才能触发 ArkUI 重新渲染, 直接调用 viewModel.getNativeToolCallingSupport()
+   * 是方法调用, ArkUI 无法追踪依赖, 导致探测完成后 UI 不刷新。
+   * 在 refreshAvatarToolCallingStatus() 中同步更新。
+   */
+  @State nativeToolCallingSupportState: string = 'UNKNOWN';
+  /**
+   * Phase 4D-2: Tool Integration 接线状态 (响应式副本)。
+   * 同步自 viewModel.getAvatarToolIntegrationState(), 供 UI 响应式刷新。
+   */
+  @State integrationStateText: string = 'DISPOSED';
+  /**
+   * Phase 4D-2: 探测错误码 (响应式副本)。
+   * 同步自 avatarToolStatus.probeErrorCode, 供 UI 响应式刷新。
+   */
+  @State probeErrorCodeText: string = '';
+  /**
+   * Phase 4D-2: 探测错误信息 (响应式副本)。
+   * 同步自 avatarToolStatus.probeErrorMessage, 供 UI 响应式刷新。
+   */
+  @State probeErrorMessageText: string = '';
+  /**
+   * Phase 4D-3: 最后一次 Avatar Tool Call 摘要 (响应式副本)。
+   *
+   * null 表示本 Turn 尚未发生 Avatar 工具调用 (AI 只返回普通文本)。
+   * 非 null 时 UI 显示 "AI 已调用 <toolName>" + 动作参数 + 执行结果。
+   * 与 AvatarStage Runtime 快照 (动作/状态/最后结果) 解耦:
+   *   - 本字段反映 "AI Tool Call 路径" 的执行结果
+   *   - AvatarStage 快照反映 "动画运行时" 的真实状态
+   * 在 refreshAvatarToolCallingStatus() 中同步更新。
+   */
+  @State lastAvatarToolCallSummary: LastAvatarToolCallSummary | null = null;
   /** Phase 4A-3R: 探测中状态 (true 时按钮禁用) */
   @State probeRunning: boolean = false;
   /** Phase 4A-3R: 烟雾测试中状态 (true 时按钮禁用) */
@@ -284,6 +328,14 @@ struct ChatPage {
   @State probeResultText: string = '';
   /** Phase 4A-3R: 最近一次烟雾测试结果摘要 (供 UI 显示) */
   @State smokeTestResultText: string = '';
+  /** Phase 4D-4: 动画运行时测试中状态 (true 时按钮禁用) */
+  @State runtimeSmokeTestRunning: boolean = false;
+  /** Phase 4D-4: 最近一次动画运行时测试结果摘要 (供 UI 显示) */
+  @State runtimeSmokeTestResultText: string = '';
+  /** Phase 4D-5: AI 动画调用测试中状态 (true 时按钮禁用) */
+  @State aiPerformSmokeTestRunning: boolean = false;
+  /** Phase 4D-5: 最近一次 AI 动画调用测试结果摘要 (供 UI 显示) */
+  @State aiPerformSmokeTestResultText: string = '';
   /** 模型大小滑动条值 (fillRatio, 0.3~0.98, 默认 0.78) */
   @State avatarModelFillRatio: number = 0.78;
   /**
@@ -322,6 +374,9 @@ struct ChatPage {
       const isStreaming: boolean = msgs.length > 0 && msgs[msgs.length - 1].isStreaming === true;
       if (!isStreaming) {
         this.refreshBudgetSnapshot();
+        // Phase 4D-3: 非流式状态时刷新 Tool Call 摘要
+        // (Tool Call 在 onComplete 中执行, 完成后触发新一轮消息更新, 此时摘要已写入)
+        this.refreshAvatarToolCallingStatus();
       }
     };
     this.viewModel = vm;
@@ -360,6 +415,7 @@ struct ChatPage {
     this.registerKeyboardListener();
     this.registerDarkModeListener();
     this.loadPersistedBubbleOpacity();
+    this.loadPersistedTextColor();
     // Phase 4A-2: 注册到 AvatarChatBridge, 使本页面发布的最终助手消息
     // 可被 VrmViewerPage (Avatar endpoint) 消费演出。
     // - endpointId 必须本页面实例内稳定,跨实例唯一
@@ -416,6 +472,87 @@ struct ChatPage {
         return;
       }
       prefs.putString(ChatPage.PREF_KEY_BUBBLE_OPACITY, value.toString())
+        .catch((_e: Object): void => {
+          // 写入失败静默忽略
+        });
+    } catch (_e) {
+      // AppServices 未初始化时静默忽略
+    }
+  }
+
+  /**
+   * 从 Preferences 读取持久化的字体配色。
+   *
+   * 存储 JSON 格式:
+   *   { "mode": "AUTO|LIGHT|DARK|CUSTOM",
+   *     "body": "#RRGGBB", "accent": "#RRGGBB",
+   *     "user": "#RRGGBB", "secondary": "#RRGGBB" }
+   *
+   * 读取失败或未初始化时静默使用默认值。
+   * 非法字段回退为对应默认值,确保渲染安全。
+   */
+  private loadPersistedTextColor(): void {
+    try {
+      const prefs = AppServices.getAppPreferences();
+      if (!prefs.isInitialized()) {
+        return;
+      }
+      prefs.getString(ChatPage.PREF_KEY_TEXT_COLOR, '')
+        .then((value: string): void => {
+          if (value.length === 0) {
+            return;
+          }
+          const obj: Record<string, Object> = JSON.parse(value) as Record<string, Object>;
+          const mode: Object | undefined = obj['mode'];
+          if (typeof mode === 'string') {
+            this.chatTextColorMode = mode;
+          }
+          const body: Object | undefined = obj['body'];
+          if (typeof body === 'string' && isValidHexColor(body)) {
+            this.chatAssistantTextColor = body.toUpperCase();
+          }
+          const accent: Object | undefined = obj['accent'];
+          if (typeof accent === 'string' && isValidHexColor(accent)) {
+            this.chatMarkdownAccentColor = accent.toUpperCase();
+          }
+          const user: Object | undefined = obj['user'];
+          if (typeof user === 'string' && isValidHexColor(user)) {
+            this.chatUserTextColor = user.toUpperCase();
+          }
+          const secondary: Object | undefined = obj['secondary'];
+          if (typeof secondary === 'string' && isValidHexColor(secondary)) {
+            this.chatSecondaryTextColor = secondary.toUpperCase();
+          }
+        })
+        .catch((_e: Object): void => {
+          // 读取失败静默使用默认值
+        });
+    } catch (_e) {
+      // AppServices 未初始化时静默使用默认值
+    }
+  }
+
+  /**
+   * 将当前字体配色持久化到 Preferences。
+   *
+   * 包含模式 + 4 个自定义颜色值,即使从 CUSTOM 切回 AUTO 也写入当前状态,
+   * 确保下次进入页面时恢复用户最后的配置。
+   * 写入失败静默忽略(不影响 UI 交互)。
+   */
+  private persistTextColor(): void {
+    try {
+      const prefs = AppServices.getAppPreferences();
+      if (!prefs.isInitialized()) {
+        return;
+      }
+      const obj: Record<string, string> = {
+        'mode': this.chatTextColorMode,
+        'body': this.chatAssistantTextColor,
+        'accent': this.chatMarkdownAccentColor,
+        'user': this.chatUserTextColor,
+        'secondary': this.chatSecondaryTextColor
+      };
+      prefs.putString(ChatPage.PREF_KEY_TEXT_COLOR, JSON.stringify(obj))
         .catch((_e: Object): void => {
           // 写入失败静默忽略
         });
@@ -561,6 +698,13 @@ struct ChatPage {
       this.avatarStrategyStatus = null;
       this.avatarRhythmStatusText = '';
       this.avatarRhythmPolicyVersion = '';
+      // Phase 4D-2: 同步重置响应式副本
+      this.nativeToolCallingSupportState = 'UNKNOWN';
+      this.integrationStateText = 'DISPOSED';
+      this.probeErrorCodeText = '';
+      this.probeErrorMessageText = '';
+      // Phase 4D-3: 重置 Tool Call 摘要
+      this.lastAvatarToolCallSummary = null;
       return;
     }
     try {
@@ -568,6 +712,13 @@ struct ChatPage {
         this.viewModel!.getAvatarToolCallingStatus();
       this.avatarToolStatus = status;
       this.avatarToolPermissionMode = status.permissionMode;
+      // Phase 4D-2: 同步响应式副本 (ArkUI 只能追踪 @State 属性, 不能追踪方法调用)
+      this.nativeToolCallingSupportState = status.nativeToolCallingSupport;
+      this.integrationStateText = status.integrationState;
+      this.probeErrorCodeText = status.probeErrorCode;
+      this.probeErrorMessageText = status.probeErrorMessage;
+      // Phase 4D-3: 同步最后一次 Tool Call 摘要 (null 表示本 Turn 未发生 Avatar 工具调用)
+      this.lastAvatarToolCallSummary = status.lastToolCallSummary;
       // Phase 4C-1: 同步刷新策略状态摘要
       this.avatarStrategyStatus = this.viewModel!.getAvatarDialogueStrategyStatus();
       // Phase 4C-2: 同步刷新节奏状态文本和策略版本
@@ -580,6 +731,11 @@ struct ChatPage {
       this.avatarStrategyStatus = null;
       this.avatarRhythmStatusText = '';
       this.avatarRhythmPolicyVersion = '';
+      this.nativeToolCallingSupportState = 'UNKNOWN';
+      this.integrationStateText = 'DISPOSED';
+      this.probeErrorCodeText = '';
+      this.probeErrorMessageText = '';
+      this.lastAvatarToolCallSummary = null;
     }
   }
 
@@ -735,6 +891,33 @@ struct ChatPage {
       // 刷新 Provider 信息和 Avatar Tool Calling 状态
       this.refreshProviderInfoSnapshot();
       this.refreshAvatarToolCallingStatus();
+      // Phase 4D-2: 加载持久化的探测结果 (如有有效记录, 恢复 SUPPORTED/UNSUPPORTED)
+      // 必须在 refreshAvatarToolCallingStatus 之后调用, 加载后再刷新一次 UI
+      this.viewModel!.loadPersistedProbeResult().then((loaded: boolean): Promise<string> => {
+        if (loaded) {
+          this.refreshAvatarToolCallingStatus();
+          Logger.info(LOG_TAG, 'connectAvatarToolIntegration: persisted probe result loaded.');
+        }
+        // Phase 4D-6: 加载持久化的权限模式 (跨页面生命周期保持)
+        // 在 probe 加载之后调用, 确保权限恢复后 UI 反映正确工具数量
+        return this.viewModel!.loadAvatarPermissionMode();
+      }).then((restoredMode: string): Promise<boolean> => {
+        this.avatarToolPermissionMode = restoredMode;
+        this.refreshAvatarToolCallingStatus();
+        Logger.info(LOG_TAG, `connectAvatarToolIntegration: permission restored=${restoredMode}.`);
+        // Phase 4D-7: 加载持久化的循环播放开关
+        return this.viewModel!.loadAvatarLoopAnimation();
+      }).then((restoredLoop: boolean): Promise<boolean> => {
+        this.avatarLoopAnimation = restoredLoop;
+        Logger.info(LOG_TAG, `connectAvatarToolIntegration: loopAnimation restored=${restoredLoop}.`);
+        // Phase 4D-8: 加载持久化的每次必调用动作开关
+        return this.viewModel!.loadAvatarAlwaysPerform();
+      }).then((restoredAlways: boolean): void => {
+        this.avatarAlwaysPerform = restoredAlways;
+        Logger.info(LOG_TAG, `connectAvatarToolIntegration: alwaysPerform restored=${restoredAlways}.`);
+      }).catch((e: Object): void => {
+        Logger.warn(LOG_TAG, 'loadPersistedProbeResult/permission/loop/always failed: ' + String(e));
+      });
     } catch (e) {
       Logger.error(LOG_TAG, 'connectAvatarToolIntegration failed: ' +
         (e instanceof Error ? e.message : String(e)));
@@ -805,6 +988,28 @@ struct ChatPage {
   }
 
   /**
+   * Phase 4D-2: 用户点击"清除验证记录"按钮清除持久化的探测结果。
+   *
+   * - 清除 AppPreferences 中当前 Provider+Model 的探测记录
+   * - 内存状态恢复为 UNKNOWN
+   * - 下次进入页面需重新探测
+   */
+  private clearPersistedProbeRecord(): void {
+    if (this.viewModel === null) {
+      return;
+    }
+    this.viewModel!.clearPersistedProbeResult().then((): void => {
+      // 内存状态恢复 UNKNOWN (通过 ChatService.clearPersistedProbeResult 后手动重置)
+      // 这里不直接操作 ChatService, 只刷新 UI 显示
+      this.probeResultText = '验证记录已清除';
+      this.refreshAvatarToolCallingStatus();
+      Logger.info(LOG_TAG, 'clearPersistedProbeRecord: cleared.');
+    }).catch((e: Object): void => {
+      Logger.warn(LOG_TAG, 'clearPersistedProbeRecord failed: ' + String(e));
+    });
+  }
+
+  /**
    * Phase 4A-3R: 用户点击"测试 Avatar 只读工具"按钮触发只读烟雾测试。
    *
    * - 调用 avatar_get_state 工具, 不播放动作, 不修改模型
@@ -829,6 +1034,94 @@ struct ChatPage {
       const msg: string = e instanceof Error ? e.message : String(e);
       this.smokeTestResultText = `Avatar 只读工具:测试异常 | ${msg}`;
       Logger.warn(LOG_TAG, 'runReadOnlyAvatarToolSmokeTest failed: ' + msg);
+    });
+  }
+
+  /**
+   * Phase 4D-4: 用户点击"测试动画运行时"按钮触发动画运行时测试。
+   *
+   * 不经过 AI Provider, 直接构造 avatar_perform 工具调用, 测试完整链路:
+   *   Tool Executor → AvatarChatBridge → LifecycleController → PerformanceController → 动画加载 → READY → PLAYING
+   *
+   * 与 runReadOnlyAvatarToolSmokeTest 的区别:
+   *   - 不经过 Provider (不需要 nativeToolCallingSupport === SUPPORTED)
+   *   - 测试 avatar_perform (演出工具), 不是 avatar_get_state (只读工具)
+   *   - 需要权限 CONTROL_THIS_CHAT (avatar_perform 需要写权限)
+   *   - 会实际播放动画 (用户可见)
+   */
+  private runAvatarRuntimeSmokeTest(): void {
+    if (this.viewModel === null || this.runtimeSmokeTestRunning) {
+      return;
+    }
+    this.runtimeSmokeTestRunning = true;
+    this.runtimeSmokeTestResultText = '正在测试动画运行时...';
+    this.viewModel!.runAvatarRuntimeSmokeTest().then((result): void => {
+      this.runtimeSmokeTestRunning = false;
+      if (result.success) {
+        this.runtimeSmokeTestResultText =
+          `动画运行时:通过 | 动作:${result.motionType}·${result.motionId} | Bridge:${result.bridgeAccepted ? '已接受' : '未接受'} | commandId:${result.commandId}`;
+      } else {
+        this.runtimeSmokeTestResultText =
+          `动画运行时:失败 | 错误:${result.errorCode} | ${result.errorMessage}`;
+      }
+      // 测试完成后刷新 Tool Call 状态 (可能影响 lastAvatarToolCallSummary 显示)
+      this.refreshAvatarToolCallingStatus();
+    }).catch((e: Object): void => {
+      this.runtimeSmokeTestRunning = false;
+      const msg: string = e instanceof Error ? e.message : String(e);
+      this.runtimeSmokeTestResultText = `动画运行时:测试异常 | ${msg}`;
+      Logger.warn(LOG_TAG, 'runAvatarRuntimeSmokeTest failed: ' + msg);
+    });
+  }
+
+  /**
+   * Phase 4D-5: 用户点击"测试 AI 动画调用"按钮触发端到端 AI 动画测试。
+   *
+   * 经过真实 AI Provider, 通过提示词让 AI 返回 avatar_perform 工具调用, 测试完整链路:
+   *   ChatService 请求 → Provider 收到 tools → Provider 返回 avatar_perform
+   *   → Tool Executor → AvatarChatBridge → LifecycleController → PLAYING
+   *
+   * 与 runAvatarRuntimeSmokeTest 的区别:
+   *   - 经过 AI Provider (要求 nativeToolCallingSupport === SUPPORTED)
+   *   - toolCallId 由 Provider 分配 (非自造)
+   *   - motionType / motionId 由 AI 决定 (从 argumentsJson 解析)
+   *   - 验证 AI 是否真的会调用 avatar_perform (而非系统构造)
+   *
+   * 故障层定位:
+   *   - 若 runAvatarRuntimeSmokeTest 成功且本测试失败, 问题在 Provider 层
+   *   - 若 runAvatarRuntimeSmokeTest 失败, 先修动画执行链, 不需本测试
+   *
+   * 前置条件:
+   *   - Tool Integration 已连接
+   *   - nativeToolCallingSupport === SUPPORTED
+   *   - 权限为 CONTROL_THIS_CHAT
+   */
+  private runAiAvatarPerformSmokeTest(): void {
+    if (this.viewModel === null || this.aiPerformSmokeTestRunning) {
+      return;
+    }
+    this.aiPerformSmokeTestRunning = true;
+    this.aiPerformSmokeTestResultText = '正在测试 AI 动画调用...';
+    this.viewModel!.runAiAvatarPerformSmokeTest().then((result): void => {
+      this.aiPerformSmokeTestRunning = false;
+      if (result.success) {
+        const exprPart: string = result.expressionId.length > 0
+          ? ` | 表情:${result.expressionId}` : '';
+        const textPart: string = result.finalTextSnippet.length > 0
+          ? ` | 文本:${result.finalTextSnippet}` : '';
+        this.aiPerformSmokeTestResultText =
+          `AI 动画调用:通过 | toolCallId:${result.toolCallId} | 动作:${result.motionType}·${result.motionId}${exprPart} | Bridge:${result.bridgeAccepted ? '已接受' : '未接受'} | commandId:${result.commandId}${textPart}`;
+      } else {
+        this.aiPerformSmokeTestResultText =
+          `AI 动画调用:失败 | 错误:${result.errorCode} | ${result.errorMessage}`;
+      }
+      // 测试完成后刷新 Tool Call 状态 (可能影响 lastAvatarToolCallSummary 显示)
+      this.refreshAvatarToolCallingStatus();
+    }).catch((e: Object): void => {
+      this.aiPerformSmokeTestRunning = false;
+      const msg: string = e instanceof Error ? e.message : String(e);
+      this.aiPerformSmokeTestResultText = `AI 动画调用:测试异常 | ${msg}`;
+      Logger.warn(LOG_TAG, 'runAiAvatarPerformSmokeTest failed: ' + msg);
     });
   }
 
@@ -1130,12 +1423,14 @@ struct ChatPage {
           && this.chatBgConfig!.enabled
           && this.chatBgConfig!.imageUri.length > 0) {
           // 背景图(应用模糊度,模糊后图像边缘有透明像素,由 page_background 兜底)
+          // expandSafeArea(KEYBOARD):OFFSET 模式下键盘弹出时背景层不上抬,保持全屏固定不动
           Image(this.chatBgConfig!.imageUri)
             .width('100%')
             .height('100%')
             .objectFit(ImageFit.Cover)
             .blur(this.chatBgConfig!.blur)
             .hitTestBehavior(HitTestMode.Transparent)
+            .expandSafeArea([SafeAreaType.KEYBOARD], [SafeAreaEdge.BOTTOM])
 
           // 暗化遮罩(增强浅色背景图下的文字可读性)
           Column()
@@ -1143,6 +1438,7 @@ struct ChatPage {
             .height('100%')
             .backgroundColor('rgba(0,0,0,' + (this.chatBgConfig!.dim / 100).toString() + ')')
             .hitTestBehavior(HitTestMode.Transparent)
+            .expandSafeArea([SafeAreaType.KEYBOARD], [SafeAreaEdge.BOTTOM])
         }
 
         // ===== Phase 4B-1: Avatar Stage 层 (透明 VRM 模型, 位于背景之上、消息列表之下) =====
@@ -1180,6 +1476,7 @@ struct ChatPage {
             this.connectAvatarToolIntegration();
           }
         })
+        .expandSafeArea([SafeAreaType.KEYBOARD], [SafeAreaEdge.BOTTOM])
 
         // ===== 底层:消息列表 + 浮动按钮 =====
         Column() {
@@ -1232,6 +1529,7 @@ struct ChatPage {
         }
         .width('100%')
         .height('100%')
+        .expandSafeArea([SafeAreaType.KEYBOARD], [SafeAreaEdge.BOTTOM])
 
         // ===== 顶部渐变层(增强状态栏图标和顶部文字可读性) =====
         // 不响应触摸:hitTestBehavior(Transparent)
@@ -1256,6 +1554,7 @@ struct ChatPage {
         .justifyContent(FlexAlign.Start)
         .alignItems(HorizontalAlign.Center)
         .hitTestBehavior(HitTestMode.Transparent)
+        .expandSafeArea([SafeAreaType.KEYBOARD], [SafeAreaEdge.BOTTOM])
 
         // ===== 浮层:顶栏(顶部对齐,半透明背景) =====
         // 注意:Stack 默认 alignContent=Center,若 Column 只设 width 不设 height,
@@ -1299,6 +1598,7 @@ struct ChatPage {
         // 顶栏 Column 透明:让下层消息列表完全可见,顶栏背景由 topBar Row 自己带
         // hitTestBehavior=Transparent 让顶栏下方空白区域点击穿透到消息列表
         .hitTestBehavior(HitTestMode.Transparent)
+        .expandSafeArea([SafeAreaType.KEYBOARD], [SafeAreaEdge.BOTTOM])
 
         // ===== 浮层:输入栏(底部对齐,悬浮胶囊式) =====
         // 外层 Column 透明,只负责把 inputArea 推到底部对齐位置;
@@ -1313,7 +1613,10 @@ struct ChatPage {
         .width('100%')
         .height('100%')
         .justifyContent(FlexAlign.End)
-        .padding({ left: 12, right: 12, bottom: this.navigationBarHeight + 12 })
+        // OFFSET 模式下输入栏未加 expandSafeArea(KEYBOARD),被系统上抬到键盘上方;
+        // bottom 仅控制 inputArea 与 Column 底部的间距:
+        // 键盘弹起时 12(系统已上抬,只需小间距);未弹起时 navigationBarHeight + 12(避让手势条)
+        .padding({ left: 12, right: 12, bottom: this.keyboardHeight > 0 ? 12 : this.navigationBarHeight + 12 })
         .hitTestBehavior(HitTestMode.Transparent)
 
         // ===== Phase 4B-1: AI 控制面板浮层 (紧凑半透明, 右侧对齐) =====
@@ -1564,6 +1867,9 @@ struct ChatPage {
 
           // Phase 4A-3: AI 模型权限区 (Avatar Tool Calling 权限控制)
           this.avatarToolPermissionBlock()
+
+          // Phase 4D-3: 最后一次 AI 工具调用摘要 (区分"工具可用"与"工具已被调用")
+          this.lastAvatarToolCallBlock()
 
           // Phase 4C-1: Avatar 对话演出策略状态区
           this.avatarDialogueStrategyBlock()
@@ -2107,6 +2413,44 @@ struct ChatPage {
       .width('100%')
       .margin({ top: 4 })
 
+      // Phase 4D-7: 动画循环播放开关
+      // 开启时 avatar_perform 强制 returnPolicy=KEEP, 动画持续循环直到下一个 avatar_perform
+      Row() {
+        Text('循环播放动作')
+          .fontSize(11)
+          .fontColor($r('app.color.app_text_primary'))
+          .layoutWeight(1)
+        Toggle({ type: ToggleType.Switch, isOn: this.avatarLoopAnimation })
+          .selectedColor($r('app.color.app_accent'))
+          .onChange((isOn: boolean): void => {
+            this.avatarLoopAnimation = isOn;
+            this.viewModel!.setAvatarLoopAnimation(isOn);
+          })
+      }
+      .width('100%')
+      .height(32)
+      .margin({ top: 4 })
+      .enabled(this.isIntegrationConnected())
+
+      // Phase 4D-8: 每次回复必调用动作开关
+      // 开启时策略改为 REQUIRED, AI 每次回复都必须调用一次 avatar_perform
+      Row() {
+        Text('每次回复都调用动作')
+          .fontSize(11)
+          .fontColor($r('app.color.app_text_primary'))
+          .layoutWeight(1)
+        Toggle({ type: ToggleType.Switch, isOn: this.avatarAlwaysPerform })
+          .selectedColor($r('app.color.app_accent'))
+          .onChange((isOn: boolean): void => {
+            this.avatarAlwaysPerform = isOn;
+            this.viewModel!.setAvatarAlwaysPerform(isOn);
+          })
+      }
+      .width('100%')
+      .height(32)
+      .margin({ top: 4 })
+      .enabled(this.isIntegrationConnected())
+
       // Phase 4A-3R: 测试 Tool Calling 按钮
       Button(this.probeRunning ? '正在测试 Tool Calling...' : '测试 Tool Calling')
         .type(ButtonType.Normal)
@@ -2131,6 +2475,24 @@ struct ChatPage {
           .margin({ top: 2 })
           .maxLines(3)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+
+      // Phase 4D-2: 清除验证记录按钮 (清除持久化的探测结果, 恢复 UNKNOWN)
+      // 仅当有探测记录时显示
+      if (this.nativeToolCallingSupportState === 'SUPPORTED' ||
+          this.nativeToolCallingSupportState === 'UNSUPPORTED') {
+        Button('清除验证记录')
+          .type(ButtonType.Normal)
+          .borderRadius($r('app.float.app_radius_sm'))
+          .backgroundColor('rgba(255,255,255,0.08)')
+          .fontColor($r('app.color.app_text_primary'))
+          .fontSize(11)
+          .width('100%')
+          .height(28)
+          .margin({ top: 4 })
+          .onClick(() => {
+            this.clearPersistedProbeRecord();
+          })
       }
 
       // Phase 4A-3R: 测试 Avatar 只读工具按钮 (仅 SUPPORTED 时可用)
@@ -2160,6 +2522,64 @@ struct ChatPage {
           .maxLines(3)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
       }
+
+      // Phase 4D-4: 测试动画运行时按钮 (不经过 Provider, 直接测试 Tool Executor → Bridge → Lifecycle → PLAYING)
+      Button(this.runtimeSmokeTestRunning ? '正在测试动画运行时...' : '测试动画运行时')
+        .type(ButtonType.Normal)
+        .borderRadius($r('app.float.app_radius_sm'))
+        .backgroundColor('rgba(255,255,255,0.12)')
+        .fontColor($r('app.color.app_text_primary'))
+        .fontSize(11)
+        .width('100%')
+        .height(28)
+        .margin({ top: 4 })
+        .enabled(!this.runtimeSmokeTestRunning
+          && this.isIntegrationConnected()
+          && this.avatarToolPermissionMode === 'CONTROL_THIS_CHAT')
+        .onClick(() => {
+          this.runAvatarRuntimeSmokeTest();
+        })
+
+      // Phase 4D-4: 动画运行时测试结果显示
+      if (this.runtimeSmokeTestResultText.length > 0) {
+        Text(this.runtimeSmokeTestResultText)
+          .fontSize(11)
+          .fontColor($r('app.color.app_text_secondary'))
+          .width('100%')
+          .margin({ top: 2 })
+          .maxLines(4)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+
+      // Phase 4D-5: 测试 AI 动画调用按钮 (经过真实 Provider, 让 AI 返回 avatar_perform, 完整端到端)
+      // 前置条件: Integration 已连接 + SUPPORTED + CONTROL_THIS_CHAT
+      Button(this.aiPerformSmokeTestRunning ? '正在测试 AI 动画调用...' : '测试 AI 动画调用')
+        .type(ButtonType.Normal)
+        .borderRadius($r('app.float.app_radius_sm'))
+        .backgroundColor('rgba(255,255,255,0.12)')
+        .fontColor($r('app.color.app_text_primary'))
+        .fontSize(11)
+        .width('100%')
+        .height(28)
+        .margin({ top: 4 })
+        .enabled(!this.aiPerformSmokeTestRunning
+          && this.isIntegrationConnected()
+          && this.getNativeToolCallingSupportState() === 'SUPPORTED'
+          && this.avatarToolPermissionMode === 'CONTROL_THIS_CHAT')
+        .onClick(() => {
+          this.runAiAvatarPerformSmokeTest();
+        })
+
+      // Phase 4D-5: AI 动画调用测试结果显示
+      if (this.aiPerformSmokeTestResultText.length > 0) {
+        Text(this.aiPerformSmokeTestResultText)
+          .fontSize(11)
+          .fontColor($r('app.color.app_text_secondary'))
+          .width('100%')
+          .margin({ top: 2 })
+          .maxLines(5)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
     }
     .width('100%')
     .padding(8)
@@ -2169,55 +2589,43 @@ struct ChatPage {
   }
 
   /**
-   * Phase 4A-3R: 判断 Tool Integration 是否已连接。
+   * Phase 4D-2: 判断 Tool Integration 是否已连接。
+   *
+   * 从 @State integrationStateText 读取 (响应式副本)。
    */
   private isIntegrationConnected(): boolean {
-    if (this.viewModel === null) {
-      return false;
-    }
-    try {
-      return this.viewModel!.getAvatarToolIntegrationState() === 'CONNECTED';
-    } catch (_e) {
-      return false;
-    }
+    return this.integrationStateText === 'CONNECTED';
   }
 
   /**
-   * Phase 4A-3R: 获取当前原生 Tool Calling 四态支持状态。
+   * Phase 4D-2: 获取当前原生 Tool Calling 四态支持状态。
+   *
+   * 从 @State nativeToolCallingSupportState 读取 (响应式副本),
+   * 而非调用 viewModel.getNativeToolCallingSupport() (方法调用, ArkUI 无法追踪依赖)。
+   * refreshAvatarToolCallingStatus() 会同步更新此副本。
    */
   private getNativeToolCallingSupportState(): string {
-    if (this.viewModel === null) {
-      return 'UNKNOWN';
-    }
-    try {
-      return this.viewModel!.getNativeToolCallingSupport();
-    } catch (_e) {
-      return 'UNKNOWN';
-    }
+    return this.nativeToolCallingSupportState;
   }
 
   /**
-   * Phase 4A-3R: 构建 Tool Integration 接线状态文案。
+   * Phase 4D-2: 构建 Tool Integration 接线状态文案。
+   *
+   * 从 @State integrationStateText 读取 (响应式副本),
+   * refreshAvatarToolCallingStatus() 会同步更新此副本。
    */
   private buildIntegrationStateText(): string {
-    if (this.viewModel === null) {
+    const state: string = this.integrationStateText;
+    if (state === 'CONNECTED') {
+      return '已连接';
+    } else if (state === 'NOT_CONNECTED') {
       return '未连接';
+    } else if (state === 'FAILED') {
+      return '接线失败';
+    } else if (state === 'DISPOSED') {
+      return '已销毁';
     }
-    try {
-      const state: string = this.viewModel!.getAvatarToolIntegrationState();
-      if (state === 'CONNECTED') {
-        return '已连接';
-      } else if (state === 'NOT_CONNECTED') {
-        return '未连接';
-      } else if (state === 'FAILED') {
-        return '接线失败';
-      } else if (state === 'DISPOSED') {
-        return '已销毁';
-      }
-      return state;
-    } catch (_e) {
-      return '未连接';
-    }
+    return state;
   }
 
   /**
@@ -2347,6 +2755,91 @@ struct ChatPage {
       return `策略：${rhythmVersion}（已注入）`;
     }
     return '策略：BALANCED（未注入）';
+  }
+
+  /**
+   * Phase 4D-3: 最后一次 AI 工具调用摘要区块。
+   *
+   * 区分三种情况 (与 AvatarStage Runtime 快照解耦):
+   *   1. 本 Turn 未发生 Avatar 工具调用 (summary === null)
+   *      → "最后一次 AI 回复未调用 Avatar 工具"
+   *   2. AI 调用了 avatar_perform (summary.source === NATIVE_TOOL && toolName === avatar_perform)
+   *      → "AI 已调用 avatar_perform" + 动作参数 + 执行结果
+   *   3. AI 调用了其他工具 (avatar_get_state / avatar_list_capabilities / avatar_stop)
+   *      → "AI 已调用 <toolName>" + 执行结果
+   *
+   * 注意: 本区块只反映 "AI Tool Call 路径" 的执行结果, 不反映动画运行时状态。
+   * 动画运行时状态 (动作/状态/最后结果) 由 runtimeStatusBlock() 显示。
+   *
+   * 数据来源: @State lastAvatarToolCallSummary (在 refreshAvatarToolCallingStatus 中同步)
+   */
+  @Builder
+  lastAvatarToolCallBlock() {
+    Column() {
+      Text('最后一次 AI 工具调用')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.app_text_secondary'))
+        .width('100%')
+        .margin({ bottom: 4 })
+
+      if (this.lastAvatarToolCallSummary === null) {
+        // 情况 1: 本 Turn 未发生 Avatar 工具调用
+        Text('未调用 Avatar 工具')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .width('100%')
+      } else {
+        // 情况 2/3: AI 实际调用了工具
+        Text(`来源：AI 原生工具`)
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_primary'))
+          .width('100%')
+        Text(`工具：${this.lastAvatarToolCallSummary!.toolName}`)
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_primary'))
+          .width('100%')
+
+        // avatar_perform 额外显示动作参数
+        if (this.lastAvatarToolCallSummary!.toolName === 'avatar_perform') {
+          Text(`动作：${this.lastAvatarToolCallSummary!.motionType}` +
+            (this.lastAvatarToolCallSummary!.motionId.length > 0
+              ? ` · ${this.lastAvatarToolCallSummary!.motionId}` : ''))
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_primary'))
+            .width('100%')
+          if (this.lastAvatarToolCallSummary!.expressionId.length > 0) {
+            Text(`表情：${this.lastAvatarToolCallSummary!.expressionId}`)
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_text_primary'))
+              .width('100%')
+          }
+        }
+
+        // 执行结果
+        if (this.lastAvatarToolCallSummary!.success) {
+          Text('执行结果：OK')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor('#4CAF50')
+            .width('100%')
+        } else {
+          Text(`执行结果：FAILED · ${this.lastAvatarToolCallSummary!.errorCode}`)
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor('#F44336')
+            .width('100%')
+          if (this.lastAvatarToolCallSummary!.errorMessage.length > 0) {
+            Text(this.lastAvatarToolCallSummary!.errorMessage)
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor('#F44336')
+              .width('100%')
+              .maxLines(2)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
+        }
+      }
+    }
+    .width('100%')
+    .margin({ top: 8, bottom: 8 })
   }
 
   /**
@@ -3011,16 +3504,16 @@ struct ChatPage {
                 .margin({ bottom: 8 })
 
               // 正文颜色
-              this.colorSwatchRow('正文颜色', 'body', this.chatAssistantTextColor)
+              this.colorSwatchRow('正文颜色', 'body')
 
               // Markdown 强调色
-              this.colorSwatchRow('Markdown 强调色', 'accent', this.chatMarkdownAccentColor)
+              this.colorSwatchRow('Markdown 强调色', 'accent')
 
               // 次级文字颜色
-              this.colorSwatchRow('次级文字', 'secondary', this.chatSecondaryTextColor)
+              this.colorSwatchRow('次级文字', 'secondary')
 
               // 用户消息文字
-              this.colorSwatchRow('用户消息文字', 'user', this.chatUserTextColor)
+              this.colorSwatchRow('用户消息文字', 'user')
             }
 
             Divider()
@@ -3083,24 +3576,50 @@ struct ChatPage {
   }
 
   /**
+   * 根据 target 获取当前自定义颜色(响应式访问 @State)。
+   *
+   * 此方法在 @Builder colorSwatchRow 内部调用,
+   * 方法体内访问的 @State 变量(chatAssistantTextColor 等)会被 ArkUI 依赖收集,
+   * 任一变化时触发 Builder 重新执行,确保色块选中标记和预览圆点立即更新。
+   *
+   * 不能通过 @Builder 参数传递 currentColor:参数在调用时求值后被固定,
+   * 不响应式追踪 @State 变化,会导致点击预设色块后选中标记不刷新。
+   */
+  private getCustomColorByTarget(target: 'body' | 'accent' | 'user' | 'secondary'): string {
+    if (target === 'body') {
+      return this.chatAssistantTextColor;
+    }
+    if (target === 'accent') {
+      return this.chatMarkdownAccentColor;
+    }
+    if (target === 'user') {
+      return this.chatUserTextColor;
+    }
+    return this.chatSecondaryTextColor;
+  }
+
+  /**
    * 颜色色块行:标签 + 预设色块 + Hex 输入。
    * 仅在 CUSTOM 模式下渲染。
    * 色块点击即应用,Hex 输入失焦时校验并提交(非法值不提交)。
+   *
+   * 注意:当前颜色通过 this.getCustomColorByTarget(target) 在 Builder 体内响应式获取,
+   * 不通过参数传入,确保 @State 变化时选中标记和预览圆点立即更新。
    */
   @Builder
-  colorSwatchRow(label: string, target: 'body' | 'accent' | 'user' | 'secondary', currentColor: string) {
+  colorSwatchRow(label: string, target: 'body' | 'accent' | 'user' | 'secondary') {
     Column() {
       Row() {
         Text(label)
           .fontSize($r('app.float.app_font_caption'))
           .fontColor($r('app.color.app_text_secondary'))
         Blank()
-        // 当前颜色预览圆点
+        // 当前颜色预览圆点(响应式:访问 @State)
         Stack()
           .width(16)
           .height(16)
           .borderRadius(8)
-          .backgroundColor(currentColor)
+          .backgroundColor(this.getCustomColorByTarget(target))
           .border({ width: 1, color: $r('app.color.app_divider') })
       }
       .width('100%')
@@ -3111,7 +3630,7 @@ struct ChatPage {
       Flex({ wrap: FlexWrap.Wrap }) {
         ForEach(this.presetSwatches, (swatch: string) => {
           Stack() {
-            if (currentColor.toUpperCase() === swatch.toUpperCase()) {
+            if (this.getCustomColorByTarget(target).toUpperCase() === swatch.toUpperCase()) {
               // 选中标记:勾选
               Text('✓')
                 .fontSize(12)
@@ -3125,8 +3644,8 @@ struct ChatPage {
           .borderRadius(12)
           .backgroundColor(swatch)
           .border({
-            width: currentColor.toUpperCase() === swatch.toUpperCase() ? 2 : 1,
-            color: currentColor.toUpperCase() === swatch.toUpperCase()
+            width: this.getCustomColorByTarget(target).toUpperCase() === swatch.toUpperCase() ? 2 : 1,
+            color: this.getCustomColorByTarget(target).toUpperCase() === swatch.toUpperCase()
               ? $r('app.color.app_accent')
               : $r('app.color.app_divider')
           })
@@ -3140,7 +3659,7 @@ struct ChatPage {
 
       // Hex 输入框
       Row() {
-        TextInput({ text: currentColor, placeholder: '#RRGGBB' })
+        TextInput({ text: this.getCustomColorByTarget(target), placeholder: '#RRGGBB' })
           .fontSize($r('app.float.app_font_caption'))
           .fontColor($r('app.color.app_text_primary'))
           .backgroundColor($r('app.color.app_surface_2'))
@@ -3415,7 +3934,8 @@ struct ChatPage {
         }, (state: ChatMessageRenderState) => state.messageId)
         // 底部空白占位:高度等于悬浮输入栏占用空间(输入栏 56 + bottom padding 12 + navBar 12),
         // 让 scrollEdge(Bottom) 时最后一条消息显示在悬浮输入栏上方,不被遮挡。
-        Blank().height(80 + this.navigationBarHeight)
+        // 键盘弹起时输入栏上移到键盘上方,占位同步增加 keyboardHeight,避免最后一条消息被遮挡。
+        Blank().height(80 + this.navigationBarHeight + this.keyboardHeight)
       }
       .width('100%')
       .padding({
@@ -4108,8 +4628,11 @@ struct ChatPage {
   /**
    * 注册键盘高度变化监听。
    *
-   * RESIZE 模式下,键盘弹起会压缩页面高度,但 Scroll 的滚动位置不会自动更新,
-   * 导致最后一条消息被压缩后的输入区遮挡。这里在键盘弹起时主动滚动到底部。
+   * EntryAbility 设为 OFFSET 上抬模式:键盘弹出时系统上抬未加 expandSafeArea(KEYBOARD) 的组件。
+   * 本页面背景/Avatar/顶栏/消息列表均加了 expandSafeArea(KEYBOARD) 固定不动,
+   * 仅输入栏被系统上抬到键盘上方。
+   * keyboardHeight 用于消息列表底部 Blank 占位与输入栏间距判断。
+   * 键盘弹起时主动滚动到底部,避免最后一条消息被输入栏遮挡。
    */
   private registerKeyboardListener(): void {
     try {
@@ -4119,6 +4642,10 @@ struct ChatPage {
           this.mainWindow = win;
           this.keyboardHeightChangeHandler = (height: number): void => {
             Logger.info(LOG_TAG, 'keyboardHeightChange: height=' + height);
+            // px → vp 换算(键盘高度回调单位为 px,输入栏 padding 单位为 vp)
+            const densityPixels: number = display.getDefaultDisplaySync().densityPixels;
+            const density: number = densityPixels > 0 ? densityPixels : 3.0;
+            this.keyboardHeight = height > 0 ? height / density : 0;
             if (height > 0 && this.viewModel !== null && !this.viewModel!.userScrolledUp) {
               // 键盘弹起,延迟一帧确保布局已更新,再滚动到底部
               setTimeout((): void => {
@@ -4149,6 +4676,7 @@ struct ChatPage {
       }
       this.mainWindow = null;
       this.keyboardHeightChangeHandler = null;
+      this.keyboardHeight = 0;
     }
   }
 
@@ -4741,15 +5269,18 @@ struct ChatPage {
   /**
    * 切换字体配色模式。
    * 不修改 chatBubbleOpacity,保持两者完全独立。
+   * 持久化到 Preferences,跨页面生命周期保持。
    */
   private setChatTextColorMode(mode: string): void {
     this.chatTextColorMode = mode;
+    this.persistTextColor();
   }
 
   /**
    * 设置自定义颜色项。
    * 仅在 CUSTOM 模式下生效,非法值不提交。
    * 自动转为大写,禁止 Alpha 与 CSS 函数。
+   * 持久化到 Preferences,跨页面生命周期保持。
    */
   private setCustomColor(target: 'body' | 'accent' | 'user' | 'secondary', color: string): void {
     const normalized: string | null = normalizeHexColor(color);
@@ -4765,12 +5296,14 @@ struct ChatPage {
     } else if (target === 'secondary') {
       this.chatSecondaryTextColor = normalized;
     }
+    this.persistTextColor();
   }
 
   /**
    * 恢复默认字体配色。
    * 模式恢复 AUTO,4 个颜色值恢复默认。
    * 不修改 chatBubbleOpacity。
+   * 持久化恢复后的默认状态,确保下次进入页面也是默认值。
    */
   private resetChatTextColor(): void {
     this.chatTextColorMode = ChatTextColorMode.AUTO;
@@ -4778,6 +5311,7 @@ struct ChatPage {
     this.chatMarkdownAccentColor = DEFAULT_MARKDOWN_ACCENT_COLOR;
     this.chatUserTextColor = DEFAULT_USER_TEXT_COLOR;
     this.chatSecondaryTextColor = DEFAULT_SECONDARY_TEXT_COLOR;
+    this.persistTextColor();
   }
 
   /**

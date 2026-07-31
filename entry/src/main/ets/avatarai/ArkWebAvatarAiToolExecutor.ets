@@ -135,6 +135,9 @@ export class ArkWebAvatarAiToolExecutor {
   /** Phase 4C-2: 节奏策略 (可选, 由 ChatPage 注入) */
   private rhythmPolicy: ArkWebAvatarDialogueRhythmPolicy | null;
 
+  /** Phase 4D-7: 动画循环播放开关 (开启时强制 returnPolicy=KEEP, 动画持续循环直到下一个 avatar_perform) */
+  private loopAnimationEnabled: boolean = false;
+
   /** 去重缓存 (chatTurnId + toolCallId → result) */
   private resultCache: ArkWebAvatarToolResultCacheEntry[] = [];
 
@@ -153,6 +156,27 @@ export class ArkWebAvatarAiToolExecutor {
     this.runtime = runtime;
     this.sessionState = sessionState;
     this.rhythmPolicy = rhythmPolicy;
+  }
+
+  /**
+   * Phase 4D-7: 设置动画循环播放开关。
+   *
+   * - enabled=true: avatar_perform 执行时强制 returnPolicy=KEEP
+   *   动画播放完成后不恢复默认姿势, VRMA 默认循环播放, 动画持续循环
+   *   直到下一个 avatar_perform 调用 (interruptPolicy=REPLACE 自动切换)
+   * - enabled=false: 使用 AI 传入的 returnPolicy (DEFAULT_POSE / RESET / KEEP)
+   *
+   * @param enabled 是否开启循环播放
+   */
+  setLoopAnimationEnabled(enabled: boolean): void {
+    this.loopAnimationEnabled = enabled;
+  }
+
+  /**
+   * Phase 4D-7: 获取动画循环播放开关状态。
+   */
+  isLoopAnimationEnabled(): boolean {
+    return this.loopAnimationEnabled;
   }
 
   /**
@@ -414,14 +438,21 @@ export class ArkWebAvatarAiToolExecutor {
     }
 
     // 构建 performanceHintJson (与 AI 面板按钮使用相同结构)
+    // 注: 不包含 interruptPolicy / commandId — Mapper 会强制 interruptPolicy=REPLACE 并生成本地 commandId
+    // (DIALOGUE_HINT_FORBIDDEN_FIELDS 黑名单禁止 AI/调用方提供这两个字段)
+    // 必须包含 version=1 (Mapper 要求 DIALOGUE_PERFORMANCE_HINT_VERSION)
+    // Phase 4D-7: loopAnimationEnabled=true 时强制 returnPolicy=KEEP, 动画持续循环
+    const effectiveReturnPolicy: string = this.loopAnimationEnabled
+      ? 'KEEP'
+      : params.returnPolicy;
     const hintJson: string = JSON.stringify({
+      version: 1,
       motionType: params.motionType,
       motionId: params.motionId,
       expressionId: params.expressionId,
       expressionWeight: params.expressionWeight,
       durationMs: params.durationMs,
-      interruptPolicy: 'REPLACE',
-      returnPolicy: params.returnPolicy
+      returnPolicy: effectiveReturnPolicy
     });
 
     // 构建稳定的 Bridge turnId: avatar_tool_<chatTurnId>_<toolCallId>

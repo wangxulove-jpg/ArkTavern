@@ -456,6 +456,14 @@ export function buildRequestBody(request: ChatRequest, forceStream: boolean = fa
   // Phase 4A-3: 工具定义 (转换为 OpenAI 格式)
   const toolsPayload: Object[] | undefined = buildOpenAiToolsPayload(request.tools);
   const hasTools: boolean = toolsPayload !== undefined;
+  // Phase 4D-8: 工具调用策略 ('required' 强制调用, 'auto' 由 AI 决定)
+  const toolChoice: string = (request.toolChoice === 'required') ? 'required' : 'auto';
+  // Phase 4D-8 诊断日志: 确认 tool_choice 实际值
+  const toolCount: number = toolsPayload !== undefined ? toolsPayload.length : 0;
+  console.info('OpenAIProvider | buildRequestBody: hasTools=' + hasTools
+    + ' toolCount=' + toolCount
+    + ' request.toolChoice=' + (request.toolChoice !== undefined ? request.toolChoice : 'undefined')
+    + ' effective tool_choice=' + toolChoice);
 
   if (hasEffort && hasJsonFormat && hasTools) {
     const requestBody: OpenAIChatRequestBody = {
@@ -468,7 +476,7 @@ export function buildRequestBody(request: ChatRequest, forceStream: boolean = fa
       reasoning_effort: effort as string,
       response_format: responseFormat as OpenAIResponseFormat,
       tools: toolsPayload as Object[],
-      tool_choice: 'auto'
+      tool_choice: toolChoice
     };
     return JSON.stringify(requestBody);
   }
@@ -483,7 +491,7 @@ export function buildRequestBody(request: ChatRequest, forceStream: boolean = fa
       stream: forceStream,
       reasoning_effort: effort as string,
       tools: toolsPayload as Object[],
-      tool_choice: 'auto'
+      tool_choice: toolChoice
     };
     return JSON.stringify(requestBody);
   }
@@ -498,7 +506,7 @@ export function buildRequestBody(request: ChatRequest, forceStream: boolean = fa
       stream: forceStream,
       response_format: responseFormat as OpenAIResponseFormat,
       tools: toolsPayload as Object[],
-      tool_choice: 'auto'
+      tool_choice: toolChoice
     };
     return JSON.stringify(requestBody);
   }
@@ -512,7 +520,7 @@ export function buildRequestBody(request: ChatRequest, forceStream: boolean = fa
       max_tokens: request.maxTokens,
       stream: forceStream,
       tools: toolsPayload as Object[],
-      tool_choice: 'auto'
+      tool_choice: toolChoice
     };
     return JSON.stringify(requestBody);
   }

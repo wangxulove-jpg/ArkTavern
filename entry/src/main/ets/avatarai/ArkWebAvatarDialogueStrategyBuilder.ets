@@ -96,7 +96,7 @@ export class ArkWebAvatarDialogueStrategyBuilder {
     }
 
     // 4. 构建 BALANCED 策略规则文本
-    const ruleText: string = this.buildRuleText(input.permissionMode);
+    const ruleText: string = this.buildRuleText(input.permissionMode, input.alwaysPerform);
     if (ruleText.length === 0) {
       const result: ArkWebAvatarDialogueStrategyResult = this.buildErrorResult(
         ArkWebAvatarDialogueStrategyErrorCode.AVATAR_STRATEGY_BUILD_FAILED,
@@ -156,16 +156,17 @@ export class ArkWebAvatarDialogueStrategyBuilder {
    * 构建 BALANCED 策略规则文本。
    *
    * @param permissionMode 权限模式 (READ_ONLY / CONTROL_THIS_CHAT)
+   * @param alwaysPerform Phase 4D-8: 每次回复必调用动作开关
    * @returns 规则文本
    */
-  private buildRuleText(permissionMode: string): string {
+  private buildRuleText(permissionMode: string, alwaysPerform: boolean): string {
     const lines: string[] = [];
 
     // 头部
     lines.push(`[AVATAR_DIALOGUE_STRATEGY_V1]`);
     lines.push('');
     lines.push(`Permission: ${permissionMode}`);
-    lines.push(`Strategy: BALANCED`);
+    lines.push(`Strategy: BALANCED${alwaysPerform ? '+ALWAYS_PERFORM' : ''}`);
     lines.push('');
 
     // 权限说明
@@ -190,22 +191,43 @@ export class ArkWebAvatarDialogueStrategyBuilder {
 
     // 1. 演出时机
     lines.push('Rules:');
-    lines.push('- Avatar performance is OPTIONAL. Not every assistant reply needs an avatar_perform call.');
-    lines.push(`- Use at most ${AVATAR_STRATEGY_MAX_PERFORM_PER_TURN} avatar_perform call per assistant turn.`);
-    lines.push('- avatar_list_capabilities and avatar_get_state do NOT count toward the performance limit.');
-    lines.push('');
-    // Phase 4C-2: 节奏策略提示
-    lines.push('Rhythm guidance (BALANCED_V1):');
-    lines.push('- After an automatic performance, leave at least 1 assistant turn WITHOUT any avatar_perform before considering the next one.');
-    lines.push('- Do NOT perform on every consecutive assistant turn. If you already performed on the last 2 turns, default to NOT performing on the next turn.');
-    lines.push('- Do NOT select the same motionType + motionId that appears in the recent 3 successful performances, unless the user explicitly requested that motion.');
-    lines.push('- Do NOT repeat the same expressionId on consecutive assistant turns. If the avatar already holds that expression, do not call expression-only avatar_perform again.');
-    lines.push('- If the current performance is still ACTIVE and the new request would use identical parameters, do NOT call avatar_perform again (the system will treat it as a no-op).');
-    lines.push('- If the current performance is still ACTIVE and the new reply does not need a clearly different performance, keep the current performance.');
-    lines.push('- Do NOT call avatar_stop before every new reply. Existing REPLACE policy handles overlap.');
-    lines.push('- If the last avatar_perform failed with AVATAR_TOOL_CAPABILITY_NOT_FOUND, do NOT retry with the same IDs; call avatar_list_capabilities or pick a different real ID.');
-    lines.push('- When no suitable capability exists, prefer NOT performing over repeating the same motion.');
-    lines.push('');
+    if (alwaysPerform) {
+      // Phase 4D-8: 每次回复必调用动作
+      lines.push('- Avatar performance is REQUIRED. You MUST call avatar_perform exactly once on EVERY assistant turn, regardless of reply content (factual, technical, emotional, or roleplay).');
+      lines.push('- Even for pure factual/technical text, code explanations, or error troubleshooting, you MUST still call avatar_perform once. Pick a neutral expression or a subtle motion if no strong motion fits.');
+      lines.push('- If no animation/pose clearly fits, use motionType="none" with a neutral or matching expressionId to satisfy the requirement.');
+      lines.push(`- Use at most ${AVATAR_STRATEGY_MAX_PERFORM_PER_TURN} avatar_perform call per assistant turn.`);
+      lines.push('- avatar_list_capabilities and avatar_get_state do NOT count toward the performance limit.');
+      lines.push('');
+      // 节奏策略:alwaysPerform 模式下移除连续次数限制,保留基本安全约束
+      lines.push('Rhythm guidance (ALWAYS_PERFORM):');
+      lines.push('- The "skip after 2 consecutive performances" rule is DISABLED. Perform every turn.');
+      lines.push('- Do NOT select the same motionType + motionId that appears in the recent 3 successful performances, unless the user explicitly requested that motion or no other option exists.');
+      lines.push('- If the current performance is still ACTIVE and the new request would use identical parameters, you may keep it (system treats as no-op) — but still issue the avatar_perform call to satisfy the requirement.');
+      lines.push('- Do NOT call avatar_stop before every new reply. Existing REPLACE policy handles overlap.');
+      lines.push('- If the last avatar_perform failed with AVATAR_TOOL_CAPABILITY_NOT_FOUND, call avatar_list_capabilities first, then pick a different real ID.');
+      lines.push('');
+    } else {
+      // BALANCED 默认策略
+      lines.push('- Avatar performance is ENCOURAGED. When your reply involves a greeting, emotion, action, or roleplay movement, call avatar_perform with a matching motionId from the capabilities below.');
+      lines.push('- For the FIRST reply in a conversation, prefer calling avatar_perform (e.g. a greeting animation) to show the avatar is alive.');
+      lines.push('- If the reply is pure factual/technical text with no emotional or physical component, you may skip avatar_perform.');
+      lines.push(`- Use at most ${AVATAR_STRATEGY_MAX_PERFORM_PER_TURN} avatar_perform call per assistant turn.`);
+      lines.push('- avatar_list_capabilities and avatar_get_state do NOT count toward the performance limit.');
+      lines.push('');
+      // Phase 4C-2: 节奏策略提示
+      lines.push('Rhythm guidance (BALANCED_V1):');
+      lines.push('- After 2 consecutive performances, leave at least 1 assistant turn WITHOUT any avatar_perform before considering the next one.');
+      lines.push('- Do NOT perform on more than 2 consecutive assistant turns. If you already performed on the last 2 turns, default to NOT performing on the next turn.');
+      lines.push('- Do NOT select the same motionType + motionId that appears in the recent 3 successful performances, unless the user explicitly requested that motion.');
+      lines.push('- Do NOT repeat the same expressionId on consecutive assistant turns. If the avatar already holds that expression, do not call expression-only avatar_perform again.');
+      lines.push('- If the current performance is still ACTIVE and the new request would use identical parameters, do NOT call avatar_perform again (the system will treat it as a no-op).');
+      lines.push('- If the current performance is still ACTIVE and the new reply does not need a clearly different performance, keep the current performance.');
+      lines.push('- Do NOT call avatar_stop before every new reply. Existing REPLACE policy handles overlap.');
+      lines.push('- If the last avatar_perform failed with AVATAR_TOOL_CAPABILITY_NOT_FOUND, do NOT retry with the same IDs; call avatar_list_capabilities or pick a different real ID.');
+      lines.push('- When no suitable capability exists, prefer NOT performing over repeating the same motion.');
+      lines.push('');
+    }
 
     // 适合演出的情况
     lines.push('Suitable for performance:');

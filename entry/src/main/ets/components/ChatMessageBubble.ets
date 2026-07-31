@@ -49,8 +49,8 @@ export struct ChatMessageBubble {
   onLongPress?: (msg: ChatMessage) => void;
   /** 点击 Assistant 头像回调(可选) */
   onAvatarClick?: () => void;
-  /** 聊天文本样式设置(v11 富文本) */
-  settings: ChatTextStyle | null = null;
+  /** 聊天文本样式设置(v11 富文本,@Prop 确保父组件样式变化时同步) */
+  @Prop settings: ChatTextStyle | null = null;
   /** 发送者角色 ID(用于角色独立颜色) */
   senderCharacterId: string = '';
   /**
@@ -58,8 +58,13 @@ export struct ChatMessageBubble {
    * 非 null 时覆盖 ChatRichText 的片段颜色查询,
    * 不改变解析行为、节点结构、字体粗细、链接行为或换行逻辑。
    * 与 bubbleOpacity 完全独立:主题只控制文字颜色,bubbleOpacity 只控制气泡背景 Alpha。
+   *
+   * @Prop 确保父组件 ChatPage 的 colorTheme 变化时同步到本组件,
+   * 进而传递给 ChatRichText 触发 @Watch('onThemeChange') 重新解析。
+   * 未加装饰器时只在组件首次创建时接收初值,后续切换 AUTO/LIGHT/DARK/CUSTOM
+   * 或自定义颜色变化均无法同步,导致聊天界面文字颜色不更新。
    */
-  colorTheme: ChatMarkdownColorTheme | null = null;
+  @Prop colorTheme: ChatMarkdownColorTheme | null = null;
   /** 气泡背景不透明度(0.40~0.90,仅控制背景 Alpha,不影响文字/头像/按钮) */
   @Prop bubbleOpacity: number = 1.0;
   /** 当前是否为深色模式(用于动态计算气泡背景 RGB) */

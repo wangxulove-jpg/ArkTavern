@@ -16,7 +16,7 @@
  * - messages 始终以新引用赋值,确保 ArkUI 检测到变化
  */
 
-import { ChatService, ChatState, ChatServiceCallbacks, AvatarToolCallingStatus, ReadOnlyAvatarToolSmokeTestResult } from '../services/ChatService';
+import { ChatService, ChatState, ChatServiceCallbacks, AvatarToolCallingStatus, ReadOnlyAvatarToolSmokeTestResult, AvatarRuntimeSmokeTestResult, AiAvatarPerformSmokeTestResult } from '../services/ChatService';
 import { ArkWebAvatarDialogueStrategyStatus } from '../avatarai/ArkWebAvatarDialogueStrategyTypes';
 import { ModelService } from '../services/ModelService';
 import { ChatMessage, ChatMessageStatus } from '../models/ChatMessage';
@@ -50,7 +50,7 @@ import { ArkWebAvatarDialogueStrategyBuilder } from '../avatarai/ArkWebAvatarDia
 import { ArkWebAvatarDialogueSessionState } from '../avatarai/ArkWebAvatarDialogueSessionState';
 import { ArkWebAvatarDialogueRhythmPolicy } from '../avatarai/ArkWebAvatarDialogueRhythmPolicy';
 import { ArkWebAvatarToolIntegrationParams } from '../avatarai/ArkWebAvatarToolIntegration';
-import { ArkWebAvatarTurnResponseCoordinator } from '../avatarai/ArkWebAvatarTurnResponseCoordinator';
+import { ArkWebAvatarTurnResponseCoordinator, ArkWebAvatarCapabilitySnapshotProvider } from '../avatarai/ArkWebAvatarTurnResponseCoordinator';
 import {
   ArkWebAvatarFinalTurn,
   ArkWebAvatarLocalFallbackConfig,
@@ -62,6 +62,29 @@ import {
 } from '../avatarai/NativeToolCallingCapability';
 
 const LOG_TAG: string = 'ChatViewModel';
+
+/**
+ * Phase 4D-8: 把函数式 snapshotProvider 适配为 Coordinator 所需的接口。
+ *
+ * ArkWebAvatarToolIntegrationParams.snapshotProvider 是一个函数,
+ * 而 Coordinator 需要实现 ArkWebAvatarCapabilitySnapshotProvider 接口的对象,
+ * 用此 class 做一次薄包装。
+ */
+class CapabilitySnapshotProviderAdapter implements ArkWebAvatarCapabilitySnapshotProvider {
+  private readonly fn: () => ArkWebAvatarAiCapabilitySnapshot | null;
+
+  constructor(fn: () => ArkWebAvatarAiCapabilitySnapshot | null) {
+    this.fn = fn;
+  }
+
+  getCapabilitySnapshot(): Object | null {
+    const snapshot: ArkWebAvatarAiCapabilitySnapshot | null = this.fn();
+    if (snapshot === null) {
+      return null;
+    }
+    return snapshot;
+  }
+}
 
 @Observed
 export class ChatViewModel {
@@ -1074,12 +1097,86 @@ export class ChatViewModel {
    * Phase 4A-3: 设置 Avatar Tool Calling 权限模式。
    *
    * 权限降级时停止当前 AI 发起的演出, 不影响用户手动发起的演出。
-   * 权限只在当前聊天页面生命周期内保存, 页面退出恢复 DENY。
+   * 权限模式会持久化到 AppPreferences, 跨页面生命周期保持 (Phase 4D-6)。
    *
    * @param mode 'DENY' / 'READ_ONLY' / 'CONTROL_THIS_CHAT'
    */
   setAvatarPermissionMode(mode: string): void {
     this.chatService.setAvatarPermissionMode(mode);
+  }
+
+  /**
+   * Phase 4D-6: 从 AppPreferences 加载 Avatar Tool 权限模式。
+   *
+   * 在 connectAvatarToolIntegration 后调用, 恢复上次的权限选择。
+   * 跨页面生命周期保持权限状态。
+   *
+   * @returns 实际生效的权限模式
+   */
+  async loadAvatarPermissionMode(): Promise<string> {
+    return this.chatService.loadAvatarPermissionMode();
+  }
+
+  /**
+   * Phase 4D-7: 设置 Avatar 动画循环播放开关。
+   *
+   * enabled=true 时 avatar_perform 强制 returnPolicy=KEEP, 动画持续循环。
+   * 持久化到 AppPreferences, 跨页面生命周期保持。
+   *
+   * 同时同步给 turnResponseCoordinator: LOCAL_FALLBACK 兜底路径不走 Executor,
+   * 需由 Coordinator 自行根据此标志选择 returnPolicy=KEEP / DEFAULT_POSE。
+   */
+  setAvatarLoopAnimation(enabled: boolean): void {
+    this.chatService.setAvatarLoopAnimation(enabled);
+    if (this.turnResponseCoordinator !== null) {
+      this.turnResponseCoordinator.setLoopAnimationMode(enabled);
+    }
+  }
+
+  /**
+   * Phase 4D-7: 从 AppPreferences 加载循环播放开关。
+   *
+   * 加载后同步给 turnResponseCoordinator, 确保页面初始化时 Coordinator 状态与持久化一致。
+   *
+   * @returns 实际生效的开关状态
+   */
+  async loadAvatarLoopAnimation(): Promise<boolean> {
+    const enabled: boolean = await this.chatService.loadAvatarLoopAnimation();
+    if (this.turnResponseCoordinator !== null) {
+      this.turnResponseCoordinator.setLoopAnimationMode(enabled);
+    }
+    return enabled;
+  }
+
+  /**
+   * Phase 4D-8: 设置"每次回复必调用动作"开关。
+   *
+   * enabled=true 时策略改为 REQUIRED, AI 每次回复必须调用 avatar_perform。
+   * 持久化到 AppPreferences, 跨页面生命周期保持。
+   *
+   * 同时同步给 turnResponseCoordinator: 当 AI 未调用工具走 LOCAL_FALLBACK 兜底时,
+   * 从能力快照选首个可用动画播放, 确保每次回复都有可见动画。
+   */
+  setAvatarAlwaysPerform(enabled: boolean): void {
+    this.chatService.setAvatarAlwaysPerform(enabled);
+    if (this.turnResponseCoordinator !== null) {
+      this.turnResponseCoordinator.setAlwaysPerformMode(enabled);
+    }
+  }
+
+  /**
+   * Phase 4D-8: 从 AppPreferences 加载"每次回复必调用动作"开关。
+   *
+   * 加载后同步给 turnResponseCoordinator, 确保页面初始化时 Coordinator 状态与持久化一致。
+   *
+   * @returns 实际生效的开关状态
+   */
+  async loadAvatarAlwaysPerform(): Promise<boolean> {
+    const enabled: boolean = await this.chatService.loadAvatarAlwaysPerform();
+    if (this.turnResponseCoordinator !== null) {
+      this.turnResponseCoordinator.setAlwaysPerformMode(enabled);
+    }
+    return enabled;
   }
 
   /**
@@ -1135,6 +1232,9 @@ export class ChatViewModel {
    *
    * 透传到 ChatService.setAvatarToolIntegration。
    * 任一参数为 null 时不启用 Avatar Tool Calling, 普通聊天保持原行为。
+   *
+   * Phase 4D-8: 同时把 snapshotProvider 注入到 turnResponseCoordinator,
+   * 使 alwaysPerformMode 兜底能从能力快照选首个可用动画播放。
    */
   setAvatarToolIntegration(params: ArkWebAvatarToolIntegrationParams): void {
     this.chatService.setAvatarToolIntegration(
@@ -1147,6 +1247,16 @@ export class ChatViewModel {
       params.sessionState,
       params.rhythmPolicy
     );
+    if (this.turnResponseCoordinator !== null) {
+      if (params.snapshotProvider !== null) {
+        const fn: () => ArkWebAvatarAiCapabilitySnapshot | null = params.snapshotProvider;
+        this.turnResponseCoordinator.setCapabilitySnapshotProvider(
+          new CapabilitySnapshotProviderAdapter(fn)
+        );
+      } else {
+        this.turnResponseCoordinator.setCapabilitySnapshotProvider(null);
+      }
+    }
   }
 
   /**
@@ -1155,9 +1265,14 @@ export class ChatViewModel {
    * - 权限恢复 DENY
    * - 清空所有依赖引用
    * - 接线状态变为 DISPOSED
+   *
+   * Phase 4D-8: 同时清空 Coordinator 的 capabilitySnapshotProvider。
    */
   clearAvatarToolIntegration(): void {
     this.chatService.clearAvatarToolIntegration();
+    if (this.turnResponseCoordinator !== null) {
+      this.turnResponseCoordinator.setCapabilitySnapshotProvider(null);
+    }
   }
 
   /**
@@ -1200,6 +1315,27 @@ export class ChatViewModel {
   }
 
   /**
+   * Phase 4D-2: 加载持久化的探测结果 (如有)。
+   *
+   * 在页面进入 / Tool Integration 接线完成时调用。
+   * 仅当持久化记录有效 (adapter 版本匹配、Provider+Model 未变、未过期) 时恢复状态。
+   *
+   * @returns true=已加载有效记录, false=无记录或已失效
+   */
+  async loadPersistedProbeResult(): Promise<boolean> {
+    return this.chatService.loadPersistedProbeResult();
+  }
+
+  /**
+   * Phase 4D-2: 清除当前 Provider+Model 的持久化探测记录。
+   *
+   * 在用户主动清除验证记录时调用。
+   */
+  async clearPersistedProbeResult(): Promise<void> {
+    await this.chatService.clearPersistedProbeResult();
+  }
+
+  /**
    * Phase 4A-3R: 运行只读 Avatar 工具烟雾测试 (avatar_get_state)。
    *
    * 前置条件: nativeToolCallingSupport === SUPPORTED 且权限为 READ_ONLY / CONTROL_THIS_CHAT。
@@ -1207,6 +1343,37 @@ export class ChatViewModel {
    */
   async runReadOnlyAvatarToolSmokeTest(): Promise<ReadOnlyAvatarToolSmokeTestResult> {
     return this.chatService.runReadOnlyAvatarToolSmokeTest();
+  }
+
+  /**
+   * Phase 4D-4: Avatar 动画运行时测试 (不经过 AI Provider)。
+   *
+   * 直接构造 avatar_perform 工具调用, 测试 Tool Executor → Bridge → Lifecycle → PLAYING 链路。
+   * 前置条件: 权限为 CONTROL_THIS_CHAT 且有可用动画。
+   * 不经过 Provider, 不要求 nativeToolCallingSupport === SUPPORTED。
+   */
+  async runAvatarRuntimeSmokeTest(): Promise<AvatarRuntimeSmokeTestResult> {
+    return this.chatService.runAvatarRuntimeSmokeTest();
+  }
+
+  /**
+   * Phase 4D-5: Provider AI 动画调用测试 (经过真实 AI Provider)。
+   *
+   * 通过发送特定提示词, 让 AI 返回 avatar_perform 工具调用, 测试完整端到端链路:
+   *   ChatService 请求 → Provider 收到 tools → Provider 返回 avatar_perform
+   *   → Tool Executor → AvatarChatBridge → LifecycleController → PLAYING
+   *
+   * 前置条件:
+   *   - Tool Integration 已连接
+   *   - nativeToolCallingSupport === SUPPORTED
+   *   - 权限为 CONTROL_THIS_CHAT
+   *   - 有可用动画
+   *
+   * 与 runAvatarRuntimeSmokeTest 的区别: 经过真实 AI Provider, toolCallId 由 Provider 分配。
+   * 与 runReadOnlyAvatarToolSmokeTest 的区别: 测试 avatar_perform (演出工具), 会实际播放动画。
+   */
+  async runAiAvatarPerformSmokeTest(): Promise<AiAvatarPerformSmokeTestResult> {
+    return this.chatService.runAiAvatarPerformSmokeTest();
   }
 
   dispose(): void {
