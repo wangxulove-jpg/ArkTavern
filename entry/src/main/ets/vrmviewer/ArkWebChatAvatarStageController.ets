@@ -2883,6 +2883,9 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
    * Phase 4B-2R: 在提交给 LifecycleController 前, 解析 performanceHintJson
    * 更新 currentActionId / currentPoseId / currentExpressionId 等跟踪字段,
    * 供 AI 面板运行时状态显示。
+   *
+   * Phase 4D-1: 识别 DIALOGUE_LOCAL_FALLBACK source, 设置镜头保持标志,
+   * 使本地兜底回应不切换镜头 (保持当前手动/AUTO 镜头)。
    */
   private async onBridgeFinalResult(result: ArkWebAvatarChatFinalResult): Promise<void> {
     if (this.disposed || this.dialogueLifecycle === null) {
@@ -2894,6 +2897,14 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
     }
     // Phase 4B-2R: 解析 hint 更新跟踪字段 (显示用, 执行状态来自 Runtime Debug State)
     this.updateTrackingFromHint(result.performanceHintJson);
+
+    // Phase 4D-1: DIALOGUE_LOCAL_FALLBACK 设置镜头保持标志
+    // 本地兜底回应不切换镜头 (保持当前手动/AUTO 镜头, 不进入脸部特写)
+    const isLocalFallback: boolean = result.source === 'DIALOGUE_LOCAL_FALLBACK';
+    if (isLocalFallback && this.shotDirector !== null) {
+      this.shotDirector.setLocalFallbackShotPreservation(true);
+    }
+
     let executed: boolean = false;
     let errorCode: string = '';
     let errorMessage: string = '';
@@ -2912,6 +2923,11 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
       errorCode = 'ON_BRIDGE_FINAL_THREW';
       errorMessage = e instanceof Error ? e.message : String(e);
       console.warn(LOG_TAG, 'onBridgeFinalResult threw: ' + errorMessage);
+    } finally {
+      // Phase 4D-1: 无论成功失败, 重置镜头保持标志 (不跨 Turn 持久化)
+      if (isLocalFallback && this.shotDirector !== null) {
+        this.shotDirector.setLocalFallbackShotPreservation(false);
+      }
     }
     // Phase 4B-2R2: 记录最后 Lifecycle 状态供诊断显示
     if (this.dialogueLifecycle !== null) {

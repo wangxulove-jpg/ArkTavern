@@ -203,15 +203,22 @@ export interface ChatServiceCallbacks {
    * 用途: ChatViewModel 实现此回调,把结果发布到应用级 Avatar 桥接器,
    *       供 VrmViewerPage 经 LifecycleController 消费演出。
    *
+   * Phase 4D-1 扩展: 增加 nativeAvatarToolAttempted/nativeAvatarToolExecuted 参数,
+   *                   供 ArkWebAvatarTurnResponseCoordinator 做优先级选择。
+   *
    * 不修改: 请求 URL / 请求体 / API Key / 流式解析协议 / 重试 / 重新生成。
-   *         本回调只透传 assistantMessageId + performanceHintJson。
+   *         本回调只透传 assistantMessageId + performanceHintJson + native tool 标记。
    *
    * @param assistantMessageId 真实助手消息 ID (作为 turnId 使用)
    * @param performanceHintJson 可选 Hint JSON (无则空字符串)
+   * @param nativeAvatarToolAttempted 本轮是否尝试过原生 Avatar Tool Calling
+   * @param nativeAvatarToolExecuted 本轮原生 Avatar Tool Calling 是否执行成功
    */
   onAssistantMessageFinalized?: (
     assistantMessageId: string,
-    performanceHintJson: string
+    performanceHintJson: string,
+    nativeAvatarToolAttempted: boolean,
+    nativeAvatarToolExecuted: boolean
   ) => void;
 }
 
@@ -495,6 +502,15 @@ export class ChatService {
    * - 在 sendMessage/regenerate 开始时重置为 false
    */
   private nativeAvatarToolExecutedForTurn: boolean = false;
+  /**
+   * Phase 4D-1: 当前 Turn 是否尝试过原生 Avatar Tool Calling。
+   *
+   * - true 表示 Provider 返回了结构化 tool_calls 且包含 Avatar 工具
+   * - 即使执行失败也为 true (已选择 Native Tool 路径, 不再执行本地兜底)
+   * - 在 sendMessage/regenerate 开始时重置为 false
+   * - 传给 ArkWebAvatarTurnResponseCoordinator 做优先级选择
+   */
+  private nativeAvatarToolAttemptedForTurn: boolean = false;
   /**
    * Phase 4A-3: 当前 Turn 已执行的工具轮次。
    *
@@ -2217,6 +2233,7 @@ export class ChatService {
    */
   private resetAvatarToolTurnState(): void {
     this.nativeAvatarToolExecutedForTurn = false;
+    this.nativeAvatarToolAttemptedForTurn = false;
     this.avatarToolRoundCount = 0;
     this.avatarToolCallCountForTurn = 0;
     this.pendingToolResultsForNextRound = [];
@@ -2270,6 +2287,11 @@ export class ChatService {
     if (toolCalls === undefined || toolCalls.length === 0) {
       return false;
     }
+
+    // Phase 4D-1: 标记本轮已尝试原生 Avatar Tool Calling
+    // 即使后续执行失败或达到轮次限制, 也视为已选择 Native Tool 路径
+    // Coordinator 据此跳过 Structured Hint 和 Local Fallback
+    this.nativeAvatarToolAttemptedForTurn = true;
 
     // 校验轮次限制
     if (this.avatarToolRoundCount >= AVATAR_TOOL_MAX_ROUNDS) {
@@ -2541,6 +2563,7 @@ export class ChatService {
 
     // Phase 4A-3: performanceHintJson 冲突策略
     // 同一 Turn 已执行原生 Avatar Tool Call 时, 忽略 performanceHintJson
+    // Phase 4D-1: 传入 nativeAvatarToolAttempted/nativeAvatarToolExecuted 供 Coordinator 优先级选择
     if (finalStatus !== ChatMessageStatus.Failed
       && callbacks.onAssistantMessageFinalized !== undefined) {
       try {
@@ -2548,7 +2571,12 @@ export class ChatService {
         if (!this.nativeAvatarToolExecutedForTurn) {
           hintJson = result.performanceHintJson ?? '';
         }
-        callbacks.onAssistantMessageFinalized(assistantId, hintJson);
+        callbacks.onAssistantMessageFinalized(
+          assistantId,
+          hintJson,
+          this.nativeAvatarToolAttemptedForTurn,
+          this.nativeAvatarToolExecutedForTurn
+        );
       } catch (e) {
         Logger.warn(LOG_TAG, 'onAssistantMessageFinalized threw: ' +
           (e instanceof Error ? e.message : String(e)));

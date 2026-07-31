@@ -62,6 +62,18 @@ export class ArkWebAvatarShotDirector {
   private state: ArkWebAvatarShotDirectorState = 'IDLE';
   /** Phase 4B-2R2: 镜头控制模式 (AUTO 默认, MANUAL 锁定当前镜头) */
   private controlMode: ArkWebAvatarShotControlMode = 'AUTO';
+  /**
+   * Phase 4D-1: 本地兜底镜头保持标志。
+   *
+   * 为 true 时, prepareForCommand 不切换镜头 (与手动模式相同),
+   * 但不影响 controlMode 字段 (手动模式优先级仍高于此标志)。
+   *
+   * 生命周期:
+   *   - 由 ChatAvatarStageController.onBridgeFinalResult 在提交 DIALOGUE_LOCAL_FALLBACK 前设置
+   *   - 提交完成后立即重置为 false
+   *   - 不跨 Turn 持久化
+   */
+  private localFallbackShotPreservation: boolean = false;
 
   /** 表情恢复定时器 ID (-1 表示无) */
   private expressionReturnTimer: number = -1;
@@ -120,12 +132,36 @@ export class ArkWebAvatarShotDirector {
   }
 
   /**
+   * Phase 4D-1: 设置本地兜底镜头保持标志。
+   *
+   * 为 true 时, prepareForCommand 不切换镜头 (DIALOGUE_LOCAL_FALLBACK 保持当前镜头)。
+   * 手动模式 (MANUAL_*) 优先级仍高于此标志。
+   *
+   * @param enabled true=保持当前镜头, false=恢复自动镜头策略
+   */
+  setLocalFallbackShotPreservation(enabled: boolean): void {
+    if (this.disposed) {
+      return;
+    }
+    this.localFallbackShotPreservation = enabled;
+    console.info(LOG_TAG, `setLocalFallbackShotPreservation: ${enabled}`);
+  }
+
+  /**
+   * Phase 4D-1: 判断是否应保持当前镜头 (手动模式或本地兜底模式)。
+   */
+  private shouldPreserveShot(): boolean {
+    return this.isManualMode() || this.localFallbackShotPreservation;
+  }
+
+  /**
    * 准备镜头 (演出执行前调用)。
    *
    * 流程:
    * 1. 解析命令对应的目标镜头
    * 2. 命令非法 → 记录错误, 返回 false (不阻塞演出, 但镜头不切换)
    * 3. Phase 4B-2R2: 手动模式下不切换镜头, 直接返回 true (允许演出继续)
+   *    Phase 4D-1: 本地兜底模式下也不切换镜头 (DIALOGUE_LOCAL_FALLBACK 保持当前镜头)
    * 4. 已处于目标镜头 → no-op, 返回 true
    * 5. 平滑切换到目标镜头
    * 6. 仅 expression-only 命令设置表情恢复定时器
@@ -150,9 +186,11 @@ export class ArkWebAvatarShotDirector {
     this.clearExpressionReturnTimer();
 
     // Phase 4B-2R2: 手动模式下不切换镜头, 直接允许演出继续
-    if (this.isManualMode()) {
+    // Phase 4D-1: 本地兜底模式下也不切换镜头 (DIALOGUE_LOCAL_FALLBACK 保持当前镜头)
+    if (this.shouldPreserveShot()) {
       console.info(LOG_TAG,
-        `prepareForCommand: manual mode ${this.controlMode}, keep shot, command=${command.commandId}`);
+        `prepareForCommand: preserve shot (manual=${this.isManualMode()}` +
+        ` fallback=${this.localFallbackShotPreservation}), command=${command.commandId}`);
       // 仅 expression-only 命令仍设置恢复定时器 (用于表情状态恢复, 不切换镜头)
       if (command.motionType === 'none' && command.expressionId.length > 0) {
         this.scheduleExpressionReturn(command.commandId, command.durationMs);
@@ -179,6 +217,7 @@ export class ArkWebAvatarShotDirector {
    * 演出停止时调用 (恢复 FULL_BODY)。
    *
    * Phase 4B-2R2: 手动模式下不切换镜头, 只清除定时器。
+   * Phase 4D-1: 本地兜底模式下也不切换镜头。
    *
    * @param reason 停止原因
    */
@@ -187,8 +226,8 @@ export class ArkWebAvatarShotDirector {
       return;
     }
     this.clearExpressionReturnTimer();
-    if (this.isManualMode()) {
-      console.info(LOG_TAG, `onPerformanceStopped: manual mode, keep shot, reason=${reason}`);
+    if (this.shouldPreserveShot()) {
+      console.info(LOG_TAG, `onPerformanceStopped: preserve shot, reason=${reason}`);
       return;
     }
     await this.transitionToFullBody(`STOP:${reason}`);
@@ -198,6 +237,7 @@ export class ArkWebAvatarShotDirector {
    * 演出失败时调用 (恢复 FULL_BODY)。
    *
    * Phase 4B-2R2: 手动模式下不切换镜头, 只清除定时器。
+   * Phase 4D-1: 本地兜底模式下也不切换镜头。
    *
    * @param reason 失败原因
    */
@@ -206,8 +246,8 @@ export class ArkWebAvatarShotDirector {
       return;
     }
     this.clearExpressionReturnTimer();
-    if (this.isManualMode()) {
-      console.info(LOG_TAG, `onPerformanceFailed: manual mode, keep shot, reason=${reason}`);
+    if (this.shouldPreserveShot()) {
+      console.info(LOG_TAG, `onPerformanceFailed: preserve shot, reason=${reason}`);
       return;
     }
     await this.transitionToFullBody(`FAILED:${reason}`);

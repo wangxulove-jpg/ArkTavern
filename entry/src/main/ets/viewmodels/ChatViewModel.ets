@@ -50,6 +50,12 @@ import { ArkWebAvatarDialogueStrategyBuilder } from '../avatarai/ArkWebAvatarDia
 import { ArkWebAvatarDialogueSessionState } from '../avatarai/ArkWebAvatarDialogueSessionState';
 import { ArkWebAvatarDialogueRhythmPolicy } from '../avatarai/ArkWebAvatarDialogueRhythmPolicy';
 import { ArkWebAvatarToolIntegrationParams } from '../avatarai/ArkWebAvatarToolIntegration';
+import { ArkWebAvatarTurnResponseCoordinator } from '../avatarai/ArkWebAvatarTurnResponseCoordinator';
+import {
+  ArkWebAvatarFinalTurn,
+  ArkWebAvatarLocalFallbackConfig,
+  ArkWebAvatarTurnResponseResult
+} from '../avatarai/ArkWebAvatarTurnResponseTypes';
 import {
   ProviderInfoSnapshot,
   NativeToolCallingProbeResult
@@ -121,6 +127,13 @@ export class ChatViewModel {
   private characterService: CharacterService;
   private promptPresetService: PromptPresetService;
   private disposed: boolean = false;
+  /**
+   * Phase 4D-1: 逐轮 Avatar 回应协调器。
+   *
+   * 生命周期: 由 ChatViewModel 持有, 在 dispose 时销毁。
+   * 职责: 按优先级选择每 Turn 的唯一 Avatar 回应来源 (Native Tool > Structured Hint > Local Fallback)。
+   */
+  private turnResponseCoordinator: ArkWebAvatarTurnResponseCoordinator | null = null;
 
   // ===== 流式 UI 节流(避免高频 delta 在同一事件循环 tick 内被 ArkUI 合并) =====
   /** setTimeout 句柄,-1 表示无 pending flush */
@@ -150,6 +163,14 @@ export class ChatViewModel {
     this.modelService = modelService;
     this.characterService = characterService;
     this.promptPresetService = promptPresetService;
+    // Phase 4D-1: 初始化逐轮 Avatar 回应协调器
+    // - 复用应用级 Bridge 单例
+    // - capabilitySnapshotProvider 设为 null, 由 AI 面板后续注入
+    // - 生命周期跟随 ChatViewModel, dispose 时销毁
+    this.turnResponseCoordinator = new ArkWebAvatarTurnResponseCoordinator({
+      bridge: ArkWebAvatarChatBridge.getInstance(),
+      capabilitySnapshotProvider: null
+    });
   }
 
   get canSend(): boolean {
@@ -1195,6 +1216,13 @@ export class ChatViewModel {
       clearTimeout(this.flushTimerId);
       this.flushTimerId = -1;
     }
+    // Phase 4D-1: 销毁逐轮回应协调器
+    // - 清空 turnId 缓存, 避免旧 Turn 延迟执行
+    // - 不 dispose Bridge (应用级单例)
+    if (this.turnResponseCoordinator !== null) {
+      this.turnResponseCoordinator.dispose();
+      this.turnResponseCoordinator = null;
+    }
     this.chatService.dispose();
   }
 
@@ -1296,7 +1324,9 @@ export class ChatViewModel {
       // - 流式 token 期间不触发 (ChatService 只在 onComplete 调用此回调)
       onAssistantMessageFinalized: (
         assistantMessageId: string,
-        performanceHintJson: string
+        performanceHintJson: string,
+        nativeAvatarToolAttempted: boolean,
+        nativeAvatarToolExecuted: boolean
       ): void => {
         if (this.disposed) {
           return;
@@ -1305,23 +1335,64 @@ export class ChatViewModel {
           Logger.warn(LOG_TAG, 'onAssistantMessageFinalized ignored: empty assistantMessageId');
           return;
         }
-        const result: ArkWebAvatarChatFinalResult = {
-          turnId: assistantMessageId,
-          performanceHintJson: performanceHintJson,
-          finalizedAt: Date.now(),
-          source: ArkWebAvatarChatFinalResultSource.SINGLE_CHAT
-        };
-        // 异步发布,不阻塞 ChatService.onComplete 流程
-        // 失败只记录轻量日志,不弹出阻塞式错误
-        ArkWebAvatarChatBridge.getInstance().publishFinalResult(result).then((ok: boolean) => {
-          if (!ok) {
-            Logger.warn(LOG_TAG,
-              `publishFinalResult rejected turnId=${assistantMessageId} (Bridge state or invalid input)`);
-          }
-        }).catch((e: Object): void => {
-          Logger.warn(LOG_TAG, 'publishFinalResult threw: ' +
-            (e instanceof Error ? e.message : String(e)));
-        });
+
+        // Phase 4D-1: 通过 Coordinator 做优先级选择
+        // - NATIVE_TOOL: 跳过 Hint 和 Fallback (Coordinator 不重复提交)
+        // - STRUCTURED_HINT: 提交 hintJson 到 Bridge (现有路径)
+        // - LOCAL_FALLBACK: 提交本地兜底演出命令到 Bridge (Coordinator 内部提交)
+        // - NONE: 不提交 (每轮回应关闭)
+        if (this.turnResponseCoordinator !== null) {
+          const turn: ArkWebAvatarFinalTurn = {
+            turnId: assistantMessageId,
+            finalizedAt: Date.now(),
+            nativeAvatarToolAttempted: nativeAvatarToolAttempted,
+            nativeAvatarToolExecuted: nativeAvatarToolExecuted,
+            performanceHintJson: performanceHintJson,
+            source: ArkWebAvatarChatFinalResultSource.SINGLE_CHAT
+          };
+          // 异步执行,不阻塞 ChatService.onComplete 流程
+          // 失败只记录轻量日志,不弹出阻塞式错误
+          this.turnResponseCoordinator!.onAssistantTurnFinalized(turn).then((res: ArkWebAvatarTurnResponseResult) => {
+            // 如果是 STRUCTURED_HINT, 需要由这里提交到 Bridge (Coordinator 不重复提交 Hint)
+            if (res.responseSource === 'STRUCTURED_HINT' && res.submitted) {
+              const bridgeResult: ArkWebAvatarChatFinalResult = {
+                turnId: assistantMessageId,
+                performanceHintJson: performanceHintJson,
+                finalizedAt: Date.now(),
+                source: ArkWebAvatarChatFinalResultSource.SINGLE_CHAT
+              };
+              ArkWebAvatarChatBridge.getInstance().publishFinalResult(bridgeResult).then((ok: boolean) => {
+                if (!ok) {
+                  Logger.warn(LOG_TAG,
+                    `publishFinalResult rejected turnId=${assistantMessageId} (Bridge state or invalid input)`);
+                }
+              }).catch((e: Object): void => {
+                Logger.warn(LOG_TAG, 'publishFinalResult threw: ' +
+                  (e instanceof Error ? e.message : String(e)));
+              });
+            }
+          }).catch((e: Object): void => {
+            Logger.warn(LOG_TAG, 'onAssistantTurnFinalized threw: ' +
+              (e instanceof Error ? e.message : String(e)));
+          });
+        } else {
+          // Coordinator 未注入 (旧路径兜底): 直接提交 hintJson 到 Bridge
+          const result: ArkWebAvatarChatFinalResult = {
+            turnId: assistantMessageId,
+            performanceHintJson: performanceHintJson,
+            finalizedAt: Date.now(),
+            source: ArkWebAvatarChatFinalResultSource.SINGLE_CHAT
+          };
+          ArkWebAvatarChatBridge.getInstance().publishFinalResult(result).then((ok: boolean) => {
+            if (!ok) {
+              Logger.warn(LOG_TAG,
+                `publishFinalResult rejected turnId=${assistantMessageId} (Bridge state or invalid input)`);
+            }
+          }).catch((e: Object): void => {
+            Logger.warn(LOG_TAG, 'publishFinalResult threw: ' +
+              (e instanceof Error ? e.message : String(e)));
+          });
+        }
       }
     };
   }
