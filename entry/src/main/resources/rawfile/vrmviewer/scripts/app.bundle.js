@@ -29338,7 +29338,8 @@ void main() {
         webglErr.code = WEBGL_NOT_SUPPORTED;
         throw webglErr;
       }
-      this.renderer.setPixelRatio(1);
+      var dpr = Math.min(window.devicePixelRatio || 1, 3);
+      this.renderer.setPixelRatio(dpr);
       this.renderer.outputColorSpace = SRGBColorSpace;
       this.renderer.setClearAlpha(1);
       this.renderer.setSize(width, height, false);

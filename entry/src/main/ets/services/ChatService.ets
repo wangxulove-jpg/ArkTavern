@@ -3124,6 +3124,23 @@ export class ChatService {
       throw new Error('无法读取当前提示词预设，请重试');
     }
 
+    // Phase 4D-9: 预设加载诊断日志
+    // 用于验证用户在设置 tab 选择的预设是否真正被加载到请求中
+    if (preset === null) {
+      Logger.info(LOG_TAG, 'createPresetRequestSnapshot: no current preset (user cleared or never set)');
+    } else {
+      const promptPreview: string = preset.systemPrompt.length > 60
+        ? preset.systemPrompt.substring(0, 60) + '...(truncated)'
+        : preset.systemPrompt;
+      Logger.info(LOG_TAG, `createPresetRequestSnapshot: preset loaded id=${preset.id}` +
+        ` name=${preset.name}` +
+        ` systemPromptLen=${preset.systemPrompt.length}` +
+        ` promptPreview=${promptPreview}` +
+        ` temp=${preset.temperature !== undefined ? preset.temperature.toString() : 'undefined'}` +
+        ` topP=${preset.topP !== undefined ? preset.topP.toString() : 'undefined'}` +
+        ` maxTokens=${preset.maxOutputTokens !== undefined ? preset.maxOutputTokens.toString() : 'undefined'}`);
+    }
+
     if (preset === null) {
       return createSnapshotWithoutPreset(
         resolveEffectiveGenerationSettings(base)
@@ -3161,6 +3178,12 @@ export class ChatService {
     presetSystemPrompt?: string,
     excludeMessageId?: string
   ): Promise<ChatMessage[]> {
+    // Phase 4D-9: 诊断日志,确认 presetSystemPrompt 是否传入 PromptBuilder
+    Logger.info(LOG_TAG, 'buildRequestMessages: presetSystemPrompt=' +
+      (presetSystemPrompt !== undefined
+        ? `len=${presetSystemPrompt.length}`
+        : 'undefined'));
+
     // 确定用于构建 Prompt 的消息列表
     let sourceMessages: ChatMessage[];
     if (excludeMessageId !== undefined && excludeMessageId.length > 0) {

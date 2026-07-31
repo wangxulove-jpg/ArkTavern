@@ -312,7 +312,21 @@ export class ViewerScene {
       webglErr.code = WEBGL_NOT_SUPPORTED;
       throw webglErr;
     }
-    this.renderer.setPixelRatio(1);
+    // Phase 4D-9: 提升渲染精度, 消除锯齿
+    // 原值 setPixelRatio(1) 渲染分辨率 = CSS 像素 1:1, 在高 DPI 手机上严重模糊。
+    // 改为使用设备实际 DPI:
+    //   - dpr=2~3 时渲染分辨率 = CSS 像素 × dpr, 充分利用物理像素, 锐度大幅提升
+    //   - clamp 到 [1, 3], 兼顾质量与性能:
+    //     * dpr=2 已能消除大部分锯齿 (像素量 = dpr=1 的 4 倍)
+    //     * dpr=3 进一步消除细小边缘锯齿 (像素量 = dpr=2 的 2.25 倍)
+    //     * 超过 3 的设备 clamp 到 3, 避免像素量过大导致帧率显著下降
+    //   - fallback 1, 兼容 dpr 获取失败的情况
+    // 与 antialias: true (MSAA 4x) 协同:
+    //   - MSAA 处理几何边缘锯齿
+    //   - 高 dpr 处理着色锯齿和细节模糊
+    //   - 两者叠加在 ArkWeb WebGL 实现下能达到最佳抗锯齿效果
+    var dpr = Math.min(window.devicePixelRatio || 1, 3);
+    this.renderer.setPixelRatio(dpr);
     // 0.176 推荐 API,等效于 Figure 的 outputEncoding = sRGBEncoding
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     // 默认 clearAlpha=1 (VIEWER 模式不透明)。CHAT_STAGE 由 setRenderProfile 改为 0。
