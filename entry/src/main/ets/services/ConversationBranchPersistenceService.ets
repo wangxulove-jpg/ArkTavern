@@ -968,19 +968,32 @@ export class ConversationBranchPersistenceService {
           }
         }
       }
+      // 计算当前 Branch 中的 User 消息总数(用于 currentMaxTurn)
+      let totalUserMessages: number = 0;
+      for (let j = 0; j < links.length; j++) {
+        const msg: ChatMessage | null =
+          await this.messageRepository.getById(links[j].messageId);
+        if (msg !== null && msg.role === ChatRole.User) {
+          totalUserMessages++;
+        }
+      }
+
       result.push({
         summary: summary,
         branchId: summary.id,
         parentBranchId: summary.parentBranchId,
         forkMessageId: summary.forkMessageId,
         forkTurnNumber: forkTurnNumber,
-        currentMaxTurn: forkTurnNumber,
+        currentMaxTurn: totalUserMessages,
         forkUserPreview: forkUserPreview,
         firstDivergentAssistantPreview: firstDivergentAssistantPreview,
         messageCount: summary.messageCount,
         isRoot: summary.isRoot,
         isActive: summary.isActive,
-        createdAt: summary.createdAt
+        createdAt: summary.createdAt,
+        nodeId: summary.id,
+        isTerminal: false,
+        isCurrent: summary.isActive
       });
     }
     return result;

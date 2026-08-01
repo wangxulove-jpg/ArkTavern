@@ -15,6 +15,8 @@
  * 分支树节点布局信息。
  */
 export interface BranchMapNodeLayout {
+  /** 地图节点唯一 ID(与 branchId 解耦) */
+  nodeId: string;
   /** 对应 Branch ID */
   branchId: string;
   /** 父 Branch ID(Root 为空字符串) */
@@ -29,8 +31,6 @@ export interface BranchMapNodeLayout {
   forkTurnNumber: number;
   /**
    * 当前 Branch 覆盖的最深轮次(= Branch 中 User 消息数)。
-   * T-6.4B-2-R1: 节点延伸显示,高度 = (currentMaxTurn - forkTurnNumber + 1) × LEVEL_GAP。
-   * 这样分支节点会从 fork 点延伸到当前最深轮次,反映分支的完整覆盖范围。
    */
   currentMaxTurn: number;
   /** 节点左上角 x 坐标 */
@@ -45,6 +45,10 @@ export interface BranchMapNodeLayout {
   siblingIndex: number;
   /** 同层节点总数 */
   siblingCount: number;
+  /** 是否为分支末端显示节点 */
+  isTerminal: boolean;
+  /** 是否为用户当前所在节点 */
+  isCurrent: boolean;
 }
 
 /**
@@ -69,6 +73,8 @@ export interface BranchTreeEdge {
   parentBranchId: string;
   /** 子节点 Branch ID */
   childBranchId: string;
+  /** 子节点唯一 ID(用于 ForEach key,避免末端节点与真实节点 key 冲突) */
+  childNodeId: string;
   /** 起点 x(父节点底部中心) */
   startX: number;
   /** 起点 y(父节点底部中心) */

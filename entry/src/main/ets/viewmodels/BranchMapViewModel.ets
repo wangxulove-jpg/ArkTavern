@@ -27,8 +27,8 @@ import {
   ConversationRecordCounts
 } from '../models/ConversationBranch';
 import { BranchMapDisplayInfo } from '../models/BranchMapDisplayInfo';
-import { BranchTreeLayoutResult } from '../models/BranchMapNodeLayout';
-import { computeBranchTreeLayout } from '../utils/BranchTreeLayout';
+import { BranchMapNodeLayout, BranchTreeLayoutResult, BranchTreeEdge } from '../models/BranchMapNodeLayout';
+import { computeBranchTreeLayout, getNodeWidth, getNodeHeight, getVerticalGap, getCanvasPadding } from '../utils/BranchTreeLayout';
 import { Logger } from '../utils/Logger';
 
 const LOG_TAG: string = 'BranchMapViewModel';
@@ -107,7 +107,9 @@ export class BranchMapViewModel {
     this.branches = branches;
     this.activeBranchId = activeBranch !== undefined ? activeBranch.id : '';
     this.recordCounts = counts;
-    this.layout = computeBranchTreeLayout(branches, displayInfos);
+    let layout: BranchTreeLayoutResult = computeBranchTreeLayout(branches, displayInfos);
+    layout = this.appendCurrentHeadNode(displayInfos, layout);
+    this.layout = layout;
   }
 
   /**
@@ -250,6 +252,97 @@ export class BranchMapViewModel {
     const info: BranchMapDisplayInfo | undefined =
       this.getDisplayInfo(this.selectedBranchId);
     return info !== undefined ? info.messageCount : 0;
+  }
+
+  /**
+   * 为当前对话的 Active Branch 追加末端显示节点。
+   * 解决"不创建分支就不显示当前对话位置"的问题。
+   *
+   * 逻辑:
+   * - 查找 Active Branch 在布局中的最后一个真实节点
+   * - 在其下方追加一个 isTerminal=true, isCurrent=true 的末端节点
+   * - 添加连接线从最后一个真实节点到末端节点
+   * - 更新画布高度
+   */
+  private appendCurrentHeadNode(
+    displayInfos: BranchMapDisplayInfo[],
+    layout: BranchTreeLayoutResult
+  ): BranchTreeLayoutResult {
+    if (this.activeBranchId.length === 0) {
+      return layout;
+    }
+
+    // 查找 Active Branch 的展示信息
+    const activeInfo: BranchMapDisplayInfo | undefined = displayInfos.find(
+      (info: BranchMapDisplayInfo): boolean => info.branchId === this.activeBranchId
+    );
+    if (activeInfo === undefined) {
+      return layout;
+    }
+
+    // 查找 Active Branch 在布局中的最后一个真实节点
+    const branchNodes: BranchMapNodeLayout[] = layout.nodes.filter(
+      (n: BranchMapNodeLayout): boolean => n.branchId === this.activeBranchId && !n.isTerminal
+    );
+    if (branchNodes.length === 0) {
+      return layout;
+    }
+    // 按 Y 坐标排序找到最后的节点
+    branchNodes.sort((a: BranchMapNodeLayout, b: BranchMapNodeLayout): number => a.y - b.y);
+    const lastNode: BranchMapNodeLayout = branchNodes[branchNodes.length - 1];
+
+    // 计算末端节点 nodeId
+    const terminalNodeId: string = 'head:' + this.activeBranchId + ':' + activeInfo.currentMaxTurn;
+
+    // 计算末端节点的 Y 坐标(在最后一个节点下方一层)
+    const NODE_HEIGHT: number = getNodeHeight();
+    const VERTICAL_GAP: number = getVerticalGap();
+    const NODE_WIDTH: number = getNodeWidth();
+    const CANVAS_PADDING: number = getCanvasPadding();
+
+    const terminalY: number = lastNode.y + NODE_HEIGHT + VERTICAL_GAP;
+
+    // 创建末端节点布局
+    const terminalNode: BranchMapNodeLayout = {
+      nodeId: terminalNodeId,
+      branchId: this.activeBranchId,
+      parentBranchId: lastNode.parentBranchId,
+      depth: lastNode.depth + 1,
+      forkTurnNumber: activeInfo.currentMaxTurn,
+      currentMaxTurn: activeInfo.currentMaxTurn,
+      x: lastNode.x,
+      y: terminalY,
+      width: NODE_WIDTH,
+      height: NODE_HEIGHT,
+      siblingIndex: 0,
+      siblingCount: 0,
+      isTerminal: true,
+      isCurrent: true
+    };
+
+    // 创建连接线(最后一个真实节点 → 末端节点)
+    const terminalEdge: BranchTreeEdge = {
+      parentBranchId: lastNode.branchId,
+      childBranchId: terminalNode.branchId,
+      childNodeId: terminalNode.nodeId,
+      startX: lastNode.x + lastNode.width / 2,
+      startY: lastNode.y + lastNode.height,
+      endX: terminalNode.x + terminalNode.width / 2,
+      endY: terminalNode.y
+    };
+
+    // 更新画布高度
+    const newCanvasHeight: number = Math.max(
+      layout.canvasHeight,
+      terminalY + NODE_HEIGHT + CANVAS_PADDING
+    );
+
+    return {
+      nodes: [...layout.nodes, terminalNode],
+      canvasWidth: layout.canvasWidth,
+      canvasHeight: newCanvasHeight,
+      edges: [...layout.edges, terminalEdge]
+    };
   }
 
   dispose(): void {

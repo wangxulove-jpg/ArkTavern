@@ -54,6 +54,17 @@ export interface BranchMapDisplayInfo {
   readonly isActive: boolean;
   /** 创建时间 */
   readonly createdAt: number;
+  /**
+   * 地图节点唯一 ID。
+   * 与 branchId 解耦:一个分支可以有多个地图节点(分叉起点 + 末端节点)。
+   * 对于真实分支节点,nodeId = branchId。
+   * 对于末端节点,nodeId = "head:" + branchId + ":" + turnNumber。
+   */
+  readonly nodeId: string;
+  /** 是否为分支末端显示节点(用于显示当前对话位置) */
+  readonly isTerminal: boolean;
+  /** 是否为用户当前所在节点 */
+  readonly isCurrent: boolean;
 }
 
 /** User 预览最大长度 */

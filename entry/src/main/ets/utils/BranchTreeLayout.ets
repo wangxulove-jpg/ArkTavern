@@ -1,5 +1,5 @@
 /**
- * BranchTreeLayout 分支树布局计算工具(T-6.4B-1.1 / T-6.4B-2-R1)
+ * BranchTreeLayout 分支树布局计算工具(T-6.4B-1.1 / T-6.4B-2-R1 / T-6.4B-4)
  *
  * 按 forkTurnNumber(对话轮次)分层布局,确保 Branch 在 BranchMap 中的 Y 位置
  * 严格对应 fork 发生的对话轮次位置:
@@ -18,6 +18,14 @@
  *   - 多兄弟分支横向并列,中心对齐父节点
  *   - 单子分支直接放在父节点正下方
  * - 这样从任何节点向下看,其所有后代都位于该节点正下方,整齐不挤到中间
+ *
+ * T-6.4B-4: Y 轴层级压缩
+ * - 不再使用 forkTurnNumber × LEVEL_GAP 作为 Y 坐标
+ * - 将所有节点的 forkTurnNumber 排序后压缩为连续的可视层级(0, 1, 2, ...)
+ * - Y = TOP_PADDING + layer × (NODE_HEIGHT + VERTICAL_GAP)
+ * - 同一轮次的多个分支共享同一层
+ * - 子节点保证至少比父节点低一层
+ * - 真实轮次通过节点文字显示,不再通过巨大空白表示
  *
  * 连接线逻辑(T-6.4B-2-R1 修正):
  * - 对每个 Branch,沿 parentBranchId 链向上查找,找到第一个
@@ -40,29 +48,134 @@ import { BranchMapDisplayInfo } from '../models/BranchMapDisplayInfo';
 /** 节点固定宽度(vp) */
 const NODE_WIDTH: number = 176;
 /** 节点固定高度(vp) */
-const NODE_HEIGHT: number = 112;
+const NODE_HEIGHT: number = 96;
 /** 兄弟节点之间的水平间距(vp) */
 const SIBLING_GAP: number = 28;
-/**
- * 轮次间垂直间距(vp)。
- * Y 坐标 = forkTurnNumber × LEVEL_GAP,严格对应对话轮次位置。
- */
-const LEVEL_GAP: number = 140;
+/** 垂直间距(vp):相邻可视层级之间的间距(取代旧 LEVEL_GAP=140) */
+const VERTICAL_GAP: number = 28;
 /** 画布外围 padding(vp) */
-const CANVAS_PADDING: number = 28;
+const CANVAS_PADDING: number = 24;
+/** 画布底部额外 padding */
+const BOTTOM_PADDING: number = 32;
 
 /**
- * 计算分支树布局(T-6.4B-3-R1 子树居中算法)。
+ * 获取节点固定宽度。
+ */
+export function getNodeWidth(): number {
+  return NODE_WIDTH;
+}
+
+/**
+ * 获取节点固定高度。
+ */
+export function getNodeHeight(): number {
+  return NODE_HEIGHT;
+}
+
+/**
+ * 获取垂直间距。
+ */
+export function getVerticalGap(): number {
+  return VERTICAL_GAP;
+}
+
+/**
+ * 获取画布 padding。
+ */
+export function getCanvasPadding(): number {
+  return CANVAS_PADDING;
+}
+
+/**
+ * 构建层级排序键:同一轮次中,分叉节点在前,末端节点在后。
+ */
+function getLayerSortKey(info: BranchMapDisplayInfo): number {
+  const typeOrder: number = info.isTerminal ? 1 : 0;
+  return info.currentMaxTurn * 2 + typeOrder;
+}
+
+/**
+ * 构建压缩层级映射:将真实轮次映射为连续的可视层级(0, 1, 2, ...)。
+ * 同时保证子节点至少比父节点低一层,避免父子重叠。
+ */
+function buildLayerMap(infos: BranchMapDisplayInfo[]): Map<string, number> {
+  // 收集所有唯一的排序键
+  const sortKeys: number[] = [];
+  const seenKeys: Set<number> = new Set<number>();
+  for (let i = 0; i < infos.length; i++) {
+    const key: number = getLayerSortKey(infos[i]);
+    if (!seenKeys.has(key)) {
+      seenKeys.add(key);
+      sortKeys.push(key);
+    }
+  }
+  sortKeys.sort((a: number, b: number): number => a - b);
+
+  // 排序键 → 时间层级(0,1,2,...)
+  const chronologicalRank: Map<number, number> = new Map<number, number>();
+  for (let i = 0; i < sortKeys.length; i++) {
+    chronologicalRank.set(sortKeys[i], i);
+  }
+
+  // 构造 nodeId → info 映射
+  const nodeById: Map<string, BranchMapDisplayInfo> = new Map<string, BranchMapDisplayInfo>();
+  for (let i = 0; i < infos.length; i++) {
+    nodeById.set(infos[i].nodeId, infos[i]);
+  }
+
+  const result: Map<string, number> = new Map<string, number>();
+  const resolving: Set<string> = new Set<string>();
+
+  const resolveLayer = (info: BranchMapDisplayInfo): number => {
+    const cached: number | undefined = result.get(info.nodeId);
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    // 防止异常父子数据形成死循环
+    if (resolving.has(info.nodeId)) {
+      return 0;
+    }
+    resolving.add(info.nodeId);
+
+    const sortKey: number = getLayerSortKey(info);
+    const timeLayer: number = chronologicalRank.get(sortKey) ?? 0;
+    let layer: number = timeLayer;
+
+    // 如果有父节点,确保子节点至少比父节点低一层
+    const parentId: string | undefined = info.parentBranchId;
+    if (parentId !== undefined && parentId.length > 0) {
+      const parent: BranchMapDisplayInfo | undefined = nodeById.get(parentId);
+      if (parent !== undefined) {
+        layer = Math.max(timeLayer, resolveLayer(parent) + 1);
+      }
+    }
+
+    resolving.delete(info.nodeId);
+    result.set(info.nodeId, layer);
+    return layer;
+  };
+
+  for (let i = 0; i < infos.length; i++) {
+    resolveLayer(infos[i]);
+  }
+
+  return result;
+}
+
+/**
+ * 计算分支树布局(T-6.4B-3-R1 子树居中算法 / T-6.4B-4 层级压缩)。
  *
  * 算法步骤:
  * 1. 构造 children 映射(parentBranchId -> 直接子节点列表)
  * 2. 找到 Root(parentBranchId 为空)
  * 3. DFS 计算每个节点的 subtreeWidth(子树所需总宽度)
  * 4. DFS 分配 X/Y 坐标:
- *    - Y = CANVAS_PADDING + forkTurnNumber × LEVEL_GAP(按对话轮次分层)
+ *    - Y = CANVAS_PADDING + layer × (NODE_HEIGHT + VERTICAL_GAP)(压缩层级)
  *    - X = 子树左边界 + (subtreeWidth - NODE_WIDTH) / 2(节点居中于自己的子树)
  *    - 子节点依次排列在父节点的子树内,父节点居中
  * 5. 生成连接线(子节点 → 第一个 turn 更小的祖先)
+ * 6. 计算画布尺寸
  *
  * @param branches 所有 Branch 摘要
  * @param displayInfos 含 forkTurnNumber 的展示信息
@@ -88,8 +201,10 @@ export function computeBranchTreeLayout(
     turnNumberMap.set(info.branchId, info.forkTurnNumber);
   }
 
+  // 0.2 构建压缩层级映射
+  const layerMap: Map<string, number> = buildLayerMap(displayInfos);
+
   // 1. 构造 children 映射(parentBranchId -> 直接子节点列表)
-  //    每个 Branch 的直接子节点 = parentBranchId === this.id 的所有 Branch
   const childrenMap: Map<string, ConversationBranchSummary[]> = new Map<string, ConversationBranchSummary[]>();
   const rootBranches: ConversationBranchSummary[] = [];
   for (let i = 0; i < branches.length; i++) {
@@ -118,13 +233,11 @@ export function computeBranchTreeLayout(
       return a.createdAt - b.createdAt;
     });
   }
-  // Root 也按 createdAt 排序(理论上只有一个 Root,容错处理)
   rootBranches.sort((a: ConversationBranchSummary, b: ConversationBranchSummary): number => {
     return a.createdAt - b.createdAt;
   });
 
   // 3. DFS 计算每个节点的 subtreeWidth
-  //    subtreeWidth = max(NODE_WIDTH, sum(子节点 subtreeWidth) + (子节点数-1) × SIBLING_GAP)
   const subtreeWidthMap: Map<string, number> = new Map<string, number>();
 
   const computeSubtreeWidth = (branchId: string): number => {
@@ -148,34 +261,40 @@ export function computeBranchTreeLayout(
     return w;
   };
 
-  // 预计算所有节点的 subtreeWidth(从 Root 开始递归会覆盖整个树)
   for (let i = 0; i < branches.length; i++) {
     computeSubtreeWidth(branches[i].id);
   }
 
   // 4. DFS 分配 X/Y 坐标
-  //    每个节点:
-  //    - Y = CANVAS_PADDING + forkTurnNumber × LEVEL_GAP
-  //    - X = leftX + (subtreeWidth - NODE_WIDTH) / 2(居中于自己的子树)
-  //    子节点依次从 leftX 开始排列,每个占用自己的 subtreeWidth + SIBLING_GAP
+  //    - Y = CANVAS_PADDING + layer × (NODE_HEIGHT + VERTICAL_GAP)(压缩层级)
+  //    - X = leftX + (subtreeWidth - NODE_WIDTH) / 2
   const layoutMap: Map<string, BranchMapNodeLayout> = new Map<string, BranchMapNodeLayout>();
   const nodes: BranchMapNodeLayout[] = [];
-  let maxTurn: number = 0;
+  let maxLayer: number = 0;
 
   const layoutNode = (branch: ConversationBranchSummary, leftX: number, depth: number): void => {
     const subtreeWidth: number = subtreeWidthMap.get(branch.id) ?? NODE_WIDTH;
     const turnNum: number | undefined = turnNumberMap.get(branch.id);
     const turn: number = turnNum !== undefined ? turnNum : 0;
-    if (turn > maxTurn) {
-      maxTurn = turn;
+
+    // 查找对应的 displayInfo 以获取 nodeId 和层级
+    const displayInfo: BranchMapDisplayInfo | undefined = displayInfos.find(
+      (info: BranchMapDisplayInfo): boolean => info.branchId === branch.id && !info.isTerminal
+    );
+    const nodeId: string = displayInfo !== undefined ? displayInfo.nodeId : branch.id;
+    const layer: number = layerMap.get(nodeId) ?? 0;
+    if (layer > maxLayer) {
+      maxLayer = layer;
     }
-    const y: number = CANVAS_PADDING + turn * LEVEL_GAP;
+
+    const y: number = CANVAS_PADDING + layer * (NODE_HEIGHT + VERTICAL_GAP);
     const x: number = leftX + (subtreeWidth - NODE_WIDTH) / 2;
 
     const children: ConversationBranchSummary[] | undefined = childrenMap.get(branch.id);
     const siblingCount: number = children !== undefined ? children.length : 0;
 
     const layout: BranchMapNodeLayout = {
+      nodeId: nodeId,
       branchId: branch.id,
       parentBranchId: branch.parentBranchId !== undefined
         ? branch.parentBranchId : '',
@@ -187,12 +306,14 @@ export function computeBranchTreeLayout(
       width: NODE_WIDTH,
       height: NODE_HEIGHT,
       siblingIndex: 0,
-      siblingCount: siblingCount
+      siblingCount: siblingCount,
+      isTerminal: displayInfo !== undefined ? displayInfo.isTerminal : false,
+      isCurrent: displayInfo !== undefined ? displayInfo.isCurrent : false
     };
     nodes.push(layout);
     layoutMap.set(layout.branchId, layout);
 
-    // 递归布局子节点:子节点依次从 leftX 开始排列
+    // 递归布局子节点
     if (children !== undefined && children.length > 0) {
       let childLeftX: number = leftX;
       for (let i = 0; i < children.length; i++) {
@@ -204,7 +325,7 @@ export function computeBranchTreeLayout(
     }
   };
 
-  // 从所有 Root 开始布局(Root 们横向并列在画布顶部)
+  // 从所有 Root 开始布局
   let currentLeftX: number = CANVAS_PADDING;
   for (let i = 0; i < rootBranches.length; i++) {
     const root: ConversationBranchSummary = rootBranches[i];
@@ -214,13 +335,11 @@ export function computeBranchTreeLayout(
   }
 
   // 5. 生成 edges(智能查找父节点,保证连线始终向下)
-  //    对每个 Branch,沿 parentBranchId 链向上查找,找到第一个
-  //    forkTurnNumber < 当前 Branch forkTurnNumber 的祖先作为起点。
   const edges: BranchTreeEdge[] = [];
   for (let i = 0; i < nodes.length; i++) {
     const nodeLayout: BranchMapNodeLayout = nodes[i];
     if (nodeLayout.parentBranchId.length === 0) {
-      continue; // Root 无入射连线
+      continue;
     }
     let currentParentId: string = nodeLayout.parentBranchId;
     let parentLayout: BranchMapNodeLayout | undefined = undefined;
@@ -243,6 +362,7 @@ export function computeBranchTreeLayout(
     edges.push({
       parentBranchId: parentLayout.branchId,
       childBranchId: nodeLayout.branchId,
+      childNodeId: nodeLayout.nodeId,
       startX: parentLayout.x + parentLayout.width / 2,
       startY: parentLayout.y + parentLayout.height,
       endX: nodeLayout.x + nodeLayout.width / 2,
@@ -251,7 +371,6 @@ export function computeBranchTreeLayout(
   }
 
   // 6. 计算画布尺寸
-  //    画布宽度 = 所有 Root 的子树宽度总和 + Root 之间的间距 + 两侧 padding
   let totalRootWidth: number = 0;
   for (let i = 0; i < rootBranches.length; i++) {
     const w: number = subtreeWidthMap.get(rootBranches[i].id) ?? NODE_WIDTH;
@@ -262,9 +381,9 @@ export function computeBranchTreeLayout(
   }
   const contentWidth: number = Math.max(totalRootWidth + CANVAS_PADDING * 2, NODE_WIDTH + CANVAS_PADDING * 2);
 
-  const contentHeight: number = CANVAS_PADDING * 2
-    + (maxTurn + 1) * NODE_HEIGHT
-    + maxTurn * (LEVEL_GAP - NODE_HEIGHT);
+  const contentHeight: number = CANVAS_PADDING
+    + (maxLayer + 1) * (NODE_HEIGHT + VERTICAL_GAP)
+    + BOTTOM_PADDING;
 
   return {
     nodes: nodes,
@@ -272,18 +391,4 @@ export function computeBranchTreeLayout(
     canvasHeight: contentHeight,
     edges: edges
   };
-}
-
-/**
- * 获取节点固定宽度。
- */
-export function getNodeWidth(): number {
-  return NODE_WIDTH;
-}
-
-/**
- * 获取节点固定高度。
- */
-export function getNodeHeight(): number {
-  return NODE_HEIGHT;
 }
