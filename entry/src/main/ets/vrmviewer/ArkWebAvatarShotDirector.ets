@@ -377,7 +377,7 @@ export class ArkWebAvatarShotDirector {
 
     // 重复镜头 no-op
     if (this.currentShot === targetShot && this.state !== 'TRANSITIONING') {
-      console.info(LOG_TAG, `no-op: already at ${targetShot}, reason=${reason}`);
+      // 镜头未变化,静默 no-op(高频保护逻辑,默认不记录)
       this.lastTransitionReason = reason;
       return true;
     }
@@ -413,7 +413,7 @@ export class ArkWebAvatarShotDirector {
 
     // generation 检查 (cancelCameraTransition 期间可能已发起新请求)
     if (generation !== this.shotGeneration || this.disposed) {
-      console.info(LOG_TAG, 'stale: generation changed during cancelCameraTransition');
+      // stale generation 静默忽略(高频保护逻辑,默认不记录)
       return false;
     }
 
@@ -433,7 +433,7 @@ export class ArkWebAvatarShotDirector {
 
     // generation 检查 (异步完成后可能已发起新请求)
     if (generation !== this.shotGeneration || this.disposed) {
-      console.info(LOG_TAG, 'stale: generation changed during transition');
+      // stale generation 静默忽略(高频保护逻辑,默认不记录)
       // 不更新 currentShot, 旧结果忽略
       return false;
     }

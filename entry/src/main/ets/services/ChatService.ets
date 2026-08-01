@@ -2299,7 +2299,6 @@ export class ChatService {
       },
       onDelta: (delta: ChatDelta): void => {
         this.clearStartTimer();
-        Logger.info(LOG_TAG, `onDelta entry aid=${assistantId.slice(0,8)} delta.len=${delta.content.length} state=${String(this.state)} disposed=${String(this.disposed)}`);
         if (this.disposed) {
           return;
         }

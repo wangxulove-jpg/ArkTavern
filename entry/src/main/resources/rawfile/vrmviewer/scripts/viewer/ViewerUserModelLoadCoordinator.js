@@ -322,8 +322,8 @@ export class ViewerUserModelLoadCoordinator {
       var result = await promise;
       // 代次检查:若期间有新加载启动或已 dispose,当前结果视为过期
       if (generation !== this.loadGeneration || this.disposed) {
-        // 过期结果不更新 state / lastResult(但记录到 console)
-        console.warn('[UserModelLoadCoordinator] stale result ignored: gen=' + generation);
+        // stale result 静默忽略(高频保护逻辑,默认不记录)
+        // 过期结果不更新 state / lastResult
         // Phase 1D-2C-1: 上报 LOAD_STARTED 失败(过期)
         // 注意:此处保留 MODEL_LOAD_STALE 错误码,不压缩为 MODEL_LOAD_FAILED。
         // 底层 ModelLoader 已上报 GLTF_LOAD_FAILED / MODEL_REPLACE_FAILED,

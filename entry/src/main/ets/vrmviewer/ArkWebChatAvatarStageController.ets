@@ -2373,9 +2373,8 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
           return false;
         }
         this.parseAnimationDebugState(resultJson);
-      } catch (e) {
-        console.warn(LOG_TAG, 'waitForAnimationReady poll failed: ' +
-          (e instanceof Error ? e.message : String(e)));
+      } catch (_) {
+        // 轮询期间忽略单次错误,等待成功或超时再记录
       }
       if (this.debugAnimationStateStr === 'READY') {
         // Phase 4B-2R2: READY 时记录 loadedActionId
@@ -3107,9 +3106,12 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
    * 更新 Stage 状态并通知监听器。
    */
   private setStageState(state: ArkWebChatAvatarStageState, detail: string): void {
+    const stateChanged: boolean = this.currentStageState !== state;
     this.currentStageState = state;
     this.currentDetail = detail;
-    console.info(LOG_TAG, `stageState=${state} detail=${detail}`);
+    if (stateChanged) {
+      console.info(LOG_TAG, `stageState=${state} detail=${detail}`);
+    }
     if (this.eventListener !== null) {
       this.eventListener.onStateChanged(state, detail);
     }

@@ -4641,7 +4641,6 @@ struct ChatPage {
         .then((win: window.Window): void => {
           this.mainWindow = win;
           this.keyboardHeightChangeHandler = (height: number): void => {
-            Logger.info(LOG_TAG, 'keyboardHeightChange: height=' + height);
             // px → vp 换算(键盘高度回调单位为 px,输入栏 padding 单位为 vp)
             const densityPixels: number = display.getDefaultDisplaySync().densityPixels;
             const density: number = densityPixels > 0 ? densityPixels : 3.0;

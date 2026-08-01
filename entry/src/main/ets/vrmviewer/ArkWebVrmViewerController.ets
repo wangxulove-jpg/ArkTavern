@@ -1801,9 +1801,12 @@ export class ArkWebVrmViewerController implements ArkWebViewerBridgeListener {
     if (this.disposed && state !== ArkWebViewerState.DISPOSED) {
       return;
     }
+    const stateChanged: boolean = this.state !== state;
     this.state = state;
     this.detail = detail;
-    console.info(`[ArkWebVrmViewerController] state=${state}, detail=${detail}`);
+    if (stateChanged) {
+      console.info(`[ArkWebVrmViewerController] state=${state}, detail=${detail}`);
+    }
     if (this.listener !== null) {
       this.listener.onStateChanged(state, detail);
     }

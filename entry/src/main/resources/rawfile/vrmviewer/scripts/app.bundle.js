@@ -44349,7 +44349,6 @@ void main() {
       });
       var onLoad = function(gltf) {
         if (self2.disposed || generation !== self2.activeLoadGeneration || self2.pendingResource !== pendingResource) {
-          console.warn("[ViewerAnimationController] stale load result ignored: generation=" + generation);
           return;
         }
         var currentVrmNow = self2._getCurrentVrm();
@@ -44495,7 +44494,6 @@ void main() {
       };
       var onError = function(error) {
         if (self2.disposed || generation !== self2.activeLoadGeneration || self2.pendingResource !== pendingResource) {
-          console.warn("[ViewerAnimationController] stale load error ignored: generation=" + generation);
           return;
         }
         var msg2 = error && error.message ? error.message : String(error);
@@ -48789,7 +48787,6 @@ void main() {
       try {
         var result = await promise;
         if (generation !== this.loadGeneration || this.disposed) {
-          console.warn("[UserModelLoadCoordinator] stale result ignored: gen=" + generation);
           this._emitDiagnostic(
             VRM_STAGE2.LOAD_STARTED,
             UserModelLoadErrorCode.MODEL_LOAD_STALE,

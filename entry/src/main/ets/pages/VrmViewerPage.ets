@@ -1314,9 +1314,8 @@ struct VrmViewerPage {
         try {
           const resultJson: string = await this.arkWebController.getAnimationDebugState();
           this.parseAnimationDebugState(resultJson);
-        } catch (e) {
-          console.warn('[PerformanceRuntime] waitForAnimationReady poll failed: ' +
-            (e instanceof Error ? e.message : String(e)));
+        } catch (_) {
+          // 轮询期间忽略单次错误,等待成功或超时再记录
         }
       }
       if (this.debugAnimationState === 'READY') {
@@ -2993,9 +2992,7 @@ struct VrmViewerPage {
     this.poseLastErrorMessage = '';
     try {
       // 1. 从持久存储读取姿势 JSON,构造受控 ArkWebPoseData
-      console.warn(`[PoseUI] onApplyPoseClick: poseId=${this.selectedPoseId}, modelState=${this.debugModelState}`);
       const poseJson: string = await this.persistentPoseStore.readPoseDataAsJson(this.selectedPoseId);
-      console.warn(`[PoseUI] onApplyPoseClick: poseJson length=${poseJson.length}, lastError=${this.persistentPoseStore.getLastError()}`);
       if (poseJson.length === 0) {
         this.poseLastErrorCode = this.persistentPoseStore.getLastError() || 'POSE_READ_FAILED';
         this.poseLastErrorMessage = `读取姿势失败: ${this.poseLastErrorCode}`;
@@ -3005,9 +3002,7 @@ struct VrmViewerPage {
       }
 
       // 2. 调用 Controller.applyPose (Web 端会先 stopAnimation 再 resetNormalizedPose + 应用)
-      console.warn(`[PoseUI] onApplyPoseClick: calling arkWebController.applyPose`);
       const resultJson: string = await this.arkWebController.applyPose(poseJson);
-      console.warn(`[PoseUI] onApplyPoseClick: applyPose result length=${resultJson.length}`);
       const resultObj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
       const success: boolean = !!resultObj['success'];
       if (success) {
@@ -3700,9 +3695,8 @@ struct VrmViewerPage {
             promptAction.showToast({ message: this.animationActionError });
           }
         }
-      }).catch((e: Object) => {
-        console.warn('[VrmViewerPage] animation poll getAnimationDebugState failed: ' +
-          (e instanceof Error ? e.message : String(e)));
+      }).catch((_e: Object) => {
+        // 轮询期间忽略单次错误,等待成功或超时再记录
       });
     }, this.ANIMATION_LOAD_POLL_INTERVAL_MS);
   }
@@ -4222,17 +4216,16 @@ struct VrmViewerPage {
             }
           }
         }
-      } catch (e) {
-        console.warn('[VrmViewerPage] pollEnvironmentOnce parse failed');
+      } catch (_) {
+        // 轮询期间忽略解析错误,等待成功或超时再记录
       }
       // 继续轮询
       this.environmentPollTimerId = setTimeout(() => {
         this.environmentPollTimerId = -1;
         this.pollEnvironmentOnce();
       }, ARKWEB_ENVIRONMENT_POLL_INTERVAL_MS);
-    }).catch((e: Object) => {
-      console.warn('[VrmViewerPage] pollEnvironmentOnce exception: ' + (e instanceof Error ? e.message : String(e)));
-      // 异常不停止轮询,继续尝试直到超时
+    }).catch((_e: Object) => {
+      // 轮询期间忽略单次异常,继续尝试直到超时
       this.environmentPollTimerId = setTimeout(() => {
         this.environmentPollTimerId = -1;
         this.pollEnvironmentOnce();
@@ -4636,7 +4629,7 @@ struct VrmViewerPage {
       const resultJson: string = await this.arkWebController.getCameraTransitionState();
       const parsed: ArkWebCameraTransitionResult | null = parseCameraTransitionResult(resultJson);
       if (parsed === null) {
-        console.warn('[VrmViewerPage] pollCameraTransitionState: parse failed');
+        // 轮询期间忽略解析错误,等待成功或超时再记录
         return;
       }
       this.updateCameraTransitionDebugState(parsed);
@@ -4657,9 +4650,8 @@ struct VrmViewerPage {
           promptAction.showToast({ message: '重置失败:' + parsed.errorCode });
         }
       }
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.warn('[VrmViewerPage] pollCameraTransitionState failed: ' + msg);
+    } catch (_) {
+      // 轮询期间忽略单次错误,等待成功或超时再记录
     }
   }
 
@@ -6428,10 +6420,8 @@ struct VrmViewerPage {
 
     this.arkWebController.getModelResourceProbeResult().then((resultJson: string) => {
       this.handleProbeResultJson(resultJson);
-    }).catch((e: Object) => {
-      const msg: string = e instanceof Error ? e.message : String(e);
-      console.warn(`[VrmViewerPage] pollProbeResult failed: ${msg}`);
-      // 继续轮询(可能是临时错误)
+    }).catch((_e: Object) => {
+      // 轮询期间忽略单次错误,继续尝试直到超时
       this.startProbePolling();
     });
   }
@@ -6740,10 +6730,8 @@ struct VrmViewerPage {
 
     this.arkWebController.getPreparedModelLoadResult().then((resultJson: string) => {
       this.handleLoadResultJson(resultJson);
-    }).catch((e: Object) => {
-      const msg: string = e instanceof Error ? e.message : String(e);
-      console.warn(`[VrmViewerPage] pollLoadResult failed: ${msg}`);
-      // 继续轮询(可能是临时错误)
+    }).catch((_e: Object) => {
+      // 轮询期间忽略单次错误,继续尝试直到超时
       this.startLoadPolling();
     });
   }

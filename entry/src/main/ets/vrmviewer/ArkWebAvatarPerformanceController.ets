@@ -414,7 +414,7 @@ export class ArkWebAvatarPerformanceController {
    */
   private checkStaleAndReturn(generation: number, commandId: string): boolean {
     if (generation !== this.performanceGeneration) {
-      console.info(`[Performance] stale result ignored: cmd=${commandId} gen=${generation} current=${this.performanceGeneration}`);
+      // stale result 静默忽略(高频保护逻辑,默认不记录)
       return true;
     }
     return false;
@@ -458,7 +458,7 @@ export class ArkWebAvatarPerformanceController {
     this.restoreTimerId = -1;
     // generation 不匹配 → 旧 timeout, 忽略
     if (generation !== this.performanceGeneration) {
-      console.info(`[Performance] stale restore timeout ignored: gen=${generation} current=${this.performanceGeneration}`);
+      // stale restore timeout 静默忽略(高频保护逻辑,默认不记录)
       return;
     }
     if (this._disposed) {

@@ -200,7 +200,6 @@
     }
     // 持久化(只含白名单字段,cachePath / sourceUri 永远不会被保存)
     global.arkTavernPreparedModelResource = filtered;
-    console.log('[ViewerBridge] preparedModelResource saved: url=' + filtered.resourceUrl);
     return JSON.stringify({ success: true, state: 'RESOURCE_READY' });
   }
 
@@ -223,7 +222,6 @@
    */
   function clearPreparedModelResource() {
     global.arkTavernPreparedModelResource = null;
-    console.log('[ViewerBridge] preparedModelResource cleared');
     return JSON.stringify({ success: true, state: 'RESOURCE_CLEARED' });
   }
 

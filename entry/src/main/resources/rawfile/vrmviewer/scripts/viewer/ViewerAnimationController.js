@@ -677,7 +677,7 @@ export class ViewerAnimationController {
       if (self.disposed ||
           generation !== self.activeLoadGeneration ||
           self.pendingResource !== pendingResource) {
-        console.warn('[ViewerAnimationController] stale load result ignored: generation=' + generation);
+        // stale load result 静默忽略(高频保护逻辑,默认不记录)
         return;
       }
       // currentVrm 未改变检查 (模型替换时不应提交)
@@ -812,7 +812,7 @@ export class ViewerAnimationController {
       if (self.disposed ||
           generation !== self.activeLoadGeneration ||
           self.pendingResource !== pendingResource) {
-        console.warn('[ViewerAnimationController] stale load error ignored: generation=' + generation);
+        // stale load error 静默忽略(高频保护逻辑,默认不记录)
         return;
       }
       var msg = error && error.message ? error.message : String(error);
