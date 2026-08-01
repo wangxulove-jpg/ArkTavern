@@ -1156,6 +1156,31 @@ export class ArkWebVrmViewerController implements ArkWebViewerBridgeListener {
     }
   }
 
+  /**
+   * 设置动画循环播放开关。
+   *
+   * @param enabled true=循环播放, false=播放一遍
+   * @returns JSON 字符串
+   *   {"success": true, "loop": true|false}
+   *   {"success": false, "error": {"code": "...", "message": "..."}}
+   */
+  async setAnimationLoop(enabled: boolean): Promise<string> {
+    if (this.disposed) {
+      const disposedError: ArkWebBridgeErrorPayload = { code: 'DISPOSED', message: 'controller disposed' };
+      const disposedResponse: ArkWebBridgeFailedResponse = { success: false, error: disposedError };
+      return JSON.stringify(disposedResponse);
+    }
+    try {
+      const payload: string = JSON.stringify({ enabled: enabled });
+      return await this.jsCaller.setAnimationLoop(payload);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const failedError: ArkWebBridgeErrorPayload = { code: 'ANIMATION_NOT_INITIALIZED', message: msg };
+      const failedResponse: ArkWebBridgeFailedResponse = { success: false, error: failedError };
+      return JSON.stringify(failedResponse);
+    }
+  }
+
   // ===== Phase 3D-2 — JSON 姿势解析、应用与恢复 =====
 
   /**

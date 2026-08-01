@@ -754,10 +754,9 @@ export class ViewerAnimationController {
         return;
       }
 
-      // 配置 Action (固定 LoopRepeat, 不提供循环模式设置)
+      // 配置 Action (根据 loop 字段动态配置循环模式)
       try {
-        action.setLoop(THREE.LoopRepeat, Infinity);
-        action.clampWhenFinished = true;
+        self._applyLoopConfigToAction(action);
         action.enabled = true;
       } catch (e) {
         var msg3 = e && e.message ? e.message : String(e);
@@ -861,6 +860,53 @@ export class ViewerAnimationController {
       console.warn('[ViewerAnimationController] load failed, no previous animation: ' +
         error.code + ' ' + error.message);
     }
+  }
+
+  /**
+   * 根据当前 loop 字段配置 AnimationAction 的循环模式。
+   *
+   * - loop=true:  LoopRepeat + Infinity (无限循环)
+   * - loop=false: LoopOnce + 1 (播放一遍, clampWhenFinished 保持最后一帧)
+   *
+   * @param {THREE.AnimationAction} action
+   * @private
+   */
+  _applyLoopConfigToAction(action) {
+    if (!action) {
+      return;
+    }
+    if (this.loop) {
+      action.setLoop(THREE.LoopRepeat, Infinity);
+      action.clampWhenFinished = false;
+    } else {
+      action.setLoop(THREE.LoopOnce, 1);
+      action.clampWhenFinished = true;
+    }
+  }
+
+  /**
+   * 运行时切换循环播放开关, 立即应用到当前 action。
+   *
+   * @param {boolean} enabled true=循环播放, false=播放一遍
+   * @returns {{success: boolean, loop?: boolean, error?: {code: string, message: string}}}
+   */
+  setLoopEnabled(enabled) {
+    if (this.disposed) {
+      return {
+        success: false,
+        error: makeAnimError(ANIMATION_ERR_DISPOSED, 'AnimationController already disposed')
+      };
+    }
+    this.loop = enabled ? true : false;
+    // 如果当前有 action, 立即应用新配置
+    if (this.currentAction) {
+      try {
+        this._applyLoopConfigToAction(this.currentAction);
+      } catch (e) {
+        // 配置失败不阻塞, 下次 play 时会重新应用
+      }
+    }
+    return { success: true, loop: this.loop };
   }
 
   /**

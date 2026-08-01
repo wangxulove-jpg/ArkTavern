@@ -31142,6 +31142,7 @@ void main() {
       this.controls = null;
       this._disposed = false;
       this.lastAction = ACTION_INITIALIZE;
+      this._baselineOffset = null;
       this.transitionState = CameraTransitionState.IDLE;
       this.transitionGeneration = 0;
       this.transitionElapsed = 0;
@@ -31194,6 +31195,7 @@ void main() {
       this.controls.enableDamping = false;
       this.controls.update();
       this.lastAction = ACTION_INITIALIZE;
+      this._commitBaselineOffset();
       this._controlsStartHandler = () => {
         this._cancelTransitionIfNeeded(CANCEL_REASON_USER_INTERACTION);
       };
@@ -31295,6 +31297,7 @@ void main() {
         this.controls.enabled = savedEnabled;
       }
       this.lastAction = ACTION_RESET;
+      this._commitBaselineOffset();
       return { success: true, state: this._buildCameraState() };
     }
     /** @returns {THREE.PerspectiveCamera|null} */
@@ -31448,6 +31451,7 @@ void main() {
         this.controls.enabled = savedEnabled;
       }
       this.lastAction = action;
+      this._commitBaselineOffset();
       return {
         success: true,
         state: this._buildCameraState(),
@@ -31478,15 +31482,21 @@ void main() {
      *
      * 通过缩短相机到目标点距离实现视觉放大, 不修改 model.scene.position / scale / 骨骼。
      *
+     * 修复 (Phase 4B-2R2-fix): 基于基准偏移 _baselineOffset 计算, 而非当前 camera.position。
+     * 旧的实现使用当前 camera.position - controls.target 作为基准, 每次调用都基于
+     * "上一次缩放后的状态"再缩放, 导致多次调用同一 multiplier 会累加放大。
+     * 现在基于 focusOnObject / reset / smoothReset 完成时保存的 _baselineOffset
+     * 计算, 保证无论调用多少次, 同一 multiplier 的结果一致 (幂等)。
+     *
      * 公式:
-     *   offset = camera.position - controls.target
-     *   scaledOffset = offset / multiplier
+     *   baselineOffset = _baselineOffset (由 focus/reset 写入)
+     *   scaledOffset = baselineOffset / multiplier
      *   camera.position = controls.target + scaledOffset
      *
      * 然后调用 updateCameraClipping 重新计算 near/far/minDistance/maxDistance。
      *
      * @param {number} multiplier 缩放倍率 (0.5 ~ 3.0)
-     *   - 1.0: 无变化
+     *   - 1.0: 恢复基准距离 (无放大)
      *   - 2.0: 相机距离缩短至 1/2, 模型视觉放大 2 倍
      *   - 3.0: 相机距离缩短至 1/3, 模型视觉放大 3 倍
      * @returns {{success: boolean, state?: object, multiplier?: number, error?: string}}
@@ -31502,11 +31512,15 @@ void main() {
         return { success: false, error: "INVALID_ZOOM_MULTIPLIER" };
       }
       var safeMultiplier = Math.max(0.5, Math.min(3, multiplier));
-      var offset = new Vector3().subVectors(this.camera.position, this.controls.target);
-      if (offset.lengthSq() < 1e-12) {
+      var baseline = this._baselineOffset;
+      if (!baseline || baseline.lengthSq() < 1e-12) {
+        baseline = new Vector3().subVectors(this.camera.position, this.controls.target);
+        this._baselineOffset = baseline.clone();
+      }
+      if (baseline.lengthSq() < 1e-12) {
         return { success: false, error: CAMERA_FOCUS_BOUNDS_INVALID };
       }
-      var scaledOffset = offset.divideScalar(safeMultiplier);
+      var scaledOffset = baseline.clone().divideScalar(safeMultiplier);
       var newPosition = new Vector3().addVectors(this.controls.target, scaledOffset);
       var savedEnabled = this.controls.enabled;
       this.camera.position.copy(newPosition);
@@ -31523,6 +31537,26 @@ void main() {
         state: this._buildCameraState(),
         multiplier: safeMultiplier
       };
+    }
+    /**
+     * Phase 4B-2R2-fix: 提交当前 (camera.position - controls.target) 为基准偏移。
+     *
+     * 在以下时机调用:
+     *   - focusOnObject 提交新位置后
+     *   - reset 恢复默认位置后
+     *   - smoothReset 过渡到达终点后
+     *   - initialize 设置默认相机后
+     *
+     * 之后 applyCameraZoomMultiplier 会基于此基准计算缩放位置,
+     * 而不是基于"上一次缩放后的状态"再缩放, 避免累加放大。
+     * @private
+     */
+    _commitBaselineOffset() {
+      if (!this.camera || !this.controls) {
+        this._baselineOffset = null;
+        return;
+      }
+      this._baselineOffset = new Vector3().subVectors(this.camera.position, this.controls.target);
     }
     // ===== Final Acceptance Fix: 相机裁剪范围统一更新 =====
     /**
@@ -31860,6 +31894,7 @@ void main() {
         this.transitionState = CameraTransitionState.COMPLETED;
         this.transitionCompletedAt = Date.now();
         this.lastAction = ACTION_SMOOTH_RESET;
+        this._commitBaselineOffset();
       }
     }
     /**
@@ -31984,6 +32019,7 @@ void main() {
       this._controlsChangeHandler = null;
       this.transitionStartState = null;
       this.transitionTargetState = null;
+      this._baselineOffset = null;
       if (this.controls) {
         try {
           this.controls.dispose();
@@ -44445,8 +44481,7 @@ void main() {
           return;
         }
         try {
-          action.setLoop(LoopRepeat, Infinity);
-          action.clampWhenFinished = true;
+          self2._applyLoopConfigToAction(action);
           action.enabled = true;
         } catch (e) {
           var msg3 = e && e.message ? e.message : String(e);
@@ -44540,6 +44575,49 @@ void main() {
         this._state = AnimationState.FAILED;
         console.warn("[ViewerAnimationController] load failed, no previous animation: " + error.code + " " + error.message);
       }
+    }
+    /**
+     * 根据当前 loop 字段配置 AnimationAction 的循环模式。
+     *
+     * - loop=true:  LoopRepeat + Infinity (无限循环)
+     * - loop=false: LoopOnce + 1 (播放一遍, clampWhenFinished 保持最后一帧)
+     *
+     * @param {THREE.AnimationAction} action
+     * @private
+     */
+    _applyLoopConfigToAction(action) {
+      if (!action) {
+        return;
+      }
+      if (this.loop) {
+        action.setLoop(LoopRepeat, Infinity);
+        action.clampWhenFinished = false;
+      } else {
+        action.setLoop(LoopOnce, 1);
+        action.clampWhenFinished = true;
+      }
+    }
+    /**
+     * 运行时切换循环播放开关, 立即应用到当前 action。
+     *
+     * @param {boolean} enabled true=循环播放, false=播放一遍
+     * @returns {{success: boolean, loop?: boolean, error?: {code: string, message: string}}}
+     */
+    setLoopEnabled(enabled) {
+      if (this.disposed) {
+        return {
+          success: false,
+          error: makeAnimError(ANIMATION_ERR_DISPOSED, "AnimationController already disposed")
+        };
+      }
+      this.loop = enabled ? true : false;
+      if (this.currentAction) {
+        try {
+          this._applyLoopConfigToAction(this.currentAction);
+        } catch (e) {
+        }
+      }
+      return { success: true, loop: this.loop };
     }
     /**
      * 播放动画 (规范 §二十二)。
@@ -46922,6 +47000,31 @@ void main() {
         };
       }
       return this.animationController.stop(options);
+    }
+    /**
+     * 设置动画循环播放开关。
+     *
+     * 立即应用到当前 AnimationAction, 无需重新加载动画。
+     * - enabled=true:  LoopRepeat + Infinity (循环播放)
+     * - enabled=false: LoopOnce + 1 (播放一遍)
+     *
+     * @param {boolean} enabled
+     * @returns {{success: boolean, loop?: boolean, error?: {code: string, message: string}}}
+     */
+    setAnimationLoop(enabled) {
+      if (this._state !== STATE_READY) {
+        return {
+          success: false,
+          error: { code: "VIEWER_NOT_READY", message: "Viewer not ready (state=" + this._state + ")" }
+        };
+      }
+      if (!this.animationController) {
+        return {
+          success: false,
+          error: { code: "ANIMATION_NOT_INITIALIZED", message: "AnimationController not initialized" }
+        };
+      }
+      return this.animationController.setLoopEnabled(enabled);
     }
     // ===== Phase 3D-2: Pose System (静态姿势应用与恢复) =====
     /**
@@ -50727,6 +50830,35 @@ void main() {
         }
         return callViewer(function(v) {
           var result = v.stopAnimation(options);
+          return result;
+        });
+      },
+      /**
+       * 设置动画循环播放开关。
+       * @param {string} enabledJson JSON: {"enabled": true|false}
+       * @returns {string} JSON 结果
+       *   {"success": true, "loop": true|false}
+       *   {"success": false, "error": {"code": "...", "message": "..."}}
+       */
+      setAnimationLoop: function(enabledJson) {
+        var enabled = true;
+        if (typeof enabledJson === "string" && enabledJson.length > 0) {
+          try {
+            var parsed = JSON.parse(enabledJson);
+            if (typeof parsed === "object" && parsed !== null) {
+              enabled = parsed.enabled === true;
+            } else if (typeof parsed === "boolean") {
+              enabled = parsed;
+            }
+          } catch (e) {
+            return jsonResult({
+              success: false,
+              error: { code: "INVALID_JSON", message: "enabledJson is not valid JSON" }
+            });
+          }
+        }
+        return callViewer(function(v) {
+          var result = v.setAnimationLoop(enabled);
           return result;
         });
       },

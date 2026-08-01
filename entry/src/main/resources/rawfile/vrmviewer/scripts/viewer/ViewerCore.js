@@ -807,6 +807,32 @@ export class ViewerCore {
     return this.animationController.stop(options);
   }
 
+  /**
+   * 设置动画循环播放开关。
+   *
+   * 立即应用到当前 AnimationAction, 无需重新加载动画。
+   * - enabled=true:  LoopRepeat + Infinity (循环播放)
+   * - enabled=false: LoopOnce + 1 (播放一遍)
+   *
+   * @param {boolean} enabled
+   * @returns {{success: boolean, loop?: boolean, error?: {code: string, message: string}}}
+   */
+  setAnimationLoop(enabled) {
+    if (this._state !== STATE_READY) {
+      return {
+        success: false,
+        error: { code: 'VIEWER_NOT_READY', message: 'Viewer not ready (state=' + this._state + ')' }
+      };
+    }
+    if (!this.animationController) {
+      return {
+        success: false,
+        error: { code: 'ANIMATION_NOT_INITIALIZED', message: 'AnimationController not initialized' }
+      };
+    }
+    return this.animationController.setLoopEnabled(enabled);
+  }
+
   // ===== Phase 3D-2: Pose System (静态姿势应用与恢复) =====
 
   /**

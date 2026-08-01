@@ -6,8 +6,8 @@
  *   - 验证资源 ID 存在 (actionId / poseId)
  *   - 按 REPLACE 策略替换当前演出 (generation++ 取消旧任务)
  *   - 调用 Runtime 回调执行动作 / 姿势 / 临时表情
- *   - 维护单次 setTimeout 到期恢复
- *   - 页面销毁时清理 timeout, 不删除任何持久化数据
+ *   - 演出进行中不自动停止, 由用户点击停止或新命令替换
+ *   - 页面销毁时清理, 不删除任何持久化数据
  *
  * 不做的事:
  *   - 不复制动作 / 姿势 / 表情底层实现
@@ -15,27 +15,22 @@
  *     VRM Humanoid Node / VRM ExpressionManager / ArkWeb Provider
  *   - 不实现 AI 接口 / 自然语言解析 / 演出队列 / CrossFade / 动作混合
  *   - 不新增 Frame Loop / setInterval / 轮询计时
+ *   - 不使用 setTimeout 自动停止动画 (已移除定时恢复逻辑)
  *
  * generation 防过期:
  *   - 每条新命令: performanceGeneration++
- *   - 清除旧 restoreTimer
  *   - 取消旧临时表情 (Runtime.cancelTemporaryExpression)
  *   - 停止旧动画 (Runtime.stopAnimation)
  *   - 旧异步结果提交前必须检查 generation
  *
- * 到期恢复 (returnPolicy):
- *   - DEFAULT_POSE: stopAnimation + cancelTemporaryExpression + restoreDefaultPose (无默认则 resetPose)
- *   - RESET: stopAnimation + cancelTemporaryExpression + resetPose
- *   - KEEP: 不停止动作或姿势, 只结束 ACTIVE 状态
- *           (临时表情仍按其自身 duration 恢复)
- *
- * 表情失败策略:
- *   - 动作或姿势已成功 → 保持动作或姿势
- *   - 记录 PERFORMANCE_EXPRESSION_APPLY_FAILED
- *   - 不撤销已成功的动作
+ * 停止策略:
+ *   - 动画循环播放或播放一遍, 由循环播放开关控制 (setAnimationLoop)
+ *   - 用户点击停止或点击同一动作 → stopAnimation + 恢复默认姿势
+ *   - 新命令替换 → 停止旧动画, 应用新动画
+ *   - 表情与动画独立播放, 互不影响
  *
  * Reference:
- *   - AGENTS.md Phase 3F-1 §演出控制器 / §REPLACE 规则 / §到期恢复
+ *   - AGENTS.md Phase 3F-1 §演出控制器 / §REPLACE 规则
  *   - ArkWebAvatarPerformanceTypes.ets
  */
 
@@ -78,10 +73,8 @@ export class ArkWebAvatarPerformanceController {
   private currentExpressionWeight: number = 0;
   /** 到期时间戳 (0 表示无活动 timeout) */
   private expiresAt: number = 0;
-  /** 当前 returnPolicy (到期恢复时使用) */
+  /** 当前 returnPolicy (记录用, 不再用于自动恢复) */
   private currentReturnPolicy: string = 'DEFAULT_POSE';
-  /** 恢复 timeout 句柄 (-1 表示无) */
-  private restoreTimerId: number = -1;
   /** 最近一次错误码 */
   private lastErrorCode: string = '';
   /** 最近一次错误消息 */
@@ -128,14 +121,14 @@ export class ArkWebAvatarPerformanceController {
    * 流程:
    *   1. 检查 disposed
    *   2. 校验命令 (validatePerformanceCommand)
-   *   3. REPLACE: generation++, 清除旧 restoreTimer, cancelTemporaryExpression, stopAnimation
+   *   3. REPLACE: generation++, cancelTemporaryExpression, stopAnimation
    *   4. state = RESOLVING, 记录当前命令字段
    *   5. motionType 分支:
    *      - animation: 查找 actionId → playAnimationById
    *      - pose: 查找 poseId → applyPoseById
    *      - none: 跳过动作
    *   6. expressionId 非空: setTemporaryExpressionByAlias
-   *   7. state = ACTIVE, 启动 restoreTimer
+   *   7. state = ACTIVE (不启动定时器, 由用户或新命令停止)
    *   8. 返回结果
    *
    * 旧 generation 的异步结果通过 generation 检查被忽略。
@@ -273,13 +266,12 @@ export class ArkWebAvatarPerformanceController {
       }
     }
 
-    // ACTIVE: 启动 restoreTimer
+    // ACTIVE: 演出进行中, 不自动停止 (由用户点击停止或新命令替换)
     if (this.checkStaleAndReturn(myGeneration, cmd.commandId)) {
       return this.makeStaleResult();
     }
     this._state = ArkWebPerformanceState.ACTIVE;
-    this.expiresAt = Date.now() + cmd.durationMs;
-    this.scheduleRestoreTimeout(myGeneration, cmd.durationMs, cmd.returnPolicy);
+    this.expiresAt = 0;
 
     return {
       success: true,
@@ -297,7 +289,6 @@ export class ArkWebAvatarPerformanceController {
    *
    * 行为:
    *   - performanceGeneration++
-   *   - 清除 restoreTimer
    *   - cancelTemporaryExpression
    *   - stopAnimation
    *   - resetPose (不恢复默认姿势)
@@ -328,7 +319,7 @@ export class ArkWebAvatarPerformanceController {
       currentExpressionId: this.currentExpressionId,
       currentExpressionWeight: this.currentExpressionWeight,
       expiresAt: this.expiresAt,
-      restoreTimerActive: this.restoreTimerId !== -1,
+      restoreTimerActive: false,
       lastErrorCode: this.lastErrorCode,
       lastErrorMessage: this.lastErrorMessage
     };
@@ -339,7 +330,6 @@ export class ArkWebAvatarPerformanceController {
    *
    * 行为:
    *   - performanceGeneration++
-   *   - 清除 restoreTimer
    *   - cancelTemporaryExpression (best-effort, 不等待)
    *   - stopAnimation (best-effort, 不等待)
    *   - state = DISPOSED
@@ -351,7 +341,6 @@ export class ArkWebAvatarPerformanceController {
     }
     this._disposed = true;
     this.performanceGeneration++;
-    this.clearRestoreTimer();
     this.currentCommandId = '';
     this.currentMotionType = '';
     this.currentMotionId = '';
@@ -389,7 +378,6 @@ export class ArkWebAvatarPerformanceController {
    */
   private beginNewCommand(): number {
     this.performanceGeneration++;
-    this.clearRestoreTimer();
     this.expiresAt = 0;
     // best-effort 取消旧临时表情和停止旧动画 (不等待, 不阻塞新命令)
     if (this.runtime !== null) {
@@ -418,95 +406,6 @@ export class ArkWebAvatarPerformanceController {
       return true;
     }
     return false;
-  }
-
-  /**
-   * 清除恢复 timeout。
-   */
-  private clearRestoreTimer(): void {
-    if (this.restoreTimerId !== -1) {
-      clearTimeout(this.restoreTimerId);
-      this.restoreTimerId = -1;
-    }
-  }
-
-  /**
-   * 调度单次恢复 timeout。
-   *
-   * 到期后:
-   *   - 检查 generation
-   *   - state = RESTORING
-   *   - 按 returnPolicy 恢复
-   *   - state = IDLE
-   */
-  private scheduleRestoreTimeout(
-    generation: number,
-    durationMs: number,
-    returnPolicy: string
-  ): void {
-    this.clearRestoreTimer();
-    const self: ArkWebAvatarPerformanceController = this;
-    this.restoreTimerId = setTimeout(() => {
-      self.onRestoreTimeout(generation, returnPolicy);
-    }, durationMs);
-  }
-
-  /**
-   * 恢复 timeout 回调。
-   */
-  private async onRestoreTimeout(generation: number, returnPolicy: string): Promise<void> {
-    this.restoreTimerId = -1;
-    // generation 不匹配 → 旧 timeout, 忽略
-    if (generation !== this.performanceGeneration) {
-      // stale restore timeout 静默忽略(高频保护逻辑,默认不记录)
-      return;
-    }
-    if (this._disposed) {
-      return;
-    }
-    this._state = ArkWebPerformanceState.RESTORING;
-    this.expiresAt = 0;
-
-    try {
-      if (returnPolicy === 'KEEP') {
-        // KEEP: 不停止动作或姿势, 只结束 ACTIVE 状态
-        // 临时表情仍按其自身 duration 恢复
-      } else if (returnPolicy === 'RESET') {
-        // RESET: 停止动画 + 取消临时表情 + resetPose
-        if (this.runtime !== null) {
-          await this.runtime.stopAnimation();
-          if (generation !== this.performanceGeneration) return;
-          await this.runtime.cancelTemporaryExpression();
-          if (generation !== this.performanceGeneration) return;
-          await this.runtime.resetPose();
-          if (generation !== this.performanceGeneration) return;
-        }
-      } else if (returnPolicy === 'DEFAULT_POSE') {
-        // DEFAULT_POSE: 停止动画 + 取消临时表情 + restoreDefaultPose (无默认则 resetPose)
-        if (this.runtime !== null) {
-          await this.runtime.stopAnimation();
-          if (generation !== this.performanceGeneration) return;
-          await this.runtime.cancelTemporaryExpression();
-          if (generation !== this.performanceGeneration) return;
-          await this.runtime.restoreDefaultPose();
-          if (generation !== this.performanceGeneration) return;
-        }
-      }
-      if (generation !== this.performanceGeneration) {
-        // 恢复过程中被新命令取代
-        return;
-      }
-      this._state = ArkWebPerformanceState.IDLE;
-      this.clearCurrentCommandFields();
-    } catch (e) {
-      const msg: string = e instanceof Error ? e.message : String(e);
-      console.warn(`[Performance] restore failed: ${msg}`);
-      this.lastErrorCode = PerformanceErrorCode.RESTORE_FAILED;
-      this.lastErrorMessage = `restore failed: ${msg}`;
-      if (generation === this.performanceGeneration) {
-        this._state = ArkWebPerformanceState.FAILED;
-      }
-    }
   }
 
   /**

@@ -821,6 +821,20 @@ export class ArkWebViewerJsCaller {
     return this.callWithStringArg('stopAnimation', optionsJson);
   }
 
+  /**
+   * 调用 window.arkTavernViewerBridge.setAnimationLoop(enabledJson)
+   *
+   * 设置动画循环播放开关, 立即应用到当前 AnimationAction。
+   *
+   * @param enabledJson JSON 字符串 {"enabled": true|false}
+   * @returns JSON 字符串
+   *   {"success": true, "loop": true|false}
+   *   {"success": false, "error": {"code": "...", "message": "..."}}
+   */
+  async setAnimationLoop(enabledJson: string): Promise<string> {
+    return this.callWithStringArg('setAnimationLoop', enabledJson);
+  }
+
   // ===== Phase 3D-2 — JSON 姿势解析、应用与恢复 =====
 
   /**

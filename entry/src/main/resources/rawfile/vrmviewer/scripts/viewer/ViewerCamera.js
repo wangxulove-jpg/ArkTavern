@@ -159,6 +159,15 @@ export class ViewerCamera {
     this._disposed = false;
     /** @type {string} Phase 2A-2: 最近一次相机操作 */
     this.lastAction = ACTION_INITIALIZE;
+    /**
+     * Phase 4B-2R2-fix: 基准相机偏移 (camera.position - controls.target)。
+     *
+     * 由 focusOnObject / reset / smoothReset 完成 / initialize 写入,
+     * applyCameraZoomMultiplier 基于此值计算缩放后的相机位置,
+     * 避免每次缩放都基于"上一次缩放后的状态"再缩放导致累加放大。
+     * @type {THREE.Vector3|null}
+     */
+    this._baselineOffset = null;
 
     // ===== Phase 2B: 平滑重置状态机 =====
     /** @type {string} 过渡状态 */
@@ -246,6 +255,8 @@ export class ViewerCamera {
     this.controls.update();
     // Phase 2A-2: 初始化完成
     this.lastAction = ACTION_INITIALIZE;
+    // Phase 4B-2R2-fix: 提交默认相机位置作为缩放基准
+    this._commitBaselineOffset();
 
     // Phase 2B: 注册 OrbitControls 'start' 事件监听器
     // 用户直接操作 3D Canvas 时取消正在运行的平滑重置
@@ -381,6 +392,8 @@ export class ViewerCamera {
 
     // 8. 更新 lastAction
     this.lastAction = ACTION_RESET;
+    // Phase 4B-2R2-fix: 提交重置后的相机位置作为缩放基准
+    this._commitBaselineOffset();
 
     // 9. 返回完整 CameraState
     return { success: true, state: this._buildCameraState() };
@@ -575,6 +588,8 @@ export class ViewerCamera {
 
     // 10. 更新 lastAction
     this.lastAction = action;
+    // Phase 4B-2R2-fix: 提交新相机位置作为缩放基准 (替代旧的 zoom 累加状态)
+    this._commitBaselineOffset();
 
     // 11. 返回完整 CameraState + bounds
     return {
@@ -610,15 +625,21 @@ export class ViewerCamera {
    *
    * 通过缩短相机到目标点距离实现视觉放大, 不修改 model.scene.position / scale / 骨骼。
    *
+   * 修复 (Phase 4B-2R2-fix): 基于基准偏移 _baselineOffset 计算, 而非当前 camera.position。
+   * 旧的实现使用当前 camera.position - controls.target 作为基准, 每次调用都基于
+   * "上一次缩放后的状态"再缩放, 导致多次调用同一 multiplier 会累加放大。
+   * 现在基于 focusOnObject / reset / smoothReset 完成时保存的 _baselineOffset
+   * 计算, 保证无论调用多少次, 同一 multiplier 的结果一致 (幂等)。
+   *
    * 公式:
-   *   offset = camera.position - controls.target
-   *   scaledOffset = offset / multiplier
+   *   baselineOffset = _baselineOffset (由 focus/reset 写入)
+   *   scaledOffset = baselineOffset / multiplier
    *   camera.position = controls.target + scaledOffset
    *
    * 然后调用 updateCameraClipping 重新计算 near/far/minDistance/maxDistance。
    *
    * @param {number} multiplier 缩放倍率 (0.5 ~ 3.0)
-   *   - 1.0: 无变化
+   *   - 1.0: 恢复基准距离 (无放大)
    *   - 2.0: 相机距离缩短至 1/2, 模型视觉放大 2 倍
    *   - 3.0: 相机距离缩短至 1/3, 模型视觉放大 3 倍
    * @returns {{success: boolean, state?: object, multiplier?: number, error?: string}}
@@ -637,12 +658,18 @@ export class ViewerCamera {
     // 钳制到 [0.5, 3.0]
     var safeMultiplier = Math.max(0.5, Math.min(3.0, multiplier));
 
-    var offset = new THREE.Vector3().subVectors(this.camera.position, this.controls.target);
-    // 避免除零或极端值
-    if (offset.lengthSq() < 1e-12) {
+    // 修复: 优先使用 _baselineOffset; 若尚未初始化则用当前 offset 并立即提交为基准
+    var baseline = this._baselineOffset;
+    if (!baseline || baseline.lengthSq() < 1e-12) {
+      baseline = new THREE.Vector3().subVectors(this.camera.position, this.controls.target);
+      this._baselineOffset = baseline.clone();
+    }
+    if (baseline.lengthSq() < 1e-12) {
       return { success: false, error: CAMERA_FOCUS_BOUNDS_INVALID };
     }
-    var scaledOffset = offset.divideScalar(safeMultiplier);
+
+    // 基于基准偏移计算缩放后的偏移 (幂等: 同一 multiplier 结果恒定)
+    var scaledOffset = baseline.clone().divideScalar(safeMultiplier);
     var newPosition = new THREE.Vector3().addVectors(this.controls.target, scaledOffset);
 
     // 保存 controls.enabled
@@ -666,6 +693,27 @@ export class ViewerCamera {
       state: this._buildCameraState(),
       multiplier: safeMultiplier
     };
+  }
+
+  /**
+   * Phase 4B-2R2-fix: 提交当前 (camera.position - controls.target) 为基准偏移。
+   *
+   * 在以下时机调用:
+   *   - focusOnObject 提交新位置后
+   *   - reset 恢复默认位置后
+   *   - smoothReset 过渡到达终点后
+   *   - initialize 设置默认相机后
+   *
+   * 之后 applyCameraZoomMultiplier 会基于此基准计算缩放位置,
+   * 而不是基于"上一次缩放后的状态"再缩放, 避免累加放大。
+   * @private
+   */
+  _commitBaselineOffset() {
+    if (!this.camera || !this.controls) {
+      this._baselineOffset = null;
+      return;
+    }
+    this._baselineOffset = new THREE.Vector3().subVectors(this.camera.position, this.controls.target);
   }
 
   // ===== Final Acceptance Fix: 相机裁剪范围统一更新 =====
@@ -1088,6 +1136,8 @@ export class ViewerCamera {
       this.transitionState = CameraTransitionState.COMPLETED;
       this.transitionCompletedAt = Date.now();
       this.lastAction = ACTION_SMOOTH_RESET;
+      // Phase 4B-2R2-fix: 提交重置完成后的相机位置作为缩放基准
+      this._commitBaselineOffset();
     }
   }
 
@@ -1222,6 +1272,8 @@ export class ViewerCamera {
     // 清空过渡状态引用
     this.transitionStartState = null;
     this.transitionTargetState = null;
+    // Phase 4B-2R2-fix: 清空缩放基准
+    this._baselineOffset = null;
     if (this.controls) {
       try { this.controls.dispose(); } catch (e) { /* ignore */ }
       this.controls = null;

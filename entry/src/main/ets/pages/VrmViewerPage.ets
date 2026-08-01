@@ -630,6 +630,8 @@ struct VrmViewerPage {
   @State debugAnimationPlaybackSpeed: number = 1;
   /** Debug:是否循环播放 */
   @State debugAnimationLoop: boolean = true;
+  /** 循环播放开关 (用户控制, true=循环播放, false=播放一遍) */
+  @State animationLoopEnabled: boolean = true;
   /** Debug:动画错误码 */
   @State debugAnimationErrorCode: string = '';
   /** Debug:动画错误信息 */
@@ -900,10 +902,6 @@ struct VrmViewerPage {
   @State aiTestMotionId: string = '';
   /** AI Tab 手动测试: 选中的业务表情 ID (空字符串表示无表情) */
   @State aiTestExpressionId: string = '';
-  /** AI Tab 手动测试: 持续时间 (ms), 选项: 1000 / 2500 / 5000 / 10000 / 15000 / 30000 */
-  @State aiTestDurationMs: number = 5000;
-  /** AI Tab 手动测试: 恢复策略 (DEFAULT_POSE / RESET / KEEP) */
-  @State aiTestReturnPolicy: string = 'DEFAULT_POSE';
 
   // ===== Phase 3B — 模型自动恢复与持久化资产目录 =====
   /** 资产库状态(READY / EMPTY / FAILED / DISPOSED) */
@@ -3444,8 +3442,21 @@ struct VrmViewerPage {
       promptAction.showToast({ message: '动画加载中,请稍候' });
       return;
     }
-    if (this.selectedActionId === actionId && this.debugAnimationState === 'READY') {
-      // 已选中且已加载,不重复加载
+    // 点击同一动作: 停止动画并恢复默认姿势 (表情不受影响)
+    if (this.selectedActionId === actionId
+        && (this.debugAnimationState === 'READY'
+            || this.debugAnimationState === 'PLAYING'
+            || this.debugAnimationState === 'PAUSED'
+            || this.debugAnimationState === 'STOPPED')) {
+      try {
+        await this.arkWebController.stopAnimation('');
+        await this.arkWebController.resetPose();
+      } catch (e) {
+        console.warn('[VrmViewerPage] stopAndReset on same action click failed: ' +
+          (e instanceof Error ? e.message : String(e)));
+      }
+      this.selectedActionId = '';
+      this.refreshAnimationDebugState();
       return;
     }
 
@@ -8842,6 +8853,28 @@ struct VrmViewerPage {
       .width('100%')
       .margin({ bottom: 16 })
 
+      // 循环播放开关
+      Row() {
+        Text('循环播放')
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor($r('app.color.app_text_primary'))
+          .layoutWeight(1)
+        Toggle({ type: ToggleType.Switch, isOn: this.animationLoopEnabled })
+          .selectedColor($r('app.color.app_accent'))
+          .onChange((isOn: boolean) => {
+            this.animationLoopEnabled = isOn;
+            this.debugAnimationLoop = isOn;
+            if (this.viewerState === ArkWebViewerState.READY) {
+              this.arkWebController.setAnimationLoop(isOn).catch((e: Object) => {
+                console.warn('[VrmViewerPage] setAnimationLoop failed: ' +
+                  (e instanceof Error ? e.message : String(e)));
+              });
+            }
+          })
+      }
+      .width('100%')
+      .margin({ bottom: 16 })
+
       // Phase 3C-1 — 动作列表
       Text('动作列表')
         .fontSize($r('app.float.app_font_subtitle'))
@@ -11109,61 +11142,6 @@ struct VrmViewerPage {
       .width('100%')
       .margin({ bottom: 12 })
 
-      // 持续时间
-      Text('持续时间 (ms)')
-        .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_primary'))
-        .margin({ bottom: 8 })
-
-      Row({ space: 8 }) {
-        ForEach([1000, 2500, 5000, 10000, 15000, 30000], (d: number) => {
-          Button(String(d))
-            .fontSize($r('app.float.app_font_caption'))
-            .fontColor(this.aiTestDurationMs === d
-              ? $r('app.color.app_text_primary')
-              : $r('app.color.app_text_secondary'))
-            .backgroundColor(this.aiTestDurationMs === d
-              ? $r('app.color.app_surface_2')
-              : $r('app.color.app_surface_1'))
-            .borderRadius($r('app.float.app_radius_sm'))
-            .height(36)
-            .layoutWeight(1)
-            .onClick(() => {
-              this.aiTestDurationMs = d;
-            })
-        })
-      }
-      .width('100%')
-      .margin({ bottom: 12 })
-
-      // 恢复策略
-      Text('恢复策略')
-        .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_primary'))
-        .margin({ bottom: 8 })
-
-      Row({ space: 8 }) {
-        ForEach(['DEFAULT_POSE', 'RESET', 'KEEP'] as ArkWebPerformanceReturnPolicy[],
-          (p: ArkWebPerformanceReturnPolicy) => {
-            Button(p)
-              .fontSize($r('app.float.app_font_caption'))
-              .fontColor(this.aiTestReturnPolicy === p
-                ? $r('app.color.app_text_primary')
-                : $r('app.color.app_text_secondary'))
-              .backgroundColor(this.aiTestReturnPolicy === p
-                ? $r('app.color.app_surface_2')
-                : $r('app.color.app_surface_1'))
-              .borderRadius($r('app.float.app_radius_sm'))
-              .height(36)
-              .layoutWeight(1)
-              .onClick(() => {
-                this.aiTestReturnPolicy = p;
-              })
-          })
-      }
-      .width('100%')
-      .margin({ bottom: 16 })
-
       // 执行 / 停止
       Row({ space: 8 }) {
         Button('执行 AI 演出测试')
@@ -11678,15 +11656,14 @@ struct VrmViewerPage {
       motionId = '';
     }
 
-    // 构造结构化 Hint (与 ArkWebDialoguePerformanceHint 字段一致)
+    // 构造结构化 Hint (不传 durationMs / returnPolicy, Mapper 使用默认值)
+    // PerformanceController 已移除定时停止, 动画循环或播放一遍由循环播放开关控制
     const hint: ArkWebDialoguePerformanceHint = {
       version: 1,
       motionType: this.aiTestMotionType,
       motionId: motionId,
       expressionId: this.aiTestExpressionId,
-      expressionWeight: 1,
-      durationMs: this.aiTestDurationMs,
-      returnPolicy: this.aiTestReturnPolicy
+      expressionWeight: 1
     };
     const rawJson: string = JSON.stringify(hint);
     // Phase 4A-2: turnId 仍用 ai_test_<timestamp> 形式 (手动测试用, 与真实聊天 turnId 区分)

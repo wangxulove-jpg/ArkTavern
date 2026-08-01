@@ -1824,6 +1824,36 @@ if (window.__arkTavernBootstrapState) {
       });
     },
 
+    /**
+     * 设置动画循环播放开关。
+     * @param {string} enabledJson JSON: {"enabled": true|false}
+     * @returns {string} JSON 结果
+     *   {"success": true, "loop": true|false}
+     *   {"success": false, "error": {"code": "...", "message": "..."}}
+     */
+    setAnimationLoop: function (enabledJson) {
+      var enabled = true;
+      if (typeof enabledJson === 'string' && enabledJson.length > 0) {
+        try {
+          var parsed = JSON.parse(enabledJson);
+          if (typeof parsed === 'object' && parsed !== null) {
+            enabled = parsed.enabled === true;
+          } else if (typeof parsed === 'boolean') {
+            enabled = parsed;
+          }
+        } catch (e) {
+          return jsonResult({
+            success: false,
+            error: { code: 'INVALID_JSON', message: 'enabledJson is not valid JSON' }
+          });
+        }
+      }
+      return callViewer(function (v) {
+        var result = v.setAnimationLoop(enabled);
+        return result;
+      });
+    },
+
     // ===== Phase 3D-2 — JSON 姿势解析、应用与恢复 (规范 §三十一) =====
 
     /**

@@ -236,6 +236,21 @@ struct ChatPage {
   /** 字体配色持久化 Preferences key (存储 JSON: mode + 4 个颜色值) */
   private static readonly PREF_KEY_TEXT_COLOR: string = 'chat_text_color';
 
+  /** VRM 模型显示开关持久化 Preferences key (全局保持用户选择, 跨会话生效) */
+  private static readonly PREF_KEY_CHAT_AVATAR_VISIBLE: string = 'chat_avatar_visible';
+
+  /** 聊天内容显示范围比例持久化 (0.5~1.0, 默认 1.0) */
+  private static readonly PREF_KEY_CONTENT_HEIGHT_RATIO: string = 'chat_content_height_ratio';
+
+  /** Avatar 模型水平偏移持久化 (vp, 默认 0) */
+  private static readonly PREF_KEY_AVATAR_OFFSET_X: string = 'chat_avatar_offset_x';
+
+  /** Avatar 模型垂直偏移持久化 (vp, 默认 0) */
+  private static readonly PREF_KEY_AVATAR_OFFSET_Y: string = 'chat_avatar_offset_y';
+
+  /** Avatar 相机缩放倍率持久化 (0.5~3.0, 默认 1.0) */
+  private static readonly PREF_KEY_CAMERA_ZOOM: string = 'chat_avatar_camera_zoom';
+
   /** Phase 4A-2: 本页面实例在 AvatarChatBridge 上的 endpointId (aboutToAppear 生成) */
   private chatEndpointId: string = '';
 
@@ -336,8 +351,6 @@ struct ChatPage {
   @State aiPerformSmokeTestRunning: boolean = false;
   /** Phase 4D-5: 最近一次 AI 动画调用测试结果摘要 (供 UI 显示) */
   @State aiPerformSmokeTestResultText: string = '';
-  /** 模型大小滑动条值 (fillRatio, 0.3~0.98, 默认 0.78) */
-  @State avatarModelFillRatio: number = 0.78;
   /**
    * Phase 4B-2R2: 相机缩放倍率 (0.5~3.0, 默认 1.0)。
    *
@@ -353,6 +366,32 @@ struct ChatPage {
    * MANUAL_FACE_RESET_VIEW: 锁定脸部镜头, 演出不改变镜头
    */
   @State avatarShotControlMode: ArkWebAvatarShotControlMode = 'AUTO';
+
+  /**
+   * 聊天内容显示范围比例 (0.0~1.0, 默认 1.0)。
+   *
+   * 1.0 = 占满顶部和底部; 0.0 = 全部擦除, 只显示背景图和模型。
+   * 背景图保持占满全屏不动。
+   */
+  @State chatContentHeightRatio: number = 1.0;
+
+  /**
+   * Avatar 模型位置调整模式开关。
+   *
+   * true: 显示全屏 pan gesture 遮罩拦截触摸, 用户可拖动模型调整位置。
+   * false: 模型位置固定, 触摸穿透到聊天消息层。
+   */
+  @State avatarPositionAdjustMode: boolean = false;
+
+  /** Avatar 模型水平偏移 (vp, 默认 0, 持久化跨会话保留) */
+  @State avatarOffsetX: number = 0;
+
+  /** Avatar 模型垂直偏移 (vp, 默认 0, 持久化跨会话保留) */
+  @State avatarOffsetY: number = 0;
+
+  /** pan gesture 起始 offset (拖动过程中临时记录) */
+  private avatarPanStartX: number = 0;
+  private avatarPanStartY: number = 0;
 
   aboutToAppear(): void {
     const modelService = AppServices.getModelService();
@@ -416,6 +455,10 @@ struct ChatPage {
     this.registerDarkModeListener();
     this.loadPersistedBubbleOpacity();
     this.loadPersistedTextColor();
+    this.loadPersistedChatAvatarVisible();
+    this.loadPersistedContentHeightRatio();
+    this.loadPersistedAvatarOffset();
+    this.loadPersistedCameraZoom();
     // Phase 4A-2: 注册到 AvatarChatBridge, 使本页面发布的最终助手消息
     // 可被 VrmViewerPage (Avatar endpoint) 消费演出。
     // - endpointId 必须本页面实例内稳定,跨实例唯一
@@ -472,6 +515,187 @@ struct ChatPage {
         return;
       }
       prefs.putString(ChatPage.PREF_KEY_BUBBLE_OPACITY, value.toString())
+        .catch((_e: Object): void => {
+          // 写入失败静默忽略
+        });
+    } catch (_e) {
+      // AppServices 未初始化时静默忽略
+    }
+  }
+
+  /**
+   * 从 Preferences 读取持久化的 VRM 模型显示开关。
+   *
+   * 存储值 'false' 表示用户曾主动关闭模型, 进入页面时保持关闭。
+   * 其它情况(未写入 / 读取失败 / 值非 'false') 使用默认值 true, 保持向后兼容。
+   */
+  private loadPersistedChatAvatarVisible(): void {
+    try {
+      const prefs = AppServices.getAppPreferences();
+      if (!prefs.isInitialized()) {
+        return;
+      }
+      prefs.getString(ChatPage.PREF_KEY_CHAT_AVATAR_VISIBLE, 'true')
+        .then((value: string): void => {
+          this.chatAvatarVisible = value !== 'false';
+        })
+        .catch((_e: Object): void => {
+          // 读取失败静默使用默认值 true
+        });
+    } catch (_e) {
+      // AppServices 未初始化时静默使用默认值 true
+    }
+  }
+
+  /**
+   * 将 VRM 模型显示开关持久化到 Preferences。
+   * 写入失败静默忽略(不影响 UI 交互)。
+   */
+  private persistChatAvatarVisible(visible: boolean): void {
+    try {
+      const prefs = AppServices.getAppPreferences();
+      if (!prefs.isInitialized()) {
+        return;
+      }
+      prefs.putString(ChatPage.PREF_KEY_CHAT_AVATAR_VISIBLE, visible ? 'true' : 'false')
+        .catch((_e: Object): void => {
+          // 写入失败静默忽略
+        });
+    } catch (_e) {
+      // AppServices 未初始化时静默忽略
+    }
+  }
+
+  /**
+   * 加载持久化的聊天内容显示范围比例。
+   * 范围 0.0~1.0, 默认 1.0。
+   */
+  private loadPersistedContentHeightRatio(): void {
+    try {
+      const prefs = AppServices.getAppPreferences();
+      if (!prefs.isInitialized()) {
+        return;
+      }
+      prefs.getString(ChatPage.PREF_KEY_CONTENT_HEIGHT_RATIO, '1.0')
+        .then((value: string): void => {
+          const ratio: number = parseFloat(value);
+          if (!isNaN(ratio) && ratio >= 0.0 && ratio <= 1.0) {
+            this.chatContentHeightRatio = ratio;
+          }
+        })
+        .catch((_e: Object): void => {
+          // 读取失败静默使用默认值
+        });
+    } catch (_e) {
+      // AppServices 未初始化时静默使用默认值
+    }
+  }
+
+  /**
+   * 持久化聊天内容显示范围比例。
+   */
+  private persistContentHeightRatio(ratio: number): void {
+    try {
+      const prefs = AppServices.getAppPreferences();
+      if (!prefs.isInitialized()) {
+        return;
+      }
+      prefs.putString(ChatPage.PREF_KEY_CONTENT_HEIGHT_RATIO, String(ratio))
+        .catch((_e: Object): void => {
+          // 写入失败静默忽略
+        });
+    } catch (_e) {
+      // AppServices 未初始化时静默忽略
+    }
+  }
+
+  /**
+   * 加载持久化的 Avatar 模型偏移 (x, y)。
+   */
+  private loadPersistedAvatarOffset(): void {
+    try {
+      const prefs = AppServices.getAppPreferences();
+      if (!prefs.isInitialized()) {
+        return;
+      }
+      Promise.all([
+        prefs.getString(ChatPage.PREF_KEY_AVATAR_OFFSET_X, '0'),
+        prefs.getString(ChatPage.PREF_KEY_AVATAR_OFFSET_Y, '0')
+      ])
+        .then((values: string[]): void => {
+          const x: number = parseFloat(values[0]);
+          const y: number = parseFloat(values[1]);
+          if (!isNaN(x)) {
+            this.avatarOffsetX = x;
+          }
+          if (!isNaN(y)) {
+            this.avatarOffsetY = y;
+          }
+        })
+        .catch((_e: Object): void => {
+          // 读取失败静默使用默认值
+        });
+    } catch (_e) {
+      // AppServices 未初始化时静默使用默认值
+    }
+  }
+
+  /**
+   * 持久化 Avatar 模型偏移。
+   */
+  private persistAvatarOffset(x: number, y: number): void {
+    try {
+      const prefs = AppServices.getAppPreferences();
+      if (!prefs.isInitialized()) {
+        return;
+      }
+      Promise.all([
+        prefs.putString(ChatPage.PREF_KEY_AVATAR_OFFSET_X, String(x)),
+        prefs.putString(ChatPage.PREF_KEY_AVATAR_OFFSET_Y, String(y))
+      ])
+        .catch((_e: Object): void => {
+          // 写入失败静默忽略
+        });
+    } catch (_e) {
+      // AppServices 未初始化时静默忽略
+    }
+  }
+
+  /**
+   * 加载持久化的相机缩放倍率。
+   * 范围 0.5~3.0, 默认 1.0。
+   */
+  private loadPersistedCameraZoom(): void {
+    try {
+      const prefs = AppServices.getAppPreferences();
+      if (!prefs.isInitialized()) {
+        return;
+      }
+      prefs.getString(ChatPage.PREF_KEY_CAMERA_ZOOM, '1.0')
+        .then((value: string): void => {
+          const zoom: number = parseFloat(value);
+          if (!isNaN(zoom) && zoom >= 0.5 && zoom <= 3.0) {
+            this.avatarCameraZoomMultiplier = zoom;
+          }
+        })
+        .catch((_e: Object): void => {
+          // 读取失败静默使用默认值
+        });
+    } catch (_e) {
+      // AppServices 未初始化时静默使用默认值
+    }
+  }
+
+  /**
+   * 持久化相机缩放倍率。
+   */
+  private persistCameraZoom(zoom: number): void {
+    try {
+      const prefs = AppServices.getAppPreferences();
+      if (!prefs.isInitialized()) {
+        return;
+      }
+      prefs.putString(ChatPage.PREF_KEY_CAMERA_ZOOM, String(zoom))
         .catch((_e: Object): void => {
           // 写入失败静默忽略
         });
@@ -1463,6 +1687,13 @@ struct ChatPage {
                 self.refreshAiCapabilitySnapshot();
                 // Phase 4A-3R: 模型就绪后刷新 Provider 信息和 Avatar Tool Calling 状态
                 self.refreshProviderInfoSnapshot();
+                // 模型就绪后应用持久化的相机缩放倍率
+                if (self.avatarCameraZoomMultiplier !== 1.0) {
+                  controller.setCameraZoomMultiplier(self.avatarCameraZoomMultiplier).catch((e: Object): void => {
+                    Logger.warn(LOG_TAG, 'apply persisted camera zoom failed: ' +
+                      (e instanceof Error ? e.message : String(e)));
+                  });
+                }
               }
             };
             listener.onModelNameChangedFn = (displayName: string): void => {
@@ -1476,9 +1707,14 @@ struct ChatPage {
             this.connectAvatarToolIntegration();
           }
         })
+        .offset({ x: this.avatarOffsetX, y: this.avatarOffsetY })
         .expandSafeArea([SafeAreaType.KEYBOARD], [SafeAreaEdge.BOTTOM])
 
         // ===== 底层:消息列表 + 浮动按钮 =====
+        // Stack 整体离屏合成, 让顶部擦除遮罩能通过 DST_IN 擦除消息
+        // - 消息列表正常渲染 (默认 SRC_OVER)
+        // - 顶部遮罩用 DST_IN + alpha 渐变: alpha=0 擦除消息, alpha=1 显示消息
+        //   → 消息从顶部淡出, 背景图和模型透出 (遮罩本身透明)
         Column() {
           // 消息列表 + 浮动按钮
           Stack({ alignContent: Alignment.BottomEnd }) {
@@ -1490,6 +1726,29 @@ struct ChatPage {
               this.emptyStateView()
             } else {
               this.messageList()
+            }
+
+            // 顶部擦除遮罩: 用 DST_IN alpha 渐变擦除消息顶部, 背景图和模型透出
+            // - 100% = 占满顶部和底部 (无遮罩)
+            // - 调小占比 = 顶部消息被擦除, 在交界处渐变消失
+            // - 背景图保持占满全屏不动 (遮罩只是擦除消息, 不绘制实体色)
+            // position 强制顶部对齐, 避免 Stack alignContent=BottomEnd 把遮罩拉到底部
+            if (this.chatContentHeightRatio < 1.0) {
+              Column()
+                .width('100%')
+                .height(`${(1 - this.chatContentHeightRatio) * 100}%`)
+                .linearGradient({
+                  angle: 180,
+                  colors: [
+                    ['#00000000', 0.0],
+                    ['#00000000', 0.5],
+                    ['#FF000000', 0.9],
+                    ['#FF000000', 1.0]
+                  ]
+                })
+                .hitTestBehavior(HitTestMode.Transparent)
+                .blendMode(BlendMode.DST_IN)
+                .position({ x: 0, y: 0 })
             }
 
             // 回到底部浮动按钮
@@ -1515,6 +1774,9 @@ struct ChatPage {
           }
           .layoutWeight(1)
           .width('100%')
+          // Stack 离屏合成, 让顶部遮罩的 blendMode(DST_IN) 能擦除消息列表
+          // OFFSCREEN: Stack 内子组件先合成到离屏 buffer, 再与下层混合
+          .blendMode(BlendMode.SRC_OVER, BlendApplyType.OFFSCREEN)
           // padding 0:消息列表占满全屏,顶栏/输入栏作为浮层叠加(顶栏透明、输入栏底部带不透明背景)。
           // 最新消息通过 autoScrollToBottom 滚动到输入栏上方可视区域。
           .padding({ top: 0, bottom: 0 })
@@ -1530,6 +1792,41 @@ struct ChatPage {
         .width('100%')
         .height('100%')
         .expandSafeArea([SafeAreaType.KEYBOARD], [SafeAreaEdge.BOTTOM])
+
+        // ===== 模型位置调整遮罩 (仅 avatarPositionAdjustMode=true 时显示) =====
+        // 位于消息列表上方, 拦截所有触摸, 用户可拖动调整模型位置
+        // - Stack + Text 占位让容器可命中触摸事件
+        // - priorityGesture 提升 PanGesture 优先级, 防下层 List 滚动手势抢占
+        // - hitTestBehavior(Block): 拦截触摸, 不穿透到下层消息列表
+        // - 背景半透明: 视觉提示用户当前处于调整模式
+        if (this.avatarPositionAdjustMode) {
+          Stack() {
+            Text('拖动调整模型位置，关闭后位置保持')
+              .fontSize(14)
+              .fontColor(Color.White)
+              .backgroundColor('rgba(0,0,0,0.6)')
+              .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+              .borderRadius(20)
+          }
+          .width('100%')
+          .height('100%')
+          .backgroundColor('rgba(0,0,0,0.3)')
+          .hitTestBehavior(HitTestMode.Block)
+          .priorityGesture(
+            PanGesture()
+              .onActionStart((_event: GestureEvent) => {
+                this.avatarPanStartX = this.avatarOffsetX;
+                this.avatarPanStartY = this.avatarOffsetY;
+              })
+              .onActionUpdate((event: GestureEvent) => {
+                this.avatarOffsetX = this.avatarPanStartX + event.offsetX;
+                this.avatarOffsetY = this.avatarPanStartY + event.offsetY;
+              })
+              .onActionEnd(() => {
+                this.persistAvatarOffset(this.avatarOffsetX, this.avatarOffsetY);
+              })
+          )
+        }
 
         // ===== 顶部渐变层(增强状态栏图标和顶部文字可读性) =====
         // 不响应触摸:hitTestBehavior(Transparent)
@@ -1623,8 +1920,8 @@ struct ChatPage {
         // Phase 4B-2R: 移到输入栏之后渲染, z-order 高于输入栏,
         // 确保面板 hitTestBehavior(Block) 不被输入栏 Transparent 层阻挡。
         // - 不使用全屏 Dialog 和遮罩
-        // - 顶部显示模型显示开关
-        // - 分组显示动作/姿势/表情能力列表
+        // - 上方: 模型显示开关 / 镜头控制 / 缩放 / 权限控制 / 能力列表 (容易调整)
+        // - 下方: 调试信息 (诊断 / 运行时状态 / 工具调用 / 策略 / 测试按钮)
         // - 点击能力时构建 performanceHint 并通过 AvatarChatBridge 发布 (source=CHAT_AI_PANEL)
         if (this.aiPanelVisible) {
           this.aiControlPanel()
@@ -1820,9 +2117,9 @@ struct ChatPage {
   @Builder
   aiControlPanel() {
     // 面板容器:靠右,不覆盖整屏,半透明背景,无全屏遮罩
-    // 面板结构 = 可滚动主区域 (状态区 + 能力列表) + 固定底部停止按钮
+    // 面板结构 = 可滚动主区域 (控制区在上 + 调试区在下) + 固定底部停止按钮
     Column() {
-      // ===== 可滚动主区域 (标题 + 诊断 + 镜头按钮 + 模型大小滑动条 + 能力列表) =====
+      // ===== 可滚动主区域 (标题 + 控制区 + 能力列表 + 调试信息) =====
       Scroll() {
         Column() {
           // 标题行:模型名 + 模型显示开关 + 关闭按钮
@@ -1841,6 +2138,7 @@ struct ChatPage {
               .scale({ x: 0.8, y: 0.8 })
               .onChange((isOn: boolean) => {
                 this.chatAvatarVisible = isOn;
+                this.persistChatAvatarVisible(isOn);
               })
 
             // 关闭按钮
@@ -1859,20 +2157,7 @@ struct ChatPage {
           .width('100%')
           .margin({ bottom: 8 })
 
-          // ===== Phase 4B-1R §第八项: 紧凑诊断信息 =====
-          this.stageDiagnosticBlock()
-
-          // Phase 4B-2R §第十二项: 运行时状态一致性 (来自 Runtime Debug State)
-          this.runtimeStatusBlock()
-
-          // Phase 4A-3: AI 模型权限区 (Avatar Tool Calling 权限控制)
-          this.avatarToolPermissionBlock()
-
-          // Phase 4D-3: 最后一次 AI 工具调用摘要 (区分"工具可用"与"工具已被调用")
-          this.lastAvatarToolCallBlock()
-
-          // Phase 4C-1: Avatar 对话演出策略状态区
-          this.avatarDialogueStrategyBlock()
+          // ===== 控制区 (上方, 容易调整) =====
 
           // 重新加载模型按钮 (Phase 4B-1R §第八项)
           Button('重新加载模型')
@@ -1940,27 +2225,6 @@ struct ChatPage {
           .width('100%')
           .margin({ bottom: 8 })
 
-          // ===== Phase 4B-2R2: 模型大小滑动条 (fillRatio, 调整基础构图占比) =====
-          Row() {
-            Text('模型大小')
-              .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_text_secondary'))
-              .width(56)
-            Slider({ value: this.avatarModelFillRatio, min: 0.3, max: 0.98, step: 0.01 })
-              .layoutWeight(1)
-              .selectedColor($r('app.color.app_accent'))
-              .trackColor('rgba(255,255,255,0.15)')
-              .blockColor($r('app.color.app_accent'))
-              .onChange((value: number, mode: SliderChangeMode) => {
-                this.avatarModelFillRatio = value;
-                if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
-                  this.adjustAvatarModelSize(value);
-                }
-              })
-          }
-          .width('100%')
-          .margin({ bottom: 8 })
-
           // ===== Phase 4B-2R2: 相机缩放倍率滑动条 (0.5×~3.0×) =====
           Row() {
             Text('缩放')
@@ -1986,6 +2250,9 @@ struct ChatPage {
           }
           .width('100%')
           .margin({ bottom: 8 })
+
+          // AI 模型权限控制 (权限按钮 + 循环播放开关 + 每次回复都调用动作开关)
+          this.avatarPermissionControlBlock()
 
           // ===== 能力列表 (动作 / 姿势 / 表情) =====
           // 无能力快照时提示
@@ -2065,6 +2332,32 @@ struct ChatPage {
               .width('100%')
             }
           }
+
+          // ===== 调试信息区 (下方) =====
+          Divider()
+            .color('rgba(255,255,255,0.1)')
+            .margin({ top: 8, bottom: 4 })
+
+          Text('调试信息')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_tertiary'))
+            .width('100%')
+            .margin({ bottom: 4 })
+
+          // Phase 4B-1R §第八项: 紧凑诊断信息
+          this.stageDiagnosticBlock()
+
+          // Phase 4B-2R §第十二项: 运行时状态一致性 (来自 Runtime Debug State)
+          this.runtimeStatusBlock()
+
+          // Phase 4D-3: 最后一次 AI 工具调用摘要 (区分"工具可用"与"工具已被调用")
+          this.lastAvatarToolCallBlock()
+
+          // Phase 4C-1: Avatar 对话演出策略状态区
+          this.avatarDialogueStrategyBlock()
+
+          // Phase 4A-3R: AI 工具调试 (测试按钮与结果)
+          this.avatarToolDiagnosticsBlock()
         }
         .width('100%')
         .padding({ left: 12, right: 12, top: 12, bottom: 4 })
@@ -2259,19 +2552,15 @@ struct ChatPage {
   }
 
   /**
-   * Phase 4A-3R: AI 模型权限区块 (Avatar Tool Calling 权限控制)。
+   * Phase 4A-3R: AI 模型权限控制区块 (Avatar Tool Calling 权限控制)。
    *
-   * Phase 4A-3R 修正:
-   *   - Avatar 能力状态与 Provider 工具状态分离
-   *   - Provider Tool Calling 改为四态 (SUPPORTED/UNSUPPORTED/UNKNOWN/MISCONFIGURED)
-   *   - 增加 Tool Integration 接线状态显示
-   *   - 增加"测试 Tool Calling"和"测试 Avatar 只读工具"按钮
-   *   - 权限按钮根据 Integration 状态和支持状态启用/禁用
+   * 控制部分: 权限按钮 + 循环播放开关 + 每次回复都调用动作开关。
+   * 测试部分已拆分到 avatarToolDiagnosticsBlock() (调试区域)。
    *
    * 手动 AI 面板按钮始终可用, 不受 AI 权限限制。
    */
   @Builder
-  avatarToolPermissionBlock() {
+  avatarPermissionControlBlock() {
     Column() {
       Text('AI 模型权限')
         .fontSize($r('app.float.app_font_caption'))
@@ -2450,6 +2739,28 @@ struct ChatPage {
       .height(32)
       .margin({ top: 4 })
       .enabled(this.isIntegrationConnected())
+    }
+    .width('100%')
+    .padding(8)
+    .margin({ bottom: 4 })
+    .borderRadius($r('app.float.app_radius_sm'))
+    .backgroundColor('rgba(255,255,255,0.05)')
+  }
+
+  /**
+   * Phase 4A-3R: AI 工具调试区块 (Avatar Tool Calling 测试按钮与结果)。
+   *
+   * 从 avatarToolPermissionBlock 拆分而来, 属于调试信息, 放在面板底部。
+   */
+  @Builder
+  avatarToolDiagnosticsBlock() {
+    Column() {
+      Text('AI 工具调试')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.app_text_secondary'))
+        .width('100%')
+        .margin({ bottom: 4 })
 
       // Phase 4A-3R: 测试 Tool Calling 按钮
       Button(this.probeRunning ? '正在测试 Tool Calling...' : '测试 Tool Calling')
@@ -3259,23 +3570,6 @@ struct ChatPage {
   }
 
   /**
-   * 调节模型大小 (通过 fillRatio 重新构图)。
-   *
-   * 调用 controller.adjustModelFillRatio(fillRatio) 重新执行 fitAvatarFullBody。
-   * fillRatio 越大模型越大 (0.5=较小, 0.95=几乎填满)。
-   */
-  private adjustAvatarModelSize(fillRatio: number): void {
-    if (this.avatarStageController === null) {
-      Logger.warn(LOG_TAG, 'adjustAvatarModelSize: controller null');
-      return;
-    }
-    this.avatarStageController!.adjustModelFillRatio(fillRatio).catch((e: Object): void => {
-      Logger.warn(LOG_TAG, 'adjustAvatarModelSize failed: ' +
-        (e instanceof Error ? e.message : String(e)));
-    });
-  }
-
-  /**
    * Phase 4B-2R2: 设置镜头控制模式。
    *
    * @param mode AUTO / MANUAL_FULL_BODY / MANUAL_FACE_RESET_VIEW
@@ -3308,6 +3602,8 @@ struct ChatPage {
       Logger.warn(LOG_TAG, 'adjustCameraZoomMultiplier failed: ' +
         (e instanceof Error ? e.message : String(e)));
     });
+    // 持久化缩放倍率, 退出重进保留
+    this.persistCameraZoom(multiplier);
   }
 
   /**
@@ -3373,7 +3669,7 @@ struct ChatPage {
               value: Math.round(this.chatBubbleOpacity * 100),
               min: 0,
               max: 100,
-              step: 5,
+              step: 10,
               style: SliderStyle.OutSet
             })
               .blockColor($r('app.color.app_accent'))
@@ -3394,6 +3690,150 @@ struct ChatPage {
                 .fontColor($r('app.color.app_text_secondary'))
               Blank()
               Text('100%')
+                .fontSize(11)
+                .fontColor($r('app.color.app_text_secondary'))
+            }
+            .width('100%')
+            .margin({ top: 4 })
+
+            Divider()
+              .color($r('app.color.app_divider'))
+              .margin({ top: 16, bottom: 12 })
+
+            // ===== 聊天显示范围 (顶部压缩, 消息渐变淡出) =====
+            Row() {
+              Text('聊天显示范围')
+                .fontSize($r('app.float.app_font_caption'))
+                .fontColor($r('app.color.app_text_secondary'))
+              Blank()
+              Text(`${Math.round(this.chatContentHeightRatio * 100)}%`)
+                .fontSize($r('app.float.app_font_caption'))
+                .fontWeight(FontWeight.Medium)
+                .fontColor($r('app.color.app_text_primary'))
+            }
+            .width('100%')
+            .alignItems(VerticalAlign.Center)
+            .margin({ bottom: 8 })
+
+            Slider({
+              value: Math.round(this.chatContentHeightRatio * 100),
+              min: 0,
+              max: 100,
+              step: 5,
+              style: SliderStyle.OutSet
+            })
+              .blockColor($r('app.color.app_accent'))
+              .trackColor($r('app.color.app_surface_2'))
+              .selectedColor($r('app.color.app_accent'))
+              .width('100%')
+              .onChange((value: number, mode: SliderChangeMode) => {
+                const ratio: number = value / 100;
+                this.chatContentHeightRatio = ratio;
+                if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+                  this.persistContentHeightRatio(ratio);
+                }
+              })
+
+            Row() {
+              Text('50%')
+                .fontSize(11)
+                .fontColor($r('app.color.app_text_secondary'))
+              Blank()
+              Text('100%')
+                .fontSize(11)
+                .fontColor($r('app.color.app_text_secondary'))
+            }
+            .width('100%')
+            .margin({ top: 4 })
+
+            Divider()
+              .color($r('app.color.app_divider'))
+              .margin({ top: 16, bottom: 12 })
+
+            // ===== 模型位置与大小 (调整 + 持久化) =====
+            Row() {
+              Text('模型位置调整')
+                .fontSize($r('app.float.app_font_caption'))
+                .fontColor($r('app.color.app_text_secondary'))
+                .layoutWeight(1)
+              Toggle({ type: ToggleType.Switch, isOn: this.avatarPositionAdjustMode })
+                .selectedColor($r('app.color.app_accent'))
+                .onChange((isOn: boolean): void => {
+                  this.avatarPositionAdjustMode = isOn;
+                  // 关闭调整模式时持久化当前 offset
+                  if (!isOn) {
+                    this.persistAvatarOffset(this.avatarOffsetX, this.avatarOffsetY);
+                  }
+                })
+            }
+            .width('100%')
+            .alignItems(VerticalAlign.Center)
+            .margin({ bottom: 8 })
+
+            if (this.avatarPositionAdjustMode) {
+              Text('调整模式已开启:拖动模型可调整位置,聊天界面不响应触控')
+                .fontSize(11)
+                .fontColor($r('app.color.app_accent'))
+                .width('100%')
+                .margin({ bottom: 8 })
+
+              // 重置位置按钮
+              Button('重置模型位置')
+                .type(ButtonType.Normal)
+                .borderRadius($r('app.float.app_radius_sm'))
+                .backgroundColor($r('app.color.app_surface_2'))
+                .fontColor($r('app.color.app_text_primary'))
+                .fontSize($r('app.float.app_font_caption'))
+                .width('100%')
+                .height(30)
+                .margin({ bottom: 8 })
+                .onClick(() => {
+                  this.avatarOffsetX = 0;
+                  this.avatarOffsetY = 0;
+                  this.persistAvatarOffset(0, 0);
+                })
+            }
+
+            // 模型大小 (相机缩放, 与 AI 面板缩放保持一致, 持久化)
+            Row() {
+              Text('模型大小')
+                .fontSize($r('app.float.app_font_caption'))
+                .fontColor($r('app.color.app_text_secondary'))
+              Blank()
+              Text(this.formatZoomMultiplier(this.avatarCameraZoomMultiplier))
+                .fontSize($r('app.float.app_font_caption'))
+                .fontWeight(FontWeight.Medium)
+                .fontColor($r('app.color.app_text_primary'))
+            }
+            .width('100%')
+            .alignItems(VerticalAlign.Center)
+            .margin({ bottom: 8 })
+
+            Slider({
+              value: this.avatarCameraZoomMultiplier * 10,
+              min: 5,
+              max: 30,
+              step: 1,
+              style: SliderStyle.OutSet
+            })
+              .blockColor($r('app.color.app_accent'))
+              .trackColor($r('app.color.app_surface_2'))
+              .selectedColor($r('app.color.app_accent'))
+              .width('100%')
+              .onChange((value: number, mode: SliderChangeMode) => {
+                const zoom: number = value / 10;
+                this.avatarCameraZoomMultiplier = zoom;
+                if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+                  this.adjustCameraZoomMultiplier(zoom);
+                }
+              })
+
+            Row() {
+              Text('0.5×')
+                .fontSize(11)
+                .fontColor($r('app.color.app_text_secondary'))
+              Blank()
+              Text('3.0×')
                 .fontSize(11)
                 .fontColor($r('app.color.app_text_secondary'))
             }
