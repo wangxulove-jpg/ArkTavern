@@ -244,9 +244,18 @@ export class DbHelper {
       await relationalStore.getRdbStore(context, config);
     const currentVersion: number = await this.readUserVersion(store);
     if (currentVersion > DATABASE_VERSION) {
-      throw DatabaseError.unsupportedVersion(
-        `current=${currentVersion} > supported=${DATABASE_VERSION}`
-      );
+      Logger.warn(LOG_TAG,
+        `database version current=${currentVersion} > supported=${DATABASE_VERSION}, deleting and recreating`);
+      store.close();
+      await relationalStore.deleteRdbStore(context, this.databaseName);
+      const newStore: relationalStore.RdbStore =
+        await relationalStore.getRdbStore(context, {
+          name: this.databaseName,
+          securityLevel: relationalStore.SecurityLevel.S1
+        });
+      await this.createFreshSchema(newStore);
+      await this.writeUserVersion(newStore, DATABASE_VERSION);
+      return newStore;
     }
     if (currentVersion === 0) {
       await this.createFreshSchema(store);
