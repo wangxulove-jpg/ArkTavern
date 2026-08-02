@@ -242,6 +242,26 @@ export struct ChatSessionRootView {
     AppStorage.setOrCreate<number>('chatListVersion', v + 1);
   }
 
+  /** 上移会话卡片(异步,完成后同步本地 sessions 并通知刷新) */
+  private async handleMoveUp(chatId: string): Promise<void> {
+    if (this.viewModel === null) {
+      return;
+    }
+    await this.viewModel!.moveUp(chatId);
+    this.syncSessions();
+    this.bumpListVersion();
+  }
+
+  /** 下移会话卡片(异步,完成后同步本地 sessions 并通知刷新) */
+  private async handleMoveDown(chatId: string): Promise<void> {
+    if (this.viewModel === null) {
+      return;
+    }
+    await this.viewModel!.moveDown(chatId);
+    this.syncSessions();
+    this.bumpListVersion();
+  }
+
   build() {
     Stack() {
       Column() {
@@ -419,7 +439,7 @@ export struct ChatSessionRootView {
         label: $r('app.string.card_action_move_up'),
         bgColor: $r('app.color.app_surface_2'),
         fgColor: $r('app.color.app_text_primary'),
-        action: (): void => { this.viewModel!.moveUp(item.chat.id); }
+        action: (): void => { this.handleMoveUp(item.chat.id); }
       })
 
       // 下移
@@ -428,7 +448,7 @@ export struct ChatSessionRootView {
         label: $r('app.string.card_action_move_down'),
         bgColor: $r('app.color.app_surface_2'),
         fgColor: $r('app.color.app_text_primary'),
-        action: (): void => { this.viewModel!.moveDown(item.chat.id); }
+        action: (): void => { this.handleMoveDown(item.chat.id); }
       })
 
       // 重命名

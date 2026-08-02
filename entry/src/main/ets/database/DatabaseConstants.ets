@@ -191,127 +191,40 @@ export const INDEX_CHAT_MEMORIES_BRANCH_END_POSITION: string = 'idx_chat_memorie
 /** v12: 按 Branch + Type + Invalidated 查询有效记忆 */
 export const INDEX_CHAT_MEMORIES_BRANCH_TYPE: string = 'idx_chat_memories_branch_type';
 
-// ===== v10: Multi-Person World =====
-export const TABLE_WORLDS: string = 'worlds';
-export const TABLE_WORLD_MEMBERS: string = 'world_members';
-export const TABLE_WORLD_SCENES: string = 'world_scenes';
-export const TABLE_WORLD_CHAT_LINKS: string = 'world_chat_links';
-export const TABLE_CHARACTER_USER_RELATIONSHIPS: string = 'character_user_relationships';
-export const TABLE_CHARACTER_RELATIONSHIPS: string = 'character_relationships';
-export const TABLE_WORLD_MEMORY_EVENTS: string = 'world_memory_events';
-export const TABLE_WORLD_PRIVATE_MEMORIES: string = 'world_private_memories';
-export const TABLE_RELATIONSHIP_CHANGE_HISTORY: string = 'relationship_change_history';
-
-// messages 表扩展字段(v10)
+// ===== messages 表扩展字段(原 v10/v11 引入,已内建到 CREATE 语句) =====
 export const COLUMN_SENDER_TYPE: string = 'sender_type';
 export const COLUMN_SENDER_CHARACTER_ID: string = 'sender_character_id';
 export const COLUMN_SCENE_ID: string = 'scene_id';
 export const COLUMN_GENERATION_BATCH_ID: string = 'generation_batch_id';
-
-// messages 表扩展字段(v11 私聊引入)
 export const COLUMN_VISIBILITY: string = 'visibility';
 export const COLUMN_RECIPIENT_CHARACTER_IDS_JSON: string = 'recipient_character_ids_json';
 export const COLUMN_PARTICIPANT_IDS_JSON: string = 'participant_ids_json';
 export const COLUMN_WITNESS_IDS_JSON: string = 'witness_ids_json';
 
-// worlds 表字段
-export const COLUMN_WORLD_ID: string = 'id';
-export const COLUMN_WORLD_NAME: string = 'name';
-export const COLUMN_WORLD_BACKGROUND: string = 'background';
-export const COLUMN_WORLD_INITIAL_SCENE: string = 'initial_scene';
-export const COLUMN_WORLD_USER_IDENTITY_JSON: string = 'user_identity_json';
-export const COLUMN_WORLD_DEFAULT_REPLY_MODE: string = 'default_reply_mode';
-
-// world_members 表字段
-export const COLUMN_MEMBER_ID: string = 'id';
-export const COLUMN_MEMBER_WORLD_ID: string = 'world_id';
-export const COLUMN_MEMBER_CHARACTER_ID: string = 'character_id';
-export const COLUMN_MEMBER_ENABLED: string = 'enabled';
-export const COLUMN_MEMBER_PRESENT: string = 'present';
-export const COLUMN_MEMBER_MUTED: string = 'muted';
-export const COLUMN_MEMBER_TALKATIVENESS: string = 'talkativeness';
-export const COLUMN_MEMBER_DISPLAY_ORDER: string = 'display_order';
-export const COLUMN_MEMBER_JOINED_AT: string = 'joined_at';
-export const COLUMN_MEMBER_INITIAL_RELATIONSHIP_JSON: string = 'initial_relationship_json';
-
-// world_scenes 表字段
-export const COLUMN_SCENE_ID_FULL: string = 'id';
-export const COLUMN_SCENE_WORLD_ID: string = 'world_id';
-export const COLUMN_SCENE_NAME: string = 'name';
-export const COLUMN_SCENE_LOCATION: string = 'location';
-export const COLUMN_SCENE_TIME_DESCRIPTION: string = 'time_description';
-export const COLUMN_SCENE_DESCRIPTION: string = 'description';
-export const COLUMN_SCENE_PRESENT_CHARACTER_IDS_JSON: string = 'present_character_ids_json';
-export const COLUMN_SCENE_IMPORTANT_OBJECTS_JSON: string = 'important_objects_json';
-export const COLUMN_SCENE_STATUS: string = 'status';
-
-// world_chat_links 表字段
-export const COLUMN_WCL_CHAT_ID: string = 'chat_id';
-export const COLUMN_WCL_WORLD_ID: string = 'world_id';
-export const COLUMN_WCL_CURRENT_SCENE_ID: string = 'current_scene_id';
-export const COLUMN_WCL_REPLY_MODE: string = 'reply_mode';
-
-// 关系表字段
-export const COLUMN_RELATIONSHIP_LABEL: string = 'relationship_label';
-export const COLUMN_AFFINITY: string = 'affinity';
-export const COLUMN_TRUST: string = 'trust';
-export const COLUMN_RESPECT: string = 'respect';
-export const COLUMN_FEAR: string = 'fear';
-export const COLUMN_HOSTILITY: string = 'hostility';
-export const COLUMN_DEPENDENCY: string = 'dependency';
-export const COLUMN_FAMILIARITY: string = 'familiarity';
-export const COLUMN_CURRENT_EMOTION: string = 'current_emotion';
-export const COLUMN_PRIVATE_OPINION: string = 'private_opinion';
-export const COLUMN_SHARED_EXPERIENCES_JSON: string = 'shared_experiences_json';
-export const COLUMN_PROMISES_JSON: string = 'promises_json';
-export const COLUMN_CONFLICTS_JSON: string = 'conflicts_json';
-export const COLUMN_SECRETS_FROM_USER_JSON: string = 'secrets_from_user_json';
-export const COLUMN_SECRETS_SHARED_BY_USER_JSON: string = 'secrets_shared_by_user_json';
-export const COLUMN_USER_NAME_OVERRIDE: string = 'user_name_override';
-export const COLUMN_LAST_UPDATED_MESSAGE_ID: string = 'last_updated_message_id';
-export const COLUMN_SOURCE_CHARACTER_ID: string = 'source_character_id';
-export const COLUMN_TARGET_CHARACTER_ID: string = 'target_character_id';
-export const COLUMN_KNOWN_SECRETS_JSON: string = 'known_secrets_json';
-
-// 记忆表字段
-export const COLUMN_EVENT_PARTICIPANT_IDS_JSON: string = 'participant_ids_json';
-export const COLUMN_EVENT_WITNESS_IDS_JSON: string = 'witness_ids_json';
-export const COLUMN_EVENT_INFORMED_IDS_JSON: string = 'informed_character_ids_json';
-export const COLUMN_EVENT_SUBJECT_CHARACTER_ID: string = 'subject_character_id';
-export const COLUMN_EVENT_RELATED_CHARACTER_IDS_JSON: string = 'related_character_ids_json';
-export const COLUMN_EVENT_VISIBILITY: string = 'visibility';
-export const COLUMN_EVENT_SUMMARY: string = 'summary';
-export const COLUMN_EVENT_START_MESSAGE_ID: string = 'start_message_id';
-export const COLUMN_EVENT_END_MESSAGE_ID: string = 'end_message_id';
-
-// 私人记忆表字段
-export const COLUMN_PRIVATE_MEMORY_CHARACTER_ID: string = 'character_id';
-
-// 关系变化历史字段
-export const COLUMN_CHANGE_TARGET_CHARACTER_ID: string = 'target_character_id';
-export const COLUMN_CHANGE_FIELD_NAME: string = 'field_name';
-export const COLUMN_CHANGE_OLD_VALUE: string = 'old_value';
-export const COLUMN_CHANGE_NEW_VALUE: string = 'new_value';
-export const COLUMN_CHANGE_REASON: string = 'reason';
-export const COLUMN_CHANGE_SOURCE_MESSAGE_ID: string = 'source_message_id';
-
-// v10 索引
+// messages 索引扩展
 export const INDEX_MESSAGES_CHAT_BATCH: string = 'idx_messages_chat_batch';
 export const INDEX_MESSAGES_SENDER_CHARACTER: string = 'idx_messages_sender_character';
-export const INDEX_WORLD_MEMBERS_WORLD_ID: string = 'idx_world_members_world_id';
-export const INDEX_WORLD_MEMBERS_CHARACTER_ID: string = 'idx_world_members_character_id';
-export const INDEX_WORLD_SCENES_WORLD_ID: string = 'idx_world_scenes_world_id';
-export const INDEX_WORLD_CHAT_LINKS_CHAT_ID: string = 'idx_world_chat_links_chat_id';
-export const INDEX_WORLD_CHAT_LINKS_WORLD_ID: string = 'idx_world_chat_links_world_id';
-export const INDEX_CHAR_USER_REL_WORLD: string = 'idx_char_user_rel_world';
-export const INDEX_CHAR_USER_REL_CHARACTER: string = 'idx_char_user_rel_character';
-export const INDEX_CHAR_REL_WORLD: string = 'idx_char_rel_world';
-export const INDEX_CHAR_REL_SOURCE: string = 'idx_char_rel_source';
-export const INDEX_CHAR_REL_TARGET: string = 'idx_char_rel_target';
-export const INDEX_WORLD_MEMORY_EVENTS_WORLD: string = 'idx_world_memory_events_world';
-export const INDEX_WORLD_MEMORY_EVENTS_BRANCH: string = 'idx_world_memory_events_branch';
-export const INDEX_WORLD_MEMORY_EVENTS_SCENE: string = 'idx_world_memory_events_scene';
-export const INDEX_WORLD_PRIVATE_MEMORIES_WORLD: string = 'idx_world_private_memories_world';
-export const INDEX_WORLD_PRIVATE_MEMORIES_CHARACTER: string = 'idx_world_private_memories_character';
-export const INDEX_RELATIONSHIP_CHANGE_HISTORY_WORLD: string = 'idx_relationship_change_history_world';
-export const INDEX_RELATIONSHIP_CHANGE_HISTORY_MESSAGE: string = 'idx_relationship_change_history_message';
+
+// ===== ALTER TABLE 语句(仅迁移时使用) =====
+export const ALTER_MESSAGES_ADD_SENDER_TYPE: string =
+  `ALTER TABLE ${TABLE_MESSAGES} ADD COLUMN ${COLUMN_SENDER_TYPE} TEXT NOT NULL DEFAULT 'user'`;
+export const ALTER_MESSAGES_ADD_SENDER_CHARACTER_ID: string =
+  `ALTER TABLE ${TABLE_MESSAGES} ADD COLUMN ${COLUMN_SENDER_CHARACTER_ID} TEXT`;
+export const ALTER_MESSAGES_ADD_SCENE_ID: string =
+  `ALTER TABLE ${TABLE_MESSAGES} ADD COLUMN ${COLUMN_SCENE_ID} TEXT`;
+export const ALTER_MESSAGES_ADD_GENERATION_BATCH_ID: string =
+  `ALTER TABLE ${TABLE_MESSAGES} ADD COLUMN ${COLUMN_GENERATION_BATCH_ID} TEXT`;
+export const ALTER_MESSAGES_ADD_VISIBILITY: string =
+  `ALTER TABLE ${TABLE_MESSAGES} ADD COLUMN ${COLUMN_VISIBILITY} TEXT NOT NULL DEFAULT 'public'`;
+export const ALTER_MESSAGES_ADD_RECIPIENT_CHARACTER_IDS_JSON: string =
+  `ALTER TABLE ${TABLE_MESSAGES} ADD COLUMN ${COLUMN_RECIPIENT_CHARACTER_IDS_JSON} TEXT`;
+export const ALTER_MESSAGES_ADD_PARTICIPANT_IDS_JSON: string =
+  `ALTER TABLE ${TABLE_MESSAGES} ADD COLUMN ${COLUMN_PARTICIPANT_IDS_JSON} TEXT`;
+export const ALTER_MESSAGES_ADD_WITNESS_IDS_JSON: string =
+  `ALTER TABLE ${TABLE_MESSAGES} ADD COLUMN ${COLUMN_WITNESS_IDS_JSON} TEXT`;
+
+// ===== CREATE INDEX 语句(新安装和迁移都用) =====
+export const CREATE_INDEX_MESSAGES_CHAT_BATCH: string =
+  `CREATE INDEX IF NOT EXISTS ${INDEX_MESSAGES_CHAT_BATCH} ON ${TABLE_MESSAGES}(${COLUMN_CHAT_ID}, ${COLUMN_GENERATION_BATCH_ID})`;
+export const CREATE_INDEX_MESSAGES_SENDER_CHARACTER: string =
+  `CREATE INDEX IF NOT EXISTS ${INDEX_MESSAGES_SENDER_CHARACTER} ON ${TABLE_MESSAGES}(${COLUMN_SENDER_CHARACTER_ID})`;

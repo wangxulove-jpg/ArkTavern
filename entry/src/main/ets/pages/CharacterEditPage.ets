@@ -522,6 +522,7 @@ struct CharacterEditPage {
           .backgroundColor($r('app.color.app_surface_2'))
           .borderRadius($r('app.float.app_radius_sm'))
           .height(100)
+          .barState(BarState.Auto)
           .width('100%')
           .padding({ left: 12, right: 12, top: 8, bottom: 8 })
           .onChange((value: string) => {
@@ -840,6 +841,7 @@ struct CharacterEditPage {
         .backgroundColor($r('app.color.app_surface_2'))
         .borderRadius($r('app.float.app_radius_md'))
         .height(120)
+        .barState(BarState.Auto)
         .padding({ left: 16, right: 16, top: 12, bottom: 12 })
         .onChange(onChange)
 

@@ -70,19 +70,6 @@ import { MarketTranslationService } from './market/MarketTranslationService';
 import { PromptPresetListViewModel } from '../viewmodels/PromptPresetListViewModel';
 import { PromptPresetEditViewModel } from '../viewmodels/PromptPresetEditViewModel';
 import { ChatSessionListViewModel } from '../viewmodels/ChatSessionListViewModel';
-import { WorldListViewModel } from '../viewmodels/WorldListViewModel';
-import { WorldCreateViewModel } from '../viewmodels/WorldCreateViewModel';
-import { WorldChatViewModel } from '../viewmodels/WorldChatViewModel';
-import { WorldMembersViewModel } from '../viewmodels/WorldMembersViewModel';
-import { WorldCharacterMemoryViewModel } from '../viewmodels/WorldCharacterMemoryViewModel';
-import { WorldRepository } from '../repositories/WorldRepository';
-import { WorldService } from './WorldService';
-import { WorldRelationshipService } from './WorldRelationshipService';
-import { WorldMemoryService } from './WorldMemoryService';
-import { SpeakerScheduler } from './SpeakerScheduler';
-import { MultiPersonPromptBuilder } from './MultiPersonPromptBuilder';
-import { MultiPersonResponseParser } from './MultiPersonResponseParser';
-import { MultiPersonChatService } from './MultiPersonChatService';
 import { ChatTextStyleSettings } from '../utils/ChatTextStyleSettings';
 import { ChatArchiveService } from './ChatArchiveService';
 import { ChatArchiveImportService } from './ChatArchiveImportService';
@@ -176,20 +163,7 @@ export class AppServices {
   private marketTranslationService: MarketTranslationService | null = null;
   /** 应用 Context,用于 ChatBackgroundService 等需要 filesDir 的服务 */
   private appContext: common.Context | null = null;
-  /** WorldRepository 多人世界仓储(v10) */
-  private readonly worldRepository: WorldRepository;
-  /** WorldService 多人世界业务服务(v10) */
-  readonly worldService: WorldService;
-  /** WorldRelationshipService 多人世界关系服务(v10) */
-  private readonly worldRelationshipService: WorldRelationshipService;
-  /** WorldMemoryService 多人世界记忆服务(v10) */
-  private readonly worldMemoryService: WorldMemoryService;
-  /** SpeakerScheduler 发言调度器(v10) */
-  private readonly speakerScheduler: SpeakerScheduler;
-  /** MultiPersonPromptBuilder 多人 Prompt 构建器(v10) */
-  private readonly multiPersonPromptBuilder: MultiPersonPromptBuilder;
-  /** MultiPersonResponseParser 多人响应解析器(v10) */
-  private readonly multiPersonResponseParser: MultiPersonResponseParser;
+  
   /** ChatTextStyleSettings 聊天文本样式设置(v11 富文本) */
   readonly chatTextStyleSettings: ChatTextStyleSettings;
   /** ChatArchiveService 聊天归档导出服务(T-CHAT.1) */
@@ -316,26 +290,6 @@ export class AppServices {
     const marketImportedMapStore: MarketImportedMapStore = new MarketImportedMapStore(this.appPreferences);
     this.marketService = new MarketService(marketHttpClient, marketCacheStore, marketImportedMapStore);
     // ChatBackgroundService 在 initialize 中 context 就绪后创建
-    // v10 多人世界服务组装
-    this.worldRepository = new WorldRepository(this.dbHelper);
-    this.worldService = new WorldService(
-      this.dbHelper,
-      this.worldRepository,
-      this.chatRepository,
-      this.characterRepository
-    );
-    this.worldRelationshipService = new WorldRelationshipService(
-      this.dbHelper,
-      this.worldRepository
-    );
-    this.worldMemoryService = new WorldMemoryService(
-      this.dbHelper,
-      this.worldRepository,
-      this.modelService
-    );
-    this.speakerScheduler = new SpeakerScheduler();
-    this.multiPersonPromptBuilder = new MultiPersonPromptBuilder();
-    this.multiPersonResponseParser = new MultiPersonResponseParser();
   }
 
   /**
@@ -652,74 +606,6 @@ export class AppServices {
   static createPromptPresetEditViewModel(presetId?: string): PromptPresetEditViewModel {
     const services: AppServices = AppServices.getInstance();
     return new PromptPresetEditViewModel(services.promptPresetService);
-  }
-
-  // ===== v10 多人世界 ViewModel 工厂 =====
-
-  /**
-   * 创建 WorldListViewModel 实例。
-   */
-  static createWorldListViewModel(): WorldListViewModel {
-    const services: AppServices = AppServices.getInstance();
-    return new WorldListViewModel(services.worldService);
-  }
-
-  /**
-   * 创建 WorldCreateViewModel 实例。
-   */
-  static createWorldCreateViewModel(): WorldCreateViewModel {
-    const services: AppServices = AppServices.getInstance();
-    return new WorldCreateViewModel(services.worldService, services.characterService);
-  }
-
-  /**
-   * 创建 WorldMembersViewModel 实例。
-   */
-  static createWorldMembersViewModel(): WorldMembersViewModel {
-    const services: AppServices = AppServices.getInstance();
-    return new WorldMembersViewModel(services.worldService, services.characterService);
-  }
-
-  /**
-   * 创建 WorldChatViewModel 实例。
-   * 每次进入 WorldChatPage 时调用,内部组装 MultiPersonChatService。
-   */
-  static createWorldChatViewModel(): WorldChatViewModel {
-    const services: AppServices = AppServices.getInstance();
-    const multiPersonChatService: MultiPersonChatService = new MultiPersonChatService(
-      services.dbHelper,
-      services.worldService,
-      services.worldRelationshipService,
-      services.worldMemoryService,
-      services.messageRepository,
-      services.chatRepository,
-      services.characterRepository,
-      services.conversationBranchRepository,
-      services.modelService,
-      services.multiPersonPromptBuilder,
-      services.multiPersonResponseParser,
-      services.speakerScheduler
-    );
-    return new WorldChatViewModel(
-      multiPersonChatService,
-      services.worldService,
-      services.characterService,
-      services.messageRepository,
-      services.conversationBranchRepository
-    );
-  }
-
-  /**
-   * 创建 WorldCharacterMemoryViewModel 实例。
-   * 用于多人世界角色记忆页面,加载世界成员 + 各角色的私人/已知/共同/公共/关系记忆。
-   */
-  static createWorldCharacterMemoryViewModel(): WorldCharacterMemoryViewModel {
-    const services: AppServices = AppServices.getInstance();
-    return new WorldCharacterMemoryViewModel(
-      services.worldService,
-      services.worldMemoryService,
-      services.worldRelationshipService
-    );
   }
 
   /**

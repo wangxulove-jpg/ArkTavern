@@ -43,6 +43,24 @@ struct LorebookPage {
   @State viewModel: LorebookViewModel | null = null;
   @State lorebooks: Lorebook[] = [];
   @State currentLorebookId: string | null = null;
+  /** 本地 @State 镜像 ViewModel 的 UI 状态,确保属性变化触发重渲染 */
+  @State showLorebookDialog: boolean = false;
+  @State showEntryDialog: boolean = false;
+  @State expandedLorebookId: string | null = null;
+  @State deleteTargetLorebook: Lorebook | null = null;
+  @State deleteTargetEntry: LorebookEntry | null = null;
+  @State deleteTargetEntryLorebookId: string = '';
+  @State vmErrorMessage: string = '';
+  /** 本地 @State 镜像,用于条目编辑对话框表单字段 */
+  @State editEntryName: string = '';
+  @State editEntryKeys: string = '';
+  @State editEntrySecondaryKeys: string = '';
+  @State editEntryContent: string = '';
+  @State editEntryConstant: boolean = false;
+  @State editEntrySelective: boolean = false;
+  @State editEntryEnabled: boolean = true;
+  @State editEntryPosition: number = 0;
+  @State editEntryPriority: number = 0;
   /** 顶部状态栏避让高度(由 EntryAbility 写入 AppStorage) */
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
 
@@ -51,10 +69,35 @@ struct LorebookPage {
     const vm: LorebookViewModel = new LorebookViewModel(service);
     this.viewModel = vm;
     vm.onDataUpdate = () => {
-      this.lorebooks = [...vm.lorebooks];
-      this.currentLorebookId = vm.currentLorebookId;
+      this.syncFromViewModel();
     };
     vm.load();
+  }
+
+  /** 将 ViewModel 的所有 UI 状态同步到本地 @State,确保属性变化触发重渲染 */
+  private syncFromViewModel(): void {
+    if (this.viewModel === null) {
+      return;
+    }
+    this.lorebooks = [...this.viewModel.lorebooks];
+    this.currentLorebookId = this.viewModel.currentLorebookId;
+    this.showLorebookDialog = this.viewModel.showLorebookDialog;
+    this.showEntryDialog = this.viewModel.showEntryDialog;
+    this.expandedLorebookId = this.viewModel.expandedLorebookId;
+    this.deleteTargetLorebook = this.viewModel.deleteTargetLorebook;
+    this.deleteTargetEntry = this.viewModel.deleteTargetEntry;
+    this.deleteTargetEntryLorebookId = this.viewModel.deleteTargetEntryLorebookId;
+    this.vmErrorMessage = this.viewModel.errorMessage;
+    // 同步条目编辑表单字段
+    this.editEntryName = this.viewModel.editEntryName;
+    this.editEntryKeys = this.viewModel.editEntryKeys;
+    this.editEntrySecondaryKeys = this.viewModel.editEntrySecondaryKeys;
+    this.editEntryContent = this.viewModel.editEntryContent;
+    this.editEntryConstant = this.viewModel.editEntryConstant;
+    this.editEntrySelective = this.viewModel.editEntrySelective;
+    this.editEntryEnabled = this.viewModel.editEntryEnabled;
+    this.editEntryPosition = this.viewModel.editEntryPosition;
+    this.editEntryPriority = this.viewModel.editEntryPriority;
   }
 
   build() {
@@ -84,8 +127,8 @@ struct LorebookPage {
         .alignItems(VerticalAlign.Center)
 
         // 错误提示
-        if (this.viewModel !== null && this.viewModel.errorMessage.length > 0) {
-          Text(this.viewModel.errorMessage)
+        if (this.vmErrorMessage.length > 0) {
+          Text(this.vmErrorMessage)
             .fontSize(13)
             .fontColor($r('app.color.worldbook_action_danger'))
             .width('100%')
@@ -125,26 +168,27 @@ struct LorebookPage {
           .position({ x: '80%', y: '90%' })
           .onClick(() => {
             this.viewModel!.showNewLorebookDialog();
+            this.syncFromViewModel();
           })
       }
 
       // 世界书编辑对话框
-      if (this.viewModel !== null && this.viewModel.showLorebookDialog) {
+      if (this.showLorebookDialog) {
         this.lorebookDialog();
       }
 
       // 条目编辑对话框
-      if (this.viewModel !== null && this.viewModel.showEntryDialog) {
+      if (this.showEntryDialog) {
         this.entryDialog();
       }
 
       // 删除确认(世界书)
-      if (this.viewModel !== null && this.viewModel.deleteTargetLorebook !== null) {
+      if (this.deleteTargetLorebook !== null) {
         this.deleteLorebookConfirm();
       }
 
       // 删除确认(条目)
-      if (this.viewModel !== null && this.viewModel.deleteTargetEntry !== null) {
+      if (this.deleteTargetEntry !== null) {
         this.deleteEntryConfirm();
       }
     }
@@ -241,12 +285,12 @@ struct LorebookPage {
           .fillColor($r('app.color.worldbook_text_secondary'))
           .margin({ left: 8 })
           .rotate({
-            angle: this.viewModel !== null
-              && this.viewModel.expandedLorebookId === lb.id ? 180 : 0
+            angle: this.expandedLorebookId === lb.id ? 180 : 0
           })
           .onClick(() => {
             if (this.viewModel !== null) {
               this.viewModel.toggleExpand(lb.id);
+              this.syncFromViewModel();
             }
           })
       }
@@ -255,6 +299,7 @@ struct LorebookPage {
       .onClick(() => {
         if (this.viewModel !== null) {
           this.viewModel.toggleExpand(lb.id);
+          this.syncFromViewModel();
         }
       })
 
@@ -273,9 +318,11 @@ struct LorebookPage {
           .borderRadius(6)
           .onClick(() => {
             if (this.viewModel !== null) {
-              this.viewModel.setCurrentLorebook(
+              void this.viewModel.setCurrentLorebook(
                 this.currentLorebookId === lb.id ? null : lb.id
-              );
+              ).then(() => {
+                this.syncFromViewModel();
+              });
             }
           })
 
@@ -288,6 +335,7 @@ struct LorebookPage {
           .onClick(() => {
             if (this.viewModel !== null) {
               this.viewModel.showEditLorebookDialog(lb);
+              this.syncFromViewModel();
             }
           })
 
@@ -303,7 +351,9 @@ struct LorebookPage {
           .padding({ left: 8, right: 8 })
           .onClick(() => {
             if (this.viewModel !== null) {
-              this.viewModel.toggleLorebookEnabled(lb);
+              void this.viewModel.toggleLorebookEnabled(lb).then(() => {
+                this.syncFromViewModel();
+              });
             }
           })
 
@@ -316,6 +366,7 @@ struct LorebookPage {
           .onClick(() => {
             if (this.viewModel !== null) {
               this.viewModel.deleteTargetLorebook = lb;
+              this.syncFromViewModel();
             }
           })
       }
@@ -324,8 +375,7 @@ struct LorebookPage {
       .justifyContent(FlexAlign.SpaceEvenly)
 
       // 条目列表(展开时显示)
-      if (this.viewModel !== null
-        && this.viewModel.expandedLorebookId === lb.id) {
+      if (this.expandedLorebookId === lb.id) {
         Divider()
           .color($r('app.color.worldbook_card_border'))
           .width('100%')
@@ -353,6 +403,7 @@ struct LorebookPage {
           .onClick(() => {
             if (this.viewModel !== null) {
               this.viewModel.showNewEntryDialog(lb.id);
+              this.syncFromViewModel();
             }
           })
       }
@@ -439,6 +490,7 @@ struct LorebookPage {
           .onClick(() => {
             if (this.viewModel !== null) {
               this.viewModel.showEditEntryDialog(lorebookId, entry);
+              this.syncFromViewModel();
             }
           })
 
@@ -452,6 +504,7 @@ struct LorebookPage {
             if (this.viewModel !== null) {
               this.viewModel.deleteTargetEntry = entry;
               this.viewModel.deleteTargetEntryLorebookId = lorebookId;
+              this.syncFromViewModel();
             }
           })
       }
@@ -541,6 +594,7 @@ struct LorebookPage {
             .onClick(() => {
               if (this.viewModel !== null) {
                 this.viewModel.closeLorebookDialog();
+                this.syncFromViewModel();
               }
             })
 
@@ -552,7 +606,9 @@ struct LorebookPage {
             .height(40)
             .onClick(() => {
               if (this.viewModel !== null) {
-                this.viewModel.saveLorebook();
+                void this.viewModel.saveLorebook().then(() => {
+                  this.syncFromViewModel();
+                });
               }
             })
         }
@@ -599,59 +655,78 @@ struct LorebookPage {
         this.entryFormField(
           $r('app.string.lorebook_entry_name'),
           $r('app.string.lorebook_entry_name_placeholder'),
-          this.viewModel !== null ? this.viewModel.editEntryName : '',
+          this.editEntryName,
           (value: string): void => {
             if (this.viewModel !== null) {
               this.viewModel.editEntryName = value;
             }
+            this.editEntryName = value;
           }
         )
 
         this.entryFormField(
           $r('app.string.lorebook_entry_keys'),
           $r('app.string.lorebook_entry_keys_placeholder'),
-          this.viewModel !== null ? this.viewModel.editEntryKeys : '',
+          this.editEntryKeys,
           (value: string): void => {
             if (this.viewModel !== null) {
               this.viewModel.editEntryKeys = value;
             }
+            this.editEntryKeys = value;
           }
         )
 
         this.entryFormField(
           $r('app.string.lorebook_entry_secondary_keys'),
           $r('app.string.lorebook_entry_secondary_keys_placeholder'),
-          this.viewModel !== null ? this.viewModel.editEntrySecondaryKeys : '',
+          this.editEntrySecondaryKeys,
           (value: string): void => {
             if (this.viewModel !== null) {
               this.viewModel.editEntrySecondaryKeys = value;
             }
+            this.editEntrySecondaryKeys = value;
           }
         )
 
         this.entryFormField(
           $r('app.string.lorebook_entry_content'),
           $r('app.string.lorebook_entry_content_placeholder'),
-          this.viewModel !== null ? this.viewModel.editEntryContent : '',
+          this.editEntryContent,
           (value: string): void => {
             if (this.viewModel !== null) {
               this.viewModel.editEntryContent = value;
             }
+            this.editEntryContent = value;
           },
           true
         )
 
         // 开关行
         Row() {
+          Text($r('app.string.lorebook_entry_enabled'))
+            .fontSize(13)
+            .layoutWeight(1)
+          Toggle({ type: ToggleType.Switch, isOn: this.editEntryEnabled })
+            .onChange((isOn: boolean) => {
+              if (this.viewModel !== null) {
+                this.viewModel.editEntryEnabled = isOn;
+              }
+              this.editEntryEnabled = isOn;
+            })
+        }
+        .width('100%')
+        .margin({ bottom: 8 })
+
+        Row() {
           Text($r('app.string.lorebook_entry_constant'))
             .fontSize(13)
             .layoutWeight(1)
-          Toggle({ type: ToggleType.Switch, isOn: this.viewModel !== null
-            ? this.viewModel.editEntryConstant : false })
+          Toggle({ type: ToggleType.Switch, isOn: this.editEntryConstant })
             .onChange((isOn: boolean) => {
               if (this.viewModel !== null) {
                 this.viewModel.editEntryConstant = isOn;
               }
+              this.editEntryConstant = isOn;
             })
         }
         .width('100%')
@@ -661,12 +736,12 @@ struct LorebookPage {
           Text($r('app.string.lorebook_entry_selective'))
             .fontSize(13)
             .layoutWeight(1)
-          Toggle({ type: ToggleType.Switch, isOn: this.viewModel !== null
-            ? this.viewModel.editEntrySelective : false })
+          Toggle({ type: ToggleType.Switch, isOn: this.editEntrySelective })
             .onChange((isOn: boolean) => {
               if (this.viewModel !== null) {
                 this.viewModel.editEntrySelective = isOn;
               }
+              this.editEntrySelective = isOn;
             })
         }
         .width('100%')
@@ -678,8 +753,7 @@ struct LorebookPage {
             .fontSize(13)
             .width(60)
           TextInput({
-            text: this.viewModel !== null
-              ? this.viewModel.editEntryPriority.toString() : '0'
+            text: this.editEntryPriority.toString()
           })
             .fontSize(14)
             .type(InputType.Number)
@@ -689,6 +763,8 @@ struct LorebookPage {
                 const parsed: number = parseInt(value);
                 this.viewModel.editEntryPriority = isNaN(parsed) ? 0 : parsed;
               }
+              const parsed: number = parseInt(value);
+              this.editEntryPriority = isNaN(parsed) ? 0 : parsed;
             })
         }
         .width('100%')
@@ -702,8 +778,7 @@ struct LorebookPage {
           Row() {
             Button($r('app.string.lorebook_entry_position_before'))
               .fontSize(12)
-              .backgroundColor(this.viewModel !== null
-                && this.viewModel.editEntryPosition === 0
+              .backgroundColor(this.editEntryPosition === 0
                 ? $r('sys.color.ohos_id_color_emphasize')
                 : $r('sys.color.ohos_id_color_button_normal'))
               .borderRadius(16)
@@ -714,12 +789,12 @@ struct LorebookPage {
                 if (this.viewModel !== null) {
                   this.viewModel.editEntryPosition = 0;
                 }
+                this.editEntryPosition = 0;
               })
 
             Button($r('app.string.lorebook_entry_position_after'))
               .fontSize(12)
-              .backgroundColor(this.viewModel !== null
-                && this.viewModel.editEntryPosition === 1
+              .backgroundColor(this.editEntryPosition === 1
                 ? $r('sys.color.ohos_id_color_emphasize')
                 : $r('sys.color.ohos_id_color_button_normal'))
               .borderRadius(16)
@@ -729,6 +804,7 @@ struct LorebookPage {
                 if (this.viewModel !== null) {
                   this.viewModel.editEntryPosition = 1;
                 }
+                this.editEntryPosition = 1;
               })
           }
           .layoutWeight(1)
@@ -747,6 +823,7 @@ struct LorebookPage {
             .onClick(() => {
               if (this.viewModel !== null) {
                 this.viewModel.closeEntryDialog();
+                this.syncFromViewModel();
               }
             })
 
@@ -758,7 +835,9 @@ struct LorebookPage {
             .height(40)
             .onClick(() => {
               if (this.viewModel !== null) {
-                this.viewModel.saveEntry();
+                void this.viewModel.saveEntry().then(() => {
+                  this.syncFromViewModel();
+                });
               }
             })
         }
@@ -800,7 +879,8 @@ struct LorebookPage {
           text: text
         })
           .fontSize(14)
-          .maxLines(4)
+          .barState(BarState.Auto)
+          .constraintSize({ minHeight: 80, maxHeight: 400 })
           .width('100%')
           .margin({ bottom: 12 })
           .onChange(onChange)
@@ -810,6 +890,7 @@ struct LorebookPage {
           text: text
         })
           .fontSize(14)
+          .barState(BarState.Auto)
           .width('100%')
           .margin({ bottom: 12 })
           .onChange(onChange)
@@ -833,6 +914,7 @@ struct LorebookPage {
       .onClick(() => {
         if (this.viewModel !== null) {
           this.viewModel.deleteTargetLorebook = null;
+          this.syncFromViewModel();
         }
       })
 
@@ -842,8 +924,8 @@ struct LorebookPage {
         .fontWeight(FontWeight.Medium)
         .margin({ bottom: 12 })
 
-      Text(this.viewModel !== null && this.viewModel.deleteTargetLorebook !== null
-        ? '确定删除世界书"' + this.viewModel.deleteTargetLorebook.name + '"吗?所有条目也将一并删除。'
+      Text(this.deleteTargetLorebook !== null
+        ? '确定删除世界书"' + this.deleteTargetLorebook.name + '"吗?所有条目也将一并删除。'
         : '')
         .fontSize(14)
         .fontColor($r('sys.color.ohos_id_color_text_secondary'))
@@ -861,6 +943,7 @@ struct LorebookPage {
           .onClick(() => {
             if (this.viewModel !== null) {
               this.viewModel.deleteTargetLorebook = null;
+              this.syncFromViewModel();
             }
           })
 
@@ -871,8 +954,10 @@ struct LorebookPage {
           .layoutWeight(1)
           .height(40)
           .onClick(() => {
-            if (this.viewModel !== null && this.viewModel.deleteTargetLorebook !== null) {
-              this.viewModel.deleteLorebook(this.viewModel.deleteTargetLorebook.id);
+            if (this.viewModel !== null && this.deleteTargetLorebook !== null) {
+              void this.viewModel.deleteLorebook(this.deleteTargetLorebook.id).then(() => {
+                this.syncFromViewModel();
+              });
             }
           })
       }
@@ -902,6 +987,7 @@ struct LorebookPage {
       .onClick(() => {
         if (this.viewModel !== null) {
           this.viewModel.deleteTargetEntry = null;
+          this.syncFromViewModel();
         }
       })
 
@@ -911,8 +997,8 @@ struct LorebookPage {
         .fontWeight(FontWeight.Medium)
         .margin({ bottom: 12 })
 
-      Text(this.viewModel !== null && this.viewModel.deleteTargetEntry !== null
-        ? '确定删除条目"' + this.viewModel.deleteTargetEntry.name + '"吗?'
+      Text(this.deleteTargetEntry !== null
+        ? '确定删除条目"' + this.deleteTargetEntry.name + '"吗?'
         : '')
         .fontSize(14)
         .fontColor($r('sys.color.ohos_id_color_text_secondary'))
@@ -930,6 +1016,7 @@ struct LorebookPage {
           .onClick(() => {
             if (this.viewModel !== null) {
               this.viewModel.deleteTargetEntry = null;
+              this.syncFromViewModel();
             }
           })
 
@@ -940,11 +1027,13 @@ struct LorebookPage {
           .layoutWeight(1)
           .height(40)
           .onClick(() => {
-            if (this.viewModel !== null && this.viewModel.deleteTargetEntry !== null) {
-              this.viewModel.deleteEntry(
-                this.viewModel.deleteTargetEntryLorebookId,
-                this.viewModel.deleteTargetEntry.id
-              );
+            if (this.viewModel !== null && this.deleteTargetEntry !== null) {
+              void this.viewModel.deleteEntry(
+                this.deleteTargetEntryLorebookId,
+                this.deleteTargetEntry.id
+              ).then(() => {
+                this.syncFromViewModel();
+              });
             }
           })
       }

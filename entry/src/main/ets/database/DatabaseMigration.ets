@@ -518,19 +518,15 @@ class V8ToV9Migration implements DatabaseMigration {
  *
  * 事务中执行:
  * 1. messages 表扩展 sender_type / sender_character_id / scene_id / generation_batch_id
- * 2. 创建 worlds / world_members / world_scenes / world_chat_links /
- *    character_user_relationships / character_relationships /
- *    world_memory_events / world_private_memories / relationship_change_history 表
- * 3. 创建相关索引
- * 4. 旧消息 sender_type 默认 'user' (User 消息) 或根据 role 推断
+ * 2. 创建相关索引(messages_chat_batch / messages_sender_character)
+ * 3. 旧消息 sender_type 默认 'user' (User 消息) 或根据 role 推断
  *    - role='user' → sender_type='user'
  *    - role='assistant' → sender_type='character' (单角色兼容)
  *    - role='system' → sender_type='narrator'
- * 5. 任一失败全部回滚,不影响旧数据
- * 6. 不修改现有 Character / Chat / Branch / Swipe / Memory 数据
+ * 4. 任一失败全部回滚,不影响旧数据
+ * 5. 不修改现有 Character / Chat / Branch / Swipe / Memory 数据
  *
  * 设计:
- * - 多人世界为全新独立模块,旧 Chat 不创建 World 数据
  * - messages.sender_type 默认 'user' 保证旧 User 消息兼容
  * - 旧 Assistant 消息在迁移时回填 sender_type='character' 以保持一致性
  */

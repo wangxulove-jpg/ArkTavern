@@ -80,14 +80,6 @@ export struct SettingsRootView {
               }
             )
 
-            this.entryCard(
-              '多人世界',
-              '创建多个角色的共同世界,在同一会话中交流',
-              () => {
-                router.pushUrl({ url: 'pages/WorldListPage' });
-              }
-            )
-
             // ===== 应用 =====
             this.sectionHeader($r('app.string.tab_settings_section_app'))
 

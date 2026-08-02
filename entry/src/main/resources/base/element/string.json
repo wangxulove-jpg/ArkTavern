@@ -589,6 +589,10 @@
       "value": "恒定(始终激活)"
     },
     {
+      "name": "lorebook_entry_enabled",
+      "value": "启用"
+    },
+    {
       "name": "lorebook_entry_selective",
       "value": "Selective(主+次关键词)"
     },

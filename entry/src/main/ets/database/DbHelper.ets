@@ -68,14 +68,6 @@ export type TransactionOperation =
   | 'chat_swap_sort_order'
   | 'v5_migration'
   | 'v5_integrity_repair'
-  | 'world_create'
-  | 'world_member_upsert'
-  | 'world_member_remove'
-  | 'world_scene_upsert'
-  | 'world_chat_link_upsert'
-  | 'world_relationship_upsert'
-  | 'world_memory_event_upsert'
-  | 'world_message_batch_append'
   | 'chat_archive_import'
   | 'unknown';
 

@@ -711,6 +711,11 @@ struct MarketDetailPage {
             void this.viewModel!.startImport().then((): void => {
               this.syncDialogState();
               this.maybeShowImportErrorToast();
+              // 首次导入成功(非重复)时通知角色列表刷新
+              if (this.viewModel !== null && this.viewModel!.importStatus === MarketImportStatus.Imported
+                && this.viewModel!.importedCharacter !== null) {
+                this.notifyListChanged();
+              }
             });
           }
         })
@@ -1143,12 +1148,17 @@ struct MarketDetailPage {
   }
 
   /**
-   * 通知市场列表刷新(导入成功后递增版本号)。
+   * 通知列表刷新(导入成功后递增版本号)。
+   * 同时通知市场列表和角色列表刷新。
    */
   private notifyListChanged(): void {
     const current: number = AppStorage.get<number>('marketListVersion') as number;
     const next: number = (current === undefined ? 0 : current) + 1;
     AppStorage.setOrCreate<number>('marketListVersion', next);
+    // 通知角色列表刷新(CharacterRootView 通过 @StorageProp('characterListVersion') 监听)
+    const charVersion: number = AppStorage.get<number>('characterListVersion') as number;
+    const nextCharVersion: number = (charVersion === undefined ? 0 : charVersion) + 1;
+    AppStorage.setOrCreate<number>('characterListVersion', nextCharVersion);
   }
 
   // ===== 格式化辅助 =====
