@@ -74,6 +74,8 @@ import { ChatTextStyleSettings } from '../utils/ChatTextStyleSettings';
 import { ChatArchiveService } from './ChatArchiveService';
 import { ChatArchiveImportService } from './ChatArchiveImportService';
 import { ChatArchiveViewModel } from '../viewmodels/ChatArchiveViewModel';
+import { ChatParticipantRepository } from '../repositories/ChatParticipantRepository';
+import { GroupConversationPersistenceService } from './groupchat/GroupConversationPersistenceService';
 import { Logger } from '../utils/Logger';
 
 const LOG_TAG: string = 'AppServices';
@@ -170,6 +172,10 @@ export class AppServices {
   private chatArchiveService: ChatArchiveService | null = null;
   /** ChatArchiveImportService 聊天归档导入服务(T-CHAT.1) */
   private chatArchiveImportService: ChatArchiveImportService | null = null;
+  /** ChatParticipantRepository 多人聊天参与者仓储(G-DATA-1A,不对页面公开) */
+  private readonly chatParticipantRepository: ChatParticipantRepository;
+  /** GroupConversationPersistenceService 多人聊天持久化服务(G-DATA-1A,不对页面公开) */
+  private readonly groupConversationPersistenceService: GroupConversationPersistenceService;
 
   /**
    * 私有构造,组装全部依赖。
@@ -253,7 +259,9 @@ export class AppServices {
       this.messageRepository,
       this.messageSwipeRepository,
       this.conversationBranchPersistenceService,
-      this.memoryPersistenceService
+      this.memoryPersistenceService,
+      // G-DATA-1A: 注入 ChatParticipantRepository,使删除 Chat 时同步清理 chat_participants
+      new ChatParticipantRepository(this.dbHelper)
     );
     // v8: MemoryService(依赖 ModelService + MemoryPersistenceService)
     this.memoryService = new MemoryService(
@@ -282,6 +290,17 @@ export class AppServices {
       this.messageRepository,
       this.messageSwipeRepository,
       this.conversationBranchPersistenceService
+    );
+    // G-DATA-1A: 多人聊天持久化底座
+    // ChatParticipantRepository 与注入到 ChatPersistenceOperations 的不是同一实例,
+    // 但共享同一 DbHelper,事务内通过 WithStore 方法操作同一 RdbStore,行为一致。
+    this.chatParticipantRepository = new ChatParticipantRepository(this.dbHelper);
+    this.groupConversationPersistenceService = new GroupConversationPersistenceService(
+      this.dbHelper,
+      this.chatRepository,
+      this.chatParticipantRepository,
+      this.characterRepository,
+      this.chatPersistenceOperations
     );
     // 市场服务(Chub 公共浏览 + 搜索 + 详情 + 下载)
     // 使用独立的 HarmonyHttpClient 实例(非流式),不与流式 Provider 共享
@@ -641,5 +660,22 @@ export class AppServices {
     const archiveService: ChatArchiveService = AppServices.getChatArchiveService();
     const importService: ChatArchiveImportService = AppServices.getChatArchiveImportService();
     return new ChatArchiveViewModel(archiveService, importService);
+  }
+
+  /**
+   * 获取 GroupConversationPersistenceService 实例(G-DATA-1A 多人聊天持久化服务)。
+   * 用于多人聊天创建、列表、重命名、成员管理、删除等正式数据操作。
+   * 本阶段(G-DATA-1A)不接入静态多人 UI,UI 接入留到 G-DATA-1B。
+   */
+  static getGroupConversationPersistenceService(): GroupConversationPersistenceService {
+    return AppServices.getInstance().groupConversationPersistenceService;
+  }
+
+  /**
+   * 获取 ChatParticipantRepository 实例(G-DATA-1A 多人聊天参与者仓储)。
+   * 仅供 GroupConversationPersistenceService 等内部服务使用,不对页面公开。
+   */
+  static getChatParticipantRepository(): ChatParticipantRepository {
+    return AppServices.getInstance().chatParticipantRepository;
   }
 }

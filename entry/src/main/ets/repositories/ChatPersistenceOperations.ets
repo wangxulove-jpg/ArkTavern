@@ -33,6 +33,7 @@ import { DbHelper } from '../database/DbHelper';
 import { ChatRepository } from './ChatRepository';
 import { MessageRepository } from './MessageRepository';
 import { MessageSwipeRepository } from './MessageSwipeRepository';
+import { ChatParticipantRepository } from './ChatParticipantRepository';
 import { ConversationBranchPersistenceService } from '../services/ConversationBranchPersistenceService';
 import { MemoryPersistenceService } from '../services/MemoryPersistenceService';
 import { DatabaseError } from '../models/DatabaseError';
@@ -45,6 +46,7 @@ export class ChatPersistenceOperations {
   private readonly swipeRepository: MessageSwipeRepository;
   private readonly branchPersistenceService: ConversationBranchPersistenceService | null;
   private readonly memoryPersistenceService: MemoryPersistenceService | null;
+  private readonly participantRepository: ChatParticipantRepository | null;
 
   constructor(
     dbHelper: DbHelper,
@@ -52,7 +54,8 @@ export class ChatPersistenceOperations {
     messageRepository: MessageRepository,
     swipeRepository: MessageSwipeRepository,
     branchPersistenceService: ConversationBranchPersistenceService | null = null,
-    memoryPersistenceService: MemoryPersistenceService | null = null
+    memoryPersistenceService: MemoryPersistenceService | null = null,
+    participantRepository: ChatParticipantRepository | null = null
   ) {
     this.dbHelper = dbHelper;
     this.chatRepository = chatRepository;
@@ -60,6 +63,7 @@ export class ChatPersistenceOperations {
     this.swipeRepository = swipeRepository;
     this.branchPersistenceService = branchPersistenceService;
     this.memoryPersistenceService = memoryPersistenceService;
+    this.participantRepository = participantRepository;
   }
 
   /**
@@ -72,12 +76,14 @@ export class ChatPersistenceOperations {
    * 6. message_swipe_candidates
    * 7. message_swipe_groups
    * 8. messages
-   * 9. chats
+   * 9. chat_participants(G-DATA-1A 多人聊天参与者,幂等)
+   * 10. chats
    *
    * 任一步失败全部回滚。
    * 删除不存在 Chat 时保持幂等(不抛错)。
    * branchPersistenceService 为 null 时跳过 Branch 清理(步骤 1-4)。
    * memoryPersistenceService 为 null 时跳过 Memory 清理(步骤 5)。
+   * participantRepository 为 null 时跳过参与者清理(步骤 9)。
    */
   async removeChatWithMessages(chatId: string): Promise<void> {
     if (chatId === '') {
@@ -98,7 +104,11 @@ export class ChatPersistenceOperations {
           await this.swipeRepository.removeByChatIdWithStore(store, chatId);
           // 8. 删除消息(幂等,不存在返回 0)
           await this.messageRepository.removeByChatIdWithStore(store, chatId);
-          // 9. 删除 Chat(幂等,不存在不抛错)
+          // 9. 删除 chat_participants(G-DATA-1A,幂等,单聊无行也安全)
+          if (this.participantRepository !== null) {
+            await this.participantRepository.deleteByChatIdWithStore(store, chatId);
+          }
+          // 10. 删除 Chat(幂等,不存在不抛错)
           await this.chatRepository.removeWithStore(store, chatId);
         }
       );

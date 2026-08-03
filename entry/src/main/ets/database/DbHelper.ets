@@ -36,6 +36,7 @@ import {
   createV9ToV10Migration,
   createV10ToV11Migration,
   createV11ToV12Migration,
+  createV12ToV13Migration,
   DatabaseMigration,
   MigrationPath
 } from './DatabaseMigration';
@@ -69,6 +70,12 @@ export type TransactionOperation =
   | 'v5_migration'
   | 'v5_integrity_repair'
   | 'chat_archive_import'
+  | 'group_conversation_create'
+  | 'group_conversation_replace_participants'
+  | 'group_conversation_update_enabled'
+  | 'group_conversation_add_participant'
+  | 'group_conversation_remove_participant'
+  | 'group_conversation_delete'
   | 'unknown';
 
 export class DbHelper {
@@ -89,7 +96,7 @@ export class DbHelper {
 
   constructor(
     databaseName: string = DATABASE_NAME,
-    migrations: ReadonlyArray<DatabaseMigration> = [createV1ToV2Migration(), createV2ToV3Migration(), createV3ToV4Migration(), createV4ToV5Migration(), createV5ToV6Migration(), createV6ToV7Migration(), createV7ToV8Migration(), createV8ToV9Migration(), createV9ToV10Migration(), createV10ToV11Migration(), createV11ToV12Migration()]
+    migrations: ReadonlyArray<DatabaseMigration> = [createV1ToV2Migration(), createV2ToV3Migration(), createV3ToV4Migration(), createV4ToV5Migration(), createV5ToV6Migration(), createV6ToV7Migration(), createV7ToV8Migration(), createV8ToV9Migration(), createV9ToV10Migration(), createV10ToV11Migration(), createV11ToV12Migration(), createV12ToV13Migration()]
   ) {
     this.databaseName = databaseName;
     this.migrations = migrations;

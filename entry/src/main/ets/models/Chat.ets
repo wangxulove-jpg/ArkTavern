@@ -8,6 +8,7 @@
 
 import { generateUuid } from '../utils/Uuid';
 import { nowMillis } from '../utils/Time';
+import { ConversationMode } from './ConversationMode';
 
 export interface Chat {
   readonly id: string;
@@ -25,6 +26,16 @@ export interface Chat {
   readonly userNameOverride: string;
   /** 自定义排序权重(越小越靠前,v7 引入) */
   readonly sortOrder: number;
+  /**
+   * 对话模式(G-DATA-1A 引入)。
+   * - Single: 单聊(普通助手或单一角色)
+   * - Group: 多人聊天(characterId 必须为 null,参与者由 chat_participants 表维护)
+   *
+   * 兼容规则:
+   * - 旧数据迁移后统一为 Single
+   * - 现有 Chat 创建调用未显式传入 mode 时默认 Single
+   */
+  readonly conversationMode: ConversationMode;
 }
 
 export interface CreateChatOptions {
@@ -34,6 +45,7 @@ export interface CreateChatOptions {
   readonly createdAt?: number;
   readonly userNameOverride?: string;
   readonly sortOrder?: number;
+  readonly conversationMode?: ConversationMode;
 }
 
 export interface ChatUpdates {
@@ -44,6 +56,7 @@ export interface ChatUpdates {
   readonly isArchived?: boolean;
   readonly userNameOverride?: string | null;
   readonly sortOrder?: number;
+  readonly conversationMode?: ConversationMode;
 }
 
 export function createChat(options?: CreateChatOptions): Chat {
@@ -71,6 +84,10 @@ export function createChat(options?: CreateChatOptions): Chat {
     options !== undefined && options.sortOrder !== undefined
       ? options.sortOrder
       : 0;
+  const conversationMode: ConversationMode =
+    options !== undefined && options.conversationMode !== undefined
+      ? options.conversationMode
+      : ConversationMode.Single;
   return {
     id: id,
     characterId: characterId,
@@ -80,7 +97,8 @@ export function createChat(options?: CreateChatOptions): Chat {
     lastMessageAt: 0,
     isArchived: false,
     userNameOverride: userNameOverride,
-    sortOrder: sortOrder
+    sortOrder: sortOrder,
+    conversationMode: conversationMode
   };
 }
 
@@ -104,6 +122,8 @@ export function updateChat(chat: Chat, updates: ChatUpdates): Chat {
       : chat.userNameOverride;
   const sortOrder: number =
     updates.sortOrder !== undefined ? updates.sortOrder : chat.sortOrder;
+  const conversationMode: ConversationMode =
+    updates.conversationMode !== undefined ? updates.conversationMode : chat.conversationMode;
   return {
     id: chat.id,
     characterId: characterId,
@@ -113,6 +133,7 @@ export function updateChat(chat: Chat, updates: ChatUpdates): Chat {
     lastMessageAt: lastMessageAt,
     isArchived: isArchived,
     userNameOverride: userNameOverride,
-    sortOrder: sortOrder
+    sortOrder: sortOrder,
+    conversationMode: conversationMode
   };
 }

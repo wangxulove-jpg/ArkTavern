@@ -15,6 +15,7 @@
 import { relationalStore } from '@kit.ArkData';
 import { DbHelper } from '../database/DbHelper';
 import { Chat } from '../models/Chat';
+import { ConversationMode, parseConversationMode, conversationModeToString } from '../models/ConversationMode';
 import { DatabaseError } from '../models/DatabaseError';
 import { nowMillis } from '../utils/Time';
 import {
@@ -27,7 +28,10 @@ import {
   COLUMN_LAST_MESSAGE_AT,
   COLUMN_IS_ARCHIVED,
   COLUMN_SORT_ORDER,
-  COLUMN_CHAT_USER_NAME_OVERRIDE
+  COLUMN_CHAT_USER_NAME_OVERRIDE,
+  COLUMN_CONVERSATION_MODE,
+  CONVERSATION_MODE_SINGLE,
+  CONVERSATION_MODE_GROUP
 } from '../database/DatabaseConstants';
 import {
   intToBoolean,
@@ -67,6 +71,7 @@ function chatToBucket(chat: Chat): relationalStore.ValuesBucket {
   bucket[COLUMN_IS_ARCHIVED] = chat.isArchived ? 1 : 0;
   bucket[COLUMN_SORT_ORDER] = chat.sortOrder;
   bucket[COLUMN_CHAT_USER_NAME_OVERRIDE] = chat.userNameOverride;
+  bucket[COLUMN_CONVERSATION_MODE] = conversationModeToString(chat.conversationMode);
   return bucket;
 }
 
@@ -89,6 +94,12 @@ function chatFromRow(rs: relationalStore.ResultSet): Chat {
   const userNameOverride: string = userNameOverrideCol >= 0
     ? safeString(rs, userNameOverrideCol)
     : '';
+  // conversation_mode:列不存在或值为空时安全回退为 Single
+  const convModeCol: number = rs.getColumnIndex(COLUMN_CONVERSATION_MODE);
+  const convModeRaw: string | null = convModeCol >= 0
+    ? (rs.isColumnNull(convModeCol) ? null : rs.getString(convModeCol))
+    : null;
+  const conversationMode: ConversationMode = parseConversationMode(convModeRaw);
   return {
     id: id,
     characterId: characterId,
@@ -98,7 +109,8 @@ function chatFromRow(rs: relationalStore.ResultSet): Chat {
     lastMessageAt: lastMessageAt,
     isArchived: isArchived,
     userNameOverride: userNameOverride,
-    sortOrder: sortOrder
+    sortOrder: sortOrder,
+    conversationMode: conversationMode
   };
 }
 
@@ -221,6 +233,7 @@ export class ChatRepository {
     bucket[COLUMN_LAST_MESSAGE_AT] = chat.lastMessageAt;
     bucket[COLUMN_IS_ARCHIVED] = chat.isArchived ? 1 : 0;
     bucket[COLUMN_CHAT_USER_NAME_OVERRIDE] = chat.userNameOverride;
+    bucket[COLUMN_CONVERSATION_MODE] = conversationModeToString(chat.conversationMode);
 
     const predicates: relationalStore.RdbPredicates =
       new relationalStore.RdbPredicates(TABLE_CHATS);
@@ -485,6 +498,110 @@ export class ChatRepository {
     } else {
       predicates.isNull(COLUMN_CHARACTER_ID);
     }
+    predicates.orderByAsc(COLUMN_SORT_ORDER);
+    predicates.orderByDesc(COLUMN_LAST_MESSAGE_AT);
+    predicates.orderByDesc(COLUMN_UPDATED_AT);
+    predicates.orderByAsc(COLUMN_ID);
+    predicates.limitAs(limit);
+    predicates.offsetAs(offset);
+
+    const rs: relationalStore.ResultSet = await store.query(predicates);
+    try {
+      const chats: Chat[] = [];
+      while (rs.goToNextRow()) {
+        chats.push(chatFromRow(rs));
+      }
+      return chats;
+    } finally {
+      rs.close();
+    }
+  }
+
+  /**
+   * 查询多人聊天(Group 模式)列表(G-DATA-1A)。
+   *
+   * - 仅返回 conversation_mode = 'group' 的会话
+   * - 始终排除 archived
+   * - 排序:last_message_at DESC → updated_at DESC → id ASC
+   * - 不查询消息正文
+   *
+   * @param limit 上限(可选,默认 50)
+   * @param offset 偏移(可选,默认 0)
+   */
+  async listGroupChats(options?: ChatContextListOptions): Promise<Chat[]> {
+    const limit: number =
+      options !== undefined && options.limit !== undefined
+        ? options.limit
+        : DEFAULT_LIMIT;
+    const offset: number =
+      options !== undefined && options.offset !== undefined
+        ? options.offset
+        : 0;
+
+    if (limit < 1 || limit > MAX_LIMIT) {
+      throw DatabaseError.invalidData('limit out of range');
+    }
+    if (offset < 0) {
+      throw DatabaseError.invalidData('offset out of range');
+    }
+
+    const store: relationalStore.RdbStore = this.dbHelper.getStore();
+    const predicates: relationalStore.RdbPredicates =
+      new relationalStore.RdbPredicates(TABLE_CHATS);
+    predicates.equalTo(COLUMN_IS_ARCHIVED, 0);
+    predicates.equalTo(COLUMN_CONVERSATION_MODE, CONVERSATION_MODE_GROUP);
+    predicates.orderByAsc(COLUMN_SORT_ORDER);
+    predicates.orderByDesc(COLUMN_LAST_MESSAGE_AT);
+    predicates.orderByDesc(COLUMN_UPDATED_AT);
+    predicates.orderByAsc(COLUMN_ID);
+    predicates.limitAs(limit);
+    predicates.offsetAs(offset);
+
+    const rs: relationalStore.ResultSet = await store.query(predicates);
+    try {
+      const chats: Chat[] = [];
+      while (rs.goToNextRow()) {
+        chats.push(chatFromRow(rs));
+      }
+      return chats;
+    } finally {
+      rs.close();
+    }
+  }
+
+  /**
+   * 查询单聊(Single 模式)列表(G-DATA-1A)。
+   *
+   * - 仅返回 conversation_mode = 'single' 的会话
+   * - 始终排除 archived
+   * - 排序与 list() 一致
+   * - 不查询消息正文
+   *
+   * @param limit 上限(可选,默认 50)
+   * @param offset 偏移(可选,默认 0)
+   */
+  async listSingleChats(options?: ChatContextListOptions): Promise<Chat[]> {
+    const limit: number =
+      options !== undefined && options.limit !== undefined
+        ? options.limit
+        : DEFAULT_LIMIT;
+    const offset: number =
+      options !== undefined && options.offset !== undefined
+        ? options.offset
+        : 0;
+
+    if (limit < 1 || limit > MAX_LIMIT) {
+      throw DatabaseError.invalidData('limit out of range');
+    }
+    if (offset < 0) {
+      throw DatabaseError.invalidData('offset out of range');
+    }
+
+    const store: relationalStore.RdbStore = this.dbHelper.getStore();
+    const predicates: relationalStore.RdbPredicates =
+      new relationalStore.RdbPredicates(TABLE_CHATS);
+    predicates.equalTo(COLUMN_IS_ARCHIVED, 0);
+    predicates.equalTo(COLUMN_CONVERSATION_MODE, CONVERSATION_MODE_SINGLE);
     predicates.orderByAsc(COLUMN_SORT_ORDER);
     predicates.orderByDesc(COLUMN_LAST_MESSAGE_AT);
     predicates.orderByDesc(COLUMN_UPDATED_AT);

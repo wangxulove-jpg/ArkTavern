@@ -6,7 +6,7 @@
  */
 
 export const DATABASE_NAME: string = 'arktavern.db';
-export const DATABASE_VERSION: number = 12;
+export const DATABASE_VERSION: number = 13;
 
 export const TABLE_CHARACTERS: string = 'characters';
 export const TABLE_CHATS: string = 'chats';
@@ -228,3 +228,26 @@ export const CREATE_INDEX_MESSAGES_CHAT_BATCH: string =
   `CREATE INDEX IF NOT EXISTS ${INDEX_MESSAGES_CHAT_BATCH} ON ${TABLE_MESSAGES}(${COLUMN_CHAT_ID}, ${COLUMN_GENERATION_BATCH_ID})`;
 export const CREATE_INDEX_MESSAGES_SENDER_CHARACTER: string =
   `CREATE INDEX IF NOT EXISTS ${INDEX_MESSAGES_SENDER_CHARACTER} ON ${TABLE_MESSAGES}(${COLUMN_SENDER_CHARACTER_ID})`;
+
+// ===== v13: 多人聊天参与者表(G-DATA-1A) =====
+export const TABLE_CHAT_PARTICIPANTS: string = 'chat_participants';
+/** chats 表新增字段:对话模式('single' / 'group') */
+export const COLUMN_CONVERSATION_MODE: string = 'conversation_mode';
+/** chat_participants.speaker_order:发言顺序(从 0 开始,同 Chat 内唯一) */
+export const COLUMN_SPEAKER_ORDER: string = 'speaker_order';
+/** chat_participants.is_enabled:是否启用(参与 AI 生成轮次) */
+export const COLUMN_IS_ENABLED: string = 'is_enabled';
+
+/** ConversationMode 字符串值集中定义 */
+export const CONVERSATION_MODE_SINGLE: string = 'single';
+export const CONVERSATION_MODE_GROUP: string = 'group';
+
+/** chat_participants(chat_id, speaker_order) 索引 */
+export const INDEX_CHAT_PARTICIPANTS_CHAT_ORDER: string = 'idx_chat_participants_chat_order';
+
+export const ALTER_CHATS_ADD_CONVERSATION_MODE: string =
+  `ALTER TABLE ${TABLE_CHATS} ADD COLUMN ${COLUMN_CONVERSATION_MODE} TEXT NOT NULL DEFAULT '${CONVERSATION_MODE_SINGLE}'`;
+
+export const CREATE_INDEX_CHAT_PARTICIPANTS_CHAT_ORDER: string =
+  `CREATE INDEX IF NOT EXISTS ${INDEX_CHAT_PARTICIPANTS_CHAT_ORDER} ` +
+  `ON ${TABLE_CHAT_PARTICIPANTS}(${COLUMN_CHAT_ID}, ${COLUMN_SPEAKER_ORDER})`;

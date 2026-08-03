@@ -14,7 +14,7 @@
  */
 
 import { relationalStore } from '@kit.ArkData';
-import { V1_TO_V2_STATEMENTS, V2_TO_V3_STATEMENTS, V3_TO_V4_STATEMENTS, V4_TO_V5_DDL_STATEMENTS, V5_TO_V6_STATEMENTS, V6_TO_V7_STATEMENTS, V7_TO_V8_DDL_STATEMENTS, V8_TO_V9_STATEMENTS, V9_TO_V10_DDL_STATEMENTS, V10_TO_V11_DDL_STATEMENTS, V11_TO_V12_DDL_STATEMENTS, V11_TO_V12_DATA_MIGRATION_STATEMENTS } from './DatabaseSchema';
+import { V1_TO_V2_STATEMENTS, V2_TO_V3_STATEMENTS, V3_TO_V4_STATEMENTS, V4_TO_V5_DDL_STATEMENTS, V5_TO_V6_STATEMENTS, V6_TO_V7_STATEMENTS, V7_TO_V8_DDL_STATEMENTS, V8_TO_V9_STATEMENTS, V9_TO_V10_DDL_STATEMENTS, V10_TO_V11_DDL_STATEMENTS, V11_TO_V12_DDL_STATEMENTS, V11_TO_V12_DATA_MIGRATION_STATEMENTS, V12_TO_V13_DDL_STATEMENTS } from './DatabaseSchema';
 import {
   TABLE_CHATS,
   TABLE_MESSAGES,
@@ -606,6 +606,35 @@ class V11ToV12Migration implements DatabaseMigration {
     //    新安装时表为空,UPDATE 不影响任何行
     for (let i = 0; i < V11_TO_V12_DATA_MIGRATION_STATEMENTS.length; i++) {
       await store.executeSql(V11_TO_V12_DATA_MIGRATION_STATEMENTS[i]);
+    }
+  }
+}
+
+/**
+ * v12→v13 迁移(G-DATA-1A 多人聊天数据底座):
+ * - ALTER chats 表添加 conversation_mode TEXT NOT NULL DEFAULT 'single'
+ *   (旧 Chat 统一视为 Single,不从 character_id 反推模式)
+ * - 创建 chat_participants 表(多人聊天参与者关系)
+ * - 创建 idx_chat_participants_chat_order 索引
+ *
+ * 安全性:
+ * - 所有 DDL 用 IF NOT EXISTS / ALTER TABLE ADD COLUMN
+ * - 不重建 chats / messages / characters 等现有表
+ * - 不删除任何现有数据
+ * - 不为旧 Chat 创建 participant 行(旧 Chat 全部为 Single,无参与者)
+ * - 任一失败由 DbHelper 事务回滚,保持 v12
+ */
+export function createV12ToV13Migration(): DatabaseMigration {
+  return new V12ToV13Migration();
+}
+
+class V12ToV13Migration implements DatabaseMigration {
+  readonly fromVersion: number = 12;
+  readonly toVersion: number = 13;
+
+  async migrate(store: relationalStore.RdbStore): Promise<void> {
+    for (let i = 0; i < V12_TO_V13_DDL_STATEMENTS.length; i++) {
+      await store.executeSql(V12_TO_V13_DDL_STATEMENTS[i]);
     }
   }
 }
