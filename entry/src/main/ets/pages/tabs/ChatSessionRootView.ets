@@ -379,12 +379,31 @@ export struct ChatSessionRootView {
           .onClick(() => {
             this.startImportFlow();
           })
+
+        // G-UI-1: 空状态也提供多人聊天入口
+        Button($r('app.string.group_entry_title'))
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor($r('app.color.app_accent'))
+          .backgroundColor($r('app.color.app_accent_surface'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(40)
+          .padding({ left: 24, right: 24 })
+          .margin({ top: $r('app.float.app_spacing_8') })
+          .onClick(() => {
+            router.pushUrl({ url: 'pages/groupchat/GroupChatHomePage' });
+          })
       }
       .width('100%')
       .layoutWeight(1)
       .justifyContent(FlexAlign.Center)
     } else {
       List() {
+        // G-UI-1: 多人聊天入口(独立卡片,不混入单聊会话列表)
+        ListItem() {
+          this.groupChatEntryCard()
+        }
+        .margin({ bottom: $r('app.float.app_spacing_12') })
+
         ForEach(this.sessions, (item: ChatSessionListItem) => {
           ListItem() {
             this.sessionCard(item)
@@ -426,6 +445,84 @@ export struct ChatSessionRootView {
         top: 0,
         bottom: 0
       })
+    }
+  }
+
+  /**
+   * G-UI-1: 多人聊天入口卡片。
+   *
+   * 独立于单聊会话列表,明确标注"多人聊天"和"预览"。
+   * 点击跳转到 GroupChatHomePage。
+   * 不修改单聊会话卡片行为。
+   */
+  @Builder
+  groupChatEntryCard() {
+    PressableCard({
+      onPress: (): void => {
+        router.pushUrl({ url: 'pages/groupchat/GroupChatHomePage' });
+      },
+      surfaceColor: $r('app.color.app_accent_surface')
+    }) {
+      Row() {
+        // 左侧:多人图标
+        Stack() {
+          SymbolGlyph($r('sys.symbol.person'))
+            .fontSize(22)
+            .fontColor([$r('app.color.app_accent')])
+        }
+        .width(44)
+        .height(44)
+        .backgroundColor($r('app.color.app_surface_2'))
+        .borderRadius(22)
+        .alignContent(Alignment.Center)
+
+        // 右侧:标题 + 描述
+        Column() {
+          Row() {
+            Text($r('app.string.group_entry_title'))
+              .fontSize($r('app.float.app_font_body'))
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.app_text_primary'))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+            // 预览徽标
+            Text($r('app.string.group_preview_badge'))
+              .fontSize(10)
+              .fontColor($r('app.color.app_accent'))
+              .backgroundColor($r('app.color.app_surface_2'))
+              .borderRadius(4)
+              .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+              .margin({ left: 8 })
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Center)
+
+          Text($r('app.string.group_entry_desc'))
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_tertiary'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .margin({ top: 4 })
+            .width('100%')
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+        .margin({ left: 12 })
+
+        // 右侧箭头
+        SymbolGlyph($r('sys.symbol.chevron_right'))
+          .fontSize(16)
+          .fontColor([$r('app.color.app_text_tertiary')])
+      }
+      .width('100%')
+      .padding({
+        left: $r('app.float.app_spacing_12'),
+        right: $r('app.float.app_spacing_12'),
+        top: $r('app.float.app_spacing_12'),
+        bottom: $r('app.float.app_spacing_12')
+      })
+      .alignItems(VerticalAlign.Center)
     }
   }
 

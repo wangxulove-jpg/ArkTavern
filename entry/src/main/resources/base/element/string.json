@@ -1415,6 +1415,322 @@
     {
       "name": "chat_background_delete",
       "value": "删除背景"
+    },
+    {
+      "name": "group_home_title",
+      "value": "多人聊天"
+    },
+    {
+      "name": "group_home_subtitle",
+      "value": "让多个角色在同一个对话中依次回应"
+    },
+    {
+      "name": "group_create",
+      "value": "创建"
+    },
+    {
+      "name": "group_home_empty_title",
+      "value": "还没有多人聊天"
+    },
+    {
+      "name": "group_home_empty_desc",
+      "value": "选择多个角色，让他们在同一个聊天中依次回应你。"
+    },
+    {
+      "name": "group_more_title",
+      "value": "更多操作"
+    },
+    {
+      "name": "group_rename",
+      "value": "重命名"
+    },
+    {
+      "name": "group_manage_members",
+      "value": "管理成员"
+    },
+    {
+      "name": "group_delete_preview",
+      "value": "删除预览"
+    },
+    {
+      "name": "group_cancel",
+      "value": "取消"
+    },
+    {
+      "name": "group_rename_placeholder",
+      "value": "请输入新的群聊名称"
+    },
+    {
+      "name": "group_save",
+      "value": "保存"
+    },
+    {
+      "name": "group_preview_badge",
+      "value": "预览"
+    },
+    {
+      "name": "group_stop_round",
+      "value": "停止本轮"
+    },
+    {
+      "name": "group_retry",
+      "value": "重试"
+    },
+    {
+      "name": "group_end_round",
+      "value": "结束本轮"
+    },
+    {
+      "name": "group_stop",
+      "value": "停止"
+    },
+    {
+      "name": "group_send",
+      "value": "发送"
+    },
+    {
+      "name": "group_retry_current",
+      "value": "重试当前角色"
+    },
+    {
+      "name": "group_create_title",
+      "value": "创建多人聊天"
+    },
+    {
+      "name": "group_create_step_1",
+      "value": "步骤 1 / 2 · 选择角色"
+    },
+    {
+      "name": "group_create_step_2",
+      "value": "步骤 2 / 2 · 群聊配置"
+    },
+    {
+      "name": "group_create_search_placeholder",
+      "value": "搜索角色"
+    },
+    {
+      "name": "group_create_next",
+      "value": "下一步"
+    },
+    {
+      "name": "group_create_prev",
+      "value": "上一步"
+    },
+    {
+      "name": "group_create_min_hint",
+      "value": "最少选择 2 位角色"
+    },
+    {
+      "name": "group_create_max_hint",
+      "value": "最多选择 8 位角色"
+    },
+    {
+      "name": "group_create_chat_name",
+      "value": "群聊名称"
+    },
+    {
+      "name": "group_create_chat_name_placeholder",
+      "value": "留空时使用角色名组合"
+    },
+    {
+      "name": "group_create_selected_members",
+      "value": "已选成员"
+    },
+    {
+      "name": "group_create_speak_order",
+      "value": "发言顺序"
+    },
+    {
+      "name": "group_create_reply_mode",
+      "value": "回复方式"
+    },
+    {
+      "name": "group_create_reply_mode_sequential",
+      "value": "按成员顺序回复"
+    },
+    {
+      "name": "group_create_move_up",
+      "value": "上移"
+    },
+    {
+      "name": "group_create_move_down",
+      "value": "下移"
+    },
+    {
+      "name": "group_create_confirm",
+      "value": "创建并进入聊天"
+    },
+    {
+      "name": "group_chat_member_view",
+      "value": "查看角色"
+    },
+    {
+      "name": "group_chat_member_only",
+      "value": "只让此角色回复"
+    },
+    {
+      "name": "group_chat_member_disable",
+      "value": "在本群聊中停用"
+    },
+    {
+      "name": "group_chat_menu_manage",
+      "value": "管理成员"
+    },
+    {
+      "name": "group_chat_menu_settings",
+      "value": "群聊设置"
+    },
+    {
+      "name": "group_chat_menu_rename",
+      "value": "重新命名"
+    },
+    {
+      "name": "group_chat_menu_clear",
+      "value": "清空当前预览"
+    },
+    {
+      "name": "group_chat_menu_preview",
+      "value": "预览状态"
+    },
+    {
+      "name": "group_chat_dev_next",
+      "value": "下一位角色"
+    },
+    {
+      "name": "group_chat_dev_complete",
+      "value": "完成当前角色"
+    },
+    {
+      "name": "group_chat_dev_fail",
+      "value": "模拟失败"
+    },
+    {
+      "name": "group_chat_dev_finish",
+      "value": "完成整轮"
+    },
+    {
+      "name": "group_chat_preview_empty",
+      "value": "空聊天"
+    },
+    {
+      "name": "group_chat_preview_normal",
+      "value": "普通聊天"
+    },
+    {
+      "name": "group_chat_preview_generating",
+      "value": "正在生成"
+    },
+    {
+      "name": "group_chat_preview_cancelled",
+      "value": "已停止"
+    },
+    {
+      "name": "group_chat_preview_failed",
+      "value": "生成失败"
+    },
+    {
+      "name": "group_chat_preview_long",
+      "value": "长消息"
+    },
+    {
+      "name": "group_chat_preview_members8",
+      "value": "8 人成员栏"
+    },
+    {
+      "name": "group_manage_title",
+      "value": "群聊成员"
+    },
+    {
+      "name": "group_manage_add",
+      "value": "添加角色"
+    },
+    {
+      "name": "group_manage_enabled",
+      "value": "已启用"
+    },
+    {
+      "name": "group_manage_disabled",
+      "value": "已停用"
+    },
+    {
+      "name": "group_manage_enable",
+      "value": "启用"
+    },
+    {
+      "name": "group_manage_disable",
+      "value": "停用"
+    },
+    {
+      "name": "group_manage_remove",
+      "value": "移除"
+    },
+    {
+      "name": "group_manage_add_title",
+      "value": "添加预览角色"
+    },
+    {
+      "name": "group_settings_title",
+      "value": "群聊设置"
+    },
+    {
+      "name": "group_settings_name",
+      "value": "群聊名称"
+    },
+    {
+      "name": "group_settings_reply_mode",
+      "value": "回复方式"
+    },
+    {
+      "name": "group_settings_reply_mode_sequential",
+      "value": "按成员顺序回复"
+    },
+    {
+      "name": "group_settings_failure_policy",
+      "value": "失败处理方式"
+    },
+    {
+      "name": "group_settings_failure_stop",
+      "value": "停止整轮"
+    },
+    {
+      "name": "group_settings_failure_skip",
+      "value": "跳过并继续"
+    },
+    {
+      "name": "group_settings_manage_members",
+      "value": "管理成员"
+    },
+    {
+      "name": "group_settings_clear_messages",
+      "value": "清空预览记录"
+    },
+    {
+      "name": "group_settings_delete",
+      "value": "删除预览群聊"
+    },
+    {
+      "name": "group_settings_clear_confirm",
+      "value": "确定清空当前群聊的所有消息吗？"
+    },
+    {
+      "name": "group_settings_delete_confirm",
+      "value": "确定删除此预览群聊吗？此操作不可撤销。"
+    },
+    {
+      "name": "group_entry_title",
+      "value": "多人聊天"
+    },
+    {
+      "name": "group_entry_desc",
+      "value": "让多个角色在同一个对话中依次回应（预览）"
+    },
+    {
+      "name": "group_confirm",
+      "value": "确定"
+    },
+    {
+      "name": "group_member_min_hint",
+      "value": "最少保留 2 个成员且至少 2 个启用"
     }
   ]
 }

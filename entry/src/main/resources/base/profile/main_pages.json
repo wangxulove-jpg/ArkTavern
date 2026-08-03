@@ -18,6 +18,11 @@
     "pages/MarketDetailPage",
     "pages/AiCharacterMakerPage",
     "pages/AiCharacterPreviewPage",
-    "pages/VrmViewerPage"
+    "pages/VrmViewerPage",
+    "pages/groupchat/GroupChatHomePage",
+    "pages/groupchat/GroupChatCreatePage",
+    "pages/groupchat/GroupChatPage",
+    "pages/groupchat/GroupMemberManagePage",
+    "pages/groupchat/GroupChatSettingsPage"
   ]
 }
