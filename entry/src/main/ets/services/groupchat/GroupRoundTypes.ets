@@ -1,5 +1,5 @@
 /**
- * GroupRoundTypes 多人聊天轮次运行时类型(G-RUNTIME-1A)
+ * GroupRoundTypes 多人聊天轮次运行时类型(G-RUNTIME-1A / G-RUNTIME-1B)
  *
  * 职责:
  * - 定义多人聊天一轮回复所需的纯运行时类型
@@ -9,8 +9,7 @@
  * 设计:
  * - generationBatchId 既是消息批次 ID,也是一轮 ID
  * - operationId 用于使旧轮次失效,避免迟到回调覆盖新状态
- * - 本阶段状态链:Idle → Planning → Ready
- *   下一阶段接入 Provider 后才会进入 Generating / Completed / Failed
+ * - 状态链:Idle → Planning → Ready → Generating → Completed/Cancelled/Failed
  *
  * 规则:
  * - 同一时间最多一个活动轮次
@@ -25,11 +24,11 @@
  *
  * - Idle:无活动轮次
  * - Planning:正在构建轮次计划(读取参与者、校验)
- * - Ready:计划已就绪,等待 AI 回复接入(本阶段终态)
- * - Generating:正在生成 AI 回复(下一阶段接入)
- * - Completed:本轮全部完成(下一阶段)
- * - Cancelled:用户取消(下一阶段)
- * - Failed:生成失败(下一阶段)
+ * - Ready:计划已就绪,等待启动生成
+ * - Generating:正在生成 AI 回复(严格顺序)
+ * - Completed:本轮全部完成
+ * - Cancelled:用户取消
+ * - Failed:生成失败
  */
 export enum GroupRoundState {
   Idle = 'idle',
@@ -73,9 +72,9 @@ export interface GroupRoundPlan {
 }
 
 /**
- * 活动轮次上下文(Generating 阶段使用,本阶段只到 Ready)。
+ * 活动轮次上下文(Generating 阶段使用)。
  *
- * 下一阶段 Provider 接入后,此对象在 Generating 期间持续存在,
+ * 在 Generating 期间持续存在,
  * 用于校验 delta / complete / error / stop 回调是否属于当前轮次。
  */
 export interface ActiveGroupRoundContext {
@@ -91,7 +90,9 @@ export interface ActiveGroupRoundContext {
   readonly speakers: GroupRoundSpeaker[];
   /** 当前发言者索引(Generating 阶段推进) */
   readonly currentSpeakerIndex: number;
-  /** 当前 AI 消息 ID(Generating 阶段写入,本阶段为 undefined) */
+  /** 当前发言者角色 ID */
+  readonly currentSpeakerCharacterId: string;
+  /** 当前 AI 消息 ID(Generating 阶段写入) */
   readonly currentAssistantMessageId?: string;
 }
 

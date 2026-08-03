@@ -1,9 +1,10 @@
 /**
- * GroupChatPage 多人聊天主页面(G-DATA-1B / G-RUNTIME-1A 正式版)
+ * GroupChatPage 多人聊天主页面(G-DATA-1B / G-RUNTIME-1A / G-RUNTIME-1B)
  *
  * 数据来源:
  * - GroupConversationPersistenceService(真实数据库)
  * - GroupConversationMessageService(真实消息)
+ * - GroupChatRuntimeService(严格顺序流式生成)
  *
  * 状态:
  * - Loading:加载中
@@ -11,20 +12,23 @@
  * - NotFound:群聊不存在或已删除
  * - Error:加载失败
  *
+ * 本轮状态(G-RUNTIME-1B):
+ * - Idle:无活动轮次,输入可用
+ * - Generating:本轮 N/M · 角色正在回复,输入禁用,显示停止按钮
+ * - Completed:本轮完成 · M 位角色已回复,输入恢复
+ * - Cancelled:本轮已停止 · N/M 位角色已完成,输入恢复
+ * - Failed:角色回复失败,输入恢复
+ *
  * 消息区域:
  * - 有消息:显示真实消息列表(用户右对齐,角色左对齐)
- * - 无消息:显示"还没有消息"
- * - 底部说明:"AI 角色回复将在下一阶段接入"
+ * - Streaming 消息:实时显示当前角色生成内容
+ * - Cancelled/Failed:保留部分正文并显示状态标记
  *
  * 输入区:
  * - 启用真实发送
  * - 发送期间禁用按钮(isSending)
+ * - 生成期间禁用发送,显示停止按钮
  * - 失败时保留输入内容
- *
- * 本阶段不实现:
- * - 多人 AI 生成(不显示"正在回复")
- * - 流式输出
- * - 停止 / 重试
  *
  * 不依赖:GroupChatPreviewStore / 预览种子数据。
  */
@@ -38,8 +42,11 @@ import {
   GroupMessageUiModel,
   GroupChatDetailState,
   GroupMessageListState,
+  GroupMemberRuntimeState,
+  GroupMemberRuntimeUiModel,
   PENDING_GROUP_CHAT_ID_KEY
 } from '../../viewmodels/groupchat/GroupChatUiModels';
+import { GroupRoundState } from '../../services/groupchat/GroupRoundTypes';
 import { CharacterImageView } from '../../components/CharacterImageView';
 import { ChatRole } from '../../models/ChatRole';
 import { ChatMessageStatus } from '../../models/ChatMessage';
@@ -63,6 +70,24 @@ struct GroupChatPage {
   @State isSending: boolean = false;
   /** 错误提示 */
   @State errorMessage: string = '';
+  /** 本轮状态 */
+  @State roundState: GroupRoundState = GroupRoundState.Idle;
+  /** 是否正在生成 */
+  @State isGenerating: boolean = false;
+  /** 是否正在停止 */
+  @State isStopping: boolean = false;
+  /** 本轮错误消息 */
+  @State roundErrorMessage: string = '';
+  /** 当前发言者索引 */
+  @State currentSpeakerIndex: number = -1;
+  /** 已完成发言者数 */
+  @State completedSpeakerCount: number = 0;
+  /** 总发言者数 */
+  @State totalSpeakerCount: number = 0;
+  /** 当前发言者角色 ID */
+  @State currentSpeakerCharacterId: string = '';
+  /** 成员运行时状态 */
+  @State memberRuntimeStates: GroupMemberRuntimeUiModel[] = [];
   /** 更多菜单是否可见 */
   @State moreMenuVisible: boolean = false;
   /** 重命名弹窗是否可见 */
@@ -76,6 +101,8 @@ struct GroupChatPage {
 
   private viewModel: GroupChatViewModel | null = null;
   private messageScroller: Scroller = new Scroller();
+  /** ViewModel 状态轮询定时器(G-RUNTIME-1B) */
+  private syncTimerId: number = -1;
 
   async aboutToAppear(): Promise<void> {
     const id: string = AppStorage.get<string>(PENDING_GROUP_CHAT_ID_KEY) ?? '';
@@ -92,17 +119,33 @@ struct GroupChatPage {
       this.viewModel = new GroupChatViewModel();
       await this.viewModel.load(id);
       this.syncFromViewModel();
+      // 启动状态轮询(生成期间持续同步 ViewModel 状态)
+      this.startSyncPolling();
     } catch (e) {
       this.state = GroupChatDetailState.Error;
     }
   }
 
-  /** 页面重新显示时刷新(从设置/成员管理返回) */
-  async onPageShow(): Promise<void> {
-    if (this.viewModel !== null && this.chatId.length > 0) {
-      await this.viewModel.load(this.chatId);
-      this.syncFromViewModel();
+  /** 页面销毁时停止整轮并清理 */
+  async aboutToDisappear(): Promise<void> {
+    this.stopSyncPolling();
+    if (this.viewModel !== null) {
+      await this.viewModel.disposeWithStop();
+      this.viewModel = null;
     }
+  }
+
+  /** 页面重新显示时刷新(从设置/成员管理返回);生成中不重新加载 */
+  async onPageShow(): Promise<void> {
+    if (this.viewModel === null || this.chatId.length === 0) {
+      return;
+    }
+    // 生成中不重新加载,避免破坏活动轮次状态
+    if (this.viewModel.isGenerating) {
+      return;
+    }
+    await this.viewModel.load(this.chatId);
+    this.syncFromViewModel();
   }
 
   /** 从 ViewModel 同步状态 */
@@ -117,6 +160,39 @@ struct GroupChatPage {
     this.inputText = this.viewModel.inputText;
     this.isSending = this.viewModel.isSending;
     this.errorMessage = this.viewModel.errorMessage;
+    this.roundState = this.viewModel.roundState;
+    this.isGenerating = this.viewModel.isGenerating;
+    this.isStopping = this.viewModel.isStopping;
+    this.roundErrorMessage = this.viewModel.roundErrorMessage;
+    this.currentSpeakerIndex = this.viewModel.currentSpeakerIndex;
+    this.completedSpeakerCount = this.viewModel.completedSpeakerCount;
+    this.totalSpeakerCount = this.viewModel.totalSpeakerCount;
+    this.currentSpeakerCharacterId = this.viewModel.currentSpeakerCharacterId;
+    this.memberRuntimeStates = this.viewModel.memberRuntimeStates;
+  }
+
+  /** 启动状态轮询(生成期间持续同步) */
+  private startSyncPolling(): void {
+    this.stopSyncPolling();
+    this.syncTimerId = setInterval((): void => {
+      if (this.viewModel === null) {
+        this.stopSyncPolling();
+        return;
+      }
+      this.syncFromViewModel();
+      // 不在生成中时停止轮询
+      if (!this.viewModel.isGenerating && !this.viewModel.isSending) {
+        this.stopSyncPolling();
+      }
+    }, 200);
+  }
+
+  /** 停止状态轮询 */
+  private stopSyncPolling(): void {
+    if (this.syncTimerId !== -1) {
+      clearInterval(this.syncTimerId);
+      this.syncTimerId = -1;
+    }
   }
 
   build(): void {
@@ -215,6 +291,7 @@ struct GroupChatPage {
       Column() {
         this.headerArea()
         this.memberStripArea()
+        this.roundStatusBar()
         this.messageArea()
         this.inputBarArea()
       }
@@ -230,6 +307,109 @@ struct GroupChatPage {
     }
     .width('100%')
     .height('100%')
+  }
+
+  /**
+   * 本轮状态栏(G-RUNTIME-1B)。
+   *
+   * - Generating:本轮 N/M · 角色名正在回复
+   * - Completed:本轮完成 · M 位角色已回复
+   * - Cancelled:本轮已停止 · N/M 位角色已完成
+   * - Failed:角色名回复失败
+   * - Idle:不显示
+   */
+  @Builder
+  roundStatusBar(): void {
+    if (this.roundState === GroupRoundState.Idle) {
+      // Idle 不显示
+    } else {
+      Row() {
+        Text(this.composeRoundStatusText())
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .layoutWeight(1)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+        if (this.isGenerating) {
+          Button() {
+            Row() {
+              if (this.isStopping) {
+                LoadingProgress()
+                  .width(14)
+                  .height(14)
+                  .color($r('app.color.app_on_accent'))
+                  .margin({ right: 4 })
+              } else {
+                SymbolGlyph($r('sys.symbol.xmark'))
+                  .fontSize(14)
+                  .fontColor([$r('app.color.app_on_accent')])
+                  .margin({ right: 4 })
+              }
+              Text(this.isStopping ? '停止中' : '停止本轮')
+                .fontSize($r('app.float.app_font_caption'))
+                .fontColor($r('app.color.app_on_accent'))
+            }
+          }
+          .type(ButtonType.Capsule)
+          .backgroundColor($r('app.color.app_danger'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(30)
+          .padding({ left: 12, right: 12 })
+          .key('group.stop_round_btn')
+          .accessibilityText('停止本轮')
+          .enabled(!this.isStopping)
+          .onClick(() => {
+            this.handleStopRound();
+          })
+        }
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 6, bottom: 6 })
+      .backgroundColor($r('app.color.app_surface_2'))
+      .alignItems(VerticalAlign.Center)
+    }
+  }
+
+  /** 构建本轮状态文案 */
+  private composeRoundStatusText(): string {
+    const current: number = this.currentSpeakerIndex >= 0
+      ? this.currentSpeakerIndex + 1 : 0;
+    const total: number = this.totalSpeakerCount;
+    const currentName: string = this.findMemberName(this.currentSpeakerCharacterId);
+
+    if (this.roundState === GroupRoundState.Generating) {
+      if (currentName.length > 0) {
+        return '本轮 ' + String(current) + '/' + String(total) + ' · ' + currentName + '正在回复';
+      }
+      return '本轮 ' + String(current) + '/' + String(total) + ' · 正在回复';
+    }
+    if (this.roundState === GroupRoundState.Completed) {
+      return '本轮完成 · ' + String(total) + ' 位角色已回复';
+    }
+    if (this.roundState === GroupRoundState.Cancelled) {
+      return '本轮已停止 · ' + String(this.completedSpeakerCount) + '/' + String(total) + ' 位角色已完成';
+    }
+    if (this.roundState === GroupRoundState.Failed) {
+      if (currentName.length > 0) {
+        return currentName + '回复失败';
+      }
+      return '本轮失败';
+    }
+    return '';
+  }
+
+  /** 根据 characterId 查找成员名称 */
+  private findMemberName(characterId: string): string {
+    if (characterId.length === 0 || this.detail === null) {
+      return '';
+    }
+    for (let i = 0; i < this.detail.members.length; i++) {
+      if (this.detail.members[i].characterId === characterId) {
+        return this.detail.members[i].name;
+      }
+    }
+    return '';
   }
 
   /** 顶部标题栏 */
@@ -302,51 +482,105 @@ struct GroupChatPage {
     return String(members.length) + ' 位成员 · ' + String(enabled) + ' 位启用';
   }
 
-  /** 成员横向栏 */
+  /**
+   * 成员横向栏(G-RUNTIME-1B)。
+   *
+   * - 生成中:使用 memberRuntimeStates 显示运行状态(Completed/Generating/Waiting)
+   * - 非生成中:显示 detail.members(包含停用成员)
+   */
   @Builder
   memberStripArea(): void {
     Scroll() {
       Row() {
-        ForEach(this.detail!.members, (member: GroupMemberUiModel) => {
-          Column() {
-            Stack() {
-              CharacterImageView({
-                imageUri: member.avatarUri,
-                fallbackName: member.name,
-                imgWidth: 44,
-                imgHeight: 44,
-                imgBorderRadius: 22,
-                displayMode: 'thumbnail',
-                objectFit: ImageFit.Cover
-              })
-              if (!member.characterExists) {
-                // 缺失角色标记
-                Text('!')
-                  .fontSize(12)
-                  .fontColor($r('app.color.app_on_accent'))
-                  .backgroundColor($r('app.color.app_danger'))
-                  .borderRadius(8)
-                  .width(16)
-                  .height(16)
-                  .textAlign(TextAlign.Center)
-                  .position({ x: 30, y: -2 })
+        if (this.isGenerating && this.memberRuntimeStates.length > 0) {
+          ForEach(this.memberRuntimeStates, (member: GroupMemberRuntimeUiModel) => {
+            Column() {
+              Stack() {
+                CharacterImageView({
+                  imageUri: member.avatarUri,
+                  fallbackName: member.name,
+                  imgWidth: 44,
+                  imgHeight: 44,
+                  imgBorderRadius: 22,
+                  displayMode: 'thumbnail',
+                  objectFit: ImageFit.Cover
+                })
+                // 运行状态徽标
+                if (member.runtimeState === GroupMemberRuntimeState.Generating) {
+                  LoadingProgress()
+                    .width(16)
+                    .height(16)
+                    .color($r('app.color.app_accent'))
+                    .position({ x: 30, y: -2 })
+                } else if (member.runtimeState === GroupMemberRuntimeState.Completed) {
+                  Text('✓')
+                    .fontSize(12)
+                    .fontColor($r('app.color.app_on_accent'))
+                    .backgroundColor($r('app.color.app_accent'))
+                    .borderRadius(8)
+                    .width(16)
+                    .height(16)
+                    .textAlign(TextAlign.Center)
+                    .position({ x: 30, y: -2 })
+                }
               }
-            }
-            .width(44)
-            .height(44)
+              .width(44)
+              .height(44)
 
-            Text(member.name)
-              .fontSize($r('app.float.app_font_caption'))
-              .fontColor(member.isEnabled ? $r('app.color.app_text_primary') : $r('app.color.app_text_tertiary'))
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-              .width(56)
-              .textAlign(TextAlign.Center)
-              .margin({ top: 4 })
-              .opacity(member.isEnabled ? 1 : 0.5)
-          }
-          .margin({ left: 8, right: 8 })
-        }, (member: GroupMemberUiModel) => member.characterId + '|' + String(member.speakerOrder) + '|' + String(member.isEnabled))
+              Text(member.name)
+                .fontSize($r('app.float.app_font_caption'))
+                .fontColor(this.memberRuntimeTextColor(member.runtimeState))
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .width(56)
+                .textAlign(TextAlign.Center)
+                .margin({ top: 4 })
+                .opacity(this.memberRuntimeOpacity(member.runtimeState))
+            }
+            .margin({ left: 8, right: 8 })
+          }, (member: GroupMemberRuntimeUiModel) => member.characterId + '|' + member.runtimeState)
+        } else {
+          ForEach(this.detail!.members, (member: GroupMemberUiModel) => {
+            Column() {
+              Stack() {
+                CharacterImageView({
+                  imageUri: member.avatarUri,
+                  fallbackName: member.name,
+                  imgWidth: 44,
+                  imgHeight: 44,
+                  imgBorderRadius: 22,
+                  displayMode: 'thumbnail',
+                  objectFit: ImageFit.Cover
+                })
+                if (!member.characterExists) {
+                  // 缺失角色标记
+                  Text('!')
+                    .fontSize(12)
+                    .fontColor($r('app.color.app_on_accent'))
+                    .backgroundColor($r('app.color.app_danger'))
+                    .borderRadius(8)
+                    .width(16)
+                    .height(16)
+                    .textAlign(TextAlign.Center)
+                    .position({ x: 30, y: -2 })
+                }
+              }
+              .width(44)
+              .height(44)
+
+              Text(member.name)
+                .fontSize($r('app.float.app_font_caption'))
+                .fontColor(member.isEnabled ? $r('app.color.app_text_primary') : $r('app.color.app_text_tertiary'))
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .width(56)
+                .textAlign(TextAlign.Center)
+                .margin({ top: 4 })
+                .opacity(member.isEnabled ? 1 : 0.5)
+            }
+            .margin({ left: 8, right: 8 })
+          }, (member: GroupMemberUiModel) => member.characterId + '|' + String(member.speakerOrder) + '|' + String(member.isEnabled))
+        }
       }
       .padding({ left: 12, right: 12, top: 4, bottom: 4 })
     }
@@ -354,6 +588,28 @@ struct GroupChatPage {
     .height(78)
     .scrollBar(BarState.Off)
     .edgeEffect(EdgeEffect.Spring)
+  }
+
+  /** 成员运行时状态文字颜色 */
+  private memberRuntimeTextColor(state: GroupMemberRuntimeState): ResourceColor {
+    if (state === GroupMemberRuntimeState.Generating) {
+      return $r('app.color.app_accent');
+    }
+    if (state === GroupMemberRuntimeState.Completed) {
+      return $r('app.color.app_text_primary');
+    }
+    return $r('app.color.app_text_tertiary');
+  }
+
+  /** 成员运行时状态透明度 */
+  private memberRuntimeOpacity(state: GroupMemberRuntimeState): number {
+    if (state === GroupMemberRuntimeState.Waiting) {
+      return 0.5;
+    }
+    if (state === GroupMemberRuntimeState.Idle) {
+      return 0.4;
+    }
+    return 1;
   }
 
   /** 消息列表区 */
@@ -374,13 +630,6 @@ struct GroupChatPage {
         Text('还没有消息')
           .fontSize($r('app.float.app_font_body'))
           .fontColor($r('app.color.app_text_secondary'))
-          .textAlign(TextAlign.Center)
-          .width('100%')
-
-        Text('AI 角色回复将在下一阶段接入。')
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
-          .margin({ top: 6 })
           .textAlign(TextAlign.Center)
           .width('100%')
       }
@@ -455,14 +704,35 @@ struct GroupChatPage {
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .width('100%')
 
-          Text(msg.content)
-            .fontSize($r('app.float.app_font_body'))
-            .fontColor($r('app.color.chat_text_primary'))
-            .width('100%')
-            .textAlign(TextAlign.Start)
+          if (msg.status === ChatMessageStatus.Streaming && msg.content.length === 0) {
+            // Streaming 但尚无内容:显示等待提示
+            Row() {
+              LoadingProgress()
+                .width(14)
+                .height(14)
+                .color($r('app.color.app_text_tertiary'))
+                .margin({ right: 6 })
+              Text('正在思考…')
+                .fontSize($r('app.float.app_font_caption'))
+                .fontColor($r('app.color.app_text_tertiary'))
+            }
             .margin({ top: 2 })
+          } else {
+            Text(msg.content)
+              .fontSize($r('app.float.app_font_body'))
+              .fontColor($r('app.color.chat_text_primary'))
+              .width('100%')
+              .textAlign(TextAlign.Start)
+              .margin({ top: 2 })
+          }
 
-          if (msg.status === ChatMessageStatus.Cancelled) {
+          if (msg.status === ChatMessageStatus.Streaming && msg.content.length > 0) {
+            // Streaming 中且有内容:显示生成中标记
+            Text('生成中…')
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_accent'))
+              .margin({ top: 2 })
+          } else if (msg.status === ChatMessageStatus.Cancelled) {
             Text('已停止')
               .fontSize($r('app.float.app_font_caption'))
               .fontColor($r('app.color.app_text_tertiary'))
@@ -498,6 +768,14 @@ struct GroupChatPage {
           .textAlign(TextAlign.Center)
           .padding({ top: 4, bottom: 4 })
       }
+      if (this.roundErrorMessage.length > 0) {
+        Text(this.roundErrorMessage)
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_danger'))
+          .width('100%')
+          .textAlign(TextAlign.Center)
+          .padding({ top: 4, bottom: 4 })
+      }
 
       Row() {
         TextInput({ placeholder: '发送消息', text: this.inputText })
@@ -508,7 +786,7 @@ struct GroupChatPage {
           .height(40)
           .padding({ left: 12, right: 12 })
           .layoutWeight(1)
-          .enabled(!this.isSending)
+          .enabled(!this.isSending && !this.isGenerating)
           .onChange((value: string) => {
             this.inputText = value;
             if (this.viewModel !== null) {
@@ -519,30 +797,39 @@ struct GroupChatPage {
             this.handleSend();
           })
 
-        Button() {
-          SymbolGlyph($r('sys.symbol.paperplane_fill'))
-            .fontSize(20)
-            .fontColor([$r('app.color.app_on_accent')])
+        if (this.isGenerating) {
+          // 生成中:显示停止按钮(与状态栏的停止按钮同步,这里不重复显示)
+          // 状态栏已有停止入口,这里保持发送按钮置灰
+          Button() {
+            SymbolGlyph($r('sys.symbol.paperplane_fill'))
+              .fontSize(20)
+              .fontColor([$r('app.color.app_text_tertiary')])
+          }
+          .type(ButtonType.Circle)
+          .backgroundColor($r('app.color.app_text_tertiary'))
+          .width(40)
+          .height(40)
+          .margin({ left: 8 })
+          .enabled(false)
+        } else {
+          Button() {
+            SymbolGlyph($r('sys.symbol.paperplane_fill'))
+              .fontSize(20)
+              .fontColor([$r('app.color.app_on_accent')])
+          }
+          .type(ButtonType.Circle)
+          .backgroundColor(this.isSending ? $r('app.color.app_text_tertiary') : $r('app.color.app_accent'))
+          .width(40)
+          .height(40)
+          .margin({ left: 8 })
+          .enabled(!this.isSending && this.inputText.trim().length > 0)
+          .onClick(() => {
+            this.handleSend();
+          })
         }
-        .type(ButtonType.Circle)
-        .backgroundColor(this.isSending ? $r('app.color.app_text_tertiary') : $r('app.color.app_accent'))
-        .width(40)
-        .height(40)
-        .margin({ left: 8 })
-        .enabled(!this.isSending && this.inputText.trim().length > 0)
-        .onClick(() => {
-          this.handleSend();
-        })
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
-
-      Text('AI 角色回复将在下一阶段接入')
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
-        .width('100%')
-        .textAlign(TextAlign.Center)
-        .margin({ top: 4 })
     }
     .width('100%')
     .padding({
@@ -561,7 +848,7 @@ struct GroupChatPage {
       return;
     }
     const content: string = this.inputText.trim();
-    if (content.length === 0 || this.isSending) {
+    if (content.length === 0 || this.isSending || this.isGenerating) {
       return;
     }
     await this.viewModel.sendUserMessage(content);
@@ -570,6 +857,19 @@ struct GroupChatPage {
       // 发送成功,清空本地输入框
       this.inputText = '';
     }
+    // 生成已启动,启动状态轮询
+    if (this.viewModel.isGenerating) {
+      this.startSyncPolling();
+    }
+  }
+
+  /** 处理停止本轮 */
+  private async handleStopRound(): Promise<void> {
+    if (this.viewModel === null || !this.isGenerating || this.isStopping) {
+      return;
+    }
+    await this.viewModel.stopRound();
+    this.syncFromViewModel();
   }
 
   /** 更多菜单弹窗 */

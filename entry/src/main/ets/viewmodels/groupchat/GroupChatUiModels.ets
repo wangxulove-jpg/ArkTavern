@@ -128,6 +128,45 @@ export enum GroupMessageListState {
   Error = 'error'
 }
 
+/**
+ * 群聊成员运行时状态(G-RUNTIME-1B)。
+ *
+ * 用于成员栏显示当前角色的运行状态:
+ * - Idle:未参与本轮或本轮未开始
+ * - Waiting:等待前序角色完成
+ * - Generating:正在生成
+ * - Completed:已完成
+ * - Cancelled:已取消(停止)
+ * - Failed:生成失败
+ */
+export enum GroupMemberRuntimeState {
+  Idle = 'idle',
+  Waiting = 'waiting',
+  Generating = 'generating',
+  Completed = 'completed',
+  Cancelled = 'cancelled',
+  Failed = 'failed'
+}
+
+/**
+ * 群聊成员运行时 UI 模型(G-RUNTIME-1B)。
+ * 在成员栏显示当前角色在本轮中的运行状态。
+ */
+export interface GroupMemberRuntimeUiModel {
+  /** 角色 ID */
+  readonly characterId: string;
+  /** 角色名称(缺失角色显示"角色已删除") */
+  readonly name: string;
+  /** 头像 URI */
+  readonly avatarUri: string;
+  /** 发言顺序 */
+  readonly speakerIndex: number;
+  /** 运行时状态 */
+  readonly runtimeState: GroupMemberRuntimeState;
+  /** 角色是否真实存在 */
+  readonly characterExists: boolean;
+}
+
 /** 用户消息显示名称 */
 export const USER_MESSAGE_SENDER_NAME: string = '我';
 

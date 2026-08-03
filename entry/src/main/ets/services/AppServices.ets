@@ -78,6 +78,8 @@ import { ChatParticipantRepository } from '../repositories/ChatParticipantReposi
 import { GroupConversationPersistenceService } from './groupchat/GroupConversationPersistenceService';
 import { GroupConversationMessageService } from './groupchat/GroupConversationMessageService';
 import { GroupRoundCoordinator } from './groupchat/GroupRoundCoordinator';
+import { GroupPromptAssembler } from './groupchat/GroupPromptAssembler';
+import { GroupChatRuntimeService } from './groupchat/GroupChatRuntimeService';
 import { Logger } from '../utils/Logger';
 
 const LOG_TAG: string = 'AppServices';
@@ -182,6 +184,10 @@ export class AppServices {
   private readonly groupConversationMessageService: GroupConversationMessageService;
   /** GroupRoundCoordinator 多人聊天轮次协调器(G-RUNTIME-1A,不对页面公开) */
   private readonly groupRoundCoordinator: GroupRoundCoordinator;
+  /** GroupPromptAssembler 多人聊天单角色 Prompt 构建器(G-RUNTIME-1B,不对页面公开) */
+  private readonly groupPromptAssembler: GroupPromptAssembler;
+  /** GroupChatRuntimeService 多人聊天运行时服务(G-RUNTIME-1B,不对页面公开) */
+  private readonly groupChatRuntimeService: GroupChatRuntimeService;
 
   /**
    * 私有构造,组装全部依赖。
@@ -318,6 +324,24 @@ export class AppServices {
     this.groupRoundCoordinator = new GroupRoundCoordinator(
       this.groupConversationPersistenceService,
       this.characterService
+    );
+    // G-RUNTIME-1B: 多人聊天运行时(严格顺序流式生成)
+    // 复用已创建的 roundCoordinator / messageService / modelService
+    // 以及 promptBuilder / historyTrimmer / tokenCounter / lorebookService / characterService / promptPresetService
+    this.groupPromptAssembler = new GroupPromptAssembler(
+      this.promptBuilder,
+      this.historyTrimmer,
+      this.tokenCounter,
+      this.lorebookService,
+      this.characterService,
+      this.promptPresetService,
+      this.modelService
+    );
+    this.groupChatRuntimeService = new GroupChatRuntimeService(
+      this.groupRoundCoordinator,
+      this.groupConversationMessageService,
+      this.groupPromptAssembler,
+      this.modelService
     );
     // 市场服务(Chub 公共浏览 + 搜索 + 详情 + 下载)
     // 使用独立的 HarmonyHttpClient 实例(非流式),不与流式 Provider 共享
@@ -712,5 +736,23 @@ export class AppServices {
    */
   static getGroupRoundCoordinator(): GroupRoundCoordinator {
     return AppServices.getInstance().groupRoundCoordinator;
+  }
+
+  /**
+   * 获取 GroupPromptAssembler 实例(G-RUNTIME-1B 多人聊天单角色 Prompt 构建器)。
+   * 用于为当前发言角色单独构建模型请求上下文,实现角色隔离。
+   * 页面通过 ViewModel 间接使用,不直接调用。
+   */
+  static getGroupPromptAssembler(): GroupPromptAssembler {
+    return AppServices.getInstance().groupPromptAssembler;
+  }
+
+  /**
+   * 获取 GroupChatRuntimeService 实例(G-RUNTIME-1B 多人聊天运行时服务)。
+   * 用于启动一轮多人聊天生成、停止整轮、查询运行状态。
+   * 页面通过 ViewModel 间接使用,不直接调用。
+   */
+  static getGroupChatRuntimeService(): GroupChatRuntimeService {
+    return AppServices.getInstance().groupChatRuntimeService;
   }
 }

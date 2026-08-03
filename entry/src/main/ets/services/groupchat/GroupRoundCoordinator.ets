@@ -1,20 +1,15 @@
 /**
- * GroupRoundCoordinator 多人聊天轮次协调器(G-RUNTIME-1A 骨架)
+ * GroupRoundCoordinator 多人聊天轮次协调器(G-RUNTIME-1A / G-RUNTIME-1B)
  *
  * 职责:
  * - 建立本轮成员快照(GroupRoundPlan)
  * - 管理 operationId,使旧轮次失效
  * - 维护活动轮次上下文(ActiveGroupRoundContext)
- * - 提供校验接口供下一阶段 Provider 回调使用
+ * - 提供校验接口供 Provider 回调使用
+ * - 推进发言者索引(Generating 阶段)
  *
- * 本阶段状态链:
- *   Idle → Planning → Ready
- *
- * 不实现:
- * - Generating(下一阶段接入 Provider)
- * - 真实 AI 消息创建
- * - 流式输出
- * - 停止 / 重试 / 跳过
+ * 状态链:
+ *   Idle → Planning → Ready → Generating → Completed/Cancelled/Failed
  *
  * 设计:
  * - 不依赖 ModelService / Provider / SSE
@@ -99,10 +94,7 @@ export class GroupRoundCoordinator {
    * 6. 按 speakerOrder ASC 排序
    * 7. 校验可用发言者 >= 2
    * 8. 生成 operationId 与 GroupRoundPlan
-   * 9. 状态转为 Ready
-   *
-   * 本阶段不进入 Generating。
-   * 计划建立后立即清理活动上下文,允许用户继续发送下一条消息。
+   * 9. 状态转为 Ready(等待 startRound 进入 Generating)
    *
    * @param chatId 群聊 ID
    * @param userMessageId 触发本轮的用户消息 ID
@@ -181,9 +173,8 @@ export class GroupRoundCoordinator {
 
       this.lastPlan = plan;
       this.state = GroupRoundState.Ready;
-      // 本阶段不进入 Generating,立即清理活动上下文
-      // 保留 lastPlan 作为最后一次调试信息,但不阻止用户继续发送
-      this.activeRound = null;
+      // Ready 状态保留 lastPlan,等待 startRound 进入 Generating
+      // activeRound 在 beginGeneration 时创建
 
       Logger.info(LOG_TAG, 'prepareRound ok speakers=' + String(speakers.length));
       return plan;
@@ -199,6 +190,153 @@ export class GroupRoundCoordinator {
         GroupRoundPlanErrorKind.Internal, String(e)
       );
     }
+  }
+
+  /**
+   * 开始生成(G-RUNTIME-1B)。
+   *
+   * 在 Ready 状态下调用,进入 Generating,创建 ActiveGroupRoundContext。
+   * 第一个发言者 index=0。
+   *
+   * @param plan 已建立的轮次计划
+   * @returns 初始活动上下文
+   */
+  beginGeneration(plan: GroupRoundPlan): ActiveGroupRoundContext {
+    if (this.state !== GroupRoundState.Ready) {
+      throw new Error('beginGeneration requires Ready state, current=' + this.state);
+    }
+    if (plan.speakers.length === 0) {
+      throw new Error('beginGeneration: speakers empty');
+    }
+    const firstSpeaker: GroupRoundSpeaker = plan.speakers[0];
+    this.activeRound = {
+      operationId: plan.operationId,
+      roundId: plan.roundId,
+      chatId: plan.chatId,
+      userMessageId: plan.userMessageId,
+      speakers: plan.speakers,
+      currentSpeakerIndex: 0,
+      currentSpeakerCharacterId: firstSpeaker.characterId
+    };
+    this.state = GroupRoundState.Generating;
+    Logger.info(LOG_TAG, 'beginGeneration opId=' + String(plan.operationId));
+    return this.activeRound;
+  }
+
+  /**
+   * 更新当前发言者的 AI 消息 ID。
+   * 在创建 Streaming Assistant Message 后调用。
+   */
+  updateCurrentAssistantMessageId(
+    operationId: number,
+    assistantMessageId: string
+  ): void {
+    if (this.activeRound === null) {
+      return;
+    }
+    if (this.activeRound.operationId !== operationId) {
+      return;
+    }
+    this.activeRound = {
+      operationId: this.activeRound.operationId,
+      roundId: this.activeRound.roundId,
+      chatId: this.activeRound.chatId,
+      userMessageId: this.activeRound.userMessageId,
+      speakers: this.activeRound.speakers,
+      currentSpeakerIndex: this.activeRound.currentSpeakerIndex,
+      currentSpeakerCharacterId: this.activeRound.currentSpeakerCharacterId,
+      currentAssistantMessageId: assistantMessageId
+    };
+  }
+
+  /**
+   * 推进到下一个发言者。
+   *
+   * 规则:
+   * - 校验 operationId
+   * - 已是最后一个发言者时返回 null(整轮完成)
+   * - 否则创建新的 ActiveGroupRoundContext, currentSpeakerIndex+1
+   *
+   * @returns 新上下文(已推进),或 null(整轮完成)
+   */
+  advanceSpeaker(operationId: number): ActiveGroupRoundContext | null {
+    if (this.activeRound === null) {
+      return null;
+    }
+    if (this.activeRound.operationId !== operationId) {
+      return null;
+    }
+    const nextIndex: number = this.activeRound.currentSpeakerIndex + 1;
+    if (nextIndex >= this.activeRound.speakers.length) {
+      // 整轮完成
+      return null;
+    }
+    const nextSpeaker: GroupRoundSpeaker = this.activeRound.speakers[nextIndex];
+    this.activeRound = {
+      operationId: this.activeRound.operationId,
+      roundId: this.activeRound.roundId,
+      chatId: this.activeRound.chatId,
+      userMessageId: this.activeRound.userMessageId,
+      speakers: this.activeRound.speakers,
+      currentSpeakerIndex: nextIndex,
+      currentSpeakerCharacterId: nextSpeaker.characterId
+      // currentAssistantMessageId 由 updateCurrentAssistantMessageId 设置
+    };
+    return this.activeRound;
+  }
+
+  /**
+   * 标记整轮完成。
+   */
+  markCompleted(operationId: number): void {
+    if (this.activeRound === null) {
+      return;
+    }
+    if (this.activeRound.operationId !== operationId) {
+      return;
+    }
+    this.activeRound = null;
+    this.state = GroupRoundState.Completed;
+    Logger.info(LOG_TAG, 'markCompleted opId=' + String(operationId));
+  }
+
+  /**
+   * 标记整轮取消。
+   */
+  markCancelled(operationId: number): void {
+    if (this.activeRound === null) {
+      // 即使 activeRound 已被 cancelRound 清理,也允许设置状态
+    }
+    if (this.activeRound !== null && this.activeRound.operationId !== operationId) {
+      return;
+    }
+    this.activeRound = null;
+    this.state = GroupRoundState.Cancelled;
+    Logger.info(LOG_TAG, 'markCancelled opId=' + String(operationId));
+  }
+
+  /**
+   * 标记整轮失败。
+   */
+  markFailed(operationId: number): void {
+    if (this.activeRound === null) {
+      // 已被清理也允许设置状态
+    }
+    if (this.activeRound !== null && this.activeRound.operationId !== operationId) {
+      return;
+    }
+    this.activeRound = null;
+    this.state = GroupRoundState.Failed;
+    Logger.info(LOG_TAG, 'markFailed opId=' + String(operationId));
+  }
+
+  /**
+   * 重置为 Idle,准备下一轮发送。
+   * 保留 lastPlan 作为历史记录。
+   */
+  resetToIdle(): void {
+    this.activeRound = null;
+    this.state = GroupRoundState.Idle;
   }
 
   /**
