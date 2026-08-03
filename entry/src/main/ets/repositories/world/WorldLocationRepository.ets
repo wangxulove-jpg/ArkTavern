@@ -53,6 +53,20 @@ export class WorldLocationRepository {
       throw DatabaseError.invalidData('WorldLocation.getById: id empty');
     }
     const store: relationalStore.RdbStore = this.dbHelper.getStore();
+    return await this.getByIdWithStore(store, id);
+  }
+
+  /**
+   * 在事务内按 id 加载地点(由调用方持有 store 和事务)。
+   * 用于 W-DATA-1B WorldStateService 在同一事务内读取地点状态。
+   */
+  async getByIdWithStore(
+    store: relationalStore.RdbStore,
+    id: string
+  ): Promise<WorldLocation | null> {
+    if (id === '') {
+      throw DatabaseError.invalidData('WorldLocation.getByIdWithStore: id empty');
+    }
     const predicates: relationalStore.RdbPredicates =
       new relationalStore.RdbPredicates(TABLE_WORLD_LOCATIONS);
     predicates.equalTo(COLUMN_ID, id);
@@ -102,6 +116,24 @@ export class WorldLocationRepository {
       throw DatabaseError.invalidData('WorldLocation.findByCanonicalKey: canonicalKey empty');
     }
     const store: relationalStore.RdbStore = this.dbHelper.getStore();
+    return await this.findByCanonicalKeyWithStore(store, worldId, canonicalKey);
+  }
+
+  /**
+   * 在事务内按 canonicalKey 精确查找(由调用方持有 store 和事务)。
+   * 用于 W-DATA-1B 创建/更新地点时在同一事务内做精确去重校验。
+   */
+  async findByCanonicalKeyWithStore(
+    store: relationalStore.RdbStore,
+    worldId: string,
+    canonicalKey: string
+  ): Promise<WorldLocation | null> {
+    if (worldId === '') {
+      throw DatabaseError.invalidData('WorldLocation.findByCanonicalKeyWithStore: worldId empty');
+    }
+    if (canonicalKey === '') {
+      throw DatabaseError.invalidData('WorldLocation.findByCanonicalKeyWithStore: canonicalKey empty');
+    }
     const predicates: relationalStore.RdbPredicates =
       new relationalStore.RdbPredicates(TABLE_WORLD_LOCATIONS);
     predicates.equalTo(COLUMN_WORLD_ID, worldId);
@@ -229,6 +261,19 @@ export class WorldLocationRepository {
       throw DatabaseError.invalidData('WorldLocation.countByWorld: worldId empty');
     }
     const store: relationalStore.RdbStore = this.dbHelper.getStore();
+    return await this.countByWorldWithStore(store, worldId);
+  }
+
+  /**
+   * 在事务内统计指定 World 的地点数量(由调用方持有 store 和事务)。
+   */
+  async countByWorldWithStore(
+    store: relationalStore.RdbStore,
+    worldId: string
+  ): Promise<number> {
+    if (worldId === '') {
+      throw DatabaseError.invalidData('WorldLocation.countByWorldWithStore: worldId empty');
+    }
     const predicates: relationalStore.RdbPredicates =
       new relationalStore.RdbPredicates(TABLE_WORLD_LOCATIONS);
     predicates.equalTo(COLUMN_WORLD_ID, worldId);

@@ -27,6 +27,8 @@ import { CharacterAssetStore } from '../storage/CharacterAssetStore';
 import { DatabaseError, DatabaseErrorType } from '../models/DatabaseError';
 import { generateUuid } from '../utils/Uuid';
 import { Logger } from '../utils/Logger';
+import { WorldCharacterInstanceRepository } from '../repositories/world/WorldCharacterInstanceRepository';
+import { CharacterReferencedByWorldError } from '../models/world/WorldStateError';
 import {
   parseCharacterJson,
   ParseResult,
@@ -57,18 +59,21 @@ export class CharacterService {
   private readonly selectionStore: CharacterSelectionStore;
   private readonly assetStore: CharacterAssetStore;
   private readonly lorebookRepository: LorebookRepository | null;
+  private readonly worldInstanceRepo: WorldCharacterInstanceRepository | null;
   private initialized: boolean = false;
 
   constructor(
     repository: CharacterRepository,
     selectionStore: CharacterSelectionStore,
     assetStore: CharacterAssetStore,
-    lorebookRepository: LorebookRepository | null = null
+    lorebookRepository: LorebookRepository | null = null,
+    worldInstanceRepo: WorldCharacterInstanceRepository | null = null
   ) {
     this.repository = repository;
     this.selectionStore = selectionStore;
     this.assetStore = assetStore;
     this.lorebookRepository = lorebookRepository;
+    this.worldInstanceRepo = worldInstanceRepo;
   }
 
   async initialize(context: common.Context): Promise<void> {
@@ -226,6 +231,16 @@ export class CharacterService {
 
   async remove(id: string): Promise<void> {
     this.requireInit();
+    // W-DATA-1B 角色删除引用保护:
+    // 在任何破坏性操作之前,先检查该 Character 是否被任意 WorldCharacterInstance 引用。
+    // 引用数 > 0 时立即阻止删除,不删除头像 / 角色世界书 / 当前选择 / 数据库角色。
+    if (this.worldInstanceRepo !== null) {
+      const refCount: number = await this.worldInstanceRepo.countByCharacterId(id);
+      if (refCount > 0) {
+        Logger.warn(LOG_TAG, 'remove blocked: character referenced by world instances');
+        throw new CharacterReferencedByWorldError(refCount);
+      }
+    }
     const existing: Character | null = await this.repository.getById(id);
     if (existing === null) {
       // 幂等:不存在视为已删除

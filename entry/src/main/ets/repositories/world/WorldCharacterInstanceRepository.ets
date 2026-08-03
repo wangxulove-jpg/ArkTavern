@@ -55,6 +55,20 @@ export class WorldCharacterInstanceRepository {
       throw DatabaseError.invalidData('WorldCharacterInstance.getById: id empty');
     }
     const store: relationalStore.RdbStore = this.dbHelper.getStore();
+    return await this.getByIdWithStore(store, id);
+  }
+
+  /**
+   * 在事务内按 id 加载角色实例(由调用方持有 store 和事务)。
+   * 用于 W-DATA-1B WorldStateService 在同一事务内读取实例状态后再决策。
+   */
+  async getByIdWithStore(
+    store: relationalStore.RdbStore,
+    id: string
+  ): Promise<WorldCharacterInstance | null> {
+    if (id === '') {
+      throw DatabaseError.invalidData('WorldCharacterInstance.getByIdWithStore: id empty');
+    }
     const predicates: relationalStore.RdbPredicates =
       new relationalStore.RdbPredicates(TABLE_WORLD_CHARACTER_INSTANCES);
     predicates.equalTo(COLUMN_ID, id);
@@ -104,6 +118,24 @@ export class WorldCharacterInstanceRepository {
       throw DatabaseError.invalidData('WorldCharacterInstance.listByLocation: locationId empty');
     }
     const store: relationalStore.RdbStore = this.dbHelper.getStore();
+    return await this.listByLocationWithStore(store, worldId, locationId);
+  }
+
+  /**
+   * 在事务内列出指定 World 内位于指定地点的全部角色实例,按 createdAt ASC 排序。
+   * 用于 W-DATA-1B 归档/删除地点前校验是否有角色位于其中(由 Service 过滤 active)。
+   */
+  async listByLocationWithStore(
+    store: relationalStore.RdbStore,
+    worldId: string,
+    locationId: string
+  ): Promise<WorldCharacterInstance[]> {
+    if (worldId === '') {
+      throw DatabaseError.invalidData('WorldCharacterInstance.listByLocationWithStore: worldId empty');
+    }
+    if (locationId === '') {
+      throw DatabaseError.invalidData('WorldCharacterInstance.listByLocationWithStore: locationId empty');
+    }
     const predicates: relationalStore.RdbPredicates =
       new relationalStore.RdbPredicates(TABLE_WORLD_CHARACTER_INSTANCES);
     predicates.equalTo(COLUMN_WORLD_ID, worldId);
@@ -135,6 +167,24 @@ export class WorldCharacterInstanceRepository {
       throw DatabaseError.invalidData('WorldCharacterInstance.findByWorldAndCharacter: characterId empty');
     }
     const store: relationalStore.RdbStore = this.dbHelper.getStore();
+    return await this.findByWorldAndCharacterWithStore(store, worldId, characterId);
+  }
+
+  /**
+   * 在事务内精确查找(world_id, character_id)。
+   * 用于 W-DATA-1B 添加角色到世界前在同一事务内做唯一性校验。
+   */
+  async findByWorldAndCharacterWithStore(
+    store: relationalStore.RdbStore,
+    worldId: string,
+    characterId: string
+  ): Promise<WorldCharacterInstance | null> {
+    if (worldId === '') {
+      throw DatabaseError.invalidData('WorldCharacterInstance.findByWorldAndCharacterWithStore: worldId empty');
+    }
+    if (characterId === '') {
+      throw DatabaseError.invalidData('WorldCharacterInstance.findByWorldAndCharacterWithStore: characterId empty');
+    }
     const predicates: relationalStore.RdbPredicates =
       new relationalStore.RdbPredicates(TABLE_WORLD_CHARACTER_INSTANCES);
     predicates.equalTo(COLUMN_WORLD_ID, worldId);
@@ -159,6 +209,20 @@ export class WorldCharacterInstanceRepository {
       throw DatabaseError.invalidData('WorldCharacterInstance.countByCharacterId: characterId empty');
     }
     const store: relationalStore.RdbStore = this.dbHelper.getStore();
+    return await this.countByCharacterIdWithStore(store, characterId);
+  }
+
+  /**
+   * 在事务内统计引用指定 Character 的角色实例数量(跨全部 World)。
+   * 用于 W-DATA-1B CharacterService.remove 在删除引用检查时保持一致性读。
+   */
+  async countByCharacterIdWithStore(
+    store: relationalStore.RdbStore,
+    characterId: string
+  ): Promise<number> {
+    if (characterId === '') {
+      throw DatabaseError.invalidData('WorldCharacterInstance.countByCharacterIdWithStore: characterId empty');
+    }
     const predicates: relationalStore.RdbPredicates =
       new relationalStore.RdbPredicates(TABLE_WORLD_CHARACTER_INSTANCES);
     predicates.equalTo(COLUMN_CHARACTER_ID, characterId);
@@ -182,6 +246,20 @@ export class WorldCharacterInstanceRepository {
       throw DatabaseError.invalidData('WorldCharacterInstance.countByCurrentLocation: locationId empty');
     }
     const store: relationalStore.RdbStore = this.dbHelper.getStore();
+    return await this.countByCurrentLocationWithStore(store, locationId);
+  }
+
+  /**
+   * 在事务内统计指定地点上的角色实例数量(跨全部 World)。
+   * 用于 W-DATA-1B 归档/删除地点前校验是否有角色位于其中。
+   */
+  async countByCurrentLocationWithStore(
+    store: relationalStore.RdbStore,
+    locationId: string
+  ): Promise<number> {
+    if (locationId === '') {
+      throw DatabaseError.invalidData('WorldCharacterInstance.countByCurrentLocationWithStore: locationId empty');
+    }
     const predicates: relationalStore.RdbPredicates =
       new relationalStore.RdbPredicates(TABLE_WORLD_CHARACTER_INSTANCES);
     predicates.equalTo(COLUMN_CURRENT_LOCATION_ID, locationId);

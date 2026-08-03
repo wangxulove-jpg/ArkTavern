@@ -10,6 +10,7 @@ import { CharacterService } from '../services/CharacterService';
 import { ParsedCharacterCard } from '../parser/CharacterCardJsonParser';
 import { PngParseResult } from '../parser/PngCharacterCardParser';
 import { Logger } from '../utils/Logger';
+import { CharacterReferencedByWorldError, isCharacterReferencedByWorldError } from '../models/world/WorldStateError';
 
 const LOG_TAG: string = 'CharacterListViewModel';
 
@@ -138,7 +139,13 @@ export class CharacterListViewModel {
       await this.service.remove(id);
       await this.load();
     } catch (e) {
-      this.errorMessage = '删除失败: ' + String(e);
+      // W-DATA-1B: 角色被世界引用时直接显示友好提示,不暴露内部 ID
+      if (isCharacterReferencedByWorldError(e)) {
+        const err: CharacterReferencedByWorldError = e as CharacterReferencedByWorldError;
+        this.errorMessage = err.message;
+      } else {
+        this.errorMessage = '删除失败: ' + String(e);
+      }
       Logger.error(LOG_TAG, 'deleteCharacter failed: ' + String(e));
     }
   }

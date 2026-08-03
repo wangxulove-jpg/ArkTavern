@@ -167,11 +167,59 @@ export class WorldLocationEdgeRepository {
       throw DatabaseError.invalidData('WorldLocationEdge.findExact: toLocationId empty');
     }
     const store: relationalStore.RdbStore = this.dbHelper.getStore();
+    return await this.findExactWithStore(store, worldId, fromLocationId, toLocationId);
+  }
+
+  /**
+   * 在事务内精确查找(world_id, from_location_id, to_location_id)。
+   * 用于 W-DATA-1B 创建/更新边时在同一事务内做精确重复与反向冲突校验,
+   * 以及移动角色时校验存在可通行边。
+   */
+  async findExactWithStore(
+    store: relationalStore.RdbStore,
+    worldId: string,
+    fromLocationId: string,
+    toLocationId: string
+  ): Promise<WorldLocationEdge | null> {
+    if (worldId === '') {
+      throw DatabaseError.invalidData('WorldLocationEdge.findExactWithStore: worldId empty');
+    }
+    if (fromLocationId === '') {
+      throw DatabaseError.invalidData('WorldLocationEdge.findExactWithStore: fromLocationId empty');
+    }
+    if (toLocationId === '') {
+      throw DatabaseError.invalidData('WorldLocationEdge.findExactWithStore: toLocationId empty');
+    }
     const predicates: relationalStore.RdbPredicates =
       new relationalStore.RdbPredicates(TABLE_WORLD_LOCATION_EDGES);
     predicates.equalTo(COLUMN_WORLD_ID, worldId);
     predicates.equalTo(COLUMN_FROM_LOCATION_ID, fromLocationId);
     predicates.equalTo(COLUMN_TO_LOCATION_ID, toLocationId);
+    const rs: relationalStore.ResultSet = await store.query(predicates);
+    try {
+      if (!rs.goToFirstRow()) {
+        return null;
+      }
+      return edgeFromRow(rs);
+    } finally {
+      rs.close();
+    }
+  }
+
+  /**
+   * 在事务内按 id 加载边(由调用方持有 store 和事务)。
+   * 用于 W-DATA-1B WorldStateService 更新/删除边时在同一事务内读取。
+   */
+  async getByIdWithStore(
+    store: relationalStore.RdbStore,
+    id: string
+  ): Promise<WorldLocationEdge | null> {
+    if (id === '') {
+      throw DatabaseError.invalidData('WorldLocationEdge.getByIdWithStore: id empty');
+    }
+    const predicates: relationalStore.RdbPredicates =
+      new relationalStore.RdbPredicates(TABLE_WORLD_LOCATION_EDGES);
+    predicates.equalTo(COLUMN_ID, id);
     const rs: relationalStore.ResultSet = await store.query(predicates);
     try {
       if (!rs.goToFirstRow()) {

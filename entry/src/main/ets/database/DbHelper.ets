@@ -79,6 +79,21 @@ export type TransactionOperation =
   | 'group_conversation_remove_participant'
   | 'group_conversation_delete'
   | 'group_message_append_user'
+  | 'world_create'
+  | 'world_update'
+  | 'world_archive'
+  | 'world_delete'
+  | 'world_location_create'
+  | 'world_location_update'
+  | 'world_location_archive'
+  | 'world_location_delete'
+  | 'world_edge_create'
+  | 'world_edge_update'
+  | 'world_edge_delete'
+  | 'world_character_add'
+  | 'world_character_remove'
+  | 'world_character_activate'
+  | 'world_character_move'
   | 'unknown';
 
 export class DbHelper {

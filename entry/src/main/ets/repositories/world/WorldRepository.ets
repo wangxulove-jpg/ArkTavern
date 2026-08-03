@@ -52,6 +52,17 @@ export class WorldRepository {
       throw DatabaseError.invalidData('World.getById: id empty');
     }
     const store: relationalStore.RdbStore = this.dbHelper.getStore();
+    return await this.getByIdWithStore(store, id);
+  }
+
+  /**
+   * 在事务内按 id 加载 World(由调用方持有 store 和事务)。
+   * 用于 W-DATA-1B WorldStateService 在同一事务内读取 World 状态后再决策。
+   */
+  async getByIdWithStore(store: relationalStore.RdbStore, id: string): Promise<World | null> {
+    if (id === '') {
+      throw DatabaseError.invalidData('World.getByIdWithStore: id empty');
+    }
     const predicates: relationalStore.RdbPredicates =
       new relationalStore.RdbPredicates(TABLE_WORLDS);
     predicates.equalTo(COLUMN_ID, id);

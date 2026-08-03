@@ -19,15 +19,20 @@ export enum WorldEventType {
   WorldCreated = 'world_created',
   WorldUpdated = 'world_updated',
   WorldArchived = 'world_archived',
+  WorldActivated = 'world_activated',
   LocationCreated = 'location_created',
   LocationUpdated = 'location_updated',
   LocationArchived = 'location_archived',
+  LocationActivated = 'location_activated',
   LocationDeleted = 'location_deleted',
   EdgeCreated = 'edge_created',
   EdgeUpdated = 'edge_updated',
   EdgeDeleted = 'edge_deleted',
   CharacterJoined = 'character_joined',
-  CharacterRemoved = 'character_removed'
+  CharacterRemoved = 'character_removed',
+  CharacterActivated = 'character_activated',
+  CharacterDeactivated = 'character_deactivated',
+  CharacterMoved = 'character_moved'
 }
 
 export const WORLD_EVENT_ID_PREFIX: string = 'world-event-';
@@ -78,15 +83,20 @@ const VALID_EVENT_TYPES: Set<string> = new Set<string>([
   WorldEventType.WorldCreated,
   WorldEventType.WorldUpdated,
   WorldEventType.WorldArchived,
+  WorldEventType.WorldActivated,
   WorldEventType.LocationCreated,
   WorldEventType.LocationUpdated,
   WorldEventType.LocationArchived,
+  WorldEventType.LocationActivated,
   WorldEventType.LocationDeleted,
   WorldEventType.EdgeCreated,
   WorldEventType.EdgeUpdated,
   WorldEventType.EdgeDeleted,
   WorldEventType.CharacterJoined,
-  WorldEventType.CharacterRemoved
+  WorldEventType.CharacterRemoved,
+  WorldEventType.CharacterActivated,
+  WorldEventType.CharacterDeactivated,
+  WorldEventType.CharacterMoved
 ]);
 
 /**

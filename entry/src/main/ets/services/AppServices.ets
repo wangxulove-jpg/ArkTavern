@@ -86,6 +86,7 @@ import { WorldLocationRepository } from '../repositories/world/WorldLocationRepo
 import { WorldLocationEdgeRepository } from '../repositories/world/WorldLocationEdgeRepository';
 import { WorldCharacterInstanceRepository } from '../repositories/world/WorldCharacterInstanceRepository';
 import { WorldEventRepository } from '../repositories/world/WorldEventRepository';
+import { WorldStateService } from './world/WorldStateService';
 import { Logger } from '../utils/Logger';
 
 const LOG_TAG: string = 'AppServices';
@@ -206,6 +207,8 @@ export class AppServices {
   private readonly worldCharacterInstanceRepository: WorldCharacterInstanceRepository;
   /** WorldEventRepository 世界事件仓储(W-DATA-1A,不对页面公开) */
   private readonly worldEventRepository: WorldEventRepository;
+  /** WorldStateService 世界模式状态业务服务(W-DATA-1B,世界基础数据唯一正式写入口) */
+  private readonly worldStateService: WorldStateService;
 
   /**
    * 私有构造,组装全部依赖。
@@ -227,11 +230,33 @@ export class AppServices {
     this.characterRepository = new CharacterRepository(this.dbHelper);
     // LorebookRepository 必须在 CharacterService 之前创建,以支持角色卡 character_book 自动导入
     this.lorebookRepository = new LorebookRepository(this.dbHelper);
+    // W-DATA-1B: 世界 Repository 必须在 CharacterService 之前创建,
+    // 以便将 WorldCharacterInstanceRepository 注入 CharacterService 实现角色删除引用保护。
+    // 所有世界 Repository 仅依赖 DbHelper,不依赖任何 Service,不会形成循环。
+    this.worldRepository = new WorldRepository(this.dbHelper);
+    this.worldLocationRepository = new WorldLocationRepository(this.dbHelper);
+    this.worldLocationEdgeRepository = new WorldLocationEdgeRepository(this.dbHelper);
+    this.worldCharacterInstanceRepository = new WorldCharacterInstanceRepository(this.dbHelper);
+    this.worldEventRepository = new WorldEventRepository(this.dbHelper);
     this.characterService = new CharacterService(
       this.characterRepository,
       this.characterSelectionStore,
       characterAssetStore,
-      this.lorebookRepository
+      this.lorebookRepository,
+      this.worldCharacterInstanceRepository
+    );
+    // W-DATA-1B: 世界模式状态业务服务(世界基础数据唯一正式写入口)。
+    // 依赖 5 个世界 Repository + CharacterService(只读 getById) + DbHelper。
+    // CharacterService 已注入 worldCharacterInstanceRepository,但 WorldStateService
+    // 不调用 CharacterService.remove 等写方法,无构造循环。
+    this.worldStateService = new WorldStateService(
+      this.worldRepository,
+      this.worldLocationRepository,
+      this.worldLocationEdgeRepository,
+      this.worldCharacterInstanceRepository,
+      this.worldEventRepository,
+      this.characterService,
+      this.dbHelper
     );
     this.lorebookSelectionStore = new LorebookSelectionStore(this.appPreferences);
     this.characterMigrationService = new CharacterMigrationService(
@@ -374,12 +399,7 @@ export class AppServices {
     const marketCacheStore: MarketCacheStore = new MarketCacheStore(this.appPreferences);
     const marketImportedMapStore: MarketImportedMapStore = new MarketImportedMapStore(this.appPreferences);
     this.marketService = new MarketService(marketHttpClient, marketCacheStore, marketImportedMapStore);
-    // W-DATA-1A: 世界模式数据域 Repository(仅依赖 DbHelper,不依赖 Page/ViewModel/Service)
-    this.worldRepository = new WorldRepository(this.dbHelper);
-    this.worldLocationRepository = new WorldLocationRepository(this.dbHelper);
-    this.worldLocationEdgeRepository = new WorldLocationEdgeRepository(this.dbHelper);
-    this.worldCharacterInstanceRepository = new WorldCharacterInstanceRepository(this.dbHelper);
-    this.worldEventRepository = new WorldEventRepository(this.dbHelper);
+    // W-DATA-1A/B: 世界模式数据域 Repository 与 WorldStateService 已在 CharacterService 之前创建
     // ChatBackgroundService 在 initialize 中 context 就绪后创建
   }
 
@@ -826,5 +846,14 @@ export class AppServices {
    */
   static getWorldEventRepository(): WorldEventRepository {
     return AppServices.getInstance().worldEventRepository;
+  }
+
+  /**
+   * 获取 WorldStateService 实例(W-DATA-1B 世界模式状态业务服务)。
+   * 是当前世界基础数据(World / Location / Edge / CharacterInstance)的唯一正式写入口。
+   * 所有页面与未来 ViewModel 必须通过此方法获取同一个 WorldStateService。
+   */
+  static getWorldStateService(): WorldStateService {
+    return AppServices.getInstance().worldStateService;
   }
 }
