@@ -55,6 +55,7 @@ import {
   GroupSpeakerRetryError,
   GroupSpeakerRetryErrorKind
 } from './GroupRoundTypes';
+import { GroupRuntimeRegistry } from './GroupRuntimeRegistry';
 import { EffectiveGenerationSettings } from '../PromptPresetRuntimeResolver';
 
 const LOG_TAG: string = 'GroupRuntime';
@@ -135,6 +136,8 @@ export class GroupChatRuntimeService {
   private readonly messageService: GroupConversationMessageService;
   private readonly promptAssembler: GroupPromptAssembler;
   private readonly modelService: ModelService;
+  /** G-RUNTIME-1D: 应用级运行注册表(跨群聊隔离 + 业务互斥) */
+  private readonly registry: GroupRuntimeRegistry;
 
   /** 当前轮次操作 ID(0 表示无活动轮次) */
   private activeOperationId: number = 0;
@@ -163,16 +166,25 @@ export class GroupChatRuntimeService {
   /** G-RUNTIME-1C: 当前是否处于重试模式(主循环不推进 advanceSpeaker) */
   private isRetryMode: boolean = false;
 
+  /** G-RUNTIME-1D: 已获取运行锁的 operationId(0 表示未持有) */
+  private acquiredOperationId: number = 0;
+  /** G-RUNTIME-1D: 已获取运行锁的 chatId */
+  private acquiredChatId: string = '';
+  /** G-RUNTIME-1D: 终止流程幂等键。同一 operationId 只执行一次终止 */
+  private stoppedOperationIds: Set<number> = new Set<number>();
+
   constructor(
     roundCoordinator: GroupRoundCoordinator,
     messageService: GroupConversationMessageService,
     promptAssembler: GroupPromptAssembler,
-    modelService: ModelService
+    modelService: ModelService,
+    registry: GroupRuntimeRegistry
   ) {
     this.roundCoordinator = roundCoordinator;
     this.messageService = messageService;
     this.promptAssembler = promptAssembler;
     this.modelService = modelService;
+    this.registry = registry;
   }
 
   /**
@@ -206,6 +218,22 @@ export class GroupChatRuntimeService {
       throw new Error('GroupChatRuntimeService: plan has no speakers');
     }
 
+    // G-RUNTIME-1D: 应用级运行锁。如果另一个群聊正在运行,拒绝启动。
+    // 用户消息已写入数据库,这里只拒绝启动生成,不回滚消息。
+    try {
+      this.registry.acquire(
+        plan.chatId, plan.roundId, plan.operationId, GroupRoundState.Generating
+      );
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'startRound acquire rejected: ' + String(e));
+      this.roundCoordinator.markFailed(plan.operationId);
+      callbacks.onRoundStateChanged(GroupRoundState.Failed);
+      callbacks.onRoundFailed('', '另一个多人聊天正在回复,请先结束当前回复');
+      return;
+    }
+    this.acquiredOperationId = plan.operationId;
+    this.acquiredChatId = plan.chatId;
+
     // G-RUNTIME-1C: 获取模型配置快照
     try {
       this.configSnapshot = await this.modelService.getCurrentConfig();
@@ -215,9 +243,10 @@ export class GroupChatRuntimeService {
     }
     if (this.configSnapshot === null) {
       // 没有当前配置,直接失败
-      this.roundCoordinator.markFailed(0);
+      this.roundCoordinator.markFailed(plan.operationId);
       callbacks.onRoundStateChanged(GroupRoundState.Failed);
       callbacks.onRoundFailed('', '未配置当前模型,请先在设置中选择');
+      this.releaseRegistryForCurrentRun();
       return;
     }
 
@@ -289,6 +318,7 @@ export class GroupChatRuntimeService {
       }
     } finally {
       this.cleanupRound();
+      this.releaseRegistryForCurrentRun();
     }
   }
 
@@ -303,8 +333,9 @@ export class GroupChatRuntimeService {
    * 5. 状态变为 Cancelled
    *
    * 幂等:不在运行中时调用为 no-op。
-   *
    * G-RUNTIME-1C: 同时用于停止整轮和停止重试。
+   * G-RUNTIME-1D: 同一 operationId 只执行一次终止流程(stoppedOperationIds)。
+   *              释放运行锁(registry.release)。
    */
   async stopRound(): Promise<void> {
     if (!this.isRunning()) {
@@ -312,6 +343,14 @@ export class GroupChatRuntimeService {
     }
 
     const operationId: number = this.activeOperationId;
+
+    // G-RUNTIME-1D: 幂等保护。同一 operationId 只执行一次终止流程。
+    if (this.stoppedOperationIds.has(operationId)) {
+      Logger.info(LOG_TAG, 'stopRound already stopped opId=' + String(operationId));
+      return;
+    }
+    this.stoppedOperationIds.add(operationId);
+
     const ctx: SpeakerContext | null = this.currentSpeakerContext;
 
     Logger.info(LOG_TAG, 'stopRound opId=' + String(operationId)
@@ -359,7 +398,25 @@ export class GroupChatRuntimeService {
     this.activeRoundId = '';
     this.activeChatId = '';
 
+    // 9. G-RUNTIME-1D: 释放运行锁
+    this.releaseRegistryForCurrentRun();
+
     Logger.info(LOG_TAG, 'stopRound done opId=' + String(operationId));
+  }
+
+  /**
+   * G-RUNTIME-1D: 幂等停止入口。
+   *
+   * 用于页面生命周期(aboutToDisappear / onPageHide)统一停止。
+   * - 不在运行中:no-op
+   * - 已停止过同一 operationId:no-op
+   * - 否则执行 stopRound
+   */
+  async stopRoundIfRunning(): Promise<void> {
+    if (!this.isRunning()) {
+      return;
+    }
+    await this.stopRound();
   }
 
   /**
@@ -392,6 +449,8 @@ export class GroupChatRuntimeService {
     this.activeOperationId = 0;
     this.roundCoordinator.markIdle(operationId);
     this.cleanupRound();
+    // G-RUNTIME-1D: 释放运行锁
+    this.releaseRegistryForCurrentRun();
     Logger.info(LOG_TAG, 'endRound ok opId=' + String(operationId));
   }
 
@@ -516,6 +575,24 @@ export class GroupChatRuntimeService {
       failedMessageId: messageId
     };
     const activeCtx: ActiveGroupRoundContext = this.roundCoordinator.beginRetry(retryCtx);
+
+    // G-RUNTIME-1D: 获取应用级运行锁(重试同样必须 acquire,不能绕过运行锁)。
+    // 如果另一个群聊正在运行,清理刚创建的活动上下文并拒绝。
+    try {
+      this.registry.acquire(
+        activeCtx.chatId, activeCtx.roundId, activeCtx.operationId, GroupRoundState.Generating
+      );
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'retry acquire rejected: ' + String(e));
+      this.roundCoordinator.markIdle(activeCtx.operationId);
+      throw new GroupSpeakerRetryError(
+        GroupSpeakerRetryErrorKind.ActiveRoundExists,
+        '另一个多人聊天正在回复,请先结束当前回复'
+      );
+    }
+    this.acquiredOperationId = activeCtx.operationId;
+    this.acquiredChatId = activeCtx.chatId;
+
     this.activeOperationId = activeCtx.operationId;
     this.activeRoundId = activeCtx.roundId;
     this.activeChatId = activeCtx.chatId;
@@ -539,6 +616,7 @@ export class GroupChatRuntimeService {
       callbacks.onRoundStateChanged(GroupRoundState.Failed);
       callbacks.onRoundFailed(characterId, '未配置当前模型,请先在设置中选择');
       this.cleanupRound();
+      this.releaseRegistryForCurrentRun();
       return;
     }
 
@@ -593,6 +671,7 @@ export class GroupChatRuntimeService {
       }
     } finally {
       this.cleanupRound();
+      this.releaseRegistryForCurrentRun();
     }
   }
 
@@ -615,6 +694,30 @@ export class GroupChatRuntimeService {
    */
   isRetryModeRunning(): boolean {
     return this.isRunning() && this.isRetryMode;
+  }
+
+  /**
+   * G-RUNTIME-1D: 指定群聊当前是否被另一个群聊阻塞。
+   *
+   * 用于 ViewModel 在发送前判断跨群聊隔离:
+   * - 如果另一个群聊正在运行,返回 true
+   * - 如果当前群聊自身在运行,返回 false(由 isGenerating 处理)
+   * - 如果无任何群聊运行,返回 false
+   *
+   * @param chatId 当前群聊 ID
+   * @returns 另一个群聊正在运行时返回 true
+   */
+  isAnotherChatRunning(chatId: string): boolean {
+    return this.registry.isAnyGroupRunning() && !this.registry.isChatRunning(chatId);
+  }
+
+  /**
+   * G-RUNTIME-1D: 获取当前运行锁所属的 chatId(可为 undefined)。
+   *
+   * 用于 ViewModel / Page 显示"另一个多人聊天正在回复"提示。
+   */
+  getRunningChatId(): string | undefined {
+    return this.registry.getRunningChatId();
   }
 
   // ===== 内部方法 =====
@@ -902,21 +1005,37 @@ export class GroupChatRuntimeService {
    *
    * G-RUNTIME-1C: 重试时使用新 operationId,
    * 原失败请求的迟到回调因 operationId 不匹配被拒绝。
+   *
+   * G-RUNTIME-1D: 额外校验 RuntimeRegistry 当前 snapshot,
+   * 防止跨群聊迟到回调写入新运行:
+   * - 群聊 A 停止后进入群聊 B,A 的迟到 delta 不写入 B
+   * - A 的迟到 complete 不启动 B 的下一角色
+   * - 旧 retry 请求的 error 不把新 retry 消息改为 Failed
    */
   private validateCallback(ctx: SpeakerContext): boolean {
     if (this.currentSpeakerContext === null) {
       return false;
     }
     const current: SpeakerContext = this.currentSpeakerContext;
-    return this.activeOperationId === ctx.operationId
-      && this.activeOperationId === current.operationId
-      && this.activeRoundId === ctx.roundId
-      && this.activeRoundId === current.roundId
-      && this.activeChatId === ctx.chatId
-      && this.activeChatId === current.chatId
-      && current.speakerIndex === ctx.speakerIndex
-      && current.speakerCharacterId === ctx.speakerCharacterId
-      && current.assistantMessageId === ctx.assistantMessageId;
+    if (this.activeOperationId !== ctx.operationId
+      || this.activeOperationId !== current.operationId
+      || this.activeRoundId !== ctx.roundId
+      || this.activeRoundId !== current.roundId
+      || this.activeChatId !== ctx.chatId
+      || this.activeChatId !== current.chatId
+      || current.speakerIndex !== ctx.speakerIndex
+      || current.speakerCharacterId !== ctx.speakerCharacterId
+      || current.assistantMessageId !== ctx.assistantMessageId) {
+      return false;
+    }
+    // G-RUNTIME-1D: 注册表上下文校验
+    // 确保 Registry 当前运行上下文仍属于本回调所属的 (chatId, roundId, operationId)
+    // 任一不匹配:不更新 UI,不更新数据库,不改变消息状态,不启动下一角色,不释放当前新运行
+    if (!this.registry.isCurrentRun(ctx.chatId, ctx.roundId, ctx.operationId)) {
+      Logger.warn(LOG_TAG, 'validateCallback: registry context mismatch');
+      return false;
+    }
+    return true;
   }
 
   /**
@@ -1041,6 +1160,23 @@ export class GroupChatRuntimeService {
     this.activeChatId = '';
     this.isRetryMode = false;
     this.advancedSpeakerKeys.clear();
+  }
+
+  /**
+   * G-RUNTIME-1D: 释放运行锁(当前已获取的 operationId / chatId)。
+   *
+   * 规则:
+   * - 仅当 acquiredOperationId > 0 且 acquiredChatId 非空时执行释放
+   * - 释放后清空 acquiredOperationId / acquiredChatId
+   * - registry.release 内部校验 chatId + operationId 匹配,
+   *   旧 operationId 不得释放新运行
+   */
+  private releaseRegistryForCurrentRun(): void {
+    if (this.acquiredOperationId > 0 && this.acquiredChatId.length > 0) {
+      this.registry.release(this.acquiredChatId, this.acquiredOperationId);
+      this.acquiredOperationId = 0;
+      this.acquiredChatId = '';
+    }
   }
 
   /**

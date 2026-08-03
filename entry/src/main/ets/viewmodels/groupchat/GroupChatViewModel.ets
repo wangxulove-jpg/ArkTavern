@@ -282,9 +282,20 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
     if (this.chatId.length === 0) {
       return;
     }
+    // G-RUNTIME-1D: 跨群聊隔离检查
+    // 如果另一个群聊正在运行,拒绝发送新一轮,显示提示。
+    // runtimeService.startRound 内部还有 acquire 二次校验作为安全网。
+    if (this.runtimeService.isAnotherChatRunning(this.chatId)) {
+      this.errorMessage = '另一个多人聊天正在回复,请先结束当前回复';
+      return;
+    }
     this.isSending = true;
     this.errorMessage = '';
     this.roundErrorMessage = '';
+    // G-RUNTIME-1D: 每轮状态完整复位(不继承上一轮的任何状态)
+    this.isStopping = false;
+    this.isRetrying = false;
+    this.isEndingRound = false;
     const opId: number = this.loadOperationId;
     const roundId: string = generateUuid();
     let preparedPlan: GroupRoundPlan | null = null;
@@ -370,6 +381,21 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
   }
 
   /**
+   * G-RUNTIME-1D: 是否有另一个群聊正在运行。
+   *
+   * 用于页面显示"另一个多人聊天正在回复"提示和禁用输入。
+   * - 当前群聊自身在运行:返回 false(由 isGenerating 处理)
+   * - 另一个群聊在运行:返回 true
+   * - 无任何群聊运行:返回 false
+   */
+  isAnotherChatRunning(): boolean {
+    if (this.chatId.length === 0) {
+      return false;
+    }
+    return this.runtimeService.isAnotherChatRunning(this.chatId);
+  }
+
+  /**
    * 停止本轮。
    *
    * 规则:
@@ -419,9 +445,20 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
     if (messageId.length === 0 || this.chatId.length === 0) {
       return;
     }
+    // G-RUNTIME-1D: 跨群聊隔离检查
+    if (this.runtimeService.isAnotherChatRunning(this.chatId)) {
+      this.errorMessage = '另一个多人聊天正在回复,请先结束当前回复';
+      return;
+    }
     this.isRetrying = true;
     this.errorMessage = '';
     this.roundErrorMessage = '';
+    // G-RUNTIME-1D: 每轮状态完整复位(不继承上一轮的任何状态)
+    this.isStopping = false;
+    this.isEndingRound = false;
+    this.currentSpeakerIndex = -1;
+    this.currentSpeakerCharacterId = '';
+    this.completedSpeakerCount = 0;
     const opId: number = this.loadOperationId;
     const expectedChatId: string = this.chatId;
     Logger.info(LOG_TAG, 'retrySpeakerMessage requested msgId=' + messageId);
@@ -569,25 +606,31 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
   /**
    * 页面离开时调用,停止整轮并清理活动上下文。
    *
+   * G-RUNTIME-1D: 使用幂等停止入口 stopRoundIfRunning,
+   * 避免 aboutToDisappear / onPageHide 重复 stop。
+   *
    * 规则:
-   * - 如果正在生成,先停止整轮(abort 当前请求,标记 Cancelled)
-   * - 然后清理轮次协调器活动上下文
+   * - 调用 stopRoundIfRunning(内部幂等,同一 operationId 只停止一次)
+   * - 清理轮次协调器活动上下文
    * - 阻止后续角色启动
    * - 阻止迟到回调更新 UI
+   * - runtimeService 的数据库终态保存仍会完成
    *
    * 不抛错,不返回值。
    */
   async disposeWithStop(): Promise<void> {
     this.disposed = true;
-    if (this.isGenerating) {
-      try {
-        await this.runtimeService.stopRound();
-      } catch (e) {
-        Logger.warn(LOG_TAG, 'disposeWithStop stopRound failed: ' + String(e));
-      }
+    // G-RUNTIME-1D: 幂等停止(无论 ViewModel.isGenerating 是否为 true,
+    // 都调用 stopRoundIfRunning,由 runtimeService 判断是否实际停止)
+    try {
+      await this.runtimeService.stopRoundIfRunning();
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'disposeWithStop stopRoundIfRunning failed: ' + String(e));
     }
     this.isGenerating = false;
     this.isStopping = false;
+    this.isRetrying = false;
+    this.isEndingRound = false;
     this.roundCoordinator.dispose();
   }
 

@@ -44,6 +44,7 @@ import { DatabaseError } from '../../models/DatabaseError';
 import { nowMillis } from '../../utils/Time';
 import { generateUuid } from '../../utils/Uuid';
 import { Logger } from '../../utils/Logger';
+import { GroupRuntimeRegistry } from './GroupRuntimeRegistry';
 
 const LOG_TAG: string = 'GroupConvMsg';
 const LIST_MESSAGES_LIMIT: number = 200;
@@ -52,15 +53,19 @@ export class GroupConversationMessageService {
   private readonly dbHelper: DbHelper;
   private readonly chatRepository: ChatRepository;
   private readonly messageRepository: MessageRepository;
+  /** G-RUNTIME-1D: 应用级运行注册表(仅用于 clearMessages 互斥) */
+  private readonly registry: GroupRuntimeRegistry;
 
   constructor(
     dbHelper: DbHelper,
     chatRepository: ChatRepository,
-    messageRepository: MessageRepository
+    messageRepository: MessageRepository,
+    registry: GroupRuntimeRegistry
   ) {
     this.dbHelper = dbHelper;
     this.chatRepository = chatRepository;
     this.messageRepository = messageRepository;
+    this.registry = registry;
   }
 
   /**
@@ -181,6 +186,11 @@ export class GroupConversationMessageService {
     if (chatId === '') {
       throw DatabaseError.invalidData('chatId empty');
     }
+    // G-RUNTIME-1D: 业务层互斥(生成中禁止清空当前群聊消息)
+    // 仅保护 clearMessages,运行时内部消息写入(appendUserMessage /
+    // appendStreamingAssistantMessage / finalize 等)不受此保护,
+    // 因为它们是运行时自己进行的,不应被错误阻止。
+    this.registry.assertChatMutable(chatId);
     const chat: Chat | null = await this.chatRepository.getById(chatId);
     if (chat === null) {
       throw DatabaseError.notFound('group chat not found');

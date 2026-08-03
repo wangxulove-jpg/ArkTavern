@@ -94,6 +94,8 @@ struct GroupChatPage {
   @State isRetrying: boolean = false;
   /** G-RUNTIME-1C: 是否正在结束本轮 */
   @State isEndingRound: boolean = false;
+  /** G-RUNTIME-1D: 是否有另一个群聊正在运行(跨群聊隔离提示) */
+  @State isAnotherChatRunning: boolean = false;
   /** 本轮错误消息 */
   @State roundErrorMessage: string = '';
   /** 当前发言者索引 */
@@ -206,6 +208,8 @@ struct GroupChatPage {
     this.isStopping = this.viewModel.isStopping;
     this.isRetrying = this.viewModel.isRetrying;
     this.isEndingRound = this.viewModel.isEndingRound;
+    // G-RUNTIME-1D: 同步跨群聊运行状态(用于显示隔离提示)
+    this.isAnotherChatRunning = this.viewModel.isAnotherChatRunning();
     this.roundErrorMessage = this.viewModel.roundErrorMessage;
     this.currentSpeakerIndex = this.viewModel.currentSpeakerIndex;
     this.completedSpeakerCount = this.viewModel.completedSpeakerCount;
@@ -376,6 +380,7 @@ struct GroupChatPage {
         this.headerArea()
         this.memberStripArea()
         this.roundStatusBar()
+        this.crossChatBanner()
         this.messageArea()
         this.inputBarArea()
       }
@@ -391,6 +396,32 @@ struct GroupChatPage {
     }
     .width('100%')
     .height('100%')
+  }
+
+  /**
+   * G-RUNTIME-1D: 跨群聊运行隔离提示。
+   *
+   * 当另一个群聊正在生成时,当前页面显示提示横幅:
+   * - 不显示 A 的停止按钮(本页 isGenerating=false,停止按钮不会出现)
+   * - 不允许发送新一轮(输入区禁用)
+   * - 提示用户先结束另一个群聊的回复
+   */
+  @Builder
+  crossChatBanner(): void {
+    if (this.isAnotherChatRunning) {
+      Row() {
+        Text('另一个多人聊天正在回复,请先结束当前回复')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_danger'))
+          .layoutWeight(1)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 6, bottom: 6 })
+      .backgroundColor($r('app.color.app_surface_2'))
+      .alignItems(VerticalAlign.Center)
+    }
   }
 
   /**
@@ -917,7 +948,7 @@ struct GroupChatPage {
           .height(40)
           .padding({ left: 12, right: 12 })
           .layoutWeight(1)
-          .enabled(!this.isSending && !this.isGenerating)
+          .enabled(!this.isSending && !this.isGenerating && !this.isAnotherChatRunning)
           .onChange((value: string) => {
             this.inputText = value;
             if (this.viewModel !== null) {
@@ -953,7 +984,7 @@ struct GroupChatPage {
           .width(40)
           .height(40)
           .margin({ left: 8 })
-          .enabled(!this.isSending && this.inputText.trim().length > 0)
+          .enabled(!this.isSending && !this.isAnotherChatRunning && this.inputText.trim().length > 0)
           .onClick(() => {
             this.handleSend();
           })

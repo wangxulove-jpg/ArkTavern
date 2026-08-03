@@ -80,6 +80,7 @@ import { GroupConversationMessageService } from './groupchat/GroupConversationMe
 import { GroupRoundCoordinator } from './groupchat/GroupRoundCoordinator';
 import { GroupPromptAssembler } from './groupchat/GroupPromptAssembler';
 import { GroupChatRuntimeService } from './groupchat/GroupChatRuntimeService';
+import { GroupRuntimeRegistry } from './groupchat/GroupRuntimeRegistry';
 import { Logger } from '../utils/Logger';
 
 const LOG_TAG: string = 'AppServices';
@@ -188,6 +189,8 @@ export class AppServices {
   private readonly groupPromptAssembler: GroupPromptAssembler;
   /** GroupChatRuntimeService 多人聊天运行时服务(G-RUNTIME-1B,不对页面公开) */
   private readonly groupChatRuntimeService: GroupChatRuntimeService;
+  /** GroupRuntimeRegistry 多人聊天运行注册表(G-RUNTIME-1D 应用级运行锁,不对页面公开) */
+  private readonly groupRuntimeRegistry: GroupRuntimeRegistry;
 
   /**
    * 私有构造,组装全部依赖。
@@ -307,19 +310,25 @@ export class AppServices {
     // ChatParticipantRepository 与注入到 ChatPersistenceOperations 的不是同一实例,
     // 但共享同一 DbHelper,事务内通过 WithStore 方法操作同一 RdbStore,行为一致。
     this.chatParticipantRepository = new ChatParticipantRepository(this.dbHelper);
+    // G-RUNTIME-1D: 应用级多人聊天运行注册表(单例,所有多人 Service 共享同一实例)
+    // 必须在 groupConversationPersistenceService / groupConversationMessageService /
+    // groupChatRuntimeService 之前创建,因为这三个 Service 构造时即注入 registry。
+    this.groupRuntimeRegistry = new GroupRuntimeRegistry();
     this.groupConversationPersistenceService = new GroupConversationPersistenceService(
       this.dbHelper,
       this.chatRepository,
       this.chatParticipantRepository,
       this.characterRepository,
-      this.chatPersistenceOperations
+      this.chatPersistenceOperations,
+      this.groupRuntimeRegistry
     );
     // G-RUNTIME-1A: 多人聊天消息持久化与轮次协调器
     // 依赖已创建的 chatRepository / messageRepository / groupConversationPersistenceService / characterService
     this.groupConversationMessageService = new GroupConversationMessageService(
       this.dbHelper,
       this.chatRepository,
-      this.messageRepository
+      this.messageRepository,
+      this.groupRuntimeRegistry
     );
     this.groupRoundCoordinator = new GroupRoundCoordinator(
       this.groupConversationPersistenceService,
@@ -341,7 +350,8 @@ export class AppServices {
       this.groupRoundCoordinator,
       this.groupConversationMessageService,
       this.groupPromptAssembler,
-      this.modelService
+      this.modelService,
+      this.groupRuntimeRegistry
     );
     // 市场服务(Chub 公共浏览 + 搜索 + 详情 + 下载)
     // 使用独立的 HarmonyHttpClient 实例(非流式),不与流式 Provider 共享

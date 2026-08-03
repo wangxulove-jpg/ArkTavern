@@ -51,6 +51,7 @@ import {
   MAX_PARTICIPANT_COUNT,
   MIN_ENABLED_COUNT
 } from './GroupConversationRules';
+import { GroupRuntimeRegistry } from './GroupRuntimeRegistry';
 
 const LOG_TAG: string = 'GroupConvPersist';
 
@@ -60,19 +61,23 @@ export class GroupConversationPersistenceService {
   private readonly participantRepository: ChatParticipantRepository;
   private readonly characterRepository: CharacterRepository;
   private readonly chatPersistenceOperations: ChatPersistenceOperations;
+  /** G-RUNTIME-1D: 应用级运行注册表(成员修改 / 删除互斥) */
+  private readonly registry: GroupRuntimeRegistry;
 
   constructor(
     dbHelper: DbHelper,
     chatRepository: ChatRepository,
     participantRepository: ChatParticipantRepository,
     characterRepository: CharacterRepository,
-    chatPersistenceOperations: ChatPersistenceOperations
+    chatPersistenceOperations: ChatPersistenceOperations,
+    registry: GroupRuntimeRegistry
   ) {
     this.dbHelper = dbHelper;
     this.chatRepository = chatRepository;
     this.participantRepository = participantRepository;
     this.characterRepository = characterRepository;
     this.chatPersistenceOperations = chatPersistenceOperations;
+    this.registry = registry;
   }
 
   /**
@@ -189,6 +194,8 @@ export class GroupConversationPersistenceService {
     chatId: string,
     orderedCharacterIds: string[]
   ): Promise<void> {
+    // G-RUNTIME-1D: 业务层互斥(生成中禁止调整顺序)
+    this.registry.assertChatMutable(chatId);
     validateParticipantCharacterIds(orderedCharacterIds);
 
     const existing: Chat | null = await this.chatRepository.getById(chatId);
@@ -268,6 +275,8 @@ export class GroupConversationPersistenceService {
     characterId: string,
     enabled: boolean
   ): Promise<void> {
+    // G-RUNTIME-1D: 业务层互斥(生成中禁止启用/停用)
+    this.registry.assertChatMutable(chatId);
     const participants: ChatParticipant[] =
       await this.participantRepository.listByChatId(chatId);
 
@@ -328,6 +337,8 @@ export class GroupConversationPersistenceService {
     if (characterId === '') {
       throw DatabaseError.invalidData('characterId empty');
     }
+    // G-RUNTIME-1D: 业务层互斥(生成中禁止添加成员)
+    this.registry.assertChatMutable(chatId);
 
     const existing: Chat | null = await this.chatRepository.getById(chatId);
     if (existing === null) {
@@ -407,6 +418,8 @@ export class GroupConversationPersistenceService {
     if (characterId === '') {
       throw DatabaseError.invalidData('characterId empty');
     }
+    // G-RUNTIME-1D: 业务层互斥(生成中禁止移除成员)
+    this.registry.assertChatMutable(chatId);
 
     const participants: ChatParticipant[] =
       await this.participantRepository.listByChatId(chatId);
@@ -480,6 +493,9 @@ export class GroupConversationPersistenceService {
    * - 幂等:不存在的 Chat 不抛错
    */
   async deleteGroupConversation(chatId: string): Promise<void> {
+    // G-RUNTIME-1D: 业务层互斥(生成中禁止删除当前群聊)
+    // 其他未运行群聊仍可删除,因为运行锁按 chatId 判断。
+    this.registry.assertChatMutable(chatId);
     await this.chatPersistenceOperations.removeChatWithMessages(chatId);
   }
 
