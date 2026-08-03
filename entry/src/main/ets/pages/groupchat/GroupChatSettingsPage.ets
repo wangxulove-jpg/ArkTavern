@@ -37,6 +37,8 @@ struct GroupChatSettingsPage {
   @State isDeleting: boolean = false;
   /** 是否正在清空消息 */
   @State isClearing: boolean = false;
+  /** G-RUNTIME-1C: 是否正在生成(生成中禁止清空/删除) */
+  @State isGenerating: boolean = false;
   /** 重命名弹窗是否可见 */
   @State renameVisible: boolean = false;
   /** 重命名输入值 */
@@ -65,10 +67,21 @@ struct GroupChatSettingsPage {
       await AppServices.whenReady();
       this.viewModel = new GroupChatSettingsViewModel();
       await this.viewModel.load(id);
+      // G-RUNTIME-1C: 刷新生成状态,生成中禁止清空/删除
+      this.viewModel.refreshGeneratingState();
       this.syncFromViewModel();
     } catch (e) {
       this.state = GroupChatDetailState.Error;
     }
+  }
+
+  /** G-RUNTIME-1C: 页面重新显示时刷新生成状态(从设置返回或从其他页返回) */
+  onPageShow(): void {
+    if (this.viewModel === null) {
+      return;
+    }
+    this.viewModel.refreshGeneratingState();
+    this.syncFromViewModel();
   }
 
   /** 从 ViewModel 同步状态 */
@@ -81,6 +94,7 @@ struct GroupChatSettingsPage {
     this.isRenaming = this.viewModel.isRenaming;
     this.isDeleting = this.viewModel.isDeleting;
     this.isClearing = this.viewModel.isClearing;
+    this.isGenerating = this.viewModel.isGenerating;
   }
 
   build(): void {
@@ -409,6 +423,12 @@ struct GroupChatSettingsPage {
         .fontSize($r('app.float.app_font_body'))
         .fontColor($r('app.color.app_danger'))
         .layoutWeight(1)
+      // G-RUNTIME-1C: 生成中显示禁用提示
+      if (this.isGenerating) {
+        Text('生成中')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_tertiary'))
+      }
     }
     .width('100%')
     .padding({
@@ -421,7 +441,7 @@ struct GroupChatSettingsPage {
     .borderRadius($r('app.float.app_radius_md'))
     .alignItems(VerticalAlign.Center)
     .margin({ top: $r('app.float.app_spacing_16') })
-    .enabled(!this.isClearing && !this.isDeleting)
+    .enabled(!this.isClearing && !this.isDeleting && !this.isGenerating)
     .onClick(() => {
       this.clearConfirmVisible = true;
     })
@@ -435,6 +455,12 @@ struct GroupChatSettingsPage {
         .fontSize($r('app.float.app_font_body'))
         .fontColor($r('app.color.app_danger'))
         .layoutWeight(1)
+      // G-RUNTIME-1C: 生成中显示禁用提示
+      if (this.isGenerating) {
+        Text('生成中')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_tertiary'))
+      }
     }
     .width('100%')
     .padding({
@@ -447,7 +473,7 @@ struct GroupChatSettingsPage {
     .borderRadius($r('app.float.app_radius_md'))
     .alignItems(VerticalAlign.Center)
     .margin({ top: $r('app.float.app_spacing_16') })
-    .enabled(!this.isDeleting)
+    .enabled(!this.isDeleting && !this.isGenerating)
     .onClick(() => {
       this.deleteConfirmVisible = true;
     })
@@ -672,7 +698,12 @@ struct GroupChatSettingsPage {
       // 替换页面栈为多人聊天首页,避免返回到已删除群聊的设置页
       router.replaceUrl({ url: 'pages/groupchat/GroupChatHomePage' });
     } catch (e) {
-      promptAction.showToast({ message: '删除失败', duration: 1500 });
+      const msg: string = String(e);
+      if (msg.indexOf('生成中') >= 0) {
+        promptAction.showToast({ message: '生成中无法删除群聊', duration: 1500 });
+      } else {
+        promptAction.showToast({ message: '删除失败', duration: 1500 });
+      }
     }
   }
 
@@ -687,7 +718,12 @@ struct GroupChatSettingsPage {
       this.clearConfirmVisible = false;
       promptAction.showToast({ message: '已清空消息', duration: 1500 });
     } catch (e) {
-      promptAction.showToast({ message: '清空失败', duration: 1500 });
+      const msg: string = String(e);
+      if (msg.indexOf('生成中') >= 0) {
+        promptAction.showToast({ message: '生成中无法清空消息', duration: 1500 });
+      } else {
+        promptAction.showToast({ message: '清空失败', duration: 1500 });
+      }
     }
   }
 }

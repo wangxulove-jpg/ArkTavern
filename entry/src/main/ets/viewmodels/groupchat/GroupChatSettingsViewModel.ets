@@ -21,6 +21,7 @@
 import { Chat } from '../../models/Chat';
 import { GroupConversationPersistenceService } from '../../services/groupchat/GroupConversationPersistenceService';
 import { GroupConversationMessageService } from '../../services/groupchat/GroupConversationMessageService';
+import { GroupChatRuntimeService } from '../../services/groupchat/GroupChatRuntimeService';
 import { AppServices } from '../../services/AppServices';
 import { Logger } from '../../utils/Logger';
 import { GroupChatDetailState } from './GroupChatUiModels';
@@ -41,14 +42,18 @@ export class GroupChatSettingsViewModel {
   isDeleting: boolean = false;
   /** 是否正在清空消息 */
   isClearing: boolean = false;
+  /** G-RUNTIME-1C: 是否正在生成(生成中禁止清空/删除) */
+  isGenerating: boolean = false;
 
   private readonly groupService: GroupConversationPersistenceService;
   private readonly messageService: GroupConversationMessageService;
+  private readonly runtimeService: GroupChatRuntimeService;
   private disposed: boolean = false;
 
   constructor() {
     this.groupService = AppServices.getGroupConversationPersistenceService();
     this.messageService = AppServices.getGroupConversationMessageService();
+    this.runtimeService = AppServices.getGroupChatRuntimeService();
   }
 
   /** 加载群聊信息 */
@@ -100,10 +105,22 @@ export class GroupChatSettingsViewModel {
     }
   }
 
+  /**
+   * G-RUNTIME-1C: 刷新生成状态(供页面 aboutToAppear 调用)。
+   * 生成中禁止清空/删除。
+   */
+  refreshGeneratingState(): void {
+    this.isGenerating = this.runtimeService.isRunning();
+  }
+
   /** 删除群聊 */
   async delete(): Promise<void> {
     if (this.disposed || this.isDeleting) {
       return;
+    }
+    // G-RUNTIME-1C: Service 层互斥,生成中禁止删除
+    if (this.runtimeService.isRunning()) {
+      throw new Error('生成中无法删除群聊');
     }
     this.isDeleting = true;
     try {
@@ -117,12 +134,13 @@ export class GroupChatSettingsViewModel {
   }
 
   /**
-   * 清空群聊消息(G-RUNTIME-1A)。
+   * 清空群聊消息(G-RUNTIME-1A / G-RUNTIME-1C)。
    *
    * 规则:
    * - 只删除该群聊的 messages
    * - 不删除 Chat / Participants / Character / 群聊名称 / 成员顺序
    * - 复用 GroupConversationMessageService.clearMessages
+   * - G-RUNTIME-1C: 生成中禁止清空(Service 层互斥)
    *
    * @returns 删除的消息条数
    */
@@ -132,6 +150,10 @@ export class GroupChatSettingsViewModel {
     }
     if (this.chatId.length === 0) {
       return 0;
+    }
+    // G-RUNTIME-1C: Service 层互斥,生成中禁止清空
+    if (this.runtimeService.isRunning()) {
+      throw new Error('生成中无法清空消息');
     }
     this.isClearing = true;
     try {

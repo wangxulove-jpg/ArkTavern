@@ -1,5 +1,5 @@
 /**
- * GroupChatRuntimeService 多人聊天运行时服务(G-RUNTIME-1B)
+ * GroupChatRuntimeService 多人聊天运行时服务(G-RUNTIME-1B / G-RUNTIME-1C)
  *
  * 职责:
  * - 启动一轮多人聊天生成(严格顺序执行,不并发)
@@ -9,6 +9,14 @@
  * - 停止整轮(中止当前请求,标记 Cancelled,不启动后续角色)
  * - 错误处理(任一角色失败→停止整轮,标记 Failed)
  * - 向 ViewModel 发送状态更新
+ *
+ * G-RUNTIME-1C 新增:
+ * - retrySpeakerMessage:重试单条 Failed/Cancelled 角色消息(创建新消息,不覆盖原消息)
+ * - endRound:用户主动结束本轮(清理活动上下文,不删除消息)
+ * - 重复完成保护(SpeakerContext.finalized):每条 Assistant 消息只能从 Streaming 进入一个终态
+ * - 下一角色幂等保护(advancedSpeakerKeys):同一 (operationId, speakerIndex) 只能推进一次
+ * - 模型配置快照(configSnapshot):一轮内 A/B/C 使用同一 ProviderConfig,中途修改设置不影响本轮
+ * - 重试迟到回调保护:重试创建新 operationId,原失败请求的迟到回调被 validateCallback 拒绝
  *
  * 严格顺序:
  * - 使用 async/await 串行执行,不使用 Promise.all
@@ -25,11 +33,11 @@
  * - 只打印操作类别、状态枚举、消息数量、Token 估算
  */
 
-import { ChatMessage, ChatMessageStatus } from '../../models/ChatMessage';
+import { ChatMessage, ChatMessageStatus, MessageSenderType } from '../../models/ChatMessage';
 import { ChatStreamCallbacks, ChatStreamHandle, ChatDelta, ChatStreamResult } from '../../models/ChatStreamTypes';
 import { NetworkError, NetworkErrorType } from '../../models/NetworkError';
 import { ChatRequestOptions } from '../../models/ChatRequest';
-import { TEMPERATURE_DEFAULT, TOP_P_DEFAULT, MAX_TOKENS_DEFAULT } from '../../models/ProviderConfig';
+import { ProviderConfig, TEMPERATURE_DEFAULT, TOP_P_DEFAULT, MAX_TOKENS_DEFAULT } from '../../models/ProviderConfig';
 import { ModelService } from '../ModelService';
 import { Logger } from '../../utils/Logger';
 import { GroupRoundCoordinator } from './GroupRoundCoordinator';
@@ -42,7 +50,10 @@ import {
   GroupRoundState,
   GroupRoundPlan,
   GroupRoundSpeaker,
-  ActiveGroupRoundContext
+  ActiveGroupRoundContext,
+  GroupSpeakerRetryContext,
+  GroupSpeakerRetryError,
+  GroupSpeakerRetryErrorKind
 } from './GroupRoundTypes';
 import { EffectiveGenerationSettings } from '../PromptPresetRuntimeResolver';
 
@@ -68,6 +79,10 @@ enum SpeakerResult {
 /**
  * 单角色执行上下文(用于回调校验)。
  * 在角色开始生成时创建,回调中校验是否仍属于当前轮次和当前角色。
+ *
+ * G-RUNTIME-1C:
+ * - finalized:重复完成保护标记。一旦设置为 true,
+ *   后续 onComplete / onError / abort 后的回调被拒绝。
  */
 interface SpeakerContext {
   readonly operationId: number;
@@ -76,6 +91,8 @@ interface SpeakerContext {
   readonly speakerIndex: number;
   readonly speakerCharacterId: string;
   readonly assistantMessageId: string;
+  /** 是否已进入终态(重复完成保护) */
+  finalized: boolean;
 }
 
 /**
@@ -89,6 +106,12 @@ export interface GroupRuntimeMessageUpdate {
 
 /**
  * 运行时回调接口(由 ViewModel 实现)。
+ *
+ * G-RUNTIME-1C:
+ * - onRetryStarted:重试开始时通知 ViewModel(characterId, speakerIndex)
+ * - onRetryCompleted:重试正常完成时通知 ViewModel
+ * - onRetryCancelled:重试被用户停止时通知 ViewModel
+ * - onRetryFailed:重试失败时通知 ViewModel(characterId, errorMessage)
  */
 export interface GroupRuntimeCallbacks {
   onRoundStateChanged(state: GroupRoundState): void;
@@ -133,6 +156,13 @@ export class GroupChatRuntimeService {
   /** 当前流式 Promise 的 resolver(用于 stopRound 解除阻塞) */
   private currentStreamResolver: ((result: SpeakerResult) => void) | null = null;
 
+  /** G-RUNTIME-1C: 下一角色幂等保护。key = operationId*1000 + speakerIndex */
+  private advancedSpeakerKeys: Set<number> = new Set<number>();
+  /** G-RUNTIME-1C: 模型配置快照(一轮开始时固定,中途修改不影响本轮) */
+  private configSnapshot: ProviderConfig | null = null;
+  /** G-RUNTIME-1C: 当前是否处于重试模式(主循环不推进 advanceSpeaker) */
+  private isRetryMode: boolean = false;
+
   constructor(
     roundCoordinator: GroupRoundCoordinator,
     messageService: GroupConversationMessageService,
@@ -158,6 +188,10 @@ export class GroupChatRuntimeService {
    * - 当前角色失败→标记 Failed,不启动后续角色
    * - 用户停止→标记 Cancelled,不启动后续角色
    *
+   * G-RUNTIME-1C:
+   * - 进入 Generating 前获取模型配置快照,本轮内所有角色使用同一快照
+   * - 用户中途修改模型设置只影响下一轮
+   *
    * @param plan 已建立的轮次计划(由 prepareRound 生成)
    * @param callbacks 状态回调
    */
@@ -172,11 +206,28 @@ export class GroupChatRuntimeService {
       throw new Error('GroupChatRuntimeService: plan has no speakers');
     }
 
+    // G-RUNTIME-1C: 获取模型配置快照
+    try {
+      this.configSnapshot = await this.modelService.getCurrentConfig();
+    } catch (e) {
+      Logger.error(LOG_TAG, 'startRound getCurrentConfig failed: ' + String(e));
+      this.configSnapshot = null;
+    }
+    if (this.configSnapshot === null) {
+      // 没有当前配置,直接失败
+      this.roundCoordinator.markFailed(0);
+      callbacks.onRoundStateChanged(GroupRoundState.Failed);
+      callbacks.onRoundFailed('', '未配置当前模型,请先在设置中选择');
+      return;
+    }
+
     // 进入 Generating
     const ctx: ActiveGroupRoundContext = this.roundCoordinator.beginGeneration(plan);
     this.activeOperationId = ctx.operationId;
     this.activeRoundId = ctx.roundId;
     this.activeChatId = ctx.chatId;
+    this.isRetryMode = false;
+    this.advancedSpeakerKeys.clear();
     const operationId: number = ctx.operationId;
 
     callbacks.onRoundStateChanged(GroupRoundState.Generating);
@@ -205,6 +256,15 @@ export class GroupChatRuntimeService {
           // Cancelled 或 Failed,主循环已在 executeSpeaker 内处理状态
           return;
         }
+
+        // G-RUNTIME-1C: 下一角色幂等保护
+        const advanceKey: number = operationId * 1000 + currentCtx.currentSpeakerIndex;
+        if (this.advancedSpeakerKeys.has(advanceKey)) {
+          // 已推进过,防止重复 complete 导致重复创建下一角色消息
+          Logger.warn(LOG_TAG, 'advanceSpeaker already done key=' + String(advanceKey));
+          return;
+        }
+        this.advancedSpeakerKeys.add(advanceKey);
 
         // 推进到下一个发言者
         currentCtx = this.roundCoordinator.advanceSpeaker(operationId);
@@ -243,6 +303,8 @@ export class GroupChatRuntimeService {
    * 5. 状态变为 Cancelled
    *
    * 幂等:不在运行中时调用为 no-op。
+   *
+   * G-RUNTIME-1C: 同时用于停止整轮和停止重试。
    */
   async stopRound(): Promise<void> {
     if (!this.isRunning()) {
@@ -252,7 +314,8 @@ export class GroupChatRuntimeService {
     const operationId: number = this.activeOperationId;
     const ctx: SpeakerContext | null = this.currentSpeakerContext;
 
-    Logger.info(LOG_TAG, 'stopRound opId=' + String(operationId));
+    Logger.info(LOG_TAG, 'stopRound opId=' + String(operationId)
+      + ' retry=' + String(this.isRetryMode));
 
     // 1. 使 operationId 失效(迟到回调被拒绝)
     this.activeOperationId = 0;
@@ -266,10 +329,11 @@ export class GroupChatRuntimeService {
       this.currentHandle = null;
     }
 
-    // 4. 最终持久化当前消息为 Cancelled(保留部分正文)
-    if (ctx !== null) {
+    // 4. 最终持久化当前消息为 Cancelled(保留部分正文,重复完成保护)
+    if (ctx !== null && !ctx.finalized) {
+      ctx.finalized = true;
       try {
-        await this.messageService.finalizeAssistantMessage(
+        await this.messageService.finalizeAssistantMessageIfTerminal(
           ctx.assistantMessageId,
           this.currentAccumulatedContent,
           ChatMessageStatus.Cancelled
@@ -299,6 +363,240 @@ export class GroupChatRuntimeService {
   }
 
   /**
+   * G-RUNTIME-1C: 结束本轮(不停止当前请求,不修改消息状态)。
+   *
+   * 用于"结束本轮"按钮:在失败或取消后,清理活动上下文,
+   * 使状态回到 Idle,允许用户发送下一条消息。
+   *
+   * 不删除已有消息,不修改消息状态。
+   * 如果当前仍在生成中,先调用 stopRound 中止请求。
+   *
+   * @returns 是否实际执行了清理
+   */
+  async endRound(): Promise<void> {
+    if (!this.isRunning()) {
+      // 已无活动轮次,确保协调器状态为 Idle
+      this.roundCoordinator.markIdle(0);
+      return;
+    }
+
+    const operationId: number = this.activeOperationId;
+
+    // 如果当前仍在生成,先停止
+    if (this.currentSpeakerContext !== null && !this.currentSpeakerContext.finalized) {
+      await this.stopRound();
+      return;
+    }
+
+    // 当前无 Streaming,直接清理
+    this.activeOperationId = 0;
+    this.roundCoordinator.markIdle(operationId);
+    this.cleanupRound();
+    Logger.info(LOG_TAG, 'endRound ok opId=' + String(operationId));
+  }
+
+  /**
+   * G-RUNTIME-1C: 重试单条 Failed/Cancelled 角色消息。
+   *
+   * 行为:
+   * - 校验消息存在、属于当前群聊、是角色消息、状态为 Failed/Cancelled
+   * - 校验当前无活动轮次
+   * - 校验角色仍存在且仍属于该群聊
+   * - 创建新的 Streaming Assistant Message(同一 generationBatchId)
+   * - 重新读取最新完整公开历史(包含同轮前序回复)
+   * - 重新构建当前角色 Prompt
+   * - 启动一次新的 Provider 请求(使用与原轮次相同的模型配置快照,如可用;否则读当前配置)
+   * - 完成后:不自动启动原轮次后续角色,状态回到 Idle 或 Completed
+   *
+   * 不变量:
+   * - 不覆盖原失败消息正文
+   * - 不重用原 assistantMessageId
+   * - 创建新 operationId / ChatStreamHandle
+   * - 原失败请求的迟到回调被 validateCallback 拒绝
+   *
+   * @param messageId 被重试的原消息 ID
+   * @param expectedChatId 调用方所在的群聊 ID(用于跨群聊保护)
+   * @param callbacks 状态回调
+   * @throws GroupSpeakerRetryError 前置校验失败
+   */
+  async retrySpeakerMessage(
+    messageId: string,
+    expectedChatId: string,
+    callbacks: GroupRuntimeCallbacks
+  ): Promise<void> {
+    if (this.isRunning()) {
+      throw new GroupSpeakerRetryError(
+        GroupSpeakerRetryErrorKind.ActiveRoundExists,
+        'cannot retry: round running'
+      );
+    }
+    if (messageId === '') {
+      throw new GroupSpeakerRetryError(
+        GroupSpeakerRetryErrorKind.MessageNotFound,
+        'messageId empty'
+      );
+    }
+    if (expectedChatId === '') {
+      throw new GroupSpeakerRetryError(
+        GroupSpeakerRetryErrorKind.MessageNotInChat,
+        'expectedChatId empty'
+      );
+    }
+
+    // 1. 读取原消息
+    const original: ChatMessage | null = await this.messageService.getMessageById(messageId);
+    if (original === null) {
+      throw new GroupSpeakerRetryError(
+        GroupSpeakerRetryErrorKind.MessageNotFound,
+        'message not found'
+      );
+    }
+
+    // 2. 校验消息属于当前群聊
+    const msgChatId: string | null = await this.messageService.getChatIdByMessageId(messageId);
+    if (msgChatId === null || msgChatId !== expectedChatId) {
+      throw new GroupSpeakerRetryError(
+        GroupSpeakerRetryErrorKind.MessageNotInChat,
+        'message not in current chat'
+      );
+    }
+
+    // 3. 校验是角色消息
+    const senderType: MessageSenderType =
+      original.senderType !== undefined ? original.senderType : 'user';
+    if (senderType !== 'character') {
+      throw new GroupSpeakerRetryError(
+        GroupSpeakerRetryErrorKind.NotCharacterMessage,
+        'not character message'
+      );
+    }
+    const characterId: string = original.senderCharacterId !== undefined
+      ? original.senderCharacterId : '';
+    if (characterId === '') {
+      throw new GroupSpeakerRetryError(
+        GroupSpeakerRetryErrorKind.NotCharacterMessage,
+        'missing senderCharacterId'
+      );
+    }
+
+    // 4. 校验 generationBatchId
+    const roundId: string = original.generationBatchId !== undefined
+      ? original.generationBatchId : '';
+    if (roundId === '') {
+      throw new GroupSpeakerRetryError(
+        GroupSpeakerRetryErrorKind.MissingRoundId,
+        'missing generationBatchId'
+      );
+    }
+
+    // 5. 校验消息状态为 Failed 或 Cancelled
+    const status: ChatMessageStatus | undefined = original.status;
+    if (status !== ChatMessageStatus.Failed && status !== ChatMessageStatus.Cancelled) {
+      throw new GroupSpeakerRetryError(
+        GroupSpeakerRetryErrorKind.InvalidStatusForRetry,
+        'status=' + String(status)
+      );
+    }
+
+    // 6. G-RUNTIME-1C: 校验角色仍存在且仍属于该群聊
+    await this.roundCoordinator.validateCharacterInChat(expectedChatId, characterId);
+
+    // 7. 解析 speakerIndex(从当前启用成员中查找,与 buildSpeakers 规则一致)
+    const speakerIndex: number = await this.roundCoordinator.resolveSpeakerIndex(
+      expectedChatId, characterId
+    );
+
+    // 8. 进入 Generating(创建新 operationId)
+    const retryCtx: GroupSpeakerRetryContext = {
+      originalOperationId: 0,
+      roundId: roundId,
+      chatId: expectedChatId,
+      speakerIndex: speakerIndex,
+      speakerCharacterId: characterId,
+      failedMessageId: messageId
+    };
+    const activeCtx: ActiveGroupRoundContext = this.roundCoordinator.beginRetry(retryCtx);
+    this.activeOperationId = activeCtx.operationId;
+    this.activeRoundId = activeCtx.roundId;
+    this.activeChatId = activeCtx.chatId;
+    this.isRetryMode = true;
+    this.advancedSpeakerKeys.clear();
+
+    // 8. 获取模型配置快照(优先用原轮次快照;若已被清理,读当前配置)
+    if (this.configSnapshot === null) {
+      try {
+        this.configSnapshot = await this.modelService.getCurrentConfig();
+      } catch (e) {
+        Logger.error(LOG_TAG, 'retry getCurrentConfig failed: ' + String(e));
+      }
+    }
+    if (this.configSnapshot === null) {
+      this.activeOperationId = 0;
+      this.activeRoundId = '';
+      this.activeChatId = '';
+      this.isRetryMode = false;
+      this.roundCoordinator.markFailed(activeCtx.operationId);
+      callbacks.onRoundStateChanged(GroupRoundState.Failed);
+      callbacks.onRoundFailed(characterId, '未配置当前模型,请先在设置中选择');
+      this.cleanupRound();
+      return;
+    }
+
+    // 9. G-RUNTIME-1C: 构建单角色 plan(用于 executeSpeaker 复用)
+    // speakers 必须包含全部启用参与者,确保 Prompt 构建器获取所有参与者名称(角色隔离)。
+    // activeCtx.currentSpeakerIndex/currentSpeakerCharacterId 指向当前重试角色。
+    const allParticipantIds: string[] =
+      await this.roundCoordinator.listEnabledParticipantCharacterIds(expectedChatId);
+    const allSpeakers: GroupRoundSpeaker[] = allParticipantIds.map(
+      (id: string, idx: number): GroupRoundSpeaker => {
+        return { characterId: id, speakerIndex: idx };
+      }
+    );
+    const singleSpeakerPlan: GroupRoundPlan = {
+      operationId: activeCtx.operationId,
+      roundId: activeCtx.roundId,
+      chatId: activeCtx.chatId,
+      userMessageId: '',
+      speakers: allSpeakers,
+      createdAt: activeCtx.operationId
+    };
+
+    callbacks.onRoundStateChanged(GroupRoundState.Generating);
+    Logger.info(LOG_TAG, 'retrySpeakerMessage opId=' + String(activeCtx.operationId)
+      + ' charId=' + characterId + ' roundId=' + roundId
+      + ' participants=' + String(allSpeakers.length));
+
+    try {
+      const result: SpeakerResult = await this.executeSpeaker(
+        activeCtx, singleSpeakerPlan, callbacks
+      );
+
+      if (!this.isRoundActive(activeCtx.operationId)) {
+        // 停止在执行期间发生
+        return;
+      }
+
+      if (result === SpeakerResult.Completed) {
+        // 重试完成:不自动启动后续角色,标记整轮为 Idle(保留 Completed 状态给 UI)
+        this.roundCoordinator.markIdle(activeCtx.operationId);
+        callbacks.onRoundStateChanged(GroupRoundState.Idle);
+        callbacks.onRoundCompleted();
+        Logger.info(LOG_TAG, 'retry completed opId=' + String(activeCtx.operationId));
+      }
+      // Cancelled 或 Failed 已在 executeSpeaker 内处理状态
+    } catch (e) {
+      Logger.error(LOG_TAG, 'retrySpeakerMessage unexpected error: ' + String(e));
+      if (this.isRoundActive(activeCtx.operationId)) {
+        this.roundCoordinator.markFailed(activeCtx.operationId);
+        callbacks.onRoundStateChanged(GroupRoundState.Failed);
+        callbacks.onRoundFailed(characterId, '重试过程中发生异常');
+      }
+    } finally {
+      this.cleanupRound();
+    }
+  }
+
+  /**
    * 是否正在生成中。
    */
   isRunning(): boolean {
@@ -310,6 +608,13 @@ export class GroupChatRuntimeService {
    */
   getActiveContext(): ActiveGroupRoundContext | null {
     return this.roundCoordinator.getActiveRound();
+  }
+
+  /**
+   * G-RUNTIME-1C: 当前是否处于重试模式。
+   */
+  isRetryModeRunning(): boolean {
+    return this.isRunning() && this.isRetryMode;
   }
 
   // ===== 内部方法 =====
@@ -370,7 +675,7 @@ export class GroupChatRuntimeService {
     if (!this.isRoundActive(operationId)) {
       // 停止发生在创建消息期间,将空消息标记为 Cancelled
       try {
-        await this.messageService.finalizeAssistantMessage(
+        await this.messageService.finalizeAssistantMessageIfTerminal(
           assistantMessage.id, '', ChatMessageStatus.Cancelled
         );
       } catch (e) {
@@ -389,7 +694,8 @@ export class GroupChatRuntimeService {
       chatId: ctx.chatId,
       speakerIndex: speakerIndex,
       speakerCharacterId: speakerCharacterId,
-      assistantMessageId: assistantMessage.id
+      assistantMessageId: assistantMessage.id,
+      finalized: false
     };
     this.currentSpeakerContext = speakerCtx;
     this.currentAccumulatedContent = '';
@@ -433,6 +739,11 @@ export class GroupChatRuntimeService {
 
   /**
    * 启动流式请求并等待完成。
+   *
+   * G-RUNTIME-1C:
+   * - 优先使用 configSnapshot(模型配置快照),通过 streamChatWithConfig 发送
+   * - 快照为 null 时回退到 streamCurrentChat(读当前配置)
+   * - onComplete / onError 增加 finalized 重复完成保护
    */
   private async streamForSpeaker(
     speakerCtx: SpeakerContext,
@@ -451,7 +762,8 @@ export class GroupChatRuntimeService {
     };
 
     Logger.info(LOG_TAG, 'streamChat start msgCount=' + String(promptResult.requestMessages.length)
-      + ' tokens=' + String(promptResult.estimatedTokens));
+      + ' tokens=' + String(promptResult.estimatedTokens)
+      + ' hasSnapshot=' + String(this.configSnapshot !== null));
 
     return new Promise<SpeakerResult>((resolve: (result: SpeakerResult) => void): void => {
       this.currentStreamResolver = resolve;
@@ -481,9 +793,13 @@ export class GroupChatRuntimeService {
           this.schedulePersistenceFlush(speakerCtx);
         },
         onComplete: (result: ChatStreamResult): void => {
-          if (!this.validateCallback(speakerCtx)) {
+          // G-RUNTIME-1C: 重复完成保护
+          if (!this.validateCallback(speakerCtx) || speakerCtx.finalized) {
+            Logger.warn(LOG_TAG, 'onComplete rejected: finalized or invalid');
             return;
           }
+          speakerCtx.finalized = true;
+
           // 同步清除 resolver,防止 stopRound 干扰
           const resolver: ((r: SpeakerResult) => void) | null = this.currentStreamResolver;
           this.currentStreamResolver = null;
@@ -495,7 +811,7 @@ export class GroupChatRuntimeService {
             : this.currentAccumulatedContent;
           this.currentAccumulatedContent = finalContent;
 
-          // 最终持久化为 Completed
+          // 最终持久化为 Completed(使用 finalizeIfTerminal 重复完成保护)
           this.finalizeCurrentMessage(finalContent, ChatMessageStatus.Completed, callbacks)
             .then((): void => {
               callbacks.onSpeakerCompleted(
@@ -508,9 +824,13 @@ export class GroupChatRuntimeService {
             });
         },
         onError: (error: NetworkError): void => {
-          if (!this.validateCallback(speakerCtx)) {
+          // G-RUNTIME-1C: 重复完成保护
+          if (!this.validateCallback(speakerCtx) || speakerCtx.finalized) {
+            Logger.warn(LOG_TAG, 'onError rejected: finalized or invalid');
             return;
           }
+          speakerCtx.finalized = true;
+
           // 同步清除 resolver
           const resolver: ((r: SpeakerResult) => void) | null = this.currentStreamResolver;
           this.currentStreamResolver = null;
@@ -551,11 +871,21 @@ export class GroupChatRuntimeService {
       };
 
       // 启动流式请求
-      this.currentHandle = this.modelService.streamCurrentChat(
-        promptResult.requestMessages,
-        options,
-        streamCallbacks
-      );
+      // G-RUNTIME-1C: 优先使用模型配置快照
+      if (this.configSnapshot !== null) {
+        this.currentHandle = this.modelService.streamChatWithConfig(
+          this.configSnapshot,
+          promptResult.requestMessages,
+          options,
+          streamCallbacks
+        );
+      } else {
+        this.currentHandle = this.modelService.streamCurrentChat(
+          promptResult.requestMessages,
+          options,
+          streamCallbacks
+        );
+      }
     });
   }
 
@@ -569,6 +899,9 @@ export class GroupChatRuntimeService {
    * - speakerIndex
    * - speakerCharacterId
    * - assistantMessageId
+   *
+   * G-RUNTIME-1C: 重试时使用新 operationId,
+   * 原失败请求的迟到回调因 operationId 不匹配被拒绝。
    */
   private validateCallback(ctx: SpeakerContext): boolean {
     if (this.currentSpeakerContext === null) {
@@ -633,6 +966,9 @@ export class GroupChatRuntimeService {
   /**
    * 最终持久化当前消息(无条件写入最终正文和状态)。
    * 清除节流定时器,通知 UI 最终状态。
+   *
+   * G-RUNTIME-1C: 使用 finalizeAssistantMessageIfTerminal 实现重复完成保护,
+   * 即使运行时 finalized 标记失败,数据库层也不会覆盖终态。
    */
   private async finalizeCurrentMessage(
     content: string,
@@ -646,13 +982,16 @@ export class GroupChatRuntimeService {
       return;
     }
 
-    // 无条件持久化最终正文和状态
+    // 无条件持久化最终正文和状态(数据库层重复完成保护)
     try {
-      await this.messageService.finalizeAssistantMessage(
+      const finalized: boolean = await this.messageService.finalizeAssistantMessageIfTerminal(
         ctx.assistantMessageId,
         content,
         status
       );
+      if (!finalized) {
+        Logger.warn(LOG_TAG, 'finalizeCurrentMessage: not finalized (already terminal?)');
+      }
     } catch (e) {
       Logger.error(LOG_TAG, 'finalizeAssistantMessage failed: ' + String(e));
       // 即使失败也继续,确保 UI 状态更新
@@ -690,12 +1029,18 @@ export class GroupChatRuntimeService {
 
   /**
    * 清理轮次级别状态(在整轮结束后调用)。
+   *
+   * G-RUNTIME-1C: 不清理 configSnapshot,
+   * 因为重试时仍可能复用上一轮的快照。
+   * configSnapshot 在下一次 startRound 时被覆盖。
    */
   private cleanupRound(): void {
     this.cleanupSpeaker();
     this.activeOperationId = 0;
     this.activeRoundId = '';
     this.activeChatId = '';
+    this.isRetryMode = false;
+    this.advancedSpeakerKeys.clear();
   }
 
   /**

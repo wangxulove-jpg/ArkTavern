@@ -1,5 +1,5 @@
 /**
- * GroupRoundTypes 多人聊天轮次运行时类型(G-RUNTIME-1A / G-RUNTIME-1B)
+ * GroupRoundTypes 多人聊天轮次运行时类型(G-RUNTIME-1A / G-RUNTIME-1B / G-RUNTIME-1C)
  *
  * 职责:
  * - 定义多人聊天一轮回复所需的纯运行时类型
@@ -17,6 +17,13 @@
  * - 已删除角色不进入 speakers
  * - 禁用成员不进入 speakers
  * - speakerIndex 从 0 连续
+ *
+ * G-RUNTIME-1C:
+ * - 新增 GroupSpeakerRetryContext:重试单角色的运行时上下文
+ * - 新增 GroupSpeakerRetryError:重试前置校验失败异常
+ * - 重试不进入新一轮次,但复用原 roundId / generationBatchId
+ * - 重试创建新 operationId / assistantMessageId / ChatStreamHandle
+ * - 重试只生成一次,不自动继续后续角色
  */
 
 /**
@@ -125,6 +132,80 @@ export class GroupRoundPlanError extends Error {
   constructor(kind: GroupRoundPlanErrorKind, message: string) {
     super(message);
     this.name = 'GroupRoundPlanError';
+    this.kind = kind;
+  }
+}
+
+// ===== G-RUNTIME-1C 重试相关类型 =====
+
+/**
+ * 单角色重试上下文(G-RUNTIME-1C)。
+ *
+ * 用于在原轮次已结束(Idle/Completed/Cancelled/Failed)时,
+ * 对单条 Failed / Cancelled 角色消息发起一次重新生成。
+ *
+ * 语义:
+ * - originalOperationId:原失败轮次的 operationId(用于日志追溯,不参与校验)
+ * - roundId:原轮次 ID(等同 generationBatchId,新消息写入同一批次)
+ * - chatId:所属群聊 ID(必须与原消息一致)
+ * - speakerIndex:发言顺序(用于 UI 显示成员状态)
+ * - speakerCharacterId:发言角色 ID(必须与原消息 senderCharacterId 一致)
+ * - failedMessageId:被重试的原消息 ID(保留作为历史,不覆盖)
+ *
+ * 不变量:
+ * - 新消息使用同一 roundId / generationBatchId
+ * - 新消息使用新的 messageId / operationId / ChatStreamHandle
+ * - 原失败消息正文不删除
+ * - 重试只生成一次,完成后不自动启动后续角色
+ */
+export interface GroupSpeakerRetryContext {
+  /** 原失败轮次的 operationId(日志追溯用) */
+  readonly originalOperationId: number;
+  /** 原轮次 ID(= generationBatchId) */
+  readonly roundId: string;
+  /** 所属群聊 ID */
+  readonly chatId: string;
+  /** 发言顺序(从 0 开始) */
+  readonly speakerIndex: number;
+  /** 发言角色 ID */
+  readonly speakerCharacterId: string;
+  /** 被重试的原消息 ID */
+  readonly failedMessageId: string;
+}
+
+/**
+ * 重试前置校验失败原因。
+ */
+export enum GroupSpeakerRetryErrorKind {
+  /** 消息不存在 */
+  MessageNotFound = 'message_not_found',
+  /** 消息不属于当前群聊 */
+  MessageNotInChat = 'message_not_in_chat',
+  /** 不是角色消息 */
+  NotCharacterMessage = 'not_character_message',
+  /** 缺少 generationBatchId */
+  MissingRoundId = 'missing_round_id',
+  /** 消息状态不允许重试(Completed/Streaming) */
+  InvalidStatusForRetry = 'invalid_status_for_retry',
+  /** 当前有活动轮次,不能重试 */
+  ActiveRoundExists = 'active_round_exists',
+  /** 角色已被删除 */
+  CharacterNotFound = 'character_not_found',
+  /** 角色已不属于该群聊 */
+  CharacterNotInChat = 'character_not_in_chat',
+  /** 内部错误 */
+  Internal = 'internal'
+}
+
+/**
+ * 重试前置校验失败异常。
+ */
+export class GroupSpeakerRetryError extends Error {
+  readonly kind: GroupSpeakerRetryErrorKind;
+
+  constructor(kind: GroupSpeakerRetryErrorKind, message: string) {
+    super(message);
+    this.name = 'GroupSpeakerRetryError';
     this.kind = kind;
   }
 }

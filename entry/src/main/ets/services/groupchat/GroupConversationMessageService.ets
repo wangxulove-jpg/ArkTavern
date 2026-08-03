@@ -393,4 +393,77 @@ export class GroupConversationMessageService {
     }
     return await this.messageRepository.normalizeInterruptedMessages(chatId);
   }
+
+  // ===== G-RUNTIME-1C 重试支持 =====
+
+  /**
+   * 根据 messageId 读取单条消息(G-RUNTIME-1C)。
+   *
+   * 用于重试前校验:
+   * - 消息存在
+   * - 消息属于当前群聊
+   * - senderType='character'
+   * - status=Failed/Cancelled
+   *
+   * @returns ChatMessage 或 null(不存在)
+   */
+  async getMessageById(messageId: string): Promise<ChatMessage | null> {
+    if (messageId === '') {
+      return null;
+    }
+    return await this.messageRepository.getById(messageId);
+  }
+
+  /**
+   * 根据 messageId 读取其所属 chatId(G-RUNTIME-1C)。
+   *
+   * 用于校验消息确实属于当前群聊,避免跨群聊重试。
+   *
+   * @returns chatId 或 null(消息不存在)
+   */
+  async getChatIdByMessageId(messageId: string): Promise<string | null> {
+    if (messageId === '') {
+      return null;
+    }
+    return await this.messageRepository.getChatIdByMessageId(messageId);
+  }
+
+  /**
+   * 仅在消息当前状态为 Streaming 时终结(G-RUNTIME-1C 重复完成保护)。
+   *
+   * 防止 Provider 异常触发多次 onComplete / onError / abort 后 onComplete,
+   * 导致终态消息被覆盖为另一终态。
+   *
+   * 规则:
+   * - 当前状态非 Streaming:返回 false,不修改
+   * - 当前状态为 Streaming:执行 finalize,返回 true
+   *
+   * @returns 是否实际执行了 finalize
+   */
+  async finalizeAssistantMessageIfTerminal(
+    messageId: string,
+    content: string,
+    status: ChatMessageStatus,
+    errorMessage?: string
+  ): Promise<boolean> {
+    if (messageId === '') {
+      return false;
+    }
+    if (status !== ChatMessageStatus.Completed
+      && status !== ChatMessageStatus.Cancelled
+      && status !== ChatMessageStatus.Failed) {
+      return false;
+    }
+    const current: ChatMessage | null = await this.messageRepository.getById(messageId);
+    if (current === null) {
+      return false;
+    }
+    // 仅 Streaming 状态允许终结
+    if (current.status !== ChatMessageStatus.Streaming) {
+      Logger.info(LOG_TAG, 'finalizeIfTerminal skip: status=' + String(current.status));
+      return false;
+    }
+    await this.finalizeAssistantMessage(messageId, content, status, errorMessage);
+    return true;
+  }
 }

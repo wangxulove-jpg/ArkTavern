@@ -22,6 +22,7 @@ import { Chat } from '../../models/Chat';
 import { ChatParticipant } from '../../models/ChatParticipant';
 import { Character } from '../../models/Character';
 import { GroupConversationPersistenceService } from '../../services/groupchat/GroupConversationPersistenceService';
+import { GroupChatRuntimeService } from '../../services/groupchat/GroupChatRuntimeService';
 import { CharacterService } from '../../services/CharacterService';
 import { AppServices } from '../../services/AppServices';
 import { Logger } from '../../utils/Logger';
@@ -56,14 +57,18 @@ export class GroupMemberManageViewModel {
   addableState: CharacterPickState = CharacterPickState.Loading;
   /** 是否正在执行成员操作(防止并发) */
   isSaving: boolean = false;
+  /** G-RUNTIME-1C: 是否正在生成(生成中禁止修改成员) */
+  isGenerating: boolean = false;
 
   private readonly groupService: GroupConversationPersistenceService;
   private readonly characterService: CharacterService;
+  private readonly runtimeService: GroupChatRuntimeService;
   private disposed: boolean = false;
 
   constructor() {
     this.groupService = AppServices.getGroupConversationPersistenceService();
     this.characterService = AppServices.getCharacterService();
+    this.runtimeService = AppServices.getGroupChatRuntimeService();
   }
 
   /** 加载群聊成员 */
@@ -134,6 +139,7 @@ export class GroupMemberManageViewModel {
     if (this.isSaving) {
       return;
     }
+    this.checkNotGenerating();
     const orderedIds: string[] = this.currentOrderedIds();
     const idx: number = orderedIds.indexOf(characterId);
     if (idx <= 0) {
@@ -149,6 +155,7 @@ export class GroupMemberManageViewModel {
     if (this.isSaving) {
       return;
     }
+    this.checkNotGenerating();
     const orderedIds: string[] = this.currentOrderedIds();
     const idx: number = orderedIds.indexOf(characterId);
     if (idx < 0 || idx >= orderedIds.length - 1) {
@@ -164,6 +171,7 @@ export class GroupMemberManageViewModel {
     if (this.isSaving) {
       return;
     }
+    this.checkNotGenerating();
     this.isSaving = true;
     try {
       await this.groupService.setParticipantEnabled(this.chatId, characterId, enabled);
@@ -181,6 +189,7 @@ export class GroupMemberManageViewModel {
     if (this.isSaving) {
       return;
     }
+    this.checkNotGenerating();
     this.isSaving = true;
     try {
       await this.groupService.removeParticipant(this.chatId, characterId);
@@ -198,6 +207,7 @@ export class GroupMemberManageViewModel {
     if (this.isSaving) {
       return;
     }
+    this.checkNotGenerating();
     this.isSaving = true;
     try {
       await this.groupService.addParticipant(this.chatId, characterId);
@@ -217,6 +227,18 @@ export class GroupMemberManageViewModel {
       result.push(this.members[i].characterId);
     }
     return result;
+  }
+
+  /** G-RUNTIME-1C: 刷新生成状态(供页面 aboutToAppear 调用) */
+  refreshGeneratingState(): void {
+    this.isGenerating = this.runtimeService.isRunning();
+  }
+
+  /** G-RUNTIME-1C: 检查是否正在生成,生成中禁止修改成员 */
+  private checkNotGenerating(): void {
+    if (this.runtimeService.isRunning()) {
+      throw new Error('生成中无法修改成员');
+    }
   }
 
   /** 替换顺序(内部) */

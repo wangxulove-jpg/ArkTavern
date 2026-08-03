@@ -1493,6 +1493,14 @@
       "value": "重试当前角色"
     },
     {
+      "name": "group_retrying",
+      "value": "重试中…"
+    },
+    {
+      "name": "group_ending_round",
+      "value": "结束中…"
+    },
+    {
       "name": "group_create_title",
       "value": "创建多人聊天"
     },

@@ -50,6 +50,8 @@ struct GroupMemberManagePage {
   @State addableState: CharacterPickState = CharacterPickState.Loading;
   /** 是否正在执行成员操作(防止并发) */
   @State isSaving: boolean = false;
+  /** G-RUNTIME-1C: 是否正在生成(生成中禁止修改成员) */
+  @State isGenerating: boolean = false;
   /** 添加角色弹窗是否可见 */
   @State addDialogVisible: boolean = false;
   /** 顶部状态栏避让高度 */
@@ -72,10 +74,21 @@ struct GroupMemberManagePage {
       await AppServices.whenReady();
       this.viewModel = new GroupMemberManageViewModel();
       await this.viewModel.load(id);
+      // G-RUNTIME-1C: 刷新生成状态,生成中禁止修改成员
+      this.viewModel.refreshGeneratingState();
       this.syncFromViewModel();
     } catch (e) {
       this.state = GroupChatDetailState.Error;
     }
+  }
+
+  /** G-RUNTIME-1C: 页面重新显示时刷新生成状态 */
+  onPageShow(): void {
+    if (this.viewModel === null) {
+      return;
+    }
+    this.viewModel.refreshGeneratingState();
+    this.syncFromViewModel();
   }
 
   /** 从 ViewModel 同步状态 */
@@ -87,6 +100,7 @@ struct GroupMemberManagePage {
     this.members = this.viewModel.members;
     this.state = this.viewModel.state;
     this.isSaving = this.viewModel.isSaving;
+    this.isGenerating = this.viewModel.isGenerating;
   }
 
   /** 同步可添加角色 */
@@ -350,7 +364,7 @@ struct GroupMemberManagePage {
           .height(32)
           .padding({ left: 12, right: 12 })
           .accessibilityText('上移角色')
-          .enabled(!this.isSaving && index > 0)
+          .enabled(!this.isSaving && !this.isGenerating && index > 0)
           .onClick(() => {
             this.handleMoveUp(member.characterId);
           })
@@ -364,7 +378,7 @@ struct GroupMemberManagePage {
           .padding({ left: 12, right: 12 })
           .margin({ left: 8 })
           .accessibilityText('下移角色')
-          .enabled(!this.isSaving && index < this.members.length - 1)
+          .enabled(!this.isSaving && !this.isGenerating && index < this.members.length - 1)
           .onClick(() => {
             this.handleMoveDown(member.characterId);
           })
@@ -378,7 +392,7 @@ struct GroupMemberManagePage {
           .padding({ left: 12, right: 12 })
           .margin({ left: 8 })
           .accessibilityText(member.isEnabled ? '停用角色' : '启用角色')
-          .enabled(!this.isSaving)
+          .enabled(!this.isSaving && !this.isGenerating)
           .onClick(() => {
             this.handleToggleEnabled(member.characterId, member.isEnabled);
           })
@@ -391,7 +405,7 @@ struct GroupMemberManagePage {
           .height(32)
           .padding({ left: 12, right: 12 })
           .margin({ left: 8 })
-          .enabled(!this.isSaving && this.members.length > MIN_MEMBER_COUNT)
+          .enabled(!this.isSaving && !this.isGenerating && this.members.length > MIN_MEMBER_COUNT)
           .onClick(() => {
             this.handleRemove(member.characterId);
           })
@@ -438,7 +452,7 @@ struct GroupMemberManagePage {
         .borderRadius($r('app.float.app_radius_sm'))
         .height(44)
         .layoutWeight(1)
-        .enabled(!this.isSaving && this.members.length < MAX_MEMBER_COUNT)
+        .enabled(!this.isSaving && !this.isGenerating && this.members.length < MAX_MEMBER_COUNT)
         .onClick(() => {
           this.openAddDialog();
         })
@@ -540,7 +554,7 @@ struct GroupMemberManagePage {
                       .borderRadius($r('app.float.app_radius_sm'))
                       .height(32)
                       .padding({ left: 12, right: 12 })
-                      .enabled(!this.isSaving)
+                      .enabled(!this.isSaving && !this.isGenerating)
                       .onClick(() => {
                         this.handleAddMember(char.characterId);
                       })
@@ -598,7 +612,12 @@ struct GroupMemberManagePage {
       await this.viewModel.moveUp(characterId);
       this.syncFromViewModel();
     } catch (e) {
-      promptAction.showToast({ message: '上移失败', duration: 1500 });
+      const msg: string = String(e);
+      if (msg.indexOf('生成中') >= 0) {
+        promptAction.showToast({ message: '生成中无法修改成员', duration: 1500 });
+      } else {
+        promptAction.showToast({ message: '上移失败', duration: 1500 });
+      }
       await this.reloadCurrent();
     }
   }
@@ -612,7 +631,12 @@ struct GroupMemberManagePage {
       await this.viewModel.moveDown(characterId);
       this.syncFromViewModel();
     } catch (e) {
-      promptAction.showToast({ message: '下移失败', duration: 1500 });
+      const msg: string = String(e);
+      if (msg.indexOf('生成中') >= 0) {
+        promptAction.showToast({ message: '生成中无法修改成员', duration: 1500 });
+      } else {
+        promptAction.showToast({ message: '下移失败', duration: 1500 });
+      }
       await this.reloadCurrent();
     }
   }
@@ -627,7 +651,9 @@ struct GroupMemberManagePage {
       this.syncFromViewModel();
     } catch (e) {
       const msg: string = String(e);
-      if (msg.indexOf('enabled') >= 0 || msg.indexOf('启用') >= 0) {
+      if (msg.indexOf('生成中') >= 0) {
+        promptAction.showToast({ message: '生成中无法修改成员', duration: 1500 });
+      } else if (msg.indexOf('enabled') >= 0 || msg.indexOf('启用') >= 0) {
         promptAction.showToast({ message: '至少保留 ' + String(MIN_MEMBER_COUNT) + ' 个启用角色', duration: 1500 });
       } else {
         promptAction.showToast({ message: '操作失败', duration: 1500 });
@@ -647,7 +673,9 @@ struct GroupMemberManagePage {
       promptAction.showToast({ message: '已移除成员', duration: 1200 });
     } catch (e) {
       const msg: string = String(e);
-      if (msg.indexOf('min') >= 0 || msg.indexOf('成员') >= 0) {
+      if (msg.indexOf('生成中') >= 0) {
+        promptAction.showToast({ message: '生成中无法修改成员', duration: 1500 });
+      } else if (msg.indexOf('min') >= 0 || msg.indexOf('成员') >= 0) {
         promptAction.showToast({ message: '最少保留 ' + String(MIN_MEMBER_COUNT) + ' 个成员', duration: 1500 });
       } else {
         promptAction.showToast({ message: '移除失败', duration: 1500 });
@@ -671,7 +699,12 @@ struct GroupMemberManagePage {
       this.addDialogVisible = false;
       promptAction.showToast({ message: '已添加成员', duration: 1200 });
     } catch (e) {
-      promptAction.showToast({ message: '添加失败', duration: 1500 });
+      const msg: string = String(e);
+      if (msg.indexOf('生成中') >= 0) {
+        promptAction.showToast({ message: '生成中无法修改成员', duration: 1500 });
+      } else {
+        promptAction.showToast({ message: '添加失败', duration: 1500 });
+      }
       await this.reloadCurrent();
     }
   }

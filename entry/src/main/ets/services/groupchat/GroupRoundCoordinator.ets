@@ -50,7 +50,10 @@ import {
   GroupRoundPlan,
   ActiveGroupRoundContext,
   GroupRoundPlanError,
-  GroupRoundPlanErrorKind
+  GroupRoundPlanErrorKind,
+  GroupSpeakerRetryContext,
+  GroupSpeakerRetryError,
+  GroupSpeakerRetryErrorKind
 } from './GroupRoundTypes';
 
 const LOG_TAG: string = 'GroupRoundCoord';
@@ -404,6 +407,235 @@ export class GroupRoundCoordinator {
       this.state = GroupRoundState.Idle;
       Logger.info(LOG_TAG, 'clearCompletedRound ok opId=' + String(expectedOperationId));
     }
+  }
+
+  /**
+   * 开始单角色重试(G-RUNTIME-1C)。
+   *
+   * 在非 Generating 状态下调用,创建一个新的 operationId,
+   * 进入 Generating 状态,但复用原 roundId / chatId / speaker 信息。
+   *
+   * 与 beginGeneration 区别:
+   * - 不依赖 Ready 状态,允许在 Idle/Completed/Cancelled/Failed 上调用
+   * - 不创建新 plan,直接基于 retryContext 构建 ActiveGroupRoundContext
+   * - 重试只生成一次,主循环不推进 advanceSpeaker
+   * - currentSpeakerIndex 使用 retryContext.speakerIndex(原轮次中的索引),
+   *   确保 UI 成员状态栏正确标记当前重试角色
+   *
+   * @param retryContext 重试上下文
+   * @returns 活动上下文(用于执行单角色生成)
+   * @throws GroupSpeakerRetryError 当前有活动轮次时抛 ActiveRoundExists
+   */
+  beginRetry(retryContext: GroupSpeakerRetryContext): ActiveGroupRoundContext {
+    if (this.state === GroupRoundState.Generating
+      || this.state === GroupRoundState.Planning
+      || this.state === GroupRoundState.Ready) {
+      throw new GroupSpeakerRetryError(
+        GroupSpeakerRetryErrorKind.ActiveRoundExists,
+        'cannot retry: state=' + this.state
+      );
+    }
+    if (this.activeRound !== null) {
+      throw new GroupSpeakerRetryError(
+        GroupSpeakerRetryErrorKind.ActiveRoundExists,
+        'cannot retry: activeRound exists'
+      );
+    }
+
+    this.generationOperationId = this.generationOperationId + 1;
+    const newOperationId: number = this.generationOperationId;
+    // 重试时 speakers 只包含当前发言者(主循环不推进)
+    const speakers: GroupRoundSpeaker[] = [{
+      characterId: retryContext.speakerCharacterId,
+      speakerIndex: retryContext.speakerIndex
+    }];
+    this.activeRound = {
+      operationId: newOperationId,
+      roundId: retryContext.roundId,
+      chatId: retryContext.chatId,
+      userMessageId: '',
+      speakers: speakers,
+      // 使用 retryContext.speakerIndex 而非 0,
+      // 确保 UI 成员状态栏正确标记当前重试角色
+      currentSpeakerIndex: retryContext.speakerIndex,
+      currentSpeakerCharacterId: retryContext.speakerCharacterId
+    };
+    this.state = GroupRoundState.Generating;
+    Logger.info(LOG_TAG, 'beginRetry opId=' + String(newOperationId)
+      + ' roundId=' + retryContext.roundId
+      + ' speakerIdx=' + String(retryContext.speakerIndex));
+    return this.activeRound;
+  }
+
+  /**
+   * 校验角色仍存在且仍属于该群聊(G-RUNTIME-1C)。
+   *
+   * 用于重试前置校验:
+   * - 角色已被删除 → CharacterNotFound
+   * - 角色不在群聊参与者中 → CharacterNotInChat
+   *
+   * @param chatId 群聊 ID
+   * @param characterId 角色 ID
+   * @throws GroupSpeakerRetryError 校验失败
+   */
+  async validateCharacterInChat(
+    chatId: string,
+    characterId: string
+  ): Promise<void> {
+    // 1. 校验角色存在
+    let character: Character | null = null;
+    try {
+      character = await this.characterService.getById(characterId);
+    } catch (e) {
+      throw new GroupSpeakerRetryError(
+        GroupSpeakerRetryErrorKind.CharacterNotFound,
+        'character load failed'
+      );
+    }
+    if (character === null) {
+      throw new GroupSpeakerRetryError(
+        GroupSpeakerRetryErrorKind.CharacterNotFound,
+        'character not found'
+      );
+    }
+
+    // 2. 校验角色仍属于该群聊(含停用成员)
+    const participants: ChatParticipant[] =
+      await this.groupService.getParticipants(chatId);
+    let found: boolean = false;
+    for (let i = 0; i < participants.length; i++) {
+      if (participants[i].characterId === characterId) {
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      throw new GroupSpeakerRetryError(
+        GroupSpeakerRetryErrorKind.CharacterNotInChat,
+        'character not in chat'
+      );
+    }
+  }
+
+  /**
+   * 解析角色在启用成员中的 speakerIndex(G-RUNTIME-1C)。
+   *
+   * 规则与 buildSpeakers 一致:
+   * - 过滤 isEnabled = true
+   * - 按 speakerOrder ASC 排序
+   * - 排除已删除角色
+   * - speakerIndex 从 0 连续
+   *
+   * 找不到时返回 0(防御,前置校验已确认角色存在且在群聊中)。
+   *
+   * @param chatId 群聊 ID
+   * @param characterId 角色 ID
+   * @returns speakerIndex(从 0 开始)
+   */
+  async resolveSpeakerIndex(
+    chatId: string,
+    characterId: string
+  ): Promise<number> {
+    const participants: ChatParticipant[] =
+      await this.groupService.getParticipants(chatId);
+    const enabled: ChatParticipant[] = participants
+      .filter((p: ChatParticipant): boolean => p.isEnabled)
+      .sort((a: ChatParticipant, b: ChatParticipant): number =>
+        a.speakerOrder - b.speakerOrder
+      );
+
+    let index: number = 0;
+    for (let i = 0; i < enabled.length; i++) {
+      const p: ChatParticipant = enabled[i];
+      // 排除已删除角色(与 buildSpeakers 一致)
+      let character: Character | null = null;
+      try {
+        character = await this.characterService.getById(p.characterId);
+      } catch (e) {
+        character = null;
+      }
+      if (character === null) {
+        continue;
+      }
+      if (p.characterId === characterId) {
+        return index;
+      }
+      index = index + 1;
+    }
+    return 0;
+  }
+
+  /**
+   * 读取群聊全部启用且存在的参与者角色 ID(G-RUNTIME-1C)。
+   *
+   * 用于重试时构建完整的 participantCharacterIds,
+   * 确保 Prompt 构建器能获取所有参与者名称(角色隔离)。
+   *
+   * @param chatId 群聊 ID
+   * @returns 有序角色 ID 列表(已排除停用和已删除角色)
+   */
+  async listEnabledParticipantCharacterIds(chatId: string): Promise<string[]> {
+    const participants: ChatParticipant[] =
+      await this.groupService.getParticipants(chatId);
+    const enabled: ChatParticipant[] = participants
+      .filter((p: ChatParticipant): boolean => p.isEnabled)
+      .sort((a: ChatParticipant, b: ChatParticipant): number =>
+        a.speakerOrder - b.speakerOrder
+      );
+
+    const result: string[] = [];
+    for (let i = 0; i < enabled.length; i++) {
+      const p: ChatParticipant = enabled[i];
+      let character: Character | null = null;
+      try {
+        character = await this.characterService.getById(p.characterId);
+      } catch (e) {
+        character = null;
+      }
+      if (character !== null) {
+        result.push(p.characterId);
+      }
+    }
+    return result;
+  }
+
+  /**
+   * 标记整轮回到 Idle(G-RUNTIME-1C)。
+   * 用于"结束本轮"按钮:不改变已有消息状态,
+   * 只清理活动上下文,使状态回到 Idle,允许用户发送下一条消息。
+   *
+   * @param expectedOperationId 必填,指定要清理的 operationId。
+   *   不匹配时不执行(迟到清理)。
+   */
+  markIdle(expectedOperationId: number): void {
+    if (expectedOperationId <= 0) {
+      return;
+    }
+    if (this.activeRound !== null &&
+        this.activeRound.operationId !== expectedOperationId) {
+      return;
+    }
+    this.activeRound = null;
+    this.state = GroupRoundState.Idle;
+    Logger.info(LOG_TAG, 'markIdle ok opId=' + String(expectedOperationId));
+  }
+
+  /**
+   * 是否有活动轮次(Generating/Planning/Ready)。
+   * Service 层互斥校验使用此方法。
+   */
+  isRunning(): boolean {
+    return this.state === GroupRoundState.Generating
+      || this.state === GroupRoundState.Planning
+      || this.state === GroupRoundState.Ready
+      || this.activeRound !== null;
+  }
+
+  /**
+   * 是否正在生成中(Generating)。
+   */
+  isGenerating(): boolean {
+    return this.state === GroupRoundState.Generating;
   }
 
   /**

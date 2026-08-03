@@ -288,6 +288,48 @@ export class ModelService {
   }
 
   /**
+   * 使用指定配置发送流式聊天(G-RUNTIME-1C 模型配置快照)。
+   *
+   * 与 streamCurrentChat 区别:
+   * - 调用方传入固定 ProviderConfig(快照),不再重新读取当前配置
+   * - 一轮多角色生成时,A/B/C 使用同一快照,用户中途修改设置不影响本轮
+   * - 单聊继续使用 streamChat / streamCurrentChat,行为不变
+   *
+   * 安全:
+   * - config 不含 API Key 明文(ProviderConfig 模型本身不含)
+   * - API Key 仍通过 KeyStore alias 在 Provider 内部解析
+   *
+   * @param config 固定的 ProviderConfig 快照
+   * @param messages 请求消息
+   * @param options 请求参数
+   * @param callbacks 流式回调
+   * @returns ChatStreamHandle
+   */
+  streamChatWithConfig(
+    config: ProviderConfig,
+    messages: ChatMessage[],
+    options: ChatRequestOptions,
+    callbacks: ChatStreamCallbacks
+  ): ChatStreamHandle {
+    this.requireInitialized();
+    const holder: StreamHandleHolder = createStreamHandleHolder();
+
+    this.startStreamWithConfigAsync(config, messages, options, callbacks, holder).then((): void => {
+      // 正常完成
+    }, (err: Object): void => {
+      if (!holder.fired) {
+        holder.fired = true;
+        const error: NetworkError = err instanceof ModelServiceError
+          ? toNetworkError(err)
+          : createUnknownNetworkError(String(err));
+        callbacks.onError(error);
+      }
+    });
+
+    return holder.handle;
+  }
+
+  /**
    * 测试指定配置的连接(不修改正式配置)。
    * 传入 apiKey 时使用临时 alias,测试后清理。
    */
@@ -445,6 +487,73 @@ export class ModelService {
       toolResults: options.toolResults,
       priorToolCalls: options.priorToolCalls,
       // Phase 4D-8: 透传工具调用策略 (alwaysPerform 开关依赖此字段)
+      toolChoice: options.toolChoice
+    };
+
+    const provider: AiProvider = this.resolveProvider(config);
+
+    const wrappedCallbacks: ChatStreamCallbacks = {
+      onStart: callbacks.onStart,
+      onDelta: callbacks.onDelta,
+      onComplete: callbacks.onComplete,
+      onError: (error: NetworkError): void => {
+        holder.fired = true;
+        callbacks.onError(error);
+      }
+    };
+
+    const innerHandle: ChatStreamHandle = provider.streamChat(config, request, wrappedCallbacks);
+    holder.setInner(innerHandle);
+  }
+
+  /**
+   * 使用固定 config 启动流式请求(G-RUNTIME-1C)。
+   * 不重新读取 configStore,直接使用传入的快照。
+   */
+  private async startStreamWithConfigAsync(
+    config: ProviderConfig,
+    messages: ChatMessage[],
+    options: ChatRequestOptions,
+    callbacks: ChatStreamCallbacks,
+    holder: StreamHandleHolder
+  ): Promise<void> {
+    const modelName: string = config.modelName.trim();
+    if (modelName.length === 0) {
+      if (!holder.fired) {
+        holder.fired = true;
+        const err: ModelServiceError = createModelServiceError(
+          ModelServiceErrorType.InvalidConfig,
+          'model name is empty for config: ' + config.id
+        );
+        callbacks.onError(toNetworkError(err));
+      }
+      return;
+    }
+
+    if (!isOpenAICompatibleType(config.type)) {
+      if (!holder.fired) {
+        holder.fired = true;
+        const err: ModelServiceError = createModelServiceError(
+          ModelServiceErrorType.UnsupportedProvider,
+          'Unsupported provider type: ' + config.type
+        );
+        callbacks.onError(toNetworkError(err));
+      }
+      return;
+    }
+
+    const request: ChatRequest = {
+      model: modelName,
+      messages: messages,
+      temperature: options.temperature,
+      topP: options.topP,
+      maxTokens: options.maxTokens,
+      stream: options.stream,
+      reasoningEffort: options.reasoningEffort,
+      responseFormatJson: options.responseFormatJson,
+      tools: options.tools,
+      toolResults: options.toolResults,
+      priorToolCalls: options.priorToolCalls,
       toolChoice: options.toolChoice
     };
 

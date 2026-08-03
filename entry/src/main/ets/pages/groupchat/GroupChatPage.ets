@@ -48,8 +48,10 @@ import {
 } from '../../viewmodels/groupchat/GroupChatUiModels';
 import { GroupRoundState } from '../../services/groupchat/GroupRoundTypes';
 import { CharacterImageView } from '../../components/CharacterImageView';
+import { GroupGenerationErrorCard } from '../../components/groupchat/GroupGenerationErrorCard';
 import { ChatRole } from '../../models/ChatRole';
 import { ChatMessageStatus } from '../../models/ChatMessage';
+import { Logger } from '../../utils/Logger';
 
 @Entry
 @Component
@@ -76,6 +78,10 @@ struct GroupChatPage {
   @State isGenerating: boolean = false;
   /** 是否正在停止 */
   @State isStopping: boolean = false;
+  /** G-RUNTIME-1C: 是否正在重试 */
+  @State isRetrying: boolean = false;
+  /** G-RUNTIME-1C: 是否正在结束本轮 */
+  @State isEndingRound: boolean = false;
   /** 本轮错误消息 */
   @State roundErrorMessage: string = '';
   /** 当前发言者索引 */
@@ -163,6 +169,8 @@ struct GroupChatPage {
     this.roundState = this.viewModel.roundState;
     this.isGenerating = this.viewModel.isGenerating;
     this.isStopping = this.viewModel.isStopping;
+    this.isRetrying = this.viewModel.isRetrying;
+    this.isEndingRound = this.viewModel.isEndingRound;
     this.roundErrorMessage = this.viewModel.roundErrorMessage;
     this.currentSpeakerIndex = this.viewModel.currentSpeakerIndex;
     this.completedSpeakerCount = this.viewModel.completedSpeakerCount;
@@ -180,8 +188,9 @@ struct GroupChatPage {
         return;
       }
       this.syncFromViewModel();
-      // 不在生成中时停止轮询
-      if (!this.viewModel.isGenerating && !this.viewModel.isSending) {
+      // 不在生成/重试/结束本轮中时停止轮询
+      if (!this.viewModel.isGenerating && !this.viewModel.isSending
+        && !this.viewModel.isRetrying && !this.viewModel.isEndingRound) {
         this.stopSyncPolling();
       }
     }, 200);
@@ -641,7 +650,26 @@ struct GroupChatPage {
       List({ scroller: this.messageScroller }) {
         ForEach(this.messages, (msg: GroupMessageUiModel) => {
           ListItem() {
-            this.messageBubble(msg)
+            Column() {
+              this.messageBubble(msg)
+              // G-RUNTIME-1C: 最近一条 Failed/Cancelled 角色消息下方显示重试/结束本轮卡片
+              if (this.shouldShowErrorCard(msg)) {
+                GroupGenerationErrorCard({
+                  errorText: this.composeErrorCardText(msg),
+                  isRetrying: this.isRetrying,
+                  isEndingRound: this.isEndingRound,
+                  onRetry: () => {
+                    this.handleRetrySpeaker(msg);
+                  },
+                  onEndRound: () => {
+                    this.handleEndRound();
+                  }
+                })
+                  .margin({ top: 6 })
+              }
+            }
+            .width('100%')
+            .alignItems(HorizontalAlign.Start)
           }
           .margin({ left: 12, right: 12, top: 6, bottom: 6 })
         }, (msg: GroupMessageUiModel) => msg.id)
@@ -657,6 +685,108 @@ struct GroupChatPage {
         }
       })
     }
+  }
+
+  /**
+   * G-RUNTIME-1C: 判断指定消息是否应该显示重试/结束本轮卡片。
+   *
+   * 规则:
+   * - 只在 roundState 为 Failed 或 Cancelled 时显示
+   * - 只对最近一条 Failed/Cancelled 角色消息显示
+   * - 不在生成/重试/结束本轮过程中显示卡片(卡片已通过 isRetrying/isEndingRound 进入处理中)
+   *   注:重试开始后,新的 Streaming 气泡出现在底部,错误卡保留为历史状态(隐藏)
+   */
+  private shouldShowErrorCard(msg: GroupMessageUiModel): boolean {
+    // 仅在 Failed / Cancelled 状态显示
+    if (this.roundState !== GroupRoundState.Failed && this.roundState !== GroupRoundState.Cancelled) {
+      return false;
+    }
+    // 重试已开始(isGenerating 重新为 true,新 Streaming 已在底部),隐藏卡片
+    if (this.isGenerating || this.isRetrying || this.isEndingRound) {
+      return false;
+    }
+    // 仅角色消息
+    if (msg.role === ChatRole.User) {
+      return false;
+    }
+    if (msg.senderCharacterId === undefined || msg.senderCharacterId.length === 0) {
+      return false;
+    }
+    if (msg.status !== ChatMessageStatus.Failed && msg.status !== ChatMessageStatus.Cancelled) {
+      return false;
+    }
+    // 缺失角色无法重试
+    if (!msg.characterExists) {
+      return false;
+    }
+    // 仅最近一条 Failed/Cancelled 角色消息
+    return this.findLatestRetryableMessageId() === msg.id;
+  }
+
+  /** 查找最近一条可重试的角色消息 ID */
+  private findLatestRetryableMessageId(): string {
+    for (let i: number = this.messages.length - 1; i >= 0; i--) {
+      const m: GroupMessageUiModel = this.messages[i];
+      if (m.role === ChatRole.User) {
+        continue;
+      }
+      if (m.senderCharacterId === undefined || m.senderCharacterId.length === 0) {
+        continue;
+      }
+      if (!m.characterExists) {
+        continue;
+      }
+      if (m.status === ChatMessageStatus.Failed || m.status === ChatMessageStatus.Cancelled) {
+        return m.id;
+      }
+    }
+    return '';
+  }
+
+  /** 构建错误卡片文案 */
+  private composeErrorCardText(msg: GroupMessageUiModel): string {
+    const name: string = msg.senderName;
+    if (msg.status === ChatMessageStatus.Failed) {
+      return name + ' 回复失败';
+    }
+    if (msg.status === ChatMessageStatus.Cancelled) {
+      return name + ' 已停止,可重试当前角色';
+    }
+    return '回复失败';
+  }
+
+  /** G-RUNTIME-1C: 处理重试当前角色 */
+  private async handleRetrySpeaker(msg: GroupMessageUiModel): Promise<void> {
+    if (this.viewModel === null) {
+      return;
+    }
+    if (this.isGenerating || this.isRetrying || this.isEndingRound) {
+      return;
+    }
+    if (!this.viewModel.canRetryMessage(msg)) {
+      promptAction.showToast({ message: '当前消息无法重试', duration: 1500 });
+      return;
+    }
+    Logger.info('GroupChatPage', 'handleRetrySpeaker msgId=' + msg.id);
+    await this.viewModel.retrySpeakerMessage(msg.id);
+    this.syncFromViewModel();
+    // 重试已启动,确保轮询运行
+    if (this.viewModel.isGenerating) {
+      this.startSyncPolling();
+    }
+  }
+
+  /** G-RUNTIME-1C: 处理结束本轮 */
+  private async handleEndRound(): Promise<void> {
+    if (this.viewModel === null) {
+      return;
+    }
+    if (this.isRetrying || this.isEndingRound) {
+      return;
+    }
+    Logger.info('GroupChatPage', 'handleEndRound');
+    await this.viewModel.endRound();
+    this.syncFromViewModel();
   }
 
   /** 单条消息气泡 */

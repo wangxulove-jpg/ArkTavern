@@ -55,7 +55,9 @@ import {
   GroupRoundState,
   GroupRoundPlan,
   GroupRoundPlanError,
-  GroupRoundPlanErrorKind
+  GroupRoundPlanErrorKind,
+  GroupSpeakerRetryError,
+  GroupSpeakerRetryErrorKind
 } from '../../services/groupchat/GroupRoundTypes';
 import {
   GroupChatRuntimeService,
@@ -117,6 +119,10 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
   isGenerating: boolean = false;
   /** 是否正在停止 */
   isStopping: boolean = false;
+  /** G-RUNTIME-1C: 是否正在重试(防止重复点击重试按钮) */
+  isRetrying: boolean = false;
+  /** G-RUNTIME-1C: 是否正在结束本轮(防止重复点击结束本轮) */
+  isEndingRound: boolean = false;
   /** 本轮错误消息(生成失败时显示) */
   roundErrorMessage: string = '';
   /** 成员运行时状态列表 */
@@ -374,12 +380,136 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
   }
 
   /**
+   * G-RUNTIME-1C: 重试单条 Failed/Cancelled 角色消息。
+   *
+   * 行为:
+   * - 调用 GroupChatRuntimeService.retrySpeakerMessage
+   * - 创建新的 Streaming 消息(同一 generationBatchId)
+   * - 重试期间 isGenerating=true, isRetrying=true
+   * - 防止重复点击(isRetrying)
+   * - 生命周期保护:检查 disposed / loadOperationId / chatId
+   *
+   * 失败处理:
+   * - 前置校验失败(GroupSpeakerRetryError):显示对应错误文案
+   * - 生成失败:由 onRoundFailed 回调处理
+   *
+   * @param messageId 被重试的原消息 ID
+   */
+  async retrySpeakerMessage(messageId: string): Promise<void> {
+    if (this.disposed || this.isGenerating || this.isRetrying) {
+      return;
+    }
+    if (messageId.length === 0 || this.chatId.length === 0) {
+      return;
+    }
+    this.isRetrying = true;
+    this.errorMessage = '';
+    this.roundErrorMessage = '';
+    const opId: number = this.loadOperationId;
+    const expectedChatId: string = this.chatId;
+    Logger.info(LOG_TAG, 'retrySpeakerMessage requested msgId=' + messageId);
+    try {
+      // 重试视为一次生成,进入 Generating 状态
+      this.isGenerating = true;
+      this.roundState = GroupRoundState.Generating;
+      this.refreshMemberRuntimeStates();
+      await this.runtimeService.retrySpeakerMessage(messageId, expectedChatId, this);
+    } catch (e) {
+      Logger.error(LOG_TAG, 'retrySpeakerMessage failed: ' + String(e));
+      if (this.disposed || opId !== this.loadOperationId) {
+        return;
+      }
+      if (e instanceof GroupSpeakerRetryError) {
+        this.errorMessage = this.mapRetryError(e.kind);
+      } else {
+        this.errorMessage = '重试失败';
+      }
+      this.isGenerating = false;
+      this.roundState = GroupRoundState.Idle;
+      this.refreshMemberRuntimeStates();
+    } finally {
+      this.isRetrying = false;
+    }
+  }
+
+  /**
+   * G-RUNTIME-1C: 结束本轮。
+   *
+   * 用于失败或取消后点击"结束本轮":
+   * - 失效 operationId
+   * - 清理活动上下文
+   * - 不创建后续角色消息
+   * - 输入区恢复
+   * - 本轮状态保持 Failed 或 Cancelled(不改为 Completed)
+   *
+   * 如果当前仍在生成中,先调用 stopRound 中止请求。
+   */
+  async endRound(): Promise<void> {
+    if (this.disposed || this.isEndingRound) {
+      return;
+    }
+    this.isEndingRound = true;
+    Logger.info(LOG_TAG, 'endRound requested');
+    try {
+      await this.runtimeService.endRound();
+    } catch (e) {
+      Logger.error(LOG_TAG, 'endRound failed: ' + String(e));
+    } finally {
+      this.isEndingRound = false;
+      this.isGenerating = false;
+      this.isStopping = false;
+      this.currentSpeakerIndex = -1;
+      this.currentSpeakerCharacterId = '';
+      this.refreshMemberRuntimeStates();
+    }
+  }
+
+  /**
+   * G-RUNTIME-1C: 判断消息是否可以重试。
+   *
+   * 条件:
+   * - 不是用户消息(role !== User)
+   * - senderCharacterId 存在(角色消息)
+   * - 状态为 Failed 或 Cancelled
+   * - 当前无活动轮次(!isGenerating)
+   * - 角色仍存在(characterExists)
+   *
+   * @param msg 消息 UI 模型
+   * @returns 是否可以重试
+   */
+  canRetryMessage(msg: GroupMessageUiModel): boolean {
+    if (msg.role === ChatRole.User) {
+      return false;
+    }
+    if (msg.senderCharacterId === undefined || msg.senderCharacterId.length === 0) {
+      return false;
+    }
+    if (msg.status !== ChatMessageStatus.Failed && msg.status !== ChatMessageStatus.Cancelled) {
+      return false;
+    }
+    if (!msg.characterExists) {
+      return false;
+    }
+    if (this.isGenerating || this.isRetrying || this.isEndingRound) {
+      return false;
+    }
+    return true;
+  }
+
+  /**
    * 清空群聊消息。
+   *
+   * G-RUNTIME-1C: 生成或重试期间禁止清空消息(Service 层互斥)。
    * 调用 GroupConversationMessageService.clearMessages,然后重新加载。
    */
   async clearMessages(): Promise<void> {
     if (this.disposed || this.chatId.length === 0) {
       return;
+    }
+    // Service 层互斥:生成/重试/停止/结束本轮期间禁止清空
+    if (this.runtimeService.isRunning()) {
+      this.errorMessage = '生成中无法清空消息';
+      throw new Error('生成中无法清空消息');
     }
     try {
       await this.messageService.clearMessages(this.chatId);
@@ -818,6 +948,31 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
       case GroupRoundPlanErrorKind.Internal:
       default:
         return '无法开始本轮';
+    }
+  }
+
+  /** G-RUNTIME-1C: 将重试错误类型映射为用户可读文案 */
+  private mapRetryError(kind: GroupSpeakerRetryErrorKind): string {
+    switch (kind) {
+      case GroupSpeakerRetryErrorKind.MessageNotFound:
+        return '消息不存在,无法重试';
+      case GroupSpeakerRetryErrorKind.MessageNotInChat:
+        return '消息不属于当前群聊';
+      case GroupSpeakerRetryErrorKind.NotCharacterMessage:
+        return '只能重试角色回复';
+      case GroupSpeakerRetryErrorKind.MissingRoundId:
+        return '消息缺少轮次信息';
+      case GroupSpeakerRetryErrorKind.InvalidStatusForRetry:
+        return '当前消息状态不允许重试';
+      case GroupSpeakerRetryErrorKind.ActiveRoundExists:
+        return '当前正在生成,请稍后重试';
+      case GroupSpeakerRetryErrorKind.CharacterNotFound:
+        return '角色已被删除,无法重试';
+      case GroupSpeakerRetryErrorKind.CharacterNotInChat:
+        return '角色已不在群聊中,无法重试';
+      case GroupSpeakerRetryErrorKind.Internal:
+      default:
+        return '重试失败';
     }
   }
 }
