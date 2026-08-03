@@ -8,7 +8,7 @@
  *
  * 职责:
  * 1. 收集创意输入(创意描述、名称、世界观、性格、关系、对话风格、内容语言、详细程度、3 个开关)
- * 2. 模型选择(跟随当前模型 / 指定 ProviderConfig)
+ * 2. 始终使用当前聊天配置的模型(ModelService.getCurrentConfig),不在页面暴露模型/Provider/API Key 等配置信息
  * 3. 首次生成前显示隐私提示
  * 4. 调用 ViewModel.startGeneration,显示生成状态,提供停止按钮
  * 5. 生成成功后跳转到 AiCharacterPreviewPage
@@ -28,7 +28,6 @@ import { common } from '@kit.AbilityKit';
 import { AppServices } from '../services/AppServices';
 import { AppPreferences } from '../storage/AppPreferences';
 import { ModelService } from '../services/ModelService';
-import { ProviderConfig } from '../models/ProviderConfig';
 import {
   AiCharacterGenerationService
 } from '../services/ai/AiCharacterGenerationService';
@@ -37,9 +36,6 @@ import {
   AiMakerState
 } from '../viewmodels/AiCharacterMakerViewModel';
 import { AiGenerationResult } from '../models/AiGenerationResult';
-import { Logger } from '../utils/Logger';
-
-const LOG_TAG: string = 'AiCharMakerPage';
 
 @Entry
 @Component
@@ -47,8 +43,6 @@ struct AiCharacterMakerPage {
   @State viewModel: AiCharacterMakerViewModel | null = null;
   @State isInitializing: boolean = true;
   @State showPrivacyDialog: boolean = false;
-  /** Provider 配置列表(用于"指定模型"选择) */
-  @State providerConfigs: ProviderConfig[] = [];
   /** 顶部状态栏避让高度(由 EntryAbility 写入 AppStorage) */
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   /** 底部导航栏/手势条避让高度 */
@@ -71,13 +65,6 @@ struct AiCharacterMakerPage {
       vm.setOnCompleteCallback((result: AiGenerationResult) => this.onGenerationComplete(result));
       this.viewModel = vm;
       await vm.loadDraft();
-      // 加载 Provider 配置列表
-      try {
-        this.providerConfigs = await modelService.listConfigs();
-      } catch (e) {
-        Logger.warn(LOG_TAG, 'listConfigs failed: ' + String(e));
-        this.providerConfigs = [];
-      }
       this.isInitializing = false;
     } catch (e) {
       this.isInitializing = false;
@@ -196,24 +183,6 @@ struct AiCharacterMakerPage {
       clearTimeout(this.draftTimerId);
       this.draftTimerId = -1;
     }
-  }
-
-  /** 选择 Provider 配置 */
-  private selectProviderConfig(id: string): void {
-    if (this.viewModel === null) {
-      return;
-    }
-    this.viewModel!.configId = id;
-    this.scheduleDraftSave();
-  }
-
-  /** 切换"跟随当前模型" */
-  private toggleUseCurrentModel(value: boolean): void {
-    if (this.viewModel === null) {
-      return;
-    }
-    this.viewModel!.useCurrentModel = value;
-    this.scheduleDraftSave();
   }
 
   /** 切换"生成世界书" */
@@ -498,32 +467,6 @@ struct AiCharacterMakerPage {
           top: $r('app.float.app_spacing_12')
         })
 
-        // ===== 卡片 4:模型选择 =====
-        Column() {
-          this.cardHeader('模型选择', false, '使用你已配置的 Provider 与 API Key')
-          this.toggleRow('跟随当前模型', '使用当前聊天配置的模型',
-            this.viewModel !== null ? this.viewModel!.useCurrentModel : true,
-            (v: boolean) => this.toggleUseCurrentModel(v))
-
-          if (this.viewModel !== null && !this.viewModel!.useCurrentModel) {
-            Divider()
-              .color($r('app.color.app_divider'))
-              .strokeWidth(0.5)
-              .width('100%')
-              .margin({ top: $r('app.float.app_spacing_8'), bottom: $r('app.float.app_spacing_4') })
-            this.providerListSelector()
-          }
-        }
-        .width('100%')
-        .padding($r('app.float.app_spacing_16'))
-        .backgroundColor($r('app.color.app_surface_1'))
-        .borderRadius($r('app.float.app_radius_lg'))
-        .margin({
-          left: $r('app.float.app_spacing_12'),
-          right: $r('app.float.app_spacing_12'),
-          top: $r('app.float.app_spacing_12')
-        })
-
         // ===== 错误提示 =====
         if (this.viewModel !== null && this.viewModel!.errorMessage.length > 0) {
           Text(this.viewModel!.errorMessage)
@@ -664,7 +607,7 @@ struct AiCharacterMakerPage {
             .textAlign(TextAlign.Center)
             .margin({ bottom: 12 })
 
-          Text('你的角色创意将发送到当前选择的模型服务,由该服务生成角色卡。\n\n请确保你已正确配置 Provider 与 API Key。ArkTavern 不会记录你的 API Key、完整创意内容或完整模型响应。')
+          Text('你的角色创意将发送到当前聊天配置的 AI 模型,由该模型生成角色卡草案。\n\n请确保你已在模型设置中配置好 Provider 与 API Key。ArkTavern 不会记录你的 API Key、完整创意内容或完整模型响应。')
             .fontSize(14)
             .fontColor($r('app.color.app_text_secondary'))
             .width('100%')
@@ -793,59 +736,6 @@ struct AiCharacterMakerPage {
       bottom: $r('app.float.app_spacing_8')
     })
     .alignItems(VerticalAlign.Center)
-  }
-
-  @Builder
-  providerListSelector() {
-    Column() {
-      if (this.providerConfigs.length === 0) {
-        Text('未配置任何 Provider,请先在"模型设置"中添加')
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
-          .width('100%')
-          .padding({
-            top: $r('app.float.app_spacing_8'),
-            bottom: $r('app.float.app_spacing_8')
-          })
-      } else {
-        ForEach(this.providerConfigs, (cfg: ProviderConfig) => {
-          Row() {
-            Column() {
-              Text(cfg.name.length > 0 ? cfg.name : '(未命名)')
-                .fontSize($r('app.float.app_font_body'))
-                .fontColor($r('app.color.app_text_primary'))
-              Text(cfg.modelName + ' · ' + cfg.type)
-                .fontSize($r('app.float.app_font_caption'))
-                .fontColor($r('app.color.app_text_tertiary'))
-                .margin({ top: 2 })
-            }
-            .alignItems(HorizontalAlign.Start)
-            .layoutWeight(1)
-
-            Text(this.viewModel !== null && this.viewModel!.configId === cfg.id ? '✓' : '')
-              .fontSize($r('app.float.app_font_body'))
-              .fontColor($r('app.color.app_accent'))
-          }
-          .width('100%')
-          .padding({
-            left: $r('app.float.app_spacing_12'),
-            right: $r('app.float.app_spacing_12'),
-            top: $r('app.float.app_spacing_12'),
-            bottom: $r('app.float.app_spacing_12')
-          })
-          .backgroundColor($r('app.color.app_surface_2'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .margin({
-            top: $r('app.float.app_spacing_4'),
-            bottom: $r('app.float.app_spacing_4')
-          })
-          .onClick(() => {
-            this.selectProviderConfig(cfg.id);
-          })
-        })
-      }
-    }
-    .width('100%')
   }
 
   // ===== 加载视图 =====

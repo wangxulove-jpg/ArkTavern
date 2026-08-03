@@ -46,6 +46,10 @@ struct AiCharacterPreviewPage {
   @State isInitializing: boolean = true;
   /** 是否展开原始 JSON */
   @State showRawJson: boolean = false;
+  /** 是否显示"重新生成整张卡"覆盖确认对话框 */
+  @State showRegenerateConfirm: boolean = false;
+  /** 是否显示"同名角色已存在"确认对话框 */
+  @State showDuplicateNameConfirm: boolean = false;
   /** 顶部状态栏避让高度 */
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   /** 底部导航栏/手势条避让高度 */
@@ -104,8 +108,27 @@ struct AiCharacterPreviewPage {
     }
   }
 
-  /** 保存角色 */
+  /** 保存角色:先检查同名,再决定是否弹出确认 */
   private async onSaveClick(): Promise<void> {
+    if (this.viewModel === null) {
+      return;
+    }
+    // 名称非空校验
+    if (this.viewModel!.name.trim().length === 0) {
+      promptAction.showToast({ message: '请输入角色名称', duration: 2000 });
+      return;
+    }
+    // 同名检查
+    const dup: boolean = await this.viewModel!.hasDuplicateName();
+    if (dup) {
+      this.showDuplicateNameConfirm = true;
+      return;
+    }
+    this.performSave();
+  }
+
+  /** 实际执行保存 */
+  private async performSave(): Promise<void> {
     if (this.viewModel === null) {
       return;
     }
@@ -122,6 +145,17 @@ struct AiCharacterPreviewPage {
     }
   }
 
+  /** 同名确认对话框:仍然保存 */
+  private confirmDuplicateNameSave(): void {
+    this.showDuplicateNameConfirm = false;
+    this.performSave();
+  }
+
+  /** 同名确认对话框:取消 */
+  private cancelDuplicateNameSave(): void {
+    this.showDuplicateNameConfirm = false;
+  }
+
   /** 放弃 */
   private onDiscardClick(): void {
     // 清理 AppStorage 槽位
@@ -132,13 +166,24 @@ struct AiCharacterPreviewPage {
     router.back();
   }
 
-  /** 重新生成整张卡:回退到 Maker 页面 */
+  /** 重新生成整张卡:先弹覆盖确认,确认后回退到 Maker 页面 */
   private onRegenerateFullClick(): void {
+    this.showRegenerateConfirm = true;
+  }
+
+  /** 确认重新生成:清理草案并回退 */
+  private confirmRegenerateFull(): void {
+    this.showRegenerateConfirm = false;
     // 清理 pendingAiCard,但保留 pendingAiInput(Maker 页面会自动加载草稿)
     if (this.viewModel !== null) {
       AppStorage.setOrCreate('pendingAiCard', null);
     }
     router.back({ url: 'pages/AiCharacterMakerPage' });
+  }
+
+  /** 取消重新生成 */
+  private cancelRegenerateFull(): void {
+    this.showRegenerateConfirm = false;
   }
 
   /** 重新生成单字段 */
@@ -277,6 +322,16 @@ struct AiCharacterPreviewPage {
       if (this.viewModel !== null
         && this.viewModel!.fieldRegenState === FieldRegenState.Regenerating) {
         this.fieldRegenOverlay()
+      }
+
+      // 重新生成整张卡覆盖确认
+      if (this.showRegenerateConfirm) {
+        this.regenerateConfirmDialog()
+      }
+
+      // 同名角色确认
+      if (this.showDuplicateNameConfirm) {
+        this.duplicateNameConfirmDialog()
       }
     }
     .width('100%')
@@ -729,6 +784,114 @@ struct AiCharacterPreviewPage {
       }
       .justifyContent(FlexAlign.Center)
       .alignItems(HorizontalAlign.Center)
+      .width('80%')
+      .padding(24)
+      .backgroundColor($r('app.color.app_surface_1'))
+      .borderRadius($r('app.float.app_radius_lg'))
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor('rgba(0,0,0,0.5)')
+  }
+
+  // ===== 重新生成整张卡确认对话框 =====
+
+  @Builder
+  regenerateConfirmDialog() {
+    Stack() {
+      Column() {
+        Text('重新生成会替换当前草案')
+          .fontSize(17)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.app_text_primary'))
+          .width('100%')
+          .textAlign(TextAlign.Center)
+          .margin({ bottom: 12 })
+
+        Text('当前已编辑的角色草案将被丢弃,返回输入页重新生成。是否继续?')
+          .fontSize(14)
+          .fontColor($r('app.color.app_text_secondary'))
+          .width('100%')
+          .margin({ bottom: 20 })
+
+        Row() {
+          Button('取消')
+            .fontSize(14)
+            .backgroundColor(Color.Transparent)
+            .fontColor($r('app.color.app_text_secondary'))
+            .height(40)
+            .layoutWeight(1)
+            .onClick(() => {
+              this.cancelRegenerateFull();
+            })
+
+          Button('继续')
+            .fontSize(14)
+            .backgroundColor($r('app.color.app_accent'))
+            .fontColor($r('app.color.app_on_accent'))
+            .height(40)
+            .layoutWeight(1)
+            .margin({ left: 12 })
+            .onClick(() => {
+              this.confirmRegenerateFull();
+            })
+        }
+        .width('100%')
+      }
+      .width('80%')
+      .padding(24)
+      .backgroundColor($r('app.color.app_surface_1'))
+      .borderRadius($r('app.float.app_radius_lg'))
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor('rgba(0,0,0,0.5)')
+  }
+
+  // ===== 同名角色确认对话框 =====
+
+  @Builder
+  duplicateNameConfirmDialog() {
+    Stack() {
+      Column() {
+        Text('已存在同名角色')
+          .fontSize(17)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.app_text_primary'))
+          .width('100%')
+          .textAlign(TextAlign.Center)
+          .margin({ bottom: 12 })
+
+        Text('已存在同名角色,继续保存将创建独立的新角色,不会覆盖原有角色。是否继续保存?')
+          .fontSize(14)
+          .fontColor($r('app.color.app_text_secondary'))
+          .width('100%')
+          .margin({ bottom: 20 })
+
+        Row() {
+          Button('取消')
+            .fontSize(14)
+            .backgroundColor(Color.Transparent)
+            .fontColor($r('app.color.app_text_secondary'))
+            .height(40)
+            .layoutWeight(1)
+            .onClick(() => {
+              this.cancelDuplicateNameSave();
+            })
+
+          Button('仍然保存')
+            .fontSize(14)
+            .backgroundColor($r('app.color.app_accent'))
+            .fontColor($r('app.color.app_on_accent'))
+            .height(40)
+            .layoutWeight(1)
+            .margin({ left: 12 })
+            .onClick(() => {
+              this.confirmDuplicateNameSave();
+            })
+        }
+        .width('100%')
+      }
       .width('80%')
       .padding(24)
       .backgroundColor($r('app.color.app_surface_1'))

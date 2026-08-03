@@ -91,9 +91,9 @@ export class AiCharacterMakerViewModel {
   generateMesExample: boolean = true;
 
   // ===== 模型选择 =====
-  /** true=跟随当前模型;false=使用指定 configId */
+  /** 始终为 true:跟随当前模型(G-AI-BUILDER-2 起不在页面暴露模型/Provider 选择) */
   useCurrentModel: boolean = true;
-  /** 指定 ProviderConfig ID(useCurrentModel=false 时使用) */
+  /** 已废弃:保留字段以兼容旧草稿,不再使用 */
   configId: string = '';
 
   // ===== 生成状态 =====
@@ -134,8 +134,8 @@ export class AiCharacterMakerViewModel {
       this.generateCharacterBook = await this.prefs.getBoolean(KEY_DRAFT_BOOK, false);
       this.generateMultipleGreetings = await this.prefs.getBoolean(KEY_DRAFT_GREETINGS, false);
       this.generateMesExample = await this.prefs.getBoolean(KEY_DRAFT_MES_EXAMPLE, true);
-      this.useCurrentModel = await this.prefs.getBoolean(KEY_DRAFT_USE_CURRENT, true);
-      this.configId = await this.prefs.getString(KEY_DRAFT_CONFIG_ID, '');
+      this.useCurrentModel = true;
+      this.configId = '';
     } catch (e) {
       Logger.warn(LOG_TAG, 'loadDraft failed: ' + String(e));
     }

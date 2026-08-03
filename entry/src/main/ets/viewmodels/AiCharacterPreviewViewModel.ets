@@ -201,8 +201,32 @@ export class AiCharacterPreviewViewModel {
   // ===== 保存 =====
 
   /**
+   * 检查是否存在同名角色(trim 后精确匹配)。
+   * 同名不是绝对禁止,由调用方决定是否提示用户。
+   */
+  async hasDuplicateName(): Promise<boolean> {
+    try {
+      const trimmedName: string = this.name.trim();
+      if (trimmedName.length === 0) {
+        return false;
+      }
+      const all: Character[] = await this.characterService.list();
+      for (let i: number = 0; i < all.length; i++) {
+        if (all[i].name.trim() === trimmedName) {
+          return true;
+        }
+      }
+      return false;
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'hasDuplicateName failed: ' + String(e));
+      return false;
+    }
+  }
+
+  /**
    * 保存为本地角色。
    * 复用 CharacterService.importFromParsed,自动处理 character_book。
+   * 同名角色不会覆盖:importFromParsed 内部生成独立 UUID。
    */
   async save(): Promise<boolean> {
     if (this.parsedCard === null) {
