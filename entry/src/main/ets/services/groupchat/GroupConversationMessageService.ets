@@ -95,7 +95,7 @@ export class GroupConversationMessageService {
   }
 
   /**
-   * 追加用户消息(事务)。
+   * 追加用户消息(G-CONTROL-1 扩展支持 recipientCharacterIds)。
    *
    * 验证:
    * - chatId 对应的 Chat 存在
@@ -105,15 +105,28 @@ export class GroupConversationMessageService {
    * 事务内:
    * - 计算 next sequenceNumber = max + 1
    * - 插入 Message(role=User, status=Completed, senderType='user',
-   *   senderCharacterId=null, generationBatchId=传入的批次 ID)
+   *   senderCharacterId=null, generationBatchId=传入的批次 ID,
+   *   visibility='public')
+   * - G-CONTROL-1: 若 recipientCharacterIds 非空,直接更新
+   *   recipient_character_ids_json 列(复用 JSON.stringify 序列化)。
+   *   MessageRepository 现有校验禁止 public+recipients 组合,
+   *   因此先以 public+空 recipients 插入(通过校验),
+   *   再在同一事务内直接 store.update 写入 recipient_character_ids_json。
+   *   读取时 MessageRepository.messageFromRow 已支持解析该字段。
    * - 更新 Chat.lastMessageAt 和 updatedAt
    *
-   * @returns 写入的 ChatMessage(含分配的 id)
+   * @param chatId 群聊 ID
+   * @param content 消息正文
+   * @param generationBatchId 本轮 ID
+   * @param recipientCharacterIds G-CONTROL-1 单角色回复目标 ID 列表
+   *   (全员回复传空数组或不传;单角色回复传 [characterId])
+   * @returns 写入的 ChatMessage(含分配的 id 和 recipientCharacterIds)
    */
   async appendUserMessage(
     chatId: string,
     content: string,
-    generationBatchId: string
+    generationBatchId: string,
+    recipientCharacterIds?: string[]
   ): Promise<ChatMessage> {
     if (chatId === '') {
       throw DatabaseError.invalidData('chatId empty');
@@ -134,8 +147,17 @@ export class GroupConversationMessageService {
       throw DatabaseError.invalidData('chat is not group mode');
     }
 
+    // G-CONTROL-1: 规范化 recipientCharacterIds
+    // - 全员回复:空数组(不写入全部成员 ID)
+    // - 单角色回复:仅一个 characterId
+    const normalizedRecipients: string[] =
+      recipientCharacterIds !== undefined ? [...recipientCharacterIds] : [];
+
     const now: number = nowMillis();
     const messageId: string = generateUuid();
+    // G-CONTROL-1: 插入时 recipientCharacterIds 始终为 undefined,
+    // 以通过 MessageRepository 的 public+recipients 校验。
+    // 单角色目标由 directUpdateRecipientIds 在事务内直接更新字段绕过校验。
     const message: ChatMessage = {
       id: messageId,
       role: ChatRole.User,
@@ -147,7 +169,8 @@ export class GroupConversationMessageService {
       senderType: 'user' as MessageSenderType,
       senderCharacterId: undefined,
       generationBatchId: generationBatchId,
-      visibility: 'public' as MessageVisibility
+      visibility: 'public' as MessageVisibility,
+      recipientCharacterIds: undefined
     };
 
     const maxSeq: number = await this.messageRepository.getMaxSequenceNumber(chatId);
@@ -156,7 +179,12 @@ export class GroupConversationMessageService {
     try {
       await this.dbHelper.runInTransaction(
         async (store: relationalStore.RdbStore): Promise<void> => {
+          // 先以 public+空 recipients 插入(通过 MessageRepository 校验)
           await this.messageRepository.insertWithStore(store, message, chatId, nextSeq);
+          // G-CONTROL-1: 同事务内直接更新 recipient_character_ids_json
+          if (normalizedRecipients.length > 0) {
+            await this.directUpdateRecipientIds(store, messageId, normalizedRecipients);
+          }
           await this.chatRepository.updateLastMessageAtWithStore(store, chatId, now, now);
         },
         'group_message_append_user'
@@ -169,6 +197,28 @@ export class GroupConversationMessageService {
       throw DatabaseError.transactionFailed('appendUserMessage');
     }
     return message;
+  }
+
+  /**
+   * G-CONTROL-1: 直接通过 RDB store 更新 recipient_character_ids_json。
+   *
+   * 复用现有 JSON.stringify 序列化格式(与 MessageRepository.buildValidatedMessageBucket 一致)。
+   * 读取时 MessageRepository.messageFromRow 已支持解析。
+   *
+   * 用途:绕过 MessageRepository 现有 public+recipients 校验,
+   * 实现 G-CONTROL-1 单角色回复目标持久化(visibility=public + recipientCharacterIds)。
+   */
+  private async directUpdateRecipientIds(
+    store: relationalStore.RdbStore,
+    messageId: string,
+    recipientCharacterIds: string[]
+  ): Promise<void> {
+    const bucket: relationalStore.ValuesBucket = {};
+    bucket['recipient_character_ids_json'] = JSON.stringify(recipientCharacterIds);
+    const predicates: relationalStore.RdbPredicates =
+      new relationalStore.RdbPredicates('messages');
+    predicates.equalTo('id', messageId);
+    await store.update(bucket, predicates);
   }
 
   /**

@@ -1,5 +1,5 @@
 /**
- * GroupRoundTypes 多人聊天轮次运行时类型(G-RUNTIME-1A / G-RUNTIME-1B / G-RUNTIME-1C)
+ * GroupRoundTypes 多人聊天轮次运行时类型(G-RUNTIME-1A / G-RUNTIME-1B / G-RUNTIME-1C / G-CONTROL-1)
  *
  * 职责:
  * - 定义多人聊天一轮回复所需的纯运行时类型
@@ -24,6 +24,12 @@
  * - 重试不进入新一轮次,但复用原 roundId / generationBatchId
  * - 重试创建新 operationId / assistantMessageId / ChatStreamHandle
  * - 重试只生成一次,不自动继续后续角色
+ *
+ * G-CONTROL-1:
+ * - 新增 GroupReplyTargetMode / GroupReplyTarget:指定单角色回复
+ * - GroupRoundPlan 新增 replyTarget 字段
+ * - AllEnabled:全部启用成员按顺序回复(默认)
+ * - SingleCharacter:仅指定角色回复(speakers 只含目标)
  */
 
 /**
@@ -58,10 +64,49 @@ export interface GroupRoundSpeaker {
 }
 
 /**
+ * 回复目标模式(G-CONTROL-1)。
+ *
+ * - AllEnabled:所有启用且有效成员按 speakerOrder 依次回复(默认)
+ * - SingleCharacter:仅由用户指定的一个角色回复
+ */
+export enum GroupReplyTargetMode {
+  AllEnabled = 'all_enabled',
+  SingleCharacter = 'single_character'
+}
+
+/**
+ * 回复目标(G-CONTROL-1)。
+ *
+ * 运行时始终使用 characterId,角色名称只用于 UI 显示。
+ * SingleCharacter 模式下 characterId 必须非空。
+ */
+export interface GroupReplyTarget {
+  readonly mode: GroupReplyTargetMode;
+  /** SingleCharacter 模式下的目标角色 ID;AllEnabled 模式为空 */
+  readonly characterId?: string;
+}
+
+/** 默认全员回复目标 */
+export const REPLY_TARGET_ALL_ENABLED: GroupReplyTarget = {
+  mode: GroupReplyTargetMode.AllEnabled
+};
+
+/**
+ * 构造单角色回复目标。
+ */
+export function singleCharacterReplyTarget(characterId: string): GroupReplyTarget {
+  return { mode: GroupReplyTargetMode.SingleCharacter, characterId: characterId };
+}
+
+/**
  * 轮次计划(Ready 状态的不可变快照)。
  *
  * 一旦建立,本轮期间成员顺序与集合不变。
  * 后续修改群聊成员只影响下一轮。
+ *
+ * G-CONTROL-1:
+ * - replyTarget 记录本轮回复目标模式
+ * - SingleCharacter 模式下 speakers 只含目标角色
  */
 export interface GroupRoundPlan {
   /** 操作 ID(用于使旧轮次失效) */
@@ -76,6 +121,8 @@ export interface GroupRoundPlan {
   readonly speakers: GroupRoundSpeaker[];
   /** 计划建立时间(毫秒) */
   readonly createdAt: number;
+  /** G-CONTROL-1: 回复目标(AllEnabled 或 SingleCharacter) */
+  readonly replyTarget: GroupReplyTarget;
 }
 
 /**
@@ -120,7 +167,15 @@ export enum GroupRoundPlanErrorKind {
   /** 当前已有活动轮次 */
   ActiveRoundExists = 'active_round_exists',
   /** 内部错误 */
-  Internal = 'internal'
+  Internal = 'internal',
+  /** G-CONTROL-1: 目标角色不存在(已删除) */
+  TargetCharacterNotFound = 'target_character_not_found',
+  /** G-CONTROL-1: 目标角色已不属于当前群聊 */
+  TargetCharacterNotInChat = 'target_character_not_in_chat',
+  /** G-CONTROL-1: 目标角色已停用 */
+  TargetCharacterNotEnabled = 'target_character_not_enabled',
+  /** G-CONTROL-1: 单角色回复目标 ID 为空 */
+  TargetCharacterIdEmpty = 'target_character_id_empty'
 }
 
 /**

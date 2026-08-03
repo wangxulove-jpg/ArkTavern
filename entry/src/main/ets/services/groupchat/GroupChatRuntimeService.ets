@@ -53,7 +53,9 @@ import {
   ActiveGroupRoundContext,
   GroupSpeakerRetryContext,
   GroupSpeakerRetryError,
-  GroupSpeakerRetryErrorKind
+  GroupSpeakerRetryErrorKind,
+  GroupReplyTarget,
+  REPLY_TARGET_ALL_ENABLED
 } from './GroupRoundTypes';
 import { GroupRuntimeRegistry } from './GroupRuntimeRegistry';
 import { EffectiveGenerationSettings } from '../PromptPresetRuntimeResolver';
@@ -623,6 +625,8 @@ export class GroupChatRuntimeService {
     // 9. G-RUNTIME-1C: 构建单角色 plan(用于 executeSpeaker 复用)
     // speakers 必须包含全部启用参与者,确保 Prompt 构建器获取所有参与者名称(角色隔离)。
     // activeCtx.currentSpeakerIndex/currentSpeakerCharacterId 指向当前重试角色。
+    // G-CONTROL-1: replyTarget 使用 AllEnabled(重试不改变原轮次目标语义,
+    //   原始 @角色 指令已保留在消息历史正文中,约束指令仍要求只以当前角色身份回应)
     const allParticipantIds: string[] =
       await this.roundCoordinator.listEnabledParticipantCharacterIds(expectedChatId);
     const allSpeakers: GroupRoundSpeaker[] = allParticipantIds.map(
@@ -636,7 +640,8 @@ export class GroupChatRuntimeService {
       chatId: activeCtx.chatId,
       userMessageId: '',
       speakers: allSpeakers,
-      createdAt: activeCtx.operationId
+      createdAt: activeCtx.operationId,
+      replyTarget: REPLY_TARGET_ALL_ENABLED
     };
 
     callbacks.onRoundStateChanged(GroupRoundState.Generating);
@@ -818,7 +823,9 @@ export class GroupChatRuntimeService {
         roundId: ctx.roundId,
         speakerCharacterId: speakerCharacterId,
         participantCharacterIds: participantCharacterIds,
-        messages: history
+        messages: history,
+        // G-CONTROL-1: 传递本轮回复目标,单角色模式会注入指定角色指令
+        replyTarget: plan.replyTarget
       });
     } catch (e) {
       Logger.error(LOG_TAG, 'assemble prompt failed: ' + String(e));

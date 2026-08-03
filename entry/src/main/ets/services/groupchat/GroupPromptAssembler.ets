@@ -60,6 +60,11 @@ import {
 } from '../PromptPresetRuntimeResolver';
 import { Logger } from '../../utils/Logger';
 import { nowMillis } from '../../utils/Time';
+import {
+  GroupReplyTarget,
+  GroupReplyTargetMode,
+  REPLY_TARGET_ALL_ENABLED
+} from './GroupRoundTypes';
 
 const LOG_TAG: string = 'GroupPromptAssembler';
 
@@ -68,6 +73,11 @@ const DEFAULT_CONTEXT_WINDOW: number = 8192;
 
 /**
  * 群聊 Prompt 构建上下文。
+ *
+ * G-CONTROL-1:
+ * - replyTarget:本轮回复目标(AllEnabled 或 SingleCharacter)
+ *   SingleCharacter 模式下,约束指令会明确告知当前角色
+ *   "本轮由用户指定你回复",避免替其他角色回答
  */
 export interface GroupPromptAssemblyContext {
   /** 群聊 ID */
@@ -80,6 +90,8 @@ export interface GroupPromptAssemblyContext {
   readonly participantCharacterIds: string[];
   /** 完整公开消息历史(从数据库读取,按 sequenceNumber ASC) */
   readonly messages: ChatMessage[];
+  /** G-CONTROL-1: 回复目标(默认全员) */
+  readonly replyTarget?: GroupReplyTarget;
 }
 
 /**
@@ -255,9 +267,12 @@ export class GroupPromptAssembler {
     const buildResult: PromptBuildResult = this.promptBuilder.build(buildContext);
 
     // 9. 追加群聊约束 System 消息
+    const replyTarget: GroupReplyTarget = context.replyTarget !== undefined
+      ? context.replyTarget : REPLY_TARGET_ALL_ENABLED;
     const groupConstraint: string = this.buildGroupConstraint(
       speaker.name,
-      participantNames
+      participantNames,
+      replyTarget
     );
     const messagesWithConstraint: ChatMessage[] = this.injectGroupConstraint(
       buildResult.messages,
@@ -397,10 +412,16 @@ export class GroupPromptAssembler {
 
   /**
    * 构建群聊约束 System 消息。
+   *
+   * G-CONTROL-1:
+   * - SingleCharacter 模式下追加"本轮由用户指定你回复"指令,
+   *   明确告知当前角色只以自己身份回应,不替其他角色回答。
+   * - AllEnabled 模式保持原有约束。
    */
   private buildGroupConstraint(
     speakerName: string,
-    participantNames: string[]
+    participantNames: string[],
+    replyTarget: GroupReplyTarget
   ): string {
     const participantList: string = participantNames.join('、');
     const lines: string[] = [
@@ -416,6 +437,13 @@ export class GroupPromptAssembler {
       '不要说明自己是 AI。',
       '根据当前可见聊天历史自然回应。'
     ];
+    // G-CONTROL-1: 单角色回复模式追加指定指令
+    if (replyTarget.mode === GroupReplyTargetMode.SingleCharacter) {
+      lines.push('');
+      lines.push('本轮由用户指定你回复。');
+      lines.push('只以你的角色身份回应。');
+      lines.push('不要替其他角色回答。');
+    }
     return lines.join('\n');
   }
 

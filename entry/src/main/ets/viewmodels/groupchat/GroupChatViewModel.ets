@@ -57,7 +57,11 @@ import {
   GroupRoundPlanError,
   GroupRoundPlanErrorKind,
   GroupSpeakerRetryError,
-  GroupSpeakerRetryErrorKind
+  GroupSpeakerRetryErrorKind,
+  GroupReplyTarget,
+  GroupReplyTargetMode,
+  REPLY_TARGET_ALL_ENABLED,
+  singleCharacterReplyTarget
 } from '../../services/groupchat/GroupRoundTypes';
 import {
   GroupChatRuntimeService,
@@ -129,6 +133,27 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
   memberRuntimeStates: GroupMemberRuntimeUiModel[] = [];
 
   /**
+   * G-CONTROL-1: 当前输入草稿的回复目标。
+   *
+   * 规则:
+   * - 进入群聊:默认 AllEnabled
+   * - 发送成功:重置为 AllEnabled
+   * - 发送失败:保留目标选择
+   * - 用户主动取消:恢复 AllEnabled
+   * - 切换群聊:清空旧群聊目标(load 时重置)
+   * - 不跨群聊共享
+   */
+  selectedReplyTarget: GroupReplyTarget = REPLY_TARGET_ALL_ENABLED;
+  /** G-CONTROL-1: 目标角色显示名称(用于 Chip 显示) */
+  selectedReplyTargetName: string = '';
+  /** G-CONTROL-1: @选择器可见性 */
+  isMentionPickerVisible: boolean = false;
+  /** G-CONTROL-1: @选择器过滤文本(@ 后输入的文字) */
+  mentionQuery: string = '';
+  /** G-CONTROL-1: @选择器候选成员(已启用且存在的成员) */
+  mentionCandidates: GroupMemberUiModel[] = [];
+
+  /**
    * UI 状态同步回调(G-RUNTIME-1C-FIX)。
    *
    * ArkUI 中 @State 持有 @Observed 对象时,ForEach 对内部数组属性变化的
@@ -165,6 +190,15 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
   async load(chatId: string): Promise<void> {
     if (this.disposed) {
       return;
+    }
+    // G-CONTROL-1: 切换群聊时清空旧群聊的草稿目标(不跨群聊共享)
+    // 同一群聊重新加载(如重命名后)保留草稿目标
+    if (this.chatId !== chatId) {
+      this.selectedReplyTarget = REPLY_TARGET_ALL_ENABLED;
+      this.selectedReplyTargetName = '';
+      this.isMentionPickerVisible = false;
+      this.mentionQuery = '';
+      this.mentionCandidates = [];
     }
     this.chatId = chatId;
     this.state = GroupChatDetailState.Loading;
@@ -258,35 +292,54 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
    *
    * 链路:
    *   防止重复点击(isSending)
+   *   → G-CONTROL-1: 校验 selectedReplyTarget,构建 recipientCharacterIds
    *   → 创建 generationBatchId
-   *   → appendUserMessage(事务)
-   *   → 追加到 messages 列表
-   *   → prepareRound(建立本轮快照)
+   *   → appendUserMessage(事务,携带 recipientCharacterIds)
+   *   → 追加到 messages 列表(含 replyTarget 标签)
+   *   → prepareRound(建立本轮快照,携带 replyTarget)
    *   → startRound(严格顺序流式生成)
    *   → 清空输入框
+   *   → G-CONTROL-1: 发送成功后重置 selectedReplyTarget 为 AllEnabled
    *
    * 失败处理:
-   *   - 消息写入失败:保留 inputText,显示错误,不创建轮次
+   *   - 目标校验失败:不写入消息,保留 inputText 和目标选择,显示错误
+   *   - 消息写入失败:保留 inputText,保留目标选择,显示错误,不创建轮次
    *   - 轮次规划失败:消息已写入,保留消息,显示"无法开始本轮",
-   *     不回滚已发送消息
+   *     不回滚已发送消息(目标选择已重置)
    *   - 生成失败:由 onError 回调处理,设置 roundErrorMessage
    */
   async sendUserMessage(content: string): Promise<void> {
+    Logger.info(LOG_TAG, 'sendUserMessage start disposed=' + String(this.disposed)
+      + ' isSending=' + String(this.isSending)
+      + ' isGenerating=' + String(this.isGenerating));
     if (this.disposed || this.isSending || this.isGenerating) {
+      Logger.warn(LOG_TAG, 'sendUserMessage skip: busy/disposed');
       return;
     }
     const trimmed: string = content.trim();
     if (trimmed.length === 0) {
+      Logger.warn(LOG_TAG, 'sendUserMessage skip: content empty');
       return;
     }
     if (this.chatId.length === 0) {
+      Logger.warn(LOG_TAG, 'sendUserMessage skip: chatId empty');
       return;
     }
     // G-RUNTIME-1D: 跨群聊隔离检查
-    // 如果另一个群聊正在运行,拒绝发送新一轮,显示提示。
-    // runtimeService.startRound 内部还有 acquire 二次校验作为安全网。
     if (this.runtimeService.isAnotherChatRunning(this.chatId)) {
+      Logger.warn(LOG_TAG, 'sendUserMessage skip: another chat running');
       this.errorMessage = '另一个多人聊天正在回复,请先结束当前回复';
+      return;
+    }
+    // G-CONTROL-1: 发送前再次校验目标角色状态(可能已被停用/移除/删除)
+    const replyTarget: GroupReplyTarget = this.selectedReplyTarget;
+    const recipientIds: string[] = this.validateAndBuildRecipients(replyTarget);
+    Logger.info(LOG_TAG, 'sendUserMessage targetMode=' + replyTarget.mode
+      + ' recipients=' + String(recipientIds.length));
+    if (recipientIds.length === 0 && replyTarget.mode === GroupReplyTargetMode.SingleCharacter) {
+      // 校验失败,errorMessage 已在 validateAndBuildRecipients 中设置
+      // 保留 inputText 和目标选择,不发送
+      Logger.warn(LOG_TAG, 'sendUserMessage skip: recipient validation failed');
       return;
     }
     this.isSending = true;
@@ -301,12 +354,20 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
     let preparedPlan: GroupRoundPlan | null = null;
     try {
       const written: ChatMessage = await this.messageService.appendUserMessage(
-        this.chatId, trimmed, roundId
+        this.chatId, trimmed, roundId, recipientIds
       );
       if (this.disposed || opId !== this.loadOperationId) {
         return;
       }
-      // 追加到消息列表(用户消息)
+      // G-CONTROL-1: 解析目标角色名称(用于 UI 标签)
+      let replyTargetName: string = '';
+      let replyTargetCharacterId: string | undefined = undefined;
+      if (replyTarget.mode === GroupReplyTargetMode.SingleCharacter
+        && replyTarget.characterId !== undefined) {
+        replyTargetCharacterId = replyTarget.characterId;
+        replyTargetName = this.findMemberNameById(replyTarget.characterId);
+      }
+      // 追加到消息列表(用户消息,含目标标签)
       const uiMsg: GroupMessageUiModel = {
         id: written.id,
         role: written.role,
@@ -319,7 +380,9 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
         generationBatchId: written.generationBatchId,
         sequenceNumber: 0,
         createdAt: written.createdAt,
-        updatedAt: written.updatedAt !== undefined ? written.updatedAt : written.createdAt
+        updatedAt: written.updatedAt !== undefined ? written.updatedAt : written.createdAt,
+        replyTargetCharacterId: replyTargetCharacterId,
+        replyTargetName: replyTargetName
       };
       this.messages = this.messages.concat([uiMsg]);
       this.notifyMessagesUpdate();
@@ -328,17 +391,22 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
       }
       // 清空输入框(消息成功写入后)
       this.inputText = '';
+      // G-CONTROL-1: 发送成功后重置目标选择(用户消息已写入,目标已记录)
+      // 失败时(prepareRound/startRound 失败)不恢复目标,因为消息已发送
+      this.selectedReplyTarget = REPLY_TARGET_ALL_ENABLED;
+      this.selectedReplyTargetName = '';
 
-      // 建立本轮计划
+      // 建立本轮计划(G-CONTROL-1: 携带 replyTarget)
       try {
         preparedPlan = await this.roundCoordinator.prepareRound(
-          this.chatId, written.id, roundId
+          this.chatId, written.id, roundId, replyTarget
         );
         if (this.disposed || opId !== this.loadOperationId) {
           return;
         }
         this.lastPreparedRound = preparedPlan;
-        Logger.info(LOG_TAG, 'round prepared speakers=' + String(preparedPlan.speakers.length));
+        Logger.info(LOG_TAG, 'round prepared speakers=' + String(preparedPlan.speakers.length)
+          + ' mode=' + replyTarget.mode);
       } catch (planErr) {
         // 轮次规划失败:消息已写入,不回滚
         if (planErr instanceof GroupRoundPlanError) {
@@ -374,6 +442,7 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
     } catch (e) {
       Logger.error(LOG_TAG, 'sendUserMessage failed: ' + String(e));
       // 消息写入失败:保留 inputText,显示错误
+      // G-CONTROL-1: 保留 selectedReplyTarget(发送失败时目标选择不重置)
       this.errorMessage = '发送失败';
     } finally {
       this.isSending = false;
@@ -713,7 +782,10 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
           generationBatchId: m.generationBatchId,
           sequenceNumber: m.sequenceNumber,
           createdAt: m.createdAt,
-          updatedAt: m.updatedAt
+          updatedAt: m.updatedAt,
+          // G-CONTROL-1: 保留用户消息目标标签(更新时不应丢失)
+          replyTargetCharacterId: m.replyTargetCharacterId,
+          replyTargetName: m.replyTargetName
         });
       } else {
         newMessages.push(m);
@@ -779,12 +851,18 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
    *
    * 规则:
    * - 未生成或整轮结束:所有成员 Idle
-   * - 生成中:
+   * - 生成中(全员轮次):
    *   - speakerIndex < currentSpeakerIndex:Completed
    *   - speakerIndex === currentSpeakerIndex:Generating
    *   - speakerIndex > currentSpeakerIndex:Waiting
-   * - Cancelled:当前角色 Cancelled,后续 Waiting
-   * - Failed:当前角色 Failed,后续 Waiting
+   * - 生成中(单角色轮次):
+   *   - 目标角色:Generating/Completed(根据 currentSpeakerIndex)
+   *   - 非目标启用成员:NotParticipating(本轮不参与)
+   * - Cancelled:当前角色 Cancelled,后续 Idle
+   * - Failed:当前角色 Failed,后续 Idle
+   *
+   * G-CONTROL-1: 单角色轮次时,非目标启用成员显示 NotParticipating,
+   * 避免被误认为"等待回复"。
    */
   private refreshMemberRuntimeStates(): void {
     if (this.detail === null) {
@@ -800,14 +878,32 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
         a.speakerOrder - b.speakerOrder
       );
 
+    // G-CONTROL-1: 判断是否为单角色轮次
+    const isSingleCharacterRound: boolean = this.lastPreparedRound !== null
+      && this.lastPreparedRound.replyTarget.mode === GroupReplyTargetMode.SingleCharacter;
+    const targetCharId: string = isSingleCharacterRound && this.lastPreparedRound !== null
+      ? (this.lastPreparedRound.replyTarget.characterId ?? '') : '';
+
     const isGenerating: boolean = this.isGenerating
       && (this.roundState === GroupRoundState.Generating
         || this.roundState === GroupRoundState.Ready);
 
+    // 单角色轮次的"轮次上下文"包括 Generating/Completed/Cancelled/Failed
+    // 这些状态下非目标启用成员显示 NotParticipating
+    const inRoundContext: boolean = isGenerating
+      || this.roundState === GroupRoundState.Completed
+      || this.roundState === GroupRoundState.Cancelled
+      || this.roundState === GroupRoundState.Failed;
+
     for (let i = 0; i < enabledMembers.length; i++) {
       const m: GroupMemberUiModel = enabledMembers[i];
       let runtimeState: GroupMemberRuntimeState = GroupMemberRuntimeState.Idle;
-      if (isGenerating) {
+
+      // G-CONTROL-1: 单角色轮次中,非目标启用成员显示 NotParticipating
+      const isTarget: boolean = isSingleCharacterRound && m.characterId === targetCharId;
+      if (inRoundContext && isSingleCharacterRound && !isTarget) {
+        runtimeState = GroupMemberRuntimeState.NotParticipating;
+      } else if (isGenerating) {
         if (i < this.currentSpeakerIndex) {
           runtimeState = GroupMemberRuntimeState.Completed;
         } else if (i === this.currentSpeakerIndex) {
@@ -849,6 +945,9 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
   /**
    * 将运行时 ChatMessage 同步映射为 UI 消息(用于 onMessageCreated)。
    * 角色信息从 detail.members 中查找(发言者必然是当前群聊的启用成员)。
+   *
+   * G-CONTROL-1: AI 消息(replyTarget 字段为空,只有用户消息有目标标签)。
+   * 用户消息场景在 sendUserMessage 中单独构建,不走此方法。
    */
   private mapRuntimeMessageToUiSync(msg: ChatMessage): GroupMessageUiModel {
     const senderType: MessageSenderType =
@@ -882,7 +981,9 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
         generationBatchId: msg.generationBatchId,
         sequenceNumber: 0,
         createdAt: msg.createdAt,
-        updatedAt: msg.updatedAt !== undefined ? msg.updatedAt : msg.createdAt
+        updatedAt: msg.updatedAt !== undefined ? msg.updatedAt : msg.createdAt,
+        replyTargetCharacterId: undefined,
+        replyTargetName: ''
       };
     }
     return {
@@ -897,7 +998,9 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
       generationBatchId: msg.generationBatchId,
       sequenceNumber: 0,
       createdAt: msg.createdAt,
-      updatedAt: msg.updatedAt !== undefined ? msg.updatedAt : msg.createdAt
+      updatedAt: msg.updatedAt !== undefined ? msg.updatedAt : msg.createdAt,
+      replyTargetCharacterId: undefined,
+      replyTargetName: ''
     };
   }
 
@@ -934,8 +1037,11 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
   }
 
   /**
-   * 批量加载消息中引用的角色(用于 AI 消息显示名称)。
-   * 用户消息无 senderCharacterId,跳过。
+   * 批量加载消息中引用的角色(用于 AI 消息显示名称 + G-CONTROL-1 用户消息目标标签)。
+   *
+   * 收集范围:
+   * - AI 消息的 senderCharacterId
+   * - 用户消息的 recipientCharacterIds(G-CONTROL-1 单角色回复目标)
    */
   private async loadCharactersForMessages(
     messages: ChatMessage[]
@@ -945,6 +1051,15 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
       const msg: ChatMessage = messages[i];
       if (msg.senderCharacterId !== undefined && msg.senderCharacterId.length > 0) {
         charIds.add(msg.senderCharacterId);
+      }
+      // G-CONTROL-1: 加载 recipientCharacterIds 对应的角色(用于用户消息目标标签)
+      if (msg.recipientCharacterIds !== undefined) {
+        for (let j = 0; j < msg.recipientCharacterIds.length; j++) {
+          const rid: string = msg.recipientCharacterIds[j];
+          if (rid.length > 0) {
+            charIds.add(rid);
+          }
+        }
       }
     }
     const result: Map<string, Character | null> = new Map<string, Character | null>();
@@ -967,11 +1082,29 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
    * - AI 消息:通过 senderCharacterId 查 Character
    *   - 存在:显示角色名和头像
    *   - 不存在:显示"角色已删除",characterExists=false
+   *
+   * G-CONTROL-1:
+   * - 解析 msg.recipientCharacterIds 为 replyTargetCharacterId / replyTargetName
+   * - 仅取第一个 ID(本阶段只支持单角色目标)
+   * - 角色已删除时 replyTargetName 显示"角色已删除"
+   * - 全员回复(recipientCharacterIds 为空)两个字段均为空
    */
   private mapMessageToUi(
     msg: ChatMessage,
     charMap: Map<string, Character | null>
   ): GroupMessageUiModel {
+    // G-CONTROL-1: 解析 recipientCharacterIds 为 replyTarget 字段
+    let replyTargetCharacterId: string | undefined = undefined;
+    let replyTargetName: string = '';
+    if (msg.recipientCharacterIds !== undefined && msg.recipientCharacterIds.length > 0) {
+      const targetId: string = msg.recipientCharacterIds[0];
+      if (targetId.length > 0) {
+        replyTargetCharacterId = targetId;
+        const c: Character | null = charMap.get(targetId) ?? null;
+        replyTargetName = c !== null ? c.name : DELETED_CHARACTER_NAME;
+      }
+    }
+
     const senderType: MessageSenderType =
       msg.senderType !== undefined ? msg.senderType : 'user';
     if (senderType === 'character') {
@@ -989,7 +1122,9 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
         generationBatchId: msg.generationBatchId,
         sequenceNumber: 0,
         createdAt: msg.createdAt,
-        updatedAt: msg.updatedAt !== undefined ? msg.updatedAt : msg.createdAt
+        updatedAt: msg.updatedAt !== undefined ? msg.updatedAt : msg.createdAt,
+        replyTargetCharacterId: replyTargetCharacterId,
+        replyTargetName: replyTargetName
       };
     }
     // 用户消息 / narrator
@@ -1005,7 +1140,9 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
       generationBatchId: msg.generationBatchId,
       sequenceNumber: 0,
       createdAt: msg.createdAt,
-      updatedAt: msg.updatedAt !== undefined ? msg.updatedAt : msg.createdAt
+      updatedAt: msg.updatedAt !== undefined ? msg.updatedAt : msg.createdAt,
+      replyTargetCharacterId: replyTargetCharacterId,
+      replyTargetName: replyTargetName
     };
   }
 
@@ -1024,10 +1161,239 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
         return '用户消息不存在';
       case GroupRoundPlanErrorKind.ActiveRoundExists:
         return '当前已有活动轮次';
+      case GroupRoundPlanErrorKind.TargetCharacterNotFound:
+        return '该角色已删除';
+      case GroupRoundPlanErrorKind.TargetCharacterNotInChat:
+        return '该角色已不在当前群聊';
+      case GroupRoundPlanErrorKind.TargetCharacterNotEnabled:
+        return '该角色已停用';
+      case GroupRoundPlanErrorKind.TargetCharacterIdEmpty:
+        return '目标角色无效';
       case GroupRoundPlanErrorKind.Internal:
       default:
         return '无法开始本轮';
     }
+  }
+
+  // ===== G-CONTROL-1 回复目标选择 =====
+
+  /**
+   * G-CONTROL-1: 发送前校验目标角色并构建 recipientCharacterIds。
+   *
+   * 校验规则(仅 SingleCharacter 模式):
+   * - characterId 非空
+   * - 角色仍存在(detail.members 中且 characterExists=true)
+   * - 角色已启用(isEnabled=true)
+   *
+   * 校验失败时设置 errorMessage 并返回空数组。
+   * 全员模式返回空数组(不写入全部成员 ID)。
+   *
+   * @returns recipientCharacterIds(全员为空数组,单角色为 [id])
+   */
+  private validateAndBuildRecipients(replyTarget: GroupReplyTarget): string[] {
+    if (replyTarget.mode === GroupReplyTargetMode.SingleCharacter) {
+      const targetId: string = replyTarget.characterId !== undefined
+        ? replyTarget.characterId : '';
+      if (targetId === '') {
+        this.errorMessage = '目标角色无效';
+        return [];
+      }
+      if (this.detail === null) {
+        this.errorMessage = '群聊信息未加载';
+        return [];
+      }
+      const member: GroupMemberUiModel | null = this.findMemberById(targetId);
+      if (member === null) {
+        this.errorMessage = '该角色已不在当前群聊';
+        return [];
+      }
+      if (!member.characterExists) {
+        this.errorMessage = '该角色已删除';
+        return [];
+      }
+      if (!member.isEnabled) {
+        this.errorMessage = '该角色已停用';
+        return [];
+      }
+      return [targetId];
+    }
+    return [];
+  }
+
+  /**
+   * G-CONTROL-1: 点击成员栏角色,切换回复目标。
+   *
+   * 行为:
+   * - 当前目标已是该角色:取消目标,恢复 AllEnabled
+   * - 当前目标是其他角色或 AllEnabled:设为 SingleCharacter(该角色)
+   *
+   * 校验:
+   * - 角色必须存在(characterExists=true)
+   * - 角色必须启用(isEnabled=true)
+   * - 生成中不允许切换目标
+   *
+   * @param characterId 被点击的角色 ID
+   * @returns 是否成功切换(校验失败返回 false,errorMessage 已设置)
+   */
+  toggleMemberReplyTarget(characterId: string): boolean {
+    if (this.disposed || this.isGenerating) {
+      return false;
+    }
+    if (characterId === '' || this.detail === null) {
+      return false;
+    }
+    const member: GroupMemberUiModel | null = this.findMemberById(characterId);
+    if (member === null) {
+      this.errorMessage = '该角色已不在当前群聊';
+      return false;
+    }
+    if (!member.characterExists) {
+      this.errorMessage = '该角色已删除';
+      return false;
+    }
+    if (!member.isEnabled) {
+      this.errorMessage = '该角色已停用';
+      return false;
+    }
+    // 切换逻辑
+    if (this.selectedReplyTarget.mode === GroupReplyTargetMode.SingleCharacter
+      && this.selectedReplyTarget.characterId === characterId) {
+      // 再次点击同一成员:取消目标
+      this.clearReplyTarget();
+      return true;
+    }
+    // 设置新目标
+    this.selectedReplyTarget = singleCharacterReplyTarget(characterId);
+    this.selectedReplyTargetName = member.name;
+    this.errorMessage = '';
+    return true;
+  }
+
+  /**
+   * G-CONTROL-1: 取消回复目标,恢复 AllEnabled。
+   */
+  clearReplyTarget(): void {
+    this.selectedReplyTarget = REPLY_TARGET_ALL_ENABLED;
+    this.selectedReplyTargetName = '';
+  }
+
+  /**
+   * G-CONTROL-1: 打开 @选择器,构建候选成员列表。
+   *
+   * 候选规则:
+   * - 当前群聊成员
+   * - 已启用(isEnabled=true)
+   * - 角色仍存在(characterExists=true)
+   *
+   * @param query 初始过滤文本(@ 后的文字,可为空)
+   */
+  openMentionPicker(query: string): void {
+    if (this.disposed || this.detail === null) {
+      this.isMentionPickerVisible = false;
+      this.mentionCandidates = [];
+      return;
+    }
+    this.mentionQuery = query;
+    this.mentionCandidates = this.filterMentionCandidates(query);
+    this.isMentionPickerVisible = this.mentionCandidates.length > 0;
+  }
+
+  /**
+   * G-CONTROL-1: 更新 @选择器过滤文本。
+   */
+  updateMentionQuery(query: string): void {
+    this.mentionQuery = query;
+    this.mentionCandidates = this.filterMentionCandidates(query);
+    this.isMentionPickerVisible = this.mentionCandidates.length > 0;
+  }
+
+  /**
+   * G-CONTROL-1: 关闭 @选择器。
+   */
+  closeMentionPicker(): void {
+    this.isMentionPickerVisible = false;
+    this.mentionQuery = '';
+  }
+
+  /**
+   * G-CONTROL-1: 选择 @角色。
+   *
+   * 行为:
+   * - 设置 selectedReplyTarget 为 SingleCharacter(该角色)
+   * - 关闭 @选择器
+   * - 返回要插入的正文字符串(@角色名 + 空格)
+   *
+   * 多次 @处理:
+   * - 如果当前已有目标且不是同一角色,设置 errorMessage 提示
+   *   "当前仅支持指定一个角色回复"
+   * - 仍然替换为新目标(最后一次选择为准)
+   *
+   * @param characterId 被选择的角色 ID
+   * @returns 要插入的正文字符串(@角色名 + 空格),失败返回空字符串
+   */
+  selectMentionTarget(characterId: string): string {
+    if (this.disposed || this.detail === null) {
+      return '';
+    }
+    const member: GroupMemberUiModel | null = this.findMemberById(characterId);
+    if (member === null || !member.characterExists || !member.isEnabled) {
+      return '';
+    }
+    // 如果当前已有目标且不是同一角色,提示
+    if (this.selectedReplyTarget.mode === GroupReplyTargetMode.SingleCharacter
+      && this.selectedReplyTarget.characterId !== characterId) {
+      this.errorMessage = '当前仅支持指定一个角色回复';
+    }
+    this.selectedReplyTarget = singleCharacterReplyTarget(characterId);
+    this.selectedReplyTargetName = member.name;
+    this.isMentionPickerVisible = false;
+    this.mentionQuery = '';
+    return '@' + member.name + ' ';
+  }
+
+  /**
+   * G-CONTROL-1: 过滤 @选择器候选成员。
+   * 按名称模糊匹配(大小写不敏感)。
+   */
+  private filterMentionCandidates(query: string): GroupMemberUiModel[] {
+    if (this.detail === null) {
+      return [];
+    }
+    const q: string = query.trim().toLowerCase();
+    return this.detail.members.filter((m: GroupMemberUiModel): boolean => {
+      if (!m.isEnabled || !m.characterExists) {
+        return false;
+      }
+      if (q.length === 0) {
+        return true;
+      }
+      return m.name.toLowerCase().includes(q);
+    });
+  }
+
+  /**
+   * G-CONTROL-1: 根据 characterId 查找成员(同步,从 detail.members)。
+   * @returns 成员模型或 null(未找到)
+   */
+  private findMemberById(characterId: string): GroupMemberUiModel | null {
+    if (characterId.length === 0 || this.detail === null) {
+      return null;
+    }
+    for (let i = 0; i < this.detail.members.length; i++) {
+      if (this.detail.members[i].characterId === characterId) {
+        return this.detail.members[i];
+      }
+    }
+    return null;
+  }
+
+  /**
+   * G-CONTROL-1: 根据 characterId 查找成员名称。
+   * @returns 成员名称或空字符串(未找到)
+   */
+  private findMemberNameById(characterId: string): string {
+    const m: GroupMemberUiModel | null = this.findMemberById(characterId);
+    return m !== null ? m.name : '';
   }
 
   /** G-RUNTIME-1C: 将重试错误类型映射为用户可读文案 */

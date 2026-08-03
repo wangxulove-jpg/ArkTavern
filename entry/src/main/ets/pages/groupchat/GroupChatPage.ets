@@ -114,6 +114,14 @@ struct GroupChatPage {
   @State renameVisible: boolean = false;
   /** 重命名输入值 */
   @State renameInput: string = '';
+  /** G-CONTROL-1: 当前选中的回复目标角色 ID(空表示全员回复) */
+  @State selectedReplyTargetCharacterId: string = '';
+  /** G-CONTROL-1: 目标角色显示名称(用于 Chip) */
+  @State selectedReplyTargetName: string = '';
+  /** G-CONTROL-1: @选择器是否可见 */
+  @State isMentionPickerVisible: boolean = false;
+  /** G-CONTROL-1: @选择器候选成员 */
+  @State mentionCandidates: GroupMemberUiModel[] = [];
   /** 顶部状态栏避让高度 */
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   /** 底部导航栏避让高度 */
@@ -216,6 +224,13 @@ struct GroupChatPage {
     this.totalSpeakerCount = this.viewModel.totalSpeakerCount;
     this.currentSpeakerCharacterId = this.viewModel.currentSpeakerCharacterId;
     this.memberRuntimeStates = this.viewModel.memberRuntimeStates;
+    // G-CONTROL-1: 同步草稿回复目标状态
+    this.selectedReplyTargetCharacterId =
+      this.viewModel.selectedReplyTarget.characterId !== undefined
+        ? this.viewModel.selectedReplyTarget.characterId : '';
+    this.selectedReplyTargetName = this.viewModel.selectedReplyTargetName;
+    this.isMentionPickerVisible = this.viewModel.isMentionPickerVisible;
+    this.mentionCandidates = this.viewModel.mentionCandidates;
   }
 
   /**
@@ -678,6 +693,17 @@ struct GroupChatPage {
                     .height(16)
                     .textAlign(TextAlign.Center)
                     .position({ x: 30, y: -2 })
+                } else if (this.isMemberReplyTarget(member.characterId)) {
+                  // G-CONTROL-1: 被选为回复目标的成员显示靶心标记
+                  Text('◎')
+                    .fontSize(14)
+                    .fontColor($r('app.color.app_on_accent'))
+                    .backgroundColor($r('app.color.app_accent'))
+                    .borderRadius(8)
+                    .width(16)
+                    .height(16)
+                    .textAlign(TextAlign.Center)
+                    .position({ x: 30, y: -2 })
                 }
               }
               .width(44)
@@ -685,16 +711,20 @@ struct GroupChatPage {
 
               Text(member.name)
                 .fontSize($r('app.float.app_font_caption'))
-                .fontColor(member.isEnabled ? $r('app.color.app_text_primary') : $r('app.color.app_text_tertiary'))
+                .fontColor(this.memberTextColor(member))
                 .maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
                 .width(56)
                 .textAlign(TextAlign.Center)
                 .margin({ top: 4 })
-                .opacity(member.isEnabled ? 1 : 0.5)
+                .opacity(this.memberOpacity(member))
             }
             .margin({ left: 8, right: 8 })
-          }, (member: GroupMemberUiModel) => member.characterId + '|' + String(member.speakerOrder) + '|' + String(member.isEnabled))
+            .opacity(member.isEnabled && member.characterExists ? 1 : 0.6)
+            .onClick(() => {
+              this.handleMemberClick(member);
+            })
+          }, (member: GroupMemberUiModel) => member.characterId + '|' + String(member.speakerOrder) + '|' + String(member.isEnabled) + '|' + (this.isMemberReplyTarget(member.characterId) ? '1' : '0'))
         }
       }
       .padding({ left: 12, right: 12, top: 4, bottom: 4 })
@@ -725,6 +755,53 @@ struct GroupChatPage {
       return 0.4;
     }
     return 1;
+  }
+
+  // ===== G-CONTROL-1 成员栏点击与目标选择 =====
+
+  /** G-CONTROL-1: 判断成员是否为当前回复目标 */
+  private isMemberReplyTarget(characterId: string): boolean {
+    return this.selectedReplyTargetCharacterId.length > 0
+      && this.selectedReplyTargetCharacterId === characterId;
+  }
+
+  /** G-CONTROL-1: 成员栏文字颜色(非生成态) */
+  private memberTextColor(member: GroupMemberUiModel): ResourceColor {
+    if (this.isMemberReplyTarget(member.characterId)) {
+      return $r('app.color.app_accent');
+    }
+    if (!member.isEnabled) {
+      return $r('app.color.app_text_tertiary');
+    }
+    return $r('app.color.app_text_primary');
+  }
+
+  /** G-CONTROL-1: 成员栏透明度(非生成态) */
+  private memberOpacity(member: GroupMemberUiModel): number {
+    if (!member.isEnabled || !member.characterExists) {
+      return 0.5;
+    }
+    return 1;
+  }
+
+  /** G-CONTROL-1: 处理成员栏点击 */
+  private handleMemberClick(member: GroupMemberUiModel): void {
+    if (this.viewModel === null) {
+      return;
+    }
+    // 生成中不允许切换目标
+    if (this.isGenerating || this.isSending) {
+      return;
+    }
+    const ok: boolean = this.viewModel.toggleMemberReplyTarget(member.characterId);
+    if (!ok) {
+      // 校验失败,显示错误提示
+      if (this.viewModel.errorMessage.length > 0) {
+        promptAction.showToast({ message: this.viewModel.errorMessage, duration: 1500 });
+      }
+      return;
+    }
+    this.syncFromViewModel();
   }
 
   /** 消息列表区 */
@@ -918,7 +995,7 @@ struct GroupChatPage {
     this.syncFromViewModel();
   }
 
-  /** 输入区(启用真实发送) */
+  /** 输入区(启用真实发送,G-CONTROL-1 增加目标 Chip 与 @选择器) */
   @Builder
   inputBarArea(): void {
     Column() {
@@ -939,8 +1016,50 @@ struct GroupChatPage {
           .padding({ top: 4, bottom: 4 })
       }
 
+      // G-CONTROL-1: 目标 Chip + 输入提示
       Row() {
-        TextInput({ placeholder: '发送消息', text: this.inputText })
+        if (this.selectedReplyTargetName.length > 0) {
+          // 指定角色:显示目标 Chip
+          Row() {
+            Text('仅' + this.selectedReplyTargetName + '回复')
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_on_accent'))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+            Button() {
+              SymbolGlyph($r('sys.symbol.xmark'))
+                .fontSize(12)
+                .fontColor([$r('app.color.app_on_accent')])
+            }
+            .type(ButtonType.Circle)
+            .backgroundColor(Color.Transparent)
+            .width(20)
+            .height(20)
+            .margin({ left: 4 })
+            .accessibilityText('取消指定角色')
+            .enabled(!this.isGenerating && !this.isSending)
+            .onClick(() => {
+              this.handleClearReplyTarget();
+            })
+          }
+          .padding({ left: 10, right: 6, top: 4, bottom: 4 })
+          .backgroundColor($r('app.color.app_accent'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .alignItems(VerticalAlign.Center)
+        } else {
+          // 全员:显示提示文案
+          Text('所有启用角色将按顺序回复')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_tertiary'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+      }
+      .width('100%')
+      .padding({ top: 2, bottom: 2 })
+
+      Row() {
+        TextInput({ placeholder: '发送消息(输入 @ 指定角色)', text: this.inputText })
           .fontSize($r('app.float.app_font_body'))
           .fontColor($r('app.color.app_text_primary'))
           .backgroundColor($r('app.color.app_surface_2'))
@@ -954,14 +1073,14 @@ struct GroupChatPage {
             if (this.viewModel !== null) {
               this.viewModel.inputText = value;
             }
+            this.handleMentionDetection(value);
           })
           .onSubmit(() => {
             this.handleSend();
           })
 
         if (this.isGenerating) {
-          // 生成中:显示停止按钮(与状态栏的停止按钮同步,这里不重复显示)
-          // 状态栏已有停止入口,这里保持发送按钮置灰
+          // 生成中:发送按钮置灰
           Button() {
             SymbolGlyph($r('sys.symbol.paperplane_fill'))
               .fontSize(20)
@@ -992,6 +1111,11 @@ struct GroupChatPage {
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
+
+      // G-CONTROL-1: @选择器浮层(紧贴输入框下方)
+      if (this.isMentionPickerVisible && this.mentionCandidates.length > 0) {
+        this.mentionPickerPanel()
+      }
     }
     .width('100%')
     .padding({
@@ -1002,6 +1126,135 @@ struct GroupChatPage {
     })
     .backgroundColor($r('app.color.app_surface_1'))
     .border({ width: { top: 0.5 }, color: $r('app.color.app_divider') })
+  }
+
+  /** G-CONTROL-1: @选择器面板 */
+  @Builder
+  mentionPickerPanel(): void {
+    Column() {
+      List() {
+        ForEach(this.mentionCandidates, (member: GroupMemberUiModel) => {
+          ListItem() {
+            Row() {
+              CharacterImageView({
+                imageUri: member.avatarUri,
+                fallbackName: member.name,
+                imgWidth: 28,
+                imgHeight: 28,
+                imgBorderRadius: 14,
+                displayMode: 'thumbnail',
+                objectFit: ImageFit.Cover
+              })
+              Text(member.name)
+                .fontSize($r('app.float.app_font_body'))
+                .fontColor($r('app.color.app_text_primary'))
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .margin({ left: 8 })
+                .layoutWeight(1)
+            }
+            .width('100%')
+            .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+            .alignItems(VerticalAlign.Center)
+          }
+          .onClick(() => {
+            this.handleSelectMention(member);
+          })
+        }, (member: GroupMemberUiModel) => member.characterId)
+      }
+      .width('100%')
+      .height(200)
+      .scrollBar(BarState.Auto)
+      .borderRadius($r('app.float.app_radius_md'))
+      .backgroundColor($r('app.color.app_surface_2'))
+    }
+    .width('100%')
+    .margin({ top: 4 })
+  }
+
+  /** G-CONTROL-1: 检测输入框中的 @触发点 */
+  private handleMentionDetection(value: string): void {
+    if (this.viewModel === null) {
+      return;
+    }
+    // 生成中不处理 @检测
+    if (this.isGenerating || this.isSending) {
+      return;
+    }
+    // 查找最后一个 @
+    const atIdx: number = value.lastIndexOf('@');
+    if (atIdx < 0) {
+      // 没有 @,关闭选择器
+      if (this.viewModel.isMentionPickerVisible) {
+        this.viewModel.closeMentionPicker();
+        this.syncFromViewModel();
+      }
+      return;
+    }
+    // @ 必须在行首或前面是空白
+    if (atIdx > 0) {
+      const prevChar: string = value.charAt(atIdx - 1);
+      if (prevChar !== ' ' && prevChar !== '\n' && prevChar !== '\t') {
+        // @不在词首,关闭选择器
+        if (this.viewModel.isMentionPickerVisible) {
+          this.viewModel.closeMentionPicker();
+          this.syncFromViewModel();
+        }
+        return;
+      }
+    }
+    // 提取 @ 后的查询文本(直到空白或结尾)
+    let query: string = '';
+    for (let i: number = atIdx + 1; i < value.length; i++) {
+      const ch: string = value.charAt(i);
+      if (ch === ' ' || ch === '\n' || ch === '\t') {
+        break;
+      }
+      query = query + ch;
+    }
+    // 更新或打开选择器
+    if (this.viewModel.isMentionPickerVisible) {
+      this.viewModel.updateMentionQuery(query);
+    } else {
+      this.viewModel.openMentionPicker(query);
+    }
+    this.syncFromViewModel();
+  }
+
+  /** G-CONTROL-1: 选择 @角色 */
+  private handleSelectMention(member: GroupMemberUiModel): void {
+    if (this.viewModel === null) {
+      return;
+    }
+    const insertText: string = this.viewModel.selectMentionTarget(member.characterId);
+    if (insertText.length === 0) {
+      this.syncFromViewModel();
+      return;
+    }
+    // 替换输入框中的 @查询 为 @角色名
+    const value: string = this.inputText;
+    const atIdx: number = value.lastIndexOf('@');
+    if (atIdx >= 0) {
+      const before: string = value.substring(0, atIdx);
+      this.inputText = before + insertText;
+      if (this.viewModel !== null) {
+        this.viewModel.inputText = this.inputText;
+      }
+    }
+    // 显示多次 @提示(如有)
+    if (this.viewModel.errorMessage.length > 0) {
+      promptAction.showToast({ message: this.viewModel.errorMessage, duration: 1500 });
+    }
+    this.syncFromViewModel();
+  }
+
+  /** G-CONTROL-1: 取消回复目标 */
+  private handleClearReplyTarget(): void {
+    if (this.viewModel === null) {
+      return;
+    }
+    this.viewModel.clearReplyTarget();
+    this.syncFromViewModel();
   }
 
   /**

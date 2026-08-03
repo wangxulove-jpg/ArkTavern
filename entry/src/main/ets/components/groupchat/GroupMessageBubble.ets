@@ -64,6 +64,16 @@ export struct GroupMessageBubble {
       .borderRadius({ topLeft: 16, topRight: 16, bottomLeft: 16, bottomRight: 6 })
       .padding({ left: 14, right: 14, top: 10, bottom: 10 })
 
+      // G-CONTROL-1: 单角色回复目标标签(仅指定角色时显示)
+      if (this.renderState.replyTargetName.length > 0) {
+        Row() {
+          Text('仅' + this.renderState.replyTargetName + '回复')
+            .fontSize(10)
+            .fontColor($r('app.color.app_text_tertiary'))
+        }
+        .margin({ top: 2, right: 4 })
+      }
+
       // 时间
       Text(this.formatTime(this.renderState.createdAt))
         .fontSize(10)

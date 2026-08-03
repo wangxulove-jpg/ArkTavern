@@ -48,6 +48,10 @@ export class GroupMessageRenderState {
   createdAt: number;
   /** 更新时间(毫秒) */
   updatedAt: number;
+  /** G-CONTROL-1: 单角色回复目标角色 ID(用户消息,全员回复为空) */
+  replyTargetCharacterId: string;
+  /** G-CONTROL-1: 目标角色显示名称(用户消息下方标签,全员回复为空) */
+  replyTargetName: string;
 
   constructor(msg: GroupMessageUiModel) {
     this.messageId = msg.id;
@@ -62,6 +66,9 @@ export class GroupMessageRenderState {
     this.generationBatchId = msg.generationBatchId !== undefined ? msg.generationBatchId : '';
     this.createdAt = msg.createdAt;
     this.updatedAt = msg.updatedAt;
+    this.replyTargetCharacterId = msg.replyTargetCharacterId !== undefined
+      ? msg.replyTargetCharacterId : '';
+    this.replyTargetName = msg.replyTargetName !== undefined ? msg.replyTargetName : '';
   }
 
   /**
@@ -81,5 +88,8 @@ export class GroupMessageRenderState {
     this.generationBatchId = msg.generationBatchId !== undefined ? msg.generationBatchId : '';
     this.createdAt = msg.createdAt;
     this.updatedAt = msg.updatedAt;
+    this.replyTargetCharacterId = msg.replyTargetCharacterId !== undefined
+      ? msg.replyTargetCharacterId : '';
+    this.replyTargetName = msg.replyTargetName !== undefined ? msg.replyTargetName : '';
   }
 }
