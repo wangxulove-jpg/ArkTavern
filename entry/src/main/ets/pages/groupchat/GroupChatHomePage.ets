@@ -249,7 +249,7 @@ struct GroupChatHomePage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('rgba(0,0,0,0.5)')
+    .backgroundColor($r('app.color.app_scrim'))
     .onClick(() => {
       this.moreTarget = null;
     })
@@ -344,7 +344,7 @@ struct GroupChatHomePage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('rgba(0,0,0,0.5)')
+    .backgroundColor($r('app.color.app_scrim'))
   }
 
   /** 确认重命名 */

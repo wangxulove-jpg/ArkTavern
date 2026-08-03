@@ -1609,6 +1609,10 @@
       "value": "完成整轮"
     },
     {
+      "name": "group_chat_dev_section",
+      "value": "开发操作(模拟生成)"
+    },
+    {
       "name": "group_chat_preview_empty",
       "value": "空聊天"
     },

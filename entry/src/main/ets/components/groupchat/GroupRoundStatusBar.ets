@@ -47,42 +47,14 @@ export struct GroupRoundStatusBar {
       .layoutWeight(1)
 
       // 右侧:操作按钮
+      // 说明:Generating 时不在此显示停止按钮,主操作由底部输入栏承担,
+      //       避免状态栏与输入栏同时出现两个停止按钮造成混淆。
+      //       Failed 时不在此显示重试/结束按钮,主操作由失败消息气泡内的
+      //       GroupGenerationErrorCard 承担,避免同一错误操作堆叠两次。
       if (this.roundStatus === GroupRoundPreviewStatus.Generating) {
-        Button($r('app.string.group_stop_round'))
+        Text($r('app.string.group_stop_round'))
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_on_accent'))
-          .backgroundColor($r('app.color.app_danger'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(30)
-          .padding({ left: 14, right: 14 })
-          .accessibilityText('停止本轮')
-          .onClick(() => {
-            this.onStop();
-          })
-      } else if (this.roundStatus === GroupRoundPreviewStatus.Failed) {
-        Button($r('app.string.group_retry'))
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_on_accent'))
-          .backgroundColor($r('app.color.app_accent'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(30)
-          .padding({ left: 14, right: 14 })
-          .accessibilityText('重试')
-          .onClick(() => {
-            this.onRetry();
-          })
-
-        Button($r('app.string.group_end_round'))
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_secondary'))
-          .backgroundColor($r('app.color.app_surface_2'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(30)
-          .padding({ left: 14, right: 14 })
-          .margin({ left: 8 })
-          .onClick(() => {
-            this.onEndRound();
-          })
+          .fontColor($r('app.color.app_text_tertiary'))
       }
     }
     .width('100%')

@@ -109,6 +109,10 @@
       "value": "#E5E5E5"
     },
     {
+      "name": "app_scrim",
+      "value": "#80000000"
+    },
+    {
       "name": "chat_text_primary",
       "value": "#1A1A1A"
     },

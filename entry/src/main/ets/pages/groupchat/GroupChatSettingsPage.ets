@@ -475,7 +475,7 @@ struct GroupChatSettingsPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('rgba(0,0,0,0.5)')
+    .backgroundColor($r('app.color.app_scrim'))
   }
 
   /** 清空确认弹窗 */
@@ -533,7 +533,7 @@ struct GroupChatSettingsPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('rgba(0,0,0,0.5)')
+    .backgroundColor($r('app.color.app_scrim'))
   }
 
   /** 删除确认弹窗 */
@@ -591,7 +591,7 @@ struct GroupChatSettingsPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('rgba(0,0,0,0.5)')
+    .backgroundColor($r('app.color.app_scrim'))
   }
 
   // ===== 操作处理 =====

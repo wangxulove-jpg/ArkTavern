@@ -35,6 +35,17 @@ import {
   GroupMemberPreviewStatus
 } from './preview/GroupChatPreviewModels';
 
+/**
+ * 预览状态控制总开关(G-UI-2 收口)。
+ *
+ * - true:GroupChatPage 更多菜单中显示"预览状态"入口与"开发操作(模拟生成)"区。
+ * - false:正式用户菜单不散落调试按钮,只保留管理成员 / 群聊设置 / 重命名 / 清空。
+ *
+ * 接入真实数据时将此常量改为 false 即可整体隐藏调试入口,便于删除,
+ * 不需要在多处分散查找预览调试代码。
+ */
+const ENABLE_GROUP_CHAT_PREVIEW_CONTROLS: boolean = true;
+
 @Entry
 @Component
 struct GroupChatPage {
@@ -399,70 +410,72 @@ struct GroupChatPage {
               promptAction.showToast({ message: '已清空当前预览消息', duration: 1500 });
             })
 
-          // 预览状态切换(开发菜单)
-          Button($r('app.string.group_chat_menu_preview'))
-            .fontSize(15)
-            .fontColor($r('app.color.app_accent'))
-            .backgroundColor($r('app.color.app_accent_surface'))
-            .borderRadius($r('app.float.app_radius_sm'))
-            .width('100%')
-            .height(44)
-            .margin({ top: 8 })
-            .onClick(() => {
-              this.moreMenuVisible = false;
-              this.previewMenuVisible = true;
-            })
+          // 预览状态切换(开发菜单,受总开关控制)
+          if (ENABLE_GROUP_CHAT_PREVIEW_CONTROLS) {
+            Button($r('app.string.group_chat_menu_preview'))
+              .fontSize(15)
+              .fontColor($r('app.color.app_accent'))
+              .backgroundColor($r('app.color.app_accent_surface'))
+              .borderRadius($r('app.float.app_radius_sm'))
+              .width('100%')
+              .height(44)
+              .margin({ top: 8 })
+              .onClick(() => {
+                this.moreMenuVisible = false;
+                this.previewMenuVisible = true;
+              })
 
-          // 开发操作区(模拟生成流程)
-          Divider().color($r('app.color.app_divider')).margin({ top: 12, bottom: 8 })
+            // 开发操作区(模拟生成流程,受总开关控制)
+            Divider().color($r('app.color.app_divider')).margin({ top: 12, bottom: 8 })
 
-          Text('开发操作(模拟生成)')
-            .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_tertiary'))
-            .width('100%')
-            .margin({ bottom: 8 })
+            Text($r('app.string.group_chat_dev_section'))
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_text_tertiary'))
+              .width('100%')
+              .margin({ bottom: 8 })
 
-          Button($r('app.string.group_chat_dev_complete'))
-            .fontSize(15)
-            .fontColor($r('app.color.app_on_accent'))
-            .backgroundColor($r('app.color.app_accent'))
-            .borderRadius($r('app.float.app_radius_sm'))
-            .width('100%')
-            .height(44)
-            .enabled(this.session !== null && this.session!.roundStatus === GroupRoundPreviewStatus.Generating)
-            .onClick(() => {
-              this.moreMenuVisible = false;
-              this.handleAdvanceCurrent();
-            })
+            Button($r('app.string.group_chat_dev_complete'))
+              .fontSize(15)
+              .fontColor($r('app.color.app_on_accent'))
+              .backgroundColor($r('app.color.app_accent'))
+              .borderRadius($r('app.float.app_radius_sm'))
+              .width('100%')
+              .height(44)
+              .enabled(this.session !== null && this.session!.roundStatus === GroupRoundPreviewStatus.Generating)
+              .onClick(() => {
+                this.moreMenuVisible = false;
+                this.handleAdvanceCurrent();
+              })
 
-          Button($r('app.string.group_chat_dev_fail'))
-            .fontSize(15)
-            .fontColor($r('app.color.app_on_accent'))
-            .backgroundColor($r('app.color.app_danger'))
-            .borderRadius($r('app.float.app_radius_sm'))
-            .width('100%')
-            .height(44)
-            .margin({ top: 8 })
-            .enabled(this.session !== null && this.session!.roundStatus === GroupRoundPreviewStatus.Generating)
-            .onClick(() => {
-              this.moreMenuVisible = false;
-              this.handleFailCurrent();
-            })
+            Button($r('app.string.group_chat_dev_fail'))
+              .fontSize(15)
+              .fontColor($r('app.color.app_on_accent'))
+              .backgroundColor($r('app.color.app_danger'))
+              .borderRadius($r('app.float.app_radius_sm'))
+              .width('100%')
+              .height(44)
+              .margin({ top: 8 })
+              .enabled(this.session !== null && this.session!.roundStatus === GroupRoundPreviewStatus.Generating)
+              .onClick(() => {
+                this.moreMenuVisible = false;
+                this.handleFailCurrent();
+              })
 
-          Button($r('app.string.group_chat_dev_finish'))
-            .fontSize(15)
-            .fontColor($r('app.color.app_text_primary'))
-            .backgroundColor($r('app.color.app_surface_2'))
-            .borderRadius($r('app.float.app_radius_sm'))
-            .width('100%')
-            .height(44)
-            .margin({ top: 8 })
-            .enabled(this.session !== null && this.session!.roundStatus !== GroupRoundPreviewStatus.Idle)
-            .onClick(() => {
-              this.moreMenuVisible = false;
-              GroupChatPreviewStore.resetRound(this.sessionId);
-              this.syncFromStore();
-            })
+            Button($r('app.string.group_chat_dev_finish'))
+              .fontSize(15)
+              .fontColor($r('app.color.app_text_primary'))
+              .backgroundColor($r('app.color.app_surface_2'))
+              .borderRadius($r('app.float.app_radius_sm'))
+              .width('100%')
+              .height(44)
+              .margin({ top: 8 })
+              .enabled(this.session !== null && this.session!.roundStatus !== GroupRoundPreviewStatus.Idle)
+              .onClick(() => {
+                this.moreMenuVisible = false;
+                GroupChatPreviewStore.resetRound(this.sessionId);
+                this.syncFromStore();
+              })
+          }
 
           Button($r('app.string.group_cancel'))
             .fontSize(15)
@@ -488,7 +501,7 @@ struct GroupChatPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('rgba(0,0,0,0.5)')
+    .backgroundColor($r('app.color.app_scrim'))
     .onClick(() => {
       this.moreMenuVisible = false;
     })
@@ -570,7 +583,7 @@ struct GroupChatPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('rgba(0,0,0,0.5)')
+    .backgroundColor($r('app.color.app_scrim'))
     .onClick(() => {
       this.memberMenuTarget = null;
     })
@@ -654,7 +667,7 @@ struct GroupChatPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('rgba(0,0,0,0.5)')
+    .backgroundColor($r('app.color.app_scrim'))
     .onClick(() => {
       this.previewMenuVisible = false;
     })
@@ -740,7 +753,7 @@ struct GroupChatPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('rgba(0,0,0,0.5)')
+    .backgroundColor($r('app.color.app_scrim'))
   }
 
   /** 确认重命名 */
