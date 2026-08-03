@@ -305,22 +305,24 @@ export class ChatPersistenceService {
   }
 
   /**
-   * 列出所有未归档会话(不限角色上下文)。
-   * 用于"对话记录"Tab 展示全部会话。
+   * 列出所有未归档的单聊会话(不限角色上下文)。
+   * 用于"对话记录"Tab 展示全部单聊会话。
+   *
+   * G-DATA-1B:仅返回 ConversationMode.Single,多人聊天(Group)不在单聊列表展示。
    *
    * - 不按 character_id 过滤(普通助手会话 + 角色会话都返回)
    * - 始终排除 archived
+   * - 始终排除 conversation_mode = 'group'
    * - 排序:last_message_at DESC → updated_at DESC → id ASC
    * - 默认最多 50 条
    * - 不查询消息正文
    *
    * @param limit 上限(可选,默认 50)
-   * @returns 会话列表(可能为空)
+   * @returns 单聊会话列表(可能为空)
    */
   async listAllSessions(limit?: number): Promise<Chat[]> {
     const effectiveLimit: number = limit !== undefined && limit > 0 ? limit : 50;
-    const chats: Chat[] = await this.chatRepository.list({
-      includeArchived: false,
+    const chats: Chat[] = await this.chatRepository.listSingleChats({
       limit: effectiveLimit,
       offset: 0
     });

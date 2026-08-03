@@ -1,38 +1,28 @@
 /**
- * GroupChatCreatePage 创建多人聊天
+ * GroupChatCreatePage 创建多人聊天(G-DATA-1B 正式版)
  *
- * G-UI-1 预览页面:两步式创建流程。
+ * 数据来源:
+ * - 角色列表:CharacterService(真实数据库)
+ * - 创建群聊:GroupConversationPersistenceService.createGroupConversation
  *
- * 步骤 1 / 2:选择角色
- * - 搜索框 + 角色列表(头像 / 名称 / 描述 / 选择状态)
- * - 最少 2 位,最多 8 位
- * - 按选择顺序确定默认发言顺序
+ * 两步式创建流程:
+ * - 步骤 1:选择角色(最少 2,最多 8,按选择顺序确定 speakerOrder)
+ * - 步骤 2:群聊名称 + 顺序调整 + 创建并进入聊天
  *
- * 步骤 2 / 2:群聊配置
- * - 群聊名称(默认由角色名组合)
- * - 已选成员(上移 / 下移调整顺序)
- * - 回复方式(仅"按成员顺序回复")
- * - 创建并进入聊天
- *
- * 数据来源:GroupChatPreviewStore(内存态,非数据库)。
+ * 不依赖:GroupChatPreviewStore / PREVIEW_CHARACTERS。
+ * 创建成功后路由只传 chatId(通过 AppStorage),不传完整对象。
  */
 
 import { router, promptAction } from '@kit.ArkUI';
 import { CharacterImageView } from '../../components/CharacterImageView';
-import { GroupChatPreviewStore, PENDING_GROUP_CHAT_ID_KEY } from './preview/GroupChatPreviewStore';
-import { GroupChatPreviewCharacter } from './preview/GroupChatPreviewModels';
+import { AppServices } from '../../services/AppServices';
 import {
-  PREVIEW_CHARACTERS,
-  PREVIEW_MEMBER_MIN,
-  PREVIEW_MEMBER_MAX,
-  composeDefaultTitle
-} from './preview/GroupChatPreviewData';
-
-/** 选中角色项(带选择顺序) */
-interface SelectedCharacterItem {
-  readonly character: GroupChatPreviewCharacter;
-  readonly selectedOrder: number;
-}
+  GroupChatCreateViewModel,
+  MIN_MEMBER_COUNT,
+  MAX_MEMBER_COUNT
+} from '../../viewmodels/groupchat/GroupChatCreateViewModel';
+import { CharacterPickState, PENDING_GROUP_CHAT_ID_KEY } from '../../viewmodels/groupchat/GroupChatUiModels';
+import { Character } from '../../models/Character';
 
 @Entry
 @Component
@@ -47,20 +37,50 @@ struct GroupChatCreatePage {
   @State chatNameInput: string = '';
   /** 步骤二:是否已用自定义名称(为 true 时不自动覆盖) */
   @State nameCustomized: boolean = false;
+  /** 角色列表 */
+  @State characters: Character[] = [];
+  /** 角色列表加载状态 */
+  @State pickState: CharacterPickState = CharacterPickState.Loading;
+  /** 是否正在创建(防止重复提交) */
+  @State isCreating: boolean = false;
   /** 顶部状态栏避让高度 */
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   /** 底部导航栏避让高度 */
   @StorageProp('navBarHeight') navBarHeight: number = 0;
 
+  private viewModel: GroupChatCreateViewModel | null = null;
+
+  async aboutToAppear(): Promise<void> {
+    try {
+      await AppServices.whenReady();
+      this.viewModel = new GroupChatCreateViewModel();
+      await this.viewModel.loadCharacters();
+      this.syncFromViewModel();
+    } catch (e) {
+      this.pickState = CharacterPickState.Error;
+    }
+  }
+
+  /** 从 ViewModel 同步状态 */
+  private syncFromViewModel(): void {
+    if (this.viewModel === null) {
+      return;
+    }
+    this.characters = this.viewModel.characters;
+    this.pickState = this.viewModel.pickState;
+    this.selectedIds = this.viewModel.selectedIds;
+    this.isCreating = this.viewModel.isCreating;
+  }
+
   /** 获取过滤后的角色列表(按搜索关键词) */
-  private getFilteredCharacters(): GroupChatPreviewCharacter[] {
+  private getFilteredCharacters(): Character[] {
     const keyword: string = this.searchKeyword.trim();
     if (keyword.length === 0) {
-      return PREVIEW_CHARACTERS.slice();
+      return this.characters;
     }
-    const result: GroupChatPreviewCharacter[] = [];
-    for (let i = 0; i < PREVIEW_CHARACTERS.length; i++) {
-      const c: GroupChatPreviewCharacter = PREVIEW_CHARACTERS[i];
+    const result: Character[] = [];
+    for (let i = 0; i < this.characters.length; i++) {
+      const c: Character = this.characters[i];
       if (c.name.indexOf(keyword) >= 0 || c.description.indexOf(keyword) >= 0) {
         result.push(c);
       }
@@ -68,55 +88,45 @@ struct GroupChatCreatePage {
     return result;
   }
 
-  /** 获取已选角色项(按选择顺序) */
-  private getSelectedItems(): SelectedCharacterItem[] {
-    const items: SelectedCharacterItem[] = [];
-    for (let i = 0; i < this.selectedIds.length; i++) {
-      const char = this.findCharacterById(this.selectedIds[i]);
-      if (char !== null) {
-        items.push({ character: char, selectedOrder: i + 1 });
-      }
-    }
-    return items;
-  }
-
-  /** 按 ID 查找预览角色 */
-  private findCharacterById(id: string): GroupChatPreviewCharacter | null {
-    for (let i = 0; i < PREVIEW_CHARACTERS.length; i++) {
-      if (PREVIEW_CHARACTERS[i].id === id) {
-        return PREVIEW_CHARACTERS[i];
+  /** 按 ID 查找角色 */
+  private findCharacterById(id: string): Character | null {
+    for (let i = 0; i < this.characters.length; i++) {
+      if (this.characters[i].id === id) {
+        return this.characters[i];
       }
     }
     return null;
   }
 
+  /** 获取已选角色(按选择顺序) */
+  private getSelectedCharacters(): Character[] {
+    const result: Character[] = [];
+    for (let i = 0; i < this.selectedIds.length; i++) {
+      const c: Character | null = this.findCharacterById(this.selectedIds[i]);
+      if (c !== null) {
+        result.push(c);
+      }
+    }
+    return result;
+  }
+
   /** 切换角色选择状态 */
   private toggleSelect(characterId: string): void {
-    const idx: number = this.selectedIds.indexOf(characterId);
-    if (idx >= 0) {
-      // 取消选择
-      const next: string[] = this.selectedIds.filter((id: string): boolean => id !== characterId);
-      this.selectedIds = next;
-    } else {
-      // 选择(检查上限)
-      if (this.selectedIds.length >= PREVIEW_MEMBER_MAX) {
-        promptAction.showToast({ message: '最多选择 ' + String(PREVIEW_MEMBER_MAX) + ' 位角色', duration: 1500 });
-        return;
-      }
-      this.selectedIds = this.selectedIds.concat([characterId]);
+    if (this.viewModel === null) {
+      return;
     }
+    this.viewModel.toggleSelect(characterId);
+    this.syncFromViewModel();
   }
 
   /** 进入步骤二 */
   private goStepTwo(): void {
-    if (this.selectedIds.length < PREVIEW_MEMBER_MIN) {
-      promptAction.showToast({ message: '最少选择 ' + String(PREVIEW_MEMBER_MIN) + ' 位角色', duration: 1500 });
+    if (this.selectedIds.length < MIN_MEMBER_COUNT) {
+      promptAction.showToast({ message: '最少选择 ' + String(MIN_MEMBER_COUNT) + ' 位角色', duration: 1500 });
       return;
     }
-    // 首次进入步骤二时,若未自定义名称,生成默认名称
     if (!this.nameCustomized && this.chatNameInput.trim().length === 0) {
-      const names: string[] = this.getSelectedItems().map((item: SelectedCharacterItem): string => item.character.name);
-      this.chatNameInput = composeDefaultTitle(names);
+      this.chatNameInput = this.composeDefaultTitle();
     }
     this.step = 2;
   }
@@ -128,27 +138,21 @@ struct GroupChatCreatePage {
 
   /** 上移成员(步骤二) */
   private moveUp(characterId: string): void {
-    const idx: number = this.selectedIds.indexOf(characterId);
-    if (idx <= 0) {
+    if (this.viewModel === null) {
       return;
     }
-    const next: string[] = this.selectedIds.slice();
-    next[idx] = next[idx - 1];
-    next[idx - 1] = characterId;
-    this.selectedIds = next;
+    this.viewModel.moveUp(characterId);
+    this.syncFromViewModel();
     this.refreshDefaultName();
   }
 
   /** 下移成员(步骤二) */
   private moveDown(characterId: string): void {
-    const idx: number = this.selectedIds.indexOf(characterId);
-    if (idx < 0 || idx >= this.selectedIds.length - 1) {
+    if (this.viewModel === null) {
       return;
     }
-    const next: string[] = this.selectedIds.slice();
-    next[idx] = next[idx + 1];
-    next[idx + 1] = characterId;
-    this.selectedIds = next;
+    this.viewModel.moveDown(characterId);
+    this.syncFromViewModel();
     this.refreshDefaultName();
   }
 
@@ -163,21 +167,53 @@ struct GroupChatCreatePage {
     if (this.nameCustomized) {
       return;
     }
-    const names: string[] = this.getSelectedItems().map((item: SelectedCharacterItem): string => item.character.name);
-    this.chatNameInput = composeDefaultTitle(names);
+    this.chatNameInput = this.composeDefaultTitle();
+  }
+
+  /** 根据已选角色生成默认群聊名称 */
+  private composeDefaultTitle(): string {
+    const selected: Character[] = this.getSelectedCharacters();
+    if (selected.length === 0) {
+      return '';
+    }
+    const names: string[] = selected.map((c: Character): string => c.name);
+    if (names.length === 2) {
+      return names[0] + ' 与 ' + names[1];
+    }
+    return names[0] + ' 等 ' + String(names.length) + ' 人';
   }
 
   /** 确认创建并进入聊天 */
   private confirmCreate(): void {
-    if (this.selectedIds.length < PREVIEW_MEMBER_MIN) {
-      promptAction.showToast({ message: '最少选择 ' + String(PREVIEW_MEMBER_MIN) + ' 位角色', duration: 1500 });
+    if (this.viewModel === null) {
+      return;
+    }
+    if (this.selectedIds.length < MIN_MEMBER_COUNT) {
+      promptAction.showToast({ message: '最少选择 ' + String(MIN_MEMBER_COUNT) + ' 位角色', duration: 1500 });
       return;
     }
     const title: string = this.chatNameInput.trim();
-    const id: string = GroupChatPreviewStore.createSession(title, this.selectedIds);
-    AppStorage.setOrCreate<string>(PENDING_GROUP_CHAT_ID_KEY, id);
-    // 替换当前页面栈为 GroupChatPage,避免返回时回到创建页
-    router.replaceUrl({ url: 'pages/groupchat/GroupChatPage' });
+    this.createGroupChat(title);
+  }
+
+  /** 异步创建群聊 */
+  private async createGroupChat(title: string): Promise<void> {
+    if (this.viewModel === null) {
+      return;
+    }
+    this.isCreating = true;
+    try {
+      const chatId: string = await this.viewModel.create(title);
+      AppStorage.setOrCreate<string>(PENDING_GROUP_CHAT_ID_KEY, chatId);
+      // 替换当前页面栈为 GroupChatPage,避免返回时回到创建页
+      router.replaceUrl({ url: 'pages/groupchat/GroupChatPage' });
+    } catch (e) {
+      this.syncFromViewModel();
+      const msg: string = this.viewModel.errorMessage.length > 0 ? this.viewModel.errorMessage : '创建失败';
+      promptAction.showToast({ message: msg, duration: 1500 });
+    } finally {
+      this.isCreating = false;
+    }
   }
 
   build(): void {
@@ -252,7 +288,94 @@ struct GroupChatCreatePage {
   @Builder
   stepOneArea(): void {
     Column() {
-      // 搜索框
+      if (this.pickState === CharacterPickState.Loading) {
+        this.loadingView()
+      } else if (this.pickState === CharacterPickState.Error) {
+        this.errorView()
+      } else if (this.pickState === CharacterPickState.Empty || this.characters.length === 0) {
+        this.emptyView()
+      } else {
+        this.characterListArea()
+      }
+      this.bottomBarStepOne()
+    }
+    .width('100%')
+    .layoutWeight(1)
+  }
+
+  @Builder
+  loadingView(): void {
+    Column() {
+      Text('加载中…')
+        .fontSize($r('app.float.app_font_body'))
+        .fontColor($r('app.color.app_text_tertiary'))
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+  }
+
+  @Builder
+  errorView(): void {
+    Column() {
+      Text('角色加载失败')
+        .fontSize($r('app.float.app_font_body'))
+        .fontColor($r('app.color.app_text_secondary'))
+      Button('重新加载')
+        .fontSize($r('app.float.app_font_body'))
+        .fontColor($r('app.color.app_on_accent'))
+        .backgroundColor($r('app.color.app_accent'))
+        .borderRadius($r('app.float.app_radius_sm'))
+        .height(40)
+        .padding({ left: 20, right: 20 })
+        .margin({ top: 16 })
+        .onClick(() => {
+          this.reloadCharacters();
+        })
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+  }
+
+  @Builder
+  emptyView(): void {
+    Column() {
+      Text('还没有角色')
+        .fontSize($r('app.float.app_font_subtitle'))
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.app_text_secondary'))
+        .textAlign(TextAlign.Center)
+        .width('100%')
+
+      Text('请先创建或导入至少两个角色。')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_tertiary'))
+        .margin({ top: 6 })
+        .textAlign(TextAlign.Center)
+        .width('100%')
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+  }
+
+  private async reloadCharacters(): Promise<void> {
+    if (this.viewModel === null) {
+      return;
+    }
+    await this.viewModel.loadCharacters();
+    this.syncFromViewModel();
+  }
+
+  /** 角色列表区 */
+  @Builder
+  characterListArea(): void {
+    // 搜索框
+    Column() {
       Row() {
         SymbolGlyph($r('sys.symbol.magnifyingglass'))
           .fontSize(18)
@@ -301,12 +424,12 @@ struct GroupChatCreatePage {
 
       // 角色列表
       List() {
-        ForEach(this.getFilteredCharacters(), (character: GroupChatPreviewCharacter) => {
+        ForEach(this.getFilteredCharacters(), (character: Character) => {
           ListItem() {
             this.characterRow(character)
           }
           .margin({ bottom: $r('app.float.app_spacing_8') })
-        }, (character: GroupChatPreviewCharacter) => character.id)
+        }, (character: Character) => character.id)
 
         // 末尾空白
         ListItem() {
@@ -323,9 +446,6 @@ struct GroupChatCreatePage {
         top: 0,
         bottom: 0
       })
-
-      // 底部固定栏
-      this.bottomBarStepOne()
     }
     .width('100%')
     .layoutWeight(1)
@@ -333,7 +453,7 @@ struct GroupChatCreatePage {
 
   /** 单个角色行 */
   @Builder
-  characterRow(character: GroupChatPreviewCharacter): void {
+  characterRow(character: Character): void {
     Row() {
       // 头像
       CharacterImageView({
@@ -368,9 +488,8 @@ struct GroupChatCreatePage {
       .alignItems(HorizontalAlign.Start)
       .margin({ left: 12 })
 
-      // 选择状态(内联表达式避免 @Builder 内声明局部变量)
+      // 选择状态
       if (this.selectedIds.indexOf(character.id) >= 0) {
-        // 显示选择顺序
         Text(String(this.selectedIds.indexOf(character.id) + 1))
           .fontSize($r('app.float.app_font_caption'))
           .fontColor($r('app.color.app_on_accent'))
@@ -412,11 +531,11 @@ struct GroupChatCreatePage {
       Button($r('app.string.group_create_next'))
         .fontSize($r('app.float.app_font_body'))
         .fontColor($r('app.color.app_on_accent'))
-        .backgroundColor(this.selectedIds.length >= PREVIEW_MEMBER_MIN ? $r('app.color.app_accent') : $r('app.color.app_surface_2'))
+        .backgroundColor(this.selectedIds.length >= MIN_MEMBER_COUNT ? $r('app.color.app_accent') : $r('app.color.app_surface_2'))
         .borderRadius($r('app.float.app_radius_md'))
         .height(40)
         .padding({ left: 20, right: 20 })
-        .enabled(this.selectedIds.length >= PREVIEW_MEMBER_MIN)
+        .enabled(this.selectedIds.length >= MIN_MEMBER_COUNT)
         .onClick(() => {
           this.goStepTwo();
         })
@@ -477,9 +596,9 @@ struct GroupChatCreatePage {
               .width('100%')
               .margin({ bottom: 8 })
 
-            ForEach(this.getSelectedItems(), (item: SelectedCharacterItem) => {
-              this.memberOrderRow(item)
-            }, (item: SelectedCharacterItem) => item.character.id + '_' + String(item.selectedOrder))
+            ForEach(this.getSelectedCharacters(), (character: Character, index: number) => {
+              this.memberOrderRow(character, index)
+            }, (character: Character, index: number) => character.id + '_' + String(index))
           }
           .width('100%')
           .padding({
@@ -491,7 +610,7 @@ struct GroupChatCreatePage {
           .backgroundColor($r('app.color.app_surface_1'))
           .margin({ top: 8 })
 
-          // 回复方式
+          // 回复方式(本阶段固定说明,不可切换)
           Column() {
             Text($r('app.string.group_create_reply_mode'))
               .fontSize($r('app.float.app_font_body'))
@@ -543,10 +662,10 @@ struct GroupChatCreatePage {
 
   /** 成员顺序行(步骤二) */
   @Builder
-  memberOrderRow(item: SelectedCharacterItem): void {
+  memberOrderRow(character: Character, index: number): void {
     Row() {
       // 顺序号
-      Text(String(item.selectedOrder))
+      Text(String(index + 1))
         .fontSize($r('app.float.app_font_body'))
         .fontWeight(FontWeight.Medium)
         .fontColor($r('app.color.app_on_accent'))
@@ -558,8 +677,8 @@ struct GroupChatCreatePage {
 
       // 头像
       CharacterImageView({
-        imageUri: item.character.avatarUri,
-        fallbackName: item.character.name,
+        imageUri: character.avatarUri,
+        fallbackName: character.name,
         imgWidth: 36,
         imgHeight: 36,
         imgBorderRadius: 18,
@@ -569,7 +688,7 @@ struct GroupChatCreatePage {
         .margin({ left: 8 })
 
       // 名称
-      Text(item.character.name)
+      Text(character.name)
         .fontSize($r('app.float.app_font_body'))
         .fontColor($r('app.color.app_text_primary'))
         .layoutWeight(1)
@@ -588,8 +707,9 @@ struct GroupChatCreatePage {
       .width(36)
       .height(36)
       .accessibilityText('上移角色')
+      .enabled(index > 0)
       .onClick(() => {
-        this.moveUp(item.character.id);
+        this.moveUp(character.id);
       })
 
       // 下移按钮
@@ -603,8 +723,9 @@ struct GroupChatCreatePage {
       .width(36)
       .height(36)
       .accessibilityText('下移角色')
+      .enabled(index < this.selectedIds.length - 1)
       .onClick(() => {
-        this.moveDown(item.character.id);
+        this.moveDown(character.id);
       })
     }
     .width('100%')
@@ -623,6 +744,7 @@ struct GroupChatCreatePage {
         .borderRadius($r('app.float.app_radius_md'))
         .height(40)
         .padding({ left: 20, right: 20 })
+        .enabled(!this.isCreating)
         .onClick(() => {
           this.goStepOne();
         })
@@ -630,12 +752,13 @@ struct GroupChatCreatePage {
       Button($r('app.string.group_create_confirm'))
         .fontSize($r('app.float.app_font_body'))
         .fontColor($r('app.color.app_on_accent'))
-        .backgroundColor($r('app.color.app_accent'))
+        .backgroundColor(this.isCreating ? $r('app.color.app_surface_2') : $r('app.color.app_accent'))
         .borderRadius($r('app.float.app_radius_md'))
         .height(40)
         .padding({ left: 20, right: 20 })
         .margin({ left: 12 })
         .layoutWeight(1)
+        .enabled(!this.isCreating)
         .onClick(() => {
           this.confirmCreate();
         })

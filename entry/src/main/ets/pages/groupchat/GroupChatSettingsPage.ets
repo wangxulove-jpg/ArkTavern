@@ -1,70 +1,92 @@
 /**
- * GroupChatSettingsPage 群聊设置
+ * GroupChatSettingsPage 群聊设置(G-DATA-1B 正式版)
  *
- * G-UI-1 预览页面:管理指定群聊的设置项。
+ * 数据来源:GroupConversationPersistenceService(真实数据库)。
  *
  * 功能:
- * - 群聊名称(查看 + 重新命名)
- * - 回复方式(仅"按成员顺序回复")
- * - 失败处理方式(停止整轮 / 跳过并继续)
+ * - 显示群聊名称(查看 + 重新命名)
+ * - 回复方式(固定说明"按成员顺序回复",不可切换)
+ * - 失败处理方式(尚无正式 Schema,显示为"尚未开放")
  * - 管理成员入口
- * - 清空预览记录
- * - 删除预览群聊
+ * - 删除群聊(二次确认 + 调用正式删除事务)
  *
- * 数据来源:GroupChatPreviewStore(内存态,非数据库)。
- * 所有操作仅修改页面内预览状态,不调用 Repository / Service。
- *
- * 本阶段不显示:自然发言 / 随机发言 / 角色抢话 / 连续自动聊天 / 私聊 / 频道
- *               / 地图 / 场景 / 记忆 / 事件 等世界模式概念。
+ * 不依赖:GroupChatPreviewStore / GroupFailurePolicy(预览枚举)。
+ * 本阶段不持久化的设置不展示为可切换状态。
  */
 
 import { router, promptAction } from '@kit.ArkUI';
-import { GroupChatPreviewStore, PENDING_GROUP_CHAT_ID_KEY } from './preview/GroupChatPreviewStore';
+import { AppServices } from '../../services/AppServices';
+import { GroupChatSettingsViewModel } from '../../viewmodels/groupchat/GroupChatSettingsViewModel';
 import {
-  GroupChatPreviewSession,
-  GroupFailurePolicy
-} from './preview/GroupChatPreviewModels';
+  GroupChatDetailState,
+  PENDING_GROUP_CHAT_ID_KEY
+} from '../../viewmodels/groupchat/GroupChatUiModels';
 
 @Entry
 @Component
 struct GroupChatSettingsPage {
-  /** 当前会话 ID */
-  @State sessionId: string = '';
-  /** 当前会话快照(null 时显示空态) */
-  @State session: GroupChatPreviewSession | null = null;
+  /** 当前群聊 ID */
+  @State chatId: string = '';
+  /** 当前群聊标题 */
+  @State title: string = '';
+  /** 详情页状态 */
+  @State state: GroupChatDetailState = GroupChatDetailState.Loading;
+  /** 是否正在重命名 */
+  @State isRenaming: boolean = false;
+  /** 是否正在删除 */
+  @State isDeleting: boolean = false;
   /** 重命名弹窗是否可见 */
   @State renameVisible: boolean = false;
   /** 重命名输入值 */
   @State renameInput: string = '';
-  /** 清空确认弹窗是否可见 */
-  @State clearConfirmVisible: boolean = false;
   /** 删除确认弹窗是否可见 */
   @State deleteConfirmVisible: boolean = false;
   /** 顶部状态栏避让高度 */
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
+  /** 底部导航栏避让高度 */
+  @StorageProp('navBarHeight') navBarHeight: number = 0;
 
-  aboutToAppear(): void {
+  private viewModel: GroupChatSettingsViewModel | null = null;
+
+  async aboutToAppear(): Promise<void> {
     const id: string = AppStorage.get<string>(PENDING_GROUP_CHAT_ID_KEY) ?? '';
     if (id.length === 0) {
       promptAction.showToast({ message: '未找到群聊', duration: 1500 });
       router.back();
       return;
     }
-    this.sessionId = id;
-    AppStorage.set<string>(PENDING_GROUP_CHAT_ID_KEY, '');
-    this.syncFromStore();
+    this.chatId = id;
+    AppStorage.setOrCreate<string>(PENDING_GROUP_CHAT_ID_KEY, '');
+    try {
+      await AppServices.whenReady();
+      this.viewModel = new GroupChatSettingsViewModel();
+      await this.viewModel.load(id);
+      this.syncFromViewModel();
+    } catch (e) {
+      this.state = GroupChatDetailState.Error;
+    }
   }
 
-  /** 从 store 同步快照 */
-  private syncFromStore(): void {
-    this.session = GroupChatPreviewStore.getSession(this.sessionId);
+  /** 从 ViewModel 同步状态 */
+  private syncFromViewModel(): void {
+    if (this.viewModel === null) {
+      return;
+    }
+    this.title = this.viewModel.title;
+    this.state = this.viewModel.state;
+    this.isRenaming = this.viewModel.isRenaming;
+    this.isDeleting = this.viewModel.isDeleting;
   }
 
   build(): void {
     Stack() {
       Column() {
-        if (this.session === null) {
-          this.emptyView()
+        if (this.state === GroupChatDetailState.Loading) {
+          this.loadingView()
+        } else if (this.state === GroupChatDetailState.Error) {
+          this.errorView()
+        } else if (this.state === GroupChatDetailState.NotFound) {
+          this.notFoundView()
         } else {
           this.headerArea()
           this.settingsListArea()
@@ -75,17 +97,9 @@ struct GroupChatSettingsPage {
       .backgroundColor($r('app.color.app_bg'))
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
-      // 重命名弹窗
       if (this.renameVisible) {
         this.renameDialog()
       }
-
-      // 清空确认弹窗
-      if (this.clearConfirmVisible) {
-        this.clearConfirmDialog()
-      }
-
-      // 删除确认弹窗
       if (this.deleteConfirmVisible) {
         this.deleteConfirmDialog()
       }
@@ -94,18 +108,75 @@ struct GroupChatSettingsPage {
     .height('100%')
   }
 
-  /** 空会话视图 */
   @Builder
-  emptyView(): void {
+  loadingView(): void {
     Column() {
-      Text('未找到群聊')
+      Text('加载中…')
         .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor($r('app.color.app_text_tertiary'))
     }
     .width('100%')
     .height('100%')
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
+  }
+
+  @Builder
+  errorView(): void {
+    Column() {
+      Text('加载失败')
+        .fontSize($r('app.float.app_font_body'))
+        .fontColor($r('app.color.app_text_secondary'))
+      Button('重新加载')
+        .fontSize($r('app.float.app_font_body'))
+        .fontColor($r('app.color.app_on_accent'))
+        .backgroundColor($r('app.color.app_accent'))
+        .borderRadius($r('app.float.app_radius_sm'))
+        .height(40)
+        .padding({ left: 20, right: 20 })
+        .margin({ top: 16 })
+        .onClick(() => {
+          this.reloadCurrent();
+        })
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+  }
+
+  @Builder
+  notFoundView(): void {
+    Column() {
+      Text('多人聊天不存在或已被删除')
+        .fontSize($r('app.float.app_font_body'))
+        .fontColor($r('app.color.app_text_secondary'))
+        .textAlign(TextAlign.Center)
+        .width('80%')
+      Button('返回多人聊天首页')
+        .fontSize($r('app.float.app_font_body'))
+        .fontColor($r('app.color.app_on_accent'))
+        .backgroundColor($r('app.color.app_accent'))
+        .borderRadius($r('app.float.app_radius_sm'))
+        .height(40)
+        .padding({ left: 20, right: 20 })
+        .margin({ top: 16 })
+        .onClick(() => {
+          router.replaceUrl({ url: 'pages/groupchat/GroupChatHomePage' });
+        })
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+  }
+
+  private async reloadCurrent(): Promise<void> {
+    if (this.viewModel === null || this.chatId.length === 0) {
+      return;
+    }
+    await this.viewModel.load(this.chatId);
+    this.syncFromViewModel();
   }
 
   /** 顶部标题栏 */
@@ -152,15 +223,13 @@ struct GroupChatSettingsPage {
       Column() {
         // 群聊名称
         this.nameSection()
-        // 回复方式
+        // 回复方式(固定说明)
         this.replyModeSection()
-        // 失败处理方式
+        // 失败处理方式(尚未开放)
         this.failurePolicySection()
         // 管理成员入口
         this.manageMembersEntry()
-        // 清空预览记录
-        this.clearMessagesEntry()
-        // 删除预览群聊
+        // 删除群聊
         this.deleteSessionEntry()
 
         // 末尾空白
@@ -191,7 +260,7 @@ struct GroupChatSettingsPage {
         .margin({ bottom: 8 })
 
       Row() {
-        Text(this.session!.title)
+        Text(this.title)
           .fontSize($r('app.float.app_font_body'))
           .fontColor($r('app.color.app_text_primary'))
           .maxLines(1)
@@ -205,8 +274,9 @@ struct GroupChatSettingsPage {
           .borderRadius($r('app.float.app_radius_sm'))
           .height(32)
           .padding({ left: 12, right: 12 })
+          .enabled(!this.isRenaming)
           .onClick(() => {
-            this.renameInput = this.session !== null ? this.session!.title : '';
+            this.renameInput = this.title;
             this.renameVisible = true;
           })
       }
@@ -225,7 +295,7 @@ struct GroupChatSettingsPage {
     .margin({ top: $r('app.float.app_spacing_12') })
   }
 
-  /** 回复方式区 */
+  /** 回复方式区(固定说明,不可切换) */
   @Builder
   replyModeSection(): void {
     Column() {
@@ -260,7 +330,7 @@ struct GroupChatSettingsPage {
     .margin({ top: $r('app.float.app_spacing_16') })
   }
 
-  /** 失败处理方式区 */
+  /** 失败处理方式区(尚无正式 Schema,显示为尚未开放) */
   @Builder
   failurePolicySection(): void {
     Column() {
@@ -270,17 +340,11 @@ struct GroupChatSettingsPage {
         .width('100%')
         .margin({ bottom: 8 })
 
-      // 停止整轮
       Row() {
-        Text($r('app.string.group_settings_failure_stop'))
+        Text('尚未开放')
           .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor($r('app.color.app_text_tertiary'))
           .layoutWeight(1)
-
-        Text(this.session !== null && this.session!.failurePolicy === GroupFailurePolicy.StopRound ? '●' : '○')
-          .fontSize(14)
-          .fontColor(this.session !== null && this.session!.failurePolicy === GroupFailurePolicy.StopRound
-            ? $r('app.color.app_accent') : $r('app.color.app_text_tertiary'))
       }
       .width('100%')
       .padding({
@@ -292,36 +356,6 @@ struct GroupChatSettingsPage {
       .backgroundColor($r('app.color.app_surface_1'))
       .borderRadius($r('app.float.app_radius_md'))
       .alignItems(VerticalAlign.Center)
-      .onClick(() => {
-        this.handleSetFailurePolicy(GroupFailurePolicy.StopRound);
-      })
-
-      // 跳过并继续
-      Row() {
-        Text($r('app.string.group_settings_failure_skip'))
-          .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_primary'))
-          .layoutWeight(1)
-
-        Text(this.session !== null && this.session!.failurePolicy === GroupFailurePolicy.SkipAndContinue ? '●' : '○')
-          .fontSize(14)
-          .fontColor(this.session !== null && this.session!.failurePolicy === GroupFailurePolicy.SkipAndContinue
-            ? $r('app.color.app_accent') : $r('app.color.app_text_tertiary'))
-      }
-      .width('100%')
-      .padding({
-        left: $r('app.float.app_spacing_12'),
-        right: $r('app.float.app_spacing_12'),
-        top: $r('app.float.app_spacing_12'),
-        bottom: $r('app.float.app_spacing_12')
-      })
-      .backgroundColor($r('app.color.app_surface_1'))
-      .borderRadius($r('app.float.app_radius_md'))
-      .alignItems(VerticalAlign.Center)
-      .margin({ top: 8 })
-      .onClick(() => {
-        this.handleSetFailurePolicy(GroupFailurePolicy.SkipAndContinue);
-      })
     }
     .width('100%')
     .margin({ top: $r('app.float.app_spacing_16') })
@@ -352,41 +386,12 @@ struct GroupChatSettingsPage {
     .alignItems(VerticalAlign.Center)
     .margin({ top: $r('app.float.app_spacing_16') })
     .onClick(() => {
-      AppStorage.setOrCreate<string>(PENDING_GROUP_CHAT_ID_KEY, this.sessionId);
+      AppStorage.setOrCreate<string>(PENDING_GROUP_CHAT_ID_KEY, this.chatId);
       router.pushUrl({ url: 'pages/groupchat/GroupMemberManagePage' });
     })
   }
 
-  /** 清空预览记录入口 */
-  @Builder
-  clearMessagesEntry(): void {
-    Row() {
-      Text($r('app.string.group_settings_clear_messages'))
-        .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_danger'))
-        .layoutWeight(1)
-
-      SymbolGlyph($r('sys.symbol.chevron_right'))
-        .fontSize(16)
-        .fontColor([$r('app.color.app_text_tertiary')])
-    }
-    .width('100%')
-    .padding({
-      left: $r('app.float.app_spacing_12'),
-      right: $r('app.float.app_spacing_12'),
-      top: $r('app.float.app_spacing_12'),
-      bottom: $r('app.float.app_spacing_12')
-    })
-    .backgroundColor($r('app.color.app_surface_1'))
-    .borderRadius($r('app.float.app_radius_md'))
-    .alignItems(VerticalAlign.Center)
-    .margin({ top: $r('app.float.app_spacing_16') })
-    .onClick(() => {
-      this.clearConfirmVisible = true;
-    })
-  }
-
-  /** 删除预览群聊入口 */
+  /** 删除群聊入口 */
   @Builder
   deleteSessionEntry(): void {
     Row() {
@@ -406,12 +411,11 @@ struct GroupChatSettingsPage {
     .borderRadius($r('app.float.app_radius_md'))
     .alignItems(VerticalAlign.Center)
     .margin({ top: $r('app.float.app_spacing_16') })
+    .enabled(!this.isDeleting)
     .onClick(() => {
       this.deleteConfirmVisible = true;
     })
   }
-
-  // ===== 弹窗 =====
 
   /** 重命名弹窗 */
   @Builder
@@ -456,66 +460,9 @@ struct GroupChatSettingsPage {
               .layoutWeight(1)
               .height(40)
               .margin({ left: 12 })
+              .enabled(!this.isRenaming)
               .onClick(() => {
                 this.confirmRename();
-              })
-          }
-          .width('100%')
-          .margin({ top: 20 })
-        }
-        .width('80%')
-        .padding(20)
-        .backgroundColor($r('app.color.app_surface_1'))
-        .borderRadius($r('app.float.app_radius_lg'))
-      }
-      .width('100%')
-      .height('100%')
-      .justifyContent(FlexAlign.Center)
-      .alignItems(HorizontalAlign.Center)
-    }
-    .width('100%')
-    .height('100%')
-    .backgroundColor($r('app.color.app_scrim'))
-  }
-
-  /** 清空确认弹窗 */
-  @Builder
-  clearConfirmDialog(): void {
-    Stack() {
-      Column() {
-        Column() {
-          Text($r('app.string.group_settings_clear_messages'))
-            .fontSize(17)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.app_text_primary'))
-            .margin({ bottom: 12 })
-            .width('100%')
-
-          Text($r('app.string.group_settings_clear_confirm'))
-            .fontSize(14)
-            .fontColor($r('app.color.app_text_secondary'))
-            .width('100%')
-
-          Row() {
-            Button($r('app.string.group_cancel'))
-              .fontSize(15)
-              .backgroundColor(Color.Transparent)
-              .fontColor($r('app.color.app_text_secondary'))
-              .layoutWeight(1)
-              .height(40)
-              .onClick(() => {
-                this.clearConfirmVisible = false;
-              })
-            Button($r('app.string.group_confirm'))
-              .fontSize(15)
-              .backgroundColor($r('app.color.app_danger'))
-              .fontColor($r('app.color.app_on_accent'))
-              .borderRadius($r('app.float.app_radius_sm'))
-              .layoutWeight(1)
-              .height(40)
-              .margin({ left: 12 })
-              .onClick(() => {
-                this.confirmClearMessages();
               })
           }
           .width('100%')
@@ -561,6 +508,7 @@ struct GroupChatSettingsPage {
               .fontColor($r('app.color.app_text_secondary'))
               .layoutWeight(1)
               .height(40)
+              .enabled(!this.isDeleting)
               .onClick(() => {
                 this.deleteConfirmVisible = false;
               })
@@ -572,6 +520,7 @@ struct GroupChatSettingsPage {
               .layoutWeight(1)
               .height(40)
               .margin({ left: 12 })
+              .enabled(!this.isDeleting)
               .onClick(() => {
                 this.confirmDeleteSession();
               })
@@ -594,46 +543,40 @@ struct GroupChatSettingsPage {
     .backgroundColor($r('app.color.app_scrim'))
   }
 
-  // ===== 操作处理 =====
-
-  /** 设置失败处理方式 */
-  private handleSetFailurePolicy(policy: GroupFailurePolicy): void {
-    GroupChatPreviewStore.setFailurePolicy(this.sessionId, policy);
-    this.syncFromStore();
-    promptAction.showToast({
-      message: policy === GroupFailurePolicy.StopRound ? '已设为停止整轮' : '已设为跳过并继续',
-      duration: 1200
-    });
-  }
-
   /** 确认重命名 */
-  private confirmRename(): void {
+  private async confirmRename(): Promise<void> {
     const trimmed: string = this.renameInput.trim();
     if (trimmed.length === 0) {
       promptAction.showToast({ message: '名称不能为空', duration: 1500 });
       return;
     }
-    GroupChatPreviewStore.renameSession(this.sessionId, trimmed);
-    this.renameVisible = false;
-    this.renameInput = '';
-    this.syncFromStore();
-    promptAction.showToast({ message: '已保存', duration: 1200 });
-  }
-
-  /** 确认清空消息 */
-  private confirmClearMessages(): void {
-    GroupChatPreviewStore.clearMessages(this.sessionId);
-    this.clearConfirmVisible = false;
-    this.syncFromStore();
-    promptAction.showToast({ message: '已清空预览记录', duration: 1500 });
+    if (this.viewModel === null) {
+      return;
+    }
+    try {
+      await this.viewModel.rename(trimmed);
+      this.syncFromViewModel();
+      this.renameVisible = false;
+      this.renameInput = '';
+      promptAction.showToast({ message: '已保存', duration: 1200 });
+    } catch (e) {
+      promptAction.showToast({ message: '重命名失败', duration: 1500 });
+    }
   }
 
   /** 确认删除群聊 */
-  private confirmDeleteSession(): void {
-    GroupChatPreviewStore.deleteSession(this.sessionId);
-    this.deleteConfirmVisible = false;
-    promptAction.showToast({ message: '已删除预览群聊', duration: 1500 });
-    // 替换页面栈为多人聊天首页,避免返回到已删除群聊的设置页
-    router.replaceUrl({ url: 'pages/groupchat/GroupChatHomePage' });
+  private async confirmDeleteSession(): Promise<void> {
+    if (this.viewModel === null) {
+      return;
+    }
+    try {
+      await this.viewModel.delete();
+      this.deleteConfirmVisible = false;
+      promptAction.showToast({ message: '已删除群聊', duration: 1500 });
+      // 替换页面栈为多人聊天首页,避免返回到已删除群聊的设置页
+      router.replaceUrl({ url: 'pages/groupchat/GroupChatHomePage' });
+    } catch (e) {
+      promptAction.showToast({ message: '删除失败', duration: 1500 });
+    }
   }
 }

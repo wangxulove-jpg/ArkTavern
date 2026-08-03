@@ -1,141 +1,100 @@
 /**
- * GroupChatPage 多人聊天主页面
+ * GroupChatPage 多人聊天主页面(G-DATA-1B 正式版)
  *
- * G-UI-1 预览页面:多人聊天核心交互界面。
+ * 数据来源:GroupConversationPersistenceService(真实数据库)。
  *
- * 布局:
- * - 顶部标题栏(GroupChatHeader)
- * - 成员横向栏(GroupMemberStrip)
- * - 消息列表(GroupMessageBubble)
- * - 本轮状态栏(GroupRoundStatusBar)
- * - 底部输入区(GroupChatInputBar)
+ * 状态:
+ * - Loading:加载中
+ * - Ready:展示群聊标题、成员、消息区(本阶段无消息)
+ * - NotFound:群聊不存在或已删除
+ * - Error:加载失败
  *
- * 交互:
- * - 发送用户消息 → 模拟生成状态
- * - 开发菜单:下一位 / 完成当前 / 模拟失败 / 停止本轮 / 完成整轮
- * - 更多菜单:管理成员 / 群聊设置 / 重新命名 / 清空当前预览 / 预览状态
- * - 成员点击:查看角色 / 只让此角色回复 / 停用
+ * 本阶段不实现:
+ * - 多人 AI 生成
+ * - 真实消息发送(输入区禁用)
+ * - 流式输出
  *
- * 数据来源:GroupChatPreviewStore(内存态,非数据库)。
- * 所有按钮只修改本地预览状态,不调用 Provider / Service。
+ * 不依赖:GroupChatPreviewStore / 预览种子数据。
  */
 
 import { router, promptAction } from '@kit.ArkUI';
-import { GroupChatHeader } from '../../components/groupchat/GroupChatHeader';
-import { GroupMemberStrip } from '../../components/groupchat/GroupMemberStrip';
-import { GroupMessageBubble } from '../../components/groupchat/GroupMessageBubble';
-import { GroupRoundStatusBar } from '../../components/groupchat/GroupRoundStatusBar';
-import { GroupChatInputBar } from '../../components/groupchat/GroupChatInputBar';
-import { GroupChatPreviewStore, PENDING_GROUP_CHAT_ID_KEY } from './preview/GroupChatPreviewStore';
+import { AppServices } from '../../services/AppServices';
+import { GroupChatViewModel } from '../../viewmodels/groupchat/GroupChatViewModel';
 import {
-  GroupChatPreviewSession,
-  GroupChatPreviewMessage,
-  GroupChatPreviewMember,
-  GroupRoundPreviewStatus,
-  GroupMemberPreviewStatus
-} from './preview/GroupChatPreviewModels';
-
-/**
- * 预览状态控制总开关(G-UI-2 收口)。
- *
- * - true:GroupChatPage 更多菜单中显示"预览状态"入口与"开发操作(模拟生成)"区。
- * - false:正式用户菜单不散落调试按钮,只保留管理成员 / 群聊设置 / 重命名 / 清空。
- *
- * 接入真实数据时将此常量改为 false 即可整体隐藏调试入口,便于删除,
- * 不需要在多处分散查找预览调试代码。
- */
-const ENABLE_GROUP_CHAT_PREVIEW_CONTROLS: boolean = true;
+  GroupConversationDetailUiModel,
+  GroupMemberUiModel,
+  GroupChatDetailState,
+  PENDING_GROUP_CHAT_ID_KEY
+} from '../../viewmodels/groupchat/GroupChatUiModels';
+import { CharacterImageView } from '../../components/CharacterImageView';
 
 @Entry
 @Component
 struct GroupChatPage {
-  /** 当前会话 ID(由首页 / 创建页写入 AppStorage) */
-  @State sessionId: string = '';
-  /** 当前会话快照(null 时显示空态) */
-  @State session: GroupChatPreviewSession | null = null;
-  /** 输入框文本 */
-  @State inputText: string = '';
+  /** 当前群聊 ID */
+  @State chatId: string = '';
+  /** 群聊详情(Ready 状态下非 null) */
+  @State detail: GroupConversationDetailUiModel | null = null;
+  /** 页面状态 */
+  @State state: GroupChatDetailState = GroupChatDetailState.Loading;
   /** 更多菜单是否可见 */
   @State moreMenuVisible: boolean = false;
-  /** 成员菜单目标(空时不显示) */
-  @State memberMenuTarget: GroupChatPreviewMember | null = null;
-  /** 预览状态菜单是否可见 */
-  @State previewMenuVisible: boolean = false;
   /** 重命名弹窗是否可见 */
   @State renameVisible: boolean = false;
   /** 重命名输入值 */
   @State renameInput: string = '';
-  /** 列表滚动控制器 */
-  private scroller: ListScroller = new ListScroller();
   /** 顶部状态栏避让高度 */
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
+  /** 底部导航栏避让高度 */
+  @StorageProp('navBarHeight') navBarHeight: number = 0;
 
-  aboutToAppear(): void {
+  private viewModel: GroupChatViewModel | null = null;
+
+  async aboutToAppear(): Promise<void> {
     const id: string = AppStorage.get<string>(PENDING_GROUP_CHAT_ID_KEY) ?? '';
     if (id.length === 0) {
       promptAction.showToast({ message: '未找到群聊', duration: 1500 });
       router.back();
       return;
     }
-    this.sessionId = id;
+    this.chatId = id;
     // 清除 pending,避免返回后误用
-    AppStorage.set<string>(PENDING_GROUP_CHAT_ID_KEY, '');
-    this.syncFromStore();
-  }
-
-  /** 从 store 同步快照 */
-  private syncFromStore(): void {
-    const s: GroupChatPreviewSession | null = GroupChatPreviewStore.getSession(this.sessionId);
-    this.session = s;
-    if (s !== null) {
-      // 滚动到底部(下一帧执行,确保列表已更新)
-      setTimeout((): void => {
-        if (s.messages.length > 0) {
-          this.scroller.scrollToIndex(s.messages.length - 1);
-        }
-      }, 50);
+    AppStorage.setOrCreate<string>(PENDING_GROUP_CHAT_ID_KEY, '');
+    try {
+      await AppServices.whenReady();
+      this.viewModel = new GroupChatViewModel();
+      await this.viewModel.load(id);
+      this.syncFromViewModel();
+    } catch (e) {
+      this.state = GroupChatDetailState.Error;
     }
   }
 
-  /** 获取当前正在生成的成员名称 */
-  private getGeneratingMemberName(): string {
-    if (this.session === null) {
-      return '';
+  /** 页面重新显示时刷新(从设置/成员管理返回) */
+  async onPageShow(): Promise<void> {
+    if (this.viewModel !== null && this.chatId.length > 0) {
+      await this.viewModel.load(this.chatId);
+      this.syncFromViewModel();
     }
-    const s: GroupChatPreviewSession = this.session!;
-    if (s.roundStatus !== GroupRoundPreviewStatus.Generating) {
-      return '';
-    }
-    const order: number = s.currentGeneratingOrder;
-    for (let i = 0; i < s.members.length; i++) {
-      if (s.members[i].order === order) {
-        return s.members[i].name;
-      }
-    }
-    return '';
   }
 
-  /** 获取失败成员名称(失败状态时) */
-  private getFailedMemberName(): string {
-    if (this.session === null) {
-      return '';
+  /** 从 ViewModel 同步状态 */
+  private syncFromViewModel(): void {
+    if (this.viewModel === null) {
+      return;
     }
-    const s: GroupChatPreviewSession = this.session!;
-    if (s.roundStatus !== GroupRoundPreviewStatus.Failed) {
-      return '';
-    }
-    for (let i = 0; i < s.members.length; i++) {
-      if (s.members[i].status === GroupMemberPreviewStatus.Failed) {
-        return s.members[i].name;
-      }
-    }
-    return '';
+    this.detail = this.viewModel.detail;
+    this.state = this.viewModel.state;
   }
 
   build(): void {
     Column() {
-      if (this.session === null) {
-        this.emptySessionView()
+      if (this.state === GroupChatDetailState.Loading) {
+        this.loadingView()
+      } else if (this.state === GroupChatDetailState.Error) {
+        this.errorView()
+      } else if (this.state === GroupChatDetailState.NotFound || this.detail === null) {
+        this.notFoundView()
       } else {
         this.chatLayout()
       }
@@ -146,13 +105,12 @@ struct GroupChatPage {
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 
-  /** 空会话视图 */
   @Builder
-  emptySessionView(): void {
+  loadingView(): void {
     Column() {
-      Text('未找到群聊')
+      Text('加载中…')
         .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor($r('app.color.app_text_tertiary'))
     }
     .width('100%')
     .height('100%')
@@ -160,88 +118,80 @@ struct GroupChatPage {
     .alignItems(HorizontalAlign.Center)
   }
 
+  @Builder
+  errorView(): void {
+    Column() {
+      Text('加载失败')
+        .fontSize($r('app.float.app_font_body'))
+        .fontColor($r('app.color.app_text_secondary'))
+      Button('重新加载')
+        .fontSize($r('app.float.app_font_body'))
+        .fontColor($r('app.color.app_on_accent'))
+        .backgroundColor($r('app.color.app_accent'))
+        .borderRadius($r('app.float.app_radius_sm'))
+        .height(40)
+        .padding({ left: 20, right: 20 })
+        .margin({ top: 16 })
+        .onClick(() => {
+          this.reloadCurrent();
+        })
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+  }
+
+  @Builder
+  notFoundView(): void {
+    Column() {
+      Text('多人聊天不存在或已被删除')
+        .fontSize($r('app.float.app_font_body'))
+        .fontColor($r('app.color.app_text_secondary'))
+        .textAlign(TextAlign.Center)
+        .width('80%')
+      Button('返回多人聊天首页')
+        .fontSize($r('app.float.app_font_body'))
+        .fontColor($r('app.color.app_on_accent'))
+        .backgroundColor($r('app.color.app_accent'))
+        .borderRadius($r('app.float.app_radius_sm'))
+        .height(40)
+        .padding({ left: 20, right: 20 })
+        .margin({ top: 16 })
+        .onClick(() => {
+          router.replaceUrl({ url: 'pages/groupchat/GroupChatHomePage' });
+        })
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+  }
+
+  private async reloadCurrent(): Promise<void> {
+    if (this.viewModel === null || this.chatId.length === 0) {
+      return;
+    }
+    await this.viewModel.load(this.chatId);
+    this.syncFromViewModel();
+  }
+
   /** 主聊天布局 */
   @Builder
   chatLayout(): void {
     Stack() {
       Column() {
-        // 顶部标题栏
-        GroupChatHeader({
-          title: this.session!.title,
-          memberCount: this.session!.members.length,
-          roundStatus: this.session!.roundStatus,
-          generatingMemberName: this.getGeneratingMemberName(),
-          onBack: (): void => {
-            router.back();
-          },
-          onMore: (): void => {
-            this.moreMenuVisible = true;
-          }
-        })
-
-        // 成员横向栏
-        GroupMemberStrip({
-          members: this.session!.members,
-          onMemberClick: (member: GroupChatPreviewMember): void => {
-            this.memberMenuTarget = member;
-          }
-        })
-
-        // 消息列表
-        this.messageListArea()
-
-        // 本轮状态栏
-        GroupRoundStatusBar({
-          roundStatus: this.session!.roundStatus,
-          completedCount: this.session!.completedCount,
-          totalCount: this.session!.totalCount,
-          generatingMemberName: this.session!.roundStatus === GroupRoundPreviewStatus.Failed
-            ? this.getFailedMemberName() : this.getGeneratingMemberName(),
-          onStop: (): void => {
-            this.handleStopRound();
-          },
-          onRetry: (): void => {
-            this.handleRetry();
-          },
-          onEndRound: (): void => {
-            this.handleEndRound();
-          }
-        })
-
-        // 底部输入区
-        GroupChatInputBar({
-          inputText: this.inputText,
-          isGenerating: this.session!.roundStatus === GroupRoundPreviewStatus.Generating,
-          onInputChange: (text: string): void => {
-            this.inputText = text;
-          },
-          onSend: (): void => {
-            this.handleSend();
-          },
-          onStop: (): void => {
-            this.handleStopRound();
-          }
-        })
+        this.headerArea()
+        this.memberStripArea()
+        this.messageArea()
+        this.inputBarArea()
       }
       .width('100%')
       .height('100%')
 
-      // 更多菜单弹窗
       if (this.moreMenuVisible) {
         this.moreMenuDialog()
       }
-
-      // 成员菜单弹窗
-      if (this.memberMenuTarget !== null) {
-        this.memberMenuDialog()
-      }
-
-      // 预览状态菜单弹窗
-      if (this.previewMenuVisible) {
-        this.previewMenuDialog()
-      }
-
-      // 重命名弹窗
       if (this.renameVisible) {
         this.renameDialog()
       }
@@ -250,99 +200,192 @@ struct GroupChatPage {
     .height('100%')
   }
 
-  /** 消息列表区 */
+  /** 顶部标题栏 */
   @Builder
-  messageListArea(): void {
-    if (this.session!.messages.length === 0) {
-      Column() {
-        Text('还没有消息,在下方输入开始聊天')
-          .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_tertiary'))
-          .textAlign(TextAlign.Center)
+  headerArea(): void {
+    Row() {
+      Button() {
+        SymbolGlyph($r('sys.symbol.chevron_left'))
+          .fontSize(22)
+          .fontColor([$r('app.color.app_text_primary')])
       }
-      .width('100%')
-      .layoutWeight(1)
-      .justifyContent(FlexAlign.Center)
-      .alignItems(HorizontalAlign.Center)
-    } else {
-      List({ scroller: this.scroller }) {
-        ForEach(this.session!.messages, (msg: GroupChatPreviewMessage) => {
-          ListItem() {
-            GroupMessageBubble({
-              message: msg,
-              onRetry: (): void => {
-                this.handleRetry();
-              },
-              onEndRound: (): void => {
-                this.handleEndRound();
-              }
-            })
-          }
-        }, (msg: GroupChatPreviewMessage) => msg.id + '|' + String(msg.updatedAt) + '|' + msg.status + '|' + String(msg.content.length))
+      .type(ButtonType.Circle)
+      .backgroundColor(Color.Transparent)
+      .width(36)
+      .height(36)
+      .accessibilityText('返回')
+      .onClick(() => {
+        router.back();
+      })
 
-        // 末尾空白
-        ListItem() {
-          Column().width('100%').height(16)
-        }
+      Column() {
+        Text(this.detail!.title)
+          .fontSize($r('app.float.app_font_subtitle'))
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.app_text_primary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+
+        Text(this.composeMemberSubtitle())
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_tertiary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+          .margin({ top: 2 })
       }
-      .width('100%')
       .layoutWeight(1)
-      .scrollBar(BarState.Off)
-      .edgeEffect(EdgeEffect.Spring)
-      .padding({
-        left: $r('app.float.app_spacing_16'),
-        right: $r('app.float.app_spacing_16'),
-        top: $r('app.float.app_spacing_8'),
-        bottom: 0
+      .alignItems(HorizontalAlign.Start)
+      .margin({ left: 4, right: 8 })
+
+      Button() {
+        SymbolGlyph($r('sys.symbol.more'))
+          .fontSize(20)
+          .fontColor([$r('app.color.app_text_primary')])
+      }
+      .type(ButtonType.Circle)
+      .backgroundColor(Color.Transparent)
+      .width(36)
+      .height(36)
+      .accessibilityText('更多操作')
+      .onClick(() => {
+        this.moreMenuVisible = true;
       })
     }
+    .width('100%')
+    .padding({
+      left: $r('app.float.app_spacing_8'),
+      right: $r('app.float.app_spacing_12'),
+      top: this.statusBarHeight + 8,
+      bottom: $r('app.float.app_spacing_8')
+    })
+    .alignItems(VerticalAlign.Center)
   }
 
-  // ===== 交互处理 =====
+  /** 构建成员副标题 */
+  private composeMemberSubtitle(): string {
+    const members: GroupMemberUiModel[] = this.detail !== null ? this.detail.members : [];
+    const enabled: number = members.filter((m: GroupMemberUiModel): boolean => m.isEnabled).length;
+    return String(members.length) + ' 位成员 · ' + String(enabled) + ' 位启用';
+  }
 
-  /** 发送消息 */
-  private handleSend(): void {
-    const text: string = this.inputText.trim();
-    if (text.length === 0) {
-      return;
+  /** 成员横向栏 */
+  @Builder
+  memberStripArea(): void {
+    Scroll() {
+      Row() {
+        ForEach(this.detail!.members, (member: GroupMemberUiModel) => {
+          Column() {
+            Stack() {
+              CharacterImageView({
+                imageUri: member.avatarUri,
+                fallbackName: member.name,
+                imgWidth: 44,
+                imgHeight: 44,
+                imgBorderRadius: 22,
+                displayMode: 'thumbnail',
+                objectFit: ImageFit.Cover
+              })
+              if (!member.characterExists) {
+                // 缺失角色标记
+                Text('!')
+                  .fontSize(12)
+                  .fontColor($r('app.color.app_on_accent'))
+                  .backgroundColor($r('app.color.app_danger'))
+                  .borderRadius(8)
+                  .width(16)
+                  .height(16)
+                  .textAlign(TextAlign.Center)
+                  .position({ x: 30, y: -2 })
+              }
+            }
+            .width(44)
+            .height(44)
+
+            Text(member.name)
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor(member.isEnabled ? $r('app.color.app_text_primary') : $r('app.color.app_text_tertiary'))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .width(56)
+              .textAlign(TextAlign.Center)
+              .margin({ top: 4 })
+              .opacity(member.isEnabled ? 1 : 0.5)
+          }
+          .margin({ left: 8, right: 8 })
+        }, (member: GroupMemberUiModel) => member.characterId + '|' + String(member.speakerOrder) + '|' + String(member.isEnabled))
+      }
+      .padding({ left: 12, right: 12, top: 4, bottom: 4 })
     }
-    GroupChatPreviewStore.appendUserMessage(this.sessionId, text);
-    this.inputText = '';
-    this.syncFromStore();
+    .width('100%')
+    .height(78)
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.Spring)
   }
 
-  /** 停止本轮 */
-  private handleStopRound(): void {
-    GroupChatPreviewStore.stopRound(this.sessionId);
-    this.syncFromStore();
+  /** 消息列表区(本阶段无真实多人消息) */
+  @Builder
+  messageArea(): void {
+    Column() {
+      Text('还没有消息')
+        .fontSize($r('app.float.app_font_body'))
+        .fontColor($r('app.color.app_text_secondary'))
+        .textAlign(TextAlign.Center)
+        .width('100%')
+
+      Text('多人 AI 回复将在下一阶段接入。')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_tertiary'))
+        .margin({ top: 6 })
+        .textAlign(TextAlign.Center)
+        .width('100%')
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
   }
 
-  /** 重试当前失败成员 */
-  private handleRetry(): void {
-    GroupChatPreviewStore.retryCurrentMember(this.sessionId);
-    this.syncFromStore();
+  /** 输入区(本阶段禁用) */
+  @Builder
+  inputBarArea(): void {
+    Row() {
+      TextInput({ placeholder: '多人回复功能将在下一阶段接入', text: '' })
+        .fontSize($r('app.float.app_font_body'))
+        .fontColor($r('app.color.app_text_tertiary'))
+        .backgroundColor($r('app.color.app_surface_2'))
+        .borderRadius($r('app.float.app_radius_md'))
+        .height(40)
+        .padding({ left: 12, right: 12 })
+        .layoutWeight(1)
+        .enabled(false)
+
+      Button() {
+        SymbolGlyph($r('sys.symbol.paperplane_fill'))
+          .fontSize(20)
+          .fontColor([$r('app.color.app_text_tertiary')])
+      }
+      .type(ButtonType.Circle)
+      .backgroundColor($r('app.color.app_surface_2'))
+      .width(40)
+      .height(40)
+      .margin({ left: 8 })
+      .enabled(false)
+    }
+    .width('100%')
+    .padding({
+      left: $r('app.float.app_spacing_16'),
+      right: $r('app.float.app_spacing_16'),
+      top: $r('app.float.app_spacing_8'),
+      bottom: this.navBarHeight + 8
+    })
+    .backgroundColor($r('app.color.app_surface_1'))
+    .border({ width: { top: 0.5 }, color: $r('app.color.app_divider') })
+    .alignItems(VerticalAlign.Center)
   }
 
-  /** 结束本轮 */
-  private handleEndRound(): void {
-    GroupChatPreviewStore.endRound(this.sessionId);
-    this.syncFromStore();
-  }
-
-  /** 开发菜单:完成当前角色(推进到下一位) */
-  private handleAdvanceCurrent(): void {
-    GroupChatPreviewStore.advanceCurrentMember(this.sessionId);
-    this.syncFromStore();
-  }
-
-  /** 开发菜单:模拟失败 */
-  private handleFailCurrent(): void {
-    GroupChatPreviewStore.failCurrentMember(this.sessionId);
-    this.syncFromStore();
-  }
-
-  // ===== 更多菜单 =====
-
+  /** 更多菜单弹窗 */
   @Builder
   moreMenuDialog(): void {
     Stack() {
@@ -363,8 +406,7 @@ struct GroupChatPage {
             .height(44)
             .onClick(() => {
               this.moreMenuVisible = false;
-              AppStorage.setOrCreate<string>(PENDING_GROUP_CHAT_ID_KEY, this.sessionId);
-              router.pushUrl({ url: 'pages/groupchat/GroupMemberManagePage' });
+              this.goManageMembers();
             })
 
           Button($r('app.string.group_chat_menu_settings'))
@@ -377,8 +419,7 @@ struct GroupChatPage {
             .margin({ top: 8 })
             .onClick(() => {
               this.moreMenuVisible = false;
-              AppStorage.setOrCreate<string>(PENDING_GROUP_CHAT_ID_KEY, this.sessionId);
-              router.pushUrl({ url: 'pages/groupchat/GroupChatSettingsPage' });
+              this.goSettings();
             })
 
           Button($r('app.string.group_chat_menu_rename'))
@@ -391,91 +432,9 @@ struct GroupChatPage {
             .margin({ top: 8 })
             .onClick(() => {
               this.moreMenuVisible = false;
-              this.renameInput = this.session !== null ? this.session!.title : '';
+              this.renameInput = this.detail !== null ? this.detail.title : '';
               this.renameVisible = true;
             })
-
-          Button($r('app.string.group_chat_menu_clear'))
-            .fontSize(15)
-            .fontColor($r('app.color.app_danger'))
-            .backgroundColor($r('app.color.app_surface_2'))
-            .borderRadius($r('app.float.app_radius_sm'))
-            .width('100%')
-            .height(44)
-            .margin({ top: 8 })
-            .onClick(() => {
-              this.moreMenuVisible = false;
-              GroupChatPreviewStore.clearMessages(this.sessionId);
-              this.syncFromStore();
-              promptAction.showToast({ message: '已清空当前预览消息', duration: 1500 });
-            })
-
-          // 预览状态切换(开发菜单,受总开关控制)
-          if (ENABLE_GROUP_CHAT_PREVIEW_CONTROLS) {
-            Button($r('app.string.group_chat_menu_preview'))
-              .fontSize(15)
-              .fontColor($r('app.color.app_accent'))
-              .backgroundColor($r('app.color.app_accent_surface'))
-              .borderRadius($r('app.float.app_radius_sm'))
-              .width('100%')
-              .height(44)
-              .margin({ top: 8 })
-              .onClick(() => {
-                this.moreMenuVisible = false;
-                this.previewMenuVisible = true;
-              })
-
-            // 开发操作区(模拟生成流程,受总开关控制)
-            Divider().color($r('app.color.app_divider')).margin({ top: 12, bottom: 8 })
-
-            Text($r('app.string.group_chat_dev_section'))
-              .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_text_tertiary'))
-              .width('100%')
-              .margin({ bottom: 8 })
-
-            Button($r('app.string.group_chat_dev_complete'))
-              .fontSize(15)
-              .fontColor($r('app.color.app_on_accent'))
-              .backgroundColor($r('app.color.app_accent'))
-              .borderRadius($r('app.float.app_radius_sm'))
-              .width('100%')
-              .height(44)
-              .enabled(this.session !== null && this.session!.roundStatus === GroupRoundPreviewStatus.Generating)
-              .onClick(() => {
-                this.moreMenuVisible = false;
-                this.handleAdvanceCurrent();
-              })
-
-            Button($r('app.string.group_chat_dev_fail'))
-              .fontSize(15)
-              .fontColor($r('app.color.app_on_accent'))
-              .backgroundColor($r('app.color.app_danger'))
-              .borderRadius($r('app.float.app_radius_sm'))
-              .width('100%')
-              .height(44)
-              .margin({ top: 8 })
-              .enabled(this.session !== null && this.session!.roundStatus === GroupRoundPreviewStatus.Generating)
-              .onClick(() => {
-                this.moreMenuVisible = false;
-                this.handleFailCurrent();
-              })
-
-            Button($r('app.string.group_chat_dev_finish'))
-              .fontSize(15)
-              .fontColor($r('app.color.app_text_primary'))
-              .backgroundColor($r('app.color.app_surface_2'))
-              .borderRadius($r('app.float.app_radius_sm'))
-              .width('100%')
-              .height(44)
-              .margin({ top: 8 })
-              .enabled(this.session !== null && this.session!.roundStatus !== GroupRoundPreviewStatus.Idle)
-              .onClick(() => {
-                this.moreMenuVisible = false;
-                GroupChatPreviewStore.resetRound(this.sessionId);
-                this.syncFromStore();
-              })
-          }
 
           Button($r('app.string.group_cancel'))
             .fontSize(15)
@@ -507,192 +466,17 @@ struct GroupChatPage {
     })
   }
 
-  // ===== 成员菜单 =====
-
-  @Builder
-  memberMenuDialog(): void {
-    Stack() {
-      Column() {
-        Column() {
-          Text(this.memberMenuTarget !== null ? this.memberMenuTarget!.name : '')
-            .fontSize(17)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.app_text_primary'))
-            .margin({ bottom: 12 })
-
-          Button($r('app.string.group_chat_member_view'))
-            .fontSize(15)
-            .fontColor($r('app.color.app_text_primary'))
-            .backgroundColor($r('app.color.app_surface_2'))
-            .borderRadius($r('app.float.app_radius_sm'))
-            .width('100%')
-            .height(44)
-            .onClick(() => {
-              const name: string = this.memberMenuTarget !== null ? this.memberMenuTarget!.name : '';
-              this.memberMenuTarget = null;
-              promptAction.showToast({ message: '查看角色:' + name + '(预览,暂未实现)', duration: 1500 });
-            })
-
-          Button($r('app.string.group_chat_member_only'))
-            .fontSize(15)
-            .fontColor($r('app.color.app_text_primary'))
-            .backgroundColor($r('app.color.app_surface_2'))
-            .borderRadius($r('app.float.app_radius_sm'))
-            .width('100%')
-            .height(44)
-            .margin({ top: 8 })
-            .enabled(this.memberMenuTarget !== null && this.memberMenuTarget!.enabled)
-            .onClick(() => {
-              this.handleOnlyThisMember();
-            })
-
-          Button($r('app.string.group_chat_member_disable'))
-            .fontSize(15)
-            .fontColor($r('app.color.app_danger'))
-            .backgroundColor($r('app.color.app_surface_2'))
-            .borderRadius($r('app.float.app_radius_sm'))
-            .width('100%')
-            .height(44)
-            .margin({ top: 8 })
-            .enabled(this.memberMenuTarget !== null && this.memberMenuTarget!.enabled)
-            .onClick(() => {
-              this.handleDisableMember();
-            })
-
-          Button($r('app.string.group_cancel'))
-            .fontSize(15)
-            .fontColor($r('app.color.app_text_secondary'))
-            .backgroundColor(Color.Transparent)
-            .borderRadius($r('app.float.app_radius_sm'))
-            .width('100%')
-            .height(44)
-            .margin({ top: 12 })
-            .onClick(() => {
-              this.memberMenuTarget = null;
-            })
-        }
-        .width('80%')
-        .padding(20)
-        .backgroundColor($r('app.color.app_surface_1'))
-        .borderRadius($r('app.float.app_radius_lg'))
-      }
-      .width('100%')
-      .height('100%')
-      .justifyContent(FlexAlign.Center)
-      .alignItems(HorizontalAlign.Center)
-    }
-    .width('100%')
-    .height('100%')
-    .backgroundColor($r('app.color.app_scrim'))
-    .onClick(() => {
-      this.memberMenuTarget = null;
-    })
+  private goManageMembers(): void {
+    AppStorage.setOrCreate<string>(PENDING_GROUP_CHAT_ID_KEY, this.chatId);
+    router.pushUrl({ url: 'pages/groupchat/GroupMemberManagePage' });
   }
 
-  /** 只让此角色回复:停用其他成员 */
-  private handleOnlyThisMember(): void {
-    if (this.memberMenuTarget === null) {
-      return;
-    }
-    const targetId: string = this.memberMenuTarget!.id;
-    this.memberMenuTarget = null;
-    if (this.session === null) {
-      return;
-    }
-    const s: GroupChatPreviewSession = this.session!;
-    for (let i = 0; i < s.members.length; i++) {
-      const m: GroupChatPreviewMember = s.members[i];
-      if (m.id !== targetId && m.enabled) {
-        GroupChatPreviewStore.setMemberEnabled(this.sessionId, m.id, false);
-      }
-    }
-    this.syncFromStore();
-    promptAction.showToast({ message: '已仅保留该角色(预览)', duration: 1500 });
+  private goSettings(): void {
+    AppStorage.setOrCreate<string>(PENDING_GROUP_CHAT_ID_KEY, this.chatId);
+    router.pushUrl({ url: 'pages/groupchat/GroupChatSettingsPage' });
   }
 
-  /** 停用成员 */
-  private handleDisableMember(): void {
-    if (this.memberMenuTarget === null) {
-      return;
-    }
-    const targetId: string = this.memberMenuTarget!.id;
-    this.memberMenuTarget = null;
-    GroupChatPreviewStore.setMemberEnabled(this.sessionId, targetId, false);
-    this.syncFromStore();
-    promptAction.showToast({ message: '已停用(预览)', duration: 1500 });
-  }
-
-  // ===== 预览状态菜单 =====
-
-  @Builder
-  previewMenuDialog(): void {
-    Stack() {
-      Column() {
-        Column() {
-          Text($r('app.string.group_chat_menu_preview'))
-            .fontSize(17)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.app_text_primary'))
-            .margin({ bottom: 12 })
-
-          this.previewModeButton($r('app.string.group_chat_preview_empty'), 'empty')
-          this.previewModeButton($r('app.string.group_chat_preview_normal'), 'normal')
-          this.previewModeButton($r('app.string.group_chat_preview_generating'), 'generating')
-          this.previewModeButton($r('app.string.group_chat_preview_cancelled'), 'cancelled')
-          this.previewModeButton($r('app.string.group_chat_preview_failed'), 'failed')
-          this.previewModeButton($r('app.string.group_chat_preview_long'), 'long')
-          this.previewModeButton($r('app.string.group_chat_preview_members8'), 'members8')
-
-          Button($r('app.string.group_cancel'))
-            .fontSize(15)
-            .fontColor($r('app.color.app_text_secondary'))
-            .backgroundColor(Color.Transparent)
-            .borderRadius($r('app.float.app_radius_sm'))
-            .width('100%')
-            .height(44)
-            .margin({ top: 12 })
-            .onClick(() => {
-              this.previewMenuVisible = false;
-            })
-        }
-        .width('80%')
-        .padding(20)
-        .backgroundColor($r('app.color.app_surface_1'))
-        .borderRadius($r('app.float.app_radius_lg'))
-      }
-      .width('100%')
-      .height('100%')
-      .justifyContent(FlexAlign.Center)
-      .alignItems(HorizontalAlign.Center)
-    }
-    .width('100%')
-    .height('100%')
-    .backgroundColor($r('app.color.app_scrim'))
-    .onClick(() => {
-      this.previewMenuVisible = false;
-    })
-  }
-
-  /** 预览模式按钮 */
-  @Builder
-  previewModeButton(label: ResourceStr, mode: string): void {
-    Button(label)
-      .fontSize(15)
-      .fontColor($r('app.color.app_text_primary'))
-      .backgroundColor($r('app.color.app_surface_2'))
-      .borderRadius($r('app.float.app_radius_sm'))
-      .width('100%')
-      .height(44)
-      .margin({ top: 8 })
-      .onClick(() => {
-        this.previewMenuVisible = false;
-        GroupChatPreviewStore.setPreviewMode(this.sessionId, mode);
-        this.syncFromStore();
-      })
-  }
-
-  // ===== 重命名弹窗 =====
-
+  /** 重命名弹窗 */
   @Builder
   renameDialog(): void {
     Stack() {
@@ -756,16 +540,23 @@ struct GroupChatPage {
     .backgroundColor($r('app.color.app_scrim'))
   }
 
-  /** 确认重命名 */
-  private confirmRename(): void {
+  private async confirmRename(): Promise<void> {
     const trimmed: string = this.renameInput.trim();
     if (trimmed.length === 0) {
       promptAction.showToast({ message: '名称不能为空', duration: 1500 });
       return;
     }
-    GroupChatPreviewStore.renameSession(this.sessionId, trimmed);
-    this.renameVisible = false;
-    this.renameInput = '';
-    this.syncFromStore();
+    if (this.viewModel === null) {
+      return;
+    }
+    try {
+      await this.viewModel.rename(trimmed);
+      this.syncFromViewModel();
+      this.renameVisible = false;
+      this.renameInput = '';
+      promptAction.showToast({ message: '已保存', duration: 1200 });
+    } catch (e) {
+      promptAction.showToast({ message: '重命名失败', duration: 1500 });
+    }
   }
 }
