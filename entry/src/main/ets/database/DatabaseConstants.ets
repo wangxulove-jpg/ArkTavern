@@ -6,7 +6,7 @@
  */
 
 export const DATABASE_NAME: string = 'arktavern.db';
-export const DATABASE_VERSION: number = 14;
+export const DATABASE_VERSION: number = 15;
 
 export const TABLE_CHARACTERS: string = 'characters';
 export const TABLE_CHATS: string = 'chats';
@@ -259,3 +259,70 @@ export const ALTER_CHATS_ADD_CONVERSATION_MODE: string =
 export const CREATE_INDEX_CHAT_PARTICIPANTS_CHAT_ORDER: string =
   `CREATE INDEX IF NOT EXISTS ${INDEX_CHAT_PARTICIPANTS_CHAT_ORDER} ` +
   `ON ${TABLE_CHAT_PARTICIPANTS}(${COLUMN_CHAT_ID}, ${COLUMN_SPEAKER_ORDER})`;
+
+// ===== v15: 世界模式数据域(W-DATA-1A) =====
+// 独立数据域,不复用 chats / messages / chat_participants。
+// 表名 / 列名 / 索引名集中定义,Repository / Schema / Migration 只读取此处。
+export const TABLE_WORLDS: string = 'worlds';
+export const TABLE_WORLD_LOCATIONS: string = 'world_locations';
+export const TABLE_WORLD_LOCATION_EDGES: string = 'world_location_edges';
+export const TABLE_WORLD_CHARACTER_INSTANCES: string = 'world_character_instances';
+export const TABLE_WORLD_EVENTS: string = 'world_events';
+
+/** worlds.world_id 列名(同表使用 id 作为主键,world_id 用于其他表外键引用) */
+export const COLUMN_WORLD_ID: string = 'world_id';
+/** 地点规范化键(用于精确去重) */
+export const COLUMN_CANONICAL_KEY: string = 'canonical_key';
+/** 边起点地点 ID */
+export const COLUMN_FROM_LOCATION_ID: string = 'from_location_id';
+/** 边终点地点 ID */
+export const COLUMN_TO_LOCATION_ID: string = 'to_location_id';
+/** 边方向显示说明 */
+export const COLUMN_DIRECTION_LABEL: string = 'direction_label';
+/** 边旅行描述 */
+export const COLUMN_TRAVEL_DESCRIPTION: string = 'travel_description';
+/** 边是否双向可通行 */
+export const COLUMN_IS_BIDIRECTIONAL: string = 'is_bidirectional';
+/** 角色实例显示名称快照 */
+export const COLUMN_DISPLAY_NAME_SNAPSHOT: string = 'display_name_snapshot';
+/** 角色实例当前位置 ID(可空) */
+export const COLUMN_CURRENT_LOCATION_ID: string = 'current_location_id';
+/** 角色实例是否活跃 */
+export const COLUMN_IS_ACTIVE: string = 'is_active';
+/** 事件类型 */
+export const COLUMN_EVENT_TYPE: string = 'event_type';
+/** 事件源角色实例 ID(可空) */
+export const COLUMN_SOURCE_CHARACTER_INSTANCE_ID: string = 'source_character_instance_id';
+/** 事件源地点 ID(可空) */
+export const COLUMN_SOURCE_LOCATION_ID: string = 'source_location_id';
+/** 事件目标地点 ID(可空) */
+export const COLUMN_TARGET_LOCATION_ID: string = 'target_location_id';
+/** 事件源场景 ID(可空,为后续场景阶段保留) */
+export const COLUMN_SOURCE_SCENE_ID: string = 'source_scene_id';
+/** 事件源消息 ID(可空,为后续场景阶段保留) */
+export const COLUMN_SOURCE_MESSAGE_ID: string = 'source_message_id';
+/** 事件摘要 */
+export const COLUMN_SUMMARY: string = 'summary';
+/** 事件结构化负载 JSON */
+export const COLUMN_PAYLOAD_JSON: string = 'payload_json';
+/** 事件发生时间 */
+export const COLUMN_OCCURRED_AT: string = 'occurred_at';
+
+// ===== v15: 世界模式索引名 =====
+export const INDEX_WORLDS_STATUS: string = 'idx_worlds_status';
+export const INDEX_WORLDS_UPDATED_AT: string = 'idx_worlds_updated_at';
+export const INDEX_WORLD_LOCATIONS_WORLD_ID: string = 'idx_world_locations_world_id';
+export const INDEX_WORLD_LOCATIONS_WORLD_STATUS: string = 'idx_world_locations_world_status';
+export const INDEX_WORLD_LOCATION_EDGES_WORLD_ID: string = 'idx_world_location_edges_world_id';
+export const INDEX_WORLD_LOCATION_EDGES_FROM: string = 'idx_world_location_edges_from';
+export const INDEX_WORLD_LOCATION_EDGES_TO: string = 'idx_world_location_edges_to';
+export const INDEX_WORLD_LOCATION_EDGES_ENABLED: string = 'idx_world_location_edges_enabled';
+export const INDEX_WORLD_CHARACTER_INSTANCES_WORLD_ID: string = 'idx_world_character_instances_world_id';
+export const INDEX_WORLD_CHARACTER_INSTANCES_CHARACTER_ID: string = 'idx_world_character_instances_character_id';
+export const INDEX_WORLD_CHARACTER_INSTANCES_LOCATION: string = 'idx_world_character_instances_location';
+export const INDEX_WORLD_CHARACTER_INSTANCES_WORLD_ACTIVE: string = 'idx_world_character_instances_world_active';
+export const INDEX_WORLD_EVENTS_WORLD_ID: string = 'idx_world_events_world_id';
+export const INDEX_WORLD_EVENTS_OCCURRED_AT: string = 'idx_world_events_world_occurred_at';
+export const INDEX_WORLD_EVENTS_TYPE: string = 'idx_world_events_type';
+export const INDEX_WORLD_EVENTS_SOURCE_CHARACTER: string = 'idx_world_events_source_character';
+export const INDEX_WORLD_EVENTS_SOURCE_SCENE: string = 'idx_world_events_source_scene';

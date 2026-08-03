@@ -81,6 +81,11 @@ import { GroupRoundCoordinator } from './groupchat/GroupRoundCoordinator';
 import { GroupPromptAssembler } from './groupchat/GroupPromptAssembler';
 import { GroupChatRuntimeService } from './groupchat/GroupChatRuntimeService';
 import { GroupRuntimeRegistry } from './groupchat/GroupRuntimeRegistry';
+import { WorldRepository } from '../repositories/world/WorldRepository';
+import { WorldLocationRepository } from '../repositories/world/WorldLocationRepository';
+import { WorldLocationEdgeRepository } from '../repositories/world/WorldLocationEdgeRepository';
+import { WorldCharacterInstanceRepository } from '../repositories/world/WorldCharacterInstanceRepository';
+import { WorldEventRepository } from '../repositories/world/WorldEventRepository';
 import { Logger } from '../utils/Logger';
 
 const LOG_TAG: string = 'AppServices';
@@ -191,6 +196,16 @@ export class AppServices {
   private readonly groupChatRuntimeService: GroupChatRuntimeService;
   /** GroupRuntimeRegistry 多人聊天运行注册表(G-RUNTIME-1D 应用级运行锁,不对页面公开) */
   private readonly groupRuntimeRegistry: GroupRuntimeRegistry;
+  /** WorldRepository 世界仓储(W-DATA-1A,不对页面公开) */
+  private readonly worldRepository: WorldRepository;
+  /** WorldLocationRepository 世界地点仓储(W-DATA-1A,不对页面公开) */
+  private readonly worldLocationRepository: WorldLocationRepository;
+  /** WorldLocationEdgeRepository 世界地点边仓储(W-DATA-1A,不对页面公开) */
+  private readonly worldLocationEdgeRepository: WorldLocationEdgeRepository;
+  /** WorldCharacterInstanceRepository 世界角色实例仓储(W-DATA-1A,不对页面公开) */
+  private readonly worldCharacterInstanceRepository: WorldCharacterInstanceRepository;
+  /** WorldEventRepository 世界事件仓储(W-DATA-1A,不对页面公开) */
+  private readonly worldEventRepository: WorldEventRepository;
 
   /**
    * 私有构造,组装全部依赖。
@@ -359,6 +374,12 @@ export class AppServices {
     const marketCacheStore: MarketCacheStore = new MarketCacheStore(this.appPreferences);
     const marketImportedMapStore: MarketImportedMapStore = new MarketImportedMapStore(this.appPreferences);
     this.marketService = new MarketService(marketHttpClient, marketCacheStore, marketImportedMapStore);
+    // W-DATA-1A: 世界模式数据域 Repository(仅依赖 DbHelper,不依赖 Page/ViewModel/Service)
+    this.worldRepository = new WorldRepository(this.dbHelper);
+    this.worldLocationRepository = new WorldLocationRepository(this.dbHelper);
+    this.worldLocationEdgeRepository = new WorldLocationEdgeRepository(this.dbHelper);
+    this.worldCharacterInstanceRepository = new WorldCharacterInstanceRepository(this.dbHelper);
+    this.worldEventRepository = new WorldEventRepository(this.dbHelper);
     // ChatBackgroundService 在 initialize 中 context 就绪后创建
   }
 
@@ -764,5 +785,46 @@ export class AppServices {
    */
   static getGroupChatRuntimeService(): GroupChatRuntimeService {
     return AppServices.getInstance().groupChatRuntimeService;
+  }
+
+  /**
+   * 获取 WorldRepository 实例(W-DATA-1A 世界仓储)。
+   * 用于 worlds 表的 CRUD 操作。本阶段不接入 UI,仅完成数据层注册。
+   * 页面与 ViewModel 不直接调用,留待 W-DATA-1B WorldStateService 使用。
+   */
+  static getWorldRepository(): WorldRepository {
+    return AppServices.getInstance().worldRepository;
+  }
+
+  /**
+   * 获取 WorldLocationRepository 实例(W-DATA-1A 世界地点仓储)。
+   * 用于 world_locations 表的 CRUD 操作。
+   */
+  static getWorldLocationRepository(): WorldLocationRepository {
+    return AppServices.getInstance().worldLocationRepository;
+  }
+
+  /**
+   * 获取 WorldLocationEdgeRepository 实例(W-DATA-1A 世界地点边仓储)。
+   * 用于 world_location_edges 表的 CRUD 操作。
+   */
+  static getWorldLocationEdgeRepository(): WorldLocationEdgeRepository {
+    return AppServices.getInstance().worldLocationEdgeRepository;
+  }
+
+  /**
+   * 获取 WorldCharacterInstanceRepository 实例(W-DATA-1A 世界角色实例仓储)。
+   * 用于 world_character_instances 表的 CRUD 操作。
+   */
+  static getWorldCharacterInstanceRepository(): WorldCharacterInstanceRepository {
+    return AppServices.getInstance().worldCharacterInstanceRepository;
+  }
+
+  /**
+   * 获取 WorldEventRepository 实例(W-DATA-1A 世界事件仓储)。
+   * 用于 world_events 表的 CRUD 操作(主要为 insert / 查询 / 事务删除)。
+   */
+  static getWorldEventRepository(): WorldEventRepository {
+    return AppServices.getInstance().worldEventRepository;
   }
 }

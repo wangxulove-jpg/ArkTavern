@@ -38,6 +38,7 @@ import {
   createV11ToV12Migration,
   createV12ToV13Migration,
   createV13ToV14Migration,
+  createV14ToV15Migration,
   DatabaseMigration,
   MigrationPath
 } from './DatabaseMigration';
@@ -98,7 +99,7 @@ export class DbHelper {
 
   constructor(
     databaseName: string = DATABASE_NAME,
-    migrations: ReadonlyArray<DatabaseMigration> = [createV1ToV2Migration(), createV2ToV3Migration(), createV3ToV4Migration(), createV4ToV5Migration(), createV5ToV6Migration(), createV6ToV7Migration(), createV7ToV8Migration(), createV8ToV9Migration(), createV9ToV10Migration(), createV10ToV11Migration(), createV11ToV12Migration(), createV12ToV13Migration(), createV13ToV14Migration()]
+    migrations: ReadonlyArray<DatabaseMigration> = [createV1ToV2Migration(), createV2ToV3Migration(), createV3ToV4Migration(), createV4ToV5Migration(), createV5ToV6Migration(), createV6ToV7Migration(), createV7ToV8Migration(), createV8ToV9Migration(), createV9ToV10Migration(), createV10ToV11Migration(), createV11ToV12Migration(), createV12ToV13Migration(), createV13ToV14Migration(), createV14ToV15Migration()]
   ) {
     this.databaseName = databaseName;
     this.migrations = migrations;

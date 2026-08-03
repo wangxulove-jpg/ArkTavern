@@ -14,7 +14,7 @@
  */
 
 import { relationalStore } from '@kit.ArkData';
-import { V1_TO_V2_STATEMENTS, V2_TO_V3_STATEMENTS, V3_TO_V4_STATEMENTS, V4_TO_V5_DDL_STATEMENTS, V5_TO_V6_STATEMENTS, V6_TO_V7_STATEMENTS, V7_TO_V8_DDL_STATEMENTS, V8_TO_V9_STATEMENTS, V9_TO_V10_DDL_STATEMENTS, V10_TO_V11_DDL_STATEMENTS, V11_TO_V12_DDL_STATEMENTS, V11_TO_V12_DATA_MIGRATION_STATEMENTS, V12_TO_V13_DDL_STATEMENTS, V13_TO_V14_DDL_STATEMENTS, V13_TO_V14_DATA_MIGRATION_STATEMENTS } from './DatabaseSchema';
+import { V1_TO_V2_STATEMENTS, V2_TO_V3_STATEMENTS, V3_TO_V4_STATEMENTS, V4_TO_V5_DDL_STATEMENTS, V5_TO_V6_STATEMENTS, V6_TO_V7_STATEMENTS, V7_TO_V8_DDL_STATEMENTS, V8_TO_V9_STATEMENTS, V9_TO_V10_DDL_STATEMENTS, V10_TO_V11_DDL_STATEMENTS, V11_TO_V12_DDL_STATEMENTS, V11_TO_V12_DATA_MIGRATION_STATEMENTS, V12_TO_V13_DDL_STATEMENTS, V13_TO_V14_DDL_STATEMENTS, V13_TO_V14_DATA_MIGRATION_STATEMENTS, V14_TO_V15_DDL_STATEMENTS } from './DatabaseSchema';
 import {
   TABLE_CHATS,
   TABLE_MESSAGES,
@@ -670,6 +670,43 @@ class V13ToV14Migration implements DatabaseMigration {
     // 2. 数据迁移:G-CONTROL-1 旧单角色目标数据迁移
     for (let i = 0; i < V13_TO_V14_DATA_MIGRATION_STATEMENTS.length; i++) {
       await store.executeSql(V13_TO_V14_DATA_MIGRATION_STATEMENTS[i]);
+    }
+  }
+}
+
+/**
+ * v14→v15 迁移(W-DATA-1A 世界模式数据域):
+ * 1. 创建 5 张 world_* 表(worlds / world_locations / world_location_edges /
+ *    world_character_instances / world_events)
+ * 2. 创建相关索引(status / updated_at / world_id / from_location_id /
+ *    to_location_id / is_enabled / character_id / current_location_id /
+ *    world_id+is_active / world_id+occurred_at / event_type /
+ *    source_character_instance_id / source_scene_id)
+ *
+ * 安全性:
+ * - 所有 DDL 用 CREATE TABLE IF NOT EXISTS / CREATE INDEX IF NOT EXISTS
+ * - 不修改任何现有表(characters / chats / messages / chat_participants 等)
+ * - 不迁移任何现有数据
+ * - 任一语句失败由 DbHelper 事务回滚,数据库版本保持 14
+ * - 失败不写入 V15
+ *
+ * 本阶段不实现:
+ * - WorldStateService
+ * - 世界 UI / 地点节点图 / 角色移动 / 世界场景 / 世界消息 / 世界 Prompt
+ * - 关系 / 记忆 / AI 候选地点 / AI 世界 Builder
+ */
+export function createV14ToV15Migration(): DatabaseMigration {
+  return new V14ToV15Migration();
+}
+
+class V14ToV15Migration implements DatabaseMigration {
+  readonly fromVersion: number = 14;
+  readonly toVersion: number = 15;
+
+  async migrate(store: relationalStore.RdbStore): Promise<void> {
+    // 仅执行 DDL(建表 + 建索引),不修改任何现有表,不迁移任何现有数据
+    for (let i = 0; i < V14_TO_V15_DDL_STATEMENTS.length; i++) {
+      await store.executeSql(V14_TO_V15_DDL_STATEMENTS[i]);
     }
   }
 }
