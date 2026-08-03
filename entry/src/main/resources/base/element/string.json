@@ -1569,6 +1569,82 @@
       "value": "创建并进入聊天"
     },
     {
+      "name": "group_ai_builder_entry",
+      "value": "AI 帮我组建"
+    },
+    {
+      "name": "group_ai_builder_title",
+      "value": "AI 建群"
+    },
+    {
+      "name": "group_ai_builder_description_hint",
+      "value": "描述你想要的群聊主题或场景"
+    },
+    {
+      "name": "group_ai_builder_description_placeholder",
+      "value": "例如:创建一个调查超自然事件的小队,希望角色性格有冲突但能互相配合"
+    },
+    {
+      "name": "group_ai_builder_candidates",
+      "value": "候选角色"
+    },
+    {
+      "name": "group_ai_builder_candidates_hint",
+      "value": "选择 2~12 个候选角色,AI 会从中筛选成员"
+    },
+    {
+      "name": "group_ai_builder_generate",
+      "value": "生成草案"
+    },
+    {
+      "name": "group_ai_builder_generating",
+      "value": "正在生成草案…"
+    },
+    {
+      "name": "group_ai_builder_stop",
+      "value": "停止生成"
+    },
+    {
+      "name": "group_ai_builder_draft_title",
+      "value": "群聊草案"
+    },
+    {
+      "name": "group_ai_builder_draft_chat_name",
+      "value": "群聊名称"
+    },
+    {
+      "name": "group_ai_builder_draft_members",
+      "value": "成员与发言顺序"
+    },
+    {
+      "name": "group_ai_builder_draft_rationale",
+      "value": "推荐理由"
+    },
+    {
+      "name": "group_ai_builder_draft_opening",
+      "value": "开场消息草案(可选)"
+    },
+    {
+      "name": "group_ai_builder_draft_opening_hint",
+      "value": "创建群聊后可手动发送,不会自动发送"
+    },
+    {
+      "name": "group_ai_builder_confirm",
+      "value": "确认创建"
+    },
+    {
+      "name": "group_ai_builder_regenerate",
+      "value": "重新生成"
+    },
+    {
+      "name": "group_ai_builder_add_member",
+      "value": "添加成员"
+    },
+    {
+      "name": "group_ai_builder_no_candidates",
+      "value": "请先选择至少 2 个候选角色"
+    },
+    {
       "name": "group_chat_member_view",
       "value": "查看角色"
     },

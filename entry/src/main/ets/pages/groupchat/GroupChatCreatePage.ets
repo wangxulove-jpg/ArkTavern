@@ -273,6 +273,20 @@ struct GroupChatCreatePage {
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Start)
       .margin({ left: 4 })
+
+      // G-AI-BUILDER-1: AI 帮我组建入口(仅步骤一显示,与手动创建并列)
+      if (this.step === 1) {
+        Button($r('app.string.group_ai_builder_entry'))
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_accent'))
+          .backgroundColor(Color.Transparent)
+          .height(32)
+          .padding({ left: 8, right: 8 })
+          .accessibilityText('AI 帮我组建多人聊天')
+          .onClick(() => {
+            router.pushUrl({ url: 'pages/groupchat/GroupChatAiBuilderPage' });
+          })
+      }
     }
     .width('100%')
     .padding({

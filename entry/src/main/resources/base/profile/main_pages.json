@@ -21,6 +21,7 @@
     "pages/VrmViewerPage",
     "pages/groupchat/GroupChatHomePage",
     "pages/groupchat/GroupChatCreatePage",
+    "pages/groupchat/GroupChatAiBuilderPage",
     "pages/groupchat/GroupChatPage",
     "pages/groupchat/GroupMemberManagePage",
     "pages/groupchat/GroupChatSettingsPage"
