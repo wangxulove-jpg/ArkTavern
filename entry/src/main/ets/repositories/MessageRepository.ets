@@ -49,7 +49,8 @@ import {
   COLUMN_VISIBILITY,
   COLUMN_RECIPIENT_CHARACTER_IDS_JSON,
   COLUMN_PARTICIPANT_IDS_JSON,
-  COLUMN_WITNESS_IDS_JSON
+  COLUMN_WITNESS_IDS_JSON,
+  COLUMN_REPLY_TARGET_CHARACTER_IDS_JSON
 } from '../database/DatabaseConstants';
 import {
   parseChatRole,
@@ -161,6 +162,18 @@ function buildValidatedMessageBucket(
     message.participantIds !== undefined ? [...message.participantIds] : [];
   const witnessIds: string[] =
     message.witnessIds !== undefined ? [...message.witnessIds] : [];
+  // v14 G-CONTROL-2A: 公开消息回复目标(独立于私聊 recipient)
+  // - 仅 visibility='public' 时允许填写
+  // - visibility='private'/'narrator' 时必须为空(回复目标只对公开消息有意义)
+  const replyTargetIds: string[] =
+    message.replyTargetCharacterIds !== undefined ? [...message.replyTargetCharacterIds] : [];
+  if (visibility === 'private' || visibility === 'narrator') {
+    if (replyTargetIds.length > 0) {
+      throw DatabaseError.invalidData(
+        `reply_target_character_ids must be empty for ${visibility} message`
+      );
+    }
+  }
   if (visibility === 'private') {
     if (recipientIds.length === 0) {
       throw DatabaseError.invalidData('recipient_character_ids empty for private message');
@@ -203,6 +216,8 @@ function buildValidatedMessageBucket(
     participantIds.length > 0 ? JSON.stringify(participantIds) : null;
   bucket[COLUMN_WITNESS_IDS_JSON] =
     witnessIds.length > 0 ? JSON.stringify(witnessIds) : null;
+  bucket[COLUMN_REPLY_TARGET_CHARACTER_IDS_JSON] =
+    replyTargetIds.length > 0 ? JSON.stringify(replyTargetIds) : null;
   return bucket;
 }
 
@@ -306,6 +321,17 @@ function messageFromRow(rs: relationalStore.ResultSet): ChatMessage {
       ? parseStringArrayJson(witnessIdsJson)
       : undefined;
 
+  // v14 G-CONTROL-2A: 公开消息回复目标(列在旧库可能不存在,getColumnIndex 返回 -1 时回退 undefined)
+  const replyTargetIdsCol: number = rs.getColumnIndex(COLUMN_REPLY_TARGET_CHARACTER_IDS_JSON);
+  const replyTargetIdsJson: string | null =
+    (replyTargetIdsCol >= 0 && !rs.isColumnNull(replyTargetIdsCol))
+      ? rs.getString(replyTargetIdsCol)
+      : null;
+  const replyTargetCharacterIds: string[] | undefined =
+    replyTargetIdsJson !== null && replyTargetIdsJson.length > 0
+      ? parseStringArrayJson(replyTargetIdsJson)
+      : undefined;
+
   return {
     id: id,
     role: role,
@@ -323,7 +349,8 @@ function messageFromRow(rs: relationalStore.ResultSet): ChatMessage {
     visibility: visibility,
     recipientCharacterIds: recipientCharacterIds,
     participantIds: participantIds,
-    witnessIds: witnessIds
+    witnessIds: witnessIds,
+    replyTargetCharacterIds: replyTargetCharacterIds
   };
 }
 

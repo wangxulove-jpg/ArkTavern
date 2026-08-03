@@ -114,13 +114,11 @@ struct GroupChatPage {
   @State renameVisible: boolean = false;
   /** 重命名输入值 */
   @State renameInput: string = '';
-  /** G-CONTROL-1: 当前选中的回复目标角色 ID(空表示全员回复) */
-  @State selectedReplyTargetCharacterId: string = '';
-  /** G-CONTROL-1: 目标角色显示名称(用于 Chip) */
-  @State selectedReplyTargetName: string = '';
-  /** G-CONTROL-1: @选择器是否可见 */
+  /** G-CONTROL-2A: 选中目标成员 UI 模型列表(空数组表示全员回复) */
+  @State selectedReplyTargetMembers: GroupMemberUiModel[] = [];
+  /** G-CONTROL-2A: @选择器是否可见 */
   @State isMentionPickerVisible: boolean = false;
-  /** G-CONTROL-1: @选择器候选成员 */
+  /** G-CONTROL-2A: @选择器候选成员 */
   @State mentionCandidates: GroupMemberUiModel[] = [];
   /** 顶部状态栏避让高度 */
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
@@ -224,11 +222,8 @@ struct GroupChatPage {
     this.totalSpeakerCount = this.viewModel.totalSpeakerCount;
     this.currentSpeakerCharacterId = this.viewModel.currentSpeakerCharacterId;
     this.memberRuntimeStates = this.viewModel.memberRuntimeStates;
-    // G-CONTROL-1: 同步草稿回复目标状态
-    this.selectedReplyTargetCharacterId =
-      this.viewModel.selectedReplyTarget.characterId !== undefined
-        ? this.viewModel.selectedReplyTarget.characterId : '';
-    this.selectedReplyTargetName = this.viewModel.selectedReplyTargetName;
+    // G-CONTROL-2A: 同步草稿回复目标状态(多目标)
+    this.selectedReplyTargetMembers = [...this.viewModel.selectedReplyTargetMembers];
     this.isMentionPickerVisible = this.viewModel.isMentionPickerVisible;
     this.mentionCandidates = this.viewModel.mentionCandidates;
   }
@@ -754,15 +749,23 @@ struct GroupChatPage {
     if (state === GroupMemberRuntimeState.Idle) {
       return 0.4;
     }
+    // G-CONTROL-2A: 有限成员轮次中未选中的启用成员,半透明显示
+    if (state === GroupMemberRuntimeState.NotParticipating) {
+      return 0.4;
+    }
     return 1;
   }
 
-  // ===== G-CONTROL-1 成员栏点击与目标选择 =====
+  // ===== G-CONTROL-2A 成员栏点击与目标选择 =====
 
-  /** G-CONTROL-1: 判断成员是否为当前回复目标 */
+  /** G-CONTROL-2A: 判断成员是否为当前回复目标(多选,检查数组) */
   private isMemberReplyTarget(characterId: string): boolean {
-    return this.selectedReplyTargetCharacterId.length > 0
-      && this.selectedReplyTargetCharacterId === characterId;
+    for (let i = 0; i < this.selectedReplyTargetMembers.length; i++) {
+      if (this.selectedReplyTargetMembers[i].characterId === characterId) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /** G-CONTROL-1: 成员栏文字颜色(非生成态) */
@@ -782,6 +785,25 @@ struct GroupChatPage {
       return 0.5;
     }
     return 1;
+  }
+
+  /**
+   * G-CONTROL-2A: 构建输入栏目标 Chip 文案。
+   *
+   * 规则:
+   * - 1 个目标:仅{name}回复
+   * - 2+ 个目标:指定 N 位角色回复
+   * - 空数组:返回空(不会进入此分支,全员显示提示文案)
+   */
+  private composeTargetChipText(): string {
+    const members: GroupMemberUiModel[] = this.selectedReplyTargetMembers;
+    if (members.length === 0) {
+      return '';
+    }
+    if (members.length === 1) {
+      return '仅' + members[0].name + '回复';
+    }
+    return '指定 ' + String(members.length) + ' 位角色回复';
   }
 
   /** G-CONTROL-1: 处理成员栏点击 */
@@ -965,7 +987,9 @@ struct GroupChatPage {
       generationBatchId: state.generationBatchId.length > 0 ? state.generationBatchId : undefined,
       sequenceNumber: 0,
       createdAt: state.createdAt,
-      updatedAt: state.updatedAt
+      updatedAt: state.updatedAt,
+      replyTargetCharacterIds: [],
+      replyTargetNames: []
     };
     if (!this.viewModel.canRetryMessage(msg)) {
       promptAction.showToast({ message: '当前消息无法重试', duration: 1500 });
@@ -1016,12 +1040,12 @@ struct GroupChatPage {
           .padding({ top: 4, bottom: 4 })
       }
 
-      // G-CONTROL-1: 目标 Chip + 输入提示
+      // G-CONTROL-2A: 目标 Chip(多选摘要)+ 输入提示
       Row() {
-        if (this.selectedReplyTargetName.length > 0) {
-          // 指定角色:显示目标 Chip
+        if (this.selectedReplyTargetMembers.length > 0) {
+          // 指定角色:显示目标摘要 Chip + 选中数量
           Row() {
-            Text('仅' + this.selectedReplyTargetName + '回复')
+            Text(this.composeTargetChipText())
               .fontSize($r('app.float.app_font_caption'))
               .fontColor($r('app.color.app_on_accent'))
               .maxLines(1)
@@ -1036,7 +1060,7 @@ struct GroupChatPage {
             .width(20)
             .height(20)
             .margin({ left: 4 })
-            .accessibilityText('取消指定角色')
+            .accessibilityText('取消全部指定角色')
             .enabled(!this.isGenerating && !this.isSending)
             .onClick(() => {
               this.handleClearReplyTarget();
@@ -1128,7 +1152,7 @@ struct GroupChatPage {
     .border({ width: { top: 0.5 }, color: $r('app.color.app_divider') })
   }
 
-  /** G-CONTROL-1: @选择器面板 */
+  /** G-CONTROL-2A: @选择器面板(显示已选中状态) */
   @Builder
   mentionPickerPanel(): void {
     Column() {
@@ -1147,11 +1171,20 @@ struct GroupChatPage {
               })
               Text(member.name)
                 .fontSize($r('app.float.app_font_body'))
-                .fontColor($r('app.color.app_text_primary'))
+                .fontColor(this.isMemberReplyTarget(member.characterId)
+                  ? $r('app.color.app_accent')
+                  : $r('app.color.app_text_primary'))
                 .maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
                 .margin({ left: 8 })
                 .layoutWeight(1)
+              // G-CONTROL-2A: 已选中的角色显示 ✓ 标记
+              if (this.isMemberReplyTarget(member.characterId)) {
+                Text('✓')
+                  .fontSize(14)
+                  .fontColor($r('app.color.app_accent'))
+                  .margin({ left: 4 })
+              }
             }
             .width('100%')
             .padding({ left: 12, right: 12, top: 8, bottom: 8 })
@@ -1160,7 +1193,7 @@ struct GroupChatPage {
           .onClick(() => {
             this.handleSelectMention(member);
           })
-        }, (member: GroupMemberUiModel) => member.characterId)
+        }, (member: GroupMemberUiModel) => member.characterId + '|' + (this.isMemberReplyTarget(member.characterId) ? '1' : '0'))
       }
       .width('100%')
       .height(200)

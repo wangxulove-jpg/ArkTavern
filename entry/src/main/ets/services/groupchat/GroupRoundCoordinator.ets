@@ -67,6 +67,12 @@ const LOG_TAG: string = 'GroupRoundCoord';
  */
 const MIN_AVAILABLE_SPEAKERS: number = 2;
 
+/**
+ * G-CONTROL-2A: 回复目标角色数量上限。
+ * 不超过当前群聊有效启用成员数。
+ */
+const MAX_REPLY_TARGETS: number = 8;
+
 export class GroupRoundCoordinator {
   private readonly groupService: GroupConversationPersistenceService;
   private readonly characterService: CharacterService;
@@ -89,7 +95,7 @@ export class GroupRoundCoordinator {
   }
 
   /**
-   * 建立本轮计划(G-CONTROL-1 扩展支持 GroupReplyTarget)。
+   * 建立本轮计划(G-CONTROL-2A 扩展支持多目标 GroupReplyTarget)。
    *
    * 步骤:
    * 1. 校验 Chat 存在且为 Group 模式
@@ -97,15 +103,21 @@ export class GroupRoundCoordinator {
    * 3. 读取当前参与者
    * 4. 根据 replyTarget 构建 speakers:
    *    - AllEnabled:过滤 isEnabled=true,排除已删除角色,按 speakerOrder 排序
-   *    - SingleCharacter:校验目标存在/在群聊/启用,speakers 只含目标
-   * 5. 校验可用发言者数(AllEnabled >= 2,SingleCharacter >= 1)
+   *    - SelectedCharacters:校验每个目标存在/在群聊/启用,
+   *      过滤出目标集合中的启用成员,按 speakerOrder 排序
+   * 5. 校验可用发言者数(AllEnabled >= 2,SelectedCharacters >= 1)
    * 6. 生成 operationId 与 GroupRoundPlan
    * 7. 状态转为 Ready(等待 startRound 进入 Generating)
+   *
+   * G-CONTROL-2A:
+   * - SelectedCharacters 模式下,目标点击顺序不影响生成顺序
+   * - 生成顺序始终按 speakerOrder ASC
+   * - 目标数量上限 8(不超过当前群聊有效启用成员数)
    *
    * @param chatId 群聊 ID
    * @param userMessageId 触发本轮的用户消息 ID
    * @param generationBatchId 本轮 ID(等同 messages.generation_batch_id)
-   * @param replyTarget G-CONTROL-1 回复目标(默认全员)
+   * @param replyTarget G-CONTROL-2A 回复目标(默认全员)
    */
   async prepareRound(
     chatId: string,
@@ -163,7 +175,7 @@ export class GroupRoundCoordinator {
       );
 
       // 4. 校验可用发言者数
-      const minRequired: number = replyTarget.mode === GroupReplyTargetMode.SingleCharacter
+      const minRequired: number = replyTarget.mode === GroupReplyTargetMode.SelectedCharacters
         ? 1 : MIN_AVAILABLE_SPEAKERS;
       if (speakers.length < minRequired) {
         throw new GroupRoundPlanError(
@@ -684,65 +696,108 @@ export class GroupRoundCoordinator {
   // ===== 内部方法 =====
 
   /**
-   * G-CONTROL-1: 根据回复目标构建发言者快照。
+   * G-CONTROL-2A: 根据回复目标构建发言者快照(支持多目标)。
    *
    * - AllEnabled:沿用 buildSpeakers 全员顺序
-   * - SingleCharacter:校验目标存在/在群聊/启用,只返回目标一个 speaker
+   * - SelectedCharacters:逐个校验目标存在/在群聊/启用,
+   *   过滤出目标集合中的启用成员,按 speakerOrder 排序
    *
-   * @throws GroupRoundPlanError 目标角色不存在/不在群聊/已停用
+   * G-CONTROL-2A 关键规则:
+   * - 目标点击顺序不影响生成顺序
+   * - 生成顺序始终按 speakerOrder ASC
+   * - 目标数量上限 MAX_REPLY_TARGETS(8)
+   * - 任一目标失效(删除/移除/停用)即抛错,不部分生成
+   *
+   * @throws GroupRoundPlanError 目标角色不存在/不在群聊/已停用/数量超限
    */
   private async buildSpeakersForTarget(
     participants: ChatParticipant[],
     replyTarget: GroupReplyTarget
   ): Promise<GroupRoundSpeaker[]> {
-    if (replyTarget.mode === GroupReplyTargetMode.SingleCharacter) {
-      const targetId: string = replyTarget.characterId !== undefined
-        ? replyTarget.characterId : '';
-      if (targetId === '') {
+    if (replyTarget.mode === GroupReplyTargetMode.SelectedCharacters) {
+      const targetIds: string[] = replyTarget.characterIds;
+      if (targetIds.length === 0) {
         throw new GroupRoundPlanError(
-          GroupRoundPlanErrorKind.TargetCharacterIdEmpty,
-          'single character target id empty'
+          GroupRoundPlanErrorKind.TargetCharacterIdsEmpty,
+          'selected characters target ids empty'
         );
       }
-      // 校验目标存在
-      let character: Character | null = null;
-      try {
-        character = await this.characterService.getById(targetId);
-      } catch (e) {
-        character = null;
-      }
-      if (character === null) {
+      if (targetIds.length > MAX_REPLY_TARGETS) {
         throw new GroupRoundPlanError(
-          GroupRoundPlanErrorKind.TargetCharacterNotFound,
-          'target character not found'
+          GroupRoundPlanErrorKind.TargetCharacterIdsExceedLimit,
+          'selected characters exceed limit ' + String(MAX_REPLY_TARGETS)
         );
       }
-      // 校验目标在群聊参与者中
-      let participant: ChatParticipant | null = null;
-      for (let i = 0; i < participants.length; i++) {
-        if (participants[i].characterId === targetId) {
-          participant = participants[i];
-          break;
+      // 构建目标 ID 集合(用于过滤)
+      const targetSet: Set<string> = new Set<string>(targetIds);
+      // 过滤出目标集合中、已启用、角色仍存在的参与者,按 speakerOrder 排序
+      const enabledTargets: ChatParticipant[] = participants
+        .filter((p: ChatParticipant): boolean => p.isEnabled)
+        .filter((p: ChatParticipant): boolean => targetSet.has(p.characterId))
+        .sort((a: ChatParticipant, b: ChatParticipant): number =>
+          a.speakerOrder - b.speakerOrder
+        );
+      // 逐个校验目标角色存在性(已删除角色抛错)
+      const speakers: GroupRoundSpeaker[] = [];
+      const seen: Set<string> = new Set<string>();
+      for (let i = 0; i < enabledTargets.length; i++) {
+        const p: ChatParticipant = enabledTargets[i];
+        if (seen.has(p.characterId)) {
+          continue;
+        }
+        let character: Character | null = null;
+        try {
+          character = await this.characterService.getById(p.characterId);
+        } catch (e) {
+          character = null;
+        }
+        if (character === null) {
+          throw new GroupRoundPlanError(
+            GroupRoundPlanErrorKind.TargetCharacterNotFound,
+            'target character not found'
+          );
+        }
+        seen.add(p.characterId);
+        speakers.push({
+          characterId: p.characterId,
+          speakerIndex: speakers.length
+        });
+      }
+      // 校验所有目标都在群聊中且启用(过滤后数量应等于目标数量)
+      if (speakers.length !== targetIds.length) {
+        // 部分目标不在群聊或已停用
+        // 找出失效的目标
+        const foundIds: Set<string> = new Set<string>(
+          speakers.map((s: GroupRoundSpeaker): string => s.characterId)
+        );
+        for (let i = 0; i < targetIds.length; i++) {
+          if (!foundIds.has(targetIds[i])) {
+            // 判断是不在群聊还是已停用
+            let inChat: boolean = false;
+            let isEnabled: boolean = false;
+            for (let j = 0; j < participants.length; j++) {
+              if (participants[j].characterId === targetIds[i]) {
+                inChat = true;
+                isEnabled = participants[j].isEnabled;
+                break;
+              }
+            }
+            if (!inChat) {
+              throw new GroupRoundPlanError(
+                GroupRoundPlanErrorKind.TargetCharacterNotInChat,
+                'target character not in chat'
+              );
+            }
+            if (!isEnabled) {
+              throw new GroupRoundPlanError(
+                GroupRoundPlanErrorKind.TargetCharacterNotEnabled,
+                'target character not enabled'
+              );
+            }
+          }
         }
       }
-      if (participant === null) {
-        throw new GroupRoundPlanError(
-          GroupRoundPlanErrorKind.TargetCharacterNotInChat,
-          'target character not in chat'
-        );
-      }
-      // 校验目标已启用
-      if (!participant.isEnabled) {
-        throw new GroupRoundPlanError(
-          GroupRoundPlanErrorKind.TargetCharacterNotEnabled,
-          'target character not enabled'
-        );
-      }
-      // 单角色轮次 speakers 只含目标
-      return [{
-        characterId: targetId,
-        speakerIndex: 0
-      }];
+      return speakers;
     }
     // AllEnabled:沿用全员构建
     return await this.buildSpeakers(participants);

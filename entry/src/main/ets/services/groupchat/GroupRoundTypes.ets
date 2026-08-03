@@ -25,11 +25,11 @@
  * - 重试创建新 operationId / assistantMessageId / ChatStreamHandle
  * - 重试只生成一次,不自动继续后续角色
  *
- * G-CONTROL-1:
- * - 新增 GroupReplyTargetMode / GroupReplyTarget:指定单角色回复
- * - GroupRoundPlan 新增 replyTarget 字段
- * - AllEnabled:全部启用成员按顺序回复(默认)
- * - SingleCharacter:仅指定角色回复(speakers 只含目标)
+ * G-CONTROL-2A:
+ * - GroupReplyTargetMode 扩展为 AllEnabled / SelectedCharacters(多目标)
+ * - 原 SingleCharacter 统一为 SelectedCharacters([characterId])
+ * - GroupRoundPlan.replyTarget 记录本轮回复目标
+ * - SelectedCharacters 模式下 speakers 只含目标角色(按 speakerOrder 排序)
  */
 
 /**
@@ -64,38 +64,79 @@ export interface GroupRoundSpeaker {
 }
 
 /**
- * 回复目标模式(G-CONTROL-1)。
+ * 回复目标模式(G-CONTROL-2A)。
  *
  * - AllEnabled:所有启用且有效成员按 speakerOrder 依次回复(默认)
- * - SingleCharacter:仅由用户指定的一个角色回复
+ * - SelectedCharacters:仅由用户指定的 1～N 个角色按 speakerOrder 回复
+ *
+ * G-CONTROL-2A:原 SingleCharacter 已统一为 SelectedCharacters([characterId])。
+ * 正式运行时不维护三套分支,单目标视为多目标的特例。
  */
 export enum GroupReplyTargetMode {
   AllEnabled = 'all_enabled',
-  SingleCharacter = 'single_character'
+  SelectedCharacters = 'selected_characters'
 }
 
 /**
- * 回复目标(G-CONTROL-1)。
+ * 回复目标(G-CONTROL-2A)。
  *
  * 运行时始终使用 characterId,角色名称只用于 UI 显示。
- * SingleCharacter 模式下 characterId 必须非空。
+ * SelectedCharacters 模式下 characterIds 非空(length >= 1)。
+ *
+ * 规则:
+ * - ID 不为空
+ * - ID 不重复
+ * - 顺序不代表生成顺序(生成顺序始终由 speakerOrder 决定)
+ * - 第一版最多 8 个目标,不超过当前群聊有效启用成员数
  */
 export interface GroupReplyTarget {
   readonly mode: GroupReplyTargetMode;
-  /** SingleCharacter 模式下的目标角色 ID;AllEnabled 模式为空 */
-  readonly characterId?: string;
+  /** SelectedCharacters 模式下的目标角色 ID 列表;AllEnabled 模式为空数组 */
+  readonly characterIds: string[];
 }
 
 /** 默认全员回复目标 */
 export const REPLY_TARGET_ALL_ENABLED: GroupReplyTarget = {
-  mode: GroupReplyTargetMode.AllEnabled
+  mode: GroupReplyTargetMode.AllEnabled,
+  characterIds: []
 };
 
 /**
- * 构造单角色回复目标。
+ * 构造指定角色回复目标(G-CONTROL-2A)。
+ * 自动去重和过滤空 ID。
  */
-export function singleCharacterReplyTarget(characterId: string): GroupReplyTarget {
-  return { mode: GroupReplyTargetMode.SingleCharacter, characterId: characterId };
+export function selectedCharactersReplyTarget(characterIds: string[]): GroupReplyTarget {
+  const seen: Set<string> = new Set<string>();
+  const result: string[] = [];
+  for (let i = 0; i < characterIds.length; i++) {
+    const id: string = characterIds[i];
+    if (id.length === 0) {
+      continue;
+    }
+    if (seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    result.push(id);
+  }
+  return { mode: GroupReplyTargetMode.SelectedCharacters, characterIds: result };
+}
+
+/**
+ * 判断目标是否为单角色(SelectedCharacters 且 length=1)。
+ * 用于兼容 G-CONTROL-1 单角色 UI 显示逻辑。
+ */
+export function isSingleCharacterTarget(target: GroupReplyTarget): boolean {
+  return target.mode === GroupReplyTargetMode.SelectedCharacters
+    && target.characterIds.length === 1;
+}
+
+/**
+ * 判断目标是否为多角色(SelectedCharacters 且 length>1)。
+ */
+export function isMultiCharacterTarget(target: GroupReplyTarget): boolean {
+  return target.mode === GroupReplyTargetMode.SelectedCharacters
+    && target.characterIds.length > 1;
 }
 
 /**
@@ -121,7 +162,7 @@ export interface GroupRoundPlan {
   readonly speakers: GroupRoundSpeaker[];
   /** 计划建立时间(毫秒) */
   readonly createdAt: number;
-  /** G-CONTROL-1: 回复目标(AllEnabled 或 SingleCharacter) */
+  /** G-CONTROL-2A: 回复目标(AllEnabled 或 SelectedCharacters) */
   readonly replyTarget: GroupReplyTarget;
 }
 
@@ -168,14 +209,16 @@ export enum GroupRoundPlanErrorKind {
   ActiveRoundExists = 'active_round_exists',
   /** 内部错误 */
   Internal = 'internal',
-  /** G-CONTROL-1: 目标角色不存在(已删除) */
+  /** G-CONTROL-2A: 目标角色不存在(已删除) */
   TargetCharacterNotFound = 'target_character_not_found',
-  /** G-CONTROL-1: 目标角色已不属于当前群聊 */
+  /** G-CONTROL-2A: 目标角色已不属于当前群聊 */
   TargetCharacterNotInChat = 'target_character_not_in_chat',
-  /** G-CONTROL-1: 目标角色已停用 */
+  /** G-CONTROL-2A: 目标角色已停用 */
   TargetCharacterNotEnabled = 'target_character_not_enabled',
-  /** G-CONTROL-1: 单角色回复目标 ID 为空 */
-  TargetCharacterIdEmpty = 'target_character_id_empty'
+  /** G-CONTROL-2A: 目标角色 ID 列表为空 */
+  TargetCharacterIdsEmpty = 'target_character_ids_empty',
+  /** G-CONTROL-2A: 目标角色数量超过上限 */
+  TargetCharacterIdsExceedLimit = 'target_character_ids_exceed_limit'
 }
 
 /**

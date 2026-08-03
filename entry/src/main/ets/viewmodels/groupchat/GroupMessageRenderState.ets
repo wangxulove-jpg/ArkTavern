@@ -1,5 +1,5 @@
 /**
- * GroupMessageRenderState 多人消息渲染状态(G-RUNTIME-1C-FIX)
+ * GroupMessageRenderState 多人消息渲染状态(G-RUNTIME-1C-FIX / G-CONTROL-2A)
  *
  * 目的:
  * - 解决 ForEach 在固定 key(messageId)下复用 GroupMessageBubble 时,
@@ -16,6 +16,11 @@
  * - messageId 在创建后不可变,用于 ForEach key
  * - 所有 UI 字段均为可观察字段,业务层 GroupMessageUiModel 变更时通过 applyMessage 同步更新
  * - 不存储敏感数据
+ *
+ * G-CONTROL-2A:
+ * - replyTargetCharacterIds / replyTargetNames 改为数组,支持多目标
+ * - 空数组表示全员回复,非空数组表示指定角色回复
+ * - 气泡根据数组长度和名称内容自行格式化标签文案
  */
 
 import { ChatMessageStatus } from '../../models/ChatMessage';
@@ -48,10 +53,10 @@ export class GroupMessageRenderState {
   createdAt: number;
   /** 更新时间(毫秒) */
   updatedAt: number;
-  /** G-CONTROL-1: 单角色回复目标角色 ID(用户消息,全员回复为空) */
-  replyTargetCharacterId: string;
-  /** G-CONTROL-1: 目标角色显示名称(用户消息下方标签,全员回复为空) */
-  replyTargetName: string;
+  /** G-CONTROL-2A: 回复目标角色 ID 列表(空数组表示全员回复) */
+  replyTargetCharacterIds: string[];
+  /** G-CONTROL-2A: 目标角色显示名称列表(空数组表示全员回复) */
+  replyTargetNames: string[];
 
   constructor(msg: GroupMessageUiModel) {
     this.messageId = msg.id;
@@ -66,15 +71,18 @@ export class GroupMessageRenderState {
     this.generationBatchId = msg.generationBatchId !== undefined ? msg.generationBatchId : '';
     this.createdAt = msg.createdAt;
     this.updatedAt = msg.updatedAt;
-    this.replyTargetCharacterId = msg.replyTargetCharacterId !== undefined
-      ? msg.replyTargetCharacterId : '';
-    this.replyTargetName = msg.replyTargetName !== undefined ? msg.replyTargetName : '';
+    this.replyTargetCharacterIds =
+      msg.replyTargetCharacterIds !== undefined ? [...msg.replyTargetCharacterIds] : [];
+    this.replyTargetNames =
+      msg.replyTargetNames !== undefined ? [...msg.replyTargetNames] : [];
   }
 
   /**
    * 同步最新 GroupMessageUiModel 到 RenderState(原地修改 @Observed 字段)。
    * 业务层不可变更新后,本方法把最新值拷贝到 RenderState 的可观察字段,
    * 触发 @ObjectLink 响应式刷新。
+   *
+   * G-CONTROL-2A: 数组字段使用 slice 复制,确保 @Observed 检测到引用变化。
    */
   applyMessage(msg: GroupMessageUiModel): void {
     this.role = msg.role;
@@ -88,8 +96,9 @@ export class GroupMessageRenderState {
     this.generationBatchId = msg.generationBatchId !== undefined ? msg.generationBatchId : '';
     this.createdAt = msg.createdAt;
     this.updatedAt = msg.updatedAt;
-    this.replyTargetCharacterId = msg.replyTargetCharacterId !== undefined
-      ? msg.replyTargetCharacterId : '';
-    this.replyTargetName = msg.replyTargetName !== undefined ? msg.replyTargetName : '';
+    this.replyTargetCharacterIds =
+      msg.replyTargetCharacterIds !== undefined ? [...msg.replyTargetCharacterIds] : [];
+    this.replyTargetNames =
+      msg.replyTargetNames !== undefined ? [...msg.replyTargetNames] : [];
   }
 }

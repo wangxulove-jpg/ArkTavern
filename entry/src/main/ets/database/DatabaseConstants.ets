@@ -6,7 +6,7 @@
  */
 
 export const DATABASE_NAME: string = 'arktavern.db';
-export const DATABASE_VERSION: number = 13;
+export const DATABASE_VERSION: number = 14;
 
 export const TABLE_CHARACTERS: string = 'characters';
 export const TABLE_CHATS: string = 'chats';
@@ -201,6 +201,10 @@ export const COLUMN_RECIPIENT_CHARACTER_IDS_JSON: string = 'recipient_character_
 export const COLUMN_PARTICIPANT_IDS_JSON: string = 'participant_ids_json';
 export const COLUMN_WITNESS_IDS_JSON: string = 'witness_ids_json';
 
+// ===== v14: G-CONTROL-2A 公开消息回复目标字段(独立于私聊 recipient) =====
+/** 公开消息回复目标角色 ID 列表(JSON 数组,空表示全员回复) */
+export const COLUMN_REPLY_TARGET_CHARACTER_IDS_JSON: string = 'reply_target_character_ids_json';
+
 // messages 索引扩展
 export const INDEX_MESSAGES_CHAT_BATCH: string = 'idx_messages_chat_batch';
 export const INDEX_MESSAGES_SENDER_CHARACTER: string = 'idx_messages_sender_character';
@@ -222,6 +226,10 @@ export const ALTER_MESSAGES_ADD_PARTICIPANT_IDS_JSON: string =
   `ALTER TABLE ${TABLE_MESSAGES} ADD COLUMN ${COLUMN_PARTICIPANT_IDS_JSON} TEXT`;
 export const ALTER_MESSAGES_ADD_WITNESS_IDS_JSON: string =
   `ALTER TABLE ${TABLE_MESSAGES} ADD COLUMN ${COLUMN_WITNESS_IDS_JSON} TEXT`;
+
+// ===== v14: G-CONTROL-2A 公开消息回复目标字段迁移 =====
+export const ALTER_MESSAGES_ADD_REPLY_TARGET_CHARACTER_IDS_JSON: string =
+  `ALTER TABLE ${TABLE_MESSAGES} ADD COLUMN ${COLUMN_REPLY_TARGET_CHARACTER_IDS_JSON} TEXT`;
 
 // ===== CREATE INDEX 语句(新安装和迁移都用) =====
 export const CREATE_INDEX_MESSAGES_CHAT_BATCH: string =

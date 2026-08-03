@@ -413,9 +413,11 @@ export class GroupPromptAssembler {
   /**
    * 构建群聊约束 System 消息。
    *
-   * G-CONTROL-1:
-   * - SingleCharacter 模式下追加"本轮由用户指定你回复"指令,
-   *   明确告知当前角色只以自己身份回应,不替其他角色回答。
+   * G-CONTROL-2A:
+   * - SelectedCharacters 模式下追加"本轮由用户指定一组角色回复"指令,
+   *   明确告知当前角色只以自己身份回应,不替其他被指定角色发言。
+   * - 单目标时使用"本轮由用户指定你回复"(兼容 G-CONTROL-1 语义)
+   * - 多目标时使用"本轮由用户指定一组角色回复。你是本轮被指定的角色之一。"
    * - AllEnabled 模式保持原有约束。
    */
   private buildGroupConstraint(
@@ -437,12 +439,21 @@ export class GroupPromptAssembler {
       '不要说明自己是 AI。',
       '根据当前可见聊天历史自然回应。'
     ];
-    // G-CONTROL-1: 单角色回复模式追加指定指令
-    if (replyTarget.mode === GroupReplyTargetMode.SingleCharacter) {
+    // G-CONTROL-2A: 指定角色回复模式追加指令
+    if (replyTarget.mode === GroupReplyTargetMode.SelectedCharacters) {
       lines.push('');
-      lines.push('本轮由用户指定你回复。');
-      lines.push('只以你的角色身份回应。');
-      lines.push('不要替其他角色回答。');
+      if (replyTarget.characterIds.length === 1) {
+        // 单目标:兼容 G-CONTROL-1 语义
+        lines.push('本轮由用户指定你回复。');
+        lines.push('只以你的角色身份回应。');
+        lines.push('不要替其他角色回答。');
+      } else {
+        // 多目标:明确告知是被指定角色之一
+        lines.push('本轮由用户指定一组角色回复。');
+        lines.push('你是本轮被指定的角色之一。');
+        lines.push('只以当前角色身份回应。');
+        lines.push('不要替其他被指定角色发言。');
+      }
     }
     return lines.join('\n');
   }

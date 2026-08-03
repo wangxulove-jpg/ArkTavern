@@ -143,6 +143,7 @@ import {
   COLUMN_RECIPIENT_CHARACTER_IDS_JSON,
   COLUMN_PARTICIPANT_IDS_JSON,
   COLUMN_WITNESS_IDS_JSON,
+  COLUMN_REPLY_TARGET_CHARACTER_IDS_JSON,
   INDEX_MESSAGES_CHAT_BATCH,
   INDEX_MESSAGES_SENDER_CHARACTER,
   ALTER_MESSAGES_ADD_SENDER_TYPE,
@@ -153,6 +154,7 @@ import {
   ALTER_MESSAGES_ADD_RECIPIENT_CHARACTER_IDS_JSON,
   ALTER_MESSAGES_ADD_PARTICIPANT_IDS_JSON,
   ALTER_MESSAGES_ADD_WITNESS_IDS_JSON,
+  ALTER_MESSAGES_ADD_REPLY_TARGET_CHARACTER_IDS_JSON,
   CREATE_INDEX_MESSAGES_CHAT_BATCH,
   CREATE_INDEX_MESSAGES_SENDER_CHARACTER,
   TABLE_CHAT_PARTICIPANTS,
@@ -237,7 +239,8 @@ const CREATE_MESSAGES_TABLE: string =
   `${COLUMN_VISIBILITY} TEXT NOT NULL DEFAULT 'public', ` +
   `${COLUMN_RECIPIENT_CHARACTER_IDS_JSON} TEXT, ` +
   `${COLUMN_PARTICIPANT_IDS_JSON} TEXT, ` +
-  `${COLUMN_WITNESS_IDS_JSON} TEXT` +
+  `${COLUMN_WITNESS_IDS_JSON} TEXT, ` +
+  `${COLUMN_REPLY_TARGET_CHARACTER_IDS_JSON} TEXT` +
   `)`;
 
 const CREATE_INDEX_CHATS_UPDATED_AT: string =
@@ -777,6 +780,54 @@ export const V13_SCHEMA_STATEMENTS: string[] = [
   CREATE_INDEX_CHAT_PARTICIPANTS_CHAT_ORDER
 ];
 
+/**
+ * v13→v14 迁移(G-CONTROL-2A 公开消息回复目标字段):
+ * 1. ALTER messages 表添加 reply_target_character_ids_json TEXT 字段
+ * 2. 数据迁移:将 G-CONTROL-1 误写入 recipient_character_ids_json 的
+ *    公开用户消息回复目标复制到 reply_target_character_ids_json,
+ *    然后清空 recipient_character_ids_json(恢复私聊语义)
+ *    (条件:sender_type='user' AND visibility='public'
+ *     AND recipient_character_ids_json 非空)
+ *
+ * 安全性:
+ * - ALTER 用 ADD COLUMN,不重建表
+ * - 数据迁移用条件 UPDATE,只影响符合条件的行
+ * - 失败由 DbHelper 事务回滚,保持 v13
+ * - 不影响私聊消息(visibility='private' 的 recipient 不动)
+ */
+export const V13_TO_V14_DDL_STATEMENTS: string[] = [
+  ALTER_MESSAGES_ADD_REPLY_TARGET_CHARACTER_IDS_JSON
+];
+
+/**
+ * v13→v14 数据迁移语句(G-CONTROL-1 旧单角色目标数据迁移)。
+ *
+ * 仅迁移满足以下全部条件的消息:
+ * - sender_type = 'user'(用户消息)
+ * - visibility = 'public'(公开消息)
+ * - recipient_character_ids_json 非空(G-CONTROL-1 写入的回复目标)
+ *
+ * 迁移动作:
+ * - 将 recipient_character_ids_json 值复制到 reply_target_character_ids_json
+ * - 清空 recipient_character_ids_json(恢复私聊语义)
+ *
+ * 私聊消息(visibility='private')的 recipient_character_ids_json 不动。
+ */
+export const V13_TO_V14_DATA_MIGRATION_STATEMENTS: string[] = [
+  `UPDATE ${TABLE_MESSAGES} SET ${COLUMN_REPLY_TARGET_CHARACTER_IDS_JSON} = ${COLUMN_RECIPIENT_CHARACTER_IDS_JSON} ` +
+    `WHERE ${COLUMN_SENDER_TYPE} = 'user' AND ${COLUMN_VISIBILITY} = 'public' ` +
+    `AND ${COLUMN_RECIPIENT_CHARACTER_IDS_JSON} IS NOT NULL ` +
+    `AND ${COLUMN_RECIPIENT_CHARACTER_IDS_JSON} != ''`,
+  `UPDATE ${TABLE_MESSAGES} SET ${COLUMN_RECIPIENT_CHARACTER_IDS_JSON} = NULL ` +
+    `WHERE ${COLUMN_SENDER_TYPE} = 'user' AND ${COLUMN_VISIBILITY} = 'public' ` +
+    `AND ${COLUMN_REPLY_TARGET_CHARACTER_IDS_JSON} IS NOT NULL`
+];
+
+/** v14 完整 Schema(新安装使用,CREATE_MESSAGES_TABLE 已含 reply_target_character_ids_json) */
+export const V14_SCHEMA_STATEMENTS: string[] = [
+  ...V13_SCHEMA_STATEMENTS
+];
+
 export function getSchemaStatements(version: number): string[] {
   if (version === 1) {
     return [...VERSION_1_STATEMENTS];
@@ -816,6 +867,9 @@ export function getSchemaStatements(version: number): string[] {
   }
   if (version === 13) {
     return [...V13_SCHEMA_STATEMENTS];
+  }
+  if (version === 14) {
+    return [...V14_SCHEMA_STATEMENTS];
   }
   return [];
 }

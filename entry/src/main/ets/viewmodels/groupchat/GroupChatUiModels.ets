@@ -86,17 +86,23 @@ export interface GroupConversationDetailUiModel {
 }
 
 /**
- * 多人聊天消息 UI 模型(G-RUNTIME-1A / G-CONTROL-1)。
+ * 多人聊天消息 UI 模型(G-RUNTIME-1A / G-CONTROL-1 / G-CONTROL-2A)。
  *
  * 字段映射规则:
  * - 用户消息:senderCharacterId 为空,显示"我",右对齐
  * - AI 角色消息:通过 senderCharacterId 读取 Character,显示角色头像和名称,左对齐
  * - 已删除角色:显示"角色已删除",使用默认头像,保留历史消息正文
  *
- * G-CONTROL-1:
- * - replyTargetCharacterId:单角色回复目标 ID(用户消息)
- * - replyTargetName:目标角色显示名称(用于用户消息下方标签)
- *   全员回复时为空字符串,单角色回复时为目标角色名
+ * G-CONTROL-2A:
+ * - replyTargetCharacterIds:回复目标角色 ID 列表(用户消息)
+ *   - 空数组:全员回复(默认)
+ *   - 非空数组:仅指定角色按 speakerOrder 回复
+ * - replyTargetNames:目标角色显示名称列表(与 IDs 一一对应,
+ *   已删除角色显示"角色已删除"),用于用户消息下方标签
+ *
+ * 历史兼容:
+ * - 旧 G-CONTROL-1 单角色消息迁移后 replyTargetCharacterIds 长度为 1
+ * - 旧全员消息 replyTargetCharacterIds 为空数组
  */
 export interface GroupMessageUiModel {
   /** 消息 ID */
@@ -123,10 +129,10 @@ export interface GroupMessageUiModel {
   readonly createdAt: number;
   /** 更新时间(毫秒) */
   readonly updatedAt: number;
-  /** G-CONTROL-1: 单角色回复目标角色 ID(用户消息,全员回复为空) */
-  readonly replyTargetCharacterId?: string;
-  /** G-CONTROL-1: 目标角色显示名称(用户消息下方标签,全员回复为空) */
-  readonly replyTargetName?: string;
+  /** G-CONTROL-2A: 回复目标角色 ID 列表(用户消息,全员回复为空数组) */
+  readonly replyTargetCharacterIds: string[];
+  /** G-CONTROL-2A: 目标角色显示名称列表(用户消息下方标签,全员回复为空数组) */
+  readonly replyTargetNames: string[];
 }
 
 /** 多人聊天消息列表状态 */
@@ -138,7 +144,7 @@ export enum GroupMessageListState {
 }
 
 /**
- * 群聊成员运行时状态(G-RUNTIME-1B / G-CONTROL-1)。
+ * 群聊成员运行时状态(G-RUNTIME-1B / G-CONTROL-1 / G-CONTROL-2A)。
  *
  * 用于成员栏显示当前角色的运行状态:
  * - Idle:未参与本轮或本轮未开始
@@ -147,7 +153,7 @@ export enum GroupMessageListState {
  * - Completed:已完成
  * - Cancelled:已取消(停止)
  * - Failed:生成失败
- * - NotParticipating:G-CONTROL-1 单角色轮次中未选中的启用成员
+ * - NotParticipating:G-CONTROL-2A 有限成员轮次中未选中的启用成员
  *   (本轮不参与生成,但不是 Disabled,区别于停用成员)
  */
 export enum GroupMemberRuntimeState {

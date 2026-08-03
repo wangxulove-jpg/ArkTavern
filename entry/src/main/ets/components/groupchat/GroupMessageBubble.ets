@@ -64,12 +64,14 @@ export struct GroupMessageBubble {
       .borderRadius({ topLeft: 16, topRight: 16, bottomLeft: 16, bottomRight: 6 })
       .padding({ left: 14, right: 14, top: 10, bottom: 10 })
 
-      // G-CONTROL-1: 单角色回复目标标签(仅指定角色时显示)
-      if (this.renderState.replyTargetName.length > 0) {
+      // G-CONTROL-2A: 多角色回复目标标签(仅指定角色时显示)
+      if (this.renderState.replyTargetNames.length > 0) {
         Row() {
-          Text('仅' + this.renderState.replyTargetName + '回复')
+          Text(this.formatReplyTargetLabel())
             .fontSize(10)
             .fontColor($r('app.color.app_text_tertiary'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
         }
         .margin({ top: 2, right: 4 })
       }
@@ -222,5 +224,31 @@ export struct GroupMessageBubble {
     const hour: string = d.getHours().toString().padStart(2, '0');
     const minute: string = d.getMinutes().toString().padStart(2, '0');
     return hour + ':' + minute;
+  }
+
+  /**
+   * G-CONTROL-2A: 格式化回复目标标签文案。
+   *
+   * 规则:
+   * - 空数组:返回空字符串(全员回复,不显示标签)
+   * - 1 个目标:仅{name}回复
+   * - 2~3 个目标且名称总长较短(<=12 字符):仅{n1}、{n2}回复
+   * - 名称过多或过长:指定 N 位角色回复
+   *
+   * 已删除角色名称显示"角色已删除",标签仍可安全显示。
+   */
+  private formatReplyTargetLabel(): string {
+    const names: string[] = this.renderState.replyTargetNames;
+    if (names.length === 0) {
+      return '';
+    }
+    if (names.length === 1) {
+      return '仅' + names[0] + '回复';
+    }
+    const joined: string = names.join('、');
+    if (names.length <= 3 && joined.length <= 12) {
+      return '仅' + joined + '回复';
+    }
+    return '指定 ' + String(names.length) + ' 位角色回复';
   }
 }

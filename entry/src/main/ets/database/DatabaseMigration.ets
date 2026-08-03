@@ -14,7 +14,7 @@
  */
 
 import { relationalStore } from '@kit.ArkData';
-import { V1_TO_V2_STATEMENTS, V2_TO_V3_STATEMENTS, V3_TO_V4_STATEMENTS, V4_TO_V5_DDL_STATEMENTS, V5_TO_V6_STATEMENTS, V6_TO_V7_STATEMENTS, V7_TO_V8_DDL_STATEMENTS, V8_TO_V9_STATEMENTS, V9_TO_V10_DDL_STATEMENTS, V10_TO_V11_DDL_STATEMENTS, V11_TO_V12_DDL_STATEMENTS, V11_TO_V12_DATA_MIGRATION_STATEMENTS, V12_TO_V13_DDL_STATEMENTS } from './DatabaseSchema';
+import { V1_TO_V2_STATEMENTS, V2_TO_V3_STATEMENTS, V3_TO_V4_STATEMENTS, V4_TO_V5_DDL_STATEMENTS, V5_TO_V6_STATEMENTS, V6_TO_V7_STATEMENTS, V7_TO_V8_DDL_STATEMENTS, V8_TO_V9_STATEMENTS, V9_TO_V10_DDL_STATEMENTS, V10_TO_V11_DDL_STATEMENTS, V11_TO_V12_DDL_STATEMENTS, V11_TO_V12_DATA_MIGRATION_STATEMENTS, V12_TO_V13_DDL_STATEMENTS, V13_TO_V14_DDL_STATEMENTS, V13_TO_V14_DATA_MIGRATION_STATEMENTS } from './DatabaseSchema';
 import {
   TABLE_CHATS,
   TABLE_MESSAGES,
@@ -635,6 +635,41 @@ class V12ToV13Migration implements DatabaseMigration {
   async migrate(store: relationalStore.RdbStore): Promise<void> {
     for (let i = 0; i < V12_TO_V13_DDL_STATEMENTS.length; i++) {
       await store.executeSql(V12_TO_V13_DDL_STATEMENTS[i]);
+    }
+  }
+}
+
+/**
+ * v13→v14 迁移(G-CONTROL-2A 公开消息回复目标字段):
+ * 1. DDL:ALTER messages 表添加 reply_target_character_ids_json TEXT 字段
+ * 2. 数据迁移:将 G-CONTROL-1 误写入 recipient_character_ids_json 的
+ *    公开用户消息回复目标复制到 reply_target_character_ids_json,
+ *    然后清空 recipient_character_ids_json(恢复私聊语义)
+ *
+ * 安全性:
+ * - 所有 DDL 用 ALTER TABLE ADD COLUMN
+ * - 不重建 messages 表
+ * - 不删除任何现有数据
+ * - 数据迁移用条件 UPDATE,只影响 user+public+recipient 非空的行
+ * - 私聊消息(visibility='private')的 recipient 不动
+ * - 任一失败由 DbHelper 事务回滚,保持 v13
+ */
+export function createV13ToV14Migration(): DatabaseMigration {
+  return new V13ToV14Migration();
+}
+
+class V13ToV14Migration implements DatabaseMigration {
+  readonly fromVersion: number = 13;
+  readonly toVersion: number = 14;
+
+  async migrate(store: relationalStore.RdbStore): Promise<void> {
+    // 1. DDL:ALTER TABLE 添加新字段
+    for (let i = 0; i < V13_TO_V14_DDL_STATEMENTS.length; i++) {
+      await store.executeSql(V13_TO_V14_DDL_STATEMENTS[i]);
+    }
+    // 2. 数据迁移:G-CONTROL-1 旧单角色目标数据迁移
+    for (let i = 0; i < V13_TO_V14_DATA_MIGRATION_STATEMENTS.length; i++) {
+      await store.executeSql(V13_TO_V14_DATA_MIGRATION_STATEMENTS[i]);
     }
   }
 }

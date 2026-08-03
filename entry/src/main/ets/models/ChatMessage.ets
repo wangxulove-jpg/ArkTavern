@@ -107,6 +107,17 @@ export interface ChatMessage {
    * 用于旁白动作或私聊被目击的场景,默认为空。
    */
   readonly witnessIds?: string[];
+  /**
+   * 公开消息回复目标角色 ID 列表(v14 G-CONTROL-2A 引入)。
+   *
+   * 语义:本轮要求哪些角色回复(独立于私聊可见性)。
+   * - undefined / 空数组:全员回复(默认)
+   * - 非空数组:仅指定角色按 speakerOrder 回复
+   *
+   * 仅用于 visibility='public' 的用户消息。
+   * 与 recipientCharacterIds(私聊可见性)语义完全分离。
+   */
+  readonly replyTargetCharacterIds?: string[];
 }
 
 /**
@@ -150,6 +161,7 @@ export interface ChatMessageOverrides {
   recipientCharacterIds?: string[];
   participantIds?: string[];
   witnessIds?: string[];
+  replyTargetCharacterIds?: string[];
 }
 
 /**
@@ -178,7 +190,9 @@ export function cloneChatMessage(msg: ChatMessage): ChatMessage {
     participantIds: msg.participantIds !== undefined
       ? msg.participantIds.slice() : undefined,
     witnessIds: msg.witnessIds !== undefined
-      ? msg.witnessIds.slice() : undefined
+      ? msg.witnessIds.slice() : undefined,
+    replyTargetCharacterIds: msg.replyTargetCharacterIds !== undefined
+      ? msg.replyTargetCharacterIds.slice() : undefined
   };
 }
 
@@ -218,6 +232,9 @@ export function mergeChatMessage(
       : (base.participantIds !== undefined ? base.participantIds.slice() : undefined),
     witnessIds: overrides.witnessIds !== undefined
       ? overrides.witnessIds.slice()
-      : (base.witnessIds !== undefined ? base.witnessIds.slice() : undefined)
+      : (base.witnessIds !== undefined ? base.witnessIds.slice() : undefined),
+    replyTargetCharacterIds: overrides.replyTargetCharacterIds !== undefined
+      ? overrides.replyTargetCharacterIds.slice()
+      : (base.replyTargetCharacterIds !== undefined ? base.replyTargetCharacterIds.slice() : undefined)
   };
 }

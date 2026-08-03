@@ -95,7 +95,7 @@ export class GroupConversationMessageService {
   }
 
   /**
-   * 追加用户消息(G-CONTROL-1 扩展支持 recipientCharacterIds)。
+   * 追加用户消息(G-CONTROL-2A 扩展支持 replyTargetCharacterIds 多目标)。
    *
    * 验证:
    * - chatId 对应的 Chat 存在
@@ -106,27 +106,28 @@ export class GroupConversationMessageService {
    * - 计算 next sequenceNumber = max + 1
    * - 插入 Message(role=User, status=Completed, senderType='user',
    *   senderCharacterId=null, generationBatchId=传入的批次 ID,
-   *   visibility='public')
-   * - G-CONTROL-1: 若 recipientCharacterIds 非空,直接更新
-   *   recipient_character_ids_json 列(复用 JSON.stringify 序列化)。
-   *   MessageRepository 现有校验禁止 public+recipients 组合,
-   *   因此先以 public+空 recipients 插入(通过校验),
-   *   再在同一事务内直接 store.update 写入 recipient_character_ids_json。
-   *   读取时 MessageRepository.messageFromRow 已支持解析该字段。
+   *   visibility='public', replyTargetCharacterIds=传入的目标列表)
    * - 更新 Chat.lastMessageAt 和 updatedAt
+   *
+   * G-CONTROL-2A:
+   * - 回复目标使用独立字段 replyTargetCharacterIds(不再借用 recipientCharacterIds)
+   * - 全员回复:replyTargetCharacterIds = undefined/空(不写入)
+   * - 有限成员回复:replyTargetCharacterIds = [目标 ID 列表](去重、过滤空)
+   * - 所有写入通过 MessageRepository.insertWithStore 正式序列化,无直接 SQL 绕过
+   * - recipientCharacterIds 保持私聊语义,公开消息始终为 undefined
    *
    * @param chatId 群聊 ID
    * @param content 消息正文
    * @param generationBatchId 本轮 ID
-   * @param recipientCharacterIds G-CONTROL-1 单角色回复目标 ID 列表
-   *   (全员回复传空数组或不传;单角色回复传 [characterId])
-   * @returns 写入的 ChatMessage(含分配的 id 和 recipientCharacterIds)
+   * @param replyTargetCharacterIds G-CONTROL-2A 回复目标角色 ID 列表
+   *   (全员回复传空数组或不传;有限成员回复传 [characterId, ...])
+   * @returns 写入的 ChatMessage(含分配的 id 和 replyTargetCharacterIds)
    */
   async appendUserMessage(
     chatId: string,
     content: string,
     generationBatchId: string,
-    recipientCharacterIds?: string[]
+    replyTargetCharacterIds?: string[]
   ): Promise<ChatMessage> {
     if (chatId === '') {
       throw DatabaseError.invalidData('chatId empty');
@@ -147,17 +148,18 @@ export class GroupConversationMessageService {
       throw DatabaseError.invalidData('chat is not group mode');
     }
 
-    // G-CONTROL-1: 规范化 recipientCharacterIds
-    // - 全员回复:空数组(不写入全部成员 ID)
-    // - 单角色回复:仅一个 characterId
-    const normalizedRecipients: string[] =
-      recipientCharacterIds !== undefined ? [...recipientCharacterIds] : [];
+    // G-CONTROL-2A: 规范化 replyTargetCharacterIds
+    // - 去重、过滤空 ID
+    // - 全员回复:空数组(不写入 reply_target_character_ids_json)
+    // - 有限成员回复:非空数组(写入 reply_target_character_ids_json)
+    const rawTargetIds: string[] =
+      replyTargetCharacterIds !== undefined ? [...replyTargetCharacterIds] : [];
+    const normalizedTargetIds: string[] = this.dedupCharacterIds(rawTargetIds);
 
     const now: number = nowMillis();
     const messageId: string = generateUuid();
-    // G-CONTROL-1: 插入时 recipientCharacterIds 始终为 undefined,
-    // 以通过 MessageRepository 的 public+recipients 校验。
-    // 单角色目标由 directUpdateRecipientIds 在事务内直接更新字段绕过校验。
+    // G-CONTROL-2A: 使用正式 replyTargetCharacterIds 字段
+    // recipientCharacterIds 保持 undefined(公开消息无私聊接收者)
     const message: ChatMessage = {
       id: messageId,
       role: ChatRole.User,
@@ -170,7 +172,9 @@ export class GroupConversationMessageService {
       senderCharacterId: undefined,
       generationBatchId: generationBatchId,
       visibility: 'public' as MessageVisibility,
-      recipientCharacterIds: undefined
+      recipientCharacterIds: undefined,
+      replyTargetCharacterIds: normalizedTargetIds.length > 0
+        ? normalizedTargetIds : undefined
     };
 
     const maxSeq: number = await this.messageRepository.getMaxSequenceNumber(chatId);
@@ -179,12 +183,8 @@ export class GroupConversationMessageService {
     try {
       await this.dbHelper.runInTransaction(
         async (store: relationalStore.RdbStore): Promise<void> => {
-          // 先以 public+空 recipients 插入(通过 MessageRepository 校验)
+          // 单次正式写入:Repository 序列化 replyTargetCharacterIds
           await this.messageRepository.insertWithStore(store, message, chatId, nextSeq);
-          // G-CONTROL-1: 同事务内直接更新 recipient_character_ids_json
-          if (normalizedRecipients.length > 0) {
-            await this.directUpdateRecipientIds(store, messageId, normalizedRecipients);
-          }
           await this.chatRepository.updateLastMessageAtWithStore(store, chatId, now, now);
         },
         'group_message_append_user'
@@ -200,25 +200,24 @@ export class GroupConversationMessageService {
   }
 
   /**
-   * G-CONTROL-1: 直接通过 RDB store 更新 recipient_character_ids_json。
-   *
-   * 复用现有 JSON.stringify 序列化格式(与 MessageRepository.buildValidatedMessageBucket 一致)。
-   * 读取时 MessageRepository.messageFromRow 已支持解析。
-   *
-   * 用途:绕过 MessageRepository 现有 public+recipients 校验,
-   * 实现 G-CONTROL-1 单角色回复目标持久化(visibility=public + recipientCharacterIds)。
+   * G-CONTROL-2A: 角色ID去重与空值过滤。
+   * 保持首次出现顺序(不影响生成顺序,生成顺序由 speakerOrder 决定)。
    */
-  private async directUpdateRecipientIds(
-    store: relationalStore.RdbStore,
-    messageId: string,
-    recipientCharacterIds: string[]
-  ): Promise<void> {
-    const bucket: relationalStore.ValuesBucket = {};
-    bucket['recipient_character_ids_json'] = JSON.stringify(recipientCharacterIds);
-    const predicates: relationalStore.RdbPredicates =
-      new relationalStore.RdbPredicates('messages');
-    predicates.equalTo('id', messageId);
-    await store.update(bucket, predicates);
+  private dedupCharacterIds(ids: string[]): string[] {
+    const seen: Set<string> = new Set<string>();
+    const result: string[] = [];
+    for (let i = 0; i < ids.length; i++) {
+      const id: string = ids[i];
+      if (id.length === 0) {
+        continue;
+      }
+      if (seen.has(id)) {
+        continue;
+      }
+      seen.add(id);
+      result.push(id);
+    }
+    return result;
   }
 
   /**
