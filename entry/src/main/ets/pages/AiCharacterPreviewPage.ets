@@ -113,6 +113,13 @@ struct AiCharacterPreviewPage {
     if (this.viewModel === null) {
       return;
     }
+    // 重复点击保护:保存进行中或对话框已显示时不再触发
+    if (this.viewModel!.isSaving) {
+      return;
+    }
+    if (this.showDuplicateNameConfirm) {
+      return;
+    }
     // 名称非空校验
     if (this.viewModel!.name.trim().length === 0) {
       promptAction.showToast({ message: '请输入角色名称', duration: 2000 });

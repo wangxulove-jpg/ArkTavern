@@ -7,8 +7,14 @@
  * 3. 流式过程中累积响应,但**不写入数据库**
  * 4. 生成结束后调用 CharacterCardV2Fixer 清理 Markdown 与提取 JSON
  * 5. 调用 CharacterCardV2Validator 校验
- * 6. 校验失败时触发自动修复(最多 2 次):将原 JSON 和错误发送给同一模型,要求只返回修正后的完整 V2 JSON
+ * 6. 校验失败时触发受控格式修复(最多 1 次):将原 JSON 和错误类别发送给同一模型,要求只返回修正后的完整 V2 JSON
  * 7. 返回 AiGenerationResult
+ *
+ * 请求次数约束(G-AI-BUILDER-2-FIX):
+ * - 初始生成请求:1 次
+ * - 格式修复请求:最多 1 次(MAX_REPAIR_ATTEMPTS = 1)
+ * - 总请求上限:2 次
+ * - 第二次仍失败立即停止,不发起第三次请求
  *
  * 不在本服务:
  * - UI 状态(由 ViewModel 管理)
@@ -60,8 +66,14 @@ const GENERATION_TEMPERATURE: number = 0.7;
 const GENERATION_TOP_P: number = 0.95;
 /** 生成最大 token 数(角色卡字段较多,需要较大空间) */
 const GENERATION_MAX_TOKENS: number = 8192;
-/** 自动修复最大次数 */
-const MAX_AUTO_FIX_ATTEMPTS: number = 2;
+/**
+ * 受控格式修复最大次数(G-AI-BUILDER-2-FIX)。
+ *
+ * 语义:初始生成请求失败后,最多再发起 1 次格式修复请求。
+ * 即总请求上限 = 1(初始) + 1(修复) = 2 次。
+ * 第二次仍失败立即停止,不发起第三次请求。
+ */
+const MAX_REPAIR_ATTEMPTS: number = 1;
 
 /**
  * 流式生成回调。
@@ -502,7 +514,13 @@ export class AiCharacterGenerationService {
   }
 
   /**
-   * 校验 + 自动修复循环。
+   * 校验 + 受控格式修复。
+   *
+   * G-AI-BUILDER-2-FIX:
+   * - 初始请求已在调用方完成,本方法只负责校验和最多 1 次修复。
+   * - 修复请求只包含:原始无效输出 + JSON Schema + 错误类别,不重新发送完整用户描述以外的隐私数据。
+   * - 修复目的仅为修正 JSON 格式和字段结构,不让模型扩展、改写或重新设计角色。
+   * - 最多发起 1 次修复请求(MAX_REPAIR_ATTEMPTS = 1),第二次仍失败立即停止。
    */
   private async validateAndAutoFix(
     rawResponse: string,
@@ -529,18 +547,18 @@ export class AiCharacterGenerationService {
       return createSuccess(result.card!, rawResponse, 0, meta);
     }
 
-    // 3. 自动修复(最多 MAX_AUTO_FIX_ATTEMPTS 次)
+    // 3. 受控格式修复(最多 MAX_REPAIR_ATTEMPTS 次)
     let lastErrors: AiValidationError[] = result.errors;
     let currentRaw: string = cleaned;
 
-    while (state.autoFixAttempts < MAX_AUTO_FIX_ATTEMPTS && !state.aborted) {
+    while (state.autoFixAttempts < MAX_REPAIR_ATTEMPTS && !state.aborted) {
       state.autoFixAttempts++;
-      Logger.warn(LOG_TAG, 'auto fix attempt=' + String(state.autoFixAttempts)
+      Logger.warn(LOG_TAG, 'repair attempt=' + String(state.autoFixAttempts)
         + ' errors=' + String(lastErrors.length));
 
       const fixMessages: ChatMessage[] = buildAutoFixMessages(currentRaw, lastErrors, input);
       const fixResponse: string = await this.streamMessages(
-        fixMessages, options, state, callbacks, '自动修复失败'
+        fixMessages, options, state, callbacks, '格式修复失败'
       );
 
       if (state.aborted) {
@@ -552,7 +570,7 @@ export class AiCharacterGenerationService {
         // 修复失败:返回最后一次校验错误
         return createFailed(
           rawResponse, lastErrors, state.autoFixAttempts, false, meta,
-          '自动修复失败:模型返回空响应'
+          '格式修复失败:模型返回空响应'
         );
       }
 
@@ -564,10 +582,10 @@ export class AiCharacterGenerationService {
       lastErrors = result.errors;
     }
 
-    // 4. 自动修复上限
-    const exhausted: boolean = state.autoFixAttempts >= MAX_AUTO_FIX_ATTEMPTS;
+    // 4. 修复次数已达上限
+    const exhausted: boolean = state.autoFixAttempts >= MAX_REPAIR_ATTEMPTS;
     const errorMessage: string = exhausted
-      ? '已自动修复 ' + String(state.autoFixAttempts) + ' 次仍无法通过校验,请手动处理或返回修改创意'
+      ? '已进行 ' + String(state.autoFixAttempts) + ' 次格式修复仍无法通过校验,请手动处理或返回修改创意'
       : '生成失败,请重试或修改创意描述';
     return createFailed(
       rawResponse, lastErrors, state.autoFixAttempts, exhausted, meta, errorMessage

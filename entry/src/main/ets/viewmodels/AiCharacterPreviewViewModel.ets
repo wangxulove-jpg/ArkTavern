@@ -315,11 +315,18 @@ export class AiCharacterPreviewViewModel {
 
   /**
    * 取消字段重新生成。
+   *
+   * 顺序(G-AI-BUILDER-2-FIX):先失效 state,再 abort 请求。
+   * 这样迟到回调到达时 fieldRegenState 已不是 Regenerating,会被忽略。
    */
   cancelFieldRegen(): void {
     if (this.fieldRegenState !== FieldRegenState.Regenerating) {
       return;
     }
+    // 1. 先失效 state,迟到回调将被忽略
+    this.fieldRegenState = FieldRegenState.Idle;
+    this.regeneratingField = '';
+    // 2. 再 abort 请求
     if (this.fieldRegenHandle !== null) {
       try {
         this.fieldRegenHandle.abort();
@@ -328,8 +335,6 @@ export class AiCharacterPreviewViewModel {
       }
       this.fieldRegenHandle = null;
     }
-    this.fieldRegenState = FieldRegenState.Idle;
-    this.regeneratingField = '';
   }
 
   /**
