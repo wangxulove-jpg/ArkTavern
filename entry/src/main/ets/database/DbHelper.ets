@@ -76,6 +76,7 @@ export type TransactionOperation =
   | 'group_conversation_add_participant'
   | 'group_conversation_remove_participant'
   | 'group_conversation_delete'
+  | 'group_message_append_user'
   | 'unknown';
 
 export class DbHelper {

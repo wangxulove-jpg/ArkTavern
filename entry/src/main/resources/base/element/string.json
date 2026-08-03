@@ -1706,19 +1706,19 @@
     },
     {
       "name": "group_settings_clear_messages",
-      "value": "清空预览记录"
+      "value": "清空聊天记录"
     },
     {
       "name": "group_settings_delete",
-      "value": "删除预览群聊"
+      "value": "删除群聊"
     },
     {
       "name": "group_settings_clear_confirm",
-      "value": "确定清空当前群聊的所有消息吗？"
+      "value": "确定清空当前群聊的所有消息吗？此操作不可撤销。"
     },
     {
       "name": "group_settings_delete_confirm",
-      "value": "确定删除此预览群聊吗？此操作不可撤销。"
+      "value": "确定删除此群聊吗？此操作不可撤销。"
     },
     {
       "name": "group_entry_title",

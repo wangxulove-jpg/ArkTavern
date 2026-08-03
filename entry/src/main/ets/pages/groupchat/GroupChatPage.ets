@@ -1,18 +1,30 @@
 /**
- * GroupChatPage 多人聊天主页面(G-DATA-1B 正式版)
+ * GroupChatPage 多人聊天主页面(G-DATA-1B / G-RUNTIME-1A 正式版)
  *
- * 数据来源:GroupConversationPersistenceService(真实数据库)。
+ * 数据来源:
+ * - GroupConversationPersistenceService(真实数据库)
+ * - GroupConversationMessageService(真实消息)
  *
  * 状态:
  * - Loading:加载中
- * - Ready:展示群聊标题、成员、消息区(本阶段无消息)
+ * - Ready:展示群聊标题、成员、真实消息列表、启用输入区
  * - NotFound:群聊不存在或已删除
  * - Error:加载失败
  *
+ * 消息区域:
+ * - 有消息:显示真实消息列表(用户右对齐,角色左对齐)
+ * - 无消息:显示"还没有消息"
+ * - 底部说明:"AI 角色回复将在下一阶段接入"
+ *
+ * 输入区:
+ * - 启用真实发送
+ * - 发送期间禁用按钮(isSending)
+ * - 失败时保留输入内容
+ *
  * 本阶段不实现:
- * - 多人 AI 生成
- * - 真实消息发送(输入区禁用)
+ * - 多人 AI 生成(不显示"正在回复")
  * - 流式输出
+ * - 停止 / 重试
  *
  * 不依赖:GroupChatPreviewStore / 预览种子数据。
  */
@@ -23,10 +35,14 @@ import { GroupChatViewModel } from '../../viewmodels/groupchat/GroupChatViewMode
 import {
   GroupConversationDetailUiModel,
   GroupMemberUiModel,
+  GroupMessageUiModel,
   GroupChatDetailState,
+  GroupMessageListState,
   PENDING_GROUP_CHAT_ID_KEY
 } from '../../viewmodels/groupchat/GroupChatUiModels';
 import { CharacterImageView } from '../../components/CharacterImageView';
+import { ChatRole } from '../../models/ChatRole';
+import { ChatMessageStatus } from '../../models/ChatMessage';
 
 @Entry
 @Component
@@ -37,6 +53,16 @@ struct GroupChatPage {
   @State detail: GroupConversationDetailUiModel | null = null;
   /** 页面状态 */
   @State state: GroupChatDetailState = GroupChatDetailState.Loading;
+  /** 消息列表 */
+  @State messages: GroupMessageUiModel[] = [];
+  /** 消息列表状态 */
+  @State messageState: GroupMessageListState = GroupMessageListState.Loading;
+  /** 输入框文本 */
+  @State inputText: string = '';
+  /** 是否正在发送 */
+  @State isSending: boolean = false;
+  /** 错误提示 */
+  @State errorMessage: string = '';
   /** 更多菜单是否可见 */
   @State moreMenuVisible: boolean = false;
   /** 重命名弹窗是否可见 */
@@ -49,6 +75,7 @@ struct GroupChatPage {
   @StorageProp('navBarHeight') navBarHeight: number = 0;
 
   private viewModel: GroupChatViewModel | null = null;
+  private messageScroller: Scroller = new Scroller();
 
   async aboutToAppear(): Promise<void> {
     const id: string = AppStorage.get<string>(PENDING_GROUP_CHAT_ID_KEY) ?? '';
@@ -85,6 +112,11 @@ struct GroupChatPage {
     }
     this.detail = this.viewModel.detail;
     this.state = this.viewModel.state;
+    this.messages = this.viewModel.messages;
+    this.messageState = this.viewModel.messageState;
+    this.inputText = this.viewModel.inputText;
+    this.isSending = this.viewModel.isSending;
+    this.errorMessage = this.viewModel.errorMessage;
   }
 
   build(): void {
@@ -324,65 +356,220 @@ struct GroupChatPage {
     .edgeEffect(EdgeEffect.Spring)
   }
 
-  /** 消息列表区(本阶段无真实多人消息) */
+  /** 消息列表区 */
   @Builder
   messageArea(): void {
-    Column() {
-      Text('还没有消息')
-        .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_secondary'))
-        .textAlign(TextAlign.Center)
-        .width('100%')
+    if (this.messageState === GroupMessageListState.Loading) {
+      Column() {
+        Text('加载消息…')
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor($r('app.color.app_text_tertiary'))
+      }
+      .width('100%')
+      .layoutWeight(1)
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+    } else if (this.messages.length === 0) {
+      Column() {
+        Text('还没有消息')
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .textAlign(TextAlign.Center)
+          .width('100%')
 
-      Text('多人 AI 回复将在下一阶段接入。')
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
-        .margin({ top: 6 })
-        .textAlign(TextAlign.Center)
-        .width('100%')
+        Text('AI 角色回复将在下一阶段接入。')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_tertiary'))
+          .margin({ top: 6 })
+          .textAlign(TextAlign.Center)
+          .width('100%')
+      }
+      .width('100%')
+      .layoutWeight(1)
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+    } else {
+      List({ scroller: this.messageScroller }) {
+        ForEach(this.messages, (msg: GroupMessageUiModel) => {
+          ListItem() {
+            this.messageBubble(msg)
+          }
+          .margin({ left: 12, right: 12, top: 6, bottom: 6 })
+        }, (msg: GroupMessageUiModel) => msg.id)
+      }
+      .width('100%')
+      .layoutWeight(1)
+      .scrollBar(BarState.Auto)
+      .edgeEffect(EdgeEffect.Spring)
+      .onAreaChange(() => {
+        // 消息列表变化后滚动到底部
+        if (this.messages.length > 0) {
+          this.messageScroller.scrollEdge(Edge.Bottom);
+        }
+      })
     }
-    .width('100%')
-    .layoutWeight(1)
-    .justifyContent(FlexAlign.Center)
-    .alignItems(HorizontalAlign.Center)
   }
 
-  /** 输入区(本阶段禁用) */
+  /** 单条消息气泡 */
+  @Builder
+  messageBubble(msg: GroupMessageUiModel): void {
+    if (msg.role === ChatRole.User) {
+      // 用户消息:右对齐
+      Row() {
+        Column() {
+          Text(msg.content)
+            .fontSize($r('app.float.app_font_body'))
+            .fontColor($r('app.color.chat_user_text'))
+            .width('100%')
+            .textAlign(TextAlign.Start)
+        }
+        .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+        .backgroundColor($r('app.color.chat_user_bubble'))
+        .borderRadius($r('app.float.app_radius_md'))
+        .constraintSize({ maxWidth: '75%' })
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.End)
+    } else {
+      // AI 角色消息:左对齐
+      Row() {
+        Column() {
+          CharacterImageView({
+            imageUri: msg.senderAvatarUri ?? '',
+            fallbackName: msg.senderName,
+            imgWidth: 32,
+            imgHeight: 32,
+            imgBorderRadius: 16,
+            displayMode: 'thumbnail',
+            objectFit: ImageFit.Cover
+          })
+            .margin({ right: 8 })
+        }
+        .alignItems(HorizontalAlign.Start)
+
+        Column() {
+          Text(msg.senderName)
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor(msg.characterExists ? $r('app.color.app_text_secondary') : $r('app.color.app_danger'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+
+          Text(msg.content)
+            .fontSize($r('app.float.app_font_body'))
+            .fontColor($r('app.color.chat_text_primary'))
+            .width('100%')
+            .textAlign(TextAlign.Start)
+            .margin({ top: 2 })
+
+          if (msg.status === ChatMessageStatus.Cancelled) {
+            Text('已停止')
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_text_tertiary'))
+              .margin({ top: 2 })
+          } else if (msg.status === ChatMessageStatus.Failed) {
+            Text('生成失败')
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_danger'))
+              .margin({ top: 2 })
+          }
+        }
+        .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+        .backgroundColor($r('app.color.chat_assistant_bubble'))
+        .borderRadius($r('app.float.app_radius_md'))
+        .constraintSize({ maxWidth: '75%' })
+        .alignItems(HorizontalAlign.Start)
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.Start)
+      .alignItems(VerticalAlign.Top)
+    }
+  }
+
+  /** 输入区(启用真实发送) */
   @Builder
   inputBarArea(): void {
-    Row() {
-      TextInput({ placeholder: '多人回复功能将在下一阶段接入', text: '' })
-        .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_tertiary'))
-        .backgroundColor($r('app.color.app_surface_2'))
-        .borderRadius($r('app.float.app_radius_md'))
-        .height(40)
-        .padding({ left: 12, right: 12 })
-        .layoutWeight(1)
-        .enabled(false)
-
-      Button() {
-        SymbolGlyph($r('sys.symbol.paperplane_fill'))
-          .fontSize(20)
-          .fontColor([$r('app.color.app_text_tertiary')])
+    Column() {
+      if (this.errorMessage.length > 0) {
+        Text(this.errorMessage)
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_danger'))
+          .width('100%')
+          .textAlign(TextAlign.Center)
+          .padding({ top: 4, bottom: 4 })
       }
-      .type(ButtonType.Circle)
-      .backgroundColor($r('app.color.app_surface_2'))
-      .width(40)
-      .height(40)
-      .margin({ left: 8 })
-      .enabled(false)
+
+      Row() {
+        TextInput({ placeholder: '发送消息', text: this.inputText })
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor($r('app.color.app_text_primary'))
+          .backgroundColor($r('app.color.app_surface_2'))
+          .borderRadius($r('app.float.app_radius_md'))
+          .height(40)
+          .padding({ left: 12, right: 12 })
+          .layoutWeight(1)
+          .enabled(!this.isSending)
+          .onChange((value: string) => {
+            this.inputText = value;
+            if (this.viewModel !== null) {
+              this.viewModel.inputText = value;
+            }
+          })
+          .onSubmit(() => {
+            this.handleSend();
+          })
+
+        Button() {
+          SymbolGlyph($r('sys.symbol.paperplane_fill'))
+            .fontSize(20)
+            .fontColor([$r('app.color.app_on_accent')])
+        }
+        .type(ButtonType.Circle)
+        .backgroundColor(this.isSending ? $r('app.color.app_text_tertiary') : $r('app.color.app_accent'))
+        .width(40)
+        .height(40)
+        .margin({ left: 8 })
+        .enabled(!this.isSending && this.inputText.trim().length > 0)
+        .onClick(() => {
+          this.handleSend();
+        })
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      Text('AI 角色回复将在下一阶段接入')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_tertiary'))
+        .width('100%')
+        .textAlign(TextAlign.Center)
+        .margin({ top: 4 })
     }
     .width('100%')
     .padding({
       left: $r('app.float.app_spacing_16'),
       right: $r('app.float.app_spacing_16'),
       top: $r('app.float.app_spacing_8'),
-      bottom: this.navBarHeight + 8
+      bottom: this.navBarHeight + 4
     })
     .backgroundColor($r('app.color.app_surface_1'))
     .border({ width: { top: 0.5 }, color: $r('app.color.app_divider') })
-    .alignItems(VerticalAlign.Center)
+  }
+
+  /** 处理发送 */
+  private async handleSend(): Promise<void> {
+    if (this.viewModel === null) {
+      return;
+    }
+    const content: string = this.inputText.trim();
+    if (content.length === 0 || this.isSending) {
+      return;
+    }
+    await this.viewModel.sendUserMessage(content);
+    this.syncFromViewModel();
+    if (this.viewModel.errorMessage.length === 0 && this.viewModel.inputText.length === 0) {
+      // 发送成功,清空本地输入框
+      this.inputText = '';
+    }
   }
 
   /** 更多菜单弹窗 */

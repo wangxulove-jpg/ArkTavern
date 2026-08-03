@@ -35,12 +35,16 @@ struct GroupChatSettingsPage {
   @State isRenaming: boolean = false;
   /** 是否正在删除 */
   @State isDeleting: boolean = false;
+  /** 是否正在清空消息 */
+  @State isClearing: boolean = false;
   /** 重命名弹窗是否可见 */
   @State renameVisible: boolean = false;
   /** 重命名输入值 */
   @State renameInput: string = '';
   /** 删除确认弹窗是否可见 */
   @State deleteConfirmVisible: boolean = false;
+  /** 清空消息确认弹窗是否可见 */
+  @State clearConfirmVisible: boolean = false;
   /** 顶部状态栏避让高度 */
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   /** 底部导航栏避让高度 */
@@ -76,6 +80,7 @@ struct GroupChatSettingsPage {
     this.state = this.viewModel.state;
     this.isRenaming = this.viewModel.isRenaming;
     this.isDeleting = this.viewModel.isDeleting;
+    this.isClearing = this.viewModel.isClearing;
   }
 
   build(): void {
@@ -102,6 +107,9 @@ struct GroupChatSettingsPage {
       }
       if (this.deleteConfirmVisible) {
         this.deleteConfirmDialog()
+      }
+      if (this.clearConfirmVisible) {
+        this.clearConfirmDialog()
       }
     }
     .width('100%')
@@ -229,6 +237,8 @@ struct GroupChatSettingsPage {
         this.failurePolicySection()
         // 管理成员入口
         this.manageMembersEntry()
+        // 清空聊天记录
+        this.clearMessagesEntry()
         // 删除群聊
         this.deleteSessionEntry()
 
@@ -391,6 +401,32 @@ struct GroupChatSettingsPage {
     })
   }
 
+  /** 清空聊天记录入口 */
+  @Builder
+  clearMessagesEntry(): void {
+    Row() {
+      Text($r('app.string.group_settings_clear_messages'))
+        .fontSize($r('app.float.app_font_body'))
+        .fontColor($r('app.color.app_danger'))
+        .layoutWeight(1)
+    }
+    .width('100%')
+    .padding({
+      left: $r('app.float.app_spacing_12'),
+      right: $r('app.float.app_spacing_12'),
+      top: $r('app.float.app_spacing_12'),
+      bottom: $r('app.float.app_spacing_12')
+    })
+    .backgroundColor($r('app.color.app_surface_1'))
+    .borderRadius($r('app.float.app_radius_md'))
+    .alignItems(VerticalAlign.Center)
+    .margin({ top: $r('app.float.app_spacing_16') })
+    .enabled(!this.isClearing && !this.isDeleting)
+    .onClick(() => {
+      this.clearConfirmVisible = true;
+    })
+  }
+
   /** 删除群聊入口 */
   @Builder
   deleteSessionEntry(): void {
@@ -543,6 +579,66 @@ struct GroupChatSettingsPage {
     .backgroundColor($r('app.color.app_scrim'))
   }
 
+  /** 清空消息确认弹窗 */
+  @Builder
+  clearConfirmDialog(): void {
+    Stack() {
+      Column() {
+        Column() {
+          Text($r('app.string.group_settings_clear_messages'))
+            .fontSize(17)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.app_danger'))
+            .margin({ bottom: 12 })
+            .width('100%')
+
+          Text($r('app.string.group_settings_clear_confirm'))
+            .fontSize(14)
+            .fontColor($r('app.color.app_text_secondary'))
+            .width('100%')
+
+          Row() {
+            Button($r('app.string.group_cancel'))
+              .fontSize(15)
+              .backgroundColor(Color.Transparent)
+              .fontColor($r('app.color.app_text_secondary'))
+              .layoutWeight(1)
+              .height(40)
+              .enabled(!this.isClearing)
+              .onClick(() => {
+                this.clearConfirmVisible = false;
+              })
+            Button($r('app.string.group_confirm'))
+              .fontSize(15)
+              .backgroundColor($r('app.color.app_danger'))
+              .fontColor($r('app.color.app_on_accent'))
+              .borderRadius($r('app.float.app_radius_sm'))
+              .layoutWeight(1)
+              .height(40)
+              .margin({ left: 12 })
+              .enabled(!this.isClearing)
+              .onClick(() => {
+                this.confirmClearMessages();
+              })
+          }
+          .width('100%')
+          .margin({ top: 20 })
+        }
+        .width('80%')
+        .padding(20)
+        .backgroundColor($r('app.color.app_surface_1'))
+        .borderRadius($r('app.float.app_radius_lg'))
+      }
+      .width('100%')
+      .height('100%')
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor($r('app.color.app_scrim'))
+  }
+
   /** 确认重命名 */
   private async confirmRename(): Promise<void> {
     const trimmed: string = this.renameInput.trim();
@@ -577,6 +673,21 @@ struct GroupChatSettingsPage {
       router.replaceUrl({ url: 'pages/groupchat/GroupChatHomePage' });
     } catch (e) {
       promptAction.showToast({ message: '删除失败', duration: 1500 });
+    }
+  }
+
+  /** 确认清空消息 */
+  private async confirmClearMessages(): Promise<void> {
+    if (this.viewModel === null) {
+      return;
+    }
+    try {
+      await this.viewModel.clearMessages();
+      this.syncFromViewModel();
+      this.clearConfirmVisible = false;
+      promptAction.showToast({ message: '已清空消息', duration: 1500 });
+    } catch (e) {
+      promptAction.showToast({ message: '清空失败', duration: 1500 });
     }
   }
 }

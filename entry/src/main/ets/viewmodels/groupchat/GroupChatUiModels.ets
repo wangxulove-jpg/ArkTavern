@@ -1,5 +1,5 @@
 /**
- * GroupChatUiModels 多人聊天正式 UI 数据模型(G-DATA-1B)
+ * GroupChatUiModels 多人聊天正式 UI 数据模型(G-DATA-1B / G-RUNTIME-1A)
  *
  * 职责:
  * - 定义只服务于多人 UI 的 DTO,隔离数据库实体与 ArkUI 页面状态
@@ -16,6 +16,9 @@
  * - 不使用 any
  * - 缺失角色标记 characterExists=false,页面显示"角色已删除"
  */
+
+import { ChatRole } from '../../models/ChatRole';
+import { ChatMessageStatus } from '../../models/ChatMessage';
 
 /** AppStorage 中待进入的群聊 ID(由首页/创建页写入,GroupChatPage 读取) */
 export const PENDING_GROUP_CHAT_ID_KEY: string = 'pendingGroupChatId';
@@ -81,6 +84,52 @@ export interface GroupConversationDetailUiModel {
   /** 有序成员列表(全部成员,含停用) */
   readonly members: GroupMemberUiModel[];
 }
+
+/**
+ * 多人聊天消息 UI 模型(G-RUNTIME-1A)。
+ *
+ * 字段映射规则:
+ * - 用户消息:senderCharacterId 为空,显示"我",右对齐
+ * - AI 角色消息:通过 senderCharacterId 读取 Character,显示角色头像和名称,左对齐
+ * - 已删除角色:显示"角色已删除",使用默认头像,保留历史消息正文
+ */
+export interface GroupMessageUiModel {
+  /** 消息 ID */
+  readonly id: string;
+  /** 消息角色(system/user/assistant) */
+  readonly role: ChatRole;
+  /** 消息正文 */
+  readonly content: string;
+  /** 消息状态(Streaming/Completed/Cancelled/Failed) */
+  readonly status: ChatMessageStatus;
+  /** 发言角色 ID(用户消息为空) */
+  readonly senderCharacterId?: string;
+  /** 发言者显示名称(用户消息为"我",AI 消息为角色名,已删除角色为"角色已删除") */
+  readonly senderName: string;
+  /** 发言者头像 URI(缺失或用户消息为空) */
+  readonly senderAvatarUri?: string;
+  /** 角色是否真实存在(false 表示已删除) */
+  readonly characterExists: boolean;
+  /** 生成批次 ID(一轮多人回复共享) */
+  readonly generationBatchId?: string;
+  /** 序列号(用于稳定排序) */
+  readonly sequenceNumber: number;
+  /** 创建时间(毫秒) */
+  readonly createdAt: number;
+  /** 更新时间(毫秒) */
+  readonly updatedAt: number;
+}
+
+/** 多人聊天消息列表状态 */
+export enum GroupMessageListState {
+  Loading = 'loading',
+  Ready = 'ready',
+  Empty = 'empty',
+  Error = 'error'
+}
+
+/** 用户消息显示名称 */
+export const USER_MESSAGE_SENDER_NAME: string = '我';
 
 /** 可添加角色 UI 模型(成员管理页"添加角色"弹窗用) */
 export interface AddableCharacterUiModel {

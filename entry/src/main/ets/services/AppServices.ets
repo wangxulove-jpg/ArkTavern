@@ -76,6 +76,8 @@ import { ChatArchiveImportService } from './ChatArchiveImportService';
 import { ChatArchiveViewModel } from '../viewmodels/ChatArchiveViewModel';
 import { ChatParticipantRepository } from '../repositories/ChatParticipantRepository';
 import { GroupConversationPersistenceService } from './groupchat/GroupConversationPersistenceService';
+import { GroupConversationMessageService } from './groupchat/GroupConversationMessageService';
+import { GroupRoundCoordinator } from './groupchat/GroupRoundCoordinator';
 import { Logger } from '../utils/Logger';
 
 const LOG_TAG: string = 'AppServices';
@@ -176,6 +178,10 @@ export class AppServices {
   private readonly chatParticipantRepository: ChatParticipantRepository;
   /** GroupConversationPersistenceService 多人聊天持久化服务(G-DATA-1A,不对页面公开) */
   private readonly groupConversationPersistenceService: GroupConversationPersistenceService;
+  /** GroupConversationMessageService 多人聊天消息服务(G-RUNTIME-1A,不对页面公开) */
+  private readonly groupConversationMessageService: GroupConversationMessageService;
+  /** GroupRoundCoordinator 多人聊天轮次协调器(G-RUNTIME-1A,不对页面公开) */
+  private readonly groupRoundCoordinator: GroupRoundCoordinator;
 
   /**
    * 私有构造,组装全部依赖。
@@ -301,6 +307,17 @@ export class AppServices {
       this.chatParticipantRepository,
       this.characterRepository,
       this.chatPersistenceOperations
+    );
+    // G-RUNTIME-1A: 多人聊天消息持久化与轮次协调器
+    // 依赖已创建的 chatRepository / messageRepository / groupConversationPersistenceService / characterService
+    this.groupConversationMessageService = new GroupConversationMessageService(
+      this.dbHelper,
+      this.chatRepository,
+      this.messageRepository
+    );
+    this.groupRoundCoordinator = new GroupRoundCoordinator(
+      this.groupConversationPersistenceService,
+      this.characterService
     );
     // 市场服务(Chub 公共浏览 + 搜索 + 详情 + 下载)
     // 使用独立的 HarmonyHttpClient 实例(非流式),不与流式 Provider 共享
@@ -677,5 +694,23 @@ export class AppServices {
    */
   static getChatParticipantRepository(): ChatParticipantRepository {
     return AppServices.getInstance().chatParticipantRepository;
+  }
+
+  /**
+   * 获取 GroupConversationMessageService 实例(G-RUNTIME-1A 多人聊天消息服务)。
+   * 用于多人聊天消息读取、用户消息写入、清空、中断恢复。
+   * 页面通过 ViewModel 间接使用,不直接调用。
+   */
+  static getGroupConversationMessageService(): GroupConversationMessageService {
+    return AppServices.getInstance().groupConversationMessageService;
+  }
+
+  /**
+   * 获取 GroupRoundCoordinator 实例(G-RUNTIME-1A 多人聊天轮次协调器)。
+   * 用于建立本轮成员快照、管理 operationId、校验活动轮次。
+   * 本阶段不接入 Provider,只到 Ready 状态。
+   */
+  static getGroupRoundCoordinator(): GroupRoundCoordinator {
+    return AppServices.getInstance().groupRoundCoordinator;
   }
 }
