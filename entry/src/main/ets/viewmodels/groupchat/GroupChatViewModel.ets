@@ -128,6 +128,19 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
   /** 成员运行时状态列表 */
   memberRuntimeStates: GroupMemberRuntimeUiModel[] = [];
 
+  /**
+   * UI 状态同步回调(G-RUNTIME-1C-FIX)。
+   *
+   * ArkUI 中 @State 持有 @Observed 对象时,ForEach 对内部数组属性变化的
+   * 响应式刷新不完整。通过回调将消息列表同步到 GroupChatPage,
+   * 使页面立即调用 syncRenderStates 更新 GroupMessageRenderState,
+   * 确保 Streaming delta / Complete / Cancelled / Failed 即时刷新到 UI,
+   * 无需等待 200ms 轮询。
+   *
+   * 与单聊 ChatViewModel.onMessagesUpdate 采用相同模式。
+   */
+  onMessagesUpdate?: (messages: GroupMessageUiModel[]) => void;
+
   private readonly groupService: GroupConversationPersistenceService;
   private readonly messageService: GroupConversationMessageService;
   private readonly roundCoordinator: GroupRoundCoordinator;
@@ -172,6 +185,7 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
       if (target === null) {
         this.detail = null;
         this.messages = [];
+        this.notifyMessagesUpdate();
         this.messageState = GroupMessageListState.Empty;
         this.state = GroupChatDetailState.NotFound;
         return;
@@ -215,6 +229,7 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
       }
       if (rawMessages.length === 0) {
         this.messages = [];
+        this.notifyMessagesUpdate();
         this.messageState = GroupMessageListState.Empty;
         return;
       }
@@ -227,6 +242,7 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
         (msg: ChatMessage): GroupMessageUiModel => this.mapMessageToUi(msg, charMap)
       );
       this.messages = uiMessages;
+      this.notifyMessagesUpdate();
       this.messageState = GroupMessageListState.Ready;
     } catch (e) {
       Logger.error(LOG_TAG, 'reloadMessages failed: ' + String(e));
@@ -295,6 +311,7 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
         updatedAt: written.updatedAt !== undefined ? written.updatedAt : written.createdAt
       };
       this.messages = this.messages.concat([uiMsg]);
+      this.notifyMessagesUpdate();
       if (this.messages.length > 0) {
         this.messageState = GroupMessageListState.Ready;
       }
@@ -517,6 +534,7 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
         return;
       }
       this.messages = [];
+      this.notifyMessagesUpdate();
       this.lastPreparedRound = null;
       this.messageState = GroupMessageListState.Empty;
       Logger.info(LOG_TAG, 'clearMessages ok');
@@ -582,6 +600,22 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
     this.roundCoordinator.dispose();
   }
 
+  /**
+   * 通知 UI 消息列表已更新(G-RUNTIME-1C-FIX)。
+   *
+   * 每次 this.messages 赋值后调用,触发 GroupChatPage 立即执行 syncRenderStates,
+   * 保证 Streaming delta / Complete / Cancelled / Failed 即时反映到页面,
+   * 不依赖 200ms 轮询。
+   */
+  private notifyMessagesUpdate(): void {
+    if (this.disposed) {
+      return;
+    }
+    if (this.onMessagesUpdate !== undefined) {
+      this.onMessagesUpdate([...this.messages]);
+    }
+  }
+
   // ===== GroupRuntimeCallbacks 实现 =====
 
   /** 整轮状态变更 */
@@ -611,6 +645,7 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
     }
     const uiMsg: GroupMessageUiModel = this.mapRuntimeMessageToUiSync(message);
     this.messages = this.messages.concat([uiMsg]);
+    this.notifyMessagesUpdate();
     this.messageState = GroupMessageListState.Ready;
   }
 
@@ -642,6 +677,7 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
       }
     }
     this.messages = newMessages;
+    this.notifyMessagesUpdate();
   }
 
   /** 单个发言者完成 */

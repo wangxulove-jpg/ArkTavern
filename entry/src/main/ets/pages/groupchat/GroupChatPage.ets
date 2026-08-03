@@ -46,11 +46,14 @@ import {
   GroupMemberRuntimeUiModel,
   PENDING_GROUP_CHAT_ID_KEY
 } from '../../viewmodels/groupchat/GroupChatUiModels';
+import { GroupMessageRenderState } from '../../viewmodels/groupchat/GroupMessageRenderState';
 import { GroupRoundState } from '../../services/groupchat/GroupRoundTypes';
 import { CharacterImageView } from '../../components/CharacterImageView';
+import { GroupMessageBubble } from '../../components/groupchat/GroupMessageBubble';
 import { GroupGenerationErrorCard } from '../../components/groupchat/GroupGenerationErrorCard';
 import { ChatRole } from '../../models/ChatRole';
 import { ChatMessageStatus } from '../../models/ChatMessage';
+import { ChatTextStyle } from '../../utils/ChatTextStyleSettings';
 import { Logger } from '../../utils/Logger';
 
 @Entry
@@ -64,6 +67,15 @@ struct GroupChatPage {
   @State state: GroupChatDetailState = GroupChatDetailState.Loading;
   /** 消息列表 */
   @State messages: GroupMessageUiModel[] = [];
+  /**
+   * 稳定渲染状态列表(G-RUNTIME-1C-FIX)。
+   * @Observed GroupMessageRenderState,ForEach 数据源,key 固定为 messageId。
+   * 与单聊 ChatPage.messageStates 采用完全相同的模式:
+   * - 同一 messageId 始终复用已有 RenderState 实例
+   * - 已有实例就地调用 applyMessage,@Observed 字段赋值触发 @ObjectLink 响应式重建
+   * - 新消息才创建新 RenderState
+   */
+  @State messageStates: GroupMessageRenderState[] = [];
   /** 消息列表状态 */
   @State messageState: GroupMessageListState = GroupMessageListState.Loading;
   /** 输入框文本 */
@@ -104,11 +116,23 @@ struct GroupChatPage {
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   /** 底部导航栏避让高度 */
   @StorageProp('navBarHeight') navBarHeight: number = 0;
+  /**
+   * 聊天文本样式设置(G-RUNTIME-1C-FIX)。
+   * 复用单聊同一套 ChatTextStyleSettings,确保多人消息字体/行距/Markdown
+   * 与单聊保持一致。从 AppServices.chatTextStyleSettings 加载。
+   */
+  @State chatTextStyle: ChatTextStyle | null = null;
 
   private viewModel: GroupChatViewModel | null = null;
   private messageScroller: Scroller = new Scroller();
   /** ViewModel 状态轮询定时器(G-RUNTIME-1B) */
   private syncTimerId: number = -1;
+  /**
+   * RenderState 缓存(G-RUNTIME-1C-FIX)。
+   * key=messageId,value=GroupMessageRenderState 实例。
+   * 与单聊 ChatPage.stateMap 采用相同模式,保证 ForEach 稳定复用气泡组件。
+   */
+  private stateMap: Map<string, GroupMessageRenderState> = new Map();
 
   async aboutToAppear(): Promise<void> {
     const id: string = AppStorage.get<string>(PENDING_GROUP_CHAT_ID_KEY) ?? '';
@@ -122,7 +146,14 @@ struct GroupChatPage {
     AppStorage.setOrCreate<string>(PENDING_GROUP_CHAT_ID_KEY, '');
     try {
       await AppServices.whenReady();
+      // 加载聊天文本样式(复用单聊同一套 ChatTextStyleSettings)
+      this.chatTextStyle = AppServices.getInstance().chatTextStyleSettings.get();
       this.viewModel = new GroupChatViewModel();
+      // 设置消息更新回调(即时同步 RenderState,不依赖 200ms 轮询)
+      this.viewModel.onMessagesUpdate = (msgs: GroupMessageUiModel[]): void => {
+        this.messages = msgs;
+        this.syncRenderStates(msgs);
+      };
       await this.viewModel.load(id);
       this.syncFromViewModel();
       // 启动状态轮询(生成期间持续同步 ViewModel 状态)
@@ -146,6 +177,8 @@ struct GroupChatPage {
     if (this.viewModel === null || this.chatId.length === 0) {
       return;
     }
+    // 刷新聊天文本样式(用户可能在设置页修改了显示偏好)
+    this.chatTextStyle = AppServices.getInstance().chatTextStyleSettings.get();
     // 生成中不重新加载,避免破坏活动轮次状态
     if (this.viewModel.isGenerating) {
       return;
@@ -162,6 +195,8 @@ struct GroupChatPage {
     this.detail = this.viewModel.detail;
     this.state = this.viewModel.state;
     this.messages = this.viewModel.messages;
+    // 同步稳定 RenderState 列表(与单聊 ChatPage.syncRenderStates 相同模式)
+    this.syncRenderStates(this.viewModel.messages);
     this.messageState = this.viewModel.messageState;
     this.inputText = this.viewModel.inputText;
     this.isSending = this.viewModel.isSending;
@@ -177,6 +212,46 @@ struct GroupChatPage {
     this.totalSpeakerCount = this.viewModel.totalSpeakerCount;
     this.currentSpeakerCharacterId = this.viewModel.currentSpeakerCharacterId;
     this.memberRuntimeStates = this.viewModel.memberRuntimeStates;
+  }
+
+  /**
+   * 同步最新消息到稳定 RenderState 列表(G-RUNTIME-1C-FIX)。
+   *
+   * 与单聊 ChatPage.syncRenderStates 采用完全相同的模式:
+   * - 同一 messageId 始终复用已有 RenderState 实例,保证 ForEach 稳定复用气泡
+   * - 已有实例就地调用 applyMessage,@Observed 字段赋值触发 @ObjectLink 响应式重建
+   * - 新消息才创建新 RenderState
+   * - 已不存在于最新消息中的旧状态从缓存中移除
+   * - 始终按最新消息顺序生成新 messageStates 数组(不原地修改)
+   *
+   * 这是解决"消息正文不刷新、需退出重进"根因的关键:
+   * ForEach 在固定 key(messageId)下复用 GroupMessageBubble 时,
+   * 普通参数传递不触发重渲染;通过 @Observed + @ObjectLink,
+   * applyMessage 的字段赋值直接触发气泡重建。
+   */
+  private syncRenderStates(messages: GroupMessageUiModel[]): void {
+    const nextStates: GroupMessageRenderState[] = [];
+    const newIds: Set<string> = new Set<string>();
+    for (let i: number = 0; i < messages.length; i++) {
+      const msg: GroupMessageUiModel = messages[i];
+      newIds.add(msg.id);
+      let state: GroupMessageRenderState | undefined = this.stateMap.get(msg.id);
+      if (state === undefined) {
+        state = new GroupMessageRenderState(msg);
+        this.stateMap.set(msg.id, state);
+      } else {
+        state.applyMessage(msg);
+      }
+      nextStates.push(state);
+    }
+    // 清理已不在最新消息列表中的旧状态
+    const oldIds: string[] = Array.from(this.stateMap.keys());
+    for (let i: number = 0; i < oldIds.length; i++) {
+      if (!newIds.has(oldIds[i])) {
+        this.stateMap.delete(oldIds[i]);
+      }
+    }
+    this.messageStates = nextStates;
   }
 
   /** 启动状态轮询(生成期间持续同步) */
@@ -634,7 +709,7 @@ struct GroupChatPage {
       .layoutWeight(1)
       .justifyContent(FlexAlign.Center)
       .alignItems(HorizontalAlign.Center)
-    } else if (this.messages.length === 0) {
+    } else if (this.messageStates.length === 0) {
       Column() {
         Text('还没有消息')
           .fontSize($r('app.float.app_font_body'))
@@ -648,18 +723,22 @@ struct GroupChatPage {
       .alignItems(HorizontalAlign.Center)
     } else {
       List({ scroller: this.messageScroller }) {
-        ForEach(this.messages, (msg: GroupMessageUiModel) => {
+        ForEach(this.messageStates, (state: GroupMessageRenderState) => {
           ListItem() {
             Column() {
-              this.messageBubble(msg)
-              // G-RUNTIME-1C: 最近一条 Failed/Cancelled 角色消息下方显示重试/结束本轮卡片
-              if (this.shouldShowErrorCard(msg)) {
+              // 复用单聊同款 ChatRichText 渲染,@ObjectLink 响应式刷新
+              GroupMessageBubble({
+                renderState: state,
+                settings: this.chatTextStyle
+              })
+              // G-RUNTIME-1C-FIX: 最近一条 Failed/Cancelled 角色消息下方显示重试/结束本轮卡片
+              if (this.shouldShowErrorCard(state)) {
                 GroupGenerationErrorCard({
-                  errorText: this.composeErrorCardText(msg),
+                  errorText: this.composeErrorCardText(state),
                   isRetrying: this.isRetrying,
                   isEndingRound: this.isEndingRound,
                   onRetry: () => {
-                    this.handleRetrySpeaker(msg);
+                    this.handleRetrySpeaker(state);
                   },
                   onEndRound: () => {
                     this.handleEndRound();
@@ -672,7 +751,7 @@ struct GroupChatPage {
             .alignItems(HorizontalAlign.Start)
           }
           .margin({ left: 12, right: 12, top: 6, bottom: 6 })
-        }, (msg: GroupMessageUiModel) => msg.id)
+        }, (state: GroupMessageRenderState) => state.messageId)
       }
       .width('100%')
       .layoutWeight(1)
@@ -680,7 +759,7 @@ struct GroupChatPage {
       .edgeEffect(EdgeEffect.Spring)
       .onAreaChange(() => {
         // 消息列表变化后滚动到底部
-        if (this.messages.length > 0) {
+        if (this.messageStates.length > 0) {
           this.messageScroller.scrollEdge(Edge.Bottom);
         }
       })
@@ -688,87 +767,106 @@ struct GroupChatPage {
   }
 
   /**
-   * G-RUNTIME-1C: 判断指定消息是否应该显示重试/结束本轮卡片。
+   * G-RUNTIME-1C-FIX: 判断指定消息是否应该显示重试/结束本轮卡片。
+   *
+   * 修复要点(与用户实机问题 1 对齐):
+   * - 不再依赖 roundState(页面重入后 roundState 重置为 Idle,导致重试入口消失)
+   * - 改为基于消息自身真实状态(Failed/Cancelled)判断
+   * - 退出重进后只要数据库消息仍为可重试状态,重试入口正确出现
    *
    * 规则:
-   * - 只在 roundState 为 Failed 或 Cancelled 时显示
-   * - 只对最近一条 Failed/Cancelled 角色消息显示
-   * - 不在生成/重试/结束本轮过程中显示卡片(卡片已通过 isRetrying/isEndingRound 进入处理中)
-   *   注:重试开始后,新的 Streaming 气泡出现在底部,错误卡保留为历史状态(隐藏)
+   * - 仅角色消息(role !== User, senderCharacterId 存在)
+   * - 消息状态为 Failed 或 Cancelled
+   * - 角色仍存在(characterExists)
+   * - 当前无活动生成/重试/结束本轮
+   * - 仅最近一条可重试的角色消息显示大型错误卡
    */
-  private shouldShowErrorCard(msg: GroupMessageUiModel): boolean {
-    // 仅在 Failed / Cancelled 状态显示
-    if (this.roundState !== GroupRoundState.Failed && this.roundState !== GroupRoundState.Cancelled) {
-      return false;
-    }
-    // 重试已开始(isGenerating 重新为 true,新 Streaming 已在底部),隐藏卡片
+  private shouldShowErrorCard(state: GroupMessageRenderState): boolean {
+    // 生成/重试/结束本轮进行中:隐藏卡片(新 Streaming 已在底部)
     if (this.isGenerating || this.isRetrying || this.isEndingRound) {
       return false;
     }
     // 仅角色消息
-    if (msg.role === ChatRole.User) {
+    if (state.role === ChatRole.User) {
       return false;
     }
-    if (msg.senderCharacterId === undefined || msg.senderCharacterId.length === 0) {
+    if (state.senderCharacterId.length === 0) {
       return false;
     }
-    if (msg.status !== ChatMessageStatus.Failed && msg.status !== ChatMessageStatus.Cancelled) {
+    if (state.status !== ChatMessageStatus.Failed && state.status !== ChatMessageStatus.Cancelled) {
       return false;
     }
     // 缺失角色无法重试
-    if (!msg.characterExists) {
+    if (!state.characterExists) {
       return false;
     }
     // 仅最近一条 Failed/Cancelled 角色消息
-    return this.findLatestRetryableMessageId() === msg.id;
+    return this.findLatestRetryableMessageId() === state.messageId;
   }
 
   /** 查找最近一条可重试的角色消息 ID */
   private findLatestRetryableMessageId(): string {
-    for (let i: number = this.messages.length - 1; i >= 0; i--) {
-      const m: GroupMessageUiModel = this.messages[i];
-      if (m.role === ChatRole.User) {
+    for (let i: number = this.messageStates.length - 1; i >= 0; i--) {
+      const s: GroupMessageRenderState = this.messageStates[i];
+      if (s.role === ChatRole.User) {
         continue;
       }
-      if (m.senderCharacterId === undefined || m.senderCharacterId.length === 0) {
+      if (s.senderCharacterId.length === 0) {
         continue;
       }
-      if (!m.characterExists) {
+      if (!s.characterExists) {
         continue;
       }
-      if (m.status === ChatMessageStatus.Failed || m.status === ChatMessageStatus.Cancelled) {
-        return m.id;
+      if (s.status === ChatMessageStatus.Failed || s.status === ChatMessageStatus.Cancelled) {
+        return s.messageId;
       }
     }
     return '';
   }
 
   /** 构建错误卡片文案 */
-  private composeErrorCardText(msg: GroupMessageUiModel): string {
-    const name: string = msg.senderName;
-    if (msg.status === ChatMessageStatus.Failed) {
+  private composeErrorCardText(state: GroupMessageRenderState): string {
+    const name: string = state.senderName;
+    if (state.status === ChatMessageStatus.Failed) {
       return name + ' 回复失败';
     }
-    if (msg.status === ChatMessageStatus.Cancelled) {
+    if (state.status === ChatMessageStatus.Cancelled) {
       return name + ' 已停止,可重试当前角色';
     }
     return '回复失败';
   }
 
-  /** G-RUNTIME-1C: 处理重试当前角色 */
-  private async handleRetrySpeaker(msg: GroupMessageUiModel): Promise<void> {
+  /** G-RUNTIME-1C-FIX: 处理重试当前角色 */
+  private async handleRetrySpeaker(state: GroupMessageRenderState): Promise<void> {
     if (this.viewModel === null) {
       return;
     }
     if (this.isGenerating || this.isRetrying || this.isEndingRound) {
       return;
     }
+    // 构造 GroupMessageUiModel 用于 canRetryMessage 校验
+    const msg: GroupMessageUiModel = {
+      id: state.messageId,
+      role: state.role,
+      content: state.content,
+      status: state.status,
+      senderCharacterId: state.senderCharacterId.length > 0 ? state.senderCharacterId : undefined,
+      senderName: state.senderName,
+      senderAvatarUri: state.senderAvatarUri.length > 0 ? state.senderAvatarUri : undefined,
+      characterExists: state.characterExists,
+      generationBatchId: state.generationBatchId.length > 0 ? state.generationBatchId : undefined,
+      sequenceNumber: 0,
+      createdAt: state.createdAt,
+      updatedAt: state.updatedAt
+    };
     if (!this.viewModel.canRetryMessage(msg)) {
       promptAction.showToast({ message: '当前消息无法重试', duration: 1500 });
       return;
     }
-    Logger.info('GroupChatPage', 'handleRetrySpeaker msgId=' + msg.id);
-    await this.viewModel.retrySpeakerMessage(msg.id);
+    Logger.info('GroupChatPage', 'handleRetrySpeaker msgId=' + state.messageId);
+    // 先启动轮询,确保 await retrySpeakerMessage 期间状态即时同步
+    this.startSyncPolling();
+    await this.viewModel.retrySpeakerMessage(state.messageId);
     this.syncFromViewModel();
     // 重试已启动,确保轮询运行
     if (this.viewModel.isGenerating) {
@@ -787,103 +885,6 @@ struct GroupChatPage {
     Logger.info('GroupChatPage', 'handleEndRound');
     await this.viewModel.endRound();
     this.syncFromViewModel();
-  }
-
-  /** 单条消息气泡 */
-  @Builder
-  messageBubble(msg: GroupMessageUiModel): void {
-    if (msg.role === ChatRole.User) {
-      // 用户消息:右对齐
-      Row() {
-        Column() {
-          Text(msg.content)
-            .fontSize($r('app.float.app_font_body'))
-            .fontColor($r('app.color.chat_user_text'))
-            .width('100%')
-            .textAlign(TextAlign.Start)
-        }
-        .padding({ left: 12, right: 12, top: 8, bottom: 8 })
-        .backgroundColor($r('app.color.chat_user_bubble'))
-        .borderRadius($r('app.float.app_radius_md'))
-        .constraintSize({ maxWidth: '75%' })
-      }
-      .width('100%')
-      .justifyContent(FlexAlign.End)
-    } else {
-      // AI 角色消息:左对齐
-      Row() {
-        Column() {
-          CharacterImageView({
-            imageUri: msg.senderAvatarUri ?? '',
-            fallbackName: msg.senderName,
-            imgWidth: 32,
-            imgHeight: 32,
-            imgBorderRadius: 16,
-            displayMode: 'thumbnail',
-            objectFit: ImageFit.Cover
-          })
-            .margin({ right: 8 })
-        }
-        .alignItems(HorizontalAlign.Start)
-
-        Column() {
-          Text(msg.senderName)
-            .fontSize($r('app.float.app_font_caption'))
-            .fontColor(msg.characterExists ? $r('app.color.app_text_secondary') : $r('app.color.app_danger'))
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .width('100%')
-
-          if (msg.status === ChatMessageStatus.Streaming && msg.content.length === 0) {
-            // Streaming 但尚无内容:显示等待提示
-            Row() {
-              LoadingProgress()
-                .width(14)
-                .height(14)
-                .color($r('app.color.app_text_tertiary'))
-                .margin({ right: 6 })
-              Text('正在思考…')
-                .fontSize($r('app.float.app_font_caption'))
-                .fontColor($r('app.color.app_text_tertiary'))
-            }
-            .margin({ top: 2 })
-          } else {
-            Text(msg.content)
-              .fontSize($r('app.float.app_font_body'))
-              .fontColor($r('app.color.chat_text_primary'))
-              .width('100%')
-              .textAlign(TextAlign.Start)
-              .margin({ top: 2 })
-          }
-
-          if (msg.status === ChatMessageStatus.Streaming && msg.content.length > 0) {
-            // Streaming 中且有内容:显示生成中标记
-            Text('生成中…')
-              .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_accent'))
-              .margin({ top: 2 })
-          } else if (msg.status === ChatMessageStatus.Cancelled) {
-            Text('已停止')
-              .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_text_tertiary'))
-              .margin({ top: 2 })
-          } else if (msg.status === ChatMessageStatus.Failed) {
-            Text('生成失败')
-              .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_danger'))
-              .margin({ top: 2 })
-          }
-        }
-        .padding({ left: 12, right: 12, top: 8, bottom: 8 })
-        .backgroundColor($r('app.color.chat_assistant_bubble'))
-        .borderRadius($r('app.float.app_radius_md'))
-        .constraintSize({ maxWidth: '75%' })
-        .alignItems(HorizontalAlign.Start)
-      }
-      .width('100%')
-      .justifyContent(FlexAlign.Start)
-      .alignItems(VerticalAlign.Top)
-    }
   }
 
   /** 输入区(启用真实发送) */
@@ -972,7 +973,16 @@ struct GroupChatPage {
     .border({ width: { top: 0.5 }, color: $r('app.color.app_divider') })
   }
 
-  /** 处理发送 */
+  /**
+   * 处理发送(G-RUNTIME-1C-FIX)。
+   *
+   * 关键修复:
+   * - 在 await sendUserMessage 之前先启动轮询。
+   * - sendUserMessage 内部 await startRound 会阻塞直到整轮完成,
+   *   如果轮询在 await 之后启动,整个生成期间页面状态不会刷新。
+   * - 先启动轮询,确保 await 期间 ViewModel 状态变化(轮次/消息)即时同步到页面。
+   * - onMessagesUpdate 回调负责消息即时刷新,轮询负责 roundState 等其他状态。
+   */
   private async handleSend(): Promise<void> {
     if (this.viewModel === null) {
       return;
@@ -981,13 +991,15 @@ struct GroupChatPage {
     if (content.length === 0 || this.isSending || this.isGenerating) {
       return;
     }
+    // 先启动轮询,确保 await sendUserMessage 期间状态即时同步
+    this.startSyncPolling();
     await this.viewModel.sendUserMessage(content);
     this.syncFromViewModel();
     if (this.viewModel.errorMessage.length === 0 && this.viewModel.inputText.length === 0) {
       // 发送成功,清空本地输入框
       this.inputText = '';
     }
-    // 生成已启动,启动状态轮询
+    // 生成已启动,确保轮询运行
     if (this.viewModel.isGenerating) {
       this.startSyncPolling();
     }
