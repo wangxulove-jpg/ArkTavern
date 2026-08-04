@@ -32,7 +32,10 @@ export enum WorldEventType {
   CharacterRemoved = 'character_removed',
   CharacterActivated = 'character_activated',
   CharacterDeactivated = 'character_deactivated',
-  CharacterMoved = 'character_moved'
+  CharacterMoved = 'character_moved',
+  // W-SCENE-1B: 场景生命周期事件(纯枚举,不改表结构)
+  SceneStarted = 'scene_started',
+  SceneEnded = 'scene_ended'
 }
 
 export const WORLD_EVENT_ID_PREFIX: string = 'world-event-';
@@ -96,7 +99,9 @@ const VALID_EVENT_TYPES: Set<string> = new Set<string>([
   WorldEventType.CharacterRemoved,
   WorldEventType.CharacterActivated,
   WorldEventType.CharacterDeactivated,
-  WorldEventType.CharacterMoved
+  WorldEventType.CharacterMoved,
+  WorldEventType.SceneStarted,
+  WorldEventType.SceneEnded
 ]);
 
 /**

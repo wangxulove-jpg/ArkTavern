@@ -34,6 +34,12 @@ export function mapWorldStateErrorToMessage(e: Object): string {
         return '该世界中已存在同名地点';
       case WorldStateErrorKind.LocationHasCharacters:
         return '该地点仍有角色,请先移走或移除角色';
+      case WorldStateErrorKind.LocationHasScenes:
+        return '该地点已有场景历史,不能永久删除,可以将地点归档';
+      case WorldStateErrorKind.LocationHasActiveScene:
+        return '该地点仍有进行中的场景,请先结束场景';
+      case WorldStateErrorKind.WorldHasActiveScenes:
+        return '世界仍有进行中的场景,请先结束场景';
       case WorldStateErrorKind.EdgeNotFound:
         return '连接不存在或已被删除';
       case WorldStateErrorKind.EdgeWorldMismatch:

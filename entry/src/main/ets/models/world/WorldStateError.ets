@@ -14,12 +14,14 @@ export enum WorldStateErrorKind {
   WorldNotFound,
   WorldArchived,
   WorldNameEmpty,
+  WorldHasActiveScenes,
   LocationNotFound,
   LocationNotInWorld,
   LocationNameEmpty,
   DuplicateLocation,
   LocationHasCharacters,
   LocationHasScenes,
+  LocationHasActiveScene,
   EdgeNotFound,
   EdgeWorldMismatch,
   EdgeSelfConnection,
@@ -56,6 +58,10 @@ export class WorldStateError extends Error {
     return new WorldStateError(WorldStateErrorKind.WorldNameEmpty, '世界名称不能为空');
   }
 
+  static worldHasActiveScenes(): WorldStateError {
+    return new WorldStateError(WorldStateErrorKind.WorldHasActiveScenes, '世界仍有进行中的场景,请先结束场景');
+  }
+
   static locationNotFound(): WorldStateError {
     return new WorldStateError(WorldStateErrorKind.LocationNotFound, '地点不存在');
   }
@@ -78,6 +84,10 @@ export class WorldStateError extends Error {
 
   static locationHasScenes(): WorldStateError {
     return new WorldStateError(WorldStateErrorKind.LocationHasScenes, '该地点已有场景历史,不能永久删除;可以将地点归档');
+  }
+
+  static locationHasActiveScene(): WorldStateError {
+    return new WorldStateError(WorldStateErrorKind.LocationHasActiveScene, '该地点仍有进行中的场景,请先结束场景');
   }
 
   static edgeNotFound(): WorldStateError {

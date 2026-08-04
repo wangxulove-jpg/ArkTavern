@@ -29,6 +29,9 @@ export const PENDING_WORLD_EDGE_ID_KEY: string = 'pendingWorldEdgeId';
 /** 跨页面路由用的 fromLocationId 暂存键(从地点详情创建连接时预填起点) */
 export const PENDING_WORLD_EDGE_FROM_LOCATION_ID_KEY: string = 'pendingWorldEdgeFromLocationId';
 
+/** 跨页面路由用的 sceneId 暂存键(场景详情页读取后清除) */
+export const PENDING_WORLD_SCENE_ID_KEY: string = 'pendingWorldSceneId';
+
 /**
  * 世界详情页刷新令牌键。
  * 子页面(WorldLocationEditPage / WorldEdgeEditPage / WorldEdgeManagePage /
@@ -44,6 +47,13 @@ export const WORLD_DETAIL_REFRESH_TOKEN_KEY: string = 'worldDetailRefreshToken';
  * WorldCharacterManagePage 通过 @StorageProp + @Watch 监听变化并触发 loadSnapshot。
  */
 export const WORLD_CHARACTER_MANAGE_REFRESH_TOKEN_KEY: string = 'worldCharacterManageRefreshToken';
+
+/**
+ * 场景详情页刷新令牌键。
+ * 场景管理页开始/结束场景、场景详情页写入消息后递增此值,
+ * 场景详情页通过 @StorageProp + @Watch 监听变化并触发 loadSnapshot。
+ */
+export const WORLD_SCENE_DETAIL_REFRESH_TOKEN_KEY: string = 'worldSceneDetailRefreshToken';
 
 /** 世界列表项 UI 模型 */
 export interface WorldSummaryUiModel {
@@ -158,6 +168,8 @@ export function localizeWorldEventType(type: WorldEventType): string {
     case WorldEventType.CharacterActivated: return '角色已启用';
     case WorldEventType.CharacterDeactivated: return '角色已停用';
     case WorldEventType.CharacterMoved: return '角色已移动';
+    case WorldEventType.SceneStarted: return '场景已开始';
+    case WorldEventType.SceneEnded: return '场景已结束';
     default: return '未知世界事件';
   }
 }

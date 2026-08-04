@@ -472,7 +472,9 @@ struct WorldDetailPage {
         .margin({ top: 8 })
 
       // 管理操作按钮行(归档世界禁用子数据写入,但管理世界按钮始终可用)
-      Row() {
+      // 横向滚动:5 个按钮在手机宽度下会溢出,用 Scroll 避免最后一个"管理场景"按钮被裁剪
+      Scroll() {
+        Row() {
         // 管理世界:始终允许(可编辑/归档/激活/硬删除)
         Button($r('app.string.world_manage'))
           .fontSize($r('app.float.app_font_caption'))
@@ -535,10 +537,30 @@ struct WorldDetailPage {
           .onClick(() => {
             this.openEdgeManage();
           })
+
+        // 管理场景:W-SCENE-1B 最小入口,归档世界也可进入只读查看
+        Button($r('app.string.world_scene_manage_entry'))
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor(world.status === WorldStatus.Archived
+            ? $r('app.color.app_text_tertiary')
+            : $r('app.color.app_accent'))
+          .backgroundColor($r('app.color.app_surface_2'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(36)
+          .padding({ left: 12, right: 12 })
+          .margin({ left: 8 })
+          .accessibilityText($r('app.string.world_scene_manage_entry'))
+          .onClick(() => {
+            this.openSceneManage();
+          })
+        }
+        .margin({ top: 12 })
+        .alignItems(VerticalAlign.Center)
       }
+      .scrollable(ScrollDirection.Horizontal)
+      .scrollBar(BarState.Auto)
       .width('100%')
-      .margin({ top: 12 })
-      .alignItems(VerticalAlign.Center)
+      .clip(true)
     }
     .width('100%')
     .padding({
@@ -1333,6 +1355,15 @@ struct WorldDetailPage {
     }
     AppStorage.setOrCreate<string>(PENDING_WORLD_ID_KEY, this.currentWorldId);
     router.pushUrl({ url: 'pages/world/WorldEdgeManagePage' });
+  }
+
+  /** 打开世界场景管理页(W-SCENE-1B,归档世界也可进入只读查看) */
+  private openSceneManage(): void {
+    if (this.currentWorldId.length === 0) {
+      return;
+    }
+    AppStorage.setOrCreate<string>(PENDING_WORLD_ID_KEY, this.currentWorldId);
+    router.pushUrl({ url: 'pages/world/WorldSceneManagePage' });
   }
 
   // ===== 辅助方法 =====

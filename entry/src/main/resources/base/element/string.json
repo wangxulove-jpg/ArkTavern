@@ -2455,6 +2455,106 @@
     {
       "name": "world_confirm_force_move",
       "value": "确认强制移动"
+    },
+    {
+      "name": "world_scene_manage_entry",
+      "value": "管理场景"
+    },
+    {
+      "name": "world_scene_manage_title",
+      "value": "场景管理"
+    },
+    {
+      "name": "world_scene_manage_subtitle",
+      "value": "每个地点最多一个进行中的场景"
+    },
+    {
+      "name": "world_scene_active_label",
+      "value": "进行中"
+    },
+    {
+      "name": "world_scene_no_active_label",
+      "value": "暂无进行中场景"
+    },
+    {
+      "name": "world_scene_view_active",
+      "value": "查看场景"
+    },
+    {
+      "name": "world_scene_start",
+      "value": "开始场景"
+    },
+    {
+      "name": "world_scene_detail_title",
+      "value": "场景详情"
+    },
+    {
+      "name": "world_scene_add_user_message",
+      "value": "用户消息"
+    },
+    {
+      "name": "world_scene_add_character_message",
+      "value": "角色消息"
+    },
+    {
+      "name": "world_scene_add_narrator_message",
+      "value": "旁白消息"
+    },
+    {
+      "name": "world_scene_end",
+      "value": "结束场景"
+    },
+    {
+      "name": "world_scene_active_characters",
+      "value": "当前地点角色"
+    },
+    {
+      "name": "world_scene_no_characters",
+      "value": "该地点暂无角色"
+    },
+    {
+      "name": "world_scene_messages",
+      "value": "场景消息"
+    },
+    {
+      "name": "world_scene_no_messages",
+      "value": "暂无消息"
+    },
+    {
+      "name": "world_scene_user_message_form_title",
+      "value": "添加用户消息"
+    },
+    {
+      "name": "world_scene_character_message_form_title",
+      "value": "添加角色消息"
+    },
+    {
+      "name": "world_scene_narrator_message_form_title",
+      "value": "添加旁白消息"
+    },
+    {
+      "name": "world_scene_recipients",
+      "value": "接收者"
+    },
+    {
+      "name": "world_scene_reply_targets",
+      "value": "回复目标(可选)"
+    },
+    {
+      "name": "world_scene_witnesses",
+      "value": "目击者(可选)"
+    },
+    {
+      "name": "world_scene_no_active_instances",
+      "value": "当前地点没有可用的活跃角色"
+    },
+    {
+      "name": "world_scene_cancel",
+      "value": "取消"
+    },
+    {
+      "name": "world_scene_save",
+      "value": "保存"
     }
   ]
 }

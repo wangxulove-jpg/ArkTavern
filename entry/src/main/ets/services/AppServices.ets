@@ -89,6 +89,7 @@ import { WorldEventRepository } from '../repositories/world/WorldEventRepository
 import { WorldSceneRepository } from '../repositories/world/WorldSceneRepository';
 import { WorldSceneMessageRepository } from '../repositories/world/WorldSceneMessageRepository';
 import { WorldStateService } from './world/WorldStateService';
+import { WorldSceneService } from './world/WorldSceneService';
 import { Logger } from '../utils/Logger';
 
 const LOG_TAG: string = 'AppServices';
@@ -215,6 +216,8 @@ export class AppServices {
   private readonly worldSceneMessageRepository: WorldSceneMessageRepository;
   /** WorldStateService 世界模式状态业务服务(W-DATA-1B,世界基础数据唯一正式写入口) */
   private readonly worldStateService: WorldStateService;
+  /** WorldSceneService 世界场景业务服务(W-SCENE-1B,场景和场景消息唯一正式写入口) */
+  private readonly worldSceneService: WorldSceneService;
 
   /**
    * 私有构造,组装全部依赖。
@@ -267,6 +270,18 @@ export class AppServices {
       this.worldSceneRepository,
       this.worldSceneMessageRepository,
       this.characterService,
+      this.dbHelper
+    );
+    // W-SCENE-1B: 世界场景业务服务(场景和场景消息唯一正式写入口)。
+    // 依赖 6 个世界 Repository + DbHelper,不依赖 CharacterService / Page / ViewModel。
+    // 在 WorldStateService 之后创建,无构造循环。
+    this.worldSceneService = new WorldSceneService(
+      this.worldRepository,
+      this.worldLocationRepository,
+      this.worldCharacterInstanceRepository,
+      this.worldSceneRepository,
+      this.worldSceneMessageRepository,
+      this.worldEventRepository,
       this.dbHelper
     );
     this.lorebookSelectionStore = new LorebookSelectionStore(this.appPreferences);
@@ -884,5 +899,14 @@ export class AppServices {
    */
   static getWorldStateService(): WorldStateService {
     return AppServices.getInstance().worldStateService;
+  }
+
+  /**
+   * 获取 WorldSceneService 实例(W-SCENE-1B 世界场景业务服务)。
+   * 是当前世界场景(Scene)和场景消息(SceneMessage)的唯一正式写入口。
+   * 所有页面与 ViewModel 必须通过此方法获取同一个 WorldSceneService。
+   */
+  static getWorldSceneService(): WorldSceneService {
+    return AppServices.getInstance().worldSceneService;
   }
 }

@@ -95,6 +95,9 @@ export type TransactionOperation =
   | 'world_character_remove'
   | 'world_character_activate'
   | 'world_character_move'
+  | 'world_scene_start'
+  | 'world_scene_end'
+  | 'world_scene_message_add'
   | 'unknown';
 
 export class DbHelper {

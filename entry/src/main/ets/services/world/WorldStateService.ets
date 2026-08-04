@@ -68,6 +68,10 @@ import {
   createWorldEventRecord,
   WORLD_EVENT_ID_PREFIX
 } from '../../models/world/WorldEvent';
+import {
+  WorldScene,
+  WorldSceneStatus
+} from '../../models/world/WorldScene';
 import { WorldStateError } from '../../models/world/WorldStateError';
 import { CharacterService } from '../CharacterService';
 import { Character } from '../../models/Character';
@@ -224,7 +228,9 @@ export class WorldStateService {
   /**
    * 归档或重新激活世界。
    * 状态未变化时不写数据库、不创建事件。
+   * 归档前检查:没有进行中的 Active Scene。
    * 归档后世界禁止新增或修改其地点、连接、角色实例和移动状态。
+   * 重新激活不受此检查影响。
    */
   async setWorldArchived(worldId: string, archived: boolean): Promise<World> {
     const targetStatus: WorldStatus = archived ? WorldStatus.Archived : WorldStatus.Active;
@@ -238,6 +244,14 @@ export class WorldStateService {
         if (existing.status === targetStatus) {
           result = existing;
           return;
+        }
+        if (archived) {
+          // 归档前检查:该 World 任意 Active Scene 都拒绝归档
+          const activeScenes: WorldScene[] =
+            await this.sceneRepo.listByStatus(existing.id, WorldSceneStatus.Active);
+          if (activeScenes.length > 0) {
+            throw WorldStateError.worldHasActiveScenes();
+          }
         }
         const updated: World = createWorldRecord({
           id: existing.id,
@@ -407,7 +421,9 @@ export class WorldStateService {
 
   /**
    * 归档或重新激活地点。
-   * 归档前检查:没有 active WorldCharacterInstance 当前位于该地点。
+   * 归档前检查:
+   * - 没有 active WorldCharacterInstance 当前位于该地点
+   * - 该地点没有进行中的 Active Scene(Ended Scene 不阻止归档)
    * 归档后禁止新增以该地点为端点的连接、禁止放置或移动角色到该地点。
    * 状态未变化时不写数据库、不创建事件。
    */
@@ -435,6 +451,14 @@ export class WorldStateService {
             if (instances[i].isActive) {
               throw WorldStateError.locationHasCharacters();
             }
+          }
+          // 归档前检查:该地点没有 Active Scene(Ended Scene 不阻止归档)
+          const activeScene: WorldScene | null =
+            await this.sceneRepo.findActiveByWorldAndLocationWithStore(
+              store, existing.worldId, locationId
+            );
+          if (activeScene !== null) {
+            throw WorldStateError.locationHasActiveScene();
           }
         }
         const updated: WorldLocation = createWorldLocationRecord({
