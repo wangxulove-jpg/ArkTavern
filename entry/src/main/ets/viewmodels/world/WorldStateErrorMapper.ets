@@ -34,6 +34,16 @@ export function mapWorldStateErrorToMessage(e: Object): string {
         return '该世界中已存在同名地点';
       case WorldStateErrorKind.LocationHasCharacters:
         return '该地点仍有角色,请先移走或移除角色';
+      case WorldStateErrorKind.EdgeNotFound:
+        return '连接不存在或已被删除';
+      case WorldStateErrorKind.EdgeWorldMismatch:
+        return '连接的地点不属于同一世界';
+      case WorldStateErrorKind.EdgeSelfConnection:
+        return '连接的起点和终点不能相同';
+      case WorldStateErrorKind.EdgeConflict:
+        return '这两个地点之间已存在冲突连接';
+      case WorldStateErrorKind.NoEnabledPath:
+        return '当前位置到目标地点没有可用的连接';
       case WorldStateErrorKind.CharacterNotFound:
         return '角色不存在或已被删除';
       case WorldStateErrorKind.CharacterAlreadyInWorld:

@@ -38,6 +38,7 @@ import {
   WorldDetailLoadState,
   PENDING_WORLD_ID_KEY,
   PENDING_WORLD_LOCATION_ID_KEY,
+  WORLD_DETAIL_REFRESH_TOKEN_KEY,
   formatWorldTimestamp
 } from '../../viewmodels/world/WorldUiModels';
 import {
@@ -54,6 +55,13 @@ import { CharacterImageView } from '../../components/CharacterImageView';
 import { Logger } from '../../utils/Logger';
 
 const LOG_TAG: string = 'WorldDetailPage';
+
+/** 生成 4 位十六进制短标识(日志用,区分页面/ViewModel 实例) */
+function generateShortId(): string {
+  const ts: number = Date.now();
+  const tail: number = Math.floor(ts % 0xffff);
+  return tail.toString(16).padStart(4, '0');
+}
 
 @Entry
 @Component
@@ -78,6 +86,12 @@ struct WorldDetailPage {
   @State private selectedLocationId: string = '';
   /** 顶部状态栏避让高度 */
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
+  /** 刷新令牌:子页面写入成功后递增此值,@Watch 触发 loadDetail */
+  @StorageProp(WORLD_DETAIL_REFRESH_TOKEN_KEY) @Watch('onRefreshTokenChange')
+  refreshToken: number = 0;
+
+  /** 页面实例短标识(日志用,区分不同 Page 实例,确认 refresh 回调指向同一实例) */
+  private readonly pageInstanceShortId: string = generateShortId();
 
   async aboutToAppear(): Promise<void> {
     try {
@@ -102,6 +116,9 @@ struct WorldDetailPage {
         AppServices.getWorldEventRepository(),
         AppServices.getCharacterService()
       );
+      Logger.info(LOG_TAG, 'aboutToAppear: pageInstance=' + this.pageInstanceShortId
+        + ', vmInstance=' + this.viewModel.instanceShortId
+        + ', worldShortId=' + worldId.substring(worldId.length - 8));
       this.isInitializing = false;
       await this.loadDetail(worldId);
     } catch (e) {
@@ -117,10 +134,34 @@ struct WorldDetailPage {
     if (this.isInitializing || this.viewModel === null) {
       return;
     }
+    // aboutToDisappear 可能在 pushUrl 覆盖页面时触发并 dispose,
+    // 返回页面时必须先 activate,否则 loadSnapshot 会被静默跳过。
+    this.viewModel.activate();
     if (this.currentWorldId.length === 0) {
       return;
     }
     await this.loadDetail(this.currentWorldId);
+  }
+
+  /**
+   * 刷新令牌变化时触发:子页面写入成功后递增了 refreshToken。
+   * 比 onPageShow 更可靠,确保 router.back() 后即使 onPageShow 不触发也能刷新。
+   */
+  onRefreshTokenChange(): void {
+    Logger.info(LOG_TAG, 'onRefreshTokenChange: token=' + this.refreshToken
+      + ', isInitializing=' + String(this.isInitializing)
+      + ', currentWorldId=' + this.currentWorldId.substring(this.currentWorldId.length - 8)
+      + ', pageInstance=' + this.pageInstanceShortId
+      + (this.viewModel !== null ? ', vmInstance=' + this.viewModel.instanceShortId : ', vmInstance=null'));
+    if (this.isInitializing || this.viewModel === null) {
+      return;
+    }
+    if (this.currentWorldId.length === 0) {
+      return;
+    }
+    // aboutToDisappear 可能在覆盖页面时 dispose,refresh 回调到达时先激活。
+    this.viewModel.activate();
+    this.loadDetail(this.currentWorldId);
   }
 
   aboutToDisappear(): void {
@@ -140,16 +181,27 @@ struct WorldDetailPage {
       this.currentWorldId = worldId;
     }
     await this.viewModel.loadSnapshot(worldId);
+    // 应用快照到 Page @State:这里赋值的是全新对象引用,触发 ArkUI 重绘。
+    // Page 直接持有 detail / state / errorMessage 快照,不依赖 ViewModel 普通字段自动刷新。
     this.state = this.viewModel.state;
     this.errorMessage = this.viewModel.errorMessage;
     this.detail = this.viewModel.detail;
-    // Ready 时计算图布局
+    const selectedShort: string = this.selectedLocationId.length > 0
+      ? this.selectedLocationId.substring(this.selectedLocationId.length - 8) : '(none)';
+    Logger.info(LOG_TAG, 'apply snapshot: pageInstance=' + this.pageInstanceShortId
+      + (this.viewModel !== null ? ', vmInstance=' + this.viewModel.instanceShortId : '')
+      + ', state=' + this.state
+      + ', detailNull=' + String(this.detail === null)
+      + ', locationCount=' + (this.detail !== null ? this.detail.locations.length : 0)
+      + ', charCount=' + (this.detail !== null ? this.detail.characters.length : 0)
+      + ', selectedLocation=' + selectedShort);
+    // Ready 时计算图布局(全新快照 → 全新布局对象)
     if (this.state === WorldDetailLoadState.Ready && this.detail !== null) {
       this.graphLayout = computeWorldLocationGraphLayout(
         this.detail.locations,
         this.detail.edges
       );
-      // 如果之前选中的地点不在新数据中,清除选中
+      // 如果之前选中的地点不在新数据中,清除选中(地点可能被删除)
       if (this.selectedLocationId.length > 0
         && !this.containsLocation(this.detail.locations, this.selectedLocationId)) {
         this.selectedLocationId = '';
@@ -173,7 +225,22 @@ struct WorldDetailPage {
   build(): void {
     Column() {
       this.headerArea();
-      this.contentArea();
+      // 内联 contentArea 逻辑:避免无参 @Builder 嵌套导致 diff 复用子树。
+      // build() 对 detail / selectedLocationId 的依赖会被 ArkUI 完整收集,
+      // 任何变化都会触发 build() 重新执行,进而重新求值 if 分支和 detailView。
+      if (this.isInitializing) {
+        this.loadingView();
+      } else if (this.initError.length > 0) {
+        this.errorView(this.initError);
+      } else if (this.state === WorldDetailLoadState.Loading) {
+        this.loadingView();
+      } else if (this.state === WorldDetailLoadState.NotFound) {
+        this.notFoundView();
+      } else if (this.state === WorldDetailLoadState.Error) {
+        this.errorView(this.errorMessage.length > 0 ? this.errorMessage : '世界数据加载失败,请重试');
+      } else if (this.state === WorldDetailLoadState.Ready && this.detail !== null) {
+        this.detailView(this.detail, this.selectedLocationId)
+      }
     }
     .width('100%')
     .height('100%')
@@ -226,24 +293,6 @@ struct WorldDetailPage {
       bottom: $r('app.float.app_spacing_8')
     })
     .alignItems(VerticalAlign.Center)
-  }
-
-  /** 内容区:按状态切换 */
-  @Builder
-  contentArea(): void {
-    if (this.isInitializing) {
-      this.loadingView();
-    } else if (this.initError.length > 0) {
-      this.errorView(this.initError);
-    } else if (this.state === WorldDetailLoadState.Loading) {
-      this.loadingView();
-    } else if (this.state === WorldDetailLoadState.NotFound) {
-      this.notFoundView();
-    } else if (this.state === WorldDetailLoadState.Error) {
-      this.errorView(this.errorMessage.length > 0 ? this.errorMessage : '世界数据加载失败,请重试');
-    } else if (this.state === WorldDetailLoadState.Ready && this.detail !== null) {
-      this.detailView(this.detail!)
-    }
   }
 
   @Builder
@@ -329,9 +378,9 @@ struct WorldDetailPage {
     .alignItems(HorizontalAlign.Center)
   }
 
-  /** 详情主体:可滚动 */
+  /** 详情主体:可滚动。接收 detail 和 selectedLocationId 作为参数,通过参数变化触发重渲染。 */
   @Builder
-  detailView(detail: WorldDetailUiModel): void {
+  detailView(detail: WorldDetailUiModel, selectedLocationId: string): void {
     Scroll() {
       Column() {
         // 1. 世界头部
@@ -346,11 +395,11 @@ struct WorldDetailPage {
         }
 
         // 4. 地点关系图
-        this.graphSection(detail)
+        this.graphSection(detail, selectedLocationId)
 
         // 5. 选中地点详情
-        if (this.selectedLocationId.length > 0) {
-          this.selectedLocationDetailSection(detail)
+        if (selectedLocationId.length > 0) {
+          this.selectedLocationDetailSection(selectedLocationId, detail)
         }
 
         // 6. 角色实例摘要
@@ -470,6 +519,22 @@ struct WorldDetailPage {
           .onClick(() => {
             this.openCharacterManage();
           })
+
+        // 管理连接:归档世界禁用(只读查看仍可进入)
+        Button($r('app.string.world_edge_manage_title'))
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor(world.status === WorldStatus.Archived
+            ? $r('app.color.app_text_tertiary')
+            : $r('app.color.app_accent'))
+          .backgroundColor($r('app.color.app_surface_2'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(36)
+          .padding({ left: 12, right: 12 })
+          .margin({ left: 8 })
+          .accessibilityText($r('app.string.world_edge_manage_entry'))
+          .onClick(() => {
+            this.openEdgeManage();
+          })
       }
       .width('100%')
       .margin({ top: 12 })
@@ -562,9 +627,9 @@ struct WorldDetailPage {
     .alignItems(VerticalAlign.Center)
   }
 
-  /** 地点关系图区域 */
+  /** 地点关系图区域。接收 detail 和 selectedLocationId 作为参数。 */
   @Builder
-  graphSection(detail: WorldDetailUiModel): void {
+  graphSection(detail: WorldDetailUiModel, selectedLocationId: string): void {
     Column() {
       // 标题
       Row() {
@@ -574,7 +639,7 @@ struct WorldDetailPage {
           .layoutWeight(1)
 
         // 提示
-        if (detail.locations.length > 0 && this.selectedLocationId.length === 0) {
+        if (detail.locations.length > 0 && selectedLocationId.length === 0) {
           Text($r('app.string.world_graph_select_hint'))
             .fontSize(11)
             .fontColor($r('app.color.app_text_tertiary'))
@@ -595,8 +660,14 @@ struct WorldDetailPage {
             bottom: $r('app.float.app_spacing_24')
           })
       } else if (this.graphLayout !== null) {
-        // 图渲染
-        this.graphCanvas(this.graphLayout!, detail)
+        // 图渲染:外层 Scroll 支持横向滚动,clip 防止溢出
+        Scroll() {
+          this.graphCanvas(this.graphLayout!, detail, selectedLocationId)
+        }
+        .scrollable(ScrollDirection.Horizontal)
+        .scrollBar(BarState.Auto)
+        .width('100%')
+        .clip(true)
       }
     }
     .width('100%')
@@ -613,75 +684,113 @@ struct WorldDetailPage {
   }
 
   /**
-   * 图画布:Stack 内部按坐标布局
-   * - 底层:边(Polyline + 方向标签)
-   * - 上层:节点(WorldLocationNode)
+   * 图画布:Stack 内部按坐标布局。接收 layout / detail / selectedLocationId 作为参数。
    *
-   * 使用 Stack 容器 + position 绝对定位实现稳定坐标。
-   * 不使用 Canvas,避免当前 SDK 兼容问题。
+   * 层级结构(关键修复):
+   * - 底层:边层 Stack(全画布,hitTestBehavior=Transparent,不拦截点击)
+   * - 顶层:节点层 Stack(全画布,默认 hitTestBehavior,接收点击)
+   *
+   * 分离为两个独立 Stack 的原因:
+   * 之前边层和节点层 ForEach 混在同一个 Stack 中,每个 edgeView 是全画布 Stack,
+   * 多个全画布 Stack 叠加干扰节点点击测试,导致节点无法点击。
+   * 分离后边层整体一个 Stack(Transparent),节点层整体一个 Stack(上层),点击可靠到达节点。
+   *
+   * ForEach key 说明:
+   * 节点 key = locationId + '|' + characterCount + '|' + isSelected
+   * - ArkUI V1 ForEach 在 key 列表完全相同时不重新调用 itemGenerator,@Prop 不更新
+   * - 角色移动后 locationId 列表不变,若 key 只用 locationId,characterCount @Prop 不更新
+   * - 把 characterCount 和 isSelected 加入 key,受影响节点(最多2个)重建,显示最新数据
+   * - 不全量重建,只重建数据变化的节点
    */
   @Builder
-  graphCanvas(layout: WorldLocationGraphLayout, detail: WorldDetailUiModel): void {
+  graphCanvas(
+    layout: WorldLocationGraphLayout,
+    detail: WorldDetailUiModel,
+    selectedLocationId: string
+  ): void {
     Stack({ alignContent: Alignment.TopStart }) {
-      // ===== 边层 =====
-      ForEach(layout.edges, (edge: WorldLocationEdgeLayout) => {
-        this.edgeView(edge, layout.canvasWidth, layout.canvasHeight)
-      }, (edge: WorldLocationEdgeLayout) => edge.edgeId)
+      // ===== 边层(底层,整体一个 Stack,透明穿透点击) =====
+      Stack({ alignContent: Alignment.TopStart }) {
+        ForEach(layout.edges, (edge: WorldLocationEdgeLayout) => {
+          this.edgeView(edge)
+        }, (edge: WorldLocationEdgeLayout) => edge.edgeId)
+      }
+      .width(layout.canvasWidth)
+      .height(layout.canvasHeight)
+      .hitTestBehavior(HitTestMode.Transparent)
 
-      // ===== 节点层 =====
-      ForEach(layout.nodes, (node: WorldLocationNodeLayout) => {
-        this.nodeView(node, detail)
-      }, (node: WorldLocationNodeLayout) => node.locationId)
+      // ===== 节点层(顶层,整体一个 Stack,接收点击) =====
+      Stack({ alignContent: Alignment.TopStart }) {
+        ForEach(layout.nodes, (node: WorldLocationNodeLayout) => {
+          this.nodeView(node, detail, selectedLocationId)
+        }, (node: WorldLocationNodeLayout) => this.nodeKey(node, detail, selectedLocationId))
+      }
+      .width(layout.canvasWidth)
+      .height(layout.canvasHeight)
     }
     .width(layout.canvasWidth)
     .height(layout.canvasHeight)
-    .clip(false)
+    .clip(true)
+  }
+
+  /**
+   * 生成节点 ForEach key。
+   * key = locationId + '|' + characterCount + '|' + isSelected
+   * - locationId:节点身份
+   * - characterCount:角色移动后变化,触发受影响节点重建
+   * - isSelected:选中变化后变化,触发受影响节点重建
+   * 只重建数据变化的节点(最多2个),不全量重建。
+   */
+  private nodeKey(
+    node: WorldLocationNodeLayout,
+    detail: WorldDetailUiModel,
+    selectedLocationId: string
+  ): string {
+    const charCount: number = this.countCharactersAt(node.locationId, detail.characters);
+    const selected: boolean = selectedLocationId === node.locationId;
+    return node.locationId + '|' + charCount.toString() + '|' + (selected ? '1' : '0');
   }
 
   /**
    * 单条边渲染:Polyline 折线 + 方向标签。
-   * 外层 Stack 尺寸与画布一致,子元素用 position 绝对定位,
-   * 这样多个 edgeView 的 Stack 在 graphCanvas 中叠加对齐。
+   * 内部子元素用 position 绝对定位。
+   * 外层不再设全画布尺寸(由父边层 Stack 统一管理),避免多个全画布 Stack 干扰点击。
    */
   @Builder
-  edgeView(edge: WorldLocationEdgeLayout, canvasWidth: number, canvasHeight: number): void {
-    Stack({ alignContent: Alignment.TopStart }) {
-      // 折线:从 (fromX, fromY) → 中间 → (toX, toY)
-      Polyline()
-        .width(Math.abs(edge.toX - edge.fromX) + 4)
-        .height(Math.abs(edge.toY - edge.fromY) + 4)
-        .position({
-          x: Math.min(edge.fromX, edge.toX) - 2,
-          y: Math.min(edge.fromY, edge.toY) - 2
-        })
-        .points(this.computeEdgePoints(edge))
-        .fillOpacity(0)
-        .stroke(this.resolveEdgeColor(edge))
-        .strokeWidth(1.5)
-        .strokeLineJoin(LineJoinStyle.Round)
-        .strokeLineCap(LineCapStyle.Round)
-        .strokeDashArray(this.resolveEdgeDash(edge))
-        .opacity(this.resolveEdgeOpacity(edge))
+  edgeView(edge: WorldLocationEdgeLayout): void {
+    // 折线:从 (fromX, fromY) → 中间 → (toX, toY)
+    Polyline()
+      .width(Math.abs(edge.toX - edge.fromX) + 4)
+      .height(Math.abs(edge.toY - edge.fromY) + 4)
+      .position({
+        x: Math.min(edge.fromX, edge.toX) - 2,
+        y: Math.min(edge.fromY, edge.toY) - 2
+      })
+      .points(this.computeEdgePoints(edge))
+      .fillOpacity(0)
+      .stroke(this.resolveEdgeColor(edge))
+      .strokeWidth(1.5)
+      .strokeLineJoin(LineJoinStyle.Round)
+      .strokeLineCap(LineCapStyle.Round)
+      .strokeDashArray(this.resolveEdgeDash(edge))
+      .opacity(this.resolveEdgeOpacity(edge))
 
-      // 方向标签:中点附近显示"单"/"双"小标签
-      Text(this.resolveEdgeDirectionLabel(edge))
-        .fontSize(9)
-        .fontColor($r('app.color.app_text_tertiary'))
-        .backgroundColor($r('app.color.app_surface_1'))
-        .borderRadius(3)
-        .padding({ left: 3, right: 3, top: 1, bottom: 1 })
-        .position({
-          x: (edge.fromX + edge.toX) / 2 - 8,
-          y: (edge.fromY + edge.toY) / 2 - 8
-        })
-    }
-    .width(canvasWidth)
-    .height(canvasHeight)
+    // 方向标签:中点附近显示"单"/"双"小标签
+    Text(this.resolveEdgeDirectionLabel(edge))
+      .fontSize(9)
+      .fontColor($r('app.color.app_text_tertiary'))
+      .backgroundColor($r('app.color.app_surface_1'))
+      .borderRadius(3)
+      .padding({ left: 3, right: 3, top: 1, bottom: 1 })
+      .position({
+        x: (edge.fromX + edge.toX) / 2 - 8,
+        y: (edge.fromY + edge.toY) / 2 - 8
+      })
   }
 
-  /** 单个节点渲染:用 WorldLocationNode 组件 + position 定位 */
+  /** 单个节点渲染。接收 node / detail / selectedLocationId 作为参数。 */
   @Builder
-  nodeView(node: WorldLocationNodeLayout, detail: WorldDetailUiModel): void {
+  nodeView(node: WorldLocationNodeLayout, detail: WorldDetailUiModel, selectedLocationId: string): void {
     Column() {
       WorldLocationNode({
         locationId: node.locationId,
@@ -689,7 +798,7 @@ struct WorldDetailPage {
         status: this.resolveLocationStatus(node.locationId, detail.locations),
         characterCount: this.countCharactersAt(node.locationId, detail.characters),
         outgoingEdgeCount: this.countOutgoingEdges(node.locationId, detail.edges),
-        isSelected: this.selectedLocationId === node.locationId,
+        isSelected: selectedLocationId === node.locationId,
         onTap: (locationId: string): void => {
           this.onLocationTapped(locationId);
         }
@@ -698,15 +807,18 @@ struct WorldDetailPage {
     .width(node.width)
     .height(node.height)
     .position({ x: node.x, y: node.y })
+    .onClick(() => {
+      this.onLocationTapped(node.locationId);
+    })
   }
 
-  /** 选中地点详情 */
+  /** 选中地点详情。接收 locationId 和 detail 作为参数,通过参数变化触发重渲染。 */
   @Builder
-  selectedLocationDetailSection(detail: WorldDetailUiModel): void {
+  selectedLocationDetailSection(locationId: string, detail: WorldDetailUiModel): void {
     Column() {
       // 标题 + 编辑按钮
       Row() {
-        Text(this.resolveLocationName(this.selectedLocationId, detail.locations))
+        Text(this.resolveLocationName(locationId, detail.locations))
           .fontSize($r('app.float.app_font_subtitle'))
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.app_text_primary'))
@@ -728,14 +840,14 @@ struct WorldDetailPage {
           .accessibilityText($r('app.string.world_edit_location'))
           .enabled(detail.world.status !== WorldStatus.Archived)
           .onClick(() => {
-            this.openLocationEdit(this.selectedLocationId);
+            this.openLocationEdit(locationId);
           })
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
 
       // 状态标签
-      Text(this.resolveLocationStatusLabel(this.selectedLocationId, detail.locations))
+      Text(this.resolveLocationStatusLabel(locationId, detail.locations))
         .fontSize(11)
         .fontColor($r('app.color.app_text_tertiary'))
         .backgroundColor($r('app.color.app_surface_2'))
@@ -744,8 +856,8 @@ struct WorldDetailPage {
         .margin({ top: 6 })
 
       // 描述
-      if (this.resolveLocationDescription(this.selectedLocationId, detail.locations).length > 0) {
-        Text(this.resolveLocationDescription(this.selectedLocationId, detail.locations))
+      if (this.resolveLocationDescription(locationId, detail.locations).length > 0) {
+        Text(this.resolveLocationDescription(locationId, detail.locations))
           .fontSize($r('app.float.app_font_body'))
           .fontColor($r('app.color.app_text_secondary'))
           .maxLines(6)
@@ -763,7 +875,7 @@ struct WorldDetailPage {
         .fontColor($r('app.color.app_text_tertiary'))
         .margin({ bottom: 6 })
 
-      this.currentCharactersList(this.selectedLocationId, detail.characters)
+      this.currentCharactersList(locationId, detail.characters)
 
       Divider().color($r('app.color.app_divider')).margin({ top: 12, bottom: 12 })
 
@@ -773,7 +885,7 @@ struct WorldDetailPage {
         .fontColor($r('app.color.app_text_tertiary'))
         .margin({ bottom: 6 })
 
-      this.edgeList(this.selectedLocationId, detail, true)
+      this.edgeList(locationId, detail.edges, true)
 
       Divider().color($r('app.color.app_divider')).margin({ top: 12, bottom: 12 })
 
@@ -783,7 +895,7 @@ struct WorldDetailPage {
         .fontColor($r('app.color.app_text_tertiary'))
         .margin({ bottom: 6 })
 
-      this.edgeList(this.selectedLocationId, detail, false)
+      this.edgeList(locationId, detail.edges, false)
     }
     .width('100%')
     .padding({
@@ -798,7 +910,7 @@ struct WorldDetailPage {
     .alignItems(HorizontalAlign.Start)
   }
 
-  /** 当前角色列表 */
+  /** 当前角色列表。接收 locationId 和 characters 作为参数。 */
   @Builder
   currentCharactersList(locationId: string, characters: WorldCharacterInstanceUiModel[]): void {
     if (this.filterCharactersAt(locationId, characters).length === 0) {
@@ -866,17 +978,17 @@ struct WorldDetailPage {
     }
   }
 
-  /** 连接列表(outgoing=true 出发,false 到达) */
+  /** 连接列表(outgoing=true 出发,false 到达)。接收 locationId 和 edges 作为参数。 */
   @Builder
-  edgeList(locationId: string, detail: WorldDetailUiModel, outgoing: boolean): void {
-    if (this.filterEdgesForLocation(locationId, detail.edges, outgoing).length === 0) {
+  edgeList(locationId: string, edges: WorldEdgeUiModel[], outgoing: boolean): void {
+    if (this.filterEdgesForLocation(locationId, edges, outgoing).length === 0) {
       Text('无')
         .fontSize($r('app.float.app_font_caption'))
         .fontColor($r('app.color.app_text_tertiary'))
         .width('100%')
     } else {
       Column() {
-        ForEach(this.filterEdgesForLocation(locationId, detail.edges, outgoing), (edge: WorldEdgeUiModel) => {
+        ForEach(this.filterEdgesForLocation(locationId, edges, outgoing), (edge: WorldEdgeUiModel) => {
           this.edgeItemRow(edge, outgoing)
         }, (edge: WorldEdgeUiModel) => edge.id + '|' + (outgoing ? 'out' : 'in'))
       }
@@ -1212,6 +1324,15 @@ struct WorldDetailPage {
     }
     AppStorage.setOrCreate<string>(PENDING_WORLD_ID_KEY, this.currentWorldId);
     router.pushUrl({ url: 'pages/world/WorldCharacterManagePage' });
+  }
+
+  /** 打开世界地点连接管理页(归档世界也可进入,只读查看) */
+  private openEdgeManage(): void {
+    if (this.currentWorldId.length === 0) {
+      return;
+    }
+    AppStorage.setOrCreate<string>(PENDING_WORLD_ID_KEY, this.currentWorldId);
+    router.pushUrl({ url: 'pages/world/WorldEdgeManagePage' });
   }
 
   // ===== 辅助方法 =====

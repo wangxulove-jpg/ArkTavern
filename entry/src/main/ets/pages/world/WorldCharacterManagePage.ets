@@ -18,7 +18,12 @@ import {
   CandidateCharacterUiModel,
   ActiveLocationOptionUiModel
 } from '../../viewmodels/world/WorldCharacterManageViewModel';
-import { PENDING_WORLD_ID_KEY } from '../../viewmodels/world/WorldUiModels';
+import {
+  PENDING_WORLD_ID_KEY,
+  PENDING_WORLD_CHARACTER_INSTANCE_ID_KEY,
+  WORLD_DETAIL_REFRESH_TOKEN_KEY,
+  WORLD_CHARACTER_MANAGE_REFRESH_TOKEN_KEY
+} from '../../viewmodels/world/WorldUiModels';
 import { CharacterImageView } from '../../components/CharacterImageView';
 import { EmptyStateView } from '../../components/EmptyStateView';
 import { Logger } from '../../utils/Logger';
@@ -37,6 +42,8 @@ struct WorldCharacterManagePage {
   @State private activeLocations: ActiveLocationOptionUiModel[] = [];
   @State private isSaving: boolean = false;
   @State private isDeleting: boolean = false;
+  /** 当前页面绑定的 worldId(用于跳转移动页) */
+  @State private currentWorldId: string = '';
 
   /** 当前正在选择初始地点的候选角色 ID */
   @State private selectingLocationForCandidate: string = '';
@@ -45,6 +52,9 @@ struct WorldCharacterManagePage {
   /** 当前正在确认移除的实例 ID */
   @State private removingInstanceId: string = '';
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
+  /** 角色管理页刷新令牌:WorldCharacterMovePage 移动成功后递增,@Watch 触发 loadSnapshot */
+  @StorageProp(WORLD_CHARACTER_MANAGE_REFRESH_TOKEN_KEY) @Watch('onManageRefreshTokenChange')
+  manageRefreshToken: number = 0;
 
   async aboutToAppear(): Promise<void> {
     try {
@@ -57,6 +67,7 @@ struct WorldCharacterManagePage {
         this.loadState = WorldCharacterManageLoadState.NotFound;
         return;
       }
+      this.currentWorldId = worldId;
       this.viewModel = new WorldCharacterManageViewModel(
         AppServices.getWorldStateService(),
         AppServices.getWorldLocationRepository(),
@@ -78,7 +89,25 @@ struct WorldCharacterManagePage {
     if (this.isInitializing || this.viewModel === null) {
       return;
     }
+    // aboutToDisappear 可能在 pushUrl 覆盖页面时触发并 dispose,
+    // 返回页面时必须先 activate,否则 loadSnapshot 会被静默跳过,
+    // 导致移动角色返回后角色管理页仍显示旧位置。
+    this.viewModel.activate();
     await this.loadSnapshot();
+  }
+
+  /**
+   * 角色管理页刷新令牌变化时触发:WorldCharacterMovePage 移动/强制移动成功后递增。
+   * 比 onPageShow 更可靠,确保 router.back() 后即使 onPageShow 不触发也能刷新。
+   */
+  onManageRefreshTokenChange(): void {
+    Logger.info(LOG_TAG, 'onManageRefreshTokenChange: token=' + this.manageRefreshToken);
+    if (this.isInitializing || this.viewModel === null) {
+      return;
+    }
+    // aboutToDisappear 可能在覆盖页面时 dispose,refresh 回调到达时先激活。
+    this.viewModel.activate();
+    this.loadSnapshot();
   }
 
   aboutToDisappear(): void {
@@ -130,6 +159,11 @@ struct WorldCharacterManagePage {
         .padding({ left: 0, right: 8 })
         .accessibilityText($r('app.string.world_back_to_list'))
         .onClick(() => {
+          // 返回前递增世界详情刷新令牌,确保 WorldDetailPage 重新加载地点图。
+          // WorldCharacterMovePage 移动成功后已递增过一次,但 @StorageProp 在
+          // WorldDetailPage 不可见时可能未同步,@Watch 可能未触发。
+          // 这里在返回前再递增一次,确保 WorldDetailPage 回到前台时收到刷新信号。
+          this.triggerWorldDetailRefresh();
           router.back();
         })
 
@@ -399,6 +433,22 @@ struct WorldCharacterManagePage {
             .accessibilityText($r('app.string.world_set_character_location'))
             .onClick(() => {
               this.selectingLocationForInstance = inst.id;
+            })
+        }
+
+        // 移动角色(仅已放置时显示,进入移动页)
+        if (inst.currentLocationId.length > 0) {
+          Button($r('app.string.world_character_move'))
+            .fontSize(12)
+            .backgroundColor($r('app.color.app_surface_2'))
+            .fontColor($r('app.color.app_accent'))
+            .borderRadius(6)
+            .height(32)
+            .padding({ left: 10, right: 10 })
+            .enabled(!this.isSaving && !this.isDeleting)
+            .accessibilityText($r('app.string.world_character_move'))
+            .onClick(() => {
+              this.openCharacterMove(inst.id);
             })
         }
 
@@ -789,9 +839,8 @@ struct WorldCharacterManagePage {
     }
     const ok: boolean = await this.viewModel.addCharacterToWorld(characterId, locationId);
     this.syncFromViewModel();
-    if (!ok && this.errorMessage.length === 0) {
-      // 已 disposed 或重复点击
-      return;
+    if (ok && this.errorMessage.length === 0) {
+      this.triggerWorldDetailRefresh();
     }
   }
 
@@ -808,6 +857,9 @@ struct WorldCharacterManagePage {
     }
     await this.viewModel.placeCharacter(instanceId, locationId);
     this.syncFromViewModel();
+    if (this.errorMessage.length === 0) {
+      this.triggerWorldDetailRefresh();
+    }
   }
 
   /** 启用/停用实例 */
@@ -823,6 +875,9 @@ struct WorldCharacterManagePage {
     }
     await this.viewModel.setInstanceActive(instanceId, active);
     this.syncFromViewModel();
+    if (this.errorMessage.length === 0) {
+      this.triggerWorldDetailRefresh();
+    }
   }
 
   /** 从世界移除实例 */
@@ -835,5 +890,24 @@ struct WorldCharacterManagePage {
     }
     await this.viewModel.removeCharacterFromWorld(instanceId);
     this.syncFromViewModel();
+    if (this.errorMessage.length === 0) {
+      this.triggerWorldDetailRefresh();
+    }
+  }
+
+  /** 打开角色移动页(传 worldId + instanceId) */
+  private openCharacterMove(instanceId: string): void {
+    if (this.currentWorldId.length === 0 || instanceId.length === 0) {
+      return;
+    }
+    AppStorage.setOrCreate<string>(PENDING_WORLD_ID_KEY, this.currentWorldId);
+    AppStorage.setOrCreate<string>(PENDING_WORLD_CHARACTER_INSTANCE_ID_KEY, instanceId);
+    router.pushUrl({ url: 'pages/world/WorldCharacterMovePage' });
+  }
+
+  /** 递增刷新令牌,通知 WorldDetailPage 重新加载 */
+  private triggerWorldDetailRefresh(): void {
+    const current: number = AppStorage.get<number>(WORLD_DETAIL_REFRESH_TOKEN_KEY) ?? 0;
+    AppStorage.setOrCreate<number>(WORLD_DETAIL_REFRESH_TOKEN_KEY, current + 1);
   }
 }

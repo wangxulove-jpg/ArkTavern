@@ -178,9 +178,7 @@ export class WorldStateService {
     const finalName: string = truncate(normalName, WORLD_NAME_MAX);
     const finalDesc: string = truncate(normalizeText(description), WORLD_DESCRIPTION_MAX);
 
-    let result: World = createWorldRecord({
-      id: worldId, name: '', description: '', status: WorldStatus.Active
-    });
+    let result: World | null = null;
     await this.dbHelper.runInTransaction(
       async (store: relationalStore.RdbStore): Promise<void> => {
         const existing: World | null = await this.worldRepo.getByIdWithStore(store, worldId);
@@ -209,6 +207,9 @@ export class WorldStateService {
       },
       'world_update'
     );
+    if (result === null) {
+      throw WorldStateError.internal('事务未产生结果');
+    }
     return result;
   }
 
@@ -219,9 +220,7 @@ export class WorldStateService {
    */
   async setWorldArchived(worldId: string, archived: boolean): Promise<World> {
     const targetStatus: WorldStatus = archived ? WorldStatus.Archived : WorldStatus.Active;
-    let result: World = createWorldRecord({
-      id: worldId, name: '', description: '', status: WorldStatus.Active
-    });
+    let result: World | null = null;
     await this.dbHelper.runInTransaction(
       async (store: relationalStore.RdbStore): Promise<void> => {
         const existing: World | null = await this.worldRepo.getByIdWithStore(store, worldId);
@@ -252,6 +251,9 @@ export class WorldStateService {
       },
       'world_archive'
     );
+    if (result === null) {
+      throw WorldStateError.internal('事务未产生结果');
+    }
     return result;
   }
 
@@ -343,9 +345,7 @@ export class WorldStateService {
     const finalDesc: string = truncate(normalizeText(description), LOCATION_DESCRIPTION_MAX);
     const newCanonicalKey: string = buildCanonicalKey(finalName);
 
-    let result: WorldLocation = createWorldLocationRecord({
-      id: locationId, worldId: '', name: '', description: '', canonicalKey: ''
-    });
+    let result: WorldLocation | null = null;
     await this.dbHelper.runInTransaction(
       async (store: relationalStore.RdbStore): Promise<void> => {
         const existing: WorldLocation | null = await this.locationRepo.getByIdWithStore(store, locationId);
@@ -387,6 +387,9 @@ export class WorldStateService {
       },
       'world_location_update'
     );
+    if (result === null) {
+      throw WorldStateError.internal('事务未产生结果');
+    }
     return result;
   }
 
@@ -399,9 +402,7 @@ export class WorldStateService {
   async setLocationArchived(locationId: string, archived: boolean): Promise<WorldLocation> {
     const targetStatus: WorldLocationStatus = archived
       ? WorldLocationStatus.Archived : WorldLocationStatus.Active;
-    let result: WorldLocation = createWorldLocationRecord({
-      id: locationId, worldId: '', name: '', description: '', canonicalKey: ''
-    });
+    let result: WorldLocation | null = null;
     await this.dbHelper.runInTransaction(
       async (store: relationalStore.RdbStore): Promise<void> => {
         const existing: WorldLocation | null = await this.locationRepo.getByIdWithStore(store, locationId);
@@ -447,6 +448,9 @@ export class WorldStateService {
       },
       'world_location_archive'
     );
+    if (result === null) {
+      throw WorldStateError.internal('事务未产生结果');
+    }
     return result;
   }
 
@@ -567,9 +571,7 @@ export class WorldStateService {
    * 无变化时不创建事件;有变化时插入 EdgeUpdated 事件。
    */
   async updateEdge(edgeId: string, updates: WorldLocationEdgeUpdates): Promise<WorldLocationEdge> {
-    let result: WorldLocationEdge = createWorldLocationEdgeRecord({
-      id: edgeId, worldId: '', fromLocationId: '', toLocationId: ''
-    });
+    let result: WorldLocationEdge | null = null;
     await this.dbHelper.runInTransaction(
       async (store: relationalStore.RdbStore): Promise<void> => {
         const existing: WorldLocationEdge | null = await this.edgeRepo.getByIdWithStore(store, edgeId);
@@ -627,6 +629,9 @@ export class WorldStateService {
       },
       'world_edge_update'
     );
+    if (result === null) {
+      throw WorldStateError.internal('事务未产生结果');
+    }
     return result;
   }
 
@@ -752,9 +757,7 @@ export class WorldStateService {
    * 世界已归档时拒绝修改。状态未变化时不写数据库、不创建事件。
    */
   async setCharacterInstanceActive(instanceId: string, active: boolean): Promise<WorldCharacterInstance> {
-    let result: WorldCharacterInstance = createWorldCharacterInstanceRecord({
-      id: instanceId, worldId: '', characterId: '', displayNameSnapshot: ''
-    });
+    let result: WorldCharacterInstance | null = null;
     await this.dbHelper.runInTransaction(
       async (store: relationalStore.RdbStore): Promise<void> => {
         const existing: WorldCharacterInstance | null =
@@ -791,6 +794,9 @@ export class WorldStateService {
       },
       'world_character_activate'
     );
+    if (result === null) {
+      throw WorldStateError.internal('事务未产生结果');
+    }
     return result;
   }
 
@@ -833,9 +839,7 @@ export class WorldStateService {
    * 事务内:更新 currentLocationId → 插入 CharacterMoved 事件(sourceLocationId 为空)。
    */
   async placeCharacter(instanceId: string, locationId: string): Promise<WorldCharacterInstance> {
-    let result: WorldCharacterInstance = createWorldCharacterInstanceRecord({
-      id: instanceId, worldId: '', characterId: '', displayNameSnapshot: ''
-    });
+    let result: WorldCharacterInstance | null = null;
     await this.dbHelper.runInTransaction(
       async (store: relationalStore.RdbStore): Promise<void> => {
         const existing: WorldCharacterInstance | null =
@@ -882,6 +886,9 @@ export class WorldStateService {
       },
       'world_character_move'
     );
+    if (result === null) {
+      throw WorldStateError.internal('事务未产生结果');
+    }
     return result;
   }
 
@@ -893,9 +900,7 @@ export class WorldStateService {
    * 事务内:更新 currentLocationId → 插入 CharacterMoved 事件。
    */
   async moveCharacter(instanceId: string, targetLocationId: string): Promise<WorldCharacterInstance> {
-    let result: WorldCharacterInstance = createWorldCharacterInstanceRecord({
-      id: instanceId, worldId: '', characterId: '', displayNameSnapshot: ''
-    });
+    let result: WorldCharacterInstance | null = null;
     await this.dbHelper.runInTransaction(
       async (store: relationalStore.RdbStore): Promise<void> => {
         const existing: WorldCharacterInstance | null =
@@ -950,6 +955,9 @@ export class WorldStateService {
       },
       'world_character_move'
     );
+    if (result === null) {
+      throw WorldStateError.internal('事务未产生结果');
+    }
     return result;
   }
 
@@ -959,9 +967,7 @@ export class WorldStateService {
    * 不要求实例 Active(可移动 inactive 实例)。payloadJson 记录 {"forced":true}。
    */
   async forceMoveCharacter(instanceId: string, targetLocationId: string): Promise<WorldCharacterInstance> {
-    let result: WorldCharacterInstance = createWorldCharacterInstanceRecord({
-      id: instanceId, worldId: '', characterId: '', displayNameSnapshot: ''
-    });
+    let result: WorldCharacterInstance | null = null;
     await this.dbHelper.runInTransaction(
       async (store: relationalStore.RdbStore): Promise<void> => {
         const existing: WorldCharacterInstance | null =
@@ -1005,6 +1011,9 @@ export class WorldStateService {
       },
       'world_character_move'
     );
+    if (result === null) {
+      throw WorldStateError.internal('事务未产生结果');
+    }
     return result;
   }
 

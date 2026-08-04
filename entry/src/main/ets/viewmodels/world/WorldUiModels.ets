@@ -23,6 +23,28 @@ export const PENDING_WORLD_LOCATION_ID_KEY: string = 'pendingWorldLocationId';
 /** 跨页面路由用的 characterInstanceId 暂存键(管理角色时使用) */
 export const PENDING_WORLD_CHARACTER_INSTANCE_ID_KEY: string = 'pendingWorldCharacterInstanceId';
 
+/** 跨页面路由用的 edgeId 暂存键(编辑连接时由管理页写入,编辑页读取后清除) */
+export const PENDING_WORLD_EDGE_ID_KEY: string = 'pendingWorldEdgeId';
+
+/** 跨页面路由用的 fromLocationId 暂存键(从地点详情创建连接时预填起点) */
+export const PENDING_WORLD_EDGE_FROM_LOCATION_ID_KEY: string = 'pendingWorldEdgeFromLocationId';
+
+/**
+ * 世界详情页刷新令牌键。
+ * 子页面(WorldLocationEditPage / WorldEdgeEditPage / WorldEdgeManagePage /
+ * WorldCharacterManagePage / WorldCharacterMovePage)在写入成功后递增此值,
+ * WorldDetailPage 通过 @StorageProp + @Watch 监听变化并触发 loadDetail。
+ * 这比仅依赖 onPageShow 更可靠,避免 router.back() 后 onPageShow 不触发的问题。
+ */
+export const WORLD_DETAIL_REFRESH_TOKEN_KEY: string = 'worldDetailRefreshToken';
+
+/**
+ * 世界角色管理页刷新令牌键。
+ * WorldCharacterMovePage 移动/强制移动成功后递增此值,
+ * WorldCharacterManagePage 通过 @StorageProp + @Watch 监听变化并触发 loadSnapshot。
+ */
+export const WORLD_CHARACTER_MANAGE_REFRESH_TOKEN_KEY: string = 'worldCharacterManageRefreshToken';
+
 /** 世界列表项 UI 模型 */
 export interface WorldSummaryUiModel {
   readonly id: string;

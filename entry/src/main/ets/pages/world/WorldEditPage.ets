@@ -14,7 +14,7 @@
 import { router } from '@kit.ArkUI';
 import { AppServices } from '../../services/AppServices';
 import { WorldEditViewModel, WorldEditLoadState } from '../../viewmodels/world/WorldEditViewModel';
-import { PENDING_WORLD_ID_KEY } from '../../viewmodels/world/WorldUiModels';
+import { PENDING_WORLD_ID_KEY, WORLD_DETAIL_REFRESH_TOKEN_KEY } from '../../viewmodels/world/WorldUiModels';
 import { WorldStatus } from '../../models/world/World';
 import { EmptyStateView } from '../../components/EmptyStateView';
 import { Logger } from '../../utils/Logger';
@@ -478,6 +478,8 @@ struct WorldEditPage {
     await this.viewModel.save();
     this.syncFromViewModel();
     if (this.viewModel.saveSucceeded) {
+      const current: number = AppStorage.get<number>(WORLD_DETAIL_REFRESH_TOKEN_KEY) ?? 0;
+      AppStorage.setOrCreate<number>(WORLD_DETAIL_REFRESH_TOKEN_KEY, current + 1);
       router.back();
     }
   }
@@ -488,6 +490,10 @@ struct WorldEditPage {
     }
     await this.viewModel.setArchived(archived);
     this.syncFromViewModel();
+    if (this.viewModel.errorMessage.length === 0) {
+      const current: number = AppStorage.get<number>(WORLD_DETAIL_REFRESH_TOKEN_KEY) ?? 0;
+      AppStorage.setOrCreate<number>(WORLD_DETAIL_REFRESH_TOKEN_KEY, current + 1);
+    }
   }
 
   private async handleDelete(): Promise<void> {

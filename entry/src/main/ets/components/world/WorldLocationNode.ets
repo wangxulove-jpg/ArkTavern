@@ -3,6 +3,12 @@
  *
  * 地点节点关系图中的单个节点。纯 UI,不依赖 Repository / Service / 数据库。
  *
+ * 响应式约定:
+ * - 所有会变化的属性使用 @Prop,父级 @State 变化时由 ArkUI 单向同步刷新;
+ * - onTap 为函数类型,不能使用 @Prop,保持普通成员(闭包捕获父级 Page this,
+ *   Page 实例不变,回调始终指向最新方法);
+ * - 节点不保存任何独立选中状态副本,isSelected 完全由父级控制。
+ *
  * 显示:
  * - 地点名称
  * - Active / Archived 状态标签(文字,不仅依赖颜色)
@@ -23,19 +29,19 @@ import { WorldLocationStatus } from '../../models/world/WorldLocation';
 
 @Component
 export struct WorldLocationNode {
-  /** 地点 ID */
-  locationId: string = '';
-  /** 地点名称 */
-  name: string = '';
-  /** 地点状态 */
-  status: WorldLocationStatus = WorldLocationStatus.Active;
-  /** 当前位置角色数量 */
-  characterCount: number = 0;
-  /** 从该地点出发的连接数量 */
-  outgoingEdgeCount: number = 0;
-  /** 是否为用户选中 */
-  isSelected: boolean = false;
-  /** 点击回调 */
+  /** 地点 ID(不变,用于 onTap 回传) */
+  @Prop locationId: string = '';
+  /** 地点名称(编辑地点后可能变化) */
+  @Prop name: string = '';
+  /** 地点状态(归档/激活切换后变化) */
+  @Prop status: WorldLocationStatus = WorldLocationStatus.Active;
+  /** 当前位置角色数量(角色移动后变化,必须响应式) */
+  @Prop characterCount: number = 0;
+  /** 从该地点出发的连接数量(连接增删后变化) */
+  @Prop outgoingEdgeCount: number = 0;
+  /** 是否为用户选中(由父级 selectedLocationId 派生,必须响应式) */
+  @Prop isSelected: boolean = false;
+  /** 点击回调(函数类型,保持普通成员) */
   onTap: (locationId: string) => void = (_: string) => {};
 
   build() {

@@ -70,6 +70,8 @@ const H_GAP: number = 28;
 const V_GAP: number = 64;
 const PADDING: number = 24;
 const COMPONENT_GAP: number = 36;
+/** 孤立节点每行最多数量(手机适配,避免横向超出屏幕) */
+const ISOLATED_MAX_PER_ROW: number = 2;
 
 /**
  * 计算地点节点关系图的确定性布局。
@@ -177,25 +179,28 @@ export function computeWorldLocationGraphLayout(
     currentY = currentY + componentLayout.height + COMPONENT_GAP;
   }
 
-  // 7.2 无连接节点放在独立区域
+  // 7.2 无连接节点放在独立区域(每行最多 ISOLATED_MAX_PER_ROW 个,换行排列)
   if (isolatedIds.length > 0) {
-    // 重新按 createdAt ASC 排序(已在 sortedLocations 中保持顺序)
-    const isolatedLayerY: number = currentY;
+    const isolatedStartY: number = currentY;
     for (let i: number = 0; i < isolatedIds.length; i++) {
       const id: string = isolatedIds[i];
-      const x: number = PADDING + i * (NODE_WIDTH + H_GAP);
+      const row: number = Math.floor(i / ISOLATED_MAX_PER_ROW);
+      const col: number = i % ISOLATED_MAX_PER_ROW;
+      const x: number = PADDING + col * (NODE_WIDTH + H_GAP);
+      const y: number = isolatedStartY + row * (NODE_HEIGHT + V_GAP);
       nodeLayouts.push({
         locationId: id,
         x: x,
-        y: isolatedLayerY,
+        y: y,
         width: NODE_WIDTH,
         height: NODE_HEIGHT,
         depth: 0,
         layerIndex: i
       });
     }
-    const isolatedRowHeight: number = NODE_HEIGHT;
-    currentY = currentY + isolatedRowHeight + COMPONENT_GAP;
+    const isolatedRows: number = Math.ceil(isolatedIds.length / ISOLATED_MAX_PER_ROW);
+    const isolatedHeight: number = isolatedRows * NODE_HEIGHT + (isolatedRows - 1) * V_GAP;
+    currentY = currentY + isolatedHeight + COMPONENT_GAP;
   }
 
   // 8. 计算画布尺寸

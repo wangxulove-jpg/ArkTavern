@@ -65,15 +65,17 @@ export class WorldDetailViewModel {
   state: WorldDetailLoadState = WorldDetailLoadState.Loading;
   /** 用户可见的安全错误消息(空字符串表示无错误) */
   errorMessage: string = '';
-  /** 世界详情 UI 模型(Ready 时非空) */
+  /** 世界详情 UI 模型(Ready 时非空,加载失败时保留上一份成功快照) */
   detail: WorldDetailUiModel | null = null;
 
   /** 当前页面绑定的 worldId(由 setWorldId 写入,防止快速切换时旧请求覆盖) */
   private expectedWorldId: string = '';
   /** 当前加载操作 ID(每次 loadSnapshot 自增,拒绝旧请求覆盖新请求) */
   private loadOperationId: number = 0;
-  /** 页面是否已销毁 */
+  /** 页面是否已销毁(aboutToDisappear 时置 true,onPageShow/refreshToken 时通过 activate 恢复) */
   private disposed: boolean = false;
+  /** ViewModel 实例短标识(日志用,区分不同实例) */
+  readonly instanceShortId: string;
 
   constructor(
     worldRepository: WorldRepository,
@@ -89,6 +91,29 @@ export class WorldDetailViewModel {
     this.characterInstanceRepository = characterInstanceRepository;
     this.eventRepository = eventRepository;
     this.characterService = characterService;
+    this.instanceShortId = WorldDetailViewModel.generateShortId();
+  }
+
+  /**
+   * 重新激活 ViewModel。
+   *
+   * ArkUI 中 router.pushUrl 覆盖页面时,aboutToDisappear 可能在某些场景触发,
+   * 导致 disposed 被永久置为 true。返回页面后(onPageShow / refreshToken 回调)
+   * 调用此方法恢复可用状态,确保后续 loadSnapshot 能正常执行。
+   *
+   * 幂等:已激活时调用无副作用。
+   */
+  activate(): void {
+    if (this.disposed) {
+      this.disposed = false;
+      Logger.info(LOG_TAG, 'activate: vmInstance=' + this.instanceShortId);
+    }
+  }
+
+  private static generateShortId(): string {
+    const ts: number = Date.now();
+    const tail: number = Math.floor(ts % 0xffff);
+    return tail.toString(16).padStart(4, '0');
   }
 
   /**
@@ -107,12 +132,14 @@ export class WorldDetailViewModel {
    * 重新加载世界详情快照。
    * - 幂等:可重复调用
    * - 使用 expectedWorldId + loadOperationId 拒绝旧请求覆盖新请求
-   * - 销毁后不再更新状态
+   * - 销毁后不再更新状态(由 activate 恢复)
+   * - 加载失败时保留上一份成功快照(不清空 detail),避免页面永久空白
    *
    * @param worldId 要加载的世界 ID(必须与 expectedWorldId 一致才接受结果)
    */
   async loadSnapshot(worldId: string): Promise<void> {
     if (this.disposed) {
+      Logger.warn(LOG_TAG, 'loadSnapshot skipped: disposed vmInstance=' + this.instanceShortId);
       return;
     }
     // 更新 expectedWorldId 并自增 operationId
@@ -121,9 +148,10 @@ export class WorldDetailViewModel {
     const operationId: number = this.loadOperationId;
     const targetWorldId: string = worldId;
 
+    // 仅更新状态,不清空 detail:加载期间 Page 仍显示上一份成功快照,
+    // 加载失败时也保留上一份快照(不永久清空页面)。
     this.state = WorldDetailLoadState.Loading;
     this.errorMessage = '';
-    this.detail = null;
 
     try {
       // 1. 加载 World(不存在 → NotFound)
@@ -337,13 +365,22 @@ export class WorldDetailViewModel {
       }
       this.detail = detailModel;
       this.state = WorldDetailLoadState.Ready;
+      Logger.info(LOG_TAG, 'loadSnapshot done: vmInstance=' + this.instanceShortId
+        + ', operation=' + operationId.toString()
+        + ', state=ready, locationCount=' + locationUiModels.length.toString()
+        + ', characterCount=' + characterUiModels.length.toString()
+        + ', edgeCount=' + edgeUiModels.length.toString()
+        + ', worldShortId=' + this.shortId(targetWorldId));
     } catch (e) {
       if (operationId !== this.loadOperationId || this.disposed) {
         return;
       }
-      Logger.error(LOG_TAG, 'loadSnapshot failed: ' + this.safeErrorCategory(e)
+      Logger.error(LOG_TAG, 'loadSnapshot failed: vmInstance=' + this.instanceShortId
+        + ', operation=' + operationId.toString()
+        + ', ' + this.safeErrorCategory(e)
         + ', worldShortId=' + this.shortId(targetWorldId));
-      this.detail = null;
+      // 加载失败时保留上一份成功快照(不置 null),避免页面永久空白;
+      // 仅切换为 Error 状态,Page 会显示错误提示并可重试。
       this.errorMessage = '世界数据加载失败,请重试';
       this.state = WorldDetailLoadState.Error;
     }
@@ -351,9 +388,12 @@ export class WorldDetailViewModel {
 
   /**
    * 标记页面已销毁,后续 loadSnapshot / 迟到结果均不再更新状态。
+   * 注意:aboutToDisappear 在 router.pushUrl 覆盖页面时也可能触发,
+   * 返回页面后必须通过 activate() 恢复,否则刷新会被静默丢弃。
    */
   dispose(): void {
     this.disposed = true;
+    Logger.info(LOG_TAG, 'dispose: vmInstance=' + this.instanceShortId);
   }
 
   /**

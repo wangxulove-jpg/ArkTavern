@@ -2263,6 +2263,198 @@
     {
       "name": "world_deactivate_character",
       "value": "停用角色"
+    },
+    {
+      "name": "world_edge_manage_title",
+      "value": "地点连接管理"
+    },
+    {
+      "name": "world_edge_manage",
+      "value": "管理连接"
+    },
+    {
+      "name": "world_edge_manage_entry",
+      "value": "管理地点连接"
+    },
+    {
+      "name": "world_edge_create",
+      "value": "创建连接"
+    },
+    {
+      "name": "world_edge_edit",
+      "value": "编辑连接"
+    },
+    {
+      "name": "world_edge_edit_title_create",
+      "value": "创建连接"
+    },
+    {
+      "name": "world_edge_edit_title_edit",
+      "value": "编辑连接"
+    },
+    {
+      "name": "world_edge_from_location_label",
+      "value": "起点地点"
+    },
+    {
+      "name": "world_edge_to_location_label",
+      "value": "终点地点"
+    },
+    {
+      "name": "world_edge_from_location_placeholder",
+      "value": "请选择起点地点"
+    },
+    {
+      "name": "world_edge_to_location_placeholder",
+      "value": "请选择终点地点"
+    },
+    {
+      "name": "world_edge_direction_label",
+      "value": "方向标签"
+    },
+    {
+      "name": "world_edge_direction_placeholder",
+      "value": "如:向北、穿过森林"
+    },
+    {
+      "name": "world_edge_travel_label",
+      "value": "旅行描述"
+    },
+    {
+      "name": "world_edge_travel_placeholder",
+      "value": "请输入旅行描述(可选)"
+    },
+    {
+      "name": "world_edge_enable",
+      "value": "启用"
+    },
+    {
+      "name": "world_edge_disable",
+      "value": "停用"
+    },
+    {
+      "name": "world_edge_delete",
+      "value": "删除连接"
+    },
+    {
+      "name": "world_edge_delete_confirm",
+      "value": "删除后,角色将不能再通过这条连接移动。"
+    },
+    {
+      "name": "world_edge_no_edges",
+      "value": "该世界还没有连接"
+    },
+    {
+      "name": "world_edge_anomalous",
+      "value": "异常连接"
+    },
+    {
+      "name": "world_edge_from_missing",
+      "value": "起点地点缺失"
+    },
+    {
+      "name": "world_edge_to_missing",
+      "value": "终点地点缺失"
+    },
+    {
+      "name": "world_edge_select_from",
+      "value": "选择起点"
+    },
+    {
+      "name": "world_edge_select_to",
+      "value": "选择终点"
+    },
+    {
+      "name": "world_character_move_title",
+      "value": "移动角色"
+    },
+    {
+      "name": "world_character_move",
+      "value": "移动角色"
+    },
+    {
+      "name": "world_character_current_location",
+      "value": "当前位置"
+    },
+    {
+      "name": "world_character_normal_move",
+      "value": "正常移动"
+    },
+    {
+      "name": "world_character_force_move",
+      "value": "主持者强制移动"
+    },
+    {
+      "name": "world_character_force_move_confirm",
+      "value": "确认强制移动"
+    },
+    {
+      "name": "world_character_move_confirm",
+      "value": "将角色从“{src}”移动到“{dst}”。"
+    },
+    {
+      "name": "world_character_move_no_path",
+      "value": "当前没有可用的正常移动路线"
+    },
+    {
+      "name": "world_character_move_via_edge",
+      "value": "通过连接"
+    },
+    {
+      "name": "world_character_move_target",
+      "value": "选择目标地点"
+    },
+    {
+      "name": "world_character_move_inactive_hint",
+      "value": "已停用角色不能正常移动,但可由主持者强制移动"
+    },
+    {
+      "name": "world_character_move_force_hint",
+      "value": "强制移动可绕过连接限制,但仍受世界和地点状态约束"
+    },
+    {
+      "name": "world_manage_edges",
+      "value": "管理地点连接"
+    },
+    {
+      "name": "world_create_edge",
+      "value": "创建地点连接"
+    },
+    {
+      "name": "world_edit_edge",
+      "value": "编辑地点连接"
+    },
+    {
+      "name": "world_enable_edge",
+      "value": "启用地点连接"
+    },
+    {
+      "name": "world_disable_edge",
+      "value": "停用地点连接"
+    },
+    {
+      "name": "world_delete_edge",
+      "value": "永久删除地点连接"
+    },
+    {
+      "name": "world_move_character",
+      "value": "移动角色"
+    },
+    {
+      "name": "world_select_move_target",
+      "value": "选择正常移动目标"
+    },
+    {
+      "name": "world_force_move_character",
+      "value": "主持者强制移动"
+    },
+    {
+      "name": "world_confirm_normal_move",
+      "value": "确认普通移动"
+    },
+    {
+      "name": "world_confirm_force_move",
+      "value": "确认强制移动"
     }
   ]
 }

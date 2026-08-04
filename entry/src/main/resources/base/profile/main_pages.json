@@ -29,6 +29,9 @@
     "pages/world/WorldDetailPage",
     "pages/world/WorldEditPage",
     "pages/world/WorldLocationEditPage",
-    "pages/world/WorldCharacterManagePage"
+    "pages/world/WorldCharacterManagePage",
+    "pages/world/WorldEdgeManagePage",
+    "pages/world/WorldEdgeEditPage",
+    "pages/world/WorldCharacterMovePage"
   ]
 }

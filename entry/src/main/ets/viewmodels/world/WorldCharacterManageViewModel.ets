@@ -86,8 +86,10 @@ export class WorldCharacterManageViewModel {
 
   /** 操作 ID(防重复 / 拒绝迟到结果) */
   private loadOperationId: number = 0;
-  /** 页面是否已销毁 */
+  /** 页面是否已销毁(aboutToDisappear 时置 true,onPageShow/refreshToken 时通过 activate 恢复) */
   private disposed: boolean = false;
+  /** ViewModel 实例短标识(日志用) */
+  readonly instanceShortId: string;
 
   constructor(
     stateService: WorldStateService,
@@ -101,6 +103,29 @@ export class WorldCharacterManageViewModel {
     this.instanceRepository = instanceRepository;
     this.characterService = characterService;
     this.boundWorldId = worldId;
+    this.instanceShortId = WorldCharacterManageViewModel.generateShortId();
+  }
+
+  /**
+   * 重新激活 ViewModel。
+   *
+   * router.pushUrl 覆盖页面时 aboutToDisappear 可能触发并 dispose,
+   * 返回页面后(onPageShow / manageRefreshToken 回调)调用此方法恢复,
+   * 确保移动角色返回后角色管理页能正常刷新当前位置。
+   *
+   * 幂等:已激活时调用无副作用。
+   */
+  activate(): void {
+    if (this.disposed) {
+      this.disposed = false;
+      Logger.info(LOG_TAG, 'activate: vmInstance=' + this.instanceShortId);
+    }
+  }
+
+  private static generateShortId(): string {
+    const ts: number = Date.now();
+    const tail: number = Math.floor(ts % 0xffff);
+    return tail.toString(16).padStart(4, '0');
   }
 
   /** 加载世界角色管理快照 */
@@ -370,9 +395,10 @@ export class WorldCharacterManageViewModel {
     this.errorMessage = '';
   }
 
-  /** 标记页面已销毁 */
+  /** 标记页面已销毁(返回页面后需通过 activate 恢复) */
   dispose(): void {
     this.disposed = true;
+    Logger.info(LOG_TAG, 'dispose: vmInstance=' + this.instanceShortId);
   }
 
   /** 安全错误分类(日志用,不含 SQL) */

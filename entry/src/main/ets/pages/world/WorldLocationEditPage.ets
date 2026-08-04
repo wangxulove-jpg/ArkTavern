@@ -15,7 +15,11 @@
 import { router } from '@kit.ArkUI';
 import { AppServices } from '../../services/AppServices';
 import { WorldLocationEditViewModel, WorldLocationEditLoadState } from '../../viewmodels/world/WorldLocationEditViewModel';
-import { PENDING_WORLD_ID_KEY, PENDING_WORLD_LOCATION_ID_KEY } from '../../viewmodels/world/WorldUiModels';
+import {
+  PENDING_WORLD_ID_KEY,
+  PENDING_WORLD_LOCATION_ID_KEY,
+  WORLD_DETAIL_REFRESH_TOKEN_KEY
+} from '../../viewmodels/world/WorldUiModels';
 import { WorldLocationStatus } from '../../models/world/WorldLocation';
 import { EmptyStateView } from '../../components/EmptyStateView';
 import { Logger } from '../../utils/Logger';
@@ -490,6 +494,7 @@ struct WorldLocationEditPage {
     await this.viewModel.save();
     this.syncFromViewModel();
     if (this.viewModel.saveSucceeded) {
+      this.triggerWorldDetailRefresh();
       router.back();
     }
   }
@@ -500,6 +505,9 @@ struct WorldLocationEditPage {
     }
     await this.viewModel.setArchived(archived);
     this.syncFromViewModel();
+    if (this.viewModel.errorMessage.length === 0) {
+      this.triggerWorldDetailRefresh();
+    }
   }
 
   private async handleDelete(): Promise<void> {
@@ -510,7 +518,14 @@ struct WorldLocationEditPage {
     this.syncFromViewModel();
     if (this.viewModel.deleteSucceeded) {
       AppStorage.set<string>(PENDING_WORLD_LOCATION_ID_KEY, '');
+      this.triggerWorldDetailRefresh();
       router.back();
     }
+  }
+
+  /** 递增刷新令牌,通知 WorldDetailPage 重新加载 */
+  private triggerWorldDetailRefresh(): void {
+    const current: number = AppStorage.get<number>(WORLD_DETAIL_REFRESH_TOKEN_KEY) ?? 0;
+    AppStorage.setOrCreate<number>(WORLD_DETAIL_REFRESH_TOKEN_KEY, current + 1);
   }
 }
