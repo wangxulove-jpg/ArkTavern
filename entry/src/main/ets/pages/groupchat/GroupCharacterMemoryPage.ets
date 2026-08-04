@@ -1,5 +1,5 @@
 /**
- * GroupCharacterMemoryPage 多人聊天角色记忆页(G-MEMORY-1A)
+ * GroupCharacterMemoryPage 多人聊天角色记忆页(G-MEMORY-1A / G-MEMORY-1A-FIX-UI)
  *
  * 职责:
  * - 显示角色头部(头像/名称/所属群聊/成员状态/记忆总数)
@@ -18,8 +18,16 @@
  *      PENDING_GROUP_MEMORY_CHARACTER_ID_KEY 传参,读取后清除。
  *
  * 写入调用 GroupCharacterMemoryService(经 ViewModel),不直接访问 Repository。
- * 视觉参考单聊 MemoryManagementPage 与世界 WorldCharacterMemoryPage,
+ * 视觉参考单聊 MemoryManagementPage(Stack 覆盖层模式),
  * 但不复用其 Service / ViewModel / branchId。
+ *
+ * G-MEMORY-1A-FIX-UI 根因修复:
+ * 旧实现使用 bindSheet,在该设备上 Sheet 打开后约 500ms 自动触发 onDisappear
+ * (formMode 仍为 Create),导致"闪一下"现象。
+ * 改为 Stack 覆盖层(参考单聊 MemoryManagementPage 的 clearConfirmDialog 模式),
+ * 避免使用 bindSheet,彻底规避自动关闭问题。
+ * 表单状态从 formMode 单状态改为 formVisible + formMode 双状态,
+ * 显示状态只在用户操作中改变,不在 build/Builder/load 中重置。
  */
 
 import { router } from '@kit.ArkUI';
@@ -50,9 +58,8 @@ import { Logger } from '../../utils/Logger';
 
 const LOG_TAG: string = 'GroupCharacterMemoryPage';
 
-/** 表单模式 */
+/** 表单模式(仅当 formVisible=true 时有意义) */
 enum GroupMemoryFormMode {
-  None,
   Create,
   Edit
 }
@@ -68,16 +75,25 @@ struct GroupCharacterMemoryPage {
   @State private header: GroupCharacterMemoryHeaderUiModel | null = null;
 
   @State private filter: GroupCharacterMemoryListFilter = GroupCharacterMemoryListFilter.Active;
-  @State private formMode: GroupMemoryFormMode = GroupMemoryFormMode.None;
+
+  // 表单显示状态(G-MEMORY-1A-FIX-UI:从 formMode 单状态拆分为双状态)
+  // formVisible 控制表单 Stack 覆盖层是否显示
+  // formMode 仅在 formVisible=true 时决定是新增还是编辑
+  // 这两个状态只在用户点击(新增/编辑/取消/保存成功)时改变,
+  // 不在 build/Builder/loadSnapshot/syncFromViewModel 中重置。
+  @State private formVisible: boolean = false;
+  @State private formMode: GroupMemoryFormMode = GroupMemoryFormMode.Create;
   @State private editingMemoryId: string = '';
   @State private formTitle: string = '';
   @State private formContent: string = '';
   @State private formImportance: number = GROUP_MEMORY_IMPORTANCE_DEFAULT;
   @State private formKeywords: string = '';
+  @State private formError: string = '';
   @State private isSaving: boolean = false;
   @State private isDeleting: boolean = false;
   @State private actionError: string = '';
-  /** 删除确认弹窗(非空表示正在确认删除该 memoryId) */
+
+  // 删除确认(独立 Stack 覆盖层,与表单互斥)
   @State private deletingMemoryId: string = '';
 
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
@@ -90,6 +106,7 @@ struct GroupCharacterMemoryPage {
         AppStorage.get<string>(PENDING_GROUP_MEMORY_GROUP_ID_KEY) ?? '';
       const characterId: string =
         AppStorage.get<string>(PENDING_GROUP_MEMORY_CHARACTER_ID_KEY) ?? '';
+      // 读取后立即清除,避免页面重绘时误用
       AppStorage.set<string>(PENDING_GROUP_MEMORY_GROUP_ID_KEY, '');
       AppStorage.set<string>(PENDING_GROUP_MEMORY_CHARACTER_ID_KEY, '');
       if (groupConversationId.length === 0 || characterId.length === 0) {
@@ -141,6 +158,11 @@ struct GroupCharacterMemoryPage {
     this.syncFromViewModel();
   }
 
+  /**
+   * 同步 ViewModel 状态到页面 @State。
+   * G-MEMORY-1A-FIX-UI:本方法只同步数据相关字段(loadState/errorMessage/isSaving/isDeleting/memories/header),
+   * 不重置 formVisible/formMode/draft,避免 load 后表单被意外关闭。
+   */
   private syncFromViewModel(): void {
     if (this.viewModel === null) {
       return;
@@ -160,52 +182,39 @@ struct GroupCharacterMemoryPage {
   }
 
   build(): void {
-    Column() {
-      this.headerArea();
-      if (this.isInitializing) {
-        this.loadingView();
-      } else if (this.loadState === GroupCharacterMemoryLoadState.Loading) {
-        this.loadingView();
-      } else if (this.loadState === GroupCharacterMemoryLoadState.NotFound) {
-        this.notFoundView();
-      } else if (this.loadState === GroupCharacterMemoryLoadState.Error) {
-        this.errorView(this.errorMessage.length > 0 ? this.errorMessage : '记忆数据加载失败,请重试');
-      } else {
-        this.contentView()
+    Stack() {
+      // 主页面
+      Column() {
+        this.headerArea()
+        if (this.isInitializing) {
+          this.loadingView()
+        } else if (this.loadState === GroupCharacterMemoryLoadState.Loading) {
+          this.loadingView()
+        } else if (this.loadState === GroupCharacterMemoryLoadState.NotFound) {
+          this.notFoundView()
+        } else if (this.loadState === GroupCharacterMemoryLoadState.Error) {
+          this.errorView(this.errorMessage.length > 0 ? this.errorMessage : '记忆数据加载失败,请重试')
+        } else {
+          this.contentView()
+        }
+      }
+      .width('100%')
+      .height('100%')
+
+      // 表单 Stack 覆盖层(G-MEMORY-1A-FIX-UI:替代 bindSheet)
+      if (this.formVisible) {
+        this.memoryFormOverlay()
+      }
+
+      // 删除确认 Stack 覆盖层(与表单互斥)
+      if (this.deletingMemoryId.length > 0) {
+        this.deleteConfirmOverlay()
       }
     }
     .width('100%')
     .height('100%')
     .backgroundColor($r('app.color.app_bg'))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-    .bindSheet(this.formMode === GroupMemoryFormMode.Create, this.createFormSheet, {
-      height: SheetSize.FIT_CONTENT,
-      dragBar: true,
-      backgroundColor: $r('app.color.app_surface_1'),
-      onDisappear: () => {
-        if (this.formMode === GroupMemoryFormMode.Create) {
-          this.formMode = GroupMemoryFormMode.None;
-        }
-      }
-    })
-    .bindSheet(this.formMode === GroupMemoryFormMode.Edit, this.editFormSheet, {
-      height: SheetSize.FIT_CONTENT,
-      dragBar: true,
-      backgroundColor: $r('app.color.app_surface_1'),
-      onDisappear: () => {
-        if (this.formMode === GroupMemoryFormMode.Edit) {
-          this.formMode = GroupMemoryFormMode.None;
-        }
-      }
-    })
-    .bindSheet(this.deletingMemoryId.length > 0, this.deleteConfirmSheet, {
-      height: SheetSize.FIT_CONTENT,
-      dragBar: true,
-      backgroundColor: $r('app.color.app_surface_1'),
-      onDisappear: () => {
-        this.deletingMemoryId = '';
-      }
-    })
   }
 
   @Builder
@@ -630,7 +639,7 @@ struct GroupCharacterMemoryPage {
             .margin({ left: 6 })
             .enabled(!this.isSaving && !this.isDeleting)
             .accessibilityText('删除记忆')
-            .onClick(() => { this.deletingMemoryId = m.id; })
+            .onClick(() => { this.openDeleteConfirm(m.id); })
         }
         .width('100%')
         .justifyContent(FlexAlign.End)
@@ -648,197 +657,253 @@ struct GroupCharacterMemoryPage {
     .alignItems(HorizontalAlign.Start)
   }
 
+  /**
+   * 记忆表单 Stack 覆盖层(G-MEMORY-1A-FIX-UI:替代 bindSheet)。
+   * 参考 MemoryManagementPage.clearConfirmDialog 的模式:
+   * - 外层 Stack 充当 Scrim,点击关闭表单
+   * - 内层 Column 是表单卡片,拦截点击不冒泡到 Scrim
+   * - 使用 hitTestBehavior(Default) 确保子组件可接收点击
+   */
   @Builder
-  createFormSheet(): void {
-    this.memoryFormSheet(false)
-  }
+  memoryFormOverlay(): void {
+    Stack() {
+      // 表单卡片(拦截点击,不冒泡到外层 Stack)
+      Column() {
+        // 标题栏
+        Row() {
+          Text(this.formMode === GroupMemoryFormMode.Edit ? '编辑手动记忆' : '新增手动记忆')
+            .fontSize($r('app.float.app_font_title'))
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.app_text_primary'))
+            .layoutWeight(1)
 
-  @Builder
-  editFormSheet(): void {
-    this.memoryFormSheet(true)
-  }
-
-  @Builder
-  memoryFormSheet(isEdit: boolean): void {
-    Column() {
-      Text(isEdit ? '编辑手动记忆' : '新增手动记忆')
-        .fontSize($r('app.float.app_font_title'))
-        .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.app_text_primary'))
-        .width('100%')
-        .padding({ left: 16, top: 16, bottom: 12 })
-
-      // 标题
-      Text('标题')
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_secondary'))
-        .width('100%')
-        .padding({ left: 16, bottom: 4 })
-      TextInput({
-        placeholder: '请输入记忆标题',
-        text: this.formTitle
-      })
-        .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_primary'))
-        .backgroundColor($r('app.color.app_surface_2'))
-        .borderRadius($r('app.float.app_radius_md'))
-        .width('100%')
-        .height(44)
-        .margin({ left: 16, right: 16, bottom: 4 })
-        .maxLength(GROUP_MEMORY_TITLE_MAX)
-        .onChange((v: string) => {
-          this.formTitle = v;
-        })
-      Text(this.formTitle.length.toString() + ' / ' + GROUP_MEMORY_TITLE_MAX.toString())
-        .fontSize(10)
-        .fontColor($r('app.color.app_text_tertiary'))
-        .width('100%')
-        .padding({ left: 16, right: 16, bottom: 8 })
-
-      // 内容
-      Text('内容')
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_secondary'))
-        .width('100%')
-        .padding({ left: 16, bottom: 4 })
-      TextArea({
-        text: this.formContent,
-        placeholder: '请输入记忆内容'
-      })
-        .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_primary'))
-        .backgroundColor($r('app.color.app_surface_2'))
-        .borderRadius($r('app.float.app_radius_md'))
-        .width('100%')
-        .height(120)
-        .margin({ left: 16, right: 16, bottom: 4 })
-        .maxLength(GROUP_MEMORY_CONTENT_MAX)
-        .onChange((v: string) => {
-          this.formContent = v;
-        })
-      Text(this.formContent.length.toString() + ' / ' + GROUP_MEMORY_CONTENT_MAX.toString())
-        .fontSize(10)
-        .fontColor($r('app.color.app_text_tertiary'))
-        .width('100%')
-        .padding({ left: 16, right: 16, bottom: 8 })
-
-      // 重要度
-      Text('重要度')
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_secondary'))
-        .width('100%')
-        .padding({ left: 16, bottom: 4 })
-      Row() {
-        ForEach(this.importanceOptions(), (n: number) => {
-          Button(n.toString())
+          Text('关闭')
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor(this.formImportance === n
-              ? $r('app.color.app_on_accent') : $r('app.color.app_text_primary'))
-            .backgroundColor(this.formImportance === n
-              ? $r('app.color.app_accent') : $r('app.color.app_surface_2'))
+            .fontColor($r('app.color.app_text_tertiary'))
+            .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+            .onClick(() => { this.closeForm(); })
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16, top: 16, bottom: 8 })
+        .alignItems(VerticalAlign.Center)
+
+        Divider().color($r('app.color.app_divider'))
+
+        // 可滚动表单内容
+        Scroll() {
+          Column() {
+            // 标题
+            Text('标题')
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_text_secondary'))
+              .width('100%')
+              .padding({ left: 16, bottom: 4, top: 8 })
+            TextInput({
+              placeholder: '请输入记忆标题',
+              text: this.formTitle
+            })
+              .fontSize($r('app.float.app_font_body'))
+              .fontColor($r('app.color.app_text_primary'))
+              .backgroundColor($r('app.color.app_surface_2'))
+              .borderRadius($r('app.float.app_radius_md'))
+              .width('100%')
+              .height(44)
+              .margin({ left: 16, right: 16, bottom: 4 })
+              .maxLength(GROUP_MEMORY_TITLE_MAX)
+              .onChange((v: string) => {
+                this.formTitle = v;
+              })
+            Text(this.formTitle.length.toString() + ' / ' + GROUP_MEMORY_TITLE_MAX.toString())
+              .fontSize(10)
+              .fontColor($r('app.color.app_text_tertiary'))
+              .width('100%')
+              .padding({ left: 16, right: 16, bottom: 8 })
+
+            // 内容
+            Text('内容')
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_text_secondary'))
+              .width('100%')
+              .padding({ left: 16, bottom: 4 })
+            TextArea({
+              text: this.formContent,
+              placeholder: '请输入记忆内容'
+            })
+              .fontSize($r('app.float.app_font_body'))
+              .fontColor($r('app.color.app_text_primary'))
+              .backgroundColor($r('app.color.app_surface_2'))
+              .borderRadius($r('app.float.app_radius_md'))
+              .width('100%')
+              .height(140)
+              .margin({ left: 16, right: 16, bottom: 4 })
+              .maxLength(GROUP_MEMORY_CONTENT_MAX)
+              .onChange((v: string) => {
+                this.formContent = v;
+              })
+            Text(this.formContent.length.toString() + ' / ' + GROUP_MEMORY_CONTENT_MAX.toString())
+              .fontSize(10)
+              .fontColor($r('app.color.app_text_tertiary'))
+              .width('100%')
+              .padding({ left: 16, right: 16, bottom: 8 })
+
+            // 重要度
+            Text('重要度')
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_text_secondary'))
+              .width('100%')
+              .padding({ left: 16, bottom: 4 })
+            Row() {
+              ForEach(this.importanceOptions(), (n: number) => {
+                Button(n.toString())
+                  .fontSize($r('app.float.app_font_caption'))
+                  .fontColor(this.formImportance === n
+                    ? $r('app.color.app_on_accent') : $r('app.color.app_text_primary'))
+                  .backgroundColor(this.formImportance === n
+                    ? $r('app.color.app_accent') : $r('app.color.app_surface_2'))
+                  .borderRadius($r('app.float.app_radius_sm'))
+                  .height(32)
+                  .width(44)
+                  .margin({ right: 6 })
+                  .onClick(() => { this.formImportance = n; })
+              }, (n: number) => n.toString())
+            }
+            .width('100%')
+            .padding({ left: 16, right: 16, bottom: 8 })
+            .alignItems(VerticalAlign.Center)
+
+            // 关键词
+            Text('关键词')
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_text_secondary'))
+              .width('100%')
+              .padding({ left: 16, bottom: 4 })
+            TextInput({
+              placeholder: '逗号分隔,例如:身份、约定、喜好',
+              text: this.formKeywords
+            })
+              .fontSize($r('app.float.app_font_body'))
+              .fontColor($r('app.color.app_text_primary'))
+              .backgroundColor($r('app.color.app_surface_2'))
+              .borderRadius($r('app.float.app_radius_md'))
+              .width('100%')
+              .height(44)
+              .margin({ left: 16, right: 16, bottom: 8 })
+              .onChange((v: string) => {
+                this.formKeywords = v;
+              })
+
+            // 表单内错误提示
+            if (this.formError.length > 0) {
+              Text(this.formError)
+                .fontSize($r('app.float.app_font_caption'))
+                .fontColor($r('app.color.app_danger'))
+                .width('100%')
+                .padding({ left: 16, right: 16, bottom: 8 })
+            }
+          }
+          .width('100%')
+          .alignItems(HorizontalAlign.Start)
+        }
+        .layoutWeight(1)
+        .width('100%')
+        .scrollBar(BarState.Auto)
+        .edgeEffect(EdgeEffect.Spring)
+
+        // 底部固定操作区(不被键盘遮挡)
+        Row() {
+          Button($r('app.string.group_cancel'))
+            .fontSize($r('app.float.app_font_body'))
+            .fontColor($r('app.color.app_text_secondary'))
+            .backgroundColor($r('app.color.app_surface_2'))
             .borderRadius($r('app.float.app_radius_sm'))
-            .height(32)
-            .width(44)
-            .margin({ right: 6 })
-            .onClick(() => { this.formImportance = n; })
-        }, (n: number) => n.toString())
-      }
-      .width('100%')
-      .padding({ left: 16, right: 16, bottom: 8 })
-      .alignItems(VerticalAlign.Center)
-
-      // 关键词
-      Text('关键词')
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_secondary'))
+            .height(40)
+            .layoutWeight(1)
+            .margin({ right: 8 })
+            .enabled(!this.isSaving)
+            .onClick(() => { this.closeForm(); })
+          Button(this.isSaving ? '保存中…' : (this.formMode === GroupMemoryFormMode.Edit ? '保存' : '创建'))
+            .fontSize($r('app.float.app_font_body'))
+            .fontColor($r('app.color.app_on_accent'))
+            .backgroundColor($r('app.color.app_accent'))
+            .borderRadius($r('app.float.app_radius_sm'))
+            .height(40)
+            .layoutWeight(1)
+            .enabled(!this.isSaving
+              && this.formTitle.trim().length > 0
+              && this.formContent.trim().length > 0)
+            .onClick(() => { this.submitForm(); })
+        }
         .width('100%')
-        .padding({ left: 16, bottom: 4 })
-      TextInput({
-        placeholder: '逗号分隔,可选',
-        text: this.formKeywords
-      })
-        .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_primary'))
-        .backgroundColor($r('app.color.app_surface_2'))
-        .borderRadius($r('app.float.app_radius_md'))
-        .width('100%')
-        .height(44)
-        .margin({ left: 16, right: 16, bottom: 8 })
-        .onChange((v: string) => {
-          this.formKeywords = v;
-        })
-
-      // 操作按钮
-      Row() {
-        Button($r('app.string.group_cancel'))
-          .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_secondary'))
-          .backgroundColor($r('app.color.app_surface_2'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(40)
-          .layoutWeight(1)
-          .margin({ right: 8 })
-          .onClick(() => { this.formMode = GroupMemoryFormMode.None; })
-        Button(isEdit ? '保存' : '创建')
-          .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_on_accent'))
-          .backgroundColor($r('app.color.app_accent'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(40)
-          .layoutWeight(1)
-          .enabled(!this.isSaving
-            && this.formTitle.trim().length > 0
-            && this.formContent.trim().length > 0)
-          .onClick(() => { this.submitForm(isEdit); })
+        .padding({ left: 16, right: 16, top: 8, bottom: 16 })
       }
-      .width('100%')
-      .padding({ left: 16, right: 16, bottom: 16 })
+      .width('90%')
+      .constraintSize({ maxHeight: '80%' })
+      .backgroundColor($r('app.color.app_surface_1'))
+      .borderRadius(12)
+      // 拦截点击,不冒泡到外层 Stack(避免点击表单内部关闭表单)
+      .onClick(() => {})
     }
     .width('100%')
-    .backgroundColor($r('app.color.app_surface_1'))
+    .height('100%')
+    .backgroundColor('rgba(0,0,0,0.5)')
+    // 点击遮罩关闭表单
+    .onClick(() => { this.closeForm(); })
   }
 
+  /**
+   * 删除确认 Stack 覆盖层(参考 MemoryManagementPage.deleteConfirmDialog)。
+   */
   @Builder
-  deleteConfirmSheet(): void {
-    Column() {
-      Text('删除记忆')
-        .fontSize($r('app.float.app_font_title'))
-        .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.app_text_primary'))
-        .width('100%')
-        .padding({ left: 16, top: 16, bottom: 12 })
+  deleteConfirmOverlay(): void {
+    Stack() {
+      Column() {
+        Text('删除记忆')
+          .fontSize($r('app.float.app_font_title'))
+          .fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.app_text_primary'))
+          .margin({ top: 16, bottom: 8 })
 
-      Text('删除后无法恢复,确定删除吗?')
-        .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_secondary'))
-        .width('100%')
-        .padding({ left: 16, right: 16, bottom: 16 })
-
-      Row() {
-        Button($r('app.string.group_cancel'))
+        Text('删除后无法恢复,确定删除吗?')
           .fontSize($r('app.float.app_font_body'))
           .fontColor($r('app.color.app_text_secondary'))
-          .backgroundColor($r('app.color.app_surface_2'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(40)
-          .layoutWeight(1)
-          .margin({ right: 8 })
-          .onClick(() => { this.deletingMemoryId = ''; })
-        Button('删除')
-          .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_on_accent'))
-          .backgroundColor($r('app.color.app_danger'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(40)
-          .layoutWeight(1)
-          .enabled(!this.isDeleting)
-          .onClick(() => { this.handleDelete(this.deletingMemoryId); })
+          .lineHeight(20)
+          .margin({ left: 16, right: 16, bottom: 16 })
+
+        Divider().color($r('app.color.app_divider'))
+
+        Row() {
+          Button('取消')
+            .fontSize($r('app.float.app_font_body'))
+            .backgroundColor(Color.Transparent)
+            .fontColor($r('app.color.app_text_secondary'))
+            .layoutWeight(1)
+            .height(48)
+            .onClick(() => { this.deletingMemoryId = ''; })
+
+          Divider().vertical(true).height(24).color($r('app.color.app_divider'))
+
+          Button(this.isDeleting ? '删除中…' : '删除')
+            .fontSize($r('app.float.app_font_body'))
+            .backgroundColor(Color.Transparent)
+            .fontColor($r('app.color.app_danger'))
+            .layoutWeight(1)
+            .height(48)
+            .enabled(!this.isDeleting)
+            .onClick(() => { this.handleDelete(this.deletingMemoryId); })
+        }
+        .width('100%')
       }
-      .width('100%')
-      .padding({ left: 16, right: 16, bottom: 16 })
+      .width('80%')
+      .backgroundColor($r('app.color.app_surface_1'))
+      .borderRadius(12)
+      // 拦截点击,不冒泡到外层 Stack
+      .onClick(() => {})
     }
     .width('100%')
-    .backgroundColor($r('app.color.app_surface_1'))
+    .height('100%')
+    .backgroundColor('rgba(0,0,0,0.5)')
+    // 点击遮罩关闭确认
+    .onClick(() => { this.deletingMemoryId = ''; })
   }
 
   // ===== 事件处理 =====
@@ -851,57 +916,105 @@ struct GroupCharacterMemoryPage {
     await this.loadSnapshot();
   }
 
+  /**
+   * 打开新增表单。
+   * G-MEMORY-1A-FIX-UI:只设置一次状态,不触发 load,不修改筛选。
+   */
   private openCreateForm(): void {
     if (!this.canCreateMemory()) {
       this.actionError = '该角色已移出群聊,无法新增记忆';
       return;
     }
     this.actionError = '';
+    this.formError = '';
     this.editingMemoryId = '';
     this.formTitle = '';
     this.formContent = '';
     this.formImportance = GROUP_MEMORY_IMPORTANCE_DEFAULT;
     this.formKeywords = '';
     this.formMode = GroupMemoryFormMode.Create;
+    this.formVisible = true;
   }
 
+  /**
+   * 打开编辑表单。
+   * G-MEMORY-1A-FIX-UI:不重新查询覆盖 draft,只从卡片数据预填。
+   */
   private openEditForm(m: GroupCharacterMemoryItemUiModel): void {
     if (m.isInteraction) {
       // Interaction 记忆只读,不打开编辑表单
       return;
     }
     this.actionError = '';
+    this.formError = '';
     this.editingMemoryId = m.id;
     this.formTitle = m.title;
     this.formContent = m.content;
     this.formImportance = m.importance;
     this.formKeywords = m.keywordsText;
     this.formMode = GroupMemoryFormMode.Edit;
+    this.formVisible = true;
   }
 
-  private async submitForm(isEdit: boolean): Promise<void> {
-    if (this.viewModel === null) {
+  /**
+   * 关闭表单(取消/关闭按钮/遮罩点击/保存成功)。
+   * G-MEMORY-1A-FIX-UI:不立即清空 draft,避免关闭动画期间闪烁;
+   * draft 在下次 openCreateForm/openEditForm 时重置。
+   */
+  private closeForm(): void {
+    if (this.isSaving) {
+      // 保存中不允许关闭(防止中断)
+      return;
+    }
+    this.formVisible = false;
+    this.formError = '';
+  }
+
+  /**
+   * 打开删除确认(先关闭表单,避免重叠)。
+   */
+  private openDeleteConfirm(memoryId: string): void {
+    if (memoryId.length === 0) {
+      return;
+    }
+    // 先关闭表单(如果在打开状态)
+    this.formVisible = false;
+    this.deletingMemoryId = memoryId;
+  }
+
+  /**
+   * 提交表单(新增或编辑)。
+   * G-MEMORY-1A-FIX-UI:
+   * - 校验失败时保持表单打开,显示 formError
+   * - 保存成功后关闭表单并刷新列表
+   * - 保存失败时保持表单打开,保留输入
+   * - isSaving 由 ViewModel 管理,防重复提交
+   */
+  private async submitForm(): Promise<void> {
+    if (this.viewModel === null || this.isSaving) {
       return;
     }
     const title: string = this.formTitle.trim();
     const content: string = this.formContent.trim();
     if (title.length === 0) {
-      this.actionError = '记忆标题不能为空';
+      this.formError = '记忆标题不能为空';
       return;
     }
     if (title.length > GROUP_MEMORY_TITLE_MAX) {
-      this.actionError = '记忆标题超过长度上限';
+      this.formError = '记忆标题超过长度上限';
       return;
     }
     if (content.length === 0) {
-      this.actionError = '记忆内容不能为空';
+      this.formError = '记忆内容不能为空';
       return;
     }
     if (content.length > GROUP_MEMORY_CONTENT_MAX) {
-      this.actionError = '记忆内容超过长度上限';
+      this.formError = '记忆内容超过长度上限';
       return;
     }
-    this.actionError = '';
+    this.formError = '';
+
+    const isEdit: boolean = this.formMode === GroupMemoryFormMode.Edit;
     if (isEdit) {
       const input: UpdateGroupMemoryFormInput = {
         memoryId: this.editingMemoryId,
@@ -912,10 +1025,10 @@ struct GroupCharacterMemoryPage {
       };
       const result = await this.viewModel.updateMemory(input);
       if (result.success) {
-        this.formMode = GroupMemoryFormMode.None;
+        this.formVisible = false;
         await this.loadSnapshot();
       } else {
-        this.actionError = result.errorMessage;
+        this.formError = result.errorMessage;
       }
     } else {
       const input: CreateGroupMemoryFormInput = {
@@ -926,10 +1039,10 @@ struct GroupCharacterMemoryPage {
       };
       const result = await this.viewModel.createMemory(input);
       if (result.success) {
-        this.formMode = GroupMemoryFormMode.None;
+        this.formVisible = false;
         await this.loadSnapshot();
       } else {
-        this.actionError = result.errorMessage;
+        this.formError = result.errorMessage;
       }
     }
   }

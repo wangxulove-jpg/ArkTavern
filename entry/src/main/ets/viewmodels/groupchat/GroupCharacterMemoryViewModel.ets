@@ -284,6 +284,11 @@ export class GroupCharacterMemoryViewModel {
         characterId, characterMissing, participants
       );
       const canCreateMemory: boolean = memberStatus === GroupCharacterMemberStatus.ActiveMember;
+      Logger.info(LOG_TAG, 'loadSnapshot: characterId=' + characterId
+        + ' characterMissing=' + characterMissing
+        + ' participants.length=' + participants.length
+        + ' memberStatus=' + memberStatus
+        + ' canCreateMemory=' + canCreateMemory);
 
       // 4. 加载记忆列表
       const memoryFilter: GroupCharacterMemoryFilter = this.toServiceFilter(filter);
