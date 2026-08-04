@@ -114,3 +114,5 @@ docs/*
 /reference/
 /docs/
 /tools/
+/opencode.json
+/panel.bat
