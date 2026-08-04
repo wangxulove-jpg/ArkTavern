@@ -7,6 +7,7 @@
  * - 删除 Chat 时同步清理 Swipe 数据(Group + Candidates)
  * - 删除 Chat 时同步清理 Branch 数据(T-6.4A)
  * - 删除 Chat 时同步清理多人聊天角色记忆(G-MEMORY-1A)
+ * - 删除 Chat 时同步清理多人角色关系记忆(G-MEMORY-AUTO-1B)
  *
  * 不负责:
  * - 单表 CRUD(见 ChatRepository / MessageRepository / MessageSwipeRepository / ConversationBranchRepository)
@@ -15,7 +16,7 @@
  * 规则:
  * - 使用 DbHelper.runInTransaction 保证原子性
  * - 任一步失败全部回滚
- * - 删除顺序(T-6.4A / G-MEMORY-1A):
+ * - 删除顺序(T-6.4A / G-MEMORY-1A / G-MEMORY-AUTO-1B):
  *   1. conversation_branch_swipe_selections(通过 BranchPersistenceService)
  *   2. conversation_branch_messages
  *   3. chat_branch_state
@@ -24,8 +25,9 @@
  *   6. message_swipe_groups
  *   7. messages
  *   8. group_character_memories(G-MEMORY-1A 多人聊天角色记忆级联清理,幂等)
- *   9. chat_participants(G-DATA-1A 多人聊天参与者,幂等)
- *   10. chats
+ *   9. group_character_relationship_memories(G-MEMORY-AUTO-1B 多人角色关系记忆级联清理,幂等)
+ *   10. chat_participants(G-DATA-1A 多人聊天参与者,幂等)
+ *   11. chats
  * - 删除不存在 Chat 时保持幂等(不抛错)
  * - 通过 WithStore 内部方法操作,避免嵌套事务
  * - branchPersistenceService 为可选参数,为 null 时跳过 Branch 清理(向后兼容旧测试)
@@ -38,6 +40,7 @@ import { MessageRepository } from './MessageRepository';
 import { MessageSwipeRepository } from './MessageSwipeRepository';
 import { ChatParticipantRepository } from './ChatParticipantRepository';
 import { GroupCharacterMemoryRepository } from './groupchat/GroupCharacterMemoryRepository';
+import { GroupCharacterRelationshipMemoryRepository } from './groupchat/GroupCharacterRelationshipMemoryRepository';
 import { ConversationBranchPersistenceService } from '../services/ConversationBranchPersistenceService';
 import { MemoryPersistenceService } from '../services/MemoryPersistenceService';
 import { DatabaseError } from '../models/DatabaseError';
@@ -52,6 +55,7 @@ export class ChatPersistenceOperations {
   private readonly memoryPersistenceService: MemoryPersistenceService | null;
   private readonly participantRepository: ChatParticipantRepository | null;
   private readonly groupCharacterMemoryRepository: GroupCharacterMemoryRepository | null;
+  private readonly groupCharacterRelationshipMemoryRepository: GroupCharacterRelationshipMemoryRepository | null;
 
   constructor(
     dbHelper: DbHelper,
@@ -61,7 +65,8 @@ export class ChatPersistenceOperations {
     branchPersistenceService: ConversationBranchPersistenceService | null = null,
     memoryPersistenceService: MemoryPersistenceService | null = null,
     participantRepository: ChatParticipantRepository | null = null,
-    groupCharacterMemoryRepository: GroupCharacterMemoryRepository | null = null
+    groupCharacterMemoryRepository: GroupCharacterMemoryRepository | null = null,
+    groupCharacterRelationshipMemoryRepository: GroupCharacterRelationshipMemoryRepository | null = null
   ) {
     this.dbHelper = dbHelper;
     this.chatRepository = chatRepository;
@@ -71,6 +76,7 @@ export class ChatPersistenceOperations {
     this.memoryPersistenceService = memoryPersistenceService;
     this.participantRepository = participantRepository;
     this.groupCharacterMemoryRepository = groupCharacterMemoryRepository;
+    this.groupCharacterRelationshipMemoryRepository = groupCharacterRelationshipMemoryRepository;
   }
 
   /**
@@ -84,18 +90,20 @@ export class ChatPersistenceOperations {
    * 7. message_swipe_groups
    * 8. messages
    * 9. group_character_memories(G-MEMORY-1A 多人聊天角色记忆级联清理,幂等)
-   * 10. chat_participants(G-DATA-1A 多人聊天参与者,幂等)
-   * 11. chats
+   * 10. group_character_relationship_memories(G-MEMORY-AUTO-1B 多人角色关系记忆级联清理,幂等)
+   * 11. chat_participants(G-DATA-1A 多人聊天参与者,幂等)
+   * 12. chats
    *
    * 任一步失败全部回滚。
    * 删除不存在 Chat 时保持幂等(不抛错)。
    * branchPersistenceService 为 null 时跳过 Branch 清理(步骤 1-4)。
    * memoryPersistenceService 为 null 时跳过 Memory 清理(步骤 5)。
    * groupCharacterMemoryRepository 为 null 时跳过多人角色记忆清理(步骤 9)。
-   * participantRepository 为 null 时跳过参与者清理(步骤 10)。
+   * groupCharacterRelationshipMemoryRepository 为 null 时跳过多人关系记忆清理(步骤 10)。
+   * participantRepository 为 null 时跳过参与者清理(步骤 11)。
    *
-   * 注意:G-MEMORY-1A 要求"删除整个群聊时必须在同一事务中删除该群聊的全部角色记忆",
-   * 不影响其他群聊中的同角色记忆(因为 group_character_memories 按 group_conversation_id 隔离)。
+   * 注意:G-MEMORY-AUTO-1B 要求"删除整个群聊时必须在同一事务中删除该群聊的全部关系记忆",
+   * 不影响其他群聊中的同角色关系(因为 group_character_relationship_memories 按 group_conversation_id 隔离)。
    */
   async removeChatWithMessages(chatId: string): Promise<void> {
     if (chatId === '') {
@@ -120,11 +128,15 @@ export class ChatPersistenceOperations {
           if (this.groupCharacterMemoryRepository !== null) {
             await this.groupCharacterMemoryRepository.deleteByGroupWithStore(store, chatId);
           }
-          // 10. 删除 chat_participants(G-DATA-1A,幂等,单聊无行也安全)
+          // 10. 删除 group_character_relationship_memories(G-MEMORY-AUTO-1B,幂等,单聊无行也安全)
+          if (this.groupCharacterRelationshipMemoryRepository !== null) {
+            await this.groupCharacterRelationshipMemoryRepository.deleteByGroupWithStore(store, chatId);
+          }
+          // 11. 删除 chat_participants(G-DATA-1A,幂等,单聊无行也安全)
           if (this.participantRepository !== null) {
             await this.participantRepository.deleteByChatIdWithStore(store, chatId);
           }
-          // 11. 删除 Chat(幂等,不存在不抛错)
+          // 12. 删除 Chat(幂等,不存在不抛错)
           await this.chatRepository.removeWithStore(store, chatId);
         }
       );

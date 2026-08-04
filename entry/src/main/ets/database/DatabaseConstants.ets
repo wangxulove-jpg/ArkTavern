@@ -6,7 +6,7 @@
  */
 
 export const DATABASE_NAME: string = 'arktavern.db';
-export const DATABASE_VERSION: number = 18;
+export const DATABASE_VERSION: number = 19;
 
 export const TABLE_CHARACTERS: string = 'characters';
 export const TABLE_CHATS: string = 'chats';
@@ -441,3 +441,46 @@ export const INDEX_GROUP_CHARACTER_MEMORIES_SOURCE_MESSAGE: string = 'idx_group_
 export const INDEX_GROUP_CHARACTER_MEMORIES_SOURCE_ROUND: string = 'idx_group_character_memories_source_round';
 export const INDEX_GROUP_CHARACTER_MEMORIES_SOURCE_HASH: string = 'idx_group_character_memories_source_hash';
 export const INDEX_GROUP_CHARACTER_MEMORIES_UPDATED_AT: string = 'idx_group_character_memories_updated_at';
+
+// ===== v19: 多人角色定向关系记忆(G-MEMORY-AUTO-1B) =====
+// 独立数据域,不复用 group_character_memories / chat_memories / world_character_memories。
+// 关系所有权属于 (group_conversation_id, owner_character_id, target_type, target_id):
+// - 关系有方向:A→B 与 B→A 完全隔离,各自一条记录
+// - 第一版每个方向对象只保留一条当前关系摘要(UNIQUE 约束)
+// - 再次批准新总结时 UPDATE 现有记录,保留新 sourceMessageIds/sourceHash/updatedAt
+// - 成员移除后关系记录保留(重新加入时恢复展示)
+// - 删除整个群聊时同事务级联清理
+// 表名 / 列名 / 索引名集中定义,Repository / Schema / Migration 只读取此处。
+export const TABLE_GROUP_CHARACTER_RELATIONSHIP_MEMORIES: string = 'group_character_relationship_memories';
+
+/** group_character_relationship_memories.owner_character_id 列名(发起方角色 ID) */
+export const COLUMN_OWNER_CHARACTER_ID: string = 'owner_character_id';
+/** group_character_relationship_memories.target_type 列名('user' / 'character') */
+export const COLUMN_TARGET_TYPE: string = 'target_type';
+/** group_character_relationship_memories.target_id 列名(用户固定 'user' 或 characters.id) */
+export const COLUMN_TARGET_ID: string = 'target_id';
+/** group_character_relationship_memories.experience_summary 列名(共同经历) */
+export const COLUMN_EXPERIENCE_SUMMARY: string = 'experience_summary';
+/** group_character_relationship_memories.attitude_summary 列名(owner 对对方的态度) */
+export const COLUMN_ATTITUDE_SUMMARY: string = 'attitude_summary';
+/** group_character_relationship_memories.relationship_summary 列名(当前关系概括) */
+export const COLUMN_RELATIONSHIP_SUMMARY: string = 'relationship_summary';
+/** group_character_relationship_memories.importance 列名(独立列,1-5 默认 3) */
+export const COLUMN_IMPORTANCE_GCRM: string = 'importance';
+/** group_character_relationship_memories.keywords_json 列名 */
+export const COLUMN_KEYWORDS_JSON: string = 'keywords_json';
+/** group_character_relationship_memories.source_message_ids_json 列名(JSON 数组) */
+export const COLUMN_SOURCE_MESSAGE_IDS_JSON: string = 'source_message_ids_json';
+/** group_character_relationship_memories.source_hash 列名(稳定哈希,防重复) */
+export const COLUMN_SOURCE_HASH_GCRM: string = 'source_hash';
+/** group_character_relationship_memories.source_type 列名('relationship_summary_v1') */
+export const COLUMN_SOURCE_TYPE_GCRM: string = 'source_type';
+
+// ===== v19: 多人角色关系记忆索引名 =====
+export const INDEX_GROUP_CHARACTER_RELATIONSHIP_MEMORIES_GROUP: string = 'idx_group_character_relationship_memories_group';
+export const INDEX_GROUP_CHARACTER_RELATIONSHIP_MEMORIES_OWNER: string = 'idx_group_character_relationship_memories_owner';
+export const INDEX_GROUP_CHARACTER_RELATIONSHIP_MEMORIES_OWNER_TARGET: string = 'idx_group_character_relationship_memories_owner_target';
+export const INDEX_GROUP_CHARACTER_RELATIONSHIP_MEMORIES_OWNER_STATUS: string = 'idx_group_character_relationship_memories_owner_status';
+export const INDEX_GROUP_CHARACTER_RELATIONSHIP_MEMORIES_TARGET: string = 'idx_group_character_relationship_memories_target';
+export const INDEX_GROUP_CHARACTER_RELATIONSHIP_MEMORIES_SOURCE_HASH: string = 'idx_group_character_relationship_memories_source_hash';
+export const INDEX_GROUP_CHARACTER_RELATIONSHIP_MEMORIES_UPDATED_AT: string = 'idx_group_character_relationship_memories_updated_at';

@@ -41,6 +41,15 @@ import {
   GroupCharacterMemoryItemUiModel,
   CreateGroupMemoryFormInput,
   UpdateGroupMemoryFormInput,
+  RelationshipListItemUiModel,
+  RelationshipCandidateUiModel,
+  UpdateRelationshipMemoryFormInput,
+  RELATIONSHIP_MEMORY_IMPORTANCE_MIN,
+  RELATIONSHIP_MEMORY_IMPORTANCE_MAX,
+  RELATIONSHIP_MEMORY_IMPORTANCE_DEFAULT,
+  RELATIONSHIP_EXPERIENCE_MAX,
+  RELATIONSHIP_ATTITUDE_MAX,
+  RELATIONSHIP_SUMMARY_MAX,
   GROUP_MEMORY_IMPORTANCE_MIN,
   GROUP_MEMORY_IMPORTANCE_MAX,
   GROUP_MEMORY_IMPORTANCE_DEFAULT,
@@ -52,6 +61,7 @@ import {
   PENDING_GROUP_MEMORY_CHARACTER_ID_KEY
 } from '../../viewmodels/groupchat/GroupChatUiModels';
 import { GroupCharacterMemoryStatus } from '../../models/groupchat/GroupCharacterMemory';
+import { GroupRelationshipMemoryStatus } from '../../models/groupchat/GroupCharacterRelationshipMemory';
 import { CharacterImageView } from '../../components/CharacterImageView';
 import { EmptyStateView } from '../../components/EmptyStateView';
 import { Logger } from '../../utils/Logger';
@@ -62,6 +72,12 @@ const LOG_TAG: string = 'GroupCharacterMemoryPage';
 enum GroupMemoryFormMode {
   Create,
   Edit
+}
+
+/** 页面视图模式:记忆列表 / 关系与经历列表 */
+enum PageViewMode {
+  Memory,
+  Relationship
 }
 
 @Entry
@@ -123,6 +139,35 @@ struct GroupCharacterMemoryPage {
   @State private isSummarizing: boolean = false;
   @State private isApprovingSummaryState: boolean = false;
 
+  // G-MEMORY-AUTO-1B 关系与经历
+  // viewMode: 当前页面视图(记忆 / 关系)
+  // relationshipList: 关系记忆列表(从 ViewModel 同步)
+  // relationshipReviewVisible: 关系候选审核窗口
+  // relationshipDetailVisible: 关系详情窗口
+  // relationshipEditVisible: 关系编辑表单窗口
+  // relationshipCandidates: 当前审核中的候选(本地可编辑副本)
+  // isPreparingRelationship / isApprovingRelationship: 从 ViewModel 同步
+  @State private viewMode: PageViewMode = PageViewMode.Memory;
+  @State private relationshipList: RelationshipListItemUiModel[] = [];
+  @State private isRelationshipListLoading: boolean = false;
+  @State private relationshipActionError: string = '';
+  @State private relationshipReviewVisible: boolean = false;
+  @State private relationshipCandidates: RelationshipCandidateUiModel[] = [];
+  @State private isPreparingRelationship: boolean = false;
+  @State private isApprovingRelationship: boolean = false;
+  @State private relationshipReviewError: string = '';
+  @State private relationshipDetailVisible: boolean = false;
+  @State private relationshipDetailId: string = '';
+  @State private relationshipDetail: RelationshipListItemUiModel | null = null;
+  @State private relationshipEditVisible: boolean = false;
+  @State private editingRelationshipId: string = '';
+  @State private relFormExperience: string = '';
+  @State private relFormAttitude: string = '';
+  @State private relFormRelationship: string = '';
+  @State private relFormImportance: number = RELATIONSHIP_MEMORY_IMPORTANCE_DEFAULT;
+  @State private relFormKeywords: string = '';
+  @State private relFormError: string = '';
+
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navBarHeight') navBarHeight: number = 0;
 
@@ -146,7 +191,9 @@ struct GroupCharacterMemoryPage {
         AppServices.getGroupConversationPersistenceService(),
         AppServices.getCharacterService(),
         AppServices.getGroupCharacterMemoryService(),
-        AppServices.getGroupCharacterSelfSummaryService()
+        AppServices.getGroupCharacterSelfSummaryService(),
+        AppServices.getGroupCharacterRelationshipMemoryService(),
+        AppServices.getGroupCharacterRelationshipSummaryService()
       );
       this.viewModel.setTarget(groupConversationId, characterId);
       this.isInitializing = false;
@@ -251,6 +298,21 @@ struct GroupCharacterMemoryPage {
       if (this.detailVisible) {
         this.memoryDetailOverlay()
       }
+
+      // G-MEMORY-AUTO-1B 关系候选审核 Stack 覆盖层(与其他互斥)
+      if (this.relationshipReviewVisible) {
+        this.relationshipReviewOverlay()
+      }
+
+      // G-MEMORY-AUTO-1B 关系详情 Stack 覆盖层(与其他互斥)
+      if (this.relationshipDetailVisible) {
+        this.relationshipDetailOverlay()
+      }
+
+      // G-MEMORY-AUTO-1B 关系编辑表单 Stack 覆盖层(与其他互斥)
+      if (this.relationshipEditVisible) {
+        this.relationshipEditOverlay()
+      }
     }
     .width('100%')
     .height('100%')
@@ -347,37 +409,90 @@ struct GroupCharacterMemoryPage {
       // 角色头部
       this.characterHeaderArea()
 
-      // 筛选
-      this.filterBar()
+      // G-MEMORY-AUTO-1B 视图切换栏:记忆 / 关系与经历
+      this.viewModeBar()
 
-      // 错误提示
-      if (this.actionError.length > 0) {
-        Text(this.actionError)
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_danger'))
-          .width('100%')
-          .padding({ left: 16, right: 16, top: 4, bottom: 4 })
-      }
-
-      // 列表
-      if (this.memories.length === 0) {
-        this.emptyMemoryView()
+      if (this.viewMode === PageViewMode.Relationship) {
+        // 关系与经历视图
+        this.relationshipContentView()
       } else {
-        List() {
-          ForEach(this.memories, (m: GroupCharacterMemoryItemUiModel) => {
-            ListItem() {
-              this.memoryCard(m)
-            }
-          }, (m: GroupCharacterMemoryItemUiModel) => m.id)
+        // 记忆视图(原有逻辑)
+        this.filterBar()
+
+        // 错误提示
+        if (this.actionError.length > 0) {
+          Text(this.actionError)
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_danger'))
+            .width('100%')
+            .padding({ left: 16, right: 16, top: 4, bottom: 4 })
         }
-        .layoutWeight(1)
-        .width('100%')
-        .padding({ left: 12, right: 12, top: 4, bottom: 4 })
-        .scrollBar(BarState.Auto)
+
+        // 列表
+        if (this.memories.length === 0) {
+          this.emptyMemoryView()
+        } else {
+          List() {
+            ForEach(this.memories, (m: GroupCharacterMemoryItemUiModel) => {
+              ListItem() {
+                this.memoryCard(m)
+              }
+            }, (m: GroupCharacterMemoryItemUiModel) => m.id)
+          }
+          .layoutWeight(1)
+          .width('100%')
+          .padding({ left: 12, right: 12, top: 4, bottom: 4 })
+          .scrollBar(BarState.Auto)
+        }
       }
     }
     .width('100%')
     .layoutWeight(1)
+  }
+
+  /**
+   * G-MEMORY-AUTO-1B 视图切换栏。
+   * 在角色头部下方显示两个切换按钮:记忆 / 关系与经历。
+   * 切换时加载对应数据。
+   */
+  @Builder
+  viewModeBar(): void {
+    Row() {
+      Button('记忆')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor(this.viewMode === PageViewMode.Memory
+          ? $r('app.color.app_on_accent') : $r('app.color.app_text_secondary'))
+        .backgroundColor(this.viewMode === PageViewMode.Memory
+          ? $r('app.color.app_accent') : $r('app.color.app_surface_2'))
+        .borderRadius($r('app.float.app_radius_sm'))
+        .height(30)
+        .padding({ left: 14, right: 14 })
+        .enabled(!this.isSaving && !this.isDeleting
+          && !this.isSummarizing && !this.isApprovingSummaryState
+          && !this.isPreparingRelationship && !this.isApprovingRelationship)
+        .onClick(() => { this.switchViewMode(PageViewMode.Memory); })
+
+      Button('关系与经历')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor(this.viewMode === PageViewMode.Relationship
+          ? $r('app.color.app_on_accent') : $r('app.color.app_text_secondary'))
+        .backgroundColor(this.viewMode === PageViewMode.Relationship
+          ? $r('app.color.app_accent') : $r('app.color.app_surface_2'))
+        .borderRadius($r('app.float.app_radius_sm'))
+        .height(30)
+        .padding({ left: 14, right: 14 })
+        .margin({ left: 8 })
+        .enabled(!this.isSaving && !this.isDeleting
+          && !this.isSummarizing && !this.isApprovingSummaryState
+          && !this.isPreparingRelationship && !this.isApprovingRelationship)
+        .accessibilityText('关系与经历')
+        .onClick(() => { this.switchViewMode(PageViewMode.Relationship); })
+
+      Blank().layoutWeight(1)
+    }
+    .width('100%')
+    .padding({ left: 16, right: 16, top: 8, bottom: 4 })
+    .alignItems(VerticalAlign.Center)
   }
 
   @Builder
@@ -1948,5 +2063,1437 @@ struct GroupCharacterMemoryPage {
       opts.push(n);
     }
     return opts;
+  }
+
+  // ===== G-MEMORY-AUTO-1B 关系与经历 =====
+
+  /**
+   * 关系视图主内容。
+   * - 顶部视角提示
+   * - 操作栏(总结新关系按钮)
+   * - 关系列表
+   */
+  @Builder
+  relationshipContentView(): void {
+    Column() {
+      // 视角提示
+      Text(this.buildRelationshipPerspectiveHint())
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_tertiary'))
+        .width('100%')
+        .padding({ left: 16, right: 16, top: 4, bottom: 4 })
+        .textAlign(TextAlign.Start)
+
+      // 操作栏
+      Row() {
+        Text('关系记录: ' + this.relationshipList.length.toString() + ' 条')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .layoutWeight(1)
+
+        Button(this.isPreparingRelationship ? '总结中…' : '总结新关系')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_on_accent'))
+          .backgroundColor($r('app.color.app_accent'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(32)
+          .padding({ left: 12, right: 12 })
+          .enabled(this.canUseRelationship()
+            && !this.isPreparingRelationship
+            && !this.isApprovingRelationship
+            && !this.isSaving && !this.isDeleting
+            && !this.isSummarizing && !this.isApprovingSummaryState)
+          .accessibilityText('总结新关系')
+          .onClick(() => { this.handlePrepareRelationship(); })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 4, bottom: 4 })
+      .alignItems(VerticalAlign.Center)
+
+      // 错误提示
+      if (this.relationshipActionError.length > 0) {
+        Text(this.relationshipActionError)
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_danger'))
+          .width('100%')
+          .padding({ left: 16, right: 16, top: 4, bottom: 4 })
+      }
+
+      // 列表
+      if (this.isRelationshipListLoading) {
+        Column() {
+          LoadingProgress().width(32).height(32).color($r('app.color.app_accent'))
+        }
+        .width('100%')
+        .layoutWeight(1)
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+      } else if (this.relationshipList.length === 0) {
+        Column() {
+          EmptyStateView({
+            title: '暂无关系记录',
+            description: this.canUseRelationship() ? '点击"总结新关系"生成关系记忆' : '关系总结服务未初始化'
+          })
+        }
+        .width('100%')
+        .layoutWeight(1)
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+      } else {
+        List() {
+          ForEach(this.relationshipList, (r: RelationshipListItemUiModel) => {
+            ListItem() {
+              this.relationshipCard(r)
+            }
+          }, (r: RelationshipListItemUiModel) => r.id)
+        }
+        .layoutWeight(1)
+        .width('100%')
+        .padding({ left: 12, right: 12, top: 4, bottom: 4 })
+        .scrollBar(BarState.Auto)
+      }
+    }
+    .width('100%')
+    .layoutWeight(1)
+  }
+
+  /** 关系视角提示文本 */
+  private buildRelationshipPerspectiveHint(): string {
+    const name: string = this.header !== null ? this.header.displayName : '角色';
+    return '以下内容以 ' + name + ' 的视角记录';
+  }
+
+  /** 是否可以使用关系功能 */
+  private canUseRelationship(): boolean {
+    return this.viewModel !== null && this.viewModel.canUseRelationship();
+  }
+
+  /**
+   * 关系卡片。
+   * 显示:对象头像/名称、方向标签、关系摘要、态度摘要、重要度、关键词、更新时间、状态。
+   */
+  @Builder
+  relationshipCard(r: RelationshipListItemUiModel): void {
+    Column() {
+      // 第一行:对象头像 + 名称 + 方向标签
+      Row() {
+        CharacterImageView({
+          imageUri: r.targetAvatarUri,
+          fallbackName: r.targetName,
+          imgWidth: 32,
+          imgHeight: 32,
+          imgBorderRadius: 16,
+          displayMode: 'thumbnail'
+        })
+
+        Column() {
+          Text(r.targetName)
+            .fontSize($r('app.float.app_font_body'))
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.app_text_primary'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+          Text(r.directionLabel)
+            .fontSize(11)
+            .fontColor($r('app.color.app_text_tertiary'))
+            .maxLines(1)
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+        .margin({ left: 8 })
+
+        // 状态标签
+        Text(r.statusLabel)
+          .fontSize(11)
+          .fontColor(r.status === GroupRelationshipMemoryStatus.Active
+            ? $r('app.color.app_accent') : $r('app.color.app_text_tertiary'))
+          .backgroundColor($r('app.color.app_surface_2'))
+          .borderRadius(3)
+          .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+
+        if (r.isTargetRemoved) {
+          Text('已移出群聊')
+            .fontSize(11)
+            .fontColor($r('app.color.app_text_tertiary'))
+            .backgroundColor($r('app.color.app_surface_2'))
+            .borderRadius(3)
+            .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+            .margin({ left: 4 })
+        }
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      // 关系摘要
+      if (r.relationshipSummary.length > 0) {
+        Text(r.relationshipSummary)
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .width('100%')
+          .margin({ top: 6 })
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .textAlign(TextAlign.Start)
+      }
+
+      // 态度摘要
+      if (r.attitudeSummary.length > 0) {
+        Text('态度:' + r.attitudePreview)
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_tertiary'))
+          .width('100%')
+          .margin({ top: 4 })
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .textAlign(TextAlign.Start)
+      }
+
+      // 重要度 + 关键词 + 时间
+      Row() {
+        Text(this.importanceLabel(r.importance))
+          .fontSize(11)
+          .fontColor($r('app.color.app_text_secondary'))
+          .backgroundColor($r('app.color.app_surface_2'))
+          .borderRadius(3)
+          .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+
+        if (r.keywordsText.length > 0) {
+          Text(r.keywordsText)
+            .fontSize(11)
+            .fontColor($r('app.color.app_text_tertiary'))
+            .backgroundColor($r('app.color.app_surface_2'))
+            .borderRadius(3)
+            .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+            .margin({ left: 6 })
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .constraintSize({ maxWidth: 140 })
+        }
+
+        Blank().layoutWeight(1)
+
+        Text(r.updatedAtLabel)
+          .fontSize(10)
+          .fontColor($r('app.color.app_text_tertiary'))
+      }
+      .width('100%')
+      .margin({ top: 6 })
+      .alignItems(VerticalAlign.Center)
+    }
+    .width('100%')
+    .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+    .backgroundColor($r('app.color.app_surface_1'))
+    .borderRadius($r('app.float.app_radius_md'))
+    .margin({ bottom: 8 })
+    .alignItems(HorizontalAlign.Start)
+    .onClick(() => { this.openRelationshipDetail(r.id); })
+  }
+
+  /**
+   * 关系详情 Stack 覆盖层。
+   * 显示完整关系信息,提供 修改 / 归档 / 恢复 入口。
+   */
+  @Builder
+  relationshipDetailOverlay(): void {
+    Stack() {
+      Column() {
+        if (this.relationshipDetail === null) {
+          Text('关系记录不存在或已删除')
+            .fontSize($r('app.float.app_font_body'))
+            .fontColor($r('app.color.app_text_secondary'))
+            .margin({ top: 24, bottom: 24 })
+          Button('关闭')
+            .fontSize($r('app.float.app_font_body'))
+            .fontColor($r('app.color.app_on_accent'))
+            .backgroundColor($r('app.color.app_accent'))
+            .borderRadius($r('app.float.app_radius_sm'))
+            .height(40)
+            .padding({ left: 24, right: 24 })
+            .margin({ bottom: 16 })
+            .onClick(() => { this.closeRelationshipDetail(); })
+        } else {
+          // 标题栏
+          Row() {
+            Text('关系详情')
+              .fontSize($r('app.float.app_font_title'))
+              .fontWeight(FontWeight.Bold)
+              .fontColor($r('app.color.app_text_primary'))
+              .layoutWeight(1)
+
+            Button('关闭')
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_accent'))
+              .backgroundColor(Color.Transparent)
+              .height(32)
+              .accessibilityText('关闭关系详情')
+              .onClick(() => { this.closeRelationshipDetail(); })
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Center)
+          .margin({ bottom: 12 })
+
+          // 可滚动内容区
+          Scroll() {
+            Column() {
+              // 视角提示
+              Text(this.buildRelationshipPerspectiveHint())
+                .fontSize($r('app.float.app_font_caption'))
+                .fontColor($r('app.color.app_text_tertiary'))
+                .width('100%')
+                .margin({ top: 0, bottom: 12 })
+                .textAlign(TextAlign.Start)
+
+              // 对象信息 + 方向
+              Row() {
+                CharacterImageView({
+                  imageUri: this.relationshipDetail.targetAvatarUri,
+                  fallbackName: this.relationshipDetail.targetName,
+                  imgWidth: 40,
+                  imgHeight: 40,
+                  imgBorderRadius: 20,
+                  displayMode: 'thumbnail'
+                })
+                Column() {
+                  Text(this.relationshipDetail.targetName)
+                    .fontSize($r('app.float.app_font_body'))
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor($r('app.color.app_text_primary'))
+                  Text(this.relationshipDetail.directionLabel)
+                    .fontSize(11)
+                    .fontColor($r('app.color.app_text_tertiary'))
+                }
+                .layoutWeight(1)
+                .alignItems(HorizontalAlign.Start)
+                .margin({ left: 10 })
+              }
+              .width('100%')
+              .alignItems(VerticalAlign.Center)
+
+              // 状态标签
+              Row() {
+                Text(this.relationshipDetail.statusLabel)
+                  .fontSize(11)
+                  .fontColor(this.relationshipDetail.status === GroupRelationshipMemoryStatus.Active
+                    ? $r('app.color.app_accent') : $r('app.color.app_text_tertiary'))
+                  .backgroundColor($r('app.color.app_surface_2'))
+                  .borderRadius(3)
+                  .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+
+                Text(this.importanceLabel(this.relationshipDetail.importance))
+                  .fontSize(11)
+                  .fontColor($r('app.color.app_text_secondary'))
+                  .backgroundColor($r('app.color.app_surface_2'))
+                  .borderRadius(3)
+                  .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+                  .margin({ left: 6 })
+
+                if (this.relationshipDetail.isTargetRemoved) {
+                  Text('已移出群聊')
+                    .fontSize(11)
+                    .fontColor($r('app.color.app_text_tertiary'))
+                    .backgroundColor($r('app.color.app_surface_2'))
+                    .borderRadius(3)
+                    .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+                    .margin({ left: 6 })
+                }
+              }
+              .width('100%')
+              .margin({ top: 8 })
+              .alignItems(VerticalAlign.Center)
+
+              // 共同经历
+              if (this.relationshipDetail.experienceSummary.length > 0) {
+                Text('共同经历')
+                  .fontSize($r('app.float.app_font_caption'))
+                  .fontColor($r('app.color.app_text_tertiary'))
+                  .width('100%')
+                  .margin({ top: 16 })
+                  .textAlign(TextAlign.Start)
+                Text(this.relationshipDetail.experienceSummary)
+                  .fontSize($r('app.float.app_font_body'))
+                  .fontColor($r('app.color.app_text_primary'))
+                  .width('100%')
+                  .margin({ top: 4 })
+                  .textAlign(TextAlign.Start)
+              }
+
+              // 态度
+              if (this.relationshipDetail.attitudeSummary.length > 0) {
+                Text('态度')
+                  .fontSize($r('app.float.app_font_caption'))
+                  .fontColor($r('app.color.app_text_tertiary'))
+                  .width('100%')
+                  .margin({ top: 16 })
+                  .textAlign(TextAlign.Start)
+                Text(this.relationshipDetail.attitudeSummary)
+                  .fontSize($r('app.float.app_font_body'))
+                  .fontColor($r('app.color.app_text_primary'))
+                  .width('100%')
+                  .margin({ top: 4 })
+                  .textAlign(TextAlign.Start)
+              }
+
+              // 关系
+              if (this.relationshipDetail.relationshipSummary.length > 0) {
+                Text('当前关系')
+                  .fontSize($r('app.float.app_font_caption'))
+                  .fontColor($r('app.color.app_text_tertiary'))
+                  .width('100%')
+                  .margin({ top: 16 })
+                  .textAlign(TextAlign.Start)
+                Text(this.relationshipDetail.relationshipSummary)
+                  .fontSize($r('app.float.app_font_body'))
+                  .fontColor($r('app.color.app_text_primary'))
+                  .width('100%')
+                  .margin({ top: 4 })
+                  .textAlign(TextAlign.Start)
+              }
+
+              // 关键词
+              if (this.relationshipDetail.keywordsText.length > 0) {
+                Text('关键词')
+                  .fontSize($r('app.float.app_font_caption'))
+                  .fontColor($r('app.color.app_text_tertiary'))
+                  .width('100%')
+                  .margin({ top: 16 })
+                  .textAlign(TextAlign.Start)
+                Text(this.relationshipDetail.keywordsText)
+                  .fontSize($r('app.float.app_font_body'))
+                  .fontColor($r('app.color.app_text_secondary'))
+                  .width('100%')
+                  .margin({ top: 4 })
+                  .textAlign(TextAlign.Start)
+              }
+
+              // 来源消息数量
+              Text('来源消息:' + this.relationshipDetail.sourceMessageCount.toString() + ' 条')
+                .fontSize($r('app.float.app_font_caption'))
+                .fontColor($r('app.color.app_text_tertiary'))
+                .width('100%')
+                .margin({ top: 16 })
+                .textAlign(TextAlign.Start)
+
+              // 时间信息
+              Text('创建:' + this.relationshipDetail.createdAtLabel)
+                .fontSize($r('app.float.app_font_caption'))
+                .fontColor($r('app.color.app_text_tertiary'))
+                .width('100%')
+                .margin({ top: 8 })
+                .textAlign(TextAlign.Start)
+              if (this.relationshipDetail.updatedAt !== this.relationshipDetail.createdAt
+                && this.relationshipDetail.updatedAtLabel.length > 0) {
+                Text('更新:' + this.relationshipDetail.updatedAtLabel)
+                  .fontSize($r('app.float.app_font_caption'))
+                  .fontColor($r('app.color.app_text_tertiary'))
+                  .width('100%')
+                  .margin({ top: 4 })
+                  .textAlign(TextAlign.Start)
+              }
+
+              // 操作按钮
+              if (this.relationshipDetail.canEdit || this.relationshipDetail.canArchive) {
+                Row() {
+                  if (this.relationshipDetail.canEdit) {
+                    Button('修改')
+                      .fontSize($r('app.float.app_font_body'))
+                      .backgroundColor($r('app.color.app_accent'))
+                      .fontColor($r('app.color.app_on_accent'))
+                      .borderRadius($r('app.float.app_radius_sm'))
+                      .height(40)
+                      .padding({ left: 16, right: 16 })
+                      .layoutWeight(1)
+                      .enabled(!this.isSaving && !this.isDeleting)
+                      .accessibilityText('修改关系')
+                      .onClick(() => {
+                        if (this.relationshipDetail !== null) {
+                          this.openRelationshipEdit(this.relationshipDetail);
+                        }
+                      })
+                  }
+
+                  if (this.relationshipDetail.canArchive) {
+                    if (this.relationshipDetail.status === GroupRelationshipMemoryStatus.Active) {
+                      Button('归档')
+                        .fontSize($r('app.float.app_font_body'))
+                        .backgroundColor($r('app.color.app_surface_2'))
+                        .fontColor($r('app.color.app_text_secondary'))
+                        .borderRadius($r('app.float.app_radius_sm'))
+                        .height(40)
+                        .padding({ left: 16, right: 16 })
+                        .margin({ left: 8 })
+                        .layoutWeight(1)
+                        .enabled(!this.isSaving && !this.isDeleting)
+                        .accessibilityText('归档关系')
+                        .onClick(() => {
+                          if (this.relationshipDetail !== null) {
+                            this.handleRelationshipArchive(this.relationshipDetail);
+                          }
+                        })
+                    } else if (this.relationshipDetail.status === GroupRelationshipMemoryStatus.Archived) {
+                      Button('恢复')
+                        .fontSize($r('app.float.app_font_body'))
+                        .backgroundColor($r('app.color.app_surface_2'))
+                        .fontColor($r('app.color.app_accent'))
+                        .borderRadius($r('app.float.app_radius_sm'))
+                        .height(40)
+                        .padding({ left: 16, right: 16 })
+                        .margin({ left: 8 })
+                        .layoutWeight(1)
+                        .enabled(!this.isSaving && !this.isDeleting)
+                        .accessibilityText('恢复关系')
+                        .onClick(() => {
+                          if (this.relationshipDetail !== null) {
+                            this.handleRelationshipArchive(this.relationshipDetail);
+                          }
+                        })
+                    }
+                  }
+                }
+                .width('100%')
+                .margin({ top: 24 })
+                .justifyContent(FlexAlign.SpaceBetween)
+                .alignItems(VerticalAlign.Center)
+              }
+
+              // 错误提示
+              if (this.relationshipActionError.length > 0) {
+                Text(this.relationshipActionError)
+                  .fontSize($r('app.float.app_font_caption'))
+                  .fontColor($r('app.color.app_danger'))
+                  .width('100%')
+                  .margin({ top: 12 })
+                  .padding({ top: 8, bottom: 8, left: 12, right: 12 })
+                  .backgroundColor($r('app.color.app_surface_2'))
+                  .borderRadius($r('app.float.app_radius_sm'))
+                  .textAlign(TextAlign.Start)
+              }
+
+              Blank().height(16)
+            }
+            .width('100%')
+            .alignItems(HorizontalAlign.Start)
+          }
+          .width('100%')
+          .layoutWeight(1)
+          .align(Alignment.TopStart)
+        }
+      }
+      .width('90%')
+      .padding({
+        left: $r('app.float.app_spacing_16'),
+        right: $r('app.float.app_spacing_16'),
+        top: $r('app.float.app_spacing_16'),
+        bottom: $r('app.float.app_spacing_16')
+      })
+      .backgroundColor($r('app.color.app_surface_1'))
+      .borderRadius($r('app.float.app_radius_lg'))
+      .constraintSize({ maxHeight: '85%' })
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor('rgba(0,0,0,0.5)')
+    .onClick(() => { this.closeRelationshipDetail(); })
+  }
+
+  /**
+   * 关系编辑表单 Stack 覆盖层。
+   * 允许修改:共同经历 / 态度 / 关系 / 重要度 / 关键词。
+   * 不可修改:targetType / targetId / owner / sourceMessageIds / sourceHash。
+   */
+  @Builder
+  relationshipEditOverlay(): void {
+    Stack() {
+      Column() {
+        // 标题栏
+        Row() {
+          Text('修改关系')
+            .fontSize($r('app.float.app_font_title'))
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.app_text_primary'))
+            .layoutWeight(1)
+
+          Text('关闭')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_tertiary'))
+            .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+            .onClick(() => { this.closeRelationshipEdit(); })
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16, top: 16, bottom: 8 })
+        .alignItems(VerticalAlign.Center)
+
+        Divider().color($r('app.color.app_divider'))
+
+        // 可滚动表单内容
+        Scroll() {
+          Column() {
+            // 对象信息(只读)
+            if (this.relationshipDetail !== null) {
+              Text('对象:' + this.relationshipDetail.targetName
+                + '  方向:' + this.relationshipDetail.directionLabel)
+                .fontSize($r('app.float.app_font_caption'))
+                .fontColor($r('app.color.app_text_tertiary'))
+                .width('100%')
+                .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+            }
+
+            // 共同经历
+            Text('共同经历')
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_text_secondary'))
+              .width('100%')
+              .padding({ left: 16, bottom: 4 })
+            TextArea({ text: this.relFormExperience, placeholder: '双方发生过什么' })
+              .fontSize($r('app.float.app_font_body'))
+              .fontColor($r('app.color.app_text_primary'))
+              .backgroundColor($r('app.color.app_surface_2'))
+              .borderRadius($r('app.float.app_radius_md'))
+              .width('100%')
+              .height(100)
+              .margin({ left: 16, right: 16, bottom: 4 })
+              .maxLength(RELATIONSHIP_EXPERIENCE_MAX)
+              .onChange((v: string) => { this.relFormExperience = v; })
+            Text(this.relFormExperience.length.toString() + ' / ' + RELATIONSHIP_EXPERIENCE_MAX.toString())
+              .fontSize(10)
+              .fontColor($r('app.color.app_text_tertiary'))
+              .width('100%')
+              .padding({ left: 16, right: 16, bottom: 8 })
+
+            // 态度
+            Text('态度')
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_text_secondary'))
+              .width('100%')
+              .padding({ left: 16, bottom: 4 })
+            TextArea({ text: this.relFormAttitude, placeholder: 'owner 对对方的态度' })
+              .fontSize($r('app.float.app_font_body'))
+              .fontColor($r('app.color.app_text_primary'))
+              .backgroundColor($r('app.color.app_surface_2'))
+              .borderRadius($r('app.float.app_radius_md'))
+              .width('100%')
+              .height(100)
+              .margin({ left: 16, right: 16, bottom: 4 })
+              .maxLength(RELATIONSHIP_ATTITUDE_MAX)
+              .onChange((v: string) => { this.relFormAttitude = v; })
+            Text(this.relFormAttitude.length.toString() + ' / ' + RELATIONSHIP_ATTITUDE_MAX.toString())
+              .fontSize(10)
+              .fontColor($r('app.color.app_text_tertiary'))
+              .width('100%')
+              .padding({ left: 16, right: 16, bottom: 8 })
+
+            // 关系
+            Text('当前关系')
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_text_secondary'))
+              .width('100%')
+              .padding({ left: 16, bottom: 4 })
+            TextArea({ text: this.relFormRelationship, placeholder: '当前关系的谨慎概括' })
+              .fontSize($r('app.float.app_font_body'))
+              .fontColor($r('app.color.app_text_primary'))
+              .backgroundColor($r('app.color.app_surface_2'))
+              .borderRadius($r('app.float.app_radius_md'))
+              .width('100%')
+              .height(100)
+              .margin({ left: 16, right: 16, bottom: 4 })
+              .maxLength(RELATIONSHIP_SUMMARY_MAX)
+              .onChange((v: string) => { this.relFormRelationship = v; })
+            Text(this.relFormRelationship.length.toString() + ' / ' + RELATIONSHIP_SUMMARY_MAX.toString())
+              .fontSize(10)
+              .fontColor($r('app.color.app_text_tertiary'))
+              .width('100%')
+              .padding({ left: 16, right: 16, bottom: 8 })
+
+            // 重要度
+            Text('重要度')
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_text_secondary'))
+              .width('100%')
+              .padding({ left: 16, bottom: 4 })
+            Row() {
+              ForEach(this.relationshipImportanceOptions(), (n: number) => {
+                Button(n.toString())
+                  .fontSize($r('app.float.app_font_caption'))
+                  .fontColor(this.relFormImportance === n
+                    ? $r('app.color.app_on_accent') : $r('app.color.app_text_primary'))
+                  .backgroundColor(this.relFormImportance === n
+                    ? $r('app.color.app_accent') : $r('app.color.app_surface_2'))
+                  .borderRadius($r('app.float.app_radius_sm'))
+                  .height(32)
+                  .width(44)
+                  .margin({ right: 6 })
+                  .onClick(() => { this.relFormImportance = n; })
+              }, (n: number) => n.toString())
+            }
+            .width('100%')
+            .padding({ left: 16, right: 16, bottom: 8 })
+            .alignItems(VerticalAlign.Center)
+
+            // 关键词
+            Text('关键词')
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_text_secondary'))
+              .width('100%')
+              .padding({ left: 16, bottom: 4 })
+            TextInput({ placeholder: '逗号分隔', text: this.relFormKeywords })
+              .fontSize($r('app.float.app_font_body'))
+              .fontColor($r('app.color.app_text_primary'))
+              .backgroundColor($r('app.color.app_surface_2'))
+              .borderRadius($r('app.float.app_radius_md'))
+              .width('100%')
+              .height(44)
+              .margin({ left: 16, right: 16, bottom: 8 })
+              .onChange((v: string) => { this.relFormKeywords = v; })
+
+            // 表单内错误提示
+            if (this.relFormError.length > 0) {
+              Text(this.relFormError)
+                .fontSize($r('app.float.app_font_caption'))
+                .fontColor($r('app.color.app_danger'))
+                .width('100%')
+                .padding({ left: 16, right: 16, bottom: 8 })
+            }
+          }
+          .width('100%')
+          .alignItems(HorizontalAlign.Start)
+        }
+        .layoutWeight(1)
+        .width('100%')
+        .scrollBar(BarState.Auto)
+        .edgeEffect(EdgeEffect.Spring)
+
+        // 底部固定操作区
+        Row() {
+          Button($r('app.string.group_cancel'))
+            .fontSize($r('app.float.app_font_body'))
+            .fontColor($r('app.color.app_text_secondary'))
+            .backgroundColor($r('app.color.app_surface_2'))
+            .borderRadius($r('app.float.app_radius_sm'))
+            .height(40)
+            .layoutWeight(1)
+            .margin({ right: 8 })
+            .enabled(!this.isSaving)
+            .onClick(() => { this.closeRelationshipEdit(); })
+          Button(this.isSaving ? '保存中…' : '保存修改')
+            .fontSize($r('app.float.app_font_body'))
+            .fontColor($r('app.color.app_on_accent'))
+            .backgroundColor($r('app.color.app_accent'))
+            .borderRadius($r('app.float.app_radius_sm'))
+            .height(40)
+            .layoutWeight(1)
+            .enabled(!this.isSaving)
+            .onClick(() => { this.submitRelationshipEdit(); })
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16, top: 8, bottom: 16 })
+      }
+      .width('92%')
+      .constraintSize({ maxHeight: '85%' })
+      .backgroundColor($r('app.color.app_surface_1'))
+      .borderRadius(12)
+      .onClick(() => {})
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor('rgba(0,0,0,0.5)')
+    .onClick(() => { this.closeRelationshipEdit(); })
+  }
+
+  /**
+   * 关系候选审核 Stack 覆盖层。
+   * 显示模型生成的所有候选,用户可逐条编辑、批准、拒绝。
+   */
+  @Builder
+  relationshipReviewOverlay(): void {
+    Stack() {
+      Column() {
+        // 标题栏
+        Row() {
+          Text('关系总结结果')
+            .fontSize($r('app.float.app_font_title'))
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.app_text_primary'))
+            .layoutWeight(1)
+
+          Text('关闭')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_tertiary'))
+            .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+            .onClick(() => { this.closeRelationshipReview(); })
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16, top: 16, bottom: 8 })
+        .alignItems(VerticalAlign.Center)
+
+        Divider().color($r('app.color.app_divider'))
+
+        // 来源信息(只读)
+        Text(this.buildRelationshipSourceInfo())
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_tertiary'))
+          .width('100%')
+          .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+
+        // 候选列表
+        if (this.relationshipCandidates.length === 0) {
+          Column() {
+            Text('没有形成明确的关系记忆')
+              .fontSize($r('app.float.app_font_body'))
+              .fontColor($r('app.color.app_text_secondary'))
+              .margin({ top: 24, bottom: 24 })
+          }
+          .width('100%')
+          .layoutWeight(1)
+          .justifyContent(FlexAlign.Center)
+          .alignItems(HorizontalAlign.Center)
+        } else {
+          Scroll() {
+            Column() {
+              ForEach(this.relationshipCandidates, (c: RelationshipCandidateUiModel) => {
+                this.relationshipCandidateCard(c)
+              }, (c: RelationshipCandidateUiModel) => c.targetType + '_' + c.targetId)
+            }
+            .width('100%')
+            .alignItems(HorizontalAlign.Start)
+          }
+          .layoutWeight(1)
+          .width('100%')
+          .scrollBar(BarState.Auto)
+          .edgeEffect(EdgeEffect.Spring)
+        }
+
+        // 审核错误提示
+        if (this.relationshipReviewError.length > 0) {
+          Text(this.relationshipReviewError)
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_danger'))
+            .width('100%')
+            .padding({ left: 16, right: 16, bottom: 8 })
+        }
+
+        // 底部固定操作区
+        Row() {
+          Button('全部拒绝')
+            .fontSize($r('app.float.app_font_body'))
+            .fontColor($r('app.color.app_text_secondary'))
+            .backgroundColor($r('app.color.app_surface_2'))
+            .borderRadius($r('app.float.app_radius_sm'))
+            .height(40)
+            .layoutWeight(1)
+            .margin({ right: 6 })
+            .enabled(!this.isApprovingRelationship)
+            .onClick(() => { this.handleRejectAllCandidates(); })
+          Button('全部批准')
+            .fontSize($r('app.float.app_font_body'))
+            .fontColor($r('app.color.app_on_accent'))
+            .backgroundColor($r('app.color.app_accent'))
+            .borderRadius($r('app.float.app_radius_sm'))
+            .height(40)
+            .layoutWeight(1)
+            .margin({ right: 6 })
+            .enabled(!this.isApprovingRelationship && this.hasPendingCandidates())
+            .onClick(() => { this.handleApproveAllCandidates(); })
+          Button('完成')
+            .fontSize($r('app.float.app_font_body'))
+            .fontColor($r('app.color.app_accent'))
+            .backgroundColor($r('app.color.app_surface_2'))
+            .borderRadius($r('app.float.app_radius_sm'))
+            .height(40)
+            .layoutWeight(1)
+            .enabled(!this.isApprovingRelationship)
+            .onClick(() => { this.handleFinishReview(); })
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16, top: 8, bottom: 16 })
+      }
+      .width('92%')
+      .constraintSize({ maxHeight: '90%' })
+      .backgroundColor($r('app.color.app_surface_1'))
+      .borderRadius(12)
+      .onClick(() => {})
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor('rgba(0,0,0,0.5)')
+    .onClick(() => {
+      if (!this.isApprovingRelationship) {
+        this.closeRelationshipReview();
+      }
+    })
+  }
+
+  /**
+   * 单个关系候选卡片(审核窗口内)。
+   * 可编辑:experienceSummary / attitudeSummary / relationshipSummary / importance / keywords。
+   * 操作:批准 / 拒绝。
+   */
+  @Builder
+  relationshipCandidateCard(c: RelationshipCandidateUiModel): void {
+    Column() {
+      // 对象信息 + 方向 + 审核状态
+      Row() {
+        CharacterImageView({
+          imageUri: c.targetAvatarUri,
+          fallbackName: c.targetName,
+          imgWidth: 32,
+          imgHeight: 32,
+          imgBorderRadius: 16,
+          displayMode: 'thumbnail'
+        })
+        Column() {
+          Text(c.targetName)
+            .fontSize($r('app.float.app_font_body'))
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.app_text_primary'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+          Text(c.directionLabel)
+            .fontSize(11)
+            .fontColor($r('app.color.app_text_tertiary'))
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+        .margin({ left: 8 })
+
+        // 审核状态徽标
+        if (c.reviewState === 'approved') {
+          Text('已批准')
+            .fontSize(11)
+            .fontColor($r('app.color.app_on_accent'))
+            .backgroundColor($r('app.color.app_accent'))
+            .borderRadius(3)
+            .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+        } else if (c.reviewState === 'rejected') {
+          Text('已拒绝')
+            .fontSize(11)
+            .fontColor($r('app.color.app_text_tertiary'))
+            .backgroundColor($r('app.color.app_surface_2'))
+            .borderRadius(3)
+            .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+        }
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      // 来源消息数量(只读)
+      Text('来源消息:' + c.sourceMessageIds.length.toString() + ' 条')
+        .fontSize(10)
+        .fontColor($r('app.color.app_text_tertiary'))
+        .width('100%')
+        .margin({ top: 4 })
+        .textAlign(TextAlign.Start)
+
+      // 共同经历(可编辑)
+      Text('共同经历')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_secondary'))
+        .width('100%')
+        .margin({ top: 8 })
+        .textAlign(TextAlign.Start)
+      TextArea({ text: c.experienceSummary, placeholder: '双方发生过什么' })
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_primary'))
+        .backgroundColor($r('app.color.app_surface_2'))
+        .borderRadius($r('app.float.app_radius_sm'))
+        .width('100%')
+        .height(70)
+        .margin({ top: 2 })
+        .maxLength(RELATIONSHIP_EXPERIENCE_MAX)
+        .enabled(c.reviewState === 'pending')
+        .onChange((v: string) => {
+          this.updateCandidateExperience(c, v);
+        })
+
+      // 态度(可编辑)
+      Text('态度')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_secondary'))
+        .width('100%')
+        .margin({ top: 8 })
+        .textAlign(TextAlign.Start)
+      TextArea({ text: c.attitudeSummary, placeholder: 'owner 对对方的态度' })
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_primary'))
+        .backgroundColor($r('app.color.app_surface_2'))
+        .borderRadius($r('app.float.app_radius_sm'))
+        .width('100%')
+        .height(70)
+        .margin({ top: 2 })
+        .maxLength(RELATIONSHIP_ATTITUDE_MAX)
+        .enabled(c.reviewState === 'pending')
+        .onChange((v: string) => {
+          this.updateCandidateAttitude(c, v);
+        })
+
+      // 关系(可编辑)
+      Text('当前关系')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_secondary'))
+        .width('100%')
+        .margin({ top: 8 })
+        .textAlign(TextAlign.Start)
+      TextArea({ text: c.relationshipSummary, placeholder: '当前关系的谨慎概括' })
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_primary'))
+        .backgroundColor($r('app.color.app_surface_2'))
+        .borderRadius($r('app.float.app_radius_sm'))
+        .width('100%')
+        .height(70)
+        .margin({ top: 2 })
+        .maxLength(RELATIONSHIP_SUMMARY_MAX)
+        .enabled(c.reviewState === 'pending')
+        .onChange((v: string) => {
+          this.updateCandidateRelationship(c, v);
+        })
+
+      // 重要度(可编辑)
+      Text('重要度')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_secondary'))
+        .width('100%')
+        .margin({ top: 8 })
+        .textAlign(TextAlign.Start)
+      Row() {
+        ForEach(this.relationshipImportanceOptions(), (n: number) => {
+          Button(n.toString())
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor(c.importance === n
+              ? $r('app.color.app_on_accent') : $r('app.color.app_text_primary'))
+            .backgroundColor(c.importance === n
+              ? $r('app.color.app_accent') : $r('app.color.app_surface_2'))
+            .borderRadius($r('app.float.app_radius_sm'))
+            .height(28)
+            .width(40)
+            .margin({ right: 4 })
+            .enabled(c.reviewState === 'pending')
+            .onClick(() => { this.updateCandidateImportance(c, n); })
+        }, (n: number) => n.toString())
+      }
+      .width('100%')
+      .margin({ top: 2 })
+      .alignItems(VerticalAlign.Center)
+
+      // 关键词(可编辑)
+      Text('关键词')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_secondary'))
+        .width('100%')
+        .margin({ top: 8 })
+        .textAlign(TextAlign.Start)
+      TextInput({ placeholder: '逗号分隔', text: c.keywordsText })
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_primary'))
+        .backgroundColor($r('app.color.app_surface_2'))
+        .borderRadius($r('app.float.app_radius_sm'))
+        .width('100%')
+        .height(36)
+        .margin({ top: 2 })
+        .enabled(c.reviewState === 'pending')
+        .onChange((v: string) => {
+          this.updateCandidateKeywords(c, v);
+        })
+
+      // 操作按钮
+      Row() {
+        Button('拒绝')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .backgroundColor($r('app.color.app_surface_2'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(32)
+          .layoutWeight(1)
+          .margin({ right: 6 })
+          .enabled(c.reviewState === 'pending' && !this.isApprovingRelationship)
+          .onClick(() => { this.handleRejectCandidate(c); })
+        Button('批准')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_on_accent'))
+          .backgroundColor($r('app.color.app_accent'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(32)
+          .layoutWeight(1)
+          .enabled(c.reviewState === 'pending' && !this.isApprovingRelationship)
+          .onClick(() => { this.handleApproveCandidate(c); })
+      }
+      .width('100%')
+      .margin({ top: 8 })
+      .alignItems(VerticalAlign.Center)
+    }
+    .width('100%')
+    .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+    .backgroundColor($r('app.color.app_surface_1'))
+    .borderRadius($r('app.float.app_radius_md'))
+    .margin({ bottom: 8 })
+    .alignItems(HorizontalAlign.Start)
+  }
+
+  // ===== 关系事件处理 =====
+
+  /** 切换视图模式 */
+  private async switchViewMode(mode: PageViewMode): Promise<void> {
+    if (this.viewMode === mode) {
+      return;
+    }
+    this.viewMode = mode;
+    this.actionError = '';
+    this.relationshipActionError = '';
+    if (mode === PageViewMode.Relationship && this.viewModel !== null) {
+      await this.viewModel.loadRelationshipList();
+      this.syncRelationshipFromViewModel();
+    }
+  }
+
+  /** 同步 ViewModel 关系状态到页面 @State */
+  private syncRelationshipFromViewModel(): void {
+    if (this.viewModel === null) {
+      return;
+    }
+    this.relationshipList = this.viewModel.relationshipList;
+    this.isRelationshipListLoading = this.viewModel.isRelationshipListLoading;
+    this.isPreparingRelationship = this.viewModel.isPreparingRelationship;
+    this.isApprovingRelationship = this.viewModel.isApprovingRelationship;
+    // 同步候选列表(从 ViewModel 获取最新数据)
+    this.relationshipCandidates = this.viewModel.relationshipCandidates.slice();
+    if (this.viewModel.relationshipError.length > 0) {
+      this.relationshipActionError = this.viewModel.relationshipError;
+    }
+  }
+
+  /** 点击"总结新关系"按钮 */
+  private async handlePrepareRelationship(): Promise<void> {
+    if (this.viewModel === null) {
+      return;
+    }
+    if (this.isPreparingRelationship || this.isApprovingRelationship) {
+      return;
+    }
+    this.relationshipActionError = '';
+    this.relationshipReviewError = '';
+    this.isPreparingRelationship = true;
+    await this.viewModel.prepareRelationshipSummary();
+    this.syncRelationshipFromViewModel();
+
+    if (this.viewModel.relationshipDraft !== null) {
+      this.relationshipReviewVisible = true;
+    } else {
+      this.relationshipActionError = this.viewModel.relationshipError;
+    }
+  }
+
+  /** 批准单个候选 */
+  private async handleApproveCandidate(c: RelationshipCandidateUiModel): Promise<void> {
+    if (this.viewModel === null) {
+      return;
+    }
+    if (this.isApprovingRelationship) {
+      return;
+    }
+    this.relationshipReviewError = '';
+    const result = await this.viewModel.approveRelationshipCandidate(c);
+    this.syncRelationshipFromViewModel();
+    if (!result.success) {
+      this.relationshipReviewError = result.errorMessage;
+    } else {
+      // 批准成功后刷新关系列表(后台刷新,不关闭窗口)
+      await this.viewModel.loadRelationshipList();
+      this.syncRelationshipFromViewModel();
+    }
+  }
+
+  /** 拒绝单个候选 */
+  private handleRejectCandidate(c: RelationshipCandidateUiModel): void {
+    if (this.viewModel === null) {
+      return;
+    }
+    this.viewModel.rejectRelationshipCandidate(c);
+    this.relationshipCandidates = this.viewModel.relationshipCandidates.slice();
+  }
+
+  /** 全部批准 */
+  private async handleApproveAllCandidates(): Promise<void> {
+    if (this.viewModel === null) {
+      return;
+    }
+    if (this.isApprovingRelationship) {
+      return;
+    }
+    if (!this.hasPendingCandidates()) {
+      this.relationshipReviewError = '没有待批准的候选';
+      return;
+    }
+    this.relationshipReviewError = '';
+    this.isApprovingRelationship = true;
+    const result = await this.viewModel.approveAllPendingCandidates();
+    this.syncRelationshipFromViewModel();
+    if (!result.success) {
+      this.relationshipReviewError = result.errorMessage;
+    } else {
+      await this.viewModel.loadRelationshipList();
+      this.syncRelationshipFromViewModel();
+    }
+  }
+
+  /** 全部拒绝 */
+  private handleRejectAllCandidates(): void {
+    if (this.viewModel === null) {
+      return;
+    }
+    this.viewModel.rejectAllPendingCandidates();
+    this.relationshipCandidates = this.viewModel.relationshipCandidates.slice();
+  }
+
+  /** 完成审核(关闭窗口) */
+  private async handleFinishReview(): Promise<void> {
+    this.closeRelationshipReview();
+    // 刷新关系列表
+    if (this.viewModel !== null) {
+      await this.viewModel.loadRelationshipList();
+      this.syncRelationshipFromViewModel();
+    }
+  }
+
+  /** 关闭审核窗口 */
+  private closeRelationshipReview(): void {
+    if (this.isApprovingRelationship) {
+      return;
+    }
+    if (this.viewModel !== null) {
+      this.viewModel.clearRelationshipDraft();
+    }
+    this.relationshipReviewVisible = false;
+    this.relationshipReviewError = '';
+    this.relationshipCandidates = [];
+    this.syncRelationshipFromViewModel();
+  }
+
+  /** 打开关系详情 */
+  private openRelationshipDetail(id: string): void {
+    if (id.length === 0) {
+      return;
+    }
+    this.relationshipDetailId = id;
+    this.relationshipDetail = this.findRelationshipById(id);
+    this.relationshipActionError = '';
+    this.relationshipDetailVisible = true;
+  }
+
+  /** 关闭关系详情 */
+  private closeRelationshipDetail(): void {
+    if (this.isSaving) {
+      return;
+    }
+    this.relationshipDetailVisible = false;
+    this.relationshipDetailId = '';
+    this.relationshipDetail = null;
+    this.relationshipActionError = '';
+  }
+
+  /** 打开关系编辑表单 */
+  private openRelationshipEdit(r: RelationshipListItemUiModel): void {
+    if (!r.canEdit) {
+      return;
+    }
+    // 先关闭详情(避免重叠)
+    this.relationshipDetailVisible = false;
+    this.relationshipActionError = '';
+    this.relFormError = '';
+    this.editingRelationshipId = r.id;
+    this.relFormExperience = r.experienceSummary;
+    this.relFormAttitude = r.attitudeSummary;
+    this.relFormRelationship = r.relationshipSummary;
+    this.relFormImportance = r.importance;
+    this.relFormKeywords = r.keywordsText;
+    this.relationshipEditVisible = true;
+  }
+
+  /** 关闭关系编辑表单 */
+  private closeRelationshipEdit(): void {
+    if (this.isSaving) {
+      return;
+    }
+    this.relationshipEditVisible = false;
+    this.relFormError = '';
+  }
+
+  /** 提交关系编辑 */
+  private async submitRelationshipEdit(): Promise<void> {
+    if (this.viewModel === null || this.isSaving) {
+      return;
+    }
+    const experience: string = this.relFormExperience.trim();
+    const attitude: string = this.relFormAttitude.trim();
+    const relationship: string = this.relFormRelationship.trim();
+    if (experience === '' && attitude === '' && relationship === '') {
+      this.relFormError = '至少填写一项摘要内容';
+      return;
+    }
+    this.relFormError = '';
+    const input: UpdateRelationshipMemoryFormInput = {
+      memoryId: this.editingRelationshipId,
+      experienceSummary: experience,
+      attitudeSummary: attitude,
+      relationshipSummary: relationship,
+      importance: this.relFormImportance,
+      keywordsText: this.relFormKeywords
+    };
+    const result = await this.viewModel.updateRelationshipMemory(input);
+    this.syncRelationshipFromViewModel();
+    if (result.success) {
+      this.relationshipEditVisible = false;
+      await this.viewModel.loadRelationshipList();
+      this.syncRelationshipFromViewModel();
+    } else {
+      this.relFormError = result.errorMessage;
+    }
+  }
+
+  /** 归档 / 恢复关系 */
+  private async handleRelationshipArchive(r: RelationshipListItemUiModel): Promise<void> {
+    if (this.viewModel === null) {
+      return;
+    }
+    const archived: boolean = r.status === GroupRelationshipMemoryStatus.Active;
+    this.relationshipActionError = '';
+    const result = await this.viewModel.setRelationshipArchived(r.id, archived);
+    this.syncRelationshipFromViewModel();
+    if (result.success) {
+      await this.viewModel.loadRelationshipList();
+      this.syncRelationshipFromViewModel();
+      // 若详情仍打开,同步更新
+      if (this.relationshipDetailVisible && this.relationshipDetailId === r.id) {
+        this.relationshipDetail = this.findRelationshipById(r.id);
+      }
+    } else {
+      this.relationshipActionError = result.errorMessage;
+    }
+  }
+
+  // ===== 关系辅助方法 =====
+
+  /** 从 relationshipList 查找指定 ID 的关系 */
+  private findRelationshipById(id: string): RelationshipListItemUiModel | null {
+    if (id.length === 0) {
+      return null;
+    }
+    for (let i = 0; i < this.relationshipList.length; i++) {
+      if (this.relationshipList[i].id === id) {
+        return this.relationshipList[i];
+      }
+    }
+    return null;
+  }
+
+  /** 是否还有 pending 候选 */
+  private hasPendingCandidates(): boolean {
+    for (let i = 0; i < this.relationshipCandidates.length; i++) {
+      if (this.relationshipCandidates[i].reviewState === 'pending') {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** 关系重要度选项(1-5) */
+  private relationshipImportanceOptions(): number[] {
+    const opts: number[] = [];
+    for (let n: number = RELATIONSHIP_MEMORY_IMPORTANCE_MIN;
+      n <= RELATIONSHIP_MEMORY_IMPORTANCE_MAX; n++) {
+      opts.push(n);
+    }
+    return opts;
+  }
+
+  /** 构建关系来源信息文本 */
+  private buildRelationshipSourceInfo(): string {
+    if (this.viewModel === null) {
+      return '';
+    }
+    const count: number = this.viewModel.relationshipSourceCount();
+    const hashShort: string = this.viewModel.relationshipSourceHashShort();
+    const targetCount: number = this.viewModel.relationshipTargetCount();
+    if (count === 0) {
+      return '';
+    }
+    const parts: string[] = [];
+    parts.push('来源消息:' + count.toString() + ' 条');
+    parts.push('对象白名单:' + targetCount.toString() + ' 个');
+    if (hashShort.length > 0) {
+      parts.push('哈希:' + hashShort);
+    }
+    return parts.join('  ·  ');
+  }
+
+  /** 更新候选的共同经历(本地编辑) */
+  private updateCandidateExperience(c: RelationshipCandidateUiModel, v: string): void {
+    if (this.viewModel === null) {
+      return;
+    }
+    for (let i = 0; i < this.viewModel.relationshipCandidates.length; i++) {
+      if (this.viewModel.relationshipCandidates[i].targetType === c.targetType
+        && this.viewModel.relationshipCandidates[i].targetId === c.targetId) {
+        this.viewModel.relationshipCandidates[i].experienceSummary = v;
+        this.relationshipCandidates = this.viewModel.relationshipCandidates.slice();
+        return;
+      }
+    }
+  }
+
+  /** 更新候选的态度(本地编辑) */
+  private updateCandidateAttitude(c: RelationshipCandidateUiModel, v: string): void {
+    if (this.viewModel === null) {
+      return;
+    }
+    for (let i = 0; i < this.viewModel.relationshipCandidates.length; i++) {
+      if (this.viewModel.relationshipCandidates[i].targetType === c.targetType
+        && this.viewModel.relationshipCandidates[i].targetId === c.targetId) {
+        this.viewModel.relationshipCandidates[i].attitudeSummary = v;
+        this.relationshipCandidates = this.viewModel.relationshipCandidates.slice();
+        return;
+      }
+    }
+  }
+
+  /** 更新候选的关系(本地编辑) */
+  private updateCandidateRelationship(c: RelationshipCandidateUiModel, v: string): void {
+    if (this.viewModel === null) {
+      return;
+    }
+    for (let i = 0; i < this.viewModel.relationshipCandidates.length; i++) {
+      if (this.viewModel.relationshipCandidates[i].targetType === c.targetType
+        && this.viewModel.relationshipCandidates[i].targetId === c.targetId) {
+        this.viewModel.relationshipCandidates[i].relationshipSummary = v;
+        this.relationshipCandidates = this.viewModel.relationshipCandidates.slice();
+        return;
+      }
+    }
+  }
+
+  /** 更新候选的重要度(本地编辑) */
+  private updateCandidateImportance(c: RelationshipCandidateUiModel, n: number): void {
+    if (this.viewModel === null) {
+      return;
+    }
+    for (let i = 0; i < this.viewModel.relationshipCandidates.length; i++) {
+      if (this.viewModel.relationshipCandidates[i].targetType === c.targetType
+        && this.viewModel.relationshipCandidates[i].targetId === c.targetId) {
+        this.viewModel.relationshipCandidates[i].importance = n;
+        this.relationshipCandidates = this.viewModel.relationshipCandidates.slice();
+        return;
+      }
+    }
+  }
+
+  /** 更新候选的关键词(本地编辑) */
+  private updateCandidateKeywords(c: RelationshipCandidateUiModel, v: string): void {
+    if (this.viewModel === null) {
+      return;
+    }
+    for (let i = 0; i < this.viewModel.relationshipCandidates.length; i++) {
+      if (this.viewModel.relationshipCandidates[i].targetType === c.targetType
+        && this.viewModel.relationshipCandidates[i].targetId === c.targetId) {
+        this.viewModel.relationshipCandidates[i].keywordsText = v;
+        this.relationshipCandidates = this.viewModel.relationshipCandidates.slice();
+        return;
+      }
+    }
   }
 }

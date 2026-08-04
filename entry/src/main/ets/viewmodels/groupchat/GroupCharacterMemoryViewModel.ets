@@ -48,6 +48,16 @@ import {
   SelfSummaryResult,
   SelfSummaryApproveResult
 } from '../../services/groupchat/GroupCharacterSelfSummaryService';
+import {
+  GroupCharacterRelationshipMemoryService,
+  ApproveRelationshipSummaryInput
+} from '../../services/groupchat/GroupCharacterRelationshipMemoryService';
+import {
+  GroupCharacterRelationshipSummaryService,
+  RelationshipSummaryDraft,
+  RelationshipSummaryResult,
+  RelationshipCandidate
+} from '../../services/groupchat/GroupCharacterRelationshipSummaryService';
 import { Logger } from '../../utils/Logger';
 import { Chat } from '../../models/Chat';
 import { ChatParticipant } from '../../models/ChatParticipant';
@@ -60,6 +70,19 @@ import {
   GROUP_CHARACTER_MEMORY_CONTENT_MAX,
   parseKeywordsFromText
 } from '../../models/groupchat/GroupCharacterMemory';
+import {
+  GroupCharacterRelationshipMemory,
+  GroupRelationshipTargetType,
+  GroupRelationshipMemoryStatus,
+  RELATIONSHIP_USER_TARGET_ID,
+  RELATIONSHIP_EXPERIENCE_SUMMARY_MAX,
+  RELATIONSHIP_ATTITUDE_SUMMARY_MAX,
+  RELATIONSHIP_RELATIONSHIP_SUMMARY_MAX,
+  RELATIONSHIP_IMPORTANCE_MIN,
+  RELATIONSHIP_IMPORTANCE_MAX,
+  RELATIONSHIP_IMPORTANCE_DEFAULT,
+  keywordsToText
+} from '../../models/groupchat/GroupCharacterRelationshipMemory';
 import { DatabaseError } from '../../models/DatabaseError';
 import { DELETED_CHARACTER_NAME } from './GroupChatUiModels';
 
@@ -169,11 +192,84 @@ export interface GroupMemorySaveResult {
   readonly errorMessage: string;
 }
 
+// ===== G-MEMORY-AUTO-1B 关系与经历 UI 模型 =====
+
+/** 关系列表卡片 UI 模型 */
+export interface RelationshipListItemUiModel {
+  readonly id: string;
+  readonly targetType: GroupRelationshipTargetType;
+  readonly targetId: string;
+  readonly targetName: string;
+  readonly targetAvatarUri: string;
+  readonly isTargetRemoved: boolean;
+  /** 方向标签,如 "A → 用户" / "A → B" */
+  readonly directionLabel: string;
+  readonly experienceSummary: string;
+  readonly experiencePreview: string;
+  readonly attitudeSummary: string;
+  readonly attitudePreview: string;
+  readonly relationshipSummary: string;
+  readonly importance: number;
+  readonly keywords: string[];
+  readonly keywordsText: string;
+  readonly sourceMessageCount: number;
+  readonly status: GroupRelationshipMemoryStatus;
+  readonly statusLabel: string;
+  /** 是否可编辑(Active 状态) */
+  readonly canEdit: boolean;
+  /** 是否可归档(Active / Archived 可切换) */
+  readonly canArchive: boolean;
+  readonly createdAt: number;
+  readonly createdAtLabel: string;
+  readonly updatedAt: number;
+  readonly updatedAtLabel: string;
+}
+
+/** 关系候选 UI 模型(审核窗口使用) */
+export interface RelationshipCandidateUiModel {
+  readonly targetType: GroupRelationshipTargetType;
+  readonly targetId: string;
+  readonly targetName: string;
+  readonly targetAvatarUri: string;
+  readonly directionLabel: string;
+  /** 可编辑字段(用户可在审核窗口修改) */
+  experienceSummary: string;
+  attitudeSummary: string;
+  relationshipSummary: string;
+  importance: number;
+  keywords: string[];
+  keywordsText: string;
+  /** 不可编辑字段 */
+  readonly sourceMessageIds: string[];
+  /** 审核状态:pending/approved/rejected */
+  reviewState: 'pending' | 'approved' | 'rejected';
+}
+
+/** 修改已批准关系表单输入 */
+export interface UpdateRelationshipMemoryFormInput {
+  readonly memoryId: string;
+  readonly experienceSummary: string;
+  readonly attitudeSummary: string;
+  readonly relationshipSummary: string;
+  readonly importance: number;
+  readonly keywordsText: string;
+}
+
+/** 关系对象解析结果(名称 / 头像 / 是否已移出群聊) */
+export interface RelationshipTargetInfo {
+  readonly targetName: string;
+  readonly targetAvatarUri: string;
+  readonly isRemoved: boolean;
+}
+
 export class GroupCharacterMemoryViewModel {
   private readonly groupPersistenceService: GroupConversationPersistenceService;
   private readonly characterService: CharacterService;
   private readonly memoryService: GroupCharacterMemoryService;
   private readonly summaryService: GroupCharacterSelfSummaryService | null;
+  // G-MEMORY-AUTO-1B 关系记忆服务(可选,未注入时关系功能不可用)
+  private readonly relationshipMemoryService: GroupCharacterRelationshipMemoryService | null;
+  private readonly relationshipSummaryService: GroupCharacterRelationshipSummaryService | null;
 
   state: GroupCharacterMemoryLoadState = GroupCharacterMemoryLoadState.Loading;
   errorMessage: string = '';
@@ -200,16 +296,38 @@ export class GroupCharacterMemoryViewModel {
   summaryError: string = '';
   private summaryOperationId: number = 0;
 
+  // G-MEMORY-AUTO-1B 关系与经历状态
+  // - isRelationshipListLoading: 关系列表加载中
+  // - relationshipList: 当前 owner 的关系记忆列表(已批准)
+  // - relationshipError: 关系相关错误(非空时页面显示)
+  // - isPreparingRelationship: 关系总结准备中(模型调用,按钮禁用)
+  // - isApprovingRelationship: 关系候选批准中(写入数据库,按钮禁用)
+  // - relationshipDraft: 当前关系总结 draft(null 表示无审核窗口)
+  // - relationshipCandidates: 审核中的候选列表(本地可编辑状态)
+  // - relationshipOperationId: 防止迟到结果覆盖另一个角色页面
+  isRelationshipListLoading: boolean = false;
+  relationshipList: RelationshipListItemUiModel[] = [];
+  relationshipError: string = '';
+  isPreparingRelationship: boolean = false;
+  isApprovingRelationship: boolean = false;
+  relationshipDraft: RelationshipSummaryDraft | null = null;
+  relationshipCandidates: RelationshipCandidateUiModel[] = [];
+  private relationshipOperationId: number = 0;
+
   constructor(
     groupPersistenceService: GroupConversationPersistenceService,
     characterService: CharacterService,
     memoryService: GroupCharacterMemoryService,
-    summaryService: GroupCharacterSelfSummaryService | null = null
+    summaryService: GroupCharacterSelfSummaryService | null = null,
+    relationshipMemoryService: GroupCharacterRelationshipMemoryService | null = null,
+    relationshipSummaryService: GroupCharacterRelationshipSummaryService | null = null
   ) {
     this.groupPersistenceService = groupPersistenceService;
     this.characterService = characterService;
     this.memoryService = memoryService;
     this.summaryService = summaryService;
+    this.relationshipMemoryService = relationshipMemoryService;
+    this.relationshipSummaryService = relationshipSummaryService;
     this.instanceShortId = GroupCharacterMemoryViewModel.generateShortId();
   }
 
@@ -234,6 +352,15 @@ export class GroupCharacterMemoryViewModel {
     this.isApprovingSummary = false;
     this.summaryDraft = null;
     this.summaryError = '';
+    // G-MEMORY-AUTO-1B: 清理关系总结状态
+    this.relationshipOperationId = this.relationshipOperationId + 1;
+    this.isPreparingRelationship = false;
+    this.isApprovingRelationship = false;
+    this.relationshipDraft = null;
+    this.relationshipCandidates = [];
+    this.relationshipError = '';
+    this.isRelationshipListLoading = false;
+    this.relationshipList = [];
     Logger.info(LOG_TAG, 'dispose: vmInstance=' + this.instanceShortId);
   }
 
@@ -942,6 +1069,439 @@ export class GroupCharacterMemoryViewModel {
     return hash.length > 12 ? hash.substring(0, 12) : hash;
   }
 
+  // ===== G-MEMORY-AUTO-1B 关系与经历 =====
+
+  /** 是否可以使用关系功能(服务已注入) */
+  canUseRelationship(): boolean {
+    return this.relationshipMemoryService !== null
+      && this.relationshipSummaryService !== null;
+  }
+
+  /**
+   * 加载当前 owner 的关系记忆列表(已批准)。
+   * 在打开关系页面 / 批准 / 编辑 / 归档后调用。
+   */
+  async loadRelationshipList(): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
+    if (this.relationshipMemoryService === null) {
+      this.relationshipError = '关系记忆服务未初始化';
+      return;
+    }
+    if (this.expectedGroupConversationId.length === 0
+      || this.expectedCharacterId.length === 0) {
+      return;
+    }
+    this.isRelationshipListLoading = true;
+    this.relationshipError = '';
+    const expectedGroupId: string = this.expectedGroupConversationId;
+    const expectedCharId: string = this.expectedCharacterId;
+    try {
+      const memories: GroupCharacterRelationshipMemory[] =
+        await this.relationshipMemoryService.listByOwner(expectedGroupId, expectedCharId);
+      if (this.disposed
+        || expectedGroupId !== this.expectedGroupConversationId
+        || expectedCharId !== this.expectedCharacterId) {
+        return;
+      }
+      // 加载参与者列表,用于判断 target 是否仍在群聊中
+      let participants: ChatParticipant[] = [];
+      try {
+        participants = await this.groupPersistenceService.getParticipants(expectedGroupId);
+      } catch (e) {
+        Logger.warn(LOG_TAG, 'loadRelationshipList getParticipants failed: '
+          + this.safeErrorCategory(e));
+        participants = [];
+      }
+      if (this.disposed) {
+        return;
+      }
+      // 构建 UI 模型(逐条解析 target 名称)
+      const items: RelationshipListItemUiModel[] =
+        new Array<RelationshipListItemUiModel>(memories.length);
+      for (let i = 0; i < memories.length; i++) {
+        items[i] = await this.buildRelationshipListItem(memories[i], participants);
+        if (this.disposed) {
+          return;
+        }
+      }
+      if (expectedGroupId !== this.expectedGroupConversationId
+        || expectedCharId !== this.expectedCharacterId) {
+        return;
+      }
+      this.relationshipList = items;
+      Logger.info(LOG_TAG, 'loadRelationshipList ok: count=' + items.length.toString()
+        + ' charShort=' + this.shortId(expectedCharId));
+    } catch (e) {
+      if (this.disposed) {
+        return;
+      }
+      Logger.warn(LOG_TAG, 'loadRelationshipList failed: ' + this.safeErrorCategory(e));
+      this.relationshipError = '关系记忆加载失败,请重试';
+    } finally {
+      this.isRelationshipListLoading = false;
+    }
+  }
+
+  /**
+   * 准备关系总结 draft(用户点击"总结新关系"按钮)。
+   *
+   * 流程:
+   * 1. 校验服务 / 目标加载
+   * 2. 防重复点击(isPreparingRelationship)
+   * 3. 从 snapshot 解析角色名称和群聊标题(供 Prompt 使用)
+   * 4. 调用 relationshipSummaryService.prepareRelationshipSummary
+   * 5. 成功:构建 relationshipCandidates,页面打开审核窗口
+   * 6. 失败:写入 relationshipError,不打开审核窗口
+   */
+  async prepareRelationshipSummary(): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
+    if (this.isPreparingRelationship || this.isApprovingRelationship) {
+      Logger.warn(LOG_TAG, 'prepareRelationshipSummary skipped: busy');
+      return;
+    }
+    if (this.relationshipSummaryService === null) {
+      this.relationshipError = '关系总结服务未初始化';
+      return;
+    }
+    if (this.expectedGroupConversationId.length === 0
+      || this.expectedCharacterId.length === 0) {
+      this.relationshipError = '目标未加载';
+      return;
+    }
+    const snapshot: GroupCharacterMemorySnapshotUiModel | null = this.snapshot;
+    if (snapshot === null) {
+      this.relationshipError = '记忆数据未加载,请稍候';
+      return;
+    }
+    const characterName: string = snapshot.header.displayName;
+    const groupTitle: string = snapshot.header.groupTitle;
+
+    this.isPreparingRelationship = true;
+    this.relationshipError = '';
+    this.relationshipOperationId = this.relationshipOperationId + 1;
+    const opId: number = this.relationshipOperationId;
+    const expectedCharId: string = this.expectedCharacterId;
+    const expectedGroupId: string = this.expectedGroupConversationId;
+
+    try {
+      const result: RelationshipSummaryResult =
+        await this.relationshipSummaryService.prepareRelationshipSummary(
+          expectedGroupId, expectedCharId, characterName, groupTitle
+        );
+      if (opId !== this.relationshipOperationId || this.disposed) {
+        Logger.info(LOG_TAG, 'prepareRelationshipSummary late result dropped');
+        return;
+      }
+      if (expectedCharId !== this.expectedCharacterId
+        || expectedGroupId !== this.expectedGroupConversationId) {
+        Logger.info(LOG_TAG, 'prepareRelationshipSummary target changed, drop');
+        return;
+      }
+      if (result.success && result.draft !== undefined) {
+        this.relationshipDraft = result.draft;
+        // 构建 UI 候选(可编辑状态)
+        let participants: ChatParticipant[] = [];
+        try {
+          participants = await this.groupPersistenceService.getParticipants(expectedGroupId);
+        } catch (e) {
+          participants = [];
+        }
+        if (opId !== this.relationshipOperationId || this.disposed) {
+          return;
+        }
+        this.relationshipCandidates =
+          this.buildRelationshipCandidates(result.draft, characterName, participants);
+        Logger.info(LOG_TAG, 'prepareRelationshipSummary ok: candidateCount='
+          + this.relationshipCandidates.length.toString()
+          + ' charShort=' + this.shortId(expectedCharId));
+      } else {
+        this.relationshipError = result.errorMessage ?? '总结失败,请稍后重试';
+        Logger.warn(LOG_TAG, 'prepareRelationshipSummary failed: kind='
+          + (result.errorKind ?? '')
+          + ' charShort=' + this.shortId(expectedCharId));
+      }
+    } catch (e) {
+      if (opId !== this.relationshipOperationId || this.disposed) {
+        return;
+      }
+      this.relationshipError = '总结失败,请稍后重试';
+      Logger.warn(LOG_TAG, 'prepareRelationshipSummary exception: ' + this.safeErrorCategory(e));
+    } finally {
+      if (opId === this.relationshipOperationId) {
+        this.isPreparingRelationship = false;
+      }
+    }
+  }
+
+  /**
+   * 批准单个候选(用户点击候选卡片"批准"按钮)。
+   * 调用 relationshipMemoryService.approveRelationshipSummary 写入数据库。
+   * 成功后将该候选标记为 approved,不关闭审核窗口(直到所有候选处理完或用户关闭)。
+   */
+  async approveRelationshipCandidate(
+    candidate: RelationshipCandidateUiModel
+  ): Promise<GroupMemorySaveResult> {
+    if (this.disposed) {
+      return { success: false, errorMessage: '页面已失效' } as GroupMemorySaveResult;
+    }
+    if (this.isApprovingRelationship) {
+      return { success: false, errorMessage: '正在处理,请稍候' } as GroupMemorySaveResult;
+    }
+    if (this.relationshipMemoryService === null || this.relationshipDraft === null) {
+      return { success: false, errorMessage: '没有待审核的候选' } as GroupMemorySaveResult;
+    }
+    const experience: string = candidate.experienceSummary.trim();
+    const attitude: string = candidate.attitudeSummary.trim();
+    const relationship: string = candidate.relationshipSummary.trim();
+    if (experience === '' && attitude === '' && relationship === '') {
+      return { success: false, errorMessage: '至少填写一项摘要内容' } as GroupMemorySaveResult;
+    }
+    const keywords: string[] = parseKeywordsFromText(candidate.keywordsText);
+    const sourceMessageIds: string[] = candidate.sourceMessageIds;
+
+    this.isApprovingRelationship = true;
+    this.operationId = this.operationId + 1;
+    const opId: number = this.operationId;
+    const targetIndex: number = this.findCandidateIndex(candidate);
+
+    try {
+      const input: ApproveRelationshipSummaryInput = {
+        groupConversationId: this.relationshipDraft.source.groupConversationId,
+        ownerCharacterId: this.relationshipDraft.source.characterId,
+        targetType: candidate.targetType,
+        targetId: candidate.targetId,
+        experienceSummary: experience,
+        attitudeSummary: attitude,
+        relationshipSummary: relationship,
+        importance: candidate.importance,
+        keywords: keywords,
+        sourceMessageIds: sourceMessageIds,
+        sourceHash: this.relationshipDraft.source.sourceHash
+      };
+      const result = await this.relationshipMemoryService.approveRelationshipSummary(input);
+      if (opId !== this.operationId || this.disposed) {
+        return { success: false, errorMessage: '操作已过期' } as GroupMemorySaveResult;
+      }
+      if (result.success) {
+        // 标记该候选为 approved
+        if (targetIndex >= 0) {
+          this.relationshipCandidates[targetIndex].reviewState = 'approved';
+        }
+        Logger.info(LOG_TAG, 'approveRelationshipCandidate ok: targetShort='
+          + this.shortId(candidate.targetId));
+        return { success: true, errorMessage: '' } as GroupMemorySaveResult;
+      }
+      return { success: false, errorMessage: result.errorMessage } as GroupMemorySaveResult;
+    } catch (e) {
+      if (opId !== this.operationId || this.disposed) {
+        return { success: false, errorMessage: '操作已过期' } as GroupMemorySaveResult;
+      }
+      Logger.warn(LOG_TAG, 'approveRelationshipCandidate exception: ' + this.safeErrorCategory(e));
+      return { success: false, errorMessage: '保存失败,请重试' } as GroupMemorySaveResult;
+    } finally {
+      if (opId === this.operationId) {
+        this.isApprovingRelationship = false;
+      }
+    }
+  }
+
+  /**
+   * 拒绝单个候选(用户点击候选卡片"拒绝"按钮)。
+   * 仅标记本地状态,不调用 Service。
+   */
+  rejectRelationshipCandidate(candidate: RelationshipCandidateUiModel): void {
+    const idx: number = this.findCandidateIndex(candidate);
+    if (idx >= 0) {
+      this.relationshipCandidates[idx].reviewState = 'rejected';
+    }
+  }
+
+  /**
+   * 批准所有 pending 候选(用户点击"全部批准"按钮)。
+   * 串行调用 approveRelationshipCandidate,任一失败不中断后续。
+   */
+  async approveAllPendingCandidates(): Promise<GroupMemorySaveResult> {
+    if (this.disposed) {
+      return { success: false, errorMessage: '页面已失效' } as GroupMemorySaveResult;
+    }
+    if (this.isApprovingRelationship) {
+      return { success: false, errorMessage: '正在处理,请稍候' } as GroupMemorySaveResult;
+    }
+    const pending: RelationshipCandidateUiModel[] = this.relationshipCandidates.filter(
+      (c: RelationshipCandidateUiModel) => c.reviewState === 'pending'
+    );
+    if (pending.length === 0) {
+      return { success: false, errorMessage: '没有待批准的候选' } as GroupMemorySaveResult;
+    }
+    let lastError: string = '';
+    let successCount: number = 0;
+    for (let i = 0; i < pending.length; i++) {
+      const result = await this.approveRelationshipCandidate(pending[i]);
+      if (result.success) {
+        successCount++;
+      } else {
+        lastError = result.errorMessage;
+        // 出错时停止后续批准,避免连续失败
+        break;
+      }
+    }
+    if (successCount > 0) {
+      return { success: true, errorMessage: '' } as GroupMemorySaveResult;
+    }
+    return { success: false, errorMessage: lastError } as GroupMemorySaveResult;
+  }
+
+  /**
+   * 拒绝所有 pending 候选(用户点击"全部拒绝"按钮)。
+   */
+  rejectAllPendingCandidates(): void {
+    for (let i = 0; i < this.relationshipCandidates.length; i++) {
+      if (this.relationshipCandidates[i].reviewState === 'pending') {
+        this.relationshipCandidates[i].reviewState = 'rejected';
+      }
+    }
+  }
+
+  /**
+   * 关闭审核窗口(用户点击"取消"或"完成")。
+   * 保存中不允许关闭(防止中断)。
+   */
+  clearRelationshipDraft(): void {
+    if (this.isApprovingRelationship) {
+      return;
+    }
+    this.relationshipDraft = null;
+    this.relationshipCandidates = [];
+    this.relationshipError = '';
+  }
+
+  /** 当前 draft 来源消息数量(供 UI 显示) */
+  relationshipSourceCount(): number {
+    return this.relationshipDraft !== null ? this.relationshipDraft.source.messages.length : 0;
+  }
+
+  /** 当前 draft sourceHash 前 12 位(供 UI 显示) */
+  relationshipSourceHashShort(): string {
+    if (this.relationshipDraft === null) {
+      return '';
+    }
+    const hash: string = this.relationshipDraft.source.sourceHash;
+    return hash.length > 12 ? hash.substring(0, 12) : hash;
+  }
+
+  /** 当前 draft 关系对象白名单数量(供 UI 显示) */
+  relationshipTargetCount(): number {
+    return this.relationshipDraft !== null
+      ? this.relationshipDraft.source.targetWhitelist.length : 0;
+  }
+
+  /**
+   * 修改已批准关系的可编辑字段。
+   * 修改后 sourceMessageIds / sourceHash / owner / target 不变,updatedAt 更新。
+   */
+  async updateRelationshipMemory(
+    input: UpdateRelationshipMemoryFormInput
+  ): Promise<GroupMemorySaveResult> {
+    if (this.disposed) {
+      return { success: false, errorMessage: '页面已失效' } as GroupMemorySaveResult;
+    }
+    if (this.isSaving) {
+      return { success: false, errorMessage: '正在处理,请稍候' } as GroupMemorySaveResult;
+    }
+    if (this.relationshipMemoryService === null) {
+      return { success: false, errorMessage: '关系记忆服务未初始化' } as GroupMemorySaveResult;
+    }
+    if (input.memoryId.length === 0) {
+      return { success: false, errorMessage: '关系未选定' } as GroupMemorySaveResult;
+    }
+    const experience: string = input.experienceSummary.trim();
+    const attitude: string = input.attitudeSummary.trim();
+    const relationship: string = input.relationshipSummary.trim();
+    if (experience === '' && attitude === '' && relationship === '') {
+      return { success: false, errorMessage: '至少填写一项摘要内容' } as GroupMemorySaveResult;
+    }
+    const keywords: string[] = parseKeywordsFromText(input.keywordsText);
+
+    this.isSaving = true;
+    this.operationId = this.operationId + 1;
+    const opId: number = this.operationId;
+    try {
+      await this.relationshipMemoryService.updateRelationshipMemory({
+        memoryId: input.memoryId,
+        experienceSummary: experience,
+        attitudeSummary: attitude,
+        relationshipSummary: relationship,
+        importance: input.importance,
+        keywords: keywords
+      });
+      if (opId !== this.operationId || this.disposed) {
+        return { success: false, errorMessage: '操作已过期' } as GroupMemorySaveResult;
+      }
+      Logger.info(LOG_TAG, 'updateRelationshipMemory ok: importance=' + input.importance.toString()
+        + ' idShort=' + this.shortId(input.memoryId));
+      return { success: true, errorMessage: '' } as GroupMemorySaveResult;
+    } catch (e) {
+      if (opId !== this.operationId || this.disposed) {
+        return { success: false, errorMessage: '操作已过期' } as GroupMemorySaveResult;
+      }
+      const msg: string = this.resolveRelationshipErrorMessage(e);
+      Logger.warn(LOG_TAG, 'updateRelationshipMemory failed: ' + this.safeErrorCategory(e)
+        + ' idShort=' + this.shortId(input.memoryId));
+      return { success: false, errorMessage: msg } as GroupMemorySaveResult;
+    } finally {
+      if (opId === this.operationId) {
+        this.isSaving = false;
+      }
+    }
+  }
+
+  /** 归档 / 恢复关系记忆 */
+  async setRelationshipArchived(
+    memoryId: string,
+    archived: boolean
+  ): Promise<GroupMemorySaveResult> {
+    if (this.disposed) {
+      return { success: false, errorMessage: '页面已失效' } as GroupMemorySaveResult;
+    }
+    if (this.isSaving || this.isDeleting) {
+      return { success: false, errorMessage: '正在处理,请稍候' } as GroupMemorySaveResult;
+    }
+    if (this.relationshipMemoryService === null) {
+      return { success: false, errorMessage: '关系记忆服务未初始化' } as GroupMemorySaveResult;
+    }
+    if (memoryId.length === 0) {
+      return { success: false, errorMessage: '关系未选定' } as GroupMemorySaveResult;
+    }
+    this.isSaving = true;
+    this.operationId = this.operationId + 1;
+    const opId: number = this.operationId;
+    try {
+      await this.relationshipMemoryService.setRelationshipArchived(memoryId, archived);
+      if (opId !== this.operationId || this.disposed) {
+        return { success: false, errorMessage: '操作已过期' } as GroupMemorySaveResult;
+      }
+      Logger.info(LOG_TAG, 'setRelationshipArchived ok: archived=' + archived.toString()
+        + ' idShort=' + this.shortId(memoryId));
+      return { success: true, errorMessage: '' } as GroupMemorySaveResult;
+    } catch (e) {
+      if (opId !== this.operationId || this.disposed) {
+        return { success: false, errorMessage: '操作已过期' } as GroupMemorySaveResult;
+      }
+      const msg: string = this.resolveRelationshipErrorMessage(e);
+      Logger.warn(LOG_TAG, 'setRelationshipArchived failed: ' + this.safeErrorCategory(e)
+        + ' idShort=' + this.shortId(memoryId));
+      return { success: false, errorMessage: msg } as GroupMemorySaveResult;
+    } finally {
+      if (opId === this.operationId) {
+        this.isSaving = false;
+      }
+    }
+  }
+
   // ===== 私有辅助 =====
 
   private resolveMemberStatus(
@@ -1108,6 +1668,201 @@ export class GroupCharacterMemoryViewModel {
     }
     return id.substring(id.length - 8);
   }
+
+  // ===== G-MEMORY-AUTO-1B 关系 UI 构建辅助 =====
+
+  /**
+   * 构建关系列表项 UI 模型。
+   * 需要解析 target 名称 / 头像 / 是否仍在群聊。
+   */
+  private async buildRelationshipListItem(
+    memory: GroupCharacterRelationshipMemory,
+    participants: ChatParticipant[]
+  ): Promise<RelationshipListItemUiModel> {
+    const targetInfo = await this.resolveTargetInfo(
+      memory.targetType, memory.targetId, participants
+    );
+    const ownerName: string = this.snapshot !== null
+      ? this.snapshot.header.displayName : '';
+    const directionLabel: string = this.buildDirectionLabel(
+      ownerName, targetInfo.targetName
+    );
+    const isActive: boolean = memory.status === GroupRelationshipMemoryStatus.Active;
+    return {
+      id: memory.id,
+      targetType: memory.targetType,
+      targetId: memory.targetId,
+      targetName: targetInfo.targetName,
+      targetAvatarUri: targetInfo.targetAvatarUri,
+      isTargetRemoved: targetInfo.isRemoved,
+      directionLabel: directionLabel,
+      experienceSummary: memory.experienceSummary,
+      experiencePreview: this.previewText(memory.experienceSummary, 80),
+      attitudeSummary: memory.attitudeSummary,
+      attitudePreview: this.previewText(memory.attitudeSummary, 80),
+      relationshipSummary: memory.relationshipSummary,
+      importance: memory.importance,
+      keywords: memory.keywords,
+      keywordsText: keywordsToText(memory.keywords),
+      sourceMessageCount: memory.sourceMessageIds.length,
+      status: memory.status,
+      statusLabel: this.relationshipStatusLabel(memory.status),
+      canEdit: isActive,
+      canArchive: isActive || memory.status === GroupRelationshipMemoryStatus.Archived,
+      createdAt: memory.createdAt,
+      createdAtLabel: this.formatTimestamp(memory.createdAt),
+      updatedAt: memory.updatedAt,
+      updatedAtLabel: this.formatTimestamp(memory.updatedAt)
+    };
+  }
+
+  /**
+   * 构建关系候选 UI 列表(从 draft 的 candidates 转换为可编辑的 UI 模型)。
+   */
+  private buildRelationshipCandidates(
+    draft: RelationshipSummaryDraft,
+    ownerName: string,
+    participants: ChatParticipant[]
+  ): RelationshipCandidateUiModel[] {
+    const result: RelationshipCandidateUiModel[] = [];
+    for (let i = 0; i < draft.candidates.length; i++) {
+      const c: RelationshipCandidate = draft.candidates[i];
+      // 同步解析 target 名称(此处用白名单中的名称,避免循环内 await)
+      let targetName: string = '';
+      let targetAvatarUri: string = '';
+      let isRemoved: boolean = false;
+      for (let j = 0; j < draft.source.targetWhitelist.length; j++) {
+        const w = draft.source.targetWhitelist[j];
+        if (w.targetId === c.targetId && w.targetType === c.targetType) {
+          targetName = w.targetName;
+          break;
+        }
+      }
+      // 判断 target 是否仍在群聊(仅 Character 类型需要)
+      if (c.targetType === GroupRelationshipTargetType.Character) {
+        let found: boolean = false;
+        for (let k = 0; k < participants.length; k++) {
+          if (participants[k].characterId === c.targetId) {
+            found = true;
+            break;
+          }
+        }
+        isRemoved = !found;
+      }
+      const directionLabel: string = this.buildDirectionLabel(ownerName, targetName);
+      result.push({
+        targetType: c.targetType,
+        targetId: c.targetId,
+        targetName: targetName,
+        targetAvatarUri: targetAvatarUri,
+        directionLabel: directionLabel,
+        experienceSummary: c.experienceSummary,
+        attitudeSummary: c.attitudeSummary,
+        relationshipSummary: c.relationshipSummary,
+        importance: c.importance,
+        keywords: c.keywords,
+        keywordsText: keywordsToText(c.keywords),
+        sourceMessageIds: c.sourceMessageIds,
+        reviewState: 'pending'
+      });
+    }
+    return result;
+  }
+
+  /**
+   * 解析关系对象信息(名称 / 头像 / 是否已移出群聊)。
+   * - User: 固定名称"用户",无头像,isRemoved=false
+   * - Character: 查询 characterService,缺失则"角色已删除";检查 participants 判断是否移出
+   */
+  private async resolveTargetInfo(
+    targetType: GroupRelationshipTargetType,
+    targetId: string,
+    participants: ChatParticipant[]
+  ): Promise<RelationshipTargetInfo> {
+    if (targetType === GroupRelationshipTargetType.User) {
+      const userInfo: RelationshipTargetInfo = {
+        targetName: '用户',
+        targetAvatarUri: '',
+        isRemoved: false
+      };
+      return userInfo;
+    }
+    // Character
+    let name: string = '';
+    let avatar: string = '';
+    try {
+      const c: Character | null = await this.characterService.getById(targetId);
+      if (c !== null) {
+        name = c.name;
+        avatar = c.avatarUri;
+      }
+    } catch (e) {
+      // ignore
+    }
+    if (name.length === 0) {
+      name = DELETED_CHARACTER_NAME;
+    }
+    // 检查是否仍在群聊
+    let found: boolean = false;
+    for (let i = 0; i < participants.length; i++) {
+      if (participants[i].characterId === targetId) {
+        found = true;
+        break;
+      }
+    }
+    const charInfo: RelationshipTargetInfo = {
+      targetName: name,
+      targetAvatarUri: avatar,
+      isRemoved: !found
+    };
+    return charInfo;
+  }
+
+  /** 构建方向标签:ownerName → targetName */
+  private buildDirectionLabel(ownerName: string, targetName: string): string {
+    const o: string = ownerName.length > 0 ? ownerName : '角色';
+    const t: string = targetName.length > 0 ? targetName : '对象';
+    return o + ' → ' + t;
+  }
+
+  /** 在候选列表中查找指定候选的索引(按 targetType + targetId 匹配) */
+  private findCandidateIndex(candidate: RelationshipCandidateUiModel): number {
+    for (let i = 0; i < this.relationshipCandidates.length; i++) {
+      if (this.relationshipCandidates[i].targetType === candidate.targetType
+        && this.relationshipCandidates[i].targetId === candidate.targetId) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  /** 关系状态标签 */
+  private relationshipStatusLabel(status: GroupRelationshipMemoryStatus): string {
+    if (status === GroupRelationshipMemoryStatus.Active) {
+      return '活跃';
+    }
+    if (status === GroupRelationshipMemoryStatus.Archived) {
+      return '已归档';
+    }
+    return '已失效';
+  }
+
+  /** 文本预览(截断 + 省略号) */
+  private previewText(text: string, maxLen: number): string {
+    if (text.length <= maxLen) {
+      return text;
+    }
+    return text.substring(0, maxLen) + '...';
+  }
+
+  /** 将 GroupCharacterMemoryError / DatabaseError 映射为用户可读消息 */
+  private resolveRelationshipErrorMessage(e: Object): string {
+    const msg: string = (e as Error).message ?? '';
+    if (msg.length > 0) {
+      return msg;
+    }
+    return '操作失败,请重试';
+  }
 }
 
 /** 重要度范围常量(供 UI 默认填充和校验) */
@@ -1116,3 +1871,11 @@ export const GROUP_MEMORY_IMPORTANCE_MAX: number = IMPORTANCE_MAX;
 export const GROUP_MEMORY_IMPORTANCE_DEFAULT: number = DEFAULT_IMPORTANCE;
 export const GROUP_MEMORY_TITLE_MAX: number = GROUP_CHARACTER_MEMORY_TITLE_MAX;
 export const GROUP_MEMORY_CONTENT_MAX: number = GROUP_CHARACTER_MEMORY_CONTENT_MAX;
+
+// G-MEMORY-AUTO-1B 关系记忆常量(供 UI 默认填充和校验)
+export const RELATIONSHIP_MEMORY_IMPORTANCE_MIN: number = RELATIONSHIP_IMPORTANCE_MIN;
+export const RELATIONSHIP_MEMORY_IMPORTANCE_MAX: number = RELATIONSHIP_IMPORTANCE_MAX;
+export const RELATIONSHIP_MEMORY_IMPORTANCE_DEFAULT: number = RELATIONSHIP_IMPORTANCE_DEFAULT;
+export const RELATIONSHIP_EXPERIENCE_MAX: number = RELATIONSHIP_EXPERIENCE_SUMMARY_MAX;
+export const RELATIONSHIP_ATTITUDE_MAX: number = RELATIONSHIP_ATTITUDE_SUMMARY_MAX;
+export const RELATIONSHIP_SUMMARY_MAX: number = RELATIONSHIP_RELATIONSHIP_SUMMARY_MAX;

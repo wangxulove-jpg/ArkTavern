@@ -83,8 +83,11 @@ import { GroupPromptAssembler } from './groupchat/GroupPromptAssembler';
 import { GroupChatRuntimeService } from './groupchat/GroupChatRuntimeService';
 import { GroupRuntimeRegistry } from './groupchat/GroupRuntimeRegistry';
 import { GroupCharacterMemoryRepository } from '../repositories/groupchat/GroupCharacterMemoryRepository';
+import { GroupCharacterRelationshipMemoryRepository } from '../repositories/groupchat/GroupCharacterRelationshipMemoryRepository';
 import { GroupCharacterMemoryService } from './groupchat/GroupCharacterMemoryService';
 import { GroupCharacterSelfSummaryService } from './groupchat/GroupCharacterSelfSummaryService';
+import { GroupCharacterRelationshipMemoryService } from './groupchat/GroupCharacterRelationshipMemoryService';
+import { GroupCharacterRelationshipSummaryService } from './groupchat/GroupCharacterRelationshipSummaryService';
 import { WorldRepository } from '../repositories/world/WorldRepository';
 import { WorldLocationRepository } from '../repositories/world/WorldLocationRepository';
 import { WorldLocationEdgeRepository } from '../repositories/world/WorldLocationEdgeRepository';
@@ -212,6 +215,12 @@ export class AppServices {
   private readonly groupCharacterMemoryService: GroupCharacterMemoryService;
   /** GroupCharacterSelfSummaryService 多人角色自身发言手动总结服务(G-MEMORY-AUTO-1A) */
   private readonly groupCharacterSelfSummaryService: GroupCharacterSelfSummaryService;
+  /** GroupCharacterRelationshipMemoryRepository 多人角色关系记忆仓储(G-MEMORY-AUTO-1B,关系记忆 CRUD) */
+  private readonly groupCharacterRelationshipMemoryRepository: GroupCharacterRelationshipMemoryRepository;
+  /** GroupCharacterRelationshipMemoryService 多人角色关系记忆业务服务(G-MEMORY-AUTO-1B,关系记忆唯一正式写入口) */
+  private readonly groupCharacterRelationshipMemoryService: GroupCharacterRelationshipMemoryService;
+  /** GroupCharacterRelationshipSummaryService 多人角色关系与经历手动总结服务(G-MEMORY-AUTO-1B) */
+  private readonly groupCharacterRelationshipSummaryService: GroupCharacterRelationshipSummaryService;
   /** WorldRepository 世界仓储(W-DATA-1A,不对页面公开) */
   private readonly worldRepository: WorldRepository;
   /** WorldLocationRepository 世界地点仓储(W-DATA-1A,不对页面公开) */
@@ -377,7 +386,10 @@ export class AppServices {
       new ChatParticipantRepository(this.dbHelper),
       // G-MEMORY-1A: 注入 GroupCharacterMemoryRepository,使删除群聊时同事务级联清理
       // group_character_memories。Repository 仅依赖 DbHelper,不依赖任何 Service,不会形成循环。
-      new GroupCharacterMemoryRepository(this.dbHelper)
+      new GroupCharacterMemoryRepository(this.dbHelper),
+      // G-MEMORY-AUTO-1B: 注入 GroupCharacterRelationshipMemoryRepository,使删除群聊时
+      // 同事务级联清理 group_character_relationship_memories。Repository 仅依赖 DbHelper。
+      new GroupCharacterRelationshipMemoryRepository(this.dbHelper)
     );
     // v8: MemoryService(依赖 ModelService + MemoryPersistenceService)
     this.memoryService = new MemoryService(
@@ -478,6 +490,29 @@ export class AppServices {
     this.groupCharacterSelfSummaryService = new GroupCharacterSelfSummaryService(
       this.groupConversationMessageService,
       this.groupCharacterMemoryService,
+      this.modelService
+    );
+    // G-MEMORY-AUTO-1B: 多人角色关系记忆 Repository + Service + SummaryService。
+    // Repository 仅依赖 DbHelper,不依赖任何 Service,不会形成循环。
+    // MemoryService 依赖 chatRepository(只读 getByIdWithStore) + characterRepository(只读 getByIdWithStore)
+    //   + relationshipRepo(写入) + dbHelper(事务)。不校验 ChatParticipant(成员移除后关系保留)。
+    // SummaryService 依赖 messageService(只读 listMessages) + groupPersistenceService(只读 getParticipants)
+    //   + characterService(只读 getById 解析白名单) + relationshipMemoryService(只读 listByOwner 检查重复)
+    //   + modelService(只读 getCurrentConfig / sendChat)。
+    // 不依赖 ChatPage / ViewModel / Runtime,无构造循环。
+    this.groupCharacterRelationshipMemoryRepository =
+      new GroupCharacterRelationshipMemoryRepository(this.dbHelper);
+    this.groupCharacterRelationshipMemoryService = new GroupCharacterRelationshipMemoryService(
+      this.chatRepository,
+      this.characterRepository,
+      this.groupCharacterRelationshipMemoryRepository,
+      this.dbHelper
+    );
+    this.groupCharacterRelationshipSummaryService = new GroupCharacterRelationshipSummaryService(
+      this.groupConversationMessageService,
+      this.groupConversationPersistenceService,
+      this.characterService,
+      this.groupCharacterRelationshipMemoryService,
       this.modelService
     );
     // 市场服务(Chub 公共浏览 + 搜索 + 详情 + 下载)
@@ -924,6 +959,26 @@ export class AppServices {
    */
   static getGroupCharacterSelfSummaryService(): GroupCharacterSelfSummaryService {
     return AppServices.getInstance().groupCharacterSelfSummaryService;
+  }
+
+  /**
+   * 获取 GroupCharacterRelationshipMemoryService 实例
+   * (G-MEMORY-AUTO-1B 多人角色关系记忆业务服务)。
+   * 是当前多人角色定向关系记忆的唯一正式写入口。
+   * 所有页面与 ViewModel 必须通过此方法获取同一个 GroupCharacterRelationshipMemoryService。
+   */
+  static getGroupCharacterRelationshipMemoryService(): GroupCharacterRelationshipMemoryService {
+    return AppServices.getInstance().groupCharacterRelationshipMemoryService;
+  }
+
+  /**
+   * 获取 GroupCharacterRelationshipSummaryService 实例
+   * (G-MEMORY-AUTO-1B 多人角色关系与经历手动总结服务)。
+   * 仅由 GroupCharacterMemoryViewModel 在 aboutToAppear 中获取并注入。
+   * 不直接暴露给 Page / Repository / 单聊代码。
+   */
+  static getGroupCharacterRelationshipSummaryService(): GroupCharacterRelationshipSummaryService {
+    return AppServices.getInstance().groupCharacterRelationshipSummaryService;
   }
 
   /**
