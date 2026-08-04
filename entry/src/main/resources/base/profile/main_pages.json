@@ -24,6 +24,8 @@
     "pages/groupchat/GroupChatAiBuilderPage",
     "pages/groupchat/GroupChatPage",
     "pages/groupchat/GroupMemberManagePage",
-    "pages/groupchat/GroupChatSettingsPage"
+    "pages/groupchat/GroupChatSettingsPage",
+    "pages/world/WorldHomePage",
+    "pages/world/WorldDetailPage"
   ]
 }

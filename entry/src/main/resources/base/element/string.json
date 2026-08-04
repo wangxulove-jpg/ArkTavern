@@ -1819,6 +1819,206 @@
     {
       "name": "group_member_min_hint",
       "value": "最少保留 2 个成员且至少 2 个启用"
+    },
+    {
+      "name": "world_entry_title",
+      "value": "世界模式"
+    },
+    {
+      "name": "world_entry_desc",
+      "value": "在独立世界中管理地点、连接与角色"
+    },
+    {
+      "name": "world_home_title",
+      "value": "世界"
+    },
+    {
+      "name": "world_home_subtitle",
+      "value": "世界模式(只读预览)"
+    },
+    {
+      "name": "world_home_empty_title",
+      "value": "还没有世界"
+    },
+    {
+      "name": "world_home_empty_desc",
+      "value": "世界创建功能将在下一阶段开放"
+    },
+    {
+      "name": "world_home_load_failed",
+      "value": "世界数据加载失败,请重试"
+    },
+    {
+      "name": "world_home_reload",
+      "value": "重新加载"
+    },
+    {
+      "name": "world_home_back",
+      "value": "返回"
+    },
+    {
+      "name": "world_status_active",
+      "value": "活跃"
+    },
+    {
+      "name": "world_status_archived",
+      "value": "已归档"
+    },
+    {
+      "name": "world_location_count_label",
+      "value": "地点"
+    },
+    {
+      "name": "world_character_count_label",
+      "value": "角色"
+    },
+    {
+      "name": "world_edge_count_label",
+      "value": "连接"
+    },
+    {
+      "name": "world_event_count_label",
+      "value": "事件"
+    },
+    {
+      "name": "world_detail_title",
+      "value": "世界详情"
+    },
+    {
+      "name": "world_detail_not_found",
+      "value": "世界不存在或已被删除"
+    },
+    {
+      "name": "world_detail_overview_section",
+      "value": "数据概览"
+    },
+    {
+      "name": "world_detail_character_section",
+      "value": "角色实例"
+    },
+    {
+      "name": "world_detail_event_section",
+      "value": "最近事件"
+    },
+    {
+      "name": "world_detail_graph_section",
+      "value": "地点关系图"
+    },
+    {
+      "name": "world_detail_no_locations",
+      "value": "该世界还没有地点"
+    },
+    {
+      "name": "world_detail_no_characters",
+      "value": "该世界还没有角色实例"
+    },
+    {
+      "name": "world_detail_no_events",
+      "value": "暂无世界事件"
+    },
+    {
+      "name": "world_detail_unplaced_characters",
+      "value": "未放置角色"
+    },
+    {
+      "name": "world_detail_anomalous_edges",
+      "value": "发现异常连接"
+    },
+    {
+      "name": "world_character_active",
+      "value": "活跃"
+    },
+    {
+      "name": "world_character_inactive",
+      "value": "已停用"
+    },
+    {
+      "name": "world_character_card_missing",
+      "value": "角色卡缺失"
+    },
+    {
+      "name": "world_character_unplaced",
+      "value": "未放置"
+    },
+    {
+      "name": "world_location_missing",
+      "value": "地点数据缺失"
+    },
+    {
+      "name": "world_edge_target_missing",
+      "value": "连接目标缺失"
+    },
+    {
+      "name": "world_edge_bidirectional",
+      "value": "双向"
+    },
+    {
+      "name": "world_edge_unidirectional",
+      "value": "单向"
+    },
+    {
+      "name": "world_edge_disabled",
+      "value": "已停用"
+    },
+    {
+      "name": "world_edge_no_direction",
+      "value": "—"
+    },
+    {
+      "name": "world_graph_empty",
+      "value": "无可用地点节点"
+    },
+    {
+      "name": "world_graph_select_hint",
+      "value": "点击节点查看地点详情"
+    },
+    {
+      "name": "world_location_outgoing_edges",
+      "value": "出发连接"
+    },
+    {
+      "name": "world_location_incoming_edges",
+      "value": "到达连接"
+    },
+    {
+      "name": "world_location_current_characters",
+      "value": "当前角色"
+    },
+    {
+      "name": "world_location_no_characters",
+      "value": "该地点暂无角色"
+    },
+    {
+      "name": "world_location_status_active",
+      "value": "活跃"
+    },
+    {
+      "name": "world_location_status_archived",
+      "value": "已归档"
+    },
+    {
+      "name": "world_event_unknown",
+      "value": "未知世界事件"
+    },
+    {
+      "name": "world_open_detail",
+      "value": "打开世界详情"
+    },
+    {
+      "name": "world_view_graph",
+      "value": "查看地点关系图"
+    },
+    {
+      "name": "world_select_location",
+      "value": "选中地点"
+    },
+    {
+      "name": "world_back_to_list",
+      "value": "返回世界列表"
+    },
+    {
+      "name": "world_reload_data",
+      "value": "重新加载世界数据"
     }
   ]
 }

@@ -392,6 +392,20 @@ export struct ChatSessionRootView {
           .onClick(() => {
             router.pushUrl({ url: 'pages/groupchat/GroupChatHomePage' });
           })
+
+        // W-UI-1: 空状态也提供世界模式入口
+        Button($r('app.string.world_entry_title'))
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor($r('app.color.app_accent'))
+          .backgroundColor($r('app.color.app_accent_surface'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(40)
+          .padding({ left: 24, right: 24 })
+          .margin({ top: $r('app.float.app_spacing_8') })
+          .accessibilityText($r('app.string.world_open_detail'))
+          .onClick(() => {
+            router.pushUrl({ url: 'pages/world/WorldHomePage' });
+          })
       }
       .width('100%')
       .layoutWeight(1)
@@ -401,6 +415,12 @@ export struct ChatSessionRootView {
         // G-UI-1: 多人聊天入口(独立卡片,不混入单聊会话列表)
         ListItem() {
           this.groupChatEntryCard()
+        }
+        .margin({ bottom: $r('app.float.app_spacing_12') })
+
+        // W-UI-1: 世界模式入口(独立卡片,与单聊/多人并列)
+        ListItem() {
+          this.worldEntryCard()
         }
         .margin({ bottom: $r('app.float.app_spacing_12') })
 
@@ -499,6 +519,86 @@ export struct ChatSessionRootView {
           .alignItems(VerticalAlign.Center)
 
           Text($r('app.string.group_entry_desc'))
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_tertiary'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .margin({ top: 4 })
+            .width('100%')
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+        .margin({ left: 12 })
+
+        // 右侧箭头
+        SymbolGlyph($r('sys.symbol.chevron_right'))
+          .fontSize(16)
+          .fontColor([$r('app.color.app_text_tertiary')])
+      }
+      .width('100%')
+      .padding({
+        left: $r('app.float.app_spacing_12'),
+        right: $r('app.float.app_spacing_12'),
+        top: $r('app.float.app_spacing_12'),
+        bottom: $r('app.float.app_spacing_12')
+      })
+      .alignItems(VerticalAlign.Center)
+    }
+  }
+
+  /**
+   * W-UI-1: 世界模式入口卡片。
+   *
+   * 独立于单聊会话列表和多人聊天入口,与单聊/多人并列。
+   * 点击跳转到 WorldHomePage。
+   * 不修改单聊/多人聊天卡片行为。
+   */
+  @Builder
+  worldEntryCard() {
+    PressableCard({
+      onPress: (): void => {
+        router.pushUrl({ url: 'pages/world/WorldHomePage' });
+      },
+      surfaceColor: $r('app.color.app_accent_surface')
+    }) {
+      Row() {
+        // 左侧:世界图标(globe)
+        Stack() {
+          SymbolGlyph($r('sys.symbol.star'))
+            .fontSize(22)
+            .fontColor([$r('app.color.app_accent')])
+        }
+        .width(44)
+        .height(44)
+        .backgroundColor($r('app.color.app_surface_2'))
+        .borderRadius(22)
+        .alignContent(Alignment.Center)
+
+        // 右侧:标题 + 描述
+        Column() {
+          Row() {
+            Text($r('app.string.world_entry_title'))
+              .fontSize($r('app.float.app_font_body'))
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.app_text_primary'))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+            // 只读徽标
+            Text($r('app.string.world_home_subtitle'))
+              .fontSize(10)
+              .fontColor($r('app.color.app_accent'))
+              .backgroundColor($r('app.color.app_surface_2'))
+              .borderRadius(4)
+              .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+              .margin({ left: 8 })
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Center)
+
+          Text($r('app.string.world_entry_desc'))
             .fontSize($r('app.float.app_font_caption'))
             .fontColor($r('app.color.app_text_tertiary'))
             .maxLines(1)
