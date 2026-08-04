@@ -28,18 +28,23 @@ export struct GroupGenerationErrorCard {
 
   build(): void {
     Column() {
+      // 失败说明行:图标 + 文字
       Row() {
-        Text('⚠')
-          .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_danger'))
+        SymbolGlyph($r('sys.symbol.exclamationmark_triangle'))
+          .fontSize(14)
+          .fontColor([$r('app.color.app_danger')])
         Text(this.errorText)
           .fontSize($r('app.float.app_font_caption'))
           .fontColor($r('app.color.app_danger'))
           .margin({ left: 6 })
           .layoutWeight(1)
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
       }
       .width('100%')
+      .alignItems(VerticalAlign.Top)
 
+      // 操作按钮行:重试(主) + 结束本轮(次)
       Row() {
         // 主操作:重试当前角色
         Button() {
@@ -105,8 +110,12 @@ export struct GroupGenerationErrorCard {
       .justifyContent(FlexAlign.End)
     }
     .width('100%')
-    .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+    .padding({ left: 12, right: 12, top: 10, bottom: 10 })
     .backgroundColor($r('app.color.chat_status_failed_bg'))
-    .borderRadius($r('app.float.app_radius_sm'))
+    .border({
+      width: 0.5,
+      color: $r('app.color.app_danger')
+    })
+    .borderRadius($r('app.float.app_radius_md'))
   }
 }

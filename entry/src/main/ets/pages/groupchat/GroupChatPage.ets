@@ -123,6 +123,13 @@ struct GroupChatPage {
   @State renameVisible: boolean = false;
   /** 重命名输入值 */
   @State renameInput: string = '';
+  /** G-UI-ALIGN-3: 重命名保存中(防重复提交,失败保留输入) */
+  @State renameSaving: boolean = false;
+  /**
+   * G-UI-ALIGN-3: 页面级错误提示可见性(顶部浮动,可关闭)。
+   * 仅显示 errorMessage(页面操作错误),轮次级错误由 GroupGenerationErrorCard 处理。
+   */
+  @State errorBannerVisible: boolean = false;
   /** G-CONTROL-2A: 选中目标成员 UI 模型列表(空数组表示全员回复) */
   @State selectedReplyTargetMembers: GroupMemberUiModel[] = [];
   /** G-CONTROL-2A: @选择器是否可见 */
@@ -381,6 +388,10 @@ struct GroupChatPage {
     this.inputText = this.viewModel.inputText;
     this.isSending = this.viewModel.isSending;
     this.errorMessage = this.viewModel.errorMessage;
+    // G-UI-ALIGN-3: errorMessage 非空时自动显示 errorBanner,用户可手动关闭
+    if (this.errorMessage.length > 0) {
+      this.errorBannerVisible = true;
+    }
     this.roundState = this.viewModel.roundState;
     this.isGenerating = this.viewModel.isGenerating;
     this.isStopping = this.viewModel.isStopping;
@@ -701,9 +712,10 @@ struct GroupChatPage {
       .hitTestBehavior(HitTestMode.Transparent)
       .expandSafeArea([SafeAreaType.KEYBOARD], [SafeAreaEdge.BOTTOM])
 
-      // ===== 3. 顶部浮层(顶栏 + 动态成员栏 + 轮次状态 + 跨群聊提示)=====
+      // ===== 3. 顶部浮层(顶栏 + 错误条 + 动态成员栏 + 轮次状态 + 跨群聊提示)=====
       Column() {
         this.topBar()
+        this.errorBanner()
         this.dynamicMemberStripArea()
         this.roundStatusBar()
         this.crossChatBanner()
@@ -739,27 +751,80 @@ struct GroupChatPage {
   }
 
   /**
-   * G-RUNTIME-1D: 跨群聊运行隔离提示。
+   * G-UI-ALIGN-3: 页面级错误提示(顶部浮动,可关闭)。
    *
-   * 当另一个群聊正在生成时,当前页面显示提示横幅:
-   * - 不显示 A 的停止按钮(本页 isGenerating=false,停止按钮不会出现)
-   * - 不允许发送新一轮(输入区禁用)
-   * - 提示用户先结束另一个群聊的回复
+   * - 仅显示 errorMessage(页面操作错误:发送失败/停止失败/回复目标错误等)
+   * - 轮次级错误由 GroupGenerationErrorCard 处理,不在此显示
+   * - 半透明 surface 背景 + app_danger 文本 + 关闭按钮
+   * - 不遮挡 topBar(在 topBar 下方),不拦截消息滚动(HitTestMode.Default)
+   * - 不输出内部 ID / SQL / Prompt / 堆栈
    */
   @Builder
-  crossChatBanner(): void {
-    if (this.isAnotherChatRunning) {
+  errorBanner(): void {
+    if (this.errorBannerVisible && this.errorMessage.length > 0) {
       Row() {
-        Text('另一个多人聊天正在回复,请先结束当前回复')
+        SymbolGlyph($r('sys.symbol.exclamationmark_triangle'))
+          .fontSize(14)
+          .fontColor([$r('app.color.app_danger')])
+        Text(this.errorMessage)
           .fontSize($r('app.float.app_font_caption'))
           .fontColor($r('app.color.app_danger'))
           .layoutWeight(1)
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .margin({ left: 6 })
+        Button({ type: ButtonType.Circle, stateEffect: false }) {
+          SymbolGlyph($r('sys.symbol.xmark'))
+            .fontSize(12)
+            .fontColor([$r('app.color.app_text_tertiary')])
+        }
+        .width(24)
+        .height(24)
+        .backgroundColor(Color.Transparent)
+        .accessibilityText('关闭错误提示')
+        .onClick(() => {
+          this.errorBannerVisible = false;
+        })
       }
       .width('100%')
-      .padding({ left: 16, right: 16, top: 6, bottom: 6 })
+      .padding({ left: 16, right: 8, top: 6, bottom: 6 })
+      .margin({ left: 12, right: 12, top: 4 })
+      .backgroundColor($r('app.color.chat_status_failed_bg'))
+      .borderRadius($r('app.float.app_radius_sm'))
+      .alignItems(VerticalAlign.Center)
+    }
+  }
+
+  /**
+   * G-UI-ALIGN-3: 跨群聊运行隔离提示(紧凑样式)。
+   *
+   * 当另一个群聊正在生成时,当前页面显示紧凑提示:
+   * - 不显示 A 的停止按钮(本页 isGenerating=false,停止按钮不会出现)
+   * - 不允许发送新一轮(输入区禁用)
+   * - 紧凑提示条:surface_2 背景 + app_text_secondary 文字 + 图标
+   * - 不再占据大色块横幅,与 errorBanner 视觉层级一致
+   * - 状态解除后立即消失(isAnotherChatRunning 由 ViewModel 同步)
+   */
+  @Builder
+  crossChatBanner(): void {
+    if (this.isAnotherChatRunning) {
+      Row() {
+        SymbolGlyph($r('sys.symbol.lock'))
+          .fontSize(12)
+          .fontColor([$r('app.color.app_text_secondary')])
+        Text('另一个群聊正在回复,当前输入暂不可用')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .layoutWeight(1)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .margin({ left: 6 })
+      }
+      .width('100%')
+      .padding({ left: 12, right: 12, top: 5, bottom: 5 })
+      .margin({ left: 12, right: 12, top: 4 })
       .backgroundColor($r('app.color.app_surface_2'))
+      .borderRadius($r('app.float.app_radius_sm'))
       .alignItems(VerticalAlign.Center)
     }
   }
@@ -1609,23 +1674,7 @@ struct GroupChatPage {
   @Builder
   inputBarArea(): void {
     Column() {
-      // 错误提示(条件)
-      if (this.errorMessage.length > 0) {
-        Text(this.errorMessage)
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_danger'))
-          .width('100%')
-          .textAlign(TextAlign.Center)
-          .padding({ top: 4, bottom: 4 })
-      }
-      if (this.roundErrorMessage.length > 0) {
-        Text(this.roundErrorMessage)
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_danger'))
-          .width('100%')
-          .textAlign(TextAlign.Center)
-          .padding({ top: 4, bottom: 4 })
-      }
+      // G-UI-ALIGN-3: 错误提示已移至顶部浮动 errorBanner,不再在输入栏内显示
 
       // G-CONTROL-2A: 回复目标 Chip(多选摘要)+ 输入提示
       Row() {
@@ -2086,84 +2135,110 @@ struct GroupChatPage {
     .hitTestBehavior(HitTestMode.Transparent)
   }
 
-  /** 更多菜单弹窗 */
+  /**
+   * G-UI-ALIGN-3: 更多菜单底部 Sheet(对齐单聊 ChatMoreMenuSheet 模式)。
+   *
+   * - 全屏 Stack + rgba scrim,点击 scrim 关闭
+   * - 底部锚定 Column,顶部圆角 16,surface_1 背景
+   * - 顶部拖动条 + 标题 + 菜单项 + 关闭
+   * - 菜单项:管理成员 / 群聊设置 / 重命名
+   * - 底部 padding 避开导航栏(navBarHeight + 16)
+   */
   @Builder
   moreMenuDialog(): void {
     Stack() {
       Column() {
+        Blank().layoutWeight(1)
         Column() {
+          // 拖动条
+          Column()
+            .width(36)
+            .height(4)
+            .borderRadius(2)
+            .backgroundColor($r('app.color.app_divider'))
+            .margin({ top: 8, bottom: 12 })
+
+          // 标题
           Text($r('app.string.group_more_title'))
-            .fontSize(17)
+            .fontSize($r('app.float.app_font_subtitle'))
             .fontWeight(FontWeight.Medium)
             .fontColor($r('app.color.app_text_primary'))
-            .margin({ bottom: 12 })
-
-          Button($r('app.string.group_chat_menu_manage'))
-            .fontSize(15)
-            .fontColor($r('app.color.app_text_primary'))
-            .backgroundColor($r('app.color.app_surface_2'))
-            .borderRadius($r('app.float.app_radius_sm'))
+            .margin({ bottom: 12, left: 16, right: 16 })
             .width('100%')
-            .height(44)
-            .onClick(() => {
-              this.moreMenuVisible = false;
-              this.goManageMembers();
-            })
 
-          Button($r('app.string.group_chat_menu_settings'))
-            .fontSize(15)
-            .fontColor($r('app.color.app_text_primary'))
-            .backgroundColor($r('app.color.app_surface_2'))
-            .borderRadius($r('app.float.app_radius_sm'))
-            .width('100%')
-            .height(44)
-            .margin({ top: 8 })
-            .onClick(() => {
-              this.moreMenuVisible = false;
-              this.goSettings();
-            })
+          // 菜单项:管理成员
+          this.sheetMenuItem($r('app.string.group_chat_menu_manage'), (): void => {
+            this.moreMenuVisible = false;
+            this.goManageMembers();
+          })
 
-          Button($r('app.string.group_chat_menu_rename'))
-            .fontSize(15)
-            .fontColor($r('app.color.app_text_primary'))
-            .backgroundColor($r('app.color.app_surface_2'))
-            .borderRadius($r('app.float.app_radius_sm'))
-            .width('100%')
-            .height(44)
-            .margin({ top: 8 })
-            .onClick(() => {
-              this.moreMenuVisible = false;
-              this.renameInput = this.detail !== null ? this.detail.title : '';
-              this.renameVisible = true;
-            })
+          // 菜单项:群聊设置
+          this.sheetMenuItem($r('app.string.group_chat_menu_settings'), (): void => {
+            this.moreMenuVisible = false;
+            this.goSettings();
+          })
 
+          // 菜单项:重命名
+          this.sheetMenuItem($r('app.string.group_chat_menu_rename'), (): void => {
+            this.moreMenuVisible = false;
+            this.renameInput = this.detail !== null ? this.detail.title : '';
+            this.renameVisible = true;
+          })
+
+          // 关闭按钮
           Button($r('app.string.group_cancel'))
-            .fontSize(15)
+            .fontSize($r('app.float.app_font_body'))
             .fontColor($r('app.color.app_text_secondary'))
-            .backgroundColor(Color.Transparent)
-            .borderRadius($r('app.float.app_radius_sm'))
+            .backgroundColor($r('app.color.app_surface_2'))
+            .borderRadius($r('app.float.app_radius_md'))
             .width('100%')
             .height(44)
-            .margin({ top: 12 })
+            .margin({ top: 12, left: 16, right: 16 })
+            .accessibilityText('关闭更多操作')
             .onClick(() => {
               this.moreMenuVisible = false;
             })
         }
-        .width('80%')
-        .padding(20)
+        .width('100%')
         .backgroundColor($r('app.color.app_surface_1'))
-        .borderRadius($r('app.float.app_radius_lg'))
+        .borderRadius({ topLeft: 16, topRight: 16, bottomLeft: 0, bottomRight: 0 })
+        .padding({ top: 0, bottom: this.navBarHeight + 16 })
       }
       .width('100%')
       .height('100%')
-      .justifyContent(FlexAlign.Center)
-      .alignItems(HorizontalAlign.Center)
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.app_scrim'))
+    .backgroundColor('rgba(0,0,0,0.5)')
     .onClick(() => {
       this.moreMenuVisible = false;
+    })
+    .transition(TransitionEffect.OPACITY)
+  }
+
+  /**
+   * G-UI-ALIGN-3: Sheet 菜单项(统一高度、圆角、点击反馈)。
+   * 对齐单聊 ChatMoreMenuSheet 的列表项样式。
+   */
+  @Builder
+  sheetMenuItem(label: ResourceStr, onTap: () => void): void {
+    Row() {
+      Text(label)
+        .fontSize($r('app.float.app_font_body'))
+        .fontColor($r('app.color.app_text_primary'))
+        .layoutWeight(1)
+      SymbolGlyph($r('sys.symbol.chevron_right'))
+        .fontSize(16)
+        .fontColor([$r('app.color.app_text_tertiary')])
+    }
+    .width('100%')
+    .height(48)
+    .padding({ left: 16, right: 16 })
+    .alignItems(VerticalAlign.Center)
+    .margin({ left: 16, right: 16 })
+    .borderRadius($r('app.float.app_radius_sm'))
+    .onClick(() => {
+      onTap();
     })
   }
 
@@ -2177,71 +2252,105 @@ struct GroupChatPage {
     router.pushUrl({ url: 'pages/groupchat/GroupChatSettingsPage' });
   }
 
-  /** 重命名弹窗 */
+  /**
+   * G-UI-ALIGN-3: 重命名底部 Sheet(对齐更多菜单 Sheet 模式)。
+   *
+   * - 底部锚定表单:拖动条 + 标题 + TextInput + 取消/保存
+   * - 保存期间禁用按钮防重复提交(renameSaving)
+   * - 失败保留输入,成功后刷新标题并关闭
+   * - 底部 padding 避开导航栏
+   */
   @Builder
   renameDialog(): void {
     Stack() {
       Column() {
+        Blank().layoutWeight(1)
         Column() {
+          // 拖动条
+          Column()
+            .width(36)
+            .height(4)
+            .borderRadius(2)
+            .backgroundColor($r('app.color.app_divider'))
+            .margin({ top: 8, bottom: 12 })
+
+          // 标题
           Text($r('app.string.group_chat_menu_rename'))
-            .fontSize(17)
+            .fontSize($r('app.float.app_font_subtitle'))
             .fontWeight(FontWeight.Medium)
             .fontColor($r('app.color.app_text_primary'))
-            .margin({ bottom: 12 })
+            .margin({ bottom: 12, left: 16, right: 16 })
+            .width('100%')
 
+          // 群聊名称输入框
           TextInput({ placeholder: $r('app.string.group_rename_placeholder'), text: this.renameInput })
-            .fontSize(15)
+            .fontSize($r('app.float.app_font_body'))
             .fontColor($r('app.color.app_text_primary'))
             .backgroundColor($r('app.color.app_surface_2'))
-            .borderRadius($r('app.float.app_radius_sm'))
+            .borderRadius($r('app.float.app_radius_md'))
             .height(44)
             .padding({ left: 12, right: 12 })
+            .margin({ left: 16, right: 16 })
+            .enabled(!this.renameSaving)
             .onChange((value: string) => {
               this.renameInput = value;
             })
 
+          // 取消 / 保存
           Row() {
             Button($r('app.string.group_cancel'))
-              .fontSize(15)
-              .backgroundColor(Color.Transparent)
+              .fontSize($r('app.float.app_font_body'))
+              .backgroundColor($r('app.color.app_surface_2'))
               .fontColor($r('app.color.app_text_secondary'))
+              .borderRadius($r('app.float.app_radius_md'))
               .layoutWeight(1)
-              .height(40)
+              .height(44)
+              .enabled(!this.renameSaving)
+              .accessibilityText('取消重命名')
               .onClick(() => {
                 this.renameVisible = false;
                 this.renameInput = '';
               })
-            Button($r('app.string.group_save'))
-              .fontSize(15)
+            Button(this.renameSaving ? $r('app.string.group_saving') : $r('app.string.group_save'))
+              .fontSize($r('app.float.app_font_body'))
               .backgroundColor($r('app.color.app_accent'))
               .fontColor($r('app.color.app_on_accent'))
-              .borderRadius($r('app.float.app_radius_sm'))
+              .borderRadius($r('app.float.app_radius_md'))
               .layoutWeight(1)
-              .height(40)
+              .height(44)
               .margin({ left: 12 })
+              .enabled(!this.renameSaving)
+              .accessibilityText('保存群聊名称')
               .onClick(() => {
                 this.confirmRename();
               })
           }
           .width('100%')
-          .margin({ top: 20 })
+          .margin({ top: 16, left: 16, right: 16 })
         }
-        .width('80%')
-        .padding(20)
+        .width('100%')
         .backgroundColor($r('app.color.app_surface_1'))
-        .borderRadius($r('app.float.app_radius_lg'))
+        .borderRadius({ topLeft: 16, topRight: 16, bottomLeft: 0, bottomRight: 0 })
+        .padding({ top: 0, bottom: this.navBarHeight + 16 })
       }
       .width('100%')
       .height('100%')
-      .justifyContent(FlexAlign.Center)
-      .alignItems(HorizontalAlign.Center)
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.app_scrim'))
+    .backgroundColor('rgba(0,0,0,0.5)')
+    .onClick(() => {
+      if (!this.renameSaving) {
+        this.renameVisible = false;
+      }
+    })
+    .transition(TransitionEffect.OPACITY)
   }
 
   private async confirmRename(): Promise<void> {
+    if (this.renameSaving) {
+      return;
+    }
     const trimmed: string = this.renameInput.trim();
     if (trimmed.length === 0) {
       promptAction.showToast({ message: '名称不能为空', duration: 1500 });
@@ -2250,6 +2359,7 @@ struct GroupChatPage {
     if (this.viewModel === null) {
       return;
     }
+    this.renameSaving = true;
     try {
       await this.viewModel.rename(trimmed);
       this.syncFromViewModel();
@@ -2257,7 +2367,10 @@ struct GroupChatPage {
       this.renameInput = '';
       promptAction.showToast({ message: '已保存', duration: 1200 });
     } catch (e) {
+      // 失败保留输入,不关闭 Sheet
       promptAction.showToast({ message: '重命名失败', duration: 1500 });
+    } finally {
+      this.renameSaving = false;
     }
   }
 }
