@@ -86,6 +86,8 @@ import { WorldLocationRepository } from '../repositories/world/WorldLocationRepo
 import { WorldLocationEdgeRepository } from '../repositories/world/WorldLocationEdgeRepository';
 import { WorldCharacterInstanceRepository } from '../repositories/world/WorldCharacterInstanceRepository';
 import { WorldEventRepository } from '../repositories/world/WorldEventRepository';
+import { WorldSceneRepository } from '../repositories/world/WorldSceneRepository';
+import { WorldSceneMessageRepository } from '../repositories/world/WorldSceneMessageRepository';
 import { WorldStateService } from './world/WorldStateService';
 import { Logger } from '../utils/Logger';
 
@@ -207,6 +209,10 @@ export class AppServices {
   private readonly worldCharacterInstanceRepository: WorldCharacterInstanceRepository;
   /** WorldEventRepository 世界事件仓储(W-DATA-1A,不对页面公开) */
   private readonly worldEventRepository: WorldEventRepository;
+  /** WorldSceneRepository 世界场景仓储(W-SCENE-1A,不对页面公开) */
+  private readonly worldSceneRepository: WorldSceneRepository;
+  /** WorldSceneMessageRepository 世界场景消息仓储(W-SCENE-1A,不对页面公开) */
+  private readonly worldSceneMessageRepository: WorldSceneMessageRepository;
   /** WorldStateService 世界模式状态业务服务(W-DATA-1B,世界基础数据唯一正式写入口) */
   private readonly worldStateService: WorldStateService;
 
@@ -238,6 +244,9 @@ export class AppServices {
     this.worldLocationEdgeRepository = new WorldLocationEdgeRepository(this.dbHelper);
     this.worldCharacterInstanceRepository = new WorldCharacterInstanceRepository(this.dbHelper);
     this.worldEventRepository = new WorldEventRepository(this.dbHelper);
+    // W-SCENE-1A: 世界场景与场景消息仓储,仅依赖 DbHelper,不依赖任何 Service,不会形成循环。
+    this.worldSceneRepository = new WorldSceneRepository(this.dbHelper);
+    this.worldSceneMessageRepository = new WorldSceneMessageRepository(this.dbHelper);
     this.characterService = new CharacterService(
       this.characterRepository,
       this.characterSelectionStore,
@@ -245,8 +254,8 @@ export class AppServices {
       this.lorebookRepository,
       this.worldCharacterInstanceRepository
     );
-    // W-DATA-1B: 世界模式状态业务服务(世界基础数据唯一正式写入口)。
-    // 依赖 5 个世界 Repository + CharacterService(只读 getById) + DbHelper。
+    // W-DATA-1B / W-SCENE-1A: 世界模式状态业务服务(世界基础数据唯一正式写入口)。
+    // 依赖 7 个世界 Repository + CharacterService(只读 getById) + DbHelper。
     // CharacterService 已注入 worldCharacterInstanceRepository,但 WorldStateService
     // 不调用 CharacterService.remove 等写方法,无构造循环。
     this.worldStateService = new WorldStateService(
@@ -255,6 +264,8 @@ export class AppServices {
       this.worldLocationEdgeRepository,
       this.worldCharacterInstanceRepository,
       this.worldEventRepository,
+      this.worldSceneRepository,
+      this.worldSceneMessageRepository,
       this.characterService,
       this.dbHelper
     );
@@ -846,6 +857,24 @@ export class AppServices {
    */
   static getWorldEventRepository(): WorldEventRepository {
     return AppServices.getInstance().worldEventRepository;
+  }
+
+  /**
+   * 获取 WorldSceneRepository 实例(W-SCENE-1A 世界场景仓储)。
+   * 用于 world_scenes 表的 CRUD 操作。本阶段不接入 UI,仅完成数据层注册。
+   * 页面与 ViewModel 不直接调用,留待 W-SCENE-1B WorldSceneService 使用。
+   */
+  static getWorldSceneRepository(): WorldSceneRepository {
+    return AppServices.getInstance().worldSceneRepository;
+  }
+
+  /**
+   * 获取 WorldSceneMessageRepository 实例(W-SCENE-1A 世界场景消息仓储)。
+   * 用于 world_scene_messages 表的 CRUD 操作与 Streaming 条件更新。
+   * 页面与 ViewModel 不直接调用,留待 W-SCENE-1B WorldSceneService 使用。
+   */
+  static getWorldSceneMessageRepository(): WorldSceneMessageRepository {
+    return AppServices.getInstance().worldSceneMessageRepository;
   }
 
   /**

@@ -6,7 +6,7 @@
  */
 
 export const DATABASE_NAME: string = 'arktavern.db';
-export const DATABASE_VERSION: number = 15;
+export const DATABASE_VERSION: number = 16;
 
 export const TABLE_CHARACTERS: string = 'characters';
 export const TABLE_CHATS: string = 'chats';
@@ -326,3 +326,51 @@ export const INDEX_WORLD_EVENTS_OCCURRED_AT: string = 'idx_world_events_world_oc
 export const INDEX_WORLD_EVENTS_TYPE: string = 'idx_world_events_type';
 export const INDEX_WORLD_EVENTS_SOURCE_CHARACTER: string = 'idx_world_events_source_character';
 export const INDEX_WORLD_EVENTS_SOURCE_SCENE: string = 'idx_world_events_source_scene';
+
+// ===== v16: 世界场景与场景消息(W-SCENE-1A) =====
+// 独立数据域,不复用 chats / messages / chat_participants。
+// 2 张 world_scene* 表 + 相关索引,新安装和 v15→v16 迁移共用同一份 DDL。
+export const TABLE_WORLD_SCENES: string = 'world_scenes';
+export const TABLE_WORLD_SCENE_MESSAGES: string = 'world_scene_messages';
+
+/** world_scenes.location_id 列名 */
+export const COLUMN_LOCATION_ID: string = 'location_id';
+/** world_scenes.started_at 列名 */
+export const COLUMN_STARTED_AT: string = 'started_at';
+/** world_scenes.ended_at 列名 */
+export const COLUMN_ENDED_AT: string = 'ended_at';
+
+/** world_scene_messages.scene_id 列名(复用 messages 表同名列常量 COLUMN_SCENE_ID) */
+/** world_scene_messages.sender_type 列名 */
+export const COLUMN_SENDER_TYPE_WS: string = 'sender_type';
+/** world_scene_messages.sender_character_instance_id 列名 */
+export const COLUMN_SENDER_CHARACTER_INSTANCE_ID: string = 'sender_character_instance_id';
+/** world_scene_messages.generation_batch_id 列名(与 messages 表字段语义一致,独立列) */
+export const COLUMN_GENERATION_BATCH_ID_WS: string = 'generation_batch_id';
+/** world_scene_messages.visibility 列名(与 messages 表字段语义一致,独立列) */
+export const COLUMN_VISIBILITY_WS: string = 'visibility';
+/** world_scene_messages.recipient_character_instance_ids_json 列名 */
+export const COLUMN_RECIPIENT_CHARACTER_INSTANCE_IDS_JSON: string = 'recipient_character_instance_ids_json';
+/** world_scene_messages.participant_character_instance_ids_json 列名 */
+export const COLUMN_PARTICIPANT_CHARACTER_INSTANCE_IDS_JSON: string = 'participant_character_instance_ids_json';
+/** world_scene_messages.witness_character_instance_ids_json 列名 */
+export const COLUMN_WITNESS_CHARACTER_INSTANCE_IDS_JSON: string = 'witness_character_instance_ids_json';
+/** world_scene_messages.reply_target_character_instance_ids_json 列名 */
+export const COLUMN_REPLY_TARGET_CHARACTER_INSTANCE_IDS_JSON: string = 'reply_target_character_instance_ids_json';
+
+// ===== v16: 世界场景索引名 =====
+export const INDEX_WORLD_SCENES_WORLD_ID: string = 'idx_world_scenes_world_id';
+export const INDEX_WORLD_SCENES_LOCATION_ID: string = 'idx_world_scenes_location_id';
+export const INDEX_WORLD_SCENES_WORLD_STATUS: string = 'idx_world_scenes_world_status';
+export const INDEX_WORLD_SCENES_WORLD_LOCATION: string = 'idx_world_scenes_world_location';
+export const INDEX_WORLD_SCENES_WORLD_LOCATION_STATUS: string = 'idx_world_scenes_world_location_status';
+export const INDEX_WORLD_SCENES_STARTED_AT: string = 'idx_world_scenes_started_at';
+
+export const INDEX_WORLD_SCENE_MESSAGES_WORLD_ID: string = 'idx_world_scene_messages_world_id';
+export const INDEX_WORLD_SCENE_MESSAGES_SCENE_ID: string = 'idx_world_scene_messages_scene_id';
+export const INDEX_WORLD_SCENE_MESSAGES_SCENE_SEQUENCE: string = 'idx_world_scene_messages_scene_sequence';
+export const INDEX_WORLD_SCENE_MESSAGES_SCENE_STATUS: string = 'idx_world_scene_messages_scene_status';
+export const INDEX_WORLD_SCENE_MESSAGES_SENDER_INSTANCE: string = 'idx_world_scene_messages_sender_instance';
+export const INDEX_WORLD_SCENE_MESSAGES_BATCH: string = 'idx_world_scene_messages_batch';
+export const INDEX_WORLD_SCENE_MESSAGES_VISIBILITY: string = 'idx_world_scene_messages_visibility';
+export const INDEX_WORLD_SCENE_MESSAGES_CREATED_AT: string = 'idx_world_scene_messages_created_at';

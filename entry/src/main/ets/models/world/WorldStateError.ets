@@ -19,6 +19,7 @@ export enum WorldStateErrorKind {
   LocationNameEmpty,
   DuplicateLocation,
   LocationHasCharacters,
+  LocationHasScenes,
   EdgeNotFound,
   EdgeWorldMismatch,
   EdgeSelfConnection,
@@ -73,6 +74,10 @@ export class WorldStateError extends Error {
 
   static locationHasCharacters(): WorldStateError {
     return new WorldStateError(WorldStateErrorKind.LocationHasCharacters, '地点上仍有角色,无法归档或删除');
+  }
+
+  static locationHasScenes(): WorldStateError {
+    return new WorldStateError(WorldStateErrorKind.LocationHasScenes, '该地点已有场景历史,不能永久删除;可以将地点归档');
   }
 
   static edgeNotFound(): WorldStateError {

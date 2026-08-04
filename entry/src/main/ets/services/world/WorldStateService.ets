@@ -37,6 +37,8 @@ import { WorldLocationRepository } from '../../repositories/world/WorldLocationR
 import { WorldLocationEdgeRepository } from '../../repositories/world/WorldLocationEdgeRepository';
 import { WorldCharacterInstanceRepository } from '../../repositories/world/WorldCharacterInstanceRepository';
 import { WorldEventRepository } from '../../repositories/world/WorldEventRepository';
+import { WorldSceneRepository } from '../../repositories/world/WorldSceneRepository';
+import { WorldSceneMessageRepository } from '../../repositories/world/WorldSceneMessageRepository';
 import {
   World,
   WorldStatus,
@@ -107,6 +109,8 @@ export class WorldStateService {
   private readonly edgeRepo: WorldLocationEdgeRepository;
   private readonly instanceRepo: WorldCharacterInstanceRepository;
   private readonly eventRepo: WorldEventRepository;
+  private readonly sceneRepo: WorldSceneRepository;
+  private readonly sceneMessageRepo: WorldSceneMessageRepository;
   private readonly characterService: CharacterService;
   private readonly dbHelper: DbHelper;
 
@@ -116,6 +120,8 @@ export class WorldStateService {
     edgeRepo: WorldLocationEdgeRepository,
     instanceRepo: WorldCharacterInstanceRepository,
     eventRepo: WorldEventRepository,
+    sceneRepo: WorldSceneRepository,
+    sceneMessageRepo: WorldSceneMessageRepository,
     characterService: CharacterService,
     dbHelper: DbHelper
   ) {
@@ -124,6 +130,8 @@ export class WorldStateService {
     this.edgeRepo = edgeRepo;
     this.instanceRepo = instanceRepo;
     this.eventRepo = eventRepo;
+    this.sceneRepo = sceneRepo;
+    this.sceneMessageRepo = sceneMessageRepo;
     this.characterService = characterService;
     this.dbHelper = dbHelper;
   }
@@ -258,10 +266,12 @@ export class WorldStateService {
   }
 
   /**
-   * 硬删除世界。在单一事务内显式删除全部 V15 子记录:
-   * world_events → world_location_edges → world_character_instances → world_locations → worlds。
+   * 硬删除世界。在单一事务内显式删除全部 V16 子记录:
+   * world_scene_messages → world_scenes → world_events → world_location_edges →
+   * world_character_instances → world_locations → worlds。
    * 硬删除后不再保留 WorldDeleted 事件(事件属于被删除世界)。
    * 任一步失败整体回滚。
+   * 不依赖 SQLite 外键级联。
    */
   async deleteWorld(worldId: string): Promise<void> {
     if (worldId === '') {
@@ -273,6 +283,8 @@ export class WorldStateService {
         if (existing === null) {
           throw WorldStateError.worldNotFound();
         }
+        await this.sceneMessageRepo.deleteByWorldWithStore(store, worldId);
+        await this.sceneRepo.deleteByWorldWithStore(store, worldId);
         await this.eventRepo.deleteByWorldWithStore(store, worldId);
         await this.edgeRepo.deleteByWorldWithStore(store, worldId);
         await this.instanceRepo.deleteByWorldWithStore(store, worldId);
@@ -456,10 +468,13 @@ export class WorldStateService {
 
   /**
    * 删除地点。
-   * 事务内:确认存在 → 确认没有角色实例位于该地点(含 inactive) → 删除关联 Edge →
+   * 事务内:确认存在 → 确认没有角色实例位于该地点(含 inactive) →
+   * 确认该地点没有场景历史(Active 或 Ended) → 删除关联 Edge →
    * 插入 LocationDeleted 事件 → 删除 Location。
    * 事件保留 sourceLocationId 软引用,即使地点随后删除。
    * 不自动移动角色,不自动清空 currentLocationId。
+   * 不自动删除场景历史,也不将场景迁移到其他地点。
+   * 有场景历史时拒绝永久删除,用户可将地点归档。
    */
   async deleteLocation(locationId: string): Promise<void> {
     await this.dbHelper.runInTransaction(
@@ -472,6 +487,11 @@ export class WorldStateService {
         const count: number = await this.instanceRepo.countByCurrentLocationWithStore(store, locationId);
         if (count > 0) {
           throw WorldStateError.locationHasCharacters();
+        }
+        // 删除保护:该地点有任何场景历史(Active 或 Ended)都禁止永久删除
+        const sceneCount: number = await this.sceneRepo.countByLocationWithStore(store, locationId);
+        if (sceneCount > 0) {
+          throw WorldStateError.locationHasScenes();
         }
         // 删除关联 Edge(作为起点或终点)
         await this.edgeRepo.deleteByLocationWithStore(store, locationId);

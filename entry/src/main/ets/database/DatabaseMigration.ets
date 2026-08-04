@@ -14,7 +14,7 @@
  */
 
 import { relationalStore } from '@kit.ArkData';
-import { V1_TO_V2_STATEMENTS, V2_TO_V3_STATEMENTS, V3_TO_V4_STATEMENTS, V4_TO_V5_DDL_STATEMENTS, V5_TO_V6_STATEMENTS, V6_TO_V7_STATEMENTS, V7_TO_V8_DDL_STATEMENTS, V8_TO_V9_STATEMENTS, V9_TO_V10_DDL_STATEMENTS, V10_TO_V11_DDL_STATEMENTS, V11_TO_V12_DDL_STATEMENTS, V11_TO_V12_DATA_MIGRATION_STATEMENTS, V12_TO_V13_DDL_STATEMENTS, V13_TO_V14_DDL_STATEMENTS, V13_TO_V14_DATA_MIGRATION_STATEMENTS, V14_TO_V15_DDL_STATEMENTS } from './DatabaseSchema';
+import { V1_TO_V2_STATEMENTS, V2_TO_V3_STATEMENTS, V3_TO_V4_STATEMENTS, V4_TO_V5_DDL_STATEMENTS, V5_TO_V6_STATEMENTS, V6_TO_V7_STATEMENTS, V7_TO_V8_DDL_STATEMENTS, V8_TO_V9_STATEMENTS, V9_TO_V10_DDL_STATEMENTS, V10_TO_V11_DDL_STATEMENTS, V11_TO_V12_DDL_STATEMENTS, V11_TO_V12_DATA_MIGRATION_STATEMENTS, V12_TO_V13_DDL_STATEMENTS, V13_TO_V14_DDL_STATEMENTS, V13_TO_V14_DATA_MIGRATION_STATEMENTS, V14_TO_V15_DDL_STATEMENTS, V15_TO_V16_DDL_STATEMENTS } from './DatabaseSchema';
 import {
   TABLE_CHATS,
   TABLE_MESSAGES,
@@ -707,6 +707,45 @@ class V14ToV15Migration implements DatabaseMigration {
     // 仅执行 DDL(建表 + 建索引),不修改任何现有表,不迁移任何现有数据
     for (let i = 0; i < V14_TO_V15_DDL_STATEMENTS.length; i++) {
       await store.executeSql(V14_TO_V15_DDL_STATEMENTS[i]);
+    }
+  }
+}
+
+/**
+ * v15→v16 迁移(W-SCENE-1A 世界场景与场景消息):
+ * 1. 创建 2 张 world_scene* 表(world_scenes / world_scene_messages)
+ * 2. 创建相关索引(world_id / location_id / world_id+status / world_id+location_id /
+ *    world_id+location_id+status / started_at / scene_id / scene_id+sequence_number /
+ *    scene_id+status / sender_character_instance_id / generation_batch_id /
+ *    visibility / created_at)
+ *
+ * 安全性:
+ * - 所有 DDL 用 CREATE TABLE IF NOT EXISTS / CREATE INDEX IF NOT EXISTS
+ * - 不修改任何现有表(characters / chats / messages / chat_participants / world_* 等)
+ * - 不迁移任何现有数据
+ * - 任一语句失败由 DbHelper 事务回滚,数据库版本保持 15
+ * - 失败不写入 V16
+ *
+ * 本阶段不实现:
+ * - WorldSceneService
+ * - 场景 UI / 场景消息 UI / 手动发送消息 / 模型对话
+ * - WorldRuntimeService / WorldRuntimeRegistry / WorldPromptAssembler
+ * - 角色发言顺序 / 流式模型调用 / 停止、重试
+ * - Prompt 可见性过滤 / 世界记忆 / 方向性关系 / 地点知识
+ * - AI 候选地点 / AI 世界 Builder
+ */
+export function createV15ToV16Migration(): DatabaseMigration {
+  return new V15ToV16Migration();
+}
+
+class V15ToV16Migration implements DatabaseMigration {
+  readonly fromVersion: number = 15;
+  readonly toVersion: number = 16;
+
+  async migrate(store: relationalStore.RdbStore): Promise<void> {
+    // 仅执行 DDL(建表 + 建索引),不修改任何现有表,不迁移任何现有数据
+    for (let i = 0; i < V15_TO_V16_DDL_STATEMENTS.length; i++) {
+      await store.executeSql(V15_TO_V16_DDL_STATEMENTS[i]);
     }
   }
 }
