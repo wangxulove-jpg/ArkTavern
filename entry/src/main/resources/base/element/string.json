@@ -2162,7 +2162,7 @@
     },
     {
       "name": "world_character_remove_confirm",
-      "value": "这只会把角色从当前世界移除,不会删除角色卡。"
+      "value": "这会把角色从当前世界移除,并删除该角色在这个世界中的全部记忆;不会删除角色卡。"
     },
     {
       "name": "world_character_set_location",
@@ -2735,6 +2735,162 @@
     {
       "name": "world_scene_content_placeholder",
       "value": "输入消息内容"
+    },
+    {
+      "name": "world_memory_page_title",
+      "value": "角色记忆"
+    },
+    {
+      "name": "world_memory_not_found",
+      "value": "角色实例不存在或已被移除"
+    },
+    {
+      "name": "world_memory_load_error",
+      "value": "记忆数据加载失败"
+    },
+    {
+      "name": "world_memory_count_label",
+      "value": "记忆总数:%d"
+    },
+    {
+      "name": "world_memory_filter_all",
+      "value": "全部"
+    },
+    {
+      "name": "world_memory_filter_active",
+      "value": "活跃"
+    },
+    {
+      "name": "world_memory_filter_archived",
+      "value": "已归档"
+    },
+    {
+      "name": "world_memory_add",
+      "value": "添加记忆"
+    },
+    {
+      "name": "world_memory_edit",
+      "value": "编辑"
+    },
+    {
+      "name": "world_memory_archive",
+      "value": "归档"
+    },
+    {
+      "name": "world_memory_restore",
+      "value": "恢复"
+    },
+    {
+      "name": "world_memory_delete",
+      "value": "删除"
+    },
+    {
+      "name": "world_memory_empty_title",
+      "value": "这个角色还没有长期记忆"
+    },
+    {
+      "name": "world_memory_empty_desc",
+      "value": "手动添加事件、事实或反思记忆,角色移动地点后记忆仍会保留"
+    },
+    {
+      "name": "world_memory_create_title",
+      "value": "新建记忆"
+    },
+    {
+      "name": "world_memory_edit_title",
+      "value": "编辑记忆"
+    },
+    {
+      "name": "world_memory_create",
+      "value": "创建"
+    },
+    {
+      "name": "world_memory_save",
+      "value": "保存"
+    },
+    {
+      "name": "world_memory_cancel",
+      "value": "取消"
+    },
+    {
+      "name": "world_memory_form_content",
+      "value": "记忆正文"
+    },
+    {
+      "name": "world_memory_form_content_placeholder",
+      "value": "记录角色经历的事件、认知的事实或反思"
+    },
+    {
+      "name": "world_memory_form_content_count",
+      "value": "%d / %d"
+    },
+    {
+      "name": "world_memory_form_type",
+      "value": "记忆类型"
+    },
+    {
+      "name": "world_memory_type_episodic",
+      "value": "事件记忆"
+    },
+    {
+      "name": "world_memory_type_semantic",
+      "value": "事实认知"
+    },
+    {
+      "name": "world_memory_type_reflection",
+      "value": "反思总结"
+    },
+    {
+      "name": "world_memory_form_importance",
+      "value": "重要度"
+    },
+    {
+      "name": "world_memory_form_location",
+      "value": "发生地点(可选)"
+    },
+    {
+      "name": "world_memory_form_location_none",
+      "value": "未指定"
+    },
+    {
+      "name": "world_memory_form_location_clear",
+      "value": "点击主标签可清空选择"
+    },
+    {
+      "name": "world_memory_form_occurred_at",
+      "value": "发生时间(可选)"
+    },
+    {
+      "name": "world_memory_form_occurred_now",
+      "value": "设为现在"
+    },
+    {
+      "name": "world_memory_form_occurred_clear",
+      "value": "清空"
+    },
+    {
+      "name": "world_memory_occurred_at_label",
+      "value": "发生:%s"
+    },
+    {
+      "name": "world_memory_created_at_label",
+      "value": "创建:%s"
+    },
+    {
+      "name": "world_memory_delete_title",
+      "value": "删除记忆"
+    },
+    {
+      "name": "world_memory_delete_confirm",
+      "value": "删除后无法恢复,确定继续吗?"
+    },
+    {
+      "name": "world_memory_view_entry",
+      "value": "查看记忆"
+    },
+    {
+      "name": "world_memory_character_sheet_title",
+      "value": "人物信息"
     }
   ]
 }

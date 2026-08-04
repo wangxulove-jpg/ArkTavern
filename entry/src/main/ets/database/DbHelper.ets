@@ -40,6 +40,7 @@ import {
   createV13ToV14Migration,
   createV14ToV15Migration,
   createV15ToV16Migration,
+  createV16ToV17Migration,
   DatabaseMigration,
   MigrationPath
 } from './DatabaseMigration';
@@ -98,6 +99,10 @@ export type TransactionOperation =
   | 'world_scene_start'
   | 'world_scene_end'
   | 'world_scene_message_add'
+  | 'world_memory_create'
+  | 'world_memory_update'
+  | 'world_memory_archive'
+  | 'world_memory_delete'
   | 'unknown';
 
 export class DbHelper {
@@ -118,7 +123,7 @@ export class DbHelper {
 
   constructor(
     databaseName: string = DATABASE_NAME,
-    migrations: ReadonlyArray<DatabaseMigration> = [createV1ToV2Migration(), createV2ToV3Migration(), createV3ToV4Migration(), createV4ToV5Migration(), createV5ToV6Migration(), createV6ToV7Migration(), createV7ToV8Migration(), createV8ToV9Migration(), createV9ToV10Migration(), createV10ToV11Migration(), createV11ToV12Migration(), createV12ToV13Migration(), createV13ToV14Migration(), createV14ToV15Migration(), createV15ToV16Migration()]
+    migrations: ReadonlyArray<DatabaseMigration> = [createV1ToV2Migration(), createV2ToV3Migration(), createV3ToV4Migration(), createV4ToV5Migration(), createV5ToV6Migration(), createV6ToV7Migration(), createV7ToV8Migration(), createV8ToV9Migration(), createV9ToV10Migration(), createV10ToV11Migration(), createV11ToV12Migration(), createV12ToV13Migration(), createV13ToV14Migration(), createV14ToV15Migration(), createV15ToV16Migration(), createV16ToV17Migration()]
   ) {
     this.databaseName = databaseName;
     this.migrations = migrations;
@@ -165,6 +170,11 @@ export class DbHelper {
       this.initializing = null;
       const cause: string = this.extractCauseMessage(err);
       Logger.error(LOG_TAG, `initialize failed cause=${cause}`);
+      // W-MEMORY-1A-FIX: 保留原始 DatabaseError 类型信息(如 UnsupportedVersion),
+      // 不无脑包装为 openFailed,避免上层无法识别高版本不兼容错误而触发重建兜底。
+      if (err instanceof DatabaseError) {
+        throw err;
+      }
       throw DatabaseError.openFailed(cause);
     } finally {
       this.initializing = null;
@@ -273,18 +283,27 @@ export class DbHelper {
       await relationalStore.getRdbStore(context, config);
     const currentVersion: number = await this.readUserVersion(store);
     if (currentVersion > DATABASE_VERSION) {
-      Logger.warn(LOG_TAG,
-        `database version current=${currentVersion} > supported=${DATABASE_VERSION}, deleting and recreating`);
-      store.close();
-      await relationalStore.deleteRdbStore(context, this.databaseName);
-      const newStore: relationalStore.RdbStore =
-        await relationalStore.getRdbStore(context, {
-          name: this.databaseName,
-          securityLevel: relationalStore.SecurityLevel.S1
-        });
-      await this.createFreshSchema(newStore);
-      await this.writeUserVersion(newStore, DATABASE_VERSION);
-      return newStore;
+      // W-MEMORY-1A-FIX: 未知高版本无损拒绝保护。
+      // 高版本数据库可能由未来版本应用创建,直接删除会清空用户数据。
+      // 必须明确拒绝打开/迁移,且:
+      // - 不调用 deleteRdbStore
+      // - 不删除数据库文件
+      // - 不执行 DROP TABLE / CREATE TABLE
+      // - 不执行迁移
+      // - 不修改 PRAGMA user_version
+      // 仅关闭本次打开的 store 句柄(关闭句柄不删除文件),抛出 UnsupportedVersion 错误。
+      Logger.error(LOG_TAG,
+        `Database version unsupported: currentVersion=${currentVersion} supportedVersion=${DATABASE_VERSION}`);
+      try {
+        store.close();
+      } catch (closeErr) {
+        // 关闭句柄失败不影响拒绝语义,记录后继续抛出 UnsupportedVersion
+        Logger.warn(LOG_TAG,
+          `close store before unsupported version rejection failed cause=${this.extractCauseMessage(closeErr)}`);
+      }
+      throw DatabaseError.unsupportedVersion(
+        `currentVersion=${currentVersion} supportedVersion=${DATABASE_VERSION}`
+      );
     }
     if (currentVersion === 0) {
       await this.createFreshSchema(store);

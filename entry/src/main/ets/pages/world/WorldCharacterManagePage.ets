@@ -21,6 +21,8 @@ import {
 import {
   PENDING_WORLD_ID_KEY,
   PENDING_WORLD_CHARACTER_INSTANCE_ID_KEY,
+  PENDING_WORLD_MEMORY_WORLD_ID_KEY,
+  PENDING_WORLD_MEMORY_CHARACTER_INSTANCE_ID_KEY,
   WORLD_DETAIL_REFRESH_TOKEN_KEY,
   WORLD_CHARACTER_MANAGE_REFRESH_TOKEN_KEY
 } from '../../viewmodels/world/WorldUiModels';
@@ -420,6 +422,22 @@ struct WorldCharacterManagePage {
 
       // 操作按钮
       Row() {
+        // 查看记忆(任何状态都允许)
+        Button($r('app.string.world_memory_view_entry'))
+          .fontSize(12)
+          .backgroundColor($r('app.color.app_surface_2'))
+          .fontColor($r('app.color.app_accent'))
+          .borderRadius(6)
+          .height(32)
+          .padding({ left: 10, right: 10 })
+          .enabled(!this.isSaving && !this.isDeleting)
+          .accessibilityText($r('app.string.world_memory_view_entry'))
+          .onClick(() => {
+            this.openCharacterMemory(inst.id);
+          })
+
+        Blank().layoutWeight(1)
+
         // 设置初始地点(仅未放置时)
         if (inst.currentLocationId.length === 0 && !inst.characterCardMissing) {
           Button($r('app.string.world_character_set_location'))
@@ -496,7 +514,7 @@ struct WorldCharacterManagePage {
           })
       }
       .width('100%')
-      .justifyContent(FlexAlign.End)
+      .justifyContent(FlexAlign.Start)
       .margin({ top: 8 })
       .alignItems(VerticalAlign.Center)
     }
@@ -903,6 +921,16 @@ struct WorldCharacterManagePage {
     AppStorage.setOrCreate<string>(PENDING_WORLD_ID_KEY, this.currentWorldId);
     AppStorage.setOrCreate<string>(PENDING_WORLD_CHARACTER_INSTANCE_ID_KEY, instanceId);
     router.pushUrl({ url: 'pages/world/WorldCharacterMovePage' });
+  }
+
+  /** 打开角色记忆页(传 worldId + instanceId,使用独立 key 避免与其他流程冲突) */
+  private openCharacterMemory(instanceId: string): void {
+    if (this.currentWorldId.length === 0 || instanceId.length === 0) {
+      return;
+    }
+    AppStorage.setOrCreate<string>(PENDING_WORLD_MEMORY_WORLD_ID_KEY, this.currentWorldId);
+    AppStorage.setOrCreate<string>(PENDING_WORLD_MEMORY_CHARACTER_INSTANCE_ID_KEY, instanceId);
+    router.pushUrl({ url: 'pages/world/WorldCharacterMemoryPage' });
   }
 
   /** 递增刷新令牌,通知 WorldDetailPage 重新加载 */

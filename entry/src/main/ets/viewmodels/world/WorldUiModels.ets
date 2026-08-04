@@ -36,6 +36,18 @@ export const PENDING_WORLD_SCENE_ID_KEY: string = 'pendingWorldSceneId';
 export const PENDING_WORLD_SCENE_CHAT_ID_KEY: string = 'pendingWorldSceneChatId';
 
 /**
+ * 跨页面路由用的 characterInstanceId 暂存键(W-MEMORY-1A)。
+ * 由 WorldCharacterManagePage / WorldSceneChatPage 写入,
+ * WorldCharacterMemoryPage 读取后清除。
+ * 与 PENDING_WORLD_CHARACTER_INSTANCE_ID_KEY 区分:后者专用于移动页等其它流程,
+ * 不复用,避免入口之间相互覆盖。
+ */
+export const PENDING_WORLD_MEMORY_CHARACTER_INSTANCE_ID_KEY: string = 'pendingWorldMemoryCharacterInstanceId';
+
+/** 跨页面路由用的 worldId 暂存键(W-MEMORY-1A,与 PENDING_WORLD_ID_KEY 区分,避免与移动页等流程互相覆盖) */
+export const PENDING_WORLD_MEMORY_WORLD_ID_KEY: string = 'pendingWorldMemoryWorldId';
+
+/**
  * 世界详情页刷新令牌键。
  * 子页面(WorldLocationEditPage / WorldEdgeEditPage / WorldEdgeManagePage /
  * WorldCharacterManagePage / WorldCharacterMovePage)在写入成功后递增此值,
@@ -64,6 +76,13 @@ export const WORLD_SCENE_DETAIL_REFRESH_TOKEN_KEY: string = 'worldSceneDetailRef
  * WorldSceneChatPage 通过 @StorageProp + @Watch 监听变化并触发 loadSnapshot。
  */
 export const WORLD_SCENE_CHAT_REFRESH_TOKEN_KEY: string = 'worldSceneChatRefreshToken';
+
+/**
+ * 世界角色记忆页刷新令牌键(W-MEMORY-1A)。
+ * 当前页面内写入记忆后递增此值,确保从子页面/编辑流程返回时重新加载。
+ * 当前未跨页面使用,保留供后续场景。
+ */
+export const WORLD_CHARACTER_MEMORY_REFRESH_TOKEN_KEY: string = 'worldCharacterMemoryRefreshToken';
 
 /** 世界列表项 UI 模型 */
 export interface WorldSummaryUiModel {

@@ -38,6 +38,7 @@ import { TokenCounter } from './TokenCounter';
 import { HistoryTrimmer } from './HistoryTrimmer';
 import { RecentMessageSelector } from './RecentMessageSelector';
 import { DbHelper } from '../database/DbHelper';
+import { DatabaseError } from '../models/DatabaseError';
 import { ChatRepository } from '../repositories/ChatRepository';
 import { MessageRepository } from '../repositories/MessageRepository';
 import { MessageSwipeRepository } from '../repositories/MessageSwipeRepository';
@@ -88,8 +89,10 @@ import { WorldCharacterInstanceRepository } from '../repositories/world/WorldCha
 import { WorldEventRepository } from '../repositories/world/WorldEventRepository';
 import { WorldSceneRepository } from '../repositories/world/WorldSceneRepository';
 import { WorldSceneMessageRepository } from '../repositories/world/WorldSceneMessageRepository';
+import { WorldCharacterMemoryRepository } from '../repositories/world/WorldCharacterMemoryRepository';
 import { WorldStateService } from './world/WorldStateService';
 import { WorldSceneService } from './world/WorldSceneService';
+import { WorldCharacterMemoryService } from './world/WorldCharacterMemoryService';
 import { Logger } from '../utils/Logger';
 
 const LOG_TAG: string = 'AppServices';
@@ -214,10 +217,14 @@ export class AppServices {
   private readonly worldSceneRepository: WorldSceneRepository;
   /** WorldSceneMessageRepository 世界场景消息仓储(W-SCENE-1A,不对页面公开) */
   private readonly worldSceneMessageRepository: WorldSceneMessageRepository;
+  /** WorldCharacterMemoryRepository 世界角色记忆仓储(W-MEMORY-1A,记忆 CRUD) */
+  private readonly worldCharacterMemoryRepository: WorldCharacterMemoryRepository;
   /** WorldStateService 世界模式状态业务服务(W-DATA-1B,世界基础数据唯一正式写入口) */
   private readonly worldStateService: WorldStateService;
   /** WorldSceneService 世界场景业务服务(W-SCENE-1B,场景和场景消息唯一正式写入口) */
   private readonly worldSceneService: WorldSceneService;
+  /** WorldCharacterMemoryService 世界角色记忆业务服务(W-MEMORY-1A,记忆唯一正式写入口) */
+  private readonly worldCharacterMemoryService: WorldCharacterMemoryService;
 
   /**
    * 私有构造,组装全部依赖。
@@ -250,6 +257,8 @@ export class AppServices {
     // W-SCENE-1A: 世界场景与场景消息仓储,仅依赖 DbHelper,不依赖任何 Service,不会形成循环。
     this.worldSceneRepository = new WorldSceneRepository(this.dbHelper);
     this.worldSceneMessageRepository = new WorldSceneMessageRepository(this.dbHelper);
+    // W-MEMORY-1A: 世界角色记忆仓储,仅依赖 DbHelper,不依赖任何 Service,不会形成循环。
+    this.worldCharacterMemoryRepository = new WorldCharacterMemoryRepository(this.dbHelper);
     this.characterService = new CharacterService(
       this.characterRepository,
       this.characterSelectionStore,
@@ -257,8 +266,21 @@ export class AppServices {
       this.lorebookRepository,
       this.worldCharacterInstanceRepository
     );
+    // W-MEMORY-1A: 世界角色记忆业务服务(记忆唯一正式写入口)。
+    // 依赖 5 个世界 Repository(只读 WithStore) + MemoryRepository(写入) + DbHelper。
+    // 不依赖 CharacterService / Page / ViewModel,无构造循环。
+    // 在 WorldStateService 之前创建,以便注入 WorldStateService 实现级联删除。
+    this.worldCharacterMemoryService = new WorldCharacterMemoryService(
+      this.worldRepository,
+      this.worldLocationRepository,
+      this.worldCharacterInstanceRepository,
+      this.worldSceneRepository,
+      this.worldSceneMessageRepository,
+      this.worldCharacterMemoryRepository,
+      this.dbHelper
+    );
     // W-DATA-1B / W-SCENE-1A: 世界模式状态业务服务(世界基础数据唯一正式写入口)。
-    // 依赖 7 个世界 Repository + CharacterService(只读 getById) + DbHelper。
+    // 依赖 7 个世界 Repository + MemoryService(级联删除) + CharacterService(只读 getById) + DbHelper。
     // CharacterService 已注入 worldCharacterInstanceRepository,但 WorldStateService
     // 不调用 CharacterService.remove 等写方法,无构造循环。
     this.worldStateService = new WorldStateService(
@@ -269,6 +291,7 @@ export class AppServices {
       this.worldEventRepository,
       this.worldSceneRepository,
       this.worldSceneMessageRepository,
+      this.worldCharacterMemoryService,
       this.characterService,
       this.dbHelper
     );
@@ -512,6 +535,11 @@ export class AppServices {
         Logger.error(LOG_TAG, 'initialize failed: ' + (e as Error).message);
         AppServices.instance = null;
         AppServices.readyPromise = null;
+        // W-MEMORY-1A-FIX: 保留 DatabaseError 类型信息(如 UnsupportedVersion),
+        // 让上层可识别高版本不兼容错误并显示安全提示,而非触发重建兜底。
+        if (e instanceof DatabaseError) {
+          throw e;
+        }
         throw new Error('AppServices initialize failed: ' + (e as Error).message);
       });
     return AppServices.readyPromise;
@@ -908,5 +936,23 @@ export class AppServices {
    */
   static getWorldSceneService(): WorldSceneService {
     return AppServices.getInstance().worldSceneService;
+  }
+
+  /**
+   * 获取 WorldCharacterMemoryService 实例(W-MEMORY-1A 世界角色记忆业务服务)。
+   * 是当前世界角色实例独立长期记忆的唯一正式写入口。
+   * 所有页面与 ViewModel 必须通过此方法获取同一个 WorldCharacterMemoryService。
+   */
+  static getWorldCharacterMemoryService(): WorldCharacterMemoryService {
+    return AppServices.getInstance().worldCharacterMemoryService;
+  }
+
+  /**
+   * 获取 WorldCharacterMemoryRepository 实例(W-MEMORY-1A 世界角色记忆仓储)。
+   * 用于 world_character_memories 表的 CRUD 操作。
+   * 页面与 ViewModel 不直接调用,留待 W-MEMORY-1A WorldCharacterMemoryService 使用。
+   */
+  static getWorldCharacterMemoryRepository(): WorldCharacterMemoryRepository {
+    return AppServices.getInstance().worldCharacterMemoryRepository;
   }
 }

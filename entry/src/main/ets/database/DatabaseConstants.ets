@@ -6,7 +6,7 @@
  */
 
 export const DATABASE_NAME: string = 'arktavern.db';
-export const DATABASE_VERSION: number = 16;
+export const DATABASE_VERSION: number = 17;
 
 export const TABLE_CHARACTERS: string = 'characters';
 export const TABLE_CHATS: string = 'chats';
@@ -374,3 +374,31 @@ export const INDEX_WORLD_SCENE_MESSAGES_SENDER_INSTANCE: string = 'idx_world_sce
 export const INDEX_WORLD_SCENE_MESSAGES_BATCH: string = 'idx_world_scene_messages_batch';
 export const INDEX_WORLD_SCENE_MESSAGES_VISIBILITY: string = 'idx_world_scene_messages_visibility';
 export const INDEX_WORLD_SCENE_MESSAGES_CREATED_AT: string = 'idx_world_scene_messages_created_at';
+
+// ===== v17: 世界角色实例独立长期记忆(W-MEMORY-1A) =====
+// 独立数据域,不复用 chat_memories。
+// 记忆所有权属于 WorldCharacterInstance,不属于 Character 模板、WorldLocation、WorldScene。
+// 表名 / 列名 / 索引名集中定义,Repository / Schema / Migration 只读取此处。
+export const TABLE_WORLD_CHARACTER_MEMORIES: string = 'world_character_memories';
+
+/** world_character_memories.character_instance_id 列名 */
+export const COLUMN_CHARACTER_INSTANCE_ID: string = 'character_instance_id';
+/** world_character_memories.memory_type 列名 */
+export const COLUMN_MEMORY_TYPE_WCM: string = 'memory_type';
+/** world_character_memories.origin_type 列名 */
+export const COLUMN_ORIGIN_TYPE: string = 'origin_type';
+/** world_character_memories.importance 列名(独立于 chat_memories.importance) */
+export const COLUMN_IMPORTANCE_WCM: string = 'importance';
+
+// ===== v17: 世界角色记忆索引名 =====
+export const INDEX_WORLD_CHARACTER_MEMORIES_WORLD_ID: string = 'idx_world_character_memories_world_id';
+export const INDEX_WORLD_CHARACTER_MEMORIES_INSTANCE: string = 'idx_world_character_memories_instance';
+export const INDEX_WORLD_CHARACTER_MEMORIES_INSTANCE_STATUS: string = 'idx_world_character_memories_instance_status';
+export const INDEX_WORLD_CHARACTER_MEMORIES_INSTANCE_STATUS_UPDATED: string = 'idx_world_character_memories_instance_status_updated';
+export const INDEX_WORLD_CHARACTER_MEMORIES_TYPE: string = 'idx_world_character_memories_type';
+export const INDEX_WORLD_CHARACTER_MEMORIES_ORIGIN: string = 'idx_world_character_memories_origin';
+export const INDEX_WORLD_CHARACTER_MEMORIES_SOURCE_SCENE: string = 'idx_world_character_memories_source_scene';
+export const INDEX_WORLD_CHARACTER_MEMORIES_SOURCE_MESSAGE: string = 'idx_world_character_memories_source_message';
+export const INDEX_WORLD_CHARACTER_MEMORIES_SOURCE_LOCATION: string = 'idx_world_character_memories_source_location';
+export const INDEX_WORLD_CHARACTER_MEMORIES_OCCURRED_AT: string = 'idx_world_character_memories_occurred_at';
+export const INDEX_WORLD_CHARACTER_MEMORIES_IMPORTANCE: string = 'idx_world_character_memories_importance';

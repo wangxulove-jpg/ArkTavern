@@ -39,6 +39,7 @@ import { WorldCharacterInstanceRepository } from '../../repositories/world/World
 import { WorldEventRepository } from '../../repositories/world/WorldEventRepository';
 import { WorldSceneRepository } from '../../repositories/world/WorldSceneRepository';
 import { WorldSceneMessageRepository } from '../../repositories/world/WorldSceneMessageRepository';
+import { WorldCharacterMemoryService } from './WorldCharacterMemoryService';
 import {
   World,
   WorldStatus,
@@ -115,6 +116,7 @@ export class WorldStateService {
   private readonly eventRepo: WorldEventRepository;
   private readonly sceneRepo: WorldSceneRepository;
   private readonly sceneMessageRepo: WorldSceneMessageRepository;
+  private readonly memoryService: WorldCharacterMemoryService;
   private readonly characterService: CharacterService;
   private readonly dbHelper: DbHelper;
 
@@ -126,6 +128,7 @@ export class WorldStateService {
     eventRepo: WorldEventRepository,
     sceneRepo: WorldSceneRepository,
     sceneMessageRepo: WorldSceneMessageRepository,
+    memoryService: WorldCharacterMemoryService,
     characterService: CharacterService,
     dbHelper: DbHelper
   ) {
@@ -136,6 +139,7 @@ export class WorldStateService {
     this.eventRepo = eventRepo;
     this.sceneRepo = sceneRepo;
     this.sceneMessageRepo = sceneMessageRepo;
+    this.memoryService = memoryService;
     this.characterService = characterService;
     this.dbHelper = dbHelper;
   }
@@ -297,6 +301,8 @@ export class WorldStateService {
         if (existing === null) {
           throw WorldStateError.worldNotFound();
         }
+        // V17: 先删除该 World 的全部世界角色记忆,避免留下孤立记忆。
+        await this.memoryService.deleteByWorldWithStore(store, worldId);
         await this.sceneMessageRepo.deleteByWorldWithStore(store, worldId);
         await this.sceneRepo.deleteByWorldWithStore(store, worldId);
         await this.eventRepo.deleteByWorldWithStore(store, worldId);
@@ -771,8 +777,10 @@ export class WorldStateService {
 
   /**
    * 从世界移除角色实例。
-   * 本阶段尚无场景、关系、记忆表,事务内:确认存在 → 插入 CharacterRemoved 事件 → 删除实例。
+   * V17 后:事务内顺序为 确认存在 → 插入 CharacterRemoved 事件 →
+   *   删除该实例全部 world_character_memories → 删除实例。
    * 不删除正式 Character。
+   * 所有删除使用同一个 RdbStore,任一步失败整体回滚,不留孤立记忆。
    */
   async removeCharacterFromWorld(instanceId: string): Promise<void> {
     await this.dbHelper.runInTransaction(
@@ -789,6 +797,7 @@ export class WorldStateService {
           sourceLocationId: existing.currentLocationId,
           summary: '角色已从世界移除'
         }));
+        await this.memoryService.deleteByCharacterInstanceWithStore(store, instanceId);
         await this.instanceRepo.deleteByIdWithStore(store, instanceId);
       },
       'world_character_remove'

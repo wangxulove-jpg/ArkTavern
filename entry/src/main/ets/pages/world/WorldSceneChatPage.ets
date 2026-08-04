@@ -31,6 +31,8 @@ import {
 } from '../../viewmodels/world/WorldSceneChatViewModel';
 import {
   PENDING_WORLD_SCENE_CHAT_ID_KEY,
+  PENDING_WORLD_MEMORY_WORLD_ID_KEY,
+  PENDING_WORLD_MEMORY_CHARACTER_INSTANCE_ID_KEY,
   WORLD_SCENE_CHAT_REFRESH_TOKEN_KEY,
   formatWorldTimestamp
 } from '../../viewmodels/world/WorldUiModels';
@@ -90,6 +92,9 @@ struct WorldSceneChatPage {
   // 旁白消息表单
   @State private narratorContent: string = '';
   @State private narratorWitnessIds: string[] = [];
+
+  // 人物操作 Sheet(W-MEMORY-1A):点击人物头像/名称打开,提供"查看记忆"入口
+  @State private characterSheetInstanceId: string = '';
 
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navBarHeight') navBarHeight: number = 0;
@@ -265,6 +270,14 @@ struct WorldSceneChatPage {
         }
       }
     })
+    .bindSheet(this.characterSheetInstanceId.length > 0, this.characterInfoSheet, {
+      height: SheetSize.FIT_CONTENT,
+      dragBar: true,
+      backgroundColor: $r('app.color.app_surface_1'),
+      onDisappear: () => {
+        this.characterSheetInstanceId = '';
+      }
+    })
   }
 
   @Builder
@@ -393,6 +406,9 @@ struct WorldSceneChatPage {
     .width(48)
     .margin({ right: 8 })
     .alignItems(HorizontalAlign.Center)
+    .onClick(() => {
+      this.characterSheetInstanceId = c.instanceId;
+    })
   }
 
   @Builder
@@ -1144,6 +1160,106 @@ struct WorldSceneChatPage {
     .backgroundColor($r('app.color.app_surface_1'))
   }
 
+  /** 人物信息 Sheet(W-MEMORY-1A):点击人物栏头像/名称打开,提供"查看记忆"入口 */
+  @Builder
+  characterInfoSheet(): void {
+    Column() {
+      Text($r('app.string.world_memory_character_sheet_title'))
+        .fontSize($r('app.float.app_font_title'))
+        .fontWeight(FontWeight.Bold)
+        .fontColor($r('app.color.app_text_primary'))
+        .width('100%')
+        .padding({ left: 16, top: 16, bottom: 12 })
+
+      if (this.detail !== null) {
+        Row() {
+          CharacterImageView({
+            imageUri: this.resolveCharacterAvatar(this.characterSheetInstanceId),
+            fallbackName: this.resolveCharacterFallback(this.characterSheetInstanceId),
+            imgWidth: 44,
+            imgHeight: 44,
+            imgBorderRadius: 22,
+            displayMode: 'thumbnail'
+          })
+
+          Column() {
+            Text(this.resolveCharacterName(this.characterSheetInstanceId))
+              .fontSize($r('app.float.app_font_body'))
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.app_text_primary'))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .width('100%')
+
+            Row() {
+              Text(this.resolveCharacterActive(this.characterSheetInstanceId)
+                ? $r('app.string.world_character_active')
+                : $r('app.string.world_character_inactive'))
+                .fontSize(10)
+                .fontColor(this.resolveCharacterActive(this.characterSheetInstanceId)
+                  ? $r('app.color.app_accent') : $r('app.color.app_text_tertiary'))
+                .backgroundColor($r('app.color.app_surface_2'))
+                .borderRadius(3)
+                .padding({ left: 4, right: 4, top: 1, bottom: 1 })
+
+              if (this.resolveCharacterCardMissing(this.characterSheetInstanceId)) {
+                Text($r('app.string.world_character_card_missing'))
+                  .fontSize(10)
+                  .fontColor($r('app.color.app_danger'))
+                  .backgroundColor($r('app.color.app_surface_2'))
+                  .borderRadius(3)
+                  .padding({ left: 4, right: 4, top: 1, bottom: 1 })
+                  .margin({ left: 4 })
+              }
+
+              Text(this.detail.locationName)
+                .fontSize(10)
+                .fontColor($r('app.color.app_text_secondary'))
+                .backgroundColor($r('app.color.app_surface_2'))
+                .borderRadius(3)
+                .padding({ left: 4, right: 4, top: 1, bottom: 1 })
+                .margin({ left: 4 })
+            }
+            .margin({ top: 4 })
+            .alignItems(VerticalAlign.Center)
+          }
+          .layoutWeight(1)
+          .alignItems(HorizontalAlign.Start)
+          .margin({ left: 10 })
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16, bottom: 12 })
+        .alignItems(VerticalAlign.Center)
+
+        Button($r('app.string.world_memory_view_entry'))
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor($r('app.color.app_on_accent'))
+          .backgroundColor($r('app.color.app_accent'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(40)
+          .width('100%')
+          .margin({ left: 16, right: 16, bottom: 8 })
+          .accessibilityText($r('app.string.world_memory_view_entry'))
+          .onClick(() => {
+            this.openCharacterMemoryFromScene(this.characterSheetInstanceId);
+          })
+
+        Button($r('app.string.world_scene_cancel'))
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .backgroundColor(Color.Transparent)
+          .height(40)
+          .width('100%')
+          .margin({ left: 16, right: 16, bottom: 16 })
+          .onClick(() => {
+            this.characterSheetInstanceId = '';
+          })
+      }
+    }
+    .width('100%')
+    .backgroundColor($r('app.color.app_surface_1'))
+  }
+
   // ===== 事件处理 =====
 
   private toggleMode(): void {
@@ -1331,5 +1447,80 @@ struct WorldSceneChatPage {
       }
     }
     return '已移除角色';
+  }
+
+  /** 人物信息 Sheet 用:解析实例显示名称 */
+  private resolveCharacterName(instanceId: string): string {
+    if (this.detail === null || instanceId.length === 0) {
+      return '';
+    }
+    return this.resolveInstanceName(this.detail, instanceId);
+  }
+
+  /** 人物信息 Sheet 用:解析实例头像 */
+  private resolveCharacterAvatar(instanceId: string): string {
+    if (this.detail === null) {
+      return '';
+    }
+    for (let i = 0; i < this.detail.characters.length; i++) {
+      if (this.detail.characters[i].instanceId === instanceId) {
+        return this.detail.characters[i].avatarUri;
+      }
+    }
+    return '';
+  }
+
+  /** 人物信息 Sheet 用:解析实例降级名称 */
+  private resolveCharacterFallback(instanceId: string): string {
+    if (this.detail === null) {
+      return '';
+    }
+    for (let i = 0; i < this.detail.characters.length; i++) {
+      if (this.detail.characters[i].instanceId === instanceId) {
+        return this.detail.characters[i].fallbackName;
+      }
+    }
+    return '';
+  }
+
+  /** 人物信息 Sheet 用:解析实例是否活跃 */
+  private resolveCharacterActive(instanceId: string): boolean {
+    if (this.detail === null) {
+      return false;
+    }
+    for (let i = 0; i < this.detail.characters.length; i++) {
+      if (this.detail.characters[i].instanceId === instanceId) {
+        return this.detail.characters[i].isActive;
+      }
+    }
+    return false;
+  }
+
+  /** 人物信息 Sheet 用:解析角色卡是否缺失 */
+  private resolveCharacterCardMissing(instanceId: string): boolean {
+    if (this.detail === null) {
+      return false;
+    }
+    for (let i = 0; i < this.detail.characters.length; i++) {
+      if (this.detail.characters[i].instanceId === instanceId) {
+        return this.detail.characters[i].characterCardMissing;
+      }
+    }
+    return false;
+  }
+
+  /** 从场景聊天页打开角色记忆页(传 worldId + instanceId) */
+  private openCharacterMemoryFromScene(instanceId: string): void {
+    if (this.detail === null || instanceId.length === 0) {
+      return;
+    }
+    const worldId: string = this.detail.worldId;
+    if (worldId.length === 0) {
+      return;
+    }
+    this.characterSheetInstanceId = '';
+    AppStorage.setOrCreate<string>(PENDING_WORLD_MEMORY_WORLD_ID_KEY, worldId);
+    AppStorage.setOrCreate<string>(PENDING_WORLD_MEMORY_CHARACTER_INSTANCE_ID_KEY, instanceId);
+    router.pushUrl({ url: 'pages/world/WorldCharacterMemoryPage' });
   }
 }
