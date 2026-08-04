@@ -2458,15 +2458,15 @@
     },
     {
       "name": "world_scene_manage_entry",
-      "value": "管理场景"
+      "value": "场景历史与高级管理"
     },
     {
       "name": "world_scene_manage_title",
-      "value": "场景管理"
+      "value": "场景历史与高级管理"
     },
     {
       "name": "world_scene_manage_subtitle",
-      "value": "每个地点最多一个进行中的场景"
+      "value": "查看场景历史与高级手动编辑(地点对话请通过地点节点进入)"
     },
     {
       "name": "world_scene_active_label",
@@ -2502,7 +2502,7 @@
     },
     {
       "name": "world_scene_end",
-      "value": "结束场景"
+      "value": "结束对话"
     },
     {
       "name": "world_scene_active_characters",
@@ -2510,7 +2510,7 @@
     },
     {
       "name": "world_scene_no_characters",
-      "value": "该地点暂无角色"
+      "value": "该地点当前没有角色"
     },
     {
       "name": "world_scene_messages",
@@ -2555,6 +2555,186 @@
     {
       "name": "world_scene_save",
       "value": "保存"
+    },
+    {
+      "name": "world_location_sheet_title",
+      "value": "地点人物"
+    },
+    {
+      "name": "world_location_sheet_open",
+      "value": "打开地点人物"
+    },
+    {
+      "name": "world_location_sheet_enter_scene",
+      "value": "进入对话"
+    },
+    {
+      "name": "world_location_sheet_enter_scene_a11y",
+      "value": "进入地点对话"
+    },
+    {
+      "name": "world_location_sheet_view_history",
+      "value": "查看场景历史"
+    },
+    {
+      "name": "world_location_sheet_active_scene",
+      "value": "进行中的对话"
+    },
+    {
+      "name": "world_location_sheet_no_active_scene",
+      "value": "当前没有进行中的对话"
+    },
+    {
+      "name": "world_location_sheet_start_scene",
+      "value": "开始新场景"
+    },
+    {
+      "name": "world_location_sheet_start_confirm_title",
+      "value": "开始新场景"
+    },
+    {
+      "name": "world_location_sheet_start_confirm_desc",
+      "value": "该地点当前没有进行中的对话,是否开始新场景?"
+    },
+    {
+      "name": "world_location_sheet_archived",
+      "value": "已归档"
+    },
+    {
+      "name": "world_location_sheet_active",
+      "value": "启用中"
+    },
+    {
+      "name": "world_location_sheet_ended_count",
+      "value": "已结束场景数"
+    },
+    {
+      "name": "world_location_sheet_loading",
+      "value": "加载地点数据"
+    },
+    {
+      "name": "world_scene_chat_title",
+      "value": "场景对话"
+    },
+    {
+      "name": "world_scene_more",
+      "value": "更多"
+    },
+    {
+      "name": "world_scene_more_title",
+      "value": "场景操作"
+    },
+    {
+      "name": "world_scene_more_a11y",
+      "value": "打开场景更多操作"
+    },
+    {
+      "name": "world_scene_manual_character",
+      "value": "手动角色发言"
+    },
+    {
+      "name": "world_scene_add_narrator",
+      "value": "添加旁白"
+    },
+    {
+      "name": "world_scene_end_a11y",
+      "value": "结束当前场景"
+    },
+    {
+      "name": "world_scene_end_confirm_title",
+      "value": "结束对话"
+    },
+    {
+      "name": "world_scene_end_confirm_desc",
+      "value": "结束后,该场景将保留为历史,但不能继续发送消息。"
+    },
+    {
+      "name": "world_scene_ended_hint",
+      "value": "场景已结束,只能查看历史。"
+    },
+    {
+      "name": "world_scene_loading",
+      "value": "加载场景"
+    },
+    {
+      "name": "world_scene_not_found",
+      "value": "场景不存在"
+    },
+    {
+      "name": "world_scene_not_found_desc",
+      "value": "该场景可能已被删除或归档。"
+    },
+    {
+      "name": "world_scene_load_error",
+      "value": "场景加载失败"
+    },
+    {
+      "name": "world_scene_empty_messages",
+      "value": "该场景暂无消息,发送第一条消息开始对话。"
+    },
+    {
+      "name": "world_scene_public_input_placeholder",
+      "value": "输入公开消息"
+    },
+    {
+      "name": "world_scene_private_input_placeholder",
+      "value": "输入私下消息"
+    },
+    {
+      "name": "world_scene_mode_public",
+      "value": "公开"
+    },
+    {
+      "name": "world_scene_mode_private",
+      "value": "私下"
+    },
+    {
+      "name": "world_scene_toggle_mode",
+      "value": "切换公开/私下"
+    },
+    {
+      "name": "world_scene_select_reply_target",
+      "value": "回复目标"
+    },
+    {
+      "name": "world_scene_select_recipients",
+      "value": "接收者"
+    },
+    {
+      "name": "world_scene_send",
+      "value": "发送"
+    },
+    {
+      "name": "world_scene_send_public_a11y",
+      "value": "发送公开消息"
+    },
+    {
+      "name": "world_scene_send_private_a11y",
+      "value": "发送私下消息"
+    },
+    {
+      "name": "world_scene_reply_target_prefix",
+      "value": "回复:"
+    },
+    {
+      "name": "world_scene_recipient_prefix",
+      "value": "接收:"
+    },
+    {
+      "name": "world_scene_witness_prefix",
+      "value": "目击:"
+    },
+    {
+      "name": "world_scene_sender",
+      "value": "发言角色"
+    },
+    {
+      "name": "world_scene_witness",
+      "value": "目击者(可选)"
+    },
+    {
+      "name": "world_scene_content_placeholder",
+      "value": "输入消息内容"
     }
   ]
 }

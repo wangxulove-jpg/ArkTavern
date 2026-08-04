@@ -34,6 +34,7 @@
     "pages/world/WorldEdgeEditPage",
     "pages/world/WorldCharacterMovePage",
     "pages/world/WorldSceneManagePage",
-    "pages/world/WorldSceneDetailPage"
+    "pages/world/WorldSceneDetailPage",
+    "pages/world/WorldSceneChatPage"
   ]
 }

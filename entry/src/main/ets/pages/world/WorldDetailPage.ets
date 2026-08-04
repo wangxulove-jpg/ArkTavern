@@ -38,9 +38,17 @@ import {
   WorldDetailLoadState,
   PENDING_WORLD_ID_KEY,
   PENDING_WORLD_LOCATION_ID_KEY,
+  PENDING_WORLD_SCENE_CHAT_ID_KEY,
   WORLD_DETAIL_REFRESH_TOKEN_KEY,
+  WORLD_SCENE_CHAT_REFRESH_TOKEN_KEY,
   formatWorldTimestamp
 } from '../../viewmodels/world/WorldUiModels';
+import {
+  WorldLocationSceneSheetViewModel,
+  LocationSheetLoadState,
+  LocationSheetUiModel,
+  SheetCharacterUiModel
+} from '../../viewmodels/world/WorldLocationSceneSheetViewModel';
 import {
   WorldLocationGraphLayout,
   WorldLocationNodeLayout,
@@ -89,6 +97,26 @@ struct WorldDetailPage {
   /** 刷新令牌:子页面写入成功后递增此值,@Watch 触发 loadDetail */
   @StorageProp(WORLD_DETAIL_REFRESH_TOKEN_KEY) @Watch('onRefreshTokenChange')
   refreshToken: number = 0;
+
+  // ===== 地点人物弹窗(W-UX-1) =====
+  /** 弹窗 ViewModel(每次打开弹窗时按需创建) */
+  @State private sheetViewModel: WorldLocationSceneSheetViewModel | null = null;
+  /** 弹窗是否可见 */
+  @State private locationSheetVisible: boolean = false;
+  /** 弹窗加载状态快照 */
+  @State private sheetLoadState: LocationSheetLoadState = LocationSheetLoadState.Loading;
+  /** 弹窗错误消息 */
+  @State private sheetErrorMessage: string = '';
+  /** 弹窗 UI 数据快照 */
+  @State private sheetDetail: LocationSheetUiModel | null = null;
+  /** 弹窗当前绑定的 worldId */
+  @State private sheetWorldId: string = '';
+  /** 弹窗当前绑定的 locationId */
+  @State private sheetLocationId: string = '';
+  /** 弹窗操作错误(如开始场景失败) */
+  @State private sheetActionError: string = '';
+  /** 开始场景确认面板可见 */
+  @State private sheetStartConfirmVisible: boolean = false;
 
   /** 页面实例短标识(日志用,区分不同 Page 实例,确认 refresh 回调指向同一实例) */
   private readonly pageInstanceShortId: string = generateShortId();
@@ -246,6 +274,314 @@ struct WorldDetailPage {
     .height('100%')
     .backgroundColor($r('app.color.app_bg'))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+    .bindSheet(this.locationSheetVisible, this.locationSceneSheet, {
+      height: SheetSize.FIT_CONTENT,
+      dragBar: true,
+      backgroundColor: $r('app.color.app_surface_1'),
+      onDisappear: () => {
+        // 关闭时清理 ViewModel 和状态(不用 $$,需手动同步)
+        if (this.sheetViewModel !== null) {
+          this.sheetViewModel.dispose();
+          this.sheetViewModel = null;
+        }
+        this.locationSheetVisible = false;
+        this.sheetDetail = null;
+        this.sheetActionError = '';
+        this.sheetStartConfirmVisible = false;
+      }
+    })
+  }
+
+  /**
+   * 地点人物弹窗 Builder(W-UX-1)。
+   * 使用 @State 快照(sheetLoadState / sheetDetail),不依赖 ViewModel 字段自动刷新。
+   */
+  @Builder
+  locationSceneSheet(): void {
+    Column() {
+      // 顶部标题行
+      Row() {
+        Text($r('app.string.world_location_sheet_title'))
+          .fontSize($r('app.float.app_font_title'))
+          .fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.app_text_primary'))
+          .layoutWeight(1)
+        Button('×')
+          .fontSize(18)
+          .fontColor($r('app.color.app_text_secondary'))
+          .backgroundColor(Color.Transparent)
+          .width(32)
+          .height(32)
+          .padding(0)
+          .align(Alignment.Center)
+          .onClick(() => {
+            this.closeLocationSheet();
+          })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 12, bottom: 8 })
+      .alignItems(VerticalAlign.Center)
+
+      // 内容区
+      if (this.sheetLoadState === LocationSheetLoadState.Loading) {
+        Column() {
+          LoadingProgress().width(32).height(32).color($r('app.color.app_accent'))
+          Text($r('app.string.world_location_sheet_loading'))
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_secondary'))
+            .margin({ top: 8 })
+        }
+        .width('100%')
+        .padding({ top: 24, bottom: 24 })
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+      } else if (this.sheetLoadState === LocationSheetLoadState.NotFound) {
+        Column() {
+          Text($r('app.string.world_detail_not_found'))
+            .fontSize($r('app.float.app_font_body'))
+            .fontColor($r('app.color.app_text_secondary'))
+        }
+        .width('100%')
+        .padding({ top: 24, bottom: 24 })
+        .alignItems(HorizontalAlign.Center)
+      } else if (this.sheetLoadState === LocationSheetLoadState.Error) {
+        Column() {
+          Text(this.sheetErrorMessage.length > 0 ? this.sheetErrorMessage : '加载失败')
+            .fontSize($r('app.float.app_font_body'))
+            .fontColor($r('app.color.app_danger'))
+        }
+        .width('100%')
+        .padding({ top: 24, bottom: 24 })
+        .alignItems(HorizontalAlign.Center)
+      } else if (this.sheetLoadState === LocationSheetLoadState.Ready && this.sheetDetail !== null) {
+        this.locationSheetContent(this.sheetDetail)
+      }
+    }
+    .width('100%')
+    .backgroundColor($r('app.color.app_surface_1'))
+  }
+
+  /** 弹窗内容(Ready 时) */
+  @Builder
+  locationSheetContent(detail: LocationSheetUiModel): void {
+    Scroll() {
+      Column() {
+        // 1. 地点名称 + 状态
+        Row() {
+          Text(detail.locationName.length > 0 ? detail.locationName : '(未命名地点)')
+            .fontSize($r('app.float.app_font_subtitle'))
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.app_text_primary'))
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .layoutWeight(1)
+          Text(detail.locationStatus === WorldLocationStatus.Active
+            ? $r('app.string.world_location_sheet_active')
+            : $r('app.string.world_location_sheet_archived'))
+            .fontSize(11)
+            .fontColor(detail.locationStatus === WorldLocationStatus.Active
+              ? $r('app.color.app_accent') : $r('app.color.app_text_tertiary'))
+            .backgroundColor($r('app.color.app_surface_2'))
+            .borderRadius(4)
+            .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+            .margin({ left: 8 })
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Top)
+
+        // 2. 描述
+        if (detail.locationDescription.length > 0) {
+          Text(detail.locationDescription)
+            .fontSize($r('app.float.app_font_body'))
+            .fontColor($r('app.color.app_text_secondary'))
+            .maxLines(6)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .margin({ top: 8 })
+            .width('100%')
+        }
+
+        // 3. Active Scene 状态
+        Divider().color($r('app.color.app_divider')).margin({ top: 12, bottom: 8 })
+        Row() {
+          Text(detail.activeScene !== null
+            ? $r('app.string.world_location_sheet_active_scene')
+            : $r('app.string.world_location_sheet_no_active_scene'))
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor(detail.activeScene !== null
+              ? $r('app.color.app_accent') : $r('app.color.app_text_tertiary'))
+            .layoutWeight(1)
+          if (detail.endedSceneCount > 0) {
+            Text($r('app.string.world_location_sheet_ended_count') + ': ' + detail.endedSceneCount.toString())
+              .fontSize(11)
+              .fontColor($r('app.color.app_text_tertiary'))
+          }
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
+
+        // 4. 当前人物
+        Divider().color($r('app.color.app_divider')).margin({ top: 12, bottom: 8 })
+        Text($r('app.string.world_scene_active_characters'))
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .width('100%')
+        this.sheetCharactersList(detail.characters)
+
+        // 5. 操作错误
+        if (this.sheetActionError.length > 0) {
+          Text(this.sheetActionError)
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_danger'))
+            .width('100%')
+            .margin({ top: 8 })
+            .padding({ left: 8, right: 8, top: 6, bottom: 6 })
+            .backgroundColor($r('app.color.app_surface_2'))
+            .borderRadius($r('app.float.app_radius_sm'))
+        }
+
+        // 6. 开始场景确认面板(覆盖在底部按钮上方)
+        if (this.sheetStartConfirmVisible) {
+          Column() {
+            Text($r('app.string.world_location_sheet_start_confirm_title'))
+              .fontSize($r('app.float.app_font_subtitle'))
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.app_text_primary'))
+              .width('100%')
+            Text($r('app.string.world_location_sheet_start_confirm_desc'))
+              .fontSize($r('app.float.app_font_body'))
+              .fontColor($r('app.color.app_text_secondary'))
+              .margin({ top: 6 })
+              .width('100%')
+            Row() {
+              Button($r('app.string.world_scene_cancel'))
+                .fontSize($r('app.float.app_font_body'))
+                .fontColor($r('app.color.app_text_secondary'))
+                .backgroundColor($r('app.color.app_surface_2'))
+                .borderRadius($r('app.float.app_radius_sm'))
+                .height(40)
+                .layoutWeight(1)
+                .margin({ right: 8 })
+                .onClick(() => {
+                  this.sheetStartConfirmVisible = false;
+                })
+              Button($r('app.string.world_location_sheet_start_scene'))
+                .fontSize($r('app.float.app_font_body'))
+                .fontColor($r('app.color.app_on_accent'))
+                .backgroundColor($r('app.color.app_accent'))
+                .borderRadius($r('app.float.app_radius_sm'))
+                .height(40)
+                .layoutWeight(1)
+                .enabled(this.sheetViewModel !== null && !this.sheetViewModel.isStarting)
+                .onClick(() => {
+                  this.confirmStartScene();
+                })
+            }
+            .width('100%')
+            .margin({ top: 12 })
+            .alignItems(VerticalAlign.Center)
+          }
+          .width('100%')
+          .padding({
+            left: 12, right: 12, top: 12, bottom: 12
+          })
+          .backgroundColor($r('app.color.app_surface_2'))
+          .borderRadius($r('app.float.app_radius_md'))
+          .margin({ top: 12 })
+        }
+
+        // 7. 底部按钮
+        if (!this.sheetStartConfirmVisible) {
+          Row() {
+            Button($r('app.string.world_location_sheet_view_history'))
+              .fontSize($r('app.float.app_font_body'))
+              .fontColor($r('app.color.app_text_secondary'))
+              .backgroundColor($r('app.color.app_surface_2'))
+              .borderRadius($r('app.float.app_radius_sm'))
+              .height(44)
+              .layoutWeight(1)
+              .margin({ right: 8 })
+              .accessibilityText($r('app.string.world_location_sheet_view_history'))
+              .onClick(() => {
+                this.onViewSceneHistoryClick();
+              })
+            Button($r('app.string.world_location_sheet_enter_scene'))
+              .fontSize($r('app.float.app_font_body'))
+              .fontColor($r('app.color.app_on_accent'))
+              .backgroundColor(detail.canStartScene || detail.activeScene !== null
+                ? $r('app.color.app_accent') : $r('app.color.app_text_tertiary'))
+              .borderRadius($r('app.float.app_radius_sm'))
+              .height(44)
+              .layoutWeight(1)
+              .enabled(detail.canStartScene || detail.activeScene !== null)
+              .accessibilityText($r('app.string.world_location_sheet_enter_scene_a11y'))
+              .onClick(() => {
+                this.onEnterSceneClick();
+              })
+          }
+          .width('100%')
+          .margin({ top: 16 })
+          .alignItems(VerticalAlign.Center)
+        }
+
+        // 底部安全空白
+        Column().width('100%').height(24)
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16 })
+      .alignItems(HorizontalAlign.Start)
+    }
+    .width('100%')
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.Spring)
+  }
+
+  /** 弹窗人物列表 */
+  @Builder
+  sheetCharactersList(characters: SheetCharacterUiModel[]): void {
+    if (characters.length === 0) {
+      Text($r('app.string.world_scene_no_characters'))
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_tertiary'))
+        .width('100%')
+        .margin({ top: 6 })
+    } else {
+      Column() {
+        ForEach(characters, (c: SheetCharacterUiModel) => {
+          Row() {
+            CharacterImageView({
+              imageUri: c.avatarUri,
+              fallbackName: c.displayName,
+              imgWidth: 32,
+              imgHeight: 32,
+              imgBorderRadius: 16,
+              displayMode: 'thumbnail',
+              objectFit: ImageFit.Cover
+            })
+            Column() {
+              Text(c.displayName)
+                .fontSize($r('app.float.app_font_body'))
+                .fontColor(c.isActive
+                  ? $r('app.color.app_text_primary') : $r('app.color.app_text_tertiary'))
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .width('100%')
+              Text(c.isActive ? '活跃' : '停用')
+                .fontSize(10)
+                .fontColor(c.isActive
+                  ? $r('app.color.app_accent') : $r('app.color.app_text_tertiary'))
+            }
+            .alignItems(HorizontalAlign.Start)
+            .layoutWeight(1)
+            .margin({ left: 8 })
+          }
+          .width('100%')
+          .padding({ top: 6, bottom: 6 })
+          .alignItems(VerticalAlign.Center)
+        }, (c: SheetCharacterUiModel) => c.instanceId + '|' + (c.isActive ? '1' : '0'))
+      }
+      .width('100%')
+      .margin({ top: 4 })
+    }
   }
 
   /** 顶部标题区 */
@@ -1301,13 +1637,141 @@ struct WorldDetailPage {
 
   // ===== 事件处理 =====
 
-  /** 节点点击:切换选中 */
+  /**
+   * 节点点击:打开地点人物弹窗(W-UX-1)。
+   * 弹窗每次打开都重新读取真实数据,不依赖旧的"选中地点详情区域"。
+   * 旧的"切换选中"交互被弹窗取代,但 selectedLocationId 仍保留用于节点视觉高亮。
+   */
   private onLocationTapped(locationId: string): void {
-    if (this.selectedLocationId === locationId) {
-      this.selectedLocationId = '';
-    } else {
-      this.selectedLocationId = locationId;
+    if (this.currentWorldId.length === 0 || locationId.length === 0) {
+      return;
     }
+    this.openLocationSheet(this.currentWorldId, locationId);
+  }
+
+  /**
+   * 打开地点人物弹窗。每次都新建 ViewModel,确保旧地点数据不残留。
+   */
+  private openLocationSheet(worldId: string, locationId: string): void {
+    if (this.sheetViewModel !== null) {
+      this.sheetViewModel.dispose();
+    }
+    const vm: WorldLocationSceneSheetViewModel = new WorldLocationSceneSheetViewModel(
+      AppServices.getWorldRepository(),
+      AppServices.getWorldLocationRepository(),
+      AppServices.getWorldCharacterInstanceRepository(),
+      AppServices.getWorldSceneRepository(),
+      AppServices.getWorldSceneService(),
+      AppServices.getCharacterService()
+    );
+    this.sheetViewModel = vm;
+    this.sheetWorldId = worldId;
+    this.sheetLocationId = locationId;
+    this.sheetLoadState = LocationSheetLoadState.Loading;
+    this.sheetErrorMessage = '';
+    this.sheetDetail = null;
+    this.sheetActionError = '';
+    this.sheetStartConfirmVisible = false;
+    this.selectedLocationId = locationId;
+    this.locationSheetVisible = true;
+    Logger.info(LOG_TAG, 'openLocationSheet: locShortId=' + locationId.substring(locationId.length - 8)
+      + ', vmInstance=' + vm.instanceShortId);
+    this.loadSheetSnapshot(worldId, locationId);
+  }
+
+  /** 关闭地点弹窗,释放 ViewModel */
+  private closeLocationSheet(): void {
+    if (this.sheetViewModel !== null) {
+      this.sheetViewModel.dispose();
+      this.sheetViewModel = null;
+    }
+    this.locationSheetVisible = false;
+    this.sheetDetail = null;
+    this.sheetLoadState = LocationSheetLoadState.Loading;
+    this.sheetErrorMessage = '';
+    this.sheetActionError = '';
+    this.sheetStartConfirmVisible = false;
+  }
+
+  /** 加载弹窗快照并同步到 @State */
+  private async loadSheetSnapshot(worldId: string, locationId: string): Promise<void> {
+    if (this.sheetViewModel === null) {
+      return;
+    }
+    await this.sheetViewModel.loadSnapshot(worldId, locationId);
+    if (this.sheetViewModel === null) {
+      return;
+    }
+    this.sheetLoadState = this.sheetViewModel.state;
+    this.sheetErrorMessage = this.sheetViewModel.errorMessage;
+    this.sheetDetail = this.sheetViewModel.detail;
+  }
+
+  /**
+   * 弹窗"进入对话"按钮:
+   * - 已有 Active Scene:直接跳转到 WorldSceneChatPage
+   * - 无 Active Scene 但可创建:显示确认面板
+   * - 已归档:提示无法开始
+   */
+  private async onEnterSceneClick(): Promise<void> {
+    if (this.sheetViewModel === null || this.sheetDetail === null) {
+      return;
+    }
+    if (this.sheetDetail.activeScene !== null) {
+      this.navigateToSceneChat(this.sheetDetail.activeScene.id);
+      return;
+    }
+    if (!this.sheetDetail.canStartScene) {
+      this.sheetActionError = '当前世界或地点已归档,无法开始新场景';
+      return;
+    }
+    // 显示开始场景确认面板
+    this.sheetStartConfirmVisible = true;
+  }
+
+  /** 确认开始新场景 */
+  private async confirmStartScene(): Promise<void> {
+    if (this.sheetViewModel === null || this.sheetDetail === null) {
+      return;
+    }
+    this.sheetActionError = '';
+    const result = await this.sheetViewModel.enterScene();
+    if (result.success) {
+      this.sheetStartConfirmVisible = false;
+      // 递增刷新令牌,通知 WorldDetailPage / WorldSceneDetailPage 刷新
+      this.bumpSceneTokens();
+      this.navigateToSceneChat(result.sceneId);
+    } else {
+      this.sheetActionError = result.errorMessage;
+    }
+  }
+
+  /** 跳转到共享对话页 */
+  private navigateToSceneChat(sceneId: string): void {
+    if (sceneId.length === 0) {
+      return;
+    }
+    AppStorage.setOrCreate<string>(PENDING_WORLD_SCENE_CHAT_ID_KEY, sceneId);
+    this.closeLocationSheet();
+    router.pushUrl({ url: 'pages/world/WorldSceneChatPage' });
+  }
+
+  /** 弹窗"查看场景历史":跳转到 WorldSceneManagePage(高级管理) */
+  private onViewSceneHistoryClick(): void {
+    if (this.sheetWorldId.length === 0) {
+      return;
+    }
+    AppStorage.setOrCreate<string>(PENDING_WORLD_ID_KEY, this.sheetWorldId);
+    this.closeLocationSheet();
+    router.pushUrl({ url: 'pages/world/WorldSceneManagePage' });
+  }
+
+  /** 递增场景相关刷新令牌 */
+  private bumpSceneTokens(): void {
+    const detailToken: number = AppStorage.get<number>(WORLD_DETAIL_REFRESH_TOKEN_KEY) ?? 0;
+    AppStorage.setOrCreate<number>(WORLD_DETAIL_REFRESH_TOKEN_KEY, detailToken + 1);
+    const chatToken: number = AppStorage.get<number>(WORLD_SCENE_CHAT_REFRESH_TOKEN_KEY) ?? 0;
+    AppStorage.setOrCreate<number>(WORLD_SCENE_CHAT_REFRESH_TOKEN_KEY, chatToken + 1);
   }
 
   /** 打开世界编辑页(编辑当前世界) */

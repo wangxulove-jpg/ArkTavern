@@ -32,6 +32,9 @@ export const PENDING_WORLD_EDGE_FROM_LOCATION_ID_KEY: string = 'pendingWorldEdge
 /** 跨页面路由用的 sceneId 暂存键(场景详情页读取后清除) */
 export const PENDING_WORLD_SCENE_ID_KEY: string = 'pendingWorldSceneId';
 
+/** 跨页面路由用的 sceneId 暂存键(共享对话页读取后清除,W-UX-1) */
+export const PENDING_WORLD_SCENE_CHAT_ID_KEY: string = 'pendingWorldSceneChatId';
+
 /**
  * 世界详情页刷新令牌键。
  * 子页面(WorldLocationEditPage / WorldEdgeEditPage / WorldEdgeManagePage /
@@ -54,6 +57,13 @@ export const WORLD_CHARACTER_MANAGE_REFRESH_TOKEN_KEY: string = 'worldCharacterM
  * 场景详情页通过 @StorageProp + @Watch 监听变化并触发 loadSnapshot。
  */
 export const WORLD_SCENE_DETAIL_REFRESH_TOKEN_KEY: string = 'worldSceneDetailRefreshToken';
+
+/**
+ * 场景共享对话页刷新令牌键(W-UX-1)。
+ * 地点弹窗开始场景、其他页面写入消息后递增此值,
+ * WorldSceneChatPage 通过 @StorageProp + @Watch 监听变化并触发 loadSnapshot。
+ */
+export const WORLD_SCENE_CHAT_REFRESH_TOKEN_KEY: string = 'worldSceneChatRefreshToken';
 
 /** 世界列表项 UI 模型 */
 export interface WorldSummaryUiModel {
