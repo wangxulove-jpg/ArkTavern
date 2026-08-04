@@ -6,7 +6,7 @@
  */
 
 export const DATABASE_NAME: string = 'arktavern.db';
-export const DATABASE_VERSION: number = 17;
+export const DATABASE_VERSION: number = 18;
 
 export const TABLE_CHARACTERS: string = 'characters';
 export const TABLE_CHATS: string = 'chats';
@@ -402,3 +402,42 @@ export const INDEX_WORLD_CHARACTER_MEMORIES_SOURCE_MESSAGE: string = 'idx_world_
 export const INDEX_WORLD_CHARACTER_MEMORIES_SOURCE_LOCATION: string = 'idx_world_character_memories_source_location';
 export const INDEX_WORLD_CHARACTER_MEMORIES_OCCURRED_AT: string = 'idx_world_character_memories_occurred_at';
 export const INDEX_WORLD_CHARACTER_MEMORIES_IMPORTANCE: string = 'idx_world_character_memories_importance';
+
+// ===== v18: 多人聊天每角色独立记忆(G-MEMORY-1A) =====
+// 独立数据域,不复用 chat_memories / world_character_memories。
+// 记忆所有权属于 (group_conversation_id, character_id):
+// - group_conversation_id 对应 chats.id(ConversationMode=Group)
+// - character_id 对应 characters.id(角色卡)
+// - 同一角色在不同群聊中的记忆完全隔离
+// - 角色被移出群聊时记忆保留,重新加入时恢复
+// - 删除整个群聊时同事务级联清理
+// - 删除角色卡时记忆保留(角色缺失时 UI 安全降级显示)
+// 表名 / 列名 / 索引名集中定义,Repository / Schema / Migration 只读取此处。
+export const TABLE_GROUP_CHARACTER_MEMORIES: string = 'group_character_memories';
+
+/** group_character_memories.group_conversation_id 列名(对应 chats.id) */
+export const COLUMN_GROUP_CONVERSATION_ID: string = 'group_conversation_id';
+/** group_character_memories.title 列名(记忆标题,独立于 chat_memories.title) */
+export const COLUMN_MEMORY_TITLE_GCM: string = 'title';
+/** group_character_memories.importance 列名(独立于 chat_memories / world_character_memories) */
+export const COLUMN_IMPORTANCE_GCM: string = 'importance';
+/** group_character_memories.source_round_id 列名(交互记忆预留) */
+export const COLUMN_SOURCE_ROUND_ID: string = 'source_round_id';
+/** group_character_memories.source_sender_character_id 列名(交互记忆预留) */
+export const COLUMN_SOURCE_SENDER_CHARACTER_ID: string = 'source_sender_character_id';
+/** group_character_memories.source_type 列名(交互记忆预留) */
+export const COLUMN_SOURCE_TYPE: string = 'source_type';
+// COLUMN_CONTENT / COLUMN_ORIGIN_TYPE / COLUMN_STATUS / COLUMN_SOURCE_MESSAGE_ID /
+// COLUMN_SOURCE_HASH / COLUMN_MEMORY_KEYWORDS_JSON / COLUMN_CHARACTER_ID / COLUMN_ID /
+// COLUMN_CREATED_AT / COLUMN_UPDATED_AT 均已在文件前部定义,这里复用同名常量
+
+// ===== v18: 多人聊天角色记忆索引名 =====
+export const INDEX_GROUP_CHARACTER_MEMORIES_GROUP: string = 'idx_group_character_memories_group';
+export const INDEX_GROUP_CHARACTER_MEMORIES_CHARACTER: string = 'idx_group_character_memories_character';
+export const INDEX_GROUP_CHARACTER_MEMORIES_GROUP_CHARACTER: string = 'idx_group_character_memories_group_character';
+export const INDEX_GROUP_CHARACTER_MEMORIES_GROUP_CHARACTER_STATUS: string = 'idx_group_character_memories_group_character_status';
+export const INDEX_GROUP_CHARACTER_MEMORIES_ORIGIN: string = 'idx_group_character_memories_origin';
+export const INDEX_GROUP_CHARACTER_MEMORIES_SOURCE_MESSAGE: string = 'idx_group_character_memories_source_message';
+export const INDEX_GROUP_CHARACTER_MEMORIES_SOURCE_ROUND: string = 'idx_group_character_memories_source_round';
+export const INDEX_GROUP_CHARACTER_MEMORIES_SOURCE_HASH: string = 'idx_group_character_memories_source_hash';
+export const INDEX_GROUP_CHARACTER_MEMORIES_UPDATED_AT: string = 'idx_group_character_memories_updated_at';

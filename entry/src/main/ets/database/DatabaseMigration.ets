@@ -14,7 +14,7 @@
  */
 
 import { relationalStore } from '@kit.ArkData';
-import { V1_TO_V2_STATEMENTS, V2_TO_V3_STATEMENTS, V3_TO_V4_STATEMENTS, V4_TO_V5_DDL_STATEMENTS, V5_TO_V6_STATEMENTS, V6_TO_V7_STATEMENTS, V7_TO_V8_DDL_STATEMENTS, V8_TO_V9_STATEMENTS, V9_TO_V10_DDL_STATEMENTS, V10_TO_V11_DDL_STATEMENTS, V11_TO_V12_DDL_STATEMENTS, V11_TO_V12_DATA_MIGRATION_STATEMENTS, V12_TO_V13_DDL_STATEMENTS, V13_TO_V14_DDL_STATEMENTS, V13_TO_V14_DATA_MIGRATION_STATEMENTS, V14_TO_V15_DDL_STATEMENTS, V15_TO_V16_DDL_STATEMENTS, V16_TO_V17_DDL_STATEMENTS } from './DatabaseSchema';
+import { V1_TO_V2_STATEMENTS, V2_TO_V3_STATEMENTS, V3_TO_V4_STATEMENTS, V4_TO_V5_DDL_STATEMENTS, V5_TO_V6_STATEMENTS, V6_TO_V7_STATEMENTS, V7_TO_V8_DDL_STATEMENTS, V8_TO_V9_STATEMENTS, V9_TO_V10_DDL_STATEMENTS, V10_TO_V11_DDL_STATEMENTS, V11_TO_V12_DDL_STATEMENTS, V11_TO_V12_DATA_MIGRATION_STATEMENTS, V12_TO_V13_DDL_STATEMENTS, V13_TO_V14_DDL_STATEMENTS, V13_TO_V14_DATA_MIGRATION_STATEMENTS, V14_TO_V15_DDL_STATEMENTS, V15_TO_V16_DDL_STATEMENTS, V16_TO_V17_DDL_STATEMENTS, V17_TO_V18_DDL_STATEMENTS } from './DatabaseSchema';
 import {
   TABLE_CHATS,
   TABLE_MESSAGES,
@@ -783,6 +783,43 @@ class V16ToV17Migration implements DatabaseMigration {
     // 仅执行 DDL(建表 + 建索引),不修改任何现有表,不迁移任何现有数据
     for (let i = 0; i < V16_TO_V17_DDL_STATEMENTS.length; i++) {
       await store.executeSql(V16_TO_V17_DDL_STATEMENTS[i]);
+    }
+  }
+}
+
+/**
+ * v17→v18 迁移(G-MEMORY-1A 多人聊天每角色独立手动记忆):
+ * 1. 创建 1 张 group_character_memories 表
+ * 2. 创建相关索引(group_conversation_id / character_id /
+ *    group+character / group+character+status / origin_type /
+ *    source_message_id / source_round_id / source_hash / updated_at)
+ *
+ * 安全性:
+ * - 所有 DDL 用 CREATE TABLE IF NOT EXISTS / CREATE INDEX IF NOT EXISTS
+ * - 不修改任何现有表(characters / chats / messages / chat_participants /
+ *   chat_memories / conversation_branches / world_* 等)
+ * - 不迁移任何现有数据
+ * - 任一语句失败由 DbHelper 事务回滚,数据库版本保持 17
+ * - 失败不写入 V18
+ *
+ * 本阶段不实现:
+ * - AI 自动提取记忆 / 模型总结 / 轮次结束自动生成记忆
+ * - 把记忆注入 GroupPromptAssembler
+ * - 交互记忆来源有效性管理 / 自动失效
+ * - 复杂唯一索引实现交互记忆去重(留给 G-MEMORY-1B)
+ */
+export function createV17ToV18Migration(): DatabaseMigration {
+  return new V17ToV18Migration();
+}
+
+class V17ToV18Migration implements DatabaseMigration {
+  readonly fromVersion: number = 17;
+  readonly toVersion: number = 18;
+
+  async migrate(store: relationalStore.RdbStore): Promise<void> {
+    // 仅执行 DDL(建表 + 建索引),不修改任何现有表,不迁移任何现有数据
+    for (let i = 0; i < V17_TO_V18_DDL_STATEMENTS.length; i++) {
+      await store.executeSql(V17_TO_V18_DDL_STATEMENTS[i]);
     }
   }
 }

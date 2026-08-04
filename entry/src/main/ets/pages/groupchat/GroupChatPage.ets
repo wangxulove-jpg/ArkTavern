@@ -46,7 +46,9 @@ import {
   GroupMessageListState,
   GroupMemberRuntimeState,
   GroupMemberRuntimeUiModel,
-  PENDING_GROUP_CHAT_ID_KEY
+  PENDING_GROUP_CHAT_ID_KEY,
+  PENDING_GROUP_MEMORY_GROUP_ID_KEY,
+  PENDING_GROUP_MEMORY_CHARACTER_ID_KEY
 } from '../../viewmodels/groupchat/GroupChatUiModels';
 import { GroupMessageRenderState } from '../../viewmodels/groupchat/GroupMessageRenderState';
 import { GroupRoundState } from '../../services/groupchat/GroupRoundTypes';
@@ -119,6 +121,10 @@ struct GroupChatPage {
   @State memberRuntimeStates: GroupMemberRuntimeUiModel[] = [];
   /** 更多菜单是否可见 */
   @State moreMenuVisible: boolean = false;
+  /** G-MEMORY-1A: 角色记忆选择 Sheet 是否可见(更多菜单→角色记忆) */
+  @State memoryPickerVisible: boolean = false;
+  /** G-MEMORY-1A: 成员记忆数量映射(characterId → count),用于角色选择 Sheet */
+  @State memberMemoryCounts: Map<string, number> = new Map();
   /** 重命名弹窗是否可见 */
   @State renameVisible: boolean = false;
   /** 重命名输入值 */
@@ -745,6 +751,10 @@ struct GroupChatPage {
       if (this.appearancePanelVisible) {
         this.chatAppearancePanel()
       }
+      // G-MEMORY-1A: 角色记忆选择 Sheet
+      if (this.memoryPickerVisible) {
+        this.memoryPickerDialog()
+      }
     }
     .width('100%')
     .height('100%')
@@ -1155,6 +1165,13 @@ struct GroupChatPage {
             .onClick(() => {
               this.handleMemberClick(member);
             })
+            .gesture(
+              LongPressGesture({ repeat: false, duration: 500 })
+                .onAction(() => {
+                  // G-MEMORY-1A: 长按成员头像 → 进入该角色记忆页
+                  this.goCharacterMemory(member.characterId);
+                })
+            )
           }, (member: GroupMemberUiModel) => member.characterId + '|' + String(member.speakerOrder) + '|' + String(member.isEnabled) + '|' + (this.isMemberReplyTarget(member.characterId) ? '1' : '0'))
         }
       }
@@ -2185,6 +2202,12 @@ struct GroupChatPage {
             this.renameVisible = true;
           })
 
+          // G-MEMORY-1A: 菜单项:角色记忆
+          this.sheetMenuItem('角色记忆', (): void => {
+            this.moreMenuVisible = false;
+            this.openMemoryPicker();
+          })
+
           // 关闭按钮
           Button($r('app.string.group_cancel'))
             .fontSize($r('app.float.app_font_body'))
@@ -2250,6 +2273,180 @@ struct GroupChatPage {
   private goSettings(): void {
     AppStorage.setOrCreate<string>(PENDING_GROUP_CHAT_ID_KEY, this.chatId);
     router.pushUrl({ url: 'pages/groupchat/GroupChatSettingsPage' });
+  }
+
+  /**
+   * G-MEMORY-1A: 打开角色记忆选择 Sheet(更多菜单 → 角色记忆)。
+   * 异步加载每个成员的记忆数量,显示成员列表供用户选择。
+   */
+  private openMemoryPicker(): void {
+    if (this.detail === null) {
+      return;
+    }
+    this.memberMemoryCounts = new Map();
+    this.memoryPickerVisible = true;
+    this.loadMemberMemoryCounts();
+  }
+
+  /** G-MEMORY-1A: 异步加载成员记忆数量(不阻塞 Sheet 显示) */
+  private async loadMemberMemoryCounts(): Promise<void> {
+    if (this.detail === null) {
+      return;
+    }
+    try {
+      const memoryService = AppServices.getGroupCharacterMemoryService();
+      const counts: Map<string, number> = new Map();
+      for (let i = 0; i < this.detail.members.length; i++) {
+        const member: GroupMemberUiModel = this.detail.members[i];
+        if (!member.characterExists) {
+          counts.set(member.characterId, 0);
+          continue;
+        }
+        const count: number = await memoryService.countByCharacter(
+          this.chatId, member.characterId
+        );
+        counts.set(member.characterId, count);
+      }
+      this.memberMemoryCounts = counts;
+    } catch (e) {
+      Logger.warn('GroupChatPage', 'loadMemberMemoryCounts failed: ' + (e as Error).message);
+    }
+  }
+
+  /** G-MEMORY-1A: 跳转到指定角色的记忆页 */
+  private goCharacterMemory(characterId: string): void {
+    if (characterId.length === 0) {
+      return;
+    }
+    AppStorage.setOrCreate<string>(PENDING_GROUP_MEMORY_GROUP_ID_KEY, this.chatId);
+    AppStorage.setOrCreate<string>(PENDING_GROUP_MEMORY_CHARACTER_ID_KEY, characterId);
+    router.pushUrl({ url: 'pages/groupchat/GroupCharacterMemoryPage' });
+  }
+
+  /**
+   * G-MEMORY-1A: 角色记忆选择 Sheet(底部锚定,对齐更多菜单 Sheet 风格)。
+   * 显示成员列表(头像/名称/启用状态/记忆数量),点击进入该角色记忆页。
+   */
+  @Builder
+  memoryPickerDialog(): void {
+    Stack() {
+      Column() {
+        Blank().layoutWeight(1)
+        Column() {
+          // 拖动条
+          Column()
+            .width(36)
+            .height(4)
+            .borderRadius(2)
+            .backgroundColor($r('app.color.app_divider'))
+            .margin({ top: 8, bottom: 12 })
+
+          // 标题
+          Text('角色记忆')
+            .fontSize($r('app.float.app_font_subtitle'))
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.app_text_primary'))
+            .margin({ bottom: 12, left: 16, right: 16 })
+            .width('100%')
+
+          // 成员列表
+          if (this.detail !== null) {
+            ForEach(this.detail.members, (member: GroupMemberUiModel) => {
+              Row() {
+                CharacterImageView({
+                  imageUri: member.avatarUri,
+                  fallbackName: member.name,
+                  imgWidth: 36,
+                  imgHeight: 36,
+                  imgBorderRadius: 18,
+                  displayMode: 'thumbnail'
+                })
+
+                Column() {
+                  Text(member.name)
+                    .fontSize($r('app.float.app_font_body'))
+                    .fontColor($r('app.color.app_text_primary'))
+                    .maxLines(1)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                    .width('100%')
+
+                  Row() {
+                    Text(member.isEnabled ? '启用' : '停用')
+                      .fontSize(10)
+                      .fontColor(member.isEnabled
+                        ? $r('app.color.app_accent') : $r('app.color.app_text_tertiary'))
+                      .backgroundColor($r('app.color.app_surface_2'))
+                      .borderRadius(3)
+                      .padding({ left: 4, right: 4, top: 1, bottom: 1 })
+
+                    Text(this.memberMemoryCountText(member.characterId))
+                      .fontSize(10)
+                      .fontColor($r('app.color.app_text_tertiary'))
+                      .backgroundColor($r('app.color.app_surface_2'))
+                      .borderRadius(3)
+                      .padding({ left: 4, right: 4, top: 1, bottom: 1 })
+                      .margin({ left: 4 })
+                  }
+                  .margin({ top: 4 })
+                  .alignItems(VerticalAlign.Center)
+                }
+                .layoutWeight(1)
+                .alignItems(HorizontalAlign.Start)
+                .margin({ left: 10 })
+
+                SymbolGlyph($r('sys.symbol.chevron_right'))
+                  .fontSize(16)
+                  .fontColor([$r('app.color.app_text_tertiary')])
+              }
+              .width('100%')
+              .height(56)
+              .padding({ left: 16, right: 16 })
+              .alignItems(VerticalAlign.Center)
+              .margin({ left: 16, right: 16 })
+              .borderRadius($r('app.float.app_radius_sm'))
+              .opacity(member.characterExists ? 1 : 0.6)
+              .onClick(() => {
+                this.memoryPickerVisible = false;
+                this.goCharacterMemory(member.characterId);
+              })
+            }, (member: GroupMemberUiModel) => member.characterId)
+          }
+
+          // 关闭按钮
+          Button($r('app.string.group_cancel'))
+            .fontSize($r('app.float.app_font_body'))
+            .fontColor($r('app.color.app_text_secondary'))
+            .backgroundColor($r('app.color.app_surface_2'))
+            .borderRadius($r('app.float.app_radius_md'))
+            .width('100%')
+            .height(44)
+            .margin({ top: 12, left: 16, right: 16 })
+            .accessibilityText('关闭角色记忆选择')
+            .onClick(() => {
+              this.memoryPickerVisible = false;
+            })
+        }
+        .width('100%')
+        .backgroundColor($r('app.color.app_surface_1'))
+        .borderRadius({ topLeft: 16, topRight: 16, bottomLeft: 0, bottomRight: 0 })
+        .padding({ top: 0, bottom: this.navBarHeight + 16 })
+      }
+      .width('100%')
+      .height('100%')
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor('rgba(0,0,0,0.5)')
+    .onClick(() => {
+      this.memoryPickerVisible = false;
+    })
+    .transition(TransitionEffect.OPACITY)
+  }
+
+  /** G-MEMORY-1A: 构建成员记忆数量文字 */
+  private memberMemoryCountText(characterId: string): string {
+    const count: number = this.memberMemoryCounts.get(characterId) ?? 0;
+    return count.toString() + ' 条记忆';
   }
 
   /**

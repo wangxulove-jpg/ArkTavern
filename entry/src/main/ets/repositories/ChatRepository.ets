@@ -158,6 +158,18 @@ export class ChatRepository {
 
   async getById(id: string): Promise<Chat | null> {
     const store: relationalStore.RdbStore = this.dbHelper.getStore();
+    return await this.getByIdWithStore(store, id);
+  }
+
+  /**
+   * 在事务内查询指定 Chat。
+   * G-MEMORY-1A: 供 GroupCharacterMemoryService 在事务内校验群聊存在。
+   * 由调用方持有 store 和事务。
+   */
+  async getByIdWithStore(
+    store: relationalStore.RdbStore,
+    id: string
+  ): Promise<Chat | null> {
     const predicates: relationalStore.RdbPredicates =
       new relationalStore.RdbPredicates(TABLE_CHATS);
     predicates.equalTo(COLUMN_ID, id);

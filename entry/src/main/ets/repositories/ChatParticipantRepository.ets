@@ -115,6 +115,34 @@ export class ChatParticipantRepository {
   }
 
   /**
+   * 在事务内查询指定 Chat 的全部参与者(按 speaker_order ASC)。
+   * G-MEMORY-1A: 供 GroupCharacterMemoryService 在事务内校验参与者存在。
+   * 由调用方持有 store 和事务。
+   */
+  async listByChatIdWithStore(
+    store: relationalStore.RdbStore,
+    chatId: string
+  ): Promise<ChatParticipant[]> {
+    if (chatId === '') {
+      throw DatabaseError.invalidData('chatId empty');
+    }
+    const predicates: relationalStore.RdbPredicates =
+      new relationalStore.RdbPredicates(TABLE_CHAT_PARTICIPANTS);
+    predicates.equalTo(COLUMN_CHAT_ID, chatId);
+    predicates.orderByAsc(COLUMN_SPEAKER_ORDER);
+    const rs: relationalStore.ResultSet = await store.query(predicates);
+    try {
+      const list: ChatParticipant[] = [];
+      while (rs.goToNextRow()) {
+        list.push(this.participantFromRow(rs));
+      }
+      return list;
+    } finally {
+      rs.close();
+    }
+  }
+
+  /**
    * 在事务内替换指定 Chat 的全部参与者(删除旧行后重新写入)。
    * - 用于 replaceParticipantOrder(角色集合不变,仅调整顺序)
    * - 由调用方持有 store 和事务

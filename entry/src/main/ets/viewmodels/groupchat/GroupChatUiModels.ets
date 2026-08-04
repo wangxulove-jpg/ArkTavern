@@ -23,6 +23,12 @@ import { ChatMessageStatus } from '../../models/ChatMessage';
 /** AppStorage 中待进入的群聊 ID(由首页/创建页写入,GroupChatPage 读取) */
 export const PENDING_GROUP_CHAT_ID_KEY: string = 'pendingGroupChatId';
 
+/** G-MEMORY-1A: AppStorage 中待进入角色记忆页的群聊 ID */
+export const PENDING_GROUP_MEMORY_GROUP_ID_KEY: string = 'pendingGroupMemoryGroupId';
+
+/** G-MEMORY-1A: AppStorage 中待进入角色记忆页的角色 ID */
+export const PENDING_GROUP_MEMORY_CHARACTER_ID_KEY: string = 'pendingGroupMemoryCharacterId';
+
 /** 多人聊天列表页状态 */
 export enum GroupChatListState {
   Loading = 'loading',

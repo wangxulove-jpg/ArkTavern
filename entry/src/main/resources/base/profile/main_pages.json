@@ -25,6 +25,7 @@
     "pages/groupchat/GroupChatPage",
     "pages/groupchat/GroupMemberManagePage",
     "pages/groupchat/GroupChatSettingsPage",
+    "pages/groupchat/GroupCharacterMemoryPage",
     "pages/world/WorldHomePage",
     "pages/world/WorldDetailPage",
     "pages/world/WorldEditPage",

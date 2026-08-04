@@ -82,6 +82,8 @@ import { GroupRoundCoordinator } from './groupchat/GroupRoundCoordinator';
 import { GroupPromptAssembler } from './groupchat/GroupPromptAssembler';
 import { GroupChatRuntimeService } from './groupchat/GroupChatRuntimeService';
 import { GroupRuntimeRegistry } from './groupchat/GroupRuntimeRegistry';
+import { GroupCharacterMemoryRepository } from '../repositories/groupchat/GroupCharacterMemoryRepository';
+import { GroupCharacterMemoryService } from './groupchat/GroupCharacterMemoryService';
 import { WorldRepository } from '../repositories/world/WorldRepository';
 import { WorldLocationRepository } from '../repositories/world/WorldLocationRepository';
 import { WorldLocationEdgeRepository } from '../repositories/world/WorldLocationEdgeRepository';
@@ -203,6 +205,10 @@ export class AppServices {
   private readonly groupChatRuntimeService: GroupChatRuntimeService;
   /** GroupRuntimeRegistry 多人聊天运行注册表(G-RUNTIME-1D 应用级运行锁,不对页面公开) */
   private readonly groupRuntimeRegistry: GroupRuntimeRegistry;
+  /** GroupCharacterMemoryRepository 多人聊天角色记忆仓储(G-MEMORY-1A,记忆 CRUD) */
+  private readonly groupCharacterMemoryRepository: GroupCharacterMemoryRepository;
+  /** GroupCharacterMemoryService 多人聊天角色记忆业务服务(G-MEMORY-1A,记忆唯一正式写入口) */
+  private readonly groupCharacterMemoryService: GroupCharacterMemoryService;
   /** WorldRepository 世界仓储(W-DATA-1A,不对页面公开) */
   private readonly worldRepository: WorldRepository;
   /** WorldLocationRepository 世界地点仓储(W-DATA-1A,不对页面公开) */
@@ -365,7 +371,10 @@ export class AppServices {
       this.conversationBranchPersistenceService,
       this.memoryPersistenceService,
       // G-DATA-1A: 注入 ChatParticipantRepository,使删除 Chat 时同步清理 chat_participants
-      new ChatParticipantRepository(this.dbHelper)
+      new ChatParticipantRepository(this.dbHelper),
+      // G-MEMORY-1A: 注入 GroupCharacterMemoryRepository,使删除群聊时同事务级联清理
+      // group_character_memories。Repository 仅依赖 DbHelper,不依赖任何 Service,不会形成循环。
+      new GroupCharacterMemoryRepository(this.dbHelper)
     );
     // v8: MemoryService(依赖 ModelService + MemoryPersistenceService)
     this.memoryService = new MemoryService(
@@ -441,6 +450,22 @@ export class AppServices {
       this.groupPromptAssembler,
       this.modelService,
       this.groupRuntimeRegistry
+    );
+    // G-MEMORY-1A: 多人聊天每角色独立记忆 Repository + Service。
+    // Repository 仅依赖 DbHelper,不依赖任何 Service,不会形成循环。
+    // Service 依赖 chatRepository(只读 getByIdWithStore) + characterRepository(只读 getByIdWithStore)
+    // + chatParticipantRepository(只读 listByChatIdWithStore) + memoryRepo(写入) + dbHelper(事务)。
+    // 不调用 GroupChatRuntimeService / GroupPromptAssembler / ModelService,
+    // 不影响多人聊天发送/Streaming/严格顺序/回复目标/@角色/停止整轮/重试等现有功能。
+    // 群聊删除级联清理已通过 ChatPersistenceOperations 注入 memoryRepo 实现,
+    // 此处 Service 仅用于手动记忆 CRUD,不参与群聊删除流程。
+    this.groupCharacterMemoryRepository = new GroupCharacterMemoryRepository(this.dbHelper);
+    this.groupCharacterMemoryService = new GroupCharacterMemoryService(
+      this.chatRepository,
+      this.characterRepository,
+      this.chatParticipantRepository,
+      this.groupCharacterMemoryRepository,
+      this.dbHelper
     );
     // 市场服务(Chub 公共浏览 + 搜索 + 详情 + 下载)
     // 使用独立的 HarmonyHttpClient 实例(非流式),不与流式 Provider 共享
@@ -859,6 +884,24 @@ export class AppServices {
    */
   static getGroupChatRuntimeService(): GroupChatRuntimeService {
     return AppServices.getInstance().groupChatRuntimeService;
+  }
+
+  /**
+   * 获取 GroupCharacterMemoryRepository 实例(G-MEMORY-1A 多人聊天角色记忆仓储)。
+   * 用于 group_character_memories 表的 CRUD 操作。
+   * 页面与 ViewModel 不直接调用,留待 GroupCharacterMemoryService 使用。
+   */
+  static getGroupCharacterMemoryRepository(): GroupCharacterMemoryRepository {
+    return AppServices.getInstance().groupCharacterMemoryRepository;
+  }
+
+  /**
+   * 获取 GroupCharacterMemoryService 实例(G-MEMORY-1A 多人聊天角色记忆业务服务)。
+   * 是当前多人聊天每角色独立手动记忆的唯一正式写入口。
+   * 所有页面与 ViewModel 必须通过此方法获取同一个 GroupCharacterMemoryService。
+   */
+  static getGroupCharacterMemoryService(): GroupCharacterMemoryService {
+    return AppServices.getInstance().groupCharacterMemoryService;
   }
 
   /**

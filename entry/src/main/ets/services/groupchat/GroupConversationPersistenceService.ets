@@ -147,6 +147,26 @@ export class GroupConversationPersistenceService {
   }
 
   /**
+   * 读取指定多人聊天(G-MEMORY-1A)。
+   * - 仅返回 ConversationMode=Group 的 Chat
+   * - 不存在或非 Group 模式返回 null
+   * 仅供记忆页头部展示群聊名称,不做权限校验。
+   */
+  async getGroupConversation(chatId: string): Promise<Chat | null> {
+    if (chatId === '') {
+      return null;
+    }
+    const chat: Chat | null = await this.chatRepository.getById(chatId);
+    if (chat === null) {
+      return null;
+    }
+    if (chat.conversationMode !== ConversationMode.Group) {
+      return null;
+    }
+    return chat;
+  }
+
+  /**
    * 读取指定多人聊天的参与者(按 speaker_order ASC)。
    */
   async getParticipants(chatId: string): Promise<ChatParticipant[]> {

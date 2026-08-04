@@ -41,6 +41,7 @@ import {
   createV14ToV15Migration,
   createV15ToV16Migration,
   createV16ToV17Migration,
+  createV17ToV18Migration,
   DatabaseMigration,
   MigrationPath
 } from './DatabaseMigration';
@@ -103,6 +104,11 @@ export type TransactionOperation =
   | 'world_memory_update'
   | 'world_memory_archive'
   | 'world_memory_delete'
+  | 'group_character_memory_create'
+  | 'group_character_memory_update'
+  | 'group_character_memory_archive'
+  | 'group_character_memory_delete'
+  | 'group_character_memory_delete_by_group'
   | 'unknown';
 
 export class DbHelper {
@@ -123,7 +129,7 @@ export class DbHelper {
 
   constructor(
     databaseName: string = DATABASE_NAME,
-    migrations: ReadonlyArray<DatabaseMigration> = [createV1ToV2Migration(), createV2ToV3Migration(), createV3ToV4Migration(), createV4ToV5Migration(), createV5ToV6Migration(), createV6ToV7Migration(), createV7ToV8Migration(), createV8ToV9Migration(), createV9ToV10Migration(), createV10ToV11Migration(), createV11ToV12Migration(), createV12ToV13Migration(), createV13ToV14Migration(), createV14ToV15Migration(), createV15ToV16Migration(), createV16ToV17Migration()]
+    migrations: ReadonlyArray<DatabaseMigration> = [createV1ToV2Migration(), createV2ToV3Migration(), createV3ToV4Migration(), createV4ToV5Migration(), createV5ToV6Migration(), createV6ToV7Migration(), createV7ToV8Migration(), createV8ToV9Migration(), createV9ToV10Migration(), createV10ToV11Migration(), createV11ToV12Migration(), createV12ToV13Migration(), createV13ToV14Migration(), createV14ToV15Migration(), createV15ToV16Migration(), createV16ToV17Migration(), createV17ToV18Migration()]
   ) {
     this.databaseName = databaseName;
     this.migrations = migrations;

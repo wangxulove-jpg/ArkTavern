@@ -316,6 +316,21 @@ export class CharacterRepository {
       throw DatabaseError.invalidData('character.getById: id empty');
     }
     const store: relationalStore.RdbStore = this.dbHelper.getStore();
+    return await this.getByIdWithStore(store, id);
+  }
+
+  /**
+   * 在事务内查询指定 Character。
+   * G-MEMORY-1A: 供 GroupCharacterMemoryService 在事务内校验角色存在。
+   * 由调用方持有 store 和事务。
+   */
+  async getByIdWithStore(
+    store: relationalStore.RdbStore,
+    id: string
+  ): Promise<Character | null> {
+    if (id.length === 0) {
+      throw DatabaseError.invalidData('character.getByIdWithStore: id empty');
+    }
     const predicates: relationalStore.RdbPredicates =
       new relationalStore.RdbPredicates(TABLE_CHARACTERS);
     predicates.equalTo(COLUMN_ID, id);
