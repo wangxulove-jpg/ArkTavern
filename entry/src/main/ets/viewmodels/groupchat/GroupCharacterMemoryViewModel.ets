@@ -36,11 +36,18 @@ import {
   GroupCharacterMemoryFilter,
   CreateManualGroupMemoryInput,
   UpdateManualGroupMemoryInput,
+  UpdateApprovedSelfSummaryInput,
   mapGroupCharacterMemoryErrorToMessage,
   DEFAULT_IMPORTANCE,
   IMPORTANCE_MIN,
   IMPORTANCE_MAX
 } from '../../services/groupchat/GroupCharacterMemoryService';
+import {
+  GroupCharacterSelfSummaryService,
+  SelfSummaryDraft,
+  SelfSummaryResult,
+  SelfSummaryApproveResult
+} from '../../services/groupchat/GroupCharacterSelfSummaryService';
 import { Logger } from '../../utils/Logger';
 import { Chat } from '../../models/Chat';
 import { ChatParticipant } from '../../models/ChatParticipant';
@@ -50,7 +57,8 @@ import {
   GroupCharacterMemoryOrigin,
   GroupCharacterMemoryStatus,
   GROUP_CHARACTER_MEMORY_TITLE_MAX,
-  GROUP_CHARACTER_MEMORY_CONTENT_MAX
+  GROUP_CHARACTER_MEMORY_CONTENT_MAX,
+  parseKeywordsFromText
 } from '../../models/groupchat/GroupCharacterMemory';
 import { DatabaseError } from '../../models/DatabaseError';
 import { DELETED_CHARACTER_NAME } from './GroupChatUiModels';
@@ -118,6 +126,14 @@ export interface GroupCharacterMemoryItemUiModel {
   readonly sourceSummary: string;
   readonly isInteraction: boolean;
   readonly isInvalidated: boolean;
+  /** G-MEMORY-AUTO-1A-FIX-2: 是否为自动总结记忆(sourceType='self_summary_v1') */
+  readonly isSelfSummary: boolean;
+  /** 是否可编辑(Manual 或 self_summary_v1 且非 Invalidated) */
+  readonly canEdit: boolean;
+  /** 是否可归档(Manual 或 self_summary_v1 且非 Invalidated) */
+  readonly canArchive: boolean;
+  /** 是否可删除(仅 Manual) */
+  readonly canDelete: boolean;
   readonly createdAt: number;
   readonly createdAtLabel: string;
   readonly updatedAt: number;
@@ -157,6 +173,7 @@ export class GroupCharacterMemoryViewModel {
   private readonly groupPersistenceService: GroupConversationPersistenceService;
   private readonly characterService: CharacterService;
   private readonly memoryService: GroupCharacterMemoryService;
+  private readonly summaryService: GroupCharacterSelfSummaryService | null;
 
   state: GroupCharacterMemoryLoadState = GroupCharacterMemoryLoadState.Loading;
   errorMessage: string = '';
@@ -171,14 +188,28 @@ export class GroupCharacterMemoryViewModel {
   isDeleting: boolean = false;
   readonly instanceShortId: string;
 
+  // G-MEMORY-AUTO-1A 自动总结状态
+  // - isSummarizing: prepare/regenerate 进行中(按钮禁用)
+  // - isApprovingSummary: 批准保存进行中(按钮禁用,审核窗口保持打开)
+  // - summaryDraft: 当前审核 draft(null 表示无审核窗口)
+  // - summaryError: 总结相关错误(非空时页面 actionError 显示)
+  // - summaryOperationId: 防止迟到结果覆盖另一个角色页面
+  isSummarizing: boolean = false;
+  isApprovingSummary: boolean = false;
+  summaryDraft: SelfSummaryDraft | null = null;
+  summaryError: string = '';
+  private summaryOperationId: number = 0;
+
   constructor(
     groupPersistenceService: GroupConversationPersistenceService,
     characterService: CharacterService,
-    memoryService: GroupCharacterMemoryService
+    memoryService: GroupCharacterMemoryService,
+    summaryService: GroupCharacterSelfSummaryService | null = null
   ) {
     this.groupPersistenceService = groupPersistenceService;
     this.characterService = characterService;
     this.memoryService = memoryService;
+    this.summaryService = summaryService;
     this.instanceShortId = GroupCharacterMemoryViewModel.generateShortId();
   }
 
@@ -197,6 +228,12 @@ export class GroupCharacterMemoryViewModel {
 
   dispose(): void {
     this.disposed = true;
+    // 使进行中的总结结果失效,迟到结果不覆盖另一个角色页面
+    this.summaryOperationId = this.summaryOperationId + 1;
+    this.isSummarizing = false;
+    this.isApprovingSummary = false;
+    this.summaryDraft = null;
+    this.summaryError = '';
     Logger.info(LOG_TAG, 'dispose: vmInstance=' + this.instanceShortId);
   }
 
@@ -489,6 +526,104 @@ export class GroupCharacterMemoryViewModel {
     }
   }
 
+  /**
+   * 修改已批准的自动总结记忆(G-MEMORY-AUTO-1A-FIX-2)。
+   *
+   * 仅允许 origin=Interaction && sourceType='self_summary_v1' 且非 Invalidated。
+   * 修改字段:title / content / importance / keywords
+   * 保留字段:groupConversationId / characterId / origin / source_* / createdAt
+   *
+   * 输入复用 UpdateGroupMemoryFormInput(与手动编辑表单结构一致),
+   * 内部转换为 UpdateApprovedSelfSummaryInput 调用 Service。
+   */
+  async updateApprovedSelfSummary(
+    input: UpdateGroupMemoryFormInput
+  ): Promise<GroupMemorySaveResult> {
+    if (this.isSaving) {
+      Logger.warn(LOG_TAG, 'updateApprovedSelfSummary skipped: isSaving');
+      return { success: false, errorMessage: '正在处理,请稍候' } as GroupMemorySaveResult;
+    }
+    if (input.memoryId.length === 0) {
+      return { success: false, errorMessage: '记忆未选定' } as GroupMemorySaveResult;
+    }
+    this.isSaving = true;
+    this.operationId = this.operationId + 1;
+    const opId: number = this.operationId;
+    try {
+      const keywords: string[] = parseKeywordsFromText(input.keywordsText);
+      const serviceInput: UpdateApprovedSelfSummaryInput = {
+        memoryId: input.memoryId,
+        title: input.title,
+        content: input.content,
+        importance: input.importance,
+        keywords: keywords
+      };
+      await this.memoryService.updateApprovedSelfSummaryMemory(serviceInput);
+      if (opId !== this.operationId || this.disposed) {
+        return { success: false, errorMessage: '操作已过期' } as GroupMemorySaveResult;
+      }
+      Logger.info(LOG_TAG, 'updateApprovedSelfSummary ok: importance=' + input.importance.toString()
+        + ', memoryShortId=' + this.shortId(input.memoryId));
+      return { success: true, errorMessage: '' } as GroupMemorySaveResult;
+    } catch (e) {
+      if (opId !== this.operationId || this.disposed) {
+        return { success: false, errorMessage: '操作已过期' } as GroupMemorySaveResult;
+      }
+      const msg: string = this.resolveErrorMessage(e);
+      Logger.warn(LOG_TAG, 'updateApprovedSelfSummary failed: ' + this.safeErrorCategory(e)
+        + ', importance=' + input.importance.toString()
+        + ', memoryShortId=' + this.shortId(input.memoryId));
+      return { success: false, errorMessage: msg } as GroupMemorySaveResult;
+    } finally {
+      if (opId === this.operationId) {
+        this.isSaving = false;
+      }
+    }
+  }
+
+  /**
+   * 归档 / 恢复已批准的自动总结记忆(G-MEMORY-AUTO-1A-FIX-2)。
+   *
+   * 仅允许 origin=Interaction && sourceType='self_summary_v1'。
+   * 仅允许 Active ↔ Archived 双向切换,Invalidated 不可恢复。
+   */
+  async setApprovedSelfSummaryArchived(
+    memoryId: string,
+    archived: boolean
+  ): Promise<GroupMemorySaveResult> {
+    if (this.isSaving || this.isDeleting) {
+      Logger.warn(LOG_TAG, 'setApprovedSelfSummaryArchived skipped: busy');
+      return { success: false, errorMessage: '正在处理,请稍候' } as GroupMemorySaveResult;
+    }
+    if (memoryId.length === 0) {
+      return { success: false, errorMessage: '记忆未选定' } as GroupMemorySaveResult;
+    }
+    this.isSaving = true;
+    this.operationId = this.operationId + 1;
+    const opId: number = this.operationId;
+    try {
+      await this.memoryService.setApprovedSelfSummaryArchived(memoryId, archived);
+      if (opId !== this.operationId || this.disposed) {
+        return { success: false, errorMessage: '操作已过期' } as GroupMemorySaveResult;
+      }
+      Logger.info(LOG_TAG, 'setApprovedSelfSummaryArchived ok: archived=' + archived.toString()
+        + ', memoryShortId=' + this.shortId(memoryId));
+      return { success: true, errorMessage: '' } as GroupMemorySaveResult;
+    } catch (e) {
+      if (opId !== this.operationId || this.disposed) {
+        return { success: false, errorMessage: '操作已过期' } as GroupMemorySaveResult;
+      }
+      const msg: string = this.resolveErrorMessage(e);
+      Logger.warn(LOG_TAG, 'setApprovedSelfSummaryArchived failed: ' + this.safeErrorCategory(e)
+        + ', memoryShortId=' + this.shortId(memoryId));
+      return { success: false, errorMessage: msg } as GroupMemorySaveResult;
+    } finally {
+      if (opId === this.operationId) {
+        this.isSaving = false;
+      }
+    }
+  }
+
   /** 永久删除记忆 */
   async deleteMemory(memoryId: string): Promise<GroupMemorySaveResult> {
     if (this.isDeleting) {
@@ -521,6 +656,290 @@ export class GroupCharacterMemoryViewModel {
         this.isDeleting = false;
       }
     }
+  }
+
+  /**
+   * 删除已批准的自动总结记忆。
+   * 仅允许 origin=Interaction && sourceType='self_summary_v1' && status!=Invalidated。
+   * Invalidated 记忆不可删除。
+   */
+  async deleteApprovedSelfSummary(memoryId: string): Promise<GroupMemorySaveResult> {
+    if (this.isDeleting) {
+      Logger.warn(LOG_TAG, 'deleteApprovedSelfSummary skipped: isDeleting');
+      return { success: false, errorMessage: '正在处理,请稍候' } as GroupMemorySaveResult;
+    }
+    if (memoryId.length === 0) {
+      return { success: false, errorMessage: '记忆未选定' } as GroupMemorySaveResult;
+    }
+    this.isDeleting = true;
+    this.operationId = this.operationId + 1;
+    const opId: number = this.operationId;
+    try {
+      await this.memoryService.deleteApprovedSelfSummaryMemory(memoryId);
+      if (opId !== this.operationId || this.disposed) {
+        return { success: false, errorMessage: '操作已过期' } as GroupMemorySaveResult;
+      }
+      Logger.info(LOG_TAG, 'deleteApprovedSelfSummary ok: memoryShortId=' + this.shortId(memoryId));
+      return { success: true, errorMessage: '' } as GroupMemorySaveResult;
+    } catch (e) {
+      if (opId !== this.operationId || this.disposed) {
+        return { success: false, errorMessage: '操作已过期' } as GroupMemorySaveResult;
+      }
+      const msg: string = this.resolveErrorMessage(e);
+      Logger.warn(LOG_TAG, 'deleteApprovedSelfSummary failed: ' + this.safeErrorCategory(e)
+        + ', memoryShortId=' + this.shortId(memoryId));
+      return { success: false, errorMessage: msg } as GroupMemorySaveResult;
+    } finally {
+      if (opId === this.operationId) {
+        this.isDeleting = false;
+      }
+    }
+  }
+
+  // ===== G-MEMORY-AUTO-1A 自动总结 =====
+
+  /**
+   * 准备自动总结 draft(用户点击"自动总结"按钮)。
+   *
+   * 流程:
+   * 1. 校验 summaryService / 目标加载
+   * 2. 防重复点击(isSummarizing)
+   * 3. 从 snapshot 解析角色名称和群聊标题(供 Prompt 使用)
+   * 4. 调用 summaryService.prepareSelfSummary
+   * 5. 成功:写入 summaryDraft,页面打开审核窗口
+   * 6. 失败:写入 summaryError,不打开审核窗口
+   *
+   * 防迟到:summaryOperationId 在 dispose / 角色切换 / 新调用时递增。
+   */
+  async prepareSelfSummary(): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
+    if (this.isSummarizing || this.isApprovingSummary) {
+      Logger.warn(LOG_TAG, 'prepareSelfSummary skipped: busy');
+      return;
+    }
+    if (this.summaryService === null) {
+      this.summaryError = '总结服务未初始化';
+      return;
+    }
+    if (this.expectedGroupConversationId.length === 0
+      || this.expectedCharacterId.length === 0) {
+      this.summaryError = '目标未加载';
+      return;
+    }
+
+    const snapshot: GroupCharacterMemorySnapshotUiModel | null = this.snapshot;
+    if (snapshot === null) {
+      this.summaryError = '记忆数据未加载,请稍候';
+      return;
+    }
+    const characterName: string = snapshot.header.displayName;
+    const groupTitle: string = snapshot.header.groupTitle;
+
+    this.isSummarizing = true;
+    this.summaryError = '';
+    this.summaryOperationId = this.summaryOperationId + 1;
+    const opId: number = this.summaryOperationId;
+    const expectedCharId: string = this.expectedCharacterId;
+    const expectedGroupId: string = this.expectedGroupConversationId;
+
+    try {
+      const result: SelfSummaryResult = await this.summaryService.prepareSelfSummary(
+        expectedGroupId, expectedCharId, characterName, groupTitle
+      );
+      // 防迟到:opId 不匹配或已 dispose,丢弃结果
+      if (opId !== this.summaryOperationId || this.disposed) {
+        Logger.info(LOG_TAG, 'prepareSelfSummary late result dropped');
+        return;
+      }
+      // 防角色切换:expected 改变则丢弃
+      if (expectedCharId !== this.expectedCharacterId
+        || expectedGroupId !== this.expectedGroupConversationId) {
+        Logger.info(LOG_TAG, 'prepareSelfSummary target changed, drop');
+        return;
+      }
+      if (result.success) {
+        this.summaryDraft = result.draft ?? null;
+        Logger.info(LOG_TAG, 'prepareSelfSummary ok: charShort=' + this.shortId(expectedCharId));
+      } else {
+        this.summaryError = result.errorMessage ?? '总结失败,请稍后重试';
+        Logger.warn(LOG_TAG, 'prepareSelfSummary failed: kind=' + (result.errorKind ?? '')
+          + ' charShort=' + this.shortId(expectedCharId));
+      }
+    } catch (e) {
+      if (opId !== this.summaryOperationId || this.disposed) {
+        return;
+      }
+      this.summaryError = '总结失败,请稍后重试';
+      Logger.warn(LOG_TAG, 'prepareSelfSummary exception: ' + this.safeErrorCategory(e));
+    } finally {
+      if (opId === this.summaryOperationId) {
+        this.isSummarizing = false;
+      }
+    }
+  }
+
+  /**
+   * 重新生成摘要(用户点击"重新生成"按钮)。
+   * 使用同一批来源消息再次调用模型,不写数据库。
+   * 保留用户已编辑的 title/importance/keywords,只替换 content。
+   */
+  async regenerateSelfSummary(): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
+    if (this.isSummarizing || this.isApprovingSummary) {
+      Logger.warn(LOG_TAG, 'regenerateSelfSummary skipped: busy');
+      return;
+    }
+    if (this.summaryService === null || this.summaryDraft === null) {
+      return;
+    }
+
+    this.isSummarizing = true;
+    this.summaryError = '';
+    this.summaryOperationId = this.summaryOperationId + 1;
+    const opId: number = this.summaryOperationId;
+    const currentDraft: SelfSummaryDraft = this.summaryDraft;
+
+    try {
+      const result: SelfSummaryResult =
+        await this.summaryService.regenerateSelfSummary(currentDraft);
+      if (opId !== this.summaryOperationId || this.disposed) {
+        return;
+      }
+      if (result.success) {
+        this.summaryDraft = result.draft ?? null;
+        Logger.info(LOG_TAG, 'regenerateSelfSummary ok');
+      } else {
+        this.summaryError = result.errorMessage ?? '重新生成失败,请稍后重试';
+        Logger.warn(LOG_TAG, 'regenerateSelfSummary failed: kind=' + (result.errorKind ?? ''));
+      }
+    } catch (e) {
+      if (opId !== this.summaryOperationId || this.disposed) {
+        return;
+      }
+      this.summaryError = '重新生成失败,请稍后重试';
+      Logger.warn(LOG_TAG, 'regenerateSelfSummary exception: ' + this.safeErrorCategory(e));
+    } finally {
+      if (opId === this.summaryOperationId) {
+        this.isSummarizing = false;
+      }
+    }
+  }
+
+  /**
+   * 批准保存 draft(用户点击"批准保存"按钮)。
+   * 调用 summaryService.approveSelfSummary 写入 group_character_memories。
+   * 保存失败时不修改 draft,用户编辑内容不丢失,审核窗口保持打开。
+   */
+  async approveSelfSummary(
+    editedTitle: string,
+    editedContent: string,
+    editedImportance: number,
+    editedKeywords: string[]
+  ): Promise<GroupMemorySaveResult> {
+    if (this.disposed) {
+      return { success: false, errorMessage: '页面已失效' } as GroupMemorySaveResult;
+    }
+    if (this.isApprovingSummary || this.isSummarizing) {
+      return { success: false, errorMessage: '正在处理,请稍候' } as GroupMemorySaveResult;
+    }
+    if (this.summaryService === null || this.summaryDraft === null) {
+      return { success: false, errorMessage: '没有待审核的摘要' } as GroupMemorySaveResult;
+    }
+
+    this.isApprovingSummary = true;
+    this.summaryError = '';
+    this.operationId = this.operationId + 1;
+    const opId: number = this.operationId;
+    const currentDraft: SelfSummaryDraft = this.summaryDraft;
+
+    try {
+      const result: SelfSummaryApproveResult = await this.summaryService.approveSelfSummary(
+        currentDraft,
+        editedTitle,
+        editedContent,
+        editedImportance,
+        editedKeywords
+      );
+      if (opId !== this.operationId || this.disposed) {
+        return { success: false, errorMessage: '操作已过期' } as GroupMemorySaveResult;
+      }
+      if (result.success) {
+        // 清空 draft,关闭审核窗口
+        this.summaryDraft = null;
+        Logger.info(LOG_TAG, 'approveSelfSummary ok');
+        return { success: true, errorMessage: '' } as GroupMemorySaveResult;
+      }
+      // 保存失败:保持 draft,用户编辑内容不丢失
+      this.summaryError = result.errorMessage;
+      return { success: false, errorMessage: result.errorMessage } as GroupMemorySaveResult;
+    } catch (e) {
+      if (opId !== this.operationId || this.disposed) {
+        return { success: false, errorMessage: '操作已过期' } as GroupMemorySaveResult;
+      }
+      const msg: string = '保存失败,请重试';
+      this.summaryError = msg;
+      Logger.warn(LOG_TAG, 'approveSelfSummary exception: ' + this.safeErrorCategory(e));
+      return { success: false, errorMessage: msg } as GroupMemorySaveResult;
+    } finally {
+      if (opId === this.operationId) {
+        this.isApprovingSummary = false;
+      }
+    }
+  }
+
+  /**
+   * 关闭审核窗口(用户点击"取消"或遮罩)。
+   * 保存中不允许关闭(防止中断)。总结中允许关闭但丢弃 draft。
+   */
+  clearSummaryDraft(): void {
+    if (this.isApprovingSummary) {
+      return;
+    }
+    this.summaryDraft = null;
+    this.summaryError = '';
+  }
+
+  /** 当前 draft 来源消息数量(供 UI 显示) */
+  summarySourceCount(): number {
+    return this.summaryDraft !== null ? this.summaryDraft.source.messages.length : 0;
+  }
+
+  /** 当前 draft 来源用户消息数量(G-MEMORY-AUTO-1A-FIX,供 UI 显示) */
+  summaryUserMessageCount(): number {
+    return this.summaryDraft !== null ? this.summaryDraft.source.userMessageCount : 0;
+  }
+
+  /** 当前 draft 来源角色自身消息数量(G-MEMORY-AUTO-1A-FIX,供 UI 显示) */
+  summaryCharacterMessageCount(): number {
+    return this.summaryDraft !== null ? this.summaryDraft.source.characterMessageCount : 0;
+  }
+
+  /** 当前 draft 来源起始 sequence(供 UI 显示) */
+  summarySourceStartSequence(): number {
+    return this.summaryDraft !== null ? this.summaryDraft.source.startSequence : 0;
+  }
+
+  /** 当前 draft 来源结束 sequence(供 UI 显示) */
+  summarySourceEndSequence(): number {
+    return this.summaryDraft !== null ? this.summaryDraft.source.endSequence : 0;
+  }
+
+  /** 当前 draft 来源角色名称(供 UI 显示) */
+  summarySourceCharacterName(): string {
+    return this.summaryDraft !== null ? this.summaryDraft.source.characterName : '';
+  }
+
+  /** 当前 draft sourceHash 前 8 位(供 UI 显示,不暴露完整 hash) */
+  summarySourceHashShort(): string {
+    if (this.summaryDraft === null) {
+      return '';
+    }
+    const hash: string = this.summaryDraft.source.sourceHash;
+    return hash.length > 12 ? hash.substring(0, 12) : hash;
   }
 
   // ===== 私有辅助 =====
@@ -574,14 +993,25 @@ export class GroupCharacterMemoryViewModel {
   private buildMemoryItem(memory: GroupCharacterMemory): GroupCharacterMemoryItemUiModel {
     const isInteraction: boolean = memory.origin === GroupCharacterMemoryOrigin.Interaction;
     const isInvalidated: boolean = memory.status === GroupCharacterMemoryStatus.Invalidated;
+    const isSelfSummary: boolean = isInteraction
+      && memory.sourceType === 'self_summary_v1';
     const contentPreview: string = memory.content.length > 80
       ? memory.content.substring(0, 80) + '...' : memory.content;
     const keywordsText: string = memory.keywords.length > 0
       ? memory.keywords.join(', ') : '';
+    // G-MEMORY-AUTO-1A-FIX-2: 权限规则
+    // - Manual: 可编辑/可归档/可删除
+    // - self_summary_v1 且非 Invalidated: 可编辑/可归档/可删除
+    // - 其他 Interaction: 只读
+    // - Invalidated: 只读
+    const canEdit: boolean = memory.origin === GroupCharacterMemoryOrigin.Manual
+      || (isSelfSummary && !isInvalidated);
+    const canArchive: boolean = canEdit;
+    const canDelete: boolean = canEdit;
     return {
       id: memory.id,
       origin: memory.origin,
-      originLabel: this.originLabel(memory.origin),
+      originLabel: this.originLabel(memory.origin, memory.sourceType !== undefined ? memory.sourceType : ''),
       status: memory.status,
       statusLabel: this.statusLabel(memory.status),
       title: memory.title,
@@ -593,6 +1023,10 @@ export class GroupCharacterMemoryViewModel {
       sourceSummary: this.buildSourceSummary(memory),
       isInteraction: isInteraction,
       isInvalidated: isInvalidated,
+      isSelfSummary: isSelfSummary,
+      canEdit: canEdit,
+      canArchive: canArchive,
+      canDelete: canDelete,
       createdAt: memory.createdAt,
       createdAtLabel: this.formatTimestamp(memory.createdAt),
       updatedAt: memory.updatedAt,
@@ -604,8 +1038,10 @@ export class GroupCharacterMemoryViewModel {
     if (memory.origin === GroupCharacterMemoryOrigin.Manual) {
       return '';
     }
-    // Interaction 记忆预留来源摘要(G-MEMORY-1B 实现)
     const parts: string[] = [];
+    if (memory.sourceType === 'self_summary_v1') {
+      parts.push('自动总结');
+    }
     if (memory.sourceMessageId !== undefined && memory.sourceMessageId.length > 0) {
       parts.push('来源消息');
     }
@@ -618,8 +1054,14 @@ export class GroupCharacterMemoryViewModel {
     return parts.join(' · ');
   }
 
-  private originLabel(origin: GroupCharacterMemoryOrigin): string {
-    return origin === GroupCharacterMemoryOrigin.Manual ? '手动' : '交互';
+  private originLabel(origin: GroupCharacterMemoryOrigin, sourceType: string): string {
+    if (origin === GroupCharacterMemoryOrigin.Manual) {
+      return '手动';
+    }
+    if (sourceType === 'self_summary_v1') {
+      return '自动总结';
+    }
+    return '交互';
   }
 
   private statusLabel(status: GroupCharacterMemoryStatus): string {

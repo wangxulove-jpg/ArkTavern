@@ -84,6 +84,7 @@ import { GroupChatRuntimeService } from './groupchat/GroupChatRuntimeService';
 import { GroupRuntimeRegistry } from './groupchat/GroupRuntimeRegistry';
 import { GroupCharacterMemoryRepository } from '../repositories/groupchat/GroupCharacterMemoryRepository';
 import { GroupCharacterMemoryService } from './groupchat/GroupCharacterMemoryService';
+import { GroupCharacterSelfSummaryService } from './groupchat/GroupCharacterSelfSummaryService';
 import { WorldRepository } from '../repositories/world/WorldRepository';
 import { WorldLocationRepository } from '../repositories/world/WorldLocationRepository';
 import { WorldLocationEdgeRepository } from '../repositories/world/WorldLocationEdgeRepository';
@@ -209,6 +210,8 @@ export class AppServices {
   private readonly groupCharacterMemoryRepository: GroupCharacterMemoryRepository;
   /** GroupCharacterMemoryService 多人聊天角色记忆业务服务(G-MEMORY-1A,记忆唯一正式写入口) */
   private readonly groupCharacterMemoryService: GroupCharacterMemoryService;
+  /** GroupCharacterSelfSummaryService 多人角色自身发言手动总结服务(G-MEMORY-AUTO-1A) */
+  private readonly groupCharacterSelfSummaryService: GroupCharacterSelfSummaryService;
   /** WorldRepository 世界仓储(W-DATA-1A,不对页面公开) */
   private readonly worldRepository: WorldRepository;
   /** WorldLocationRepository 世界地点仓储(W-DATA-1A,不对页面公开) */
@@ -466,6 +469,16 @@ export class AppServices {
       this.chatParticipantRepository,
       this.groupCharacterMemoryRepository,
       this.dbHelper
+    );
+    // G-MEMORY-AUTO-1A: 多人角色自身发言手动总结服务
+    // 依赖 messageService(只读 listMessages) + memoryService(只读 listByCharacter / 写入 createInteractionMemory)
+    //   + modelService(只读 getCurrentConfig / sendChat)。
+    // 不依赖 ChatPage / ViewModel / Runtime,无构造循环。
+    // 不修改单聊 MemoryService,仅参考其调用参数。
+    this.groupCharacterSelfSummaryService = new GroupCharacterSelfSummaryService(
+      this.groupConversationMessageService,
+      this.groupCharacterMemoryService,
+      this.modelService
     );
     // 市场服务(Chub 公共浏览 + 搜索 + 详情 + 下载)
     // 使用独立的 HarmonyHttpClient 实例(非流式),不与流式 Provider 共享
@@ -902,6 +915,15 @@ export class AppServices {
    */
   static getGroupCharacterMemoryService(): GroupCharacterMemoryService {
     return AppServices.getInstance().groupCharacterMemoryService;
+  }
+
+  /**
+   * 获取 GroupCharacterSelfSummaryService 实例(G-MEMORY-AUTO-1A 多人角色自身发言手动总结服务)。
+   * 仅由 GroupCharacterMemoryViewModel 在 aboutToAppear 中获取并注入。
+   * 不直接暴露给 Page / Repository / 单聊代码。
+   */
+  static getGroupCharacterSelfSummaryService(): GroupCharacterSelfSummaryService {
+    return AppServices.getInstance().groupCharacterSelfSummaryService;
   }
 
   /**

@@ -90,6 +90,30 @@ export interface UpdateManualGroupMemoryInput {
   readonly keywords?: string[];
 }
 
+/** 交互记忆创建输入(G-MEMORY-AUTO-1A 自动总结等交互来源) */
+export interface CreateInteractionMemoryInput {
+  readonly groupConversationId: string;
+  readonly characterId: string;
+  readonly title: string;
+  readonly content: string;
+  readonly importance: number;
+  readonly keywords?: string[];
+  readonly sourceMessageId: string;
+  readonly sourceRoundId?: string;
+  readonly sourceSenderCharacterId: string;
+  readonly sourceType: string;
+  readonly sourceHash: string;
+}
+
+/** 修改已批准自动总结记忆输入(G-MEMORY-AUTO-1A-FIX-2) */
+export interface UpdateApprovedSelfSummaryInput {
+  readonly memoryId: string;
+  readonly title: string;
+  readonly content: string;
+  readonly importance: number;
+  readonly keywords?: string[];
+}
+
 export class GroupCharacterMemoryService {
   private readonly chatRepo: ChatRepository;
   private readonly characterRepo: CharacterRepository;
@@ -227,6 +251,107 @@ export class GroupCharacterMemoryService {
     const created: GroupCharacterMemory = result;
     Logger.info(LOG_TAG, 'createManualMemory: importance=' + created.importance
       + ' keywords=' + String(created.keywords.length)
+      + ' id=' + shortId(created.id));
+    return created;
+  }
+
+  /**
+   * 创建交互记忆(G-MEMORY-AUTO-1A 自动总结批准保存入口)。
+   *
+   * 与 createManualMemory 区别:
+   * - origin = Interaction(自动总结等交互来源)
+   * - status = Active
+   * - 必须提供 sourceMessageId / sourceSenderCharacterId / sourceType / sourceHash
+   * - sourceSenderCharacterId 必须等于 characterId(来源角色匹配当前角色)
+   * - 不校验 ChatParticipant 当前存在(角色可能已移出群聊,但历史消息仍可总结)
+   * - 仍校验 GroupConversation 和 Character 存在
+   *
+   * 严格校验:
+   * - title 非空且不超过长度上限
+   * - content 非空且不超过长度上限
+   * - importance 1-5
+   * - sourceMessageId 非空
+   * - sourceSenderCharacterId 非空且 === characterId
+   * - sourceType 非空
+   * - sourceHash 非空
+   *
+   * Interaction 记忆仍然只读:
+   * - 不能通过 updateManualMemory 修改(拒绝非 Manual)
+   * - 不能通过 deleteManualMemory 删除(拒绝非 Manual)
+   * - 不能通过 setManualMemoryArchived 归档(拒绝非 Manual)
+   * - 用户只能在批准前编辑 draft
+   */
+  async createInteractionMemory(input: CreateInteractionMemoryInput): Promise<GroupCharacterMemory> {
+    validateTitle(input.title);
+    validateContent(input.content);
+    validateImportance(input.importance);
+    if (input.sourceMessageId === '') {
+      throw GroupCharacterMemoryError.internal('sourceMessageId empty');
+    }
+    if (input.sourceSenderCharacterId === '') {
+      throw GroupCharacterMemoryError.internal('sourceSenderCharacterId empty');
+    }
+    if (input.sourceSenderCharacterId !== input.characterId) {
+      throw GroupCharacterMemoryError.internal('sourceSenderCharacterId mismatch');
+    }
+    if (input.sourceType === '') {
+      throw GroupCharacterMemoryError.internal('sourceType empty');
+    }
+    if (input.sourceHash === '') {
+      throw GroupCharacterMemoryError.internal('sourceHash empty');
+    }
+    const keywords: string[] = resolveKeywords(input.keywords, undefined);
+
+    const memoryId: string = GROUP_CHARACTER_MEMORY_ID_PREFIX + generateUuid();
+    const now: number = nowMillis();
+
+    let result: GroupCharacterMemory | null = null;
+    await this.dbHelper.runInTransaction(
+      async (store: relationalStore.RdbStore): Promise<void> => {
+        // 1. 校验群聊存在
+        const chat: Chat | null = await this.chatRepo.getByIdWithStore(store, input.groupConversationId);
+        if (chat === null) {
+          throw GroupCharacterMemoryError.groupNotFound();
+        }
+        // 2. 校验角色存在(角色卡缺失时拒绝创建,与 createManualMemory 一致)
+        const character: Character | null =
+          await this.characterRepo.getByIdWithStore(store, input.characterId);
+        if (character === null) {
+          throw GroupCharacterMemoryError.characterNotFound();
+        }
+        // 3. 不校验 participant 当前存在
+        //    自动总结基于历史消息,角色可能已移出群聊但历史发言仍可总结
+
+        const memory: GroupCharacterMemory = createGroupCharacterMemoryRecord({
+          id: memoryId,
+          groupConversationId: input.groupConversationId,
+          characterId: input.characterId,
+          origin: GroupCharacterMemoryOrigin.Interaction,
+          status: GroupCharacterMemoryStatus.Active,
+          title: normalizeTitle(input.title),
+          content: normalizeContent(input.content),
+          importance: input.importance,
+          keywords: keywords,
+          sourceMessageId: input.sourceMessageId,
+          sourceRoundId: input.sourceRoundId,
+          sourceSenderCharacterId: input.sourceSenderCharacterId,
+          sourceType: input.sourceType,
+          sourceHash: input.sourceHash,
+          createdAt: now,
+          updatedAt: now
+        });
+        await this.memoryRepo.insertWithStore(store, memory);
+        result = memory;
+      },
+      'group_character_memory_create'
+    );
+    if (result === null) {
+      throw GroupCharacterMemoryError.internal('事务未产生结果');
+    }
+    const created: GroupCharacterMemory = result;
+    Logger.info(LOG_TAG, 'createInteractionMemory: importance=' + created.importance
+      + ' keywords=' + String(created.keywords.length)
+      + ' sourceType=' + created.sourceType
       + ' id=' + shortId(created.id));
     return created;
   }
@@ -382,6 +507,201 @@ export class GroupCharacterMemoryService {
       'group_character_memory_delete'
     );
     Logger.info(LOG_TAG, 'deleteManualMemory: id=' + shortId(memoryId));
+  }
+
+  // ===== G-MEMORY-AUTO-1A-FIX-2: 自动总结记忆修改与归档 =====
+
+  /**
+   * 修改已批准的自动总结记忆(G-MEMORY-AUTO-1A-FIX-2)。
+   *
+   * 与 updateManualMemory 区别:
+   * - 只允许 origin=Interaction && sourceType='self_summary_v1' && status!=Invalidated
+   * - 只修改 title/content/importance/keywords
+   * - 保留全部来源字段(sourceMessageId/sourceRoundId/sourceSenderCharacterId/sourceType/sourceHash)
+   * - 保留 createdAt
+   * - 更新 updatedAt
+   *
+   * 不允许:
+   * - 修改来源字段
+   * - 修改 origin
+   * - 修改 status(用 setApprovedSelfSummaryArchived)
+   * - 伪装成 Manual
+   */
+  async updateApprovedSelfSummaryMemory(
+    input: UpdateApprovedSelfSummaryInput
+  ): Promise<GroupCharacterMemory> {
+    validateTitle(input.title);
+    validateContent(input.content);
+    validateImportance(input.importance);
+    const keywords: string[] = resolveKeywords(input.keywords, undefined);
+
+    let result: GroupCharacterMemory | null = null;
+    await this.dbHelper.runInTransaction(
+      async (store: relationalStore.RdbStore): Promise<void> => {
+        const existing: GroupCharacterMemory | null =
+          await this.memoryRepo.getByIdWithStore(store, input.memoryId);
+        if (existing === null) {
+          throw GroupCharacterMemoryError.memoryNotFound();
+        }
+        // 严格校验:必须是 Interaction + self_summary_v1 + 非 Invalidated
+        if (existing.origin !== GroupCharacterMemoryOrigin.Interaction) {
+          throw GroupCharacterMemoryError.interactionMemoryReadOnly();
+        }
+        if (existing.sourceType !== 'self_summary_v1') {
+          throw GroupCharacterMemoryError.interactionMemoryReadOnly();
+        }
+        if (existing.status === GroupCharacterMemoryStatus.Invalidated) {
+          throw GroupCharacterMemoryError.invalidStatusTransition('已失效记忆不能修改');
+        }
+        // 更新:只改 title/content/importance/keywords,保留来源字段
+        const updated: GroupCharacterMemory = createGroupCharacterMemoryRecord({
+          id: existing.id,
+          groupConversationId: existing.groupConversationId,
+          characterId: existing.characterId,
+          origin: existing.origin,
+          status: existing.status,
+          title: normalizeTitle(input.title),
+          content: normalizeContent(input.content),
+          importance: input.importance,
+          keywords: keywords,
+          sourceMessageId: existing.sourceMessageId,
+          sourceRoundId: existing.sourceRoundId,
+          sourceSenderCharacterId: existing.sourceSenderCharacterId,
+          sourceType: existing.sourceType,
+          sourceHash: existing.sourceHash,
+          createdAt: existing.createdAt,
+          updatedAt: nowMillis()
+        });
+        await this.memoryRepo.updateWithStore(store, updated);
+        result = updated;
+      },
+      'group_character_memory_update'
+    );
+    if (result === null) {
+      throw GroupCharacterMemoryError.internal('事务未产生结果');
+    }
+    const updatedMemory: GroupCharacterMemory = result;
+    Logger.info(LOG_TAG, 'updateApprovedSelfSummaryMemory: id=' + shortId(updatedMemory.id)
+      + ' importance=' + updatedMemory.importance
+      + ' keywords=' + String(updatedMemory.keywords.length));
+    return updatedMemory;
+  }
+
+  /**
+   * 归档/恢复已批准的自动总结记忆(G-MEMORY-AUTO-1A-FIX-2)。
+   *
+   * 规则:
+   * - 只允许 origin=Interaction && sourceType='self_summary_v1'
+   * - 只允许 Active ↔ Archived 双向切换
+   * - 不得把 Invalidated 恢复为 Active
+   * - 不得把 Active/Archived 改为 Invalidated
+   */
+  async setApprovedSelfSummaryArchived(
+    memoryId: string,
+    archived: boolean
+  ): Promise<GroupCharacterMemory> {
+    let result: GroupCharacterMemory | null = null;
+    await this.dbHelper.runInTransaction(
+      async (store: relationalStore.RdbStore): Promise<void> => {
+        const existing: GroupCharacterMemory | null =
+          await this.memoryRepo.getByIdWithStore(store, memoryId);
+        if (existing === null) {
+          throw GroupCharacterMemoryError.memoryNotFound();
+        }
+        if (existing.origin !== GroupCharacterMemoryOrigin.Interaction) {
+          throw GroupCharacterMemoryError.interactionMemoryReadOnly();
+        }
+        if (existing.sourceType !== 'self_summary_v1') {
+          throw GroupCharacterMemoryError.interactionMemoryReadOnly();
+        }
+        if (existing.status === GroupCharacterMemoryStatus.Invalidated) {
+          throw GroupCharacterMemoryError.invalidStatusTransition('已失效记忆不能恢复为活跃');
+        }
+        const targetStatus: GroupCharacterMemoryStatus = archived
+          ? GroupCharacterMemoryStatus.Archived : GroupCharacterMemoryStatus.Active;
+        if (existing.status === targetStatus) {
+          result = existing;
+          return;
+        }
+        // 仅允许 Active ↔ Archived 切换
+        if (existing.status === GroupCharacterMemoryStatus.Active
+          && targetStatus === GroupCharacterMemoryStatus.Archived) {
+          // OK
+        } else if (existing.status === GroupCharacterMemoryStatus.Archived
+          && targetStatus === GroupCharacterMemoryStatus.Active) {
+          // OK
+        } else {
+          throw GroupCharacterMemoryError.invalidStatusTransition('仅允许活跃与已归档之间切换');
+        }
+        const updated: GroupCharacterMemory = createGroupCharacterMemoryRecord({
+          id: existing.id,
+          groupConversationId: existing.groupConversationId,
+          characterId: existing.characterId,
+          origin: existing.origin,
+          status: targetStatus,
+          title: existing.title,
+          content: existing.content,
+          importance: existing.importance,
+          keywords: existing.keywords,
+          sourceMessageId: existing.sourceMessageId,
+          sourceRoundId: existing.sourceRoundId,
+          sourceSenderCharacterId: existing.sourceSenderCharacterId,
+          sourceType: existing.sourceType,
+          sourceHash: existing.sourceHash,
+          createdAt: existing.createdAt,
+          updatedAt: nowMillis()
+        });
+        await this.memoryRepo.updateWithStore(store, updated);
+        result = updated;
+      },
+      'group_character_memory_archive'
+    );
+    if (result === null) {
+      throw GroupCharacterMemoryError.internal('事务未产生结果');
+    }
+    const archivedMemory: GroupCharacterMemory = result;
+    Logger.info(LOG_TAG, 'setApprovedSelfSummaryArchived: id=' + shortId(archivedMemory.id)
+      + ' archived=' + archived + ' status=' + archivedMemory.status);
+    return archivedMemory;
+  }
+
+  /**
+   * 删除已批准的自动总结记忆。
+   *
+   * 仅允许 origin=Interaction && sourceType='self_summary_v1' && status!=Invalidated。
+   * Invalidated 记忆不可删除(保留失效痕迹,防止误删历史失效记录)。
+   *
+   * 删除后:
+   * - 记忆记录从数据库移除
+   * - 不影响增量总结进度(sourceMessageId 进度由 GroupCharacterSelfSummaryService 管理)
+   * - 下一次总结不会重复生成已删除的内容(基于 sourceMessageId 增量)
+   */
+  async deleteApprovedSelfSummaryMemory(memoryId: string): Promise<void> {
+    if (memoryId.length === 0) {
+      throw GroupCharacterMemoryError.memoryNotFound();
+    }
+    await this.dbHelper.runInTransaction(
+      async (store: relationalStore.RdbStore): Promise<void> => {
+        const existing: GroupCharacterMemory | null =
+          await this.memoryRepo.getByIdWithStore(store, memoryId);
+        if (existing === null) {
+          throw GroupCharacterMemoryError.memoryNotFound();
+        }
+        // 严格校验:必须是 Interaction + self_summary_v1 + 非 Invalidated
+        if (existing.origin !== GroupCharacterMemoryOrigin.Interaction) {
+          throw GroupCharacterMemoryError.interactionMemoryReadOnly();
+        }
+        if (existing.sourceType !== 'self_summary_v1') {
+          throw GroupCharacterMemoryError.interactionMemoryReadOnly();
+        }
+        if (existing.status === GroupCharacterMemoryStatus.Invalidated) {
+          throw GroupCharacterMemoryError.invalidStatusTransition('已失效记忆不能删除');
+        }
+        await this.memoryRepo.deleteByIdWithStore(store, memoryId);
+      },
+      'group_character_memory_delete'
+    );
+    Logger.info(LOG_TAG, 'deleteApprovedSelfSummaryMemory: id=' + shortId(memoryId));
   }
 
   /**
