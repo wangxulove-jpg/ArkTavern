@@ -138,6 +138,15 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
   roundErrorMessage: string = '';
   /** 成员运行时状态列表 */
   memberRuntimeStates: GroupMemberRuntimeUiModel[] = [];
+  /**
+   * G-UI-ALIGN-1: 当前活动轮次 ID(供 UI 追踪轮次切换)。
+   *
+   * - Idle/Completed/Cancelled/Failed 后保留最近一轮 ID,便于 UI 判断"同一轮次内已收起"
+   * - 新一轮 sendUserMessage/retrySpeakerMessage 启动时更新为新 roundId
+   * - 页面通过比对 currentRoundId 变化识别"新轮次开始",从而允许成员栏重新展开
+   * - 不持久化,仅用于 UI 状态机判断,不影响业务逻辑
+   */
+  currentRoundId: string = '';
 
   /**
    * G-CONTROL-2A: 当前输入草稿的回复目标。
@@ -365,6 +374,8 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
     this.isEndingRound = false;
     const opId: number = this.loadOperationId;
     const roundId: string = generateUuid();
+    // G-UI-ALIGN-1: 记录当前轮次 ID,供 UI 追踪轮次切换(成员栏展开/收起状态机)
+    this.currentRoundId = roundId;
     let preparedPlan: GroupRoundPlan | null = null;
     try {
       const written: ChatMessage = await this.messageService.appendUserMessage(
@@ -540,6 +551,10 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
     this.completedSpeakerCount = 0;
     const opId: number = this.loadOperationId;
     const expectedChatId: string = this.chatId;
+    // G-UI-ALIGN-1: 重试视为新一轮次触发,更新 currentRoundId 让 UI 成员栏可重新展开
+    // 复用被重试消息的 generationBatchId 作为轮次标识(重试不创建新批次)
+    const retryRoundId: string = 'retry_' + messageId;
+    this.currentRoundId = retryRoundId;
     Logger.info(LOG_TAG, 'retrySpeakerMessage requested msgId=' + messageId);
     try {
       // 重试视为一次生成,进入 Generating 状态

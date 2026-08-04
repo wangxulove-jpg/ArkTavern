@@ -26,6 +26,10 @@ import { CharacterImageView } from '../CharacterImageView';
 import { ChatRichText, ChatSenderType } from '../ChatRichText';
 import { ChatTextStyle } from '../../utils/ChatTextStyleSettings';
 import { getCharacterColor } from '../../utils/ChatPalette';
+import {
+  computeAssistantBubbleColor,
+  computeUserBubbleColor
+} from '../../utils/ChatBubbleAppearance';
 import { GroupMessageRenderState } from '../../viewmodels/groupchat/GroupMessageRenderState';
 
 @Component
@@ -34,6 +38,13 @@ export struct GroupMessageBubble {
   @ObjectLink renderState: GroupMessageRenderState;
   /** 聊天文本样式设置(复用单聊同一套显示偏好,@Prop 确保父组件样式变化时同步) */
   @Prop settings: ChatTextStyle | null = null;
+  /**
+   * G-UI-ALIGN-2A: 气泡背景不透明度(0.40~0.90,仅控制背景 Alpha,不影响文字/头像/按钮)。
+   * 与单聊 ChatMessageBubble 共享同一份 Preferences 设置,父组件调节时即时同步。
+   */
+  @Prop bubbleOpacity: number = 1.0;
+  /** G-UI-ALIGN-2A: 当前是否为深色模式(用于动态计算气泡背景 RGB) */
+  @Prop isDarkMode: boolean = false;
 
   build() {
     if (this.renderState.role === ChatRole.User) {
@@ -59,10 +70,19 @@ export struct GroupMessageBubble {
           selectable: true
         })
       }
-      .constraintSize({ maxWidth: '80%' })
-      .backgroundColor($r('app.color.chat_user_bubble'))
+      .constraintSize({ maxWidth: '88%' })
+      .backgroundColor(computeUserBubbleColor(this.bubbleOpacity, this.isDarkMode))
+      .border({
+        width: $r('app.float.chat_bubble_border_width'),
+        color: $r('app.color.chat_user_border')
+      })
       .borderRadius({ topLeft: 16, topRight: 16, bottomLeft: 16, bottomRight: 6 })
-      .padding({ left: 14, right: 14, top: 10, bottom: 10 })
+      .padding({
+        left: $r('app.float.chat_bubble_padding_h'),
+        right: $r('app.float.chat_bubble_padding_h'),
+        top: $r('app.float.chat_bubble_padding_v'),
+        bottom: $r('app.float.chat_bubble_padding_v')
+      })
 
       // G-CONTROL-2A: 多角色回复目标标签(仅指定角色时显示)
       if (this.renderState.replyTargetNames.length > 0) {
@@ -87,33 +107,34 @@ export struct GroupMessageBubble {
     .margin({ top: 8, bottom: 8 })
   }
 
-  /** 角色消息:左对齐,头像 + 名称 + 正文 + 状态 */
+  /** 角色消息:头像 + 名称在气泡上方,左对齐,对齐单聊 assistantBubble 纵向结构 */
   @Builder
   characterBubble(): void {
-    Row() {
-      // 头像
-      CharacterImageView({
-        imageUri: this.renderState.senderAvatarUri,
-        fallbackName: this.renderState.senderName,
-        imgWidth: 32,
-        imgHeight: 32,
-        imgBorderRadius: 16,
-        displayMode: 'thumbnail',
-        objectFit: ImageFit.Cover
-      })
-        .alignSelf(ItemAlign.Start)
+    Column() {
+      // 头像 + 角色名称行(在气泡上方,对齐单聊头像位置)
+      Row() {
+        CharacterImageView({
+          imageUri: this.renderState.senderAvatarUri,
+          fallbackName: this.renderState.senderName,
+          imgWidth: 32,
+          imgHeight: 32,
+          imgBorderRadius: 16,
+          displayMode: 'thumbnail',
+          objectFit: ImageFit.Cover
+        })
 
-      // 气泡区
-      Column() {
-        // 角色名称(使用角色强调色)
         Text(this.renderState.senderName)
           .fontSize($r('app.float.app_font_caption'))
           .fontWeight(FontWeight.Medium)
           .fontColor(this.resolveCharacterColor())
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
+          .margin({ left: 8 })
+      }
+      .margin({ bottom: 6 })
 
+      // 气泡区
+      Column() {
         // 正文(有内容时显示,复用单聊 ChatRichText)
         if (this.renderState.content.length > 0) {
           ChatRichText({
@@ -125,38 +146,29 @@ export struct GroupMessageBubble {
             colorTheme: null,
             selectable: true
           })
-            .margin({ top: 4 })
         }
 
-        // streaming:思考中提示(无内容时)
+        // streaming:思考中提示(无内容时,对齐单聊文案)
         if (this.renderState.isStreaming && this.renderState.content.length === 0) {
           Row() {
-            LoadingProgress()
-              .width(14)
-              .height(14)
-              .color($r('app.color.app_text_tertiary'))
-              .margin({ right: 6 })
-            Text('正在思考…')
+            Text('思考中')
               .fontSize($r('app.float.app_font_caption'))
               .fontColor($r('app.color.app_text_tertiary'))
-          }
-          .margin({ top: 4 })
-        }
-
-        // streaming:光标 + "生成中"(有内容时)
-        if (this.renderState.isStreaming && this.renderState.content.length > 0) {
-          Row() {
-            Text('▍')
-              .fontSize($r('app.float.app_font_body'))
+              .fontStyle(FontStyle.Italic)
+            Text('...')
+              .fontSize($r('app.float.app_font_caption'))
               .fontColor($r('app.color.app_accent'))
               .margin({ left: 2 })
-            Text('生成中…')
-              .fontSize(11)
-              .fontColor($r('app.color.app_text_tertiary'))
-              .fontStyle(FontStyle.Italic)
-              .margin({ left: 4 })
           }
-          .margin({ top: 4 })
+          .margin({ top: 2 })
+        }
+
+        // streaming:光标(有内容时,对齐单聊:仅光标,无"生成中"文字,避免噪声)
+        if (this.renderState.isStreaming && this.renderState.content.length > 0) {
+          Text('▍')
+            .fontSize($r('app.float.app_font_body'))
+            .fontColor($r('app.color.app_accent'))
+            .margin({ top: 2 })
         }
 
         // cancelled:已停止标记
@@ -184,22 +196,31 @@ export struct GroupMessageBubble {
           .borderRadius(8)
           .margin({ top: 6 })
         }
-
-        // 时间
-        Text(this.formatTime(this.renderState.createdAt))
-          .fontSize(10)
-          .fontColor($r('app.color.app_text_tertiary'))
-          .margin({ top: 4 })
       }
-      .constraintSize({ maxWidth: '78%' })
-      .backgroundColor($r('app.color.chat_assistant_bubble'))
+      .constraintSize({ maxWidth: '94%' })
+      .backgroundColor(computeAssistantBubbleColor(this.bubbleOpacity, this.isDarkMode))
+      .border({
+        width: $r('app.float.chat_bubble_border_width'),
+        color: $r('app.color.chat_assistant_border')
+      })
       .borderRadius({ topLeft: 6, topRight: 16, bottomLeft: 16, bottomRight: 16 })
-      .padding({ left: 14, right: 14, top: 10, bottom: 10 })
-      .margin({ left: 8 })
+      .padding({
+        left: $r('app.float.chat_bubble_padding_h'),
+        right: $r('app.float.chat_bubble_padding_h'),
+        top: $r('app.float.chat_bubble_padding_v'),
+        bottom: $r('app.float.chat_bubble_padding_v')
+      })
       .alignItems(HorizontalAlign.Start)
+      // 微阴影:让角色气泡在浅色背景上有浮起感(对齐单聊助手气泡)
+      .shadow({
+        radius: 6,
+        color: $r('app.color.chat_assistant_shadow'),
+        offsetX: 0,
+        offsetY: 2
+      })
     }
     .width('100%')
-    .alignItems(VerticalAlign.Top)
+    .alignItems(HorizontalAlign.Start)
     .margin({ top: 8, bottom: 8 })
   }
 
