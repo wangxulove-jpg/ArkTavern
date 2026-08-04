@@ -93,6 +93,15 @@ struct CharacterListPage {
               .padding({ left: 16, right: 16, top: 4, bottom: 4 })
           }
 
+          // 通用错误提示(含角色被世界引用时的删除保护提示)
+          if (this.viewModel!.errorMessage.length > 0) {
+            Text(this.viewModel!.errorMessage)
+              .fontSize(13)
+              .fontColor('#E74C3C')
+              .width('100%')
+              .padding({ left: 16, right: 16, top: 4, bottom: 4 })
+          }
+
           // 角色列表
           Scroll() {
             Column() {

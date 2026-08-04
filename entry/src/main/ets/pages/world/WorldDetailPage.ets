@@ -37,6 +37,7 @@ import {
   WorldEventUiModel,
   WorldDetailLoadState,
   PENDING_WORLD_ID_KEY,
+  PENDING_WORLD_LOCATION_ID_KEY,
   formatWorldTimestamp
 } from '../../viewmodels/world/WorldUiModels';
 import {
@@ -420,6 +421,59 @@ struct WorldDetailPage {
         .fontSize($r('app.float.app_font_caption'))
         .fontColor($r('app.color.app_text_tertiary'))
         .margin({ top: 8 })
+
+      // 管理操作按钮行(归档世界禁用子数据写入,但管理世界按钮始终可用)
+      Row() {
+        // 管理世界:始终允许(可编辑/归档/激活/硬删除)
+        Button($r('app.string.world_manage'))
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_accent'))
+          .backgroundColor($r('app.color.app_surface_2'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(36)
+          .padding({ left: 12, right: 12 })
+          .accessibilityText($r('app.string.world_edit_world'))
+          .onClick(() => {
+            this.openWorldEdit();
+          })
+
+        // 添加地点:归档世界禁用
+        Button($r('app.string.world_add_location'))
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor(world.status === WorldStatus.Archived
+            ? $r('app.color.app_text_tertiary')
+            : $r('app.color.app_accent'))
+          .backgroundColor($r('app.color.app_surface_2'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(36)
+          .padding({ left: 12, right: 12 })
+          .margin({ left: 8 })
+          .accessibilityText($r('app.string.world_add_location'))
+          .enabled(world.status !== WorldStatus.Archived)
+          .onClick(() => {
+            this.openLocationCreate();
+          })
+
+        // 管理角色:归档世界禁用
+        Button($r('app.string.world_character_manage'))
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor(world.status === WorldStatus.Archived
+            ? $r('app.color.app_text_tertiary')
+            : $r('app.color.app_accent'))
+          .backgroundColor($r('app.color.app_surface_2'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(36)
+          .padding({ left: 12, right: 12 })
+          .margin({ left: 8 })
+          .accessibilityText($r('app.string.world_manage_characters'))
+          .enabled(world.status !== WorldStatus.Archived)
+          .onClick(() => {
+            this.openCharacterManage();
+          })
+      }
+      .width('100%')
+      .margin({ top: 12 })
+      .alignItems(VerticalAlign.Center)
     }
     .width('100%')
     .padding({
@@ -650,14 +704,35 @@ struct WorldDetailPage {
   @Builder
   selectedLocationDetailSection(detail: WorldDetailUiModel): void {
     Column() {
-      // 标题
-      Text(this.resolveLocationName(this.selectedLocationId, detail.locations))
-        .fontSize($r('app.float.app_font_subtitle'))
-        .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.app_text_primary'))
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .width('100%')
+      // 标题 + 编辑按钮
+      Row() {
+        Text(this.resolveLocationName(this.selectedLocationId, detail.locations))
+          .fontSize($r('app.float.app_font_subtitle'))
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.app_text_primary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .layoutWeight(1)
+
+        // 编辑地点:归档世界禁用
+        Button($r('app.string.world_location_edit'))
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor(detail.world.status === WorldStatus.Archived
+            ? $r('app.color.app_text_tertiary')
+            : $r('app.color.app_accent'))
+          .backgroundColor($r('app.color.app_surface_2'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(32)
+          .padding({ left: 12, right: 12 })
+          .margin({ left: 8 })
+          .accessibilityText($r('app.string.world_edit_location'))
+          .enabled(detail.world.status !== WorldStatus.Archived)
+          .onClick(() => {
+            this.openLocationEdit(this.selectedLocationId);
+          })
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
 
       // 状态标签
       Text(this.resolveLocationStatusLabel(this.selectedLocationId, detail.locations))
@@ -1099,6 +1174,44 @@ struct WorldDetailPage {
     } else {
       this.selectedLocationId = locationId;
     }
+  }
+
+  /** 打开世界编辑页(编辑当前世界) */
+  private openWorldEdit(): void {
+    if (this.currentWorldId.length === 0) {
+      return;
+    }
+    AppStorage.setOrCreate<string>(PENDING_WORLD_ID_KEY, this.currentWorldId);
+    router.pushUrl({ url: 'pages/world/WorldEditPage' });
+  }
+
+  /** 打开地点编辑页(创建模式) */
+  private openLocationCreate(): void {
+    if (this.currentWorldId.length === 0) {
+      return;
+    }
+    AppStorage.setOrCreate<string>(PENDING_WORLD_ID_KEY, this.currentWorldId);
+    AppStorage.setOrCreate<string>(PENDING_WORLD_LOCATION_ID_KEY, '');
+    router.pushUrl({ url: 'pages/world/WorldLocationEditPage' });
+  }
+
+  /** 打开地点编辑页(编辑模式) */
+  private openLocationEdit(locationId: string): void {
+    if (this.currentWorldId.length === 0 || locationId.length === 0) {
+      return;
+    }
+    AppStorage.setOrCreate<string>(PENDING_WORLD_ID_KEY, this.currentWorldId);
+    AppStorage.setOrCreate<string>(PENDING_WORLD_LOCATION_ID_KEY, locationId);
+    router.pushUrl({ url: 'pages/world/WorldLocationEditPage' });
+  }
+
+  /** 打开世界角色管理页 */
+  private openCharacterManage(): void {
+    if (this.currentWorldId.length === 0) {
+      return;
+    }
+    AppStorage.setOrCreate<string>(PENDING_WORLD_ID_KEY, this.currentWorldId);
+    router.pushUrl({ url: 'pages/world/WorldCharacterManagePage' });
   }
 
   // ===== 辅助方法 =====

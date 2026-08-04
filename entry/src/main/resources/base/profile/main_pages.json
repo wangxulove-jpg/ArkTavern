@@ -26,6 +26,9 @@
     "pages/groupchat/GroupMemberManagePage",
     "pages/groupchat/GroupChatSettingsPage",
     "pages/world/WorldHomePage",
-    "pages/world/WorldDetailPage"
+    "pages/world/WorldDetailPage",
+    "pages/world/WorldEditPage",
+    "pages/world/WorldLocationEditPage",
+    "pages/world/WorldCharacterManagePage"
   ]
 }

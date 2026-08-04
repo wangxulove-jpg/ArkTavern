@@ -17,6 +17,12 @@ import { WorldEventType } from '../../models/world/WorldEvent';
 /** 跨页面路由用的 worldId 暂存键(由 WorldHomePage 写入,WorldDetailPage 读取后清除) */
 export const PENDING_WORLD_ID_KEY: string = 'pendingWorldId';
 
+/** 跨页面路由用的 locationId 暂存键(编辑地点时由详情页写入,编辑页读取后清除) */
+export const PENDING_WORLD_LOCATION_ID_KEY: string = 'pendingWorldLocationId';
+
+/** 跨页面路由用的 characterInstanceId 暂存键(管理角色时使用) */
+export const PENDING_WORLD_CHARACTER_INSTANCE_ID_KEY: string = 'pendingWorldCharacterInstanceId';
+
 /** 世界列表项 UI 模型 */
 export interface WorldSummaryUiModel {
   readonly id: string;

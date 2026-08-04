@@ -2019,6 +2019,250 @@
     {
       "name": "world_reload_data",
       "value": "重新加载世界数据"
+    },
+    {
+      "name": "world_create",
+      "value": "创建世界"
+    },
+    {
+      "name": "world_edit",
+      "value": "编辑世界"
+    },
+    {
+      "name": "world_manage",
+      "value": "管理世界"
+    },
+    {
+      "name": "world_name_label",
+      "value": "世界名称"
+    },
+    {
+      "name": "world_name_placeholder",
+      "value": "请输入世界名称"
+    },
+    {
+      "name": "world_desc_label",
+      "value": "世界描述"
+    },
+    {
+      "name": "world_desc_placeholder",
+      "value": "请输入世界描述(可选)"
+    },
+    {
+      "name": "world_save",
+      "value": "保存"
+    },
+    {
+      "name": "world_cancel",
+      "value": "取消"
+    },
+    {
+      "name": "world_archive",
+      "value": "归档世界"
+    },
+    {
+      "name": "world_activate",
+      "value": "重新激活"
+    },
+    {
+      "name": "world_delete",
+      "value": "永久删除世界"
+    },
+    {
+      "name": "world_archive_confirm",
+      "value": "归档后不能修改地点和角色,但仍可查看。"
+    },
+    {
+      "name": "world_delete_confirm",
+      "value": "将永久删除该世界、地点、连接、角色实例和事件,无法恢复。"
+    },
+    {
+      "name": "world_confirm_delete",
+      "value": "确认删除"
+    },
+    {
+      "name": "world_edit_title_create",
+      "value": "创建世界"
+    },
+    {
+      "name": "world_edit_title_edit",
+      "value": "编辑世界"
+    },
+    {
+      "name": "world_location_add",
+      "value": "添加地点"
+    },
+    {
+      "name": "world_location_edit",
+      "value": "编辑地点"
+    },
+    {
+      "name": "world_location_name_label",
+      "value": "地点名称"
+    },
+    {
+      "name": "world_location_name_placeholder",
+      "value": "请输入地点名称"
+    },
+    {
+      "name": "world_location_desc_label",
+      "value": "地点描述"
+    },
+    {
+      "name": "world_location_desc_placeholder",
+      "value": "请输入地点描述(可选)"
+    },
+    {
+      "name": "world_location_archive",
+      "value": "归档地点"
+    },
+    {
+      "name": "world_location_activate",
+      "value": "重新激活地点"
+    },
+    {
+      "name": "world_location_delete",
+      "value": "删除地点"
+    },
+    {
+      "name": "world_location_delete_confirm",
+      "value": "删除地点会同时删除与该地点相关的连接。"
+    },
+    {
+      "name": "world_location_edit_title_create",
+      "value": "创建地点"
+    },
+    {
+      "name": "world_location_edit_title_edit",
+      "value": "编辑地点"
+    },
+    {
+      "name": "world_character_manage",
+      "value": "管理角色"
+    },
+    {
+      "name": "world_character_manage_title",
+      "value": "世界角色管理"
+    },
+    {
+      "name": "world_character_added_section",
+      "value": "已加入世界"
+    },
+    {
+      "name": "world_character_available_section",
+      "value": "可加入角色"
+    },
+    {
+      "name": "world_character_add_to_world",
+      "value": "加入世界"
+    },
+    {
+      "name": "world_character_remove",
+      "value": "从世界移除"
+    },
+    {
+      "name": "world_character_remove_confirm",
+      "value": "这只会把角色从当前世界移除,不会删除角色卡。"
+    },
+    {
+      "name": "world_character_set_location",
+      "value": "设置初始地点"
+    },
+    {
+      "name": "world_character_activate",
+      "value": "启用"
+    },
+    {
+      "name": "world_character_deactivate",
+      "value": "停用"
+    },
+    {
+      "name": "world_character_no_location",
+      "value": "暂不放置"
+    },
+    {
+      "name": "world_character_select_location",
+      "value": "选择初始地点"
+    },
+    {
+      "name": "world_character_no_available",
+      "value": "所有角色已加入该世界"
+    },
+    {
+      "name": "world_character_none_added",
+      "value": "该世界还没有角色"
+    },
+    {
+      "name": "world_open_world_list",
+      "value": "打开世界列表"
+    },
+    {
+      "name": "world_open_world_mode",
+      "value": "打开世界模式"
+    },
+    {
+      "name": "world_create_world",
+      "value": "创建世界"
+    },
+    {
+      "name": "world_edit_world",
+      "value": "编辑世界"
+    },
+    {
+      "name": "world_archive_world",
+      "value": "归档世界"
+    },
+    {
+      "name": "world_activate_world",
+      "value": "重新激活世界"
+    },
+    {
+      "name": "world_delete_world",
+      "value": "永久删除世界"
+    },
+    {
+      "name": "world_add_location",
+      "value": "添加地点"
+    },
+    {
+      "name": "world_edit_location",
+      "value": "编辑地点"
+    },
+    {
+      "name": "world_archive_location",
+      "value": "归档地点"
+    },
+    {
+      "name": "world_activate_location",
+      "value": "重新激活地点"
+    },
+    {
+      "name": "world_delete_location",
+      "value": "删除地点"
+    },
+    {
+      "name": "world_manage_characters",
+      "value": "管理世界角色"
+    },
+    {
+      "name": "world_add_character_to_world",
+      "value": "把角色加入世界"
+    },
+    {
+      "name": "world_remove_character_from_world",
+      "value": "从世界移除角色"
+    },
+    {
+      "name": "world_set_character_location",
+      "value": "设置角色初始地点"
+    },
+    {
+      "name": "world_activate_character",
+      "value": "启用角色"
+    },
+    {
+      "name": "world_deactivate_character",
+      "value": "停用角色"
     }
   ]
 }

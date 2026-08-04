@@ -149,6 +149,20 @@ struct WorldHomePage {
       .alignItems(HorizontalAlign.Start)
       .margin({ left: 4 })
 
+      // 创建世界按钮
+      Button($r('app.string.world_create'))
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_on_accent'))
+        .backgroundColor($r('app.color.app_accent'))
+        .borderRadius($r('app.float.app_radius_sm'))
+        .height(32)
+        .padding({ left: 12, right: 12 })
+        .margin({ right: 8 })
+        .accessibilityText($r('app.string.world_create_world'))
+        .onClick(() => {
+          this.openWorldCreate();
+        })
+
       // 刷新按钮
       Button($r('app.string.world_home_reload'))
         .fontSize($r('app.float.app_font_caption'))
@@ -238,6 +252,19 @@ struct WorldHomePage {
         title: $r('app.string.world_home_empty_title'),
         description: $r('app.string.world_home_empty_desc')
       })
+
+      Button($r('app.string.world_create'))
+        .fontSize($r('app.float.app_font_body'))
+        .fontColor($r('app.color.app_on_accent'))
+        .backgroundColor($r('app.color.app_accent'))
+        .borderRadius($r('app.float.app_radius_sm'))
+        .height(40)
+        .padding({ left: 24, right: 24 })
+        .margin({ top: $r('app.float.app_spacing_16') })
+        .accessibilityText($r('app.string.world_create_world'))
+        .onClick(() => {
+          this.openWorldCreate();
+        })
     }
     .width('100%')
     .layoutWeight(1)
@@ -350,6 +377,12 @@ struct WorldHomePage {
   private openWorldDetail(worldId: string): void {
     AppStorage.setOrCreate<string>(PENDING_WORLD_ID_KEY, worldId);
     router.pushUrl({ url: 'pages/world/WorldDetailPage' });
+  }
+
+  /** 打开世界创建页(worldId 为空表示创建模式) */
+  private openWorldCreate(): void {
+    AppStorage.setOrCreate<string>(PENDING_WORLD_ID_KEY, '');
+    router.pushUrl({ url: 'pages/world/WorldEditPage' });
   }
 
   /** 解析状态标签文字 */
