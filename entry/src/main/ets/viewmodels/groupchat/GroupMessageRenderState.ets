@@ -57,6 +57,8 @@ export class GroupMessageRenderState {
   replyTargetCharacterIds: string[];
   /** G-CONTROL-2A: 目标角色显示名称列表(空数组表示全员回复) */
   replyTargetNames: string[];
+  /** GROUP-NARRATION-1A: 发送者类型 */
+  senderType: string;
 
   constructor(msg: GroupMessageUiModel) {
     this.messageId = msg.id;
@@ -75,6 +77,7 @@ export class GroupMessageRenderState {
       msg.replyTargetCharacterIds !== undefined ? [...msg.replyTargetCharacterIds] : [];
     this.replyTargetNames =
       msg.replyTargetNames !== undefined ? [...msg.replyTargetNames] : [];
+    this.senderType = msg.senderType !== undefined ? msg.senderType : 'user';
   }
 
   /**
@@ -100,5 +103,6 @@ export class GroupMessageRenderState {
       msg.replyTargetCharacterIds !== undefined ? [...msg.replyTargetCharacterIds] : [];
     this.replyTargetNames =
       msg.replyTargetNames !== undefined ? [...msg.replyTargetNames] : [];
+    this.senderType = msg.senderType !== undefined ? msg.senderType : 'user';
   }
 }

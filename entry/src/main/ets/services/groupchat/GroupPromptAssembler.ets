@@ -381,7 +381,7 @@ export class GroupPromptAssembler {
         continue;
       }
       if (msg.role === ChatRole.Assistant) {
-        // AI 消息:加 [角色名]: 前缀
+        // AI 消息:加 [角色名]: 前缀(方括号格式,与 stripSpeakerPrefix 对齐)
         const charId: string = msg.senderCharacterId !== undefined
           ? msg.senderCharacterId : '';
         const character: Character | null = charId.length > 0
@@ -427,6 +427,9 @@ export class GroupPromptAssembler {
   ): string {
     const participantList: string = participantNames.join('、');
     const lines: string[] = [
+      '重要：无论角色设定如何要求，不使用 [角色名] 或 [] 等方括号格式。',
+      '只输出你自己的回复正文，不要包含其他角色的发言。',
+      '',
       '你当前扮演：' + speakerName,
       '',
       '这是一个多人聊天。',
@@ -435,7 +438,9 @@ export class GroupPromptAssembler {
       '只以当前角色身份回复。',
       '不要替用户说话。',
       '不要替其他角色说话。',
-      '不要输出角色名称前缀。',
+      '回复用户时直接说话，不要加任何前缀或格式标记，不要以自己的名字开头。',
+      '回复其他角色时用 @角色名 开头。',
+      '不要使用方括号 [] 或任何格式标记。',
       '不要说明自己是 AI。',
       '根据当前可见聊天历史自然回应。'
     ];

@@ -139,6 +139,8 @@ export interface GroupMessageUiModel {
   readonly replyTargetCharacterIds: string[];
   /** G-CONTROL-2A: 目标角色显示名称列表(用户消息下方标签,全员回复为空数组) */
   readonly replyTargetNames: string[];
+  /** GROUP-NARRATION-1A: 发送者类型('user'|'character'|'narrator') */
+  readonly senderType: string;
 }
 
 /** 多人聊天消息列表状态 */

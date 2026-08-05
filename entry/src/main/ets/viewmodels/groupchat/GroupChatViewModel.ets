@@ -75,7 +75,9 @@ import { generateUuid } from '../../utils/Uuid';
 import {
   GroupReplyTargetModeSetting,
   loadGroupReplyTargetMode,
-  persistGroupReplyTargetMode
+  persistGroupReplyTargetMode,
+  loadGroupNarrationEnabled,
+  loadGroupNarrationMaxTokens
 } from '../../utils/GroupReplyModeSetting';
 import {
   GroupConversationDetailUiModel,
@@ -197,6 +199,10 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
    * 默认 'one_shot'。
    */
   replyTargetMode: string = 'one_shot';
+  /** GROUP-NARRATION-1A: 旁白开关(按群聊持久化,默认关闭) */
+  narrationEnabled: boolean = false;
+  /** GROUP-NARRATION-1A: 旁白最大 token 数 */
+  narrationMaxTokens: number = 256;
 
   /**
    * GROUP-CHAT-TARGET-1: 仅下一次发送使用的临时目标。
@@ -445,7 +451,8 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
         createdAt: written.createdAt,
         updatedAt: written.updatedAt !== undefined ? written.updatedAt : written.createdAt,
         replyTargetCharacterIds: replyTargetIds,
-        replyTargetNames: replyTargetNames
+        replyTargetNames: replyTargetNames,
+        senderType: 'user'
       };
       this.messages = this.messages.concat([uiMsg]);
       this.notifyMessagesUpdate();
@@ -494,6 +501,16 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
       this.roundState = GroupRoundState.Ready;
       this.isGenerating = true;
       this.refreshMemberRuntimeStates();
+
+      // GROUP-NARRATION-1A: 设置旁白配置(generateNarration 时使用)
+      this.runtimeService.setNarrationConfig(
+        this.narrationEnabled && replyTargetIds.length === 1,
+        this.detail !== null ? this.detail.title : '',
+        replyTargetIds.length === 1 ? this.findMemberNameById(replyTargetIds[0]) : '',
+        trimmed,
+        this.buildOtherCharacterSummaries(replyTargetIds),
+        this.narrationMaxTokens
+      );
 
       try {
         await this.runtimeService.startRound(preparedPlan, this);
@@ -622,6 +639,78 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
     } finally {
       this.isRetrying = false;
     }
+  }
+
+  /**
+   * GROUP-REGENERATE: 重新生成指定的角色消息(允许 Completed 状态)。
+   */
+  async regenerateSpeakerMessage(messageId: string): Promise<void> {
+    if (this.disposed || this.isGenerating || this.isRetrying) {
+      return;
+    }
+    if (messageId.length === 0 || this.chatId.length === 0) {
+      return;
+    }
+    if (this.runtimeService.isAnotherChatRunning(this.chatId)) {
+      this.errorMessage = '另一个多人聊天正在回复,请先结束当前回复';
+      return;
+    }
+    this.isRetrying = true;
+    this.errorMessage = '';
+    this.roundErrorMessage = '';
+    this.isStopping = false;
+    this.isEndingRound = false;
+    this.currentSpeakerIndex = -1;
+    this.currentSpeakerCharacterId = '';
+    this.completedSpeakerCount = 0;
+    // 立即从 UI 列表移除旧消息(DB 删除由 RuntimeService 处理)
+    this.messages = this.messages.filter((m: GroupMessageUiModel): boolean => m.id !== messageId);
+    this.notifyMessagesUpdate();
+    const opId: number = this.loadOperationId;
+    const expectedChatId: string = this.chatId;
+    const retryRoundId: string = 'retry_' + messageId;
+    this.currentRoundId = retryRoundId;
+    Logger.info(LOG_TAG, 'regenerateSpeakerMessage msgId=' + messageId);
+    try {
+      this.isGenerating = true;
+      this.roundState = GroupRoundState.Generating;
+      this.refreshMemberRuntimeStates();
+      await this.runtimeService.retrySpeakerMessage(messageId, expectedChatId, this, true);
+    } catch (e) {
+      Logger.error(LOG_TAG, 'regenerateSpeakerMessage failed: ' + String(e));
+      if (this.disposed || opId !== this.loadOperationId) {
+        return;
+      }
+      if (e instanceof GroupSpeakerRetryError) {
+        this.errorMessage = this.mapRetryError(e.kind);
+      } else {
+        this.errorMessage = '重新生成失败';
+      }
+      this.isGenerating = false;
+      this.roundState = GroupRoundState.Idle;
+      this.refreshMemberRuntimeStates();
+    } finally {
+      this.isRetrying = false;
+    }
+  }
+
+  /**
+   * GROUP-REGENERATE: 判断角色消息是否可以重新生成。
+   */
+  canRegenerateMessage(msg: GroupMessageUiModel): boolean {
+    if (msg.role === ChatRole.User) {
+      return false;
+    }
+    if (msg.senderCharacterId === undefined || msg.senderCharacterId.length === 0) {
+      return false;
+    }
+    if (!msg.characterExists) {
+      return false;
+    }
+    if (this.isGenerating || this.isRetrying || this.isEndingRound) {
+      return false;
+    }
+    return true;
   }
 
   /**
@@ -860,7 +949,8 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
           updatedAt: m.updatedAt,
           // G-CONTROL-2A: 保留用户消息目标标签(更新时不应丢失)
           replyTargetCharacterIds: m.replyTargetCharacterIds,
-          replyTargetNames: m.replyTargetNames
+          replyTargetNames: m.replyTargetNames,
+          senderType: m.senderType
         });
       } else {
         newMessages.push(m);
@@ -1064,7 +1154,27 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
         createdAt: msg.createdAt,
         updatedAt: msg.updatedAt !== undefined ? msg.updatedAt : msg.createdAt,
         replyTargetCharacterIds: [],
-        replyTargetNames: []
+        replyTargetNames: [],
+        senderType: 'character'
+      };
+    }
+    if (senderType === 'narrator') {
+      return {
+        id: msg.id,
+        role: msg.role,
+        content: msg.content,
+        status: msg.status !== undefined ? msg.status : ChatMessageStatus.Streaming,
+        senderCharacterId: undefined,
+        senderName: '旁白',
+        senderAvatarUri: undefined,
+        characterExists: true,
+        generationBatchId: msg.generationBatchId,
+        sequenceNumber: 0,
+        createdAt: msg.createdAt,
+        updatedAt: msg.updatedAt !== undefined ? msg.updatedAt : msg.createdAt,
+        replyTargetCharacterIds: [],
+        replyTargetNames: [],
+        senderType: 'narrator'
       };
     }
     return {
@@ -1081,7 +1191,8 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
       createdAt: msg.createdAt,
       updatedAt: msg.updatedAt !== undefined ? msg.updatedAt : msg.createdAt,
       replyTargetCharacterIds: [],
-      replyTargetNames: []
+      replyTargetNames: [],
+      senderType: 'user'
     };
   }
 
@@ -1212,10 +1323,30 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
         createdAt: msg.createdAt,
         updatedAt: msg.updatedAt !== undefined ? msg.updatedAt : msg.createdAt,
         replyTargetCharacterIds: replyTargetCharacterIds,
-        replyTargetNames: replyTargetNames
+        replyTargetNames: replyTargetNames,
+        senderType: 'character'
       };
     }
-    // 用户消息 / narrator
+    if (senderType === 'narrator') {
+      return {
+        id: msg.id,
+        role: msg.role,
+        content: msg.content,
+        status: msg.status !== undefined ? msg.status : ChatMessageStatus.Completed,
+        senderCharacterId: undefined,
+        senderName: '旁白',
+        senderAvatarUri: undefined,
+        characterExists: true,
+        generationBatchId: msg.generationBatchId,
+        sequenceNumber: 0,
+        createdAt: msg.createdAt,
+        updatedAt: msg.updatedAt !== undefined ? msg.updatedAt : msg.createdAt,
+        replyTargetCharacterIds: [],
+        replyTargetNames: [],
+        senderType: 'narrator'
+      };
+    }
+    // 用户消息
     return {
       id: msg.id,
       role: msg.role,
@@ -1230,7 +1361,8 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
       createdAt: msg.createdAt,
       updatedAt: msg.updatedAt !== undefined ? msg.updatedAt : msg.createdAt,
       replyTargetCharacterIds: replyTargetCharacterIds,
-      replyTargetNames: replyTargetNames
+      replyTargetNames: replyTargetNames,
+      senderType: 'user'
     };
   }
 
@@ -1533,6 +1665,12 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
       return;
     }
     this.replyTargetMode = await loadGroupReplyTargetMode(this.chatId);
+    this.narrationEnabled = await loadGroupNarrationEnabled(this.chatId);
+    this.narrationMaxTokens = await loadGroupNarrationMaxTokens(this.chatId);
+    // 模式切换为仅回复一次时，清除旧的持续目标防止残留
+    if (this.replyTargetMode === 'one_shot') {
+      this.persistentReplyTargetCharacterId = '';
+    }
   }
 
   /**
@@ -1544,6 +1682,36 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
     if (this.chatId.length > 0) {
       persistGroupReplyTargetMode(this.chatId, mode === 'persistent' ? 'persistent' : 'one_shot');
     }
+  }
+
+  /**
+   * GROUP-NARRATION-1A: 构建其他在场角色摘要(用于旁白 Prompt)。
+   * 排除 replyTargetIds 中的角色。
+   */
+  buildOtherCharacterSummaries(excludeIds: string[]): string[] {
+    if (this.detail === null) {
+      return [];
+    }
+    const excludeSet: Set<string> = new Set<string>();
+    for (let i = 0; i < excludeIds.length; i++) {
+      excludeSet.add(excludeIds[i]);
+    }
+    const summaries: string[] = [];
+    for (let i = 0; i < this.detail.members.length; i++) {
+      const m: GroupMemberUiModel = this.detail.members[i];
+      if (excludeSet.has(m.characterId)) {
+        continue;
+      }
+      if (!m.isEnabled || !m.characterExists) {
+        continue;
+      }
+      let summary: string = m.name;
+      if (m.description.length > 0) {
+        summary = summary + '：' + m.description;
+      }
+      summaries.push(summary);
+    }
+    return summaries;
   }
 
   /**

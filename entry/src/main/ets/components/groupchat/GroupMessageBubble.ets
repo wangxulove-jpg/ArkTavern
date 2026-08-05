@@ -49,9 +49,62 @@ export struct GroupMessageBubble {
   build() {
     if (this.renderState.role === ChatRole.User) {
       this.userBubble()
+    } else if (this.renderState.senderType === 'narrator') {
+      this.narratorBubble()
     } else {
       this.characterBubble()
     }
+  }
+
+  /** 旁白消息:居中信息框,淡色背景,小字体,无头像 */
+  @Builder
+  narratorBubble(): void {
+    Column() {
+      // 标签:"旁白"
+      Text('旁白')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_tertiary'))
+        .fontStyle(FontStyle.Italic)
+        .margin({ bottom: 4 })
+
+      // 正文(居中, dimmed)
+      if (this.renderState.content.length > 0) {
+        ChatRichText({
+          content: this.renderState.content,
+          senderType: 'narrator' as ChatSenderType,
+          senderCharacterId: '',
+          isStreaming: this.renderState.isStreaming,
+          settings: this.settings,
+          colorTheme: null,
+          selectable: true
+        })
+      }
+
+      if (this.renderState.isStreaming && this.renderState.content.length === 0) {
+        Text('旁白生成中…')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_tertiary'))
+          .fontStyle(FontStyle.Italic)
+      }
+
+      if (this.renderState.isStreaming && this.renderState.content.length > 0) {
+        Text('▍')
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor($r('app.color.app_accent'))
+          .margin({ top: 2 })
+      }
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Center)
+    .margin({ top: 12, bottom: 12 })
+    .backgroundColor($r('app.color.app_surface_2'))
+    .borderRadius($r('app.float.app_radius_md'))
+    .padding({
+      left: 16,
+      right: 16,
+      top: $r('app.float.app_spacing_8'),
+      bottom: $r('app.float.app_spacing_8')
+    })
   }
 
   /** 用户消息:右对齐,复用单聊 ChatRichText 渲染 */

@@ -27,7 +27,11 @@ import { Logger } from '../../utils/Logger';
 import {
   GroupReplyTargetModeSetting,
   loadGroupReplyTargetMode,
-  persistGroupReplyTargetMode
+  persistGroupReplyTargetMode,
+  loadGroupNarrationEnabled,
+  persistGroupNarrationEnabled,
+  loadGroupNarrationMaxTokens,
+  persistGroupNarrationMaxTokens
 } from '../../utils/GroupReplyModeSetting';
 import { GroupChatDetailState } from './GroupChatUiModels';
 
@@ -51,6 +55,10 @@ export class GroupChatSettingsViewModel {
   isGenerating: boolean = false;
   /** GROUP-CHAT-TARGET-1: @角色回复模式 */
   replyTargetMode: string = 'one_shot';
+  /** GROUP-NARRATION-1A: 旁白开关 */
+  narrationEnabled: boolean = false;
+  /** GROUP-NARRATION-1A: 旁白最大 token 数 */
+  narrationMaxTokens: number = 256;
 
   private readonly groupService: GroupConversationPersistenceService;
   private readonly messageService: GroupConversationMessageService;
@@ -87,6 +95,9 @@ export class GroupChatSettingsViewModel {
       this.state = GroupChatDetailState.Ready;
       // GROUP-CHAT-TARGET-1: 加载 @角色回复模式
       this.replyTargetMode = await loadGroupReplyTargetMode(chatId);
+      // GROUP-NARRATION-1A: 加载旁白开关
+      this.narrationEnabled = await loadGroupNarrationEnabled(chatId);
+      this.narrationMaxTokens = await loadGroupNarrationMaxTokens(chatId);
     } catch (e) {
       Logger.error(LOG_TAG, 'load failed: ' + String(e));
       this.state = GroupChatDetailState.Error;
@@ -189,6 +200,23 @@ export class GroupChatSettingsViewModel {
     this.replyTargetMode = mode;
     if (this.chatId.length > 0) {
       persistGroupReplyTargetMode(this.chatId, mode === 'persistent' ? 'persistent' : 'one_shot');
+    }
+  }
+
+  /**
+   * GROUP-NARRATION-1A: 设置并持久化旁白开关。
+   */
+  setAndPersistNarrationEnabled(enabled: boolean): void {
+    this.narrationEnabled = enabled;
+    if (this.chatId.length > 0) {
+      persistGroupNarrationEnabled(this.chatId, enabled);
+    }
+  }
+
+  setAndPersistNarrationMaxTokens(tokens: number): void {
+    this.narrationMaxTokens = tokens;
+    if (this.chatId.length > 0) {
+      persistGroupNarrationMaxTokens(this.chatId, tokens);
     }
   }
 }

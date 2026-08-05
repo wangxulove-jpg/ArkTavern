@@ -1449,6 +1449,33 @@ struct GroupChatPage {
               })
                 .margin({ top: 6 })
             }
+            // GROUP-REGENERATE: 最近一条 Completed 角色消息下方显示重新生成按钮
+            if (this.shouldShowRegenerateCard(state)) {
+              Row() {
+                Button() {
+                  Row() {
+                    SymbolGlyph($r('sys.symbol.arrow_clockwise'))
+                      .fontSize(14)
+                      .fontColor([$r('app.color.app_accent')])
+                    Text('重新生成')
+                      .fontSize($r('app.float.app_font_caption'))
+                      .fontColor($r('app.color.app_accent'))
+                      .margin({ left: 4 })
+                  }
+                }
+                .type(ButtonType.Capsule)
+                .backgroundColor($r('app.color.app_surface_2'))
+                .border({ width: 1, color: $r('app.color.app_accent') })
+                .height(28)
+                .padding({ left: 10, right: 10 })
+                .enabled(!this.isRetrying && !this.isEndingRound)
+                .onClick(() => {
+                  this.handleRegenerateSpeaker(state);
+                })
+              }
+              .width('100%')
+              .margin({ top: 6 })
+            }
           }
           .width('100%')
           .alignItems(HorizontalAlign.Start)
@@ -1625,6 +1652,59 @@ struct GroupChatPage {
     return '';
   }
 
+  /** GROUP-REGENERATE: 是否在最近一条 Completed 角色消息下方显示重新生成按钮 */
+  private shouldShowRegenerateCard(state: GroupMessageRenderState): boolean {
+    if (this.isGenerating || this.isRetrying || this.isEndingRound) {
+      return false;
+    }
+    if (state.role === ChatRole.User) {
+      return false;
+    }
+    if (state.senderCharacterId.length === 0) {
+      return false;
+    }
+    if (state.status !== ChatMessageStatus.Completed) {
+      return false;
+    }
+    return this.isLatestCompletedCharacterMessage(state);
+  }
+
+  /** 判断是否为最近一条 Completed 角色消息 */
+  private isLatestCompletedCharacterMessage(state: GroupMessageRenderState): boolean {
+    for (let i: number = this.messageStates.length - 1; i >= 0; i--) {
+      const s: GroupMessageRenderState = this.messageStates[i];
+      if (s.role === ChatRole.User) {
+        continue;
+      }
+      if (s.senderCharacterId.length === 0) {
+        continue;
+      }
+      if (s.status === ChatMessageStatus.Completed) {
+        return s.messageId === state.messageId;
+      }
+      // 遇到非 Completed 的角色消息,后面没有符合条件的
+      return false;
+    }
+    return false;
+  }
+
+  /** GROUP-REGENERATE: 重新生成当前角色消息 */
+  private async handleRegenerateSpeaker(state: GroupMessageRenderState): Promise<void> {
+    if (this.viewModel === null) {
+      return;
+    }
+    if (this.isGenerating || this.isRetrying || this.isEndingRound) {
+      return;
+    }
+    Logger.info('GroupChatPage', 'handleRegenerateSpeaker msgId=' + state.messageId);
+    this.startSyncPolling();
+    await this.viewModel.regenerateSpeakerMessage(state.messageId);
+    this.syncFromViewModel();
+    if (this.viewModel.isGenerating) {
+      this.startSyncPolling();
+    }
+  }
+
   /** 构建错误卡片文案 */
   private composeErrorCardText(state: GroupMessageRenderState): string {
     const name: string = state.senderName;
@@ -1660,7 +1740,8 @@ struct GroupChatPage {
       createdAt: state.createdAt,
       updatedAt: state.updatedAt,
       replyTargetCharacterIds: [],
-      replyTargetNames: []
+      replyTargetNames: [],
+      senderType: 'character'
     };
     if (!this.viewModel.canRetryMessage(msg)) {
       promptAction.showToast({ message: '当前消息无法重试', duration: 1500 });
@@ -1717,10 +1798,38 @@ struct GroupChatPage {
     Column() {
       // G-UI-ALIGN-3: 错误提示已移至顶部浮动 errorBanner,不再在输入栏内显示
 
-      // GROUP-CHAT-TARGET-1: 持续对话状态条 + 仅本次 Chip + 多选草稿 Chip
+      // GROUP-CHAT-TARGET-1: 仅本次 > 持续对话 > 多选草稿
       Row() {
-        // 持续对话状态条(优先级最高,持续模式下显示)
-        if (this.persistentReplyTargetCharacterId.length > 0) {
+        if (this.oneShotTargetName.length > 0) {
+          // 仅本次 Chip(优先级最高)
+          Row() {
+            Text('仅' + this.oneShotTargetName + '回复(本次)')
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_on_accent'))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+            Button() {
+              SymbolGlyph($r('sys.symbol.xmark'))
+                .fontSize(12)
+                .fontColor([$r('app.color.app_on_accent')])
+            }
+            .type(ButtonType.Circle)
+            .backgroundColor(Color.Transparent)
+            .width(20)
+            .height(20)
+            .margin({ left: 4 })
+            .accessibilityText('取消仅本次目标')
+            .enabled(!this.isGenerating && !this.isSending)
+            .onClick(() => {
+              this.handleClearOneShotTarget();
+            })
+          }
+          .padding({ left: 10, right: 6, top: 4, bottom: 4 })
+          .backgroundColor($r('app.color.app_accent'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .alignItems(VerticalAlign.Center)
+        } else if (this.persistentReplyTargetCharacterId.length > 0) {
+          // 持续对话状态条
           Row() {
             CharacterImageView({
               imageUri: this.persistentTargetAvatarUri,
@@ -1753,34 +1862,6 @@ struct GroupChatPage {
             .enabled(!this.isGenerating && !this.isSending)
             .onClick(() => {
               this.handleClearPersistentTarget();
-            })
-          }
-          .padding({ left: 10, right: 6, top: 4, bottom: 4 })
-          .backgroundColor($r('app.color.app_accent'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .alignItems(VerticalAlign.Center)
-        } else if (this.oneShotTargetName.length > 0) {
-          // 仅本次 Chip
-          Row() {
-            Text('仅' + this.oneShotTargetName + '回复(本次)')
-              .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_on_accent'))
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-            Button() {
-              SymbolGlyph($r('sys.symbol.xmark'))
-                .fontSize(12)
-                .fontColor([$r('app.color.app_on_accent')])
-            }
-            .type(ButtonType.Circle)
-            .backgroundColor(Color.Transparent)
-            .width(20)
-            .height(20)
-            .margin({ left: 4 })
-            .accessibilityText('取消仅本次目标')
-            .enabled(!this.isGenerating && !this.isSending)
-            .onClick(() => {
-              this.handleClearOneShotTarget();
             })
           }
           .padding({ left: 10, right: 6, top: 4, bottom: 4 })

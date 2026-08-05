@@ -329,6 +329,71 @@ export class GroupConversationMessageService {
   }
 
   /**
+   * GROUP-NARRATION-1A: 创建旁白 Streaming 消息。
+   *
+   * 与 appendStreamingAssistantMessage 的区别:
+   * - senderType='narrator'
+   * - senderCharacterId 为空(旁白不是某个角色)
+   * - visibility='public'(旁白是公开场景描述)
+   * - 不需要 characterId 参数
+   */
+  async appendStreamingNarratorMessage(
+    chatId: string,
+    generationBatchId: string
+  ): Promise<ChatMessage> {
+    if (chatId === '') {
+      throw DatabaseError.invalidData('chatId empty');
+    }
+    if (generationBatchId === '') {
+      throw DatabaseError.invalidData('generationBatchId empty');
+    }
+
+    const chat: Chat | null = await this.chatRepository.getById(chatId);
+    if (chat === null) {
+      throw DatabaseError.notFound('group chat not found');
+    }
+    if (chat.conversationMode !== ConversationMode.Group) {
+      throw DatabaseError.invalidData('chat is not group mode');
+    }
+
+    const now: number = nowMillis();
+    const messageId: string = generateUuid();
+    const message: ChatMessage = {
+      id: messageId,
+      role: ChatRole.Assistant,
+      content: '',
+      createdAt: now,
+      updatedAt: now,
+      isStreaming: true,
+      status: ChatMessageStatus.Streaming,
+      senderType: 'narrator' as MessageSenderType,
+      senderCharacterId: undefined,
+      generationBatchId: generationBatchId,
+      visibility: 'public' as MessageVisibility
+    };
+
+    const maxSeq: number = await this.messageRepository.getMaxSequenceNumber(chatId);
+    const nextSeq: number = maxSeq + 1;
+
+    try {
+      await this.dbHelper.runInTransaction(
+        async (store: relationalStore.RdbStore): Promise<void> => {
+          await this.messageRepository.insertWithStore(store, message, chatId, nextSeq);
+          await this.chatRepository.updateLastMessageAtWithStore(store, chatId, now, now);
+        },
+        'group_message_append_user'
+      );
+    } catch (err) {
+      if (err instanceof DatabaseError) {
+        throw err;
+      }
+      Logger.error(LOG_TAG, 'appendStreamingNarratorMessage failed: ' + String(err));
+      throw DatabaseError.transactionFailed('appendStreamingNarratorMessage');
+    }
+    return message;
+  }
+
+  /**
    * 更新 Streaming AI 消息内容(节流持久化)。
    *
    * 规则:
@@ -524,5 +589,21 @@ export class GroupConversationMessageService {
     }
     await this.finalizeAssistantMessage(messageId, content, status, errorMessage);
     return true;
+  }
+
+  /**
+   * GROUP-REGENERATE: 删除单条消息(用于重新生成时移除旧消息)。
+   * 通过 MessageRepository 根据 messageId 删除对应行。
+   */
+  async deleteMessage(messageId: string): Promise<void> {
+    if (messageId === '') {
+      return;
+    }
+    try {
+      await this.messageRepository.remove(messageId);
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'deleteMessage failed: ' + String(e));
+      throw DatabaseError.transactionFailed('deleteMessage');
+    }
   }
 }

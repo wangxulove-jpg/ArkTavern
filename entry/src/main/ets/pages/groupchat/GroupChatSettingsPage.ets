@@ -51,6 +51,12 @@ struct GroupChatSettingsPage {
   @State replyTargetMode: string = 'one_shot';
   /** GROUP-CHAT-TARGET-1: 回复模式选择 Sheet 是否可见 */
   @State replyModePickerVisible: boolean = false;
+  /** GROUP-NARRATION-1A: 旁白开关 */
+  @State narrationEnabled: boolean = false;
+  /** GROUP-NARRATION-1A: 旁白 token 数 */
+  @State narrationMaxTokens: number = 256;
+  /** GROUP-NARRATION-1A: 旁白 token 编辑时临时值 */
+  @State narrationTokensInput: string = '256';
   /** 顶部状态栏避让高度 */
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   /** 底部导航栏避让高度 */
@@ -100,6 +106,9 @@ struct GroupChatSettingsPage {
     this.isClearing = this.viewModel.isClearing;
     this.isGenerating = this.viewModel.isGenerating;
     this.replyTargetMode = this.viewModel.replyTargetMode;
+    this.narrationEnabled = this.viewModel.narrationEnabled;
+    this.narrationMaxTokens = this.viewModel.narrationMaxTokens;
+    this.narrationTokensInput = String(this.viewModel.narrationMaxTokens);
   }
 
   build(): void {
@@ -367,6 +376,79 @@ struct GroupChatSettingsPage {
       .onClick(() => {
         this.replyModePickerVisible = true;
       })
+
+      // GROUP-NARRATION-1A: 旁白开关
+      Row() {
+        Column() {
+          Text('旁白')
+            .fontSize($r('app.float.app_font_body'))
+            .fontColor($r('app.color.app_text_primary'))
+          Text('描述其他在场角色的动作')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_tertiary'))
+            .margin({ top: 2 })
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
+
+        Toggle({ type: ToggleType.Switch, isOn: this.narrationEnabled })
+          .selectedColor($r('app.color.app_accent'))
+          .onChange((isOn: boolean) => {
+            if (this.viewModel !== null) {
+              this.viewModel.setAndPersistNarrationEnabled(isOn);
+              this.narrationEnabled = isOn;
+            }
+          })
+      }
+      .width('100%')
+      .padding({
+        left: $r('app.float.app_spacing_12'),
+        right: $r('app.float.app_spacing_12'),
+        top: $r('app.float.app_spacing_12'),
+        bottom: $r('app.float.app_spacing_12')
+      })
+      .backgroundColor($r('app.color.app_surface_1'))
+      .borderRadius($r('app.float.app_radius_md'))
+      .alignItems(VerticalAlign.Center)
+      .margin({ top: $r('app.float.app_spacing_8') })
+
+      // GROUP-NARRATION-1A: 旁白 reply token 数
+      Row() {
+        Text('旁白回复 token 数')
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor($r('app.color.app_text_primary'))
+
+        Blank()
+
+        TextInput({ text: this.narrationTokensInput })
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor($r('app.color.app_text_primary'))
+          .backgroundColor(Color.Transparent)
+          .textAlign(TextAlign.End)
+          .type(InputType.Normal)
+          .width(60)
+          .onChange((value: string) => {
+            this.narrationTokensInput = value;
+          })
+          .onSubmit(() => {
+            const n: number = parseInt(this.narrationTokensInput);
+            if (!isNaN(n) && n >= 16 && this.viewModel !== null) {
+              this.viewModel.setAndPersistNarrationMaxTokens(n);
+              this.narrationMaxTokens = n;
+            }
+          })
+      }
+      .width('100%')
+      .padding({
+        left: $r('app.float.app_spacing_12'),
+        right: $r('app.float.app_spacing_12'),
+        top: $r('app.float.app_spacing_12'),
+        bottom: $r('app.float.app_spacing_12')
+      })
+      .backgroundColor($r('app.color.app_surface_1'))
+      .borderRadius($r('app.float.app_radius_md'))
+      .alignItems(VerticalAlign.Center)
+      .margin({ top: $r('app.float.app_spacing_8') })
     }
     .width('100%')
     .margin({ top: $r('app.float.app_spacing_16') })

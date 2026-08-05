@@ -36,7 +36,7 @@
 import { ChatMessage, ChatMessageStatus, MessageSenderType } from '../../models/ChatMessage';
 import { ChatStreamCallbacks, ChatStreamHandle, ChatDelta, ChatStreamResult } from '../../models/ChatStreamTypes';
 import { NetworkError, NetworkErrorType } from '../../models/NetworkError';
-import { ChatRequestOptions } from '../../models/ChatRequest';
+import { ChatRequestOptions, ChatRequest } from '../../models/ChatRequest';
 import { ProviderConfig, TEMPERATURE_DEFAULT, TOP_P_DEFAULT, MAX_TOKENS_DEFAULT } from '../../models/ProviderConfig';
 import { ModelService } from '../ModelService';
 import { Logger } from '../../utils/Logger';
@@ -59,6 +59,11 @@ import {
 } from './GroupRoundTypes';
 import { GroupRuntimeRegistry } from './GroupRuntimeRegistry';
 import { EffectiveGenerationSettings } from '../PromptPresetRuntimeResolver';
+import {
+  GroupNarrationPromptInput,
+  GroupNarrationPromptResult,
+  buildNarrationPrompt
+} from './GroupNarrationPromptAssembler';
 
 const LOG_TAG: string = 'GroupRuntime';
 
@@ -156,6 +161,22 @@ export class GroupChatRuntimeService {
   private currentAccumulatedContent: string = '';
   /** 上次持久化的正文长度 */
   private lastPersistedContentLength: number = 0;
+
+  // ===== GROUP-NARRATION-1A: 旁白配置 =====
+  /** 旁白开关(由 ViewModel 在 startRound 前设置) */
+  private narrationEnabled: boolean = false;
+  /** 群聊标题(旁白 Prompt 用) */
+  private narrationGroupTitle: string = '';
+  /** 其他启用角色摘要列表(旁白 Prompt 用) */
+  private narrationOtherCharacterSummaries: string[] = [];
+  /** 当前目标角色名称(旁白 Prompt 用) */
+  private narrationSpeakerName: string = '';
+  /** 当前目标角色刚完成的回复(旁白 Prompt 用) */
+  private narrationSpeakerReply: string = '';
+  /** 用户消息(旁白 Prompt 用) */
+  private narrationUserMessage: string = '';
+  /** 旁白最大 token 数 */
+  private narrationMaxTokens: number = 256;
   /** 节流持久化定时器 ID */
   private persistenceTimerId: number = -1;
   /** 当前流式 Promise 的 resolver(用于 stopRound 解除阻塞) */
@@ -187,6 +208,26 @@ export class GroupChatRuntimeService {
     this.promptAssembler = promptAssembler;
     this.modelService = modelService;
     this.registry = registry;
+  }
+
+  /**
+   * GROUP-NARRATION-1A: 设置旁白配置(由 ViewModel 在 startRound 前调用)。
+   */
+  setNarrationConfig(
+    enabled: boolean,
+    groupTitle: string,
+    speakerName: string,
+    userMessage: string,
+    otherCharacterSummaries: string[],
+    maxTokens: number
+  ): void {
+    this.narrationEnabled = enabled;
+    this.narrationGroupTitle = groupTitle;
+    this.narrationSpeakerName = speakerName;
+    this.narrationUserMessage = userMessage;
+    this.narrationOtherCharacterSummaries = otherCharacterSummaries;
+    this.narrationSpeakerReply = '';
+    this.narrationMaxTokens = maxTokens;
   }
 
   /**
@@ -303,6 +344,12 @@ export class GroupChatRuntimeService {
 
       // 全部发言者完成
       if (this.isRoundActive(operationId)) {
+        // GROUP-NARRATION-1A: 尝试生成旁白(单目标 + 开关开启 + 有其他角色时)
+        await this.tryGenerateNarration(operationId, plan, callbacks);
+        if (!this.isRoundActive(operationId)) {
+          return;
+        }
+
         this.roundCoordinator.markCompleted(operationId);
         callbacks.onRoundStateChanged(GroupRoundState.Completed);
         callbacks.onRoundCompleted();
@@ -483,7 +530,8 @@ export class GroupChatRuntimeService {
   async retrySpeakerMessage(
     messageId: string,
     expectedChatId: string,
-    callbacks: GroupRuntimeCallbacks
+    callbacks: GroupRuntimeCallbacks,
+    allowCompleted: boolean = false
   ): Promise<void> {
     if (this.isRunning()) {
       throw new GroupSpeakerRetryError(
@@ -550,13 +598,26 @@ export class GroupChatRuntimeService {
       );
     }
 
-    // 5. 校验消息状态为 Failed 或 Cancelled
+    // 5. 校验消息状态(重试行:Failed/Cancelled; 重生成行:Completed 也可)
     const status: ChatMessageStatus | undefined = original.status;
-    if (status !== ChatMessageStatus.Failed && status !== ChatMessageStatus.Cancelled) {
+    const valid: boolean = status === ChatMessageStatus.Failed
+      || status === ChatMessageStatus.Cancelled
+      || (allowCompleted && status === ChatMessageStatus.Completed);
+    if (!valid) {
       throw new GroupSpeakerRetryError(
         GroupSpeakerRetryErrorKind.InvalidStatusForRetry,
         'status=' + String(status)
       );
+    }
+
+    // GROUP-REGENERATE: Completed 重新生成时删除旧消息
+    if (allowCompleted && status === ChatMessageStatus.Completed) {
+      try {
+        await this.messageService.deleteMessage(messageId);
+        Logger.info(LOG_TAG, 'regenerate: deleted old message ' + messageId);
+      } catch (e) {
+        Logger.warn(LOG_TAG, 'regenerate: delete old message failed: ' + String(e));
+      }
     }
 
     // 6. G-RUNTIME-1C: 校验角色仍存在且仍属于该群聊
@@ -861,6 +922,8 @@ export class GroupChatRuntimeService {
     callbacks: GroupRuntimeCallbacks
   ): Promise<SpeakerResult> {
     const settings: EffectiveGenerationSettings = promptResult.effectiveSettings;
+    const speakerName: string | null = promptResult.character !== null
+      ? promptResult.character.name : null;
     const options: ChatRequestOptions = {
       temperature: settings.temperature !== undefined
         ? settings.temperature : TEMPERATURE_DEFAULT,
@@ -889,9 +952,14 @@ export class GroupChatRuntimeService {
           // 累积内容
           const accumulated: string | undefined = delta.accumulatedContent;
           if (accumulated !== undefined && accumulated.length > 0) {
-            this.currentAccumulatedContent = accumulated;
+            this.currentAccumulatedContent = this.stripSpeakerPrefix(accumulated, speakerName);
           } else if (delta.content.length > 0) {
             this.currentAccumulatedContent = this.currentAccumulatedContent + delta.content;
+            // 增量累积后也剥离前缀(防止前缀跨 delta 出现)
+            const stripped: string = this.stripSpeakerPrefix(this.currentAccumulatedContent, speakerName);
+            if (stripped !== this.currentAccumulatedContent) {
+              this.currentAccumulatedContent = stripped;
+            }
           }
           // 立即更新 UI
           callbacks.onMessageUpdated({
@@ -915,10 +983,13 @@ export class GroupChatRuntimeService {
           this.currentStreamResolver = null;
           this.currentHandle = null;
 
-          // 确定最终正文
-          const finalContent: string = result.content.length > 0
-            ? result.content
-            : this.currentAccumulatedContent;
+          // 确定最终正文(剥离说话人名称前缀)
+          const finalContent: string = this.stripSpeakerPrefix(
+            result.content.length > 0
+              ? result.content
+              : this.currentAccumulatedContent,
+            speakerName
+          );
           this.currentAccumulatedContent = finalContent;
 
           // 最终持久化为 Completed(使用 finalizeIfTerminal 重复完成保护)
@@ -1153,6 +1224,216 @@ export class GroupChatRuntimeService {
     this.currentStreamResolver = null;
   }
 
+  // ===== GROUP-NARRATION-1A: 旁白生成 =====
+
+  /**
+   * 尝试生成旁白(所有角色回复完成后调用)。
+   */
+  private async tryGenerateNarration(
+    operationId: number,
+    plan: GroupRoundPlan,
+    callbacks: GroupRuntimeCallbacks
+  ): Promise<void> {
+    Logger.info(LOG_TAG, 'narration check: enabled=' + String(this.narrationEnabled)
+      + ' speakers=' + String(plan.speakers.length)
+      + ' others=' + String(this.narrationOtherCharacterSummaries.length)
+      + ' active=' + String(this.isRoundActive(operationId)));
+    if (!this.narrationEnabled) {
+      return;
+    }
+    if (plan.speakers.length !== 1) {
+      return;
+    }
+    if (this.narrationOtherCharacterSummaries.length === 0) {
+      return;
+    }
+    if (!this.isRoundActive(operationId)) {
+      return;
+    }
+
+    Logger.info(LOG_TAG, 'narration start opId=' + String(operationId));
+
+    let narratorMessage: ChatMessage;
+    try {
+      narratorMessage = await this.messageService.appendStreamingNarratorMessage(
+        plan.chatId, plan.roundId
+      );
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'narration: append failed: ' + String(e));
+      return;
+    }
+    if (!this.isRoundActive(operationId)) {
+      try {
+        await this.messageService.finalizeAssistantMessageIfTerminal(
+          narratorMessage.id, '', ChatMessageStatus.Cancelled
+        );
+      } catch (_e) {
+        // ignore
+      }
+      return;
+    }
+
+    let speakerReply: string = '';
+    try {
+      const history: ChatMessage[] = await this.messageService.listMessages(plan.chatId);
+      for (let i = history.length - 1; i >= 0; i--) {
+        if (history[i].senderType === 'character' && history[i].status === ChatMessageStatus.Completed) {
+          speakerReply = history[i].content;
+          break;
+        }
+      }
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'narration: read history failed');
+    }
+
+    const narrationInput: GroupNarrationPromptInput = {
+      groupTitle: this.narrationGroupTitle,
+      userMessage: this.narrationUserMessage,
+      speakerName: this.narrationSpeakerName,
+      speakerReply: speakerReply,
+      otherCharacterSummaries: this.narrationOtherCharacterSummaries
+    };
+    const narrationResult: GroupNarrationPromptResult = buildNarrationPrompt(narrationInput);
+
+    callbacks.onMessageCreated(narratorMessage);
+
+    this.currentAccumulatedContent = '';
+    this.lastPersistedContentLength = 0;
+
+    const narrationSettings: EffectiveGenerationSettings = {
+      temperature: 0.8,
+      topP: 0.9,
+      maxOutputTokens: this.narrationMaxTokens > 0 ? this.narrationMaxTokens : 256
+    };
+
+    let result: SpeakerResult = SpeakerResult.Failed;
+    try {
+      result = await this.streamNarration(
+        narratorMessage, narrationResult, narrationSettings, operationId, callbacks
+      );
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'narration: stream error: ' + String(e));
+    }
+
+    if (!this.isRoundActive(operationId)) {
+      try {
+        await this.messageService.finalizeAssistantMessageIfTerminal(
+          narratorMessage.id, this.currentAccumulatedContent, ChatMessageStatus.Cancelled
+        );
+      } catch (_e) {
+        // ignore
+      }
+      return;
+    }
+
+    if (result === SpeakerResult.Completed) {
+      try {
+        await this.messageService.finalizeAssistantMessageIfTerminal(
+          narratorMessage.id, this.currentAccumulatedContent, ChatMessageStatus.Completed
+        );
+      } catch (e) {
+        Logger.warn(LOG_TAG, 'narration: finalize failed: ' + String(e));
+      }
+      callbacks.onMessageUpdated({
+        messageId: narratorMessage.id,
+        content: this.currentAccumulatedContent,
+        status: ChatMessageStatus.Completed
+      });
+      Logger.info(LOG_TAG, 'narration completed');
+    } else {
+      try {
+        await this.messageService.finalizeAssistantMessageIfTerminal(
+          narratorMessage.id, this.currentAccumulatedContent, ChatMessageStatus.Failed
+        );
+      } catch (e) {
+        Logger.warn(LOG_TAG, 'narration: finalize failed: ' + String(e));
+      }
+    }
+
+    this.cleanupSpeaker();
+  }
+
+  private streamNarration(
+    narratorMessage: ChatMessage,
+    promptResult: GroupNarrationPromptResult,
+    settings: EffectiveGenerationSettings,
+    operationId: number,
+    callbacks: GroupRuntimeCallbacks
+  ): Promise<SpeakerResult> {
+    return new Promise<SpeakerResult>((resolve: (value: SpeakerResult) => void): void => {
+      const NARR_DEFAULT_TOKENS: number = 256;
+      const options: ChatRequestOptions = {
+        temperature: settings.temperature ?? TEMPERATURE_DEFAULT,
+        topP: settings.topP ?? TOP_P_DEFAULT,
+        maxTokens: settings.maxOutputTokens ?? NARR_DEFAULT_TOKENS,
+        stream: true
+      };
+
+      let handle: ChatStreamHandle | null = null;
+
+      const streamCallbacks: ChatStreamCallbacks = {
+        onDelta: (delta: ChatDelta): void => {
+          if (!this.isRoundActive(operationId)) {
+            return;
+          }
+          if (delta.accumulatedContent && delta.accumulatedContent.length > 0) {
+            this.currentAccumulatedContent = delta.accumulatedContent;
+          } else if (delta.content.length > 0) {
+            this.currentAccumulatedContent = this.currentAccumulatedContent + delta.content;
+          }
+          callbacks.onMessageUpdated({
+            messageId: narratorMessage.id,
+            content: this.currentAccumulatedContent,
+            status: ChatMessageStatus.Streaming
+          });
+        },
+        onComplete: (result: ChatStreamResult): void => {
+          handle = null;
+          this.currentHandle = null;
+          if (!this.isRoundActive(operationId)) {
+            resolve(SpeakerResult.Cancelled);
+            return;
+          }
+          const finalContent: string = result.content.length > 0
+            ? result.content
+            : this.currentAccumulatedContent;
+          this.currentAccumulatedContent = finalContent;
+          resolve(SpeakerResult.Completed);
+        },
+        onError: (_error: NetworkError): void => {
+          handle = null;
+          this.currentHandle = null;
+          resolve(SpeakerResult.Failed);
+        }
+      };
+
+      const narrationMsgs: ChatMessage[] = promptResult.messages;
+      const messages: ChatMessage[] = [];
+      for (let i = 0; i < narrationMsgs.length; i++) {
+        messages.push(narrationMsgs[i]);
+      }
+
+      const request: ChatRequest = {
+        model: '',
+        messages: messages,
+        temperature: options.temperature,
+        topP: options.topP,
+        maxTokens: options.maxTokens,
+        stream: options.stream
+      };
+
+      if (this.configSnapshot !== null) {
+        handle = this.modelService.streamChatWithConfig(
+          this.configSnapshot, messages, options, streamCallbacks
+        );
+        this.currentHandle = handle;
+      } else {
+        handle = this.modelService.streamChat(request, streamCallbacks);
+        this.currentHandle = handle;
+      }
+    });
+  }
+
   /**
    * 清理轮次级别状态(在整轮结束后调用)。
    *
@@ -1212,5 +1493,31 @@ export class GroupChatRuntimeService {
       default:
         return '生成失败';
     }
+  }
+
+  /**
+   * 剥离模型输出的说话人名称前缀。
+   * 优先按说话人姓名精确匹配,再 fallback 到泛化方括号匹配。
+   * "[角色名]: " → "", "[角色名]：" → "", "角色名: " → "", "角色名：" → ""
+   */
+  private stripSpeakerPrefix(content: string, speakerName: string | null): string {
+    if (content.length === 0) {
+      return content;
+    }
+    // 1. 按说话人姓名精确剥离(方括号 + 无方括号)
+    if (speakerName !== null && speakerName.length > 0) {
+      const escaped: string = speakerName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const exactPattern: string = '^(?:\\[' + escaped + '\\]|' + escaped + ')[：:]\\s*';
+      const exactMatch: RegExpMatchArray | null = content.match(exactPattern);
+      if (exactMatch !== null) {
+        return content.substring(exactMatch[0].length);
+      }
+    }
+    // 2. Fallback: 泛化方括号 [任意名字]:
+    const bracketMatch: RegExpMatchArray | null = content.match(/^\[[^\]]+\][：:]\s*/);
+    if (bracketMatch !== null) {
+      return content.substring(bracketMatch[0].length);
+    }
+    return content;
   }
 }
