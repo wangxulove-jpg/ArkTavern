@@ -2202,10 +2202,10 @@ struct GroupChatPage {
             this.renameVisible = true;
           })
 
-          // G-MEMORY-1A: 菜单项:角色记忆
+          // G-MEMORY-UI-2: 菜单项:角色记忆(直接进入页面,不再弹出选择 Sheet)
           this.sheetMenuItem('角色记忆', (): void => {
             this.moreMenuVisible = false;
-            this.openMemoryPicker();
+            this.goCharacterMemoryPage();
           })
 
           // 关闭按钮
@@ -2313,7 +2313,17 @@ struct GroupChatPage {
     }
   }
 
-  /** G-MEMORY-1A: 跳转到指定角色的记忆页 */
+  /** G-MEMORY-UI-2: 直接跳转角色记忆页(不弹角色选择 Sheet) */
+  private goCharacterMemoryPage(): void {
+    if (this.chatId.length === 0) {
+      return;
+    }
+    AppStorage.setOrCreate<string>(PENDING_GROUP_MEMORY_GROUP_ID_KEY, this.chatId);
+    AppStorage.setOrCreate<string>(PENDING_GROUP_MEMORY_CHARACTER_ID_KEY, '');
+    router.pushUrl({ url: 'pages/groupchat/GroupCharacterMemoryPage' });
+  }
+
+  /** G-MEMORY-1A: 跳转到指定角色的记忆页(长按成员头像) */
   private goCharacterMemory(characterId: string): void {
     if (characterId.length === 0) {
       return;

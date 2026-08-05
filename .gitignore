@@ -116,3 +116,4 @@ docs/*
 /tools/
 /opencode.json
 /panel.bat
+/.opencode/opencode.json

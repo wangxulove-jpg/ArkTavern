@@ -54,7 +54,8 @@ import {
   GROUP_MEMORY_IMPORTANCE_MAX,
   GROUP_MEMORY_IMPORTANCE_DEFAULT,
   GROUP_MEMORY_TITLE_MAX,
-  GROUP_MEMORY_CONTENT_MAX
+  GROUP_MEMORY_CONTENT_MAX,
+  GroupCharacterSwitcherItemUiModel
 } from '../../viewmodels/groupchat/GroupCharacterMemoryViewModel';
 import {
   PENDING_GROUP_MEMORY_GROUP_ID_KEY,
@@ -89,6 +90,11 @@ struct GroupCharacterMemoryPage {
   @State private errorMessage: string = '';
   @State private memories: GroupCharacterMemoryItemUiModel[] = [];
   @State private header: GroupCharacterMemoryHeaderUiModel | null = null;
+
+  // G-MEMORY-UI-2: 角色切换
+  @State private members: GroupCharacterSwitcherItemUiModel[] = [];
+  @State private selectedCharacterId: string = '';
+  @State private hasNoMembers: boolean = false;
 
   @State private filter: GroupCharacterMemoryListFilter = GroupCharacterMemoryListFilter.Active;
 
@@ -181,8 +187,8 @@ struct GroupCharacterMemoryPage {
       // 读取后立即清除,避免页面重绘时误用
       AppStorage.set<string>(PENDING_GROUP_MEMORY_GROUP_ID_KEY, '');
       AppStorage.set<string>(PENDING_GROUP_MEMORY_CHARACTER_ID_KEY, '');
-      if (groupConversationId.length === 0 || characterId.length === 0) {
-        Logger.warn(LOG_TAG, 'aboutToAppear: groupConversationId or characterId empty');
+      if (groupConversationId.length === 0) {
+        Logger.warn(LOG_TAG, 'aboutToAppear: groupConversationId empty');
         this.isInitializing = false;
         this.loadState = GroupCharacterMemoryLoadState.NotFound;
         return;
@@ -195,7 +201,19 @@ struct GroupCharacterMemoryPage {
         AppServices.getGroupCharacterRelationshipMemoryService(),
         AppServices.getGroupCharacterRelationshipSummaryService()
       );
-      this.viewModel.setTarget(groupConversationId, characterId);
+      // G-MEMORY-UI-2: 先加载成员列表,确定默认角色
+      await this.viewModel.loadMembers(groupConversationId, characterId);
+      if (this.viewModel === null) {
+        return;
+      }
+      this.members = this.viewModel.members;
+      this.selectedCharacterId = this.viewModel.selectedCharacterId;
+      this.hasNoMembers = this.members.length === 0;
+      if (this.selectedCharacterId.length === 0) {
+        this.isInitializing = false;
+        this.loadState = GroupCharacterMemoryLoadState.Ready;
+        return;
+      }
       this.isInitializing = false;
       await this.loadSnapshot();
     } catch (e) {
@@ -231,6 +249,9 @@ struct GroupCharacterMemoryPage {
     }
     await this.viewModel.loadSnapshot(groupConversationId, characterId, this.filter);
     this.syncFromViewModel();
+    // G-MEMORY-UI-2: 同步选中角色(防止角色被删除后 ViewModel 自动切换)
+    this.selectedCharacterId = this.viewModel.selectedCharacterId;
+    this.members = this.viewModel.members;
   }
 
   /**
@@ -406,43 +427,59 @@ struct GroupCharacterMemoryPage {
   @Builder
   contentView(): void {
     Column() {
-      // 角色头部
-      this.characterHeaderArea()
+      // G-MEMORY-UI-2: 顶部角色横向切换区
+      if (this.members.length > 1) {
+        this.characterSwitcherArea()
+      }
 
-      // G-MEMORY-AUTO-1B 视图切换栏:记忆 / 关系与经历
-      this.viewModeBar()
-
-      if (this.viewMode === PageViewMode.Relationship) {
-        // 关系与经历视图
-        this.relationshipContentView()
-      } else {
-        // 记忆视图(原有逻辑)
-        this.filterBar()
-
-        // 错误提示
-        if (this.actionError.length > 0) {
-          Text(this.actionError)
-            .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_danger'))
-            .width('100%')
-            .padding({ left: 16, right: 16, top: 4, bottom: 4 })
+      // 没有成员空状态
+      if (this.hasNoMembers) {
+        Column() {
+          EmptyStateView({ title: '当前群聊没有可设置记忆的角色', description: '' })
         }
+        .width('100%')
+        .layoutWeight(1)
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+      } else {
+        // 角色头部
+        this.characterHeaderArea()
 
-        // 列表
-        if (this.memories.length === 0) {
-          this.emptyMemoryView()
+        // G-MEMORY-AUTO-1B 视图切换栏:记忆 / 关系与经历
+        this.viewModeBar()
+
+        if (this.viewMode === PageViewMode.Relationship) {
+          // 关系与经历视图
+          this.relationshipContentView()
         } else {
-          List() {
-            ForEach(this.memories, (m: GroupCharacterMemoryItemUiModel) => {
-              ListItem() {
-                this.memoryCard(m)
-              }
-            }, (m: GroupCharacterMemoryItemUiModel) => m.id)
+          // 记忆视图(原有逻辑)
+          this.filterBar()
+
+          // 错误提示
+          if (this.actionError.length > 0) {
+            Text(this.actionError)
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_danger'))
+              .width('100%')
+              .padding({ left: 16, right: 16, top: 4, bottom: 4 })
           }
-          .layoutWeight(1)
-          .width('100%')
-          .padding({ left: 12, right: 12, top: 4, bottom: 4 })
-          .scrollBar(BarState.Auto)
+
+          // 列表
+          if (this.memories.length === 0) {
+            this.emptyMemoryView()
+          } else {
+            List() {
+              ForEach(this.memories, (m: GroupCharacterMemoryItemUiModel) => {
+                ListItem() {
+                  this.memoryCard(m)
+                }
+              }, (m: GroupCharacterMemoryItemUiModel) => m.id)
+            }
+            .layoutWeight(1)
+            .width('100%')
+            .padding({ left: 12, right: 12, top: 4, bottom: 4 })
+            .scrollBar(BarState.Auto)
+          }
         }
       }
     }
@@ -493,6 +530,70 @@ struct GroupCharacterMemoryPage {
     .width('100%')
     .padding({ left: 16, right: 16, top: 8, bottom: 4 })
     .alignItems(VerticalAlign.Center)
+  }
+
+  /**
+   * G-MEMORY-UI-2: 顶部角色横向切换区。
+   * 横向滚动列表,每项为"圆形头像 + 角色名"垂直布局。
+   * 选中:头像 2vp 主题色描边 + 角色名主题色 Medium 字重。
+   * 未选中:无描边 + 角色名普通文字色。
+   * 不显示底部小横条/ScrollBar/分页指示器。
+   */
+  @Builder
+  characterSwitcherArea(): void {
+    Scroll() {
+      Row() {
+        ForEach(this.members, (member: GroupCharacterSwitcherItemUiModel) => {
+          Column() {
+            Stack() {
+              CharacterImageView({
+                imageUri: member.avatarUri,
+                fallbackName: member.displayName,
+                imgWidth: 48,
+                imgHeight: 48,
+                imgBorderRadius: 24,
+                displayMode: 'thumbnail'
+              })
+              if (this.selectedCharacterId === member.characterId) {
+                Column()
+                  .width(52)
+                  .height(52)
+                  .borderRadius(26)
+                  .border({ width: 2, color: $r('app.color.app_accent') })
+              }
+            }
+            .width(52)
+            .height(52)
+            .alignContent(Alignment.Center)
+
+            Text(member.displayName)
+              .fontSize(12)
+              .fontWeight(this.selectedCharacterId === member.characterId
+                ? FontWeight.Medium : FontWeight.Normal)
+              .fontColor(this.selectedCharacterId === member.characterId
+                ? $r('app.color.app_accent') : $r('app.color.app_text_secondary'))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .width(68)
+              .textAlign(TextAlign.Center)
+              .margin({ top: 6 })
+          }
+          .width(68)
+          .alignItems(HorizontalAlign.Center)
+          .margin({ right: 10 })
+          .opacity(member.isCharacterMissing ? 0.5 : 1)
+          .onClick(() => {
+            this.handleSwitchCharacter(member.characterId);
+          })
+        }, (member: GroupCharacterSwitcherItemUiModel) => member.characterId)
+      }
+      .padding({ left: 16, right: 16 })
+    }
+    .width('100%')
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.Spring)
+    .align(Alignment.Start)
+    .padding({ top: 8, bottom: 4 })
   }
 
   @Builder
@@ -1587,6 +1688,38 @@ struct GroupCharacterMemoryPage {
     }
     this.filter = filter;
     await this.loadSnapshot();
+  }
+
+  /**
+   * G-MEMORY-UI-2: 切换当前选中角色。
+   * 更新 ViewModel,关闭所有覆盖层,加载新角色数据。
+   */
+  private async handleSwitchCharacter(characterId: string): Promise<void> {
+    if (this.viewModel === null || characterId.length === 0) {
+      return;
+    }
+    if (this.selectedCharacterId === characterId) {
+      return;
+    }
+    // 关闭所有覆盖层
+    this.formVisible = false;
+    this.deletingMemoryId = '';
+    this.summaryVisible = false;
+    this.detailVisible = false;
+    this.relationshipReviewVisible = false;
+    this.relationshipDetailVisible = false;
+    this.relationshipEditVisible = false;
+    this.actionError = '';
+    this.relationshipActionError = '';
+
+    this.viewModel.switchCharacter(characterId);
+    this.selectedCharacterId = characterId;
+    await this.loadSnapshot();
+    // 如果在关系视图,重新加载关系列表
+    if (this.viewMode === PageViewMode.Relationship) {
+      await this.viewModel.loadRelationshipList();
+      this.syncRelationshipFromViewModel();
+    }
   }
 
   /**

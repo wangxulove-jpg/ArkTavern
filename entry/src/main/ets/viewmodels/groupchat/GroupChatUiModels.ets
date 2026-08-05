@@ -26,7 +26,7 @@ export const PENDING_GROUP_CHAT_ID_KEY: string = 'pendingGroupChatId';
 /** G-MEMORY-1A: AppStorage 中待进入角色记忆页的群聊 ID */
 export const PENDING_GROUP_MEMORY_GROUP_ID_KEY: string = 'pendingGroupMemoryGroupId';
 
-/** G-MEMORY-1A: AppStorage 中待进入角色记忆页的角色 ID */
+/** G-MEMORY-1A: AppStorage 中待进入角色记忆页的角色 ID(G-MEMORY-UI-2: 可选,空则自动选首个) */
 export const PENDING_GROUP_MEMORY_CHARACTER_ID_KEY: string = 'pendingGroupMemoryCharacterId';
 
 /** 多人聊天列表页状态 */

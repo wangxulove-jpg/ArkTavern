@@ -118,6 +118,16 @@ export enum GroupCharacterMemberStatus {
   CharacterMissing = 'character_missing'
 }
 
+/** 角色切换项 UI 模型(G-MEMORY-UI-2 顶部横向切换) */
+export interface GroupCharacterSwitcherItemUiModel {
+  readonly characterId: string;
+  readonly displayName: string;
+  readonly avatarUri: string;
+  readonly isCharacterMissing: boolean;
+  readonly isEnabled: boolean;
+  readonly speakerOrder: number;
+}
+
 /** 角色头部 UI 模型 */
 export interface GroupCharacterMemoryHeaderUiModel {
   readonly groupConversationId: string;
@@ -275,6 +285,10 @@ export class GroupCharacterMemoryViewModel {
   errorMessage: string = '';
   snapshot: GroupCharacterMemorySnapshotUiModel | null = null;
 
+  // G-MEMORY-UI-2: 角色切换
+  members: GroupCharacterSwitcherItemUiModel[] = [];
+  selectedCharacterId: string = '';
+
   private expectedGroupConversationId: string = '';
   private expectedCharacterId: string = '';
   private loadOperationId: number = 0;
@@ -379,6 +393,144 @@ export class GroupCharacterMemoryViewModel {
 
   expectedCharacterIdOfPage(): string {
     return this.expectedCharacterId;
+  }
+
+  /**
+   * 加载群聊成员列表并确定默认选中角色(G-MEMORY-UI-2)。
+   * 在 aboutToAppear 中调用,优先使用路由传入的 characterId,
+   * 否则选择 speakerOrder 最靠前的有效且启用成员。
+   */
+  async loadMembers(
+    groupConversationId: string,
+    routeCharacterId: string
+  ): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
+    this.expectedGroupConversationId = groupConversationId;
+    this.members = [];
+    this.selectedCharacterId = '';
+
+    try {
+      let participants: ChatParticipant[] = [];
+      try {
+        participants = await this.groupPersistenceService.getParticipants(groupConversationId);
+      } catch (e) {
+        Logger.warn(LOG_TAG, 'loadMembers getParticipants failed: ' + this.safeErrorCategory(e));
+        participants = [];
+      }
+      if (this.disposed) {
+        return;
+      }
+
+      const items: GroupCharacterSwitcherItemUiModel[] = [];
+      for (let i = 0; i < participants.length; i++) {
+        const p: ChatParticipant = participants[i];
+        let character: Character | null = null;
+        try {
+          character = await this.characterService.getById(p.characterId);
+        } catch (e) {
+          character = null;
+        }
+        if (this.disposed) {
+          return;
+        }
+        const missing: boolean = character === null;
+        const name: string = !missing && character !== null ? character.name : DELETED_CHARACTER_NAME;
+        const avatar: string = !missing && character !== null ? character.avatarUri : '';
+        items.push({
+          characterId: p.characterId,
+          displayName: name,
+          avatarUri: avatar,
+          isCharacterMissing: missing,
+          isEnabled: p.isEnabled,
+          speakerOrder: p.speakerOrder
+        });
+      }
+
+      this.members = items;
+
+      // 确定默认选中角色
+      let targetId: string = '';
+      if (routeCharacterId.length > 0) {
+        let found: boolean = false;
+        for (let i = 0; i < items.length; i++) {
+          if (items[i].characterId === routeCharacterId) {
+            found = true;
+            break;
+          }
+        }
+        if (found) {
+          targetId = routeCharacterId;
+        }
+      }
+      if (targetId.length === 0) {
+        let bestItem: GroupCharacterSwitcherItemUiModel | null = null;
+        for (let i = 0; i < items.length; i++) {
+          if (items[i].isCharacterMissing) {
+            continue;
+          }
+          if (items[i].isEnabled) {
+            if (bestItem === null || items[i].speakerOrder < bestItem.speakerOrder) {
+              bestItem = items[i];
+            }
+          }
+        }
+        if (bestItem !== null) {
+          targetId = bestItem.characterId;
+        }
+      }
+      if (targetId.length === 0) {
+        let bestItem: GroupCharacterSwitcherItemUiModel | null = null;
+        for (let i = 0; i < items.length; i++) {
+          if (items[i].isCharacterMissing) {
+            continue;
+          }
+          if (bestItem === null || items[i].speakerOrder < bestItem.speakerOrder) {
+            bestItem = items[i];
+          }
+        }
+        if (bestItem !== null) {
+          targetId = bestItem.characterId;
+        }
+      }
+
+      this.selectedCharacterId = targetId;
+      this.expectedCharacterId = targetId;
+    } catch (e) {
+      Logger.error(LOG_TAG, 'loadMembers failed: ' + this.safeErrorCategory(e));
+      this.members = [];
+      this.selectedCharacterId = routeCharacterId.length > 0 ? routeCharacterId : '';
+      this.expectedCharacterId = this.selectedCharacterId;
+    }
+  }
+
+  /**
+   * 切换当前选中角色(G-MEMORY-UI-2)。
+   * 更新 selectedCharacterId + expectedCharacterId,递增 loadOperationId 防迟到。
+   */
+  switchCharacter(characterId: string): void {
+    if (this.disposed || characterId.length === 0) {
+      return;
+    }
+    if (this.selectedCharacterId === characterId) {
+      return;
+    }
+    this.selectedCharacterId = characterId;
+    this.expectedCharacterId = characterId;
+    this.loadOperationId = this.loadOperationId + 1;
+    // 清理当前选中角色的总结/关系状态(防迟到)
+    this.summaryOperationId = this.summaryOperationId + 1;
+    this.isSummarizing = false;
+    this.isApprovingSummary = false;
+    this.summaryDraft = null;
+    this.summaryError = '';
+    this.relationshipOperationId = this.relationshipOperationId + 1;
+    this.isPreparingRelationship = false;
+    this.isApprovingRelationship = false;
+    this.relationshipDraft = null;
+    this.relationshipCandidates = [];
+    this.relationshipError = '';
   }
 
   /**
