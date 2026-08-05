@@ -142,6 +142,14 @@ struct GroupChatPage {
   @State isMentionPickerVisible: boolean = false;
   /** G-CONTROL-2A: @选择器候选成员 */
   @State mentionCandidates: GroupMemberUiModel[] = [];
+  /** GROUP-CHAT-TARGET-1: 持续对话目标角色 ID(空表示无持续目标) */
+  @State persistentReplyTargetCharacterId: string = '';
+  /** GROUP-CHAT-TARGET-1: 持续目标角色名称(用于状态条显示) */
+  @State persistentTargetName: string = '';
+  /** GROUP-CHAT-TARGET-1: 持续目标角色头像 */
+  @State persistentTargetAvatarUri: string = '';
+  /** GROUP-CHAT-TARGET-1: 仅本次目标角色名称(用于 Chip 显示) */
+  @State oneShotTargetName: string = '';
   /**
    * G-CONTROL-2A: 程序化设置输入文本时跳过 @检测的标志。
    * handleSelectMention 替换输入框文本后会触发 onChange,
@@ -237,6 +245,8 @@ struct GroupChatPage {
       this.registerDarkModeListener();
       this.registerKeyboardListener();
       this.viewModel = new GroupChatViewModel();
+      // GROUP-CHAT-TARGET-1: 加载当前群聊的 @角色回复模式
+      await this.viewModel.loadReplyTargetMode();
       // 设置消息更新回调(即时同步 RenderState,不依赖 200ms 轮询)
       this.viewModel.onMessagesUpdate = (msgs: GroupMessageUiModel[]): void => {
         this.messages = msgs;
@@ -281,6 +291,8 @@ struct GroupChatPage {
     if (this.viewModel === null || this.chatId.length === 0) {
       return;
     }
+    // GROUP-CHAT-TARGET-1: 刷新 @角色回复模式(用户可能在设置页修改)
+    await this.viewModel.loadReplyTargetMode();
     // 刷新聊天文本样式(用户可能在设置页修改了显示偏好)
     this.chatTextStyle = AppServices.getInstance().chatTextStyleSettings.get();
     // G-UI-ALIGN-2A: 刷新气泡透明度(用户可能在单聊调节过,共享 Preferences)
@@ -415,6 +427,11 @@ struct GroupChatPage {
     this.selectedReplyTargetMembers = [...this.viewModel.selectedReplyTargetMembers];
     this.isMentionPickerVisible = this.viewModel.isMentionPickerVisible;
     this.mentionCandidates = this.viewModel.mentionCandidates;
+    // GROUP-CHAT-TARGET-1: 同步持续/临时目标状态
+    this.persistentReplyTargetCharacterId = this.viewModel.persistentReplyTargetCharacterId;
+    this.persistentTargetName = this.viewModel.findPersistentTargetMemberName();
+    this.persistentTargetAvatarUri = this.viewModel.findPersistentTargetMemberAvatarUri();
+    this.oneShotTargetName = this.viewModel.findOneShotTargetMemberName();
     // G-UI-ALIGN-1: 同步成员栏展开/收起状态
     this.updateMemberStripState();
   }
@@ -1314,22 +1331,29 @@ struct GroupChatPage {
     return '指定 ' + String(members.length) + ' 位角色回复';
   }
 
-  /** G-CONTROL-1: 处理成员栏点击 */
+  /** G-CONTROL-1: 处理成员栏点击 → GROUP-CHAT-TARGET-1: 按设置模式直接生效 */
   private handleMemberClick(member: GroupMemberUiModel): void {
     if (this.viewModel === null) {
       return;
     }
-    // 生成中不允许切换目标
     if (this.isGenerating || this.isSending) {
       return;
     }
-    const ok: boolean = this.viewModel.toggleMemberReplyTarget(member.characterId);
-    if (!ok) {
-      // 校验失败,显示错误提示
-      if (this.viewModel.errorMessage.length > 0) {
+    // 按群聊设置中的模式直接生效，先清除旧草稿防止残留
+    if (this.viewModel.replyTargetMode === 'persistent') {
+      this.viewModel.clearReplyTarget();
+      const ok: boolean = this.viewModel.setPersistentReplyTarget(member.characterId);
+      if (!ok) {
         promptAction.showToast({ message: this.viewModel.errorMessage, duration: 1500 });
       }
+      this.syncFromViewModel();
       return;
+    }
+    // one_shot 模式:仅本次
+    this.viewModel.clearReplyTarget();
+    const ok: boolean = this.viewModel.setOneShotReplyTarget(member.characterId);
+    if (!ok) {
+      promptAction.showToast({ message: this.viewModel.errorMessage, duration: 1500 });
     }
     this.syncFromViewModel();
   }
@@ -1693,9 +1717,78 @@ struct GroupChatPage {
     Column() {
       // G-UI-ALIGN-3: 错误提示已移至顶部浮动 errorBanner,不再在输入栏内显示
 
-      // G-CONTROL-2A: 回复目标 Chip(多选摘要)+ 输入提示
+      // GROUP-CHAT-TARGET-1: 持续对话状态条 + 仅本次 Chip + 多选草稿 Chip
       Row() {
-        if (this.selectedReplyTargetMembers.length > 0) {
+        // 持续对话状态条(优先级最高,持续模式下显示)
+        if (this.persistentReplyTargetCharacterId.length > 0) {
+          Row() {
+            CharacterImageView({
+              imageUri: this.persistentTargetAvatarUri,
+              fallbackName: this.persistentTargetName,
+              imgWidth: 20,
+              imgHeight: 20,
+              imgBorderRadius: 10,
+              displayMode: 'thumbnail',
+              objectFit: ImageFit.Cover
+            })
+            Text('正在与 ' + this.persistentTargetName + ' 持续对话')
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_on_accent'))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .layoutWeight(1)
+              .margin({ left: 6 })
+            Button() {
+              SymbolGlyph($r('sys.symbol.xmark'))
+                .fontSize(12)
+                .fontColor([$r('app.color.app_on_accent')])
+            }
+            .type(ButtonType.Circle)
+            .backgroundColor(Color.Transparent)
+            .width(20)
+            .height(20)
+            .margin({ left: 4 })
+            .key('group.persistent_target_cancel')
+            .accessibilityText('取消持续对话')
+            .enabled(!this.isGenerating && !this.isSending)
+            .onClick(() => {
+              this.handleClearPersistentTarget();
+            })
+          }
+          .padding({ left: 10, right: 6, top: 4, bottom: 4 })
+          .backgroundColor($r('app.color.app_accent'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .alignItems(VerticalAlign.Center)
+        } else if (this.oneShotTargetName.length > 0) {
+          // 仅本次 Chip
+          Row() {
+            Text('仅' + this.oneShotTargetName + '回复(本次)')
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_on_accent'))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+            Button() {
+              SymbolGlyph($r('sys.symbol.xmark'))
+                .fontSize(12)
+                .fontColor([$r('app.color.app_on_accent')])
+            }
+            .type(ButtonType.Circle)
+            .backgroundColor(Color.Transparent)
+            .width(20)
+            .height(20)
+            .margin({ left: 4 })
+            .accessibilityText('取消仅本次目标')
+            .enabled(!this.isGenerating && !this.isSending)
+            .onClick(() => {
+              this.handleClearOneShotTarget();
+            })
+          }
+          .padding({ left: 10, right: 6, top: 4, bottom: 4 })
+          .backgroundColor($r('app.color.app_accent'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .alignItems(VerticalAlign.Center)
+        } else if (this.selectedReplyTargetMembers.length > 0) {
+          // 多选草稿 Chip(现有行为)
           Row() {
             Text(this.composeTargetChipText())
               .fontSize($r('app.float.app_font_caption'))
@@ -1722,13 +1815,8 @@ struct GroupChatPage {
           .backgroundColor($r('app.color.app_accent'))
           .borderRadius($r('app.float.app_radius_sm'))
           .alignItems(VerticalAlign.Center)
-        } else {
-          Text('所有启用角色将按顺序回复')
-            .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_tertiary'))
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
         }
+        // GROUP-CHAT-TARGET-1: 默认状态不显示任何提示文字(隐藏旧的 "所有启用角色将按顺序回复")
       }
       .width('100%')
       .padding({ top: 2, bottom: 2 })
@@ -1939,7 +2027,12 @@ struct GroupChatPage {
         // @不在词首,关闭选择器
         if (this.viewModel.isMentionPickerVisible) {
           this.viewModel.closeMentionPicker();
-          this.syncFromViewModel();
+this.syncFromViewModel();
+    // GROUP-CHAT-TARGET-1: 发送后防御性清除仅本次目标(页面侧确保不会残留)
+    this.oneShotTargetName = '';
+    if (this.viewModel.pendingOneShotReplyTargetCharacterId.length > 0) {
+      this.viewModel.pendingOneShotReplyTargetCharacterId = '';
+    }
         }
         return;
       }
@@ -1962,31 +2055,31 @@ struct GroupChatPage {
     this.syncFromViewModel();
   }
 
-  /** G-CONTROL-1: 选择 @角色 */
+  /** G-CONTROL-1: 选择 @角色 → GROUP-CHAT-TARGET-1: 按设置模式直接生效 */
   private handleSelectMention(member: GroupMemberUiModel): void {
     if (this.viewModel === null) {
       return;
     }
-    const insertText: string = this.viewModel.selectMentionTarget(member.characterId);
-    if (insertText.length === 0) {
-      this.syncFromViewModel();
-      return;
-    }
+    // 关闭 @选择器
+    this.viewModel.closeMentionPicker();
     // 替换输入框中的 @查询 为 @角色名
     const value: string = this.inputText;
     const atIdx: number = value.lastIndexOf('@');
     if (atIdx >= 0) {
       const before: string = value.substring(0, atIdx);
-      this.inputText = before + insertText;
+      this.inputText = before + '@' + member.name + ' ';
       if (this.viewModel !== null) {
         this.viewModel.inputText = this.inputText;
       }
-      // 标记跳过下一次 onChange 的 @检测,避免 @角色名 触发选择器重新打开
       this.skipMentionDetectionOnNextChange = true;
     }
-    // 显示多次 @提示(如有)
-    if (this.viewModel.errorMessage.length > 0) {
-      promptAction.showToast({ message: this.viewModel.errorMessage, duration: 1500 });
+    // GROUP-CHAT-TARGET-1: 按群聊设置中的模式直接生效，先清除旧草稿防止残留
+    if (this.viewModel.replyTargetMode === 'persistent') {
+      this.viewModel.clearReplyTarget();
+      this.viewModel.setPersistentReplyTarget(member.characterId);
+    } else {
+      this.viewModel.clearReplyTarget();
+      this.viewModel.setOneShotReplyTarget(member.characterId);
     }
     this.syncFromViewModel();
   }
@@ -1997,6 +2090,24 @@ struct GroupChatPage {
       return;
     }
     this.viewModel.clearReplyTarget();
+    this.syncFromViewModel();
+  }
+
+  /** GROUP-CHAT-TARGET-1: 取消持续对话目标 */
+  private handleClearPersistentTarget(): void {
+    if (this.viewModel === null) {
+      return;
+    }
+    this.viewModel.clearPersistentReplyTarget();
+    this.syncFromViewModel();
+  }
+
+  /** GROUP-CHAT-TARGET-1: 取消仅本次目标 */
+  private handleClearOneShotTarget(): void {
+    if (this.viewModel === null) {
+      return;
+    }
+    this.viewModel.pendingOneShotReplyTargetCharacterId = '';
     this.syncFromViewModel();
   }
 
@@ -2459,7 +2570,7 @@ struct GroupChatPage {
     return count.toString() + ' 条记忆';
   }
 
-  /**
+/**
    * G-UI-ALIGN-3: 重命名底部 Sheet(对齐更多菜单 Sheet 模式)。
    *
    * - 底部锚定表单:拖动条 + 标题 + TextInput + 取消/保存

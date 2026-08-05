@@ -73,6 +73,11 @@ import { AppServices } from '../../services/AppServices';
 import { Logger } from '../../utils/Logger';
 import { generateUuid } from '../../utils/Uuid';
 import {
+  GroupReplyTargetModeSetting,
+  loadGroupReplyTargetMode,
+  persistGroupReplyTargetMode
+} from '../../utils/GroupReplyModeSetting';
+import {
   GroupConversationDetailUiModel,
   GroupMemberUiModel,
   GroupMessageUiModel,
@@ -176,6 +181,33 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
   mentionCandidates: GroupMemberUiModel[] = [];
 
   /**
+   * GROUP-CHAT-TARGET-1: 持续回复目标角色 ID。
+   *
+   * - null 表示默认全员回复
+   * - 页面退出群聊后不持久化
+   * - 不写数据库/Preferences/Chat 模型
+   * - 切换群聊时清除
+   * - 角色失效时自动清除
+   */
+  persistentReplyTargetCharacterId: string = '';
+  /**
+   * GROUP-CHAT-TARGET-1: @角色回复模式(按群聊持久化)。
+   * - 'one_shot': @角色仅影响当前消息,发送后恢复全员
+   * - 'persistent': @角色直接切换持续目标,后续消息默认由该角色回复
+   * 默认 'one_shot'。
+   */
+  replyTargetMode: string = 'one_shot';
+
+  /**
+   * GROUP-CHAT-TARGET-1: 仅下一次发送使用的临时目标。
+   *
+   * - 发送成功提交用户消息后立即清除
+   * - 优先级高于 persistentReplyTargetCharacterId
+   * - 不跨消息保留
+   */
+  pendingOneShotReplyTargetCharacterId: string = '';
+
+  /**
    * UI 状态同步回调(G-RUNTIME-1C-FIX)。
    *
    * ArkUI 中 @State 持有 @Observed 对象时,ForEach 对内部数组属性变化的
@@ -221,6 +253,9 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
       this.isMentionPickerVisible = false;
       this.mentionQuery = '';
       this.mentionCandidates = [];
+      // GROUP-CHAT-TARGET-1: 切换群聊时清除持续/临时目标,防止跨群聊串线
+      this.persistentReplyTargetCharacterId = '';
+      this.pendingOneShotReplyTargetCharacterId = '';
     }
     this.chatId = chatId;
     this.state = GroupChatDetailState.Loading;
@@ -353,11 +388,18 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
       this.errorMessage = '另一个多人聊天正在回复,请先结束当前回复';
       return;
     }
-    // G-CONTROL-2A: 发送前再次校验目标角色状态(可能已被停用/移除/删除)
-    const replyTarget: GroupReplyTarget = this.selectedReplyTarget;
+    // GROUP-CHAT-TARGET-1: 发送前校验持续目标有效性(可能已被停用/移除/删除)
+    // 失效时自动清除并显示提示,继续走默认全员逻辑
+    this.validateAndClearInvalidPersistentTarget();
+
+    // GROUP-CHAT-TARGET-1: 发送前解析回复目标快照(优先级: 仅本次 > 持续对话 > 多选草稿 > 全员)
+    // 快照固定后不再在运行中重新读取,确保本轮由同一角色完成
+    const replyTarget: GroupReplyTarget = this.resolveReplyTargetSnapshot();
     const replyTargetIds: string[] = this.validateAndBuildReplyTargetIds(replyTarget);
     Logger.info(LOG_TAG, 'sendUserMessage targetMode=' + replyTarget.mode
-      + ' targets=' + String(replyTargetIds.length));
+      + ' targets=' + String(replyTargetIds.length)
+      + ' oneShot=' + this.pendingOneShotReplyTargetCharacterId
+      + ' persistent=' + this.persistentReplyTargetCharacterId);
     if (replyTarget.mode === GroupReplyTargetMode.SelectedCharacters
       && replyTargetIds.length === 0) {
       // 校验失败,errorMessage 已在 validateAndBuildReplyTargetIds 中设置
@@ -416,6 +458,8 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
       // 失败时(prepareRound/startRound 失败)不恢复目标,因为消息已发送
       this.selectedReplyTarget = REPLY_TARGET_ALL_ENABLED;
       this.selectedReplyTargetMembers = [];
+      // GROUP-CHAT-TARGET-1: 发送成功后清除仅本次临时目标(推荐提交用户消息后立即清除)
+      this.pendingOneShotReplyTargetCharacterId = '';
 
       // 建立本轮计划(G-CONTROL-2A: 携带 replyTarget)
       try {
@@ -714,6 +758,9 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
    */
   async disposeWithStop(): Promise<void> {
     this.disposed = true;
+    // GROUP-CHAT-TARGET-1: 清除持续/临时目标(页面离开时清除)
+    this.persistentReplyTargetCharacterId = '';
+    this.pendingOneShotReplyTargetCharacterId = '';
     // G-RUNTIME-1D: 幂等停止(无论 ViewModel.isGenerating 是否为 true,
     // 都调用 stopRoundIfRunning,由 runtimeService 判断是否实际停止)
     try {
@@ -734,6 +781,9 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
    */
   dispose(): void {
     this.disposed = true;
+    // GROUP-CHAT-TARGET-1: 清除持续/临时目标
+    this.persistentReplyTargetCharacterId = '';
+    this.pendingOneShotReplyTargetCharacterId = '';
     this.roundCoordinator.dispose();
   }
 
@@ -1354,6 +1404,208 @@ export class GroupChatViewModel implements GroupRuntimeCallbacks {
   clearReplyTarget(): void {
     this.selectedReplyTarget = REPLY_TARGET_ALL_ENABLED;
     this.selectedReplyTargetMembers = [];
+  }
+
+  // ===== GROUP-CHAT-TARGET-1 持续对话与仅本次目标 =====
+
+  /**
+   * GROUP-CHAT-TARGET-1: 设置仅本次回复目标。
+   *
+   * - 校验角色有效性
+   * - 不影响 persistentReplyTargetCharacterId
+   * - 发送成功后自动清除
+   *
+   * @param characterId 目标角色 ID
+   * @returns 是否成功(校验失败返回 false,errorMessage 已设置)
+   */
+  setOneShotReplyTarget(characterId: string): boolean {
+    if (this.disposed || this.isGenerating) {
+      return false;
+    }
+    if (characterId === '' || this.detail === null) {
+      return false;
+    }
+    const member: GroupMemberUiModel | null = this.findMemberById(characterId);
+    if (member === null) {
+      this.errorMessage = '该角色已不在当前群聊';
+      return false;
+    }
+    if (!member.characterExists) {
+      this.errorMessage = '该角色已删除';
+      return false;
+    }
+    if (!member.isEnabled) {
+      this.errorMessage = '该角色已停用';
+      return false;
+    }
+    this.pendingOneShotReplyTargetCharacterId = characterId;
+    this.errorMessage = '';
+    return true;
+  }
+
+  /**
+   * GROUP-CHAT-TARGET-1: 设置持续对话目标。
+   *
+   * - 校验角色有效性
+   * - 替换旧持续目标(直接切换)
+   * - 同时清除 pendingOneShot(持续模式优先时不需要临时目标)
+   *
+   * @param characterId 目标角色 ID
+   * @returns 是否成功(校验失败返回 false,errorMessage 已设置)
+   */
+  setPersistentReplyTarget(characterId: string): boolean {
+    if (this.disposed || this.isGenerating) {
+      return false;
+    }
+    if (characterId === '' || this.detail === null) {
+      return false;
+    }
+    const member: GroupMemberUiModel | null = this.findMemberById(characterId);
+    if (member === null) {
+      this.errorMessage = '该角色已不在当前群聊';
+      return false;
+    }
+    if (!member.characterExists) {
+      this.errorMessage = '该角色已删除';
+      return false;
+    }
+    if (!member.isEnabled) {
+      this.errorMessage = '该角色已停用';
+      return false;
+    }
+    this.persistentReplyTargetCharacterId = characterId;
+    this.pendingOneShotReplyTargetCharacterId = '';
+    this.errorMessage = '';
+    return true;
+  }
+
+  /**
+   * GROUP-CHAT-TARGET-1: 取消持续对话目标。
+   *
+   * - 恢复默认全员回复
+   * - 下一条消息恢复全员顺序回复
+   * - 不弹出确认框
+   * - 不删除任何历史消息
+   */
+  clearPersistentReplyTarget(): void {
+    this.persistentReplyTargetCharacterId = '';
+  }
+
+  /**
+   * GROUP-CHAT-TARGET-1: 查找持续目标角色名称(用于 UI 状态条显示)。
+   *
+   * @returns 角色名称或空字符串
+   */
+  findPersistentTargetMemberName(): string {
+    if (this.persistentReplyTargetCharacterId.length === 0) {
+      return '';
+    }
+    return this.findMemberNameById(this.persistentReplyTargetCharacterId);
+  }
+
+  /**
+   * GROUP-CHAT-TARGET-1: 查找持续目标角色头像 URI。
+   */
+  findPersistentTargetMemberAvatarUri(): string {
+    if (this.persistentReplyTargetCharacterId.length === 0) {
+      return '';
+    }
+    const m: GroupMemberUiModel | null = this.findMemberById(this.persistentReplyTargetCharacterId);
+    return m !== null ? m.avatarUri : '';
+  }
+
+  /**
+   * GROUP-CHAT-TARGET-1: 查找仅本次目标角色名称。
+   */
+  findOneShotTargetMemberName(): string {
+    if (this.pendingOneShotReplyTargetCharacterId.length === 0) {
+      return '';
+    }
+    return this.findMemberNameById(this.pendingOneShotReplyTargetCharacterId);
+  }
+
+  /**
+   * GROUP-CHAT-TARGET-1: 加载当前群聊的 @角色回复模式。
+   * 应从 GroupChatPage.aboutToAppear 调用。
+   */
+  async loadReplyTargetMode(): Promise<void> {
+    if (this.chatId.length === 0) {
+      return;
+    }
+    this.replyTargetMode = await loadGroupReplyTargetMode(this.chatId);
+  }
+
+  /**
+   * GROUP-CHAT-TARGET-1: 设置并持久化当前群聊的 @角色回复模式。
+   * @param mode 'one_shot' | 'persistent'
+   */
+  setAndPersistReplyTargetMode(mode: string): void {
+    this.replyTargetMode = mode;
+    if (this.chatId.length > 0) {
+      persistGroupReplyTargetMode(this.chatId, mode === 'persistent' ? 'persistent' : 'one_shot');
+    }
+  }
+
+  /**
+   * GROUP-CHAT-TARGET-1: 校验持续目标角色是否仍有效。
+   *
+   * 如果角色被移除、禁用或 Character 缺失:
+   * - 自动清除持续目标
+   * - 恢复默认全员回复
+   * - 设置 errorMessage 显示轻量提示
+   *
+   * @returns true 表示有效或无持续目标;false 表示已自动清除
+   */
+  validateAndClearInvalidPersistentTarget(): boolean {
+    if (this.persistentReplyTargetCharacterId.length === 0) {
+      return true;
+    }
+    if (this.detail === null) {
+      this.persistentReplyTargetCharacterId = '';
+      return false;
+    }
+    const member: GroupMemberUiModel | null =
+      this.findMemberById(this.persistentReplyTargetCharacterId);
+    if (member === null) {
+      this.persistentReplyTargetCharacterId = '';
+      this.errorMessage = '持续对话角色已不在当前群聊,已恢复全员回复';
+      return false;
+    }
+    if (!member.characterExists) {
+      this.persistentReplyTargetCharacterId = '';
+      this.errorMessage = '持续对话角色已删除,已恢复全员回复';
+      return false;
+    }
+    if (!member.isEnabled) {
+      this.persistentReplyTargetCharacterId = '';
+      this.errorMessage = '持续对话角色已停用,已恢复全员回复';
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * GROUP-CHAT-TARGET-1: 发送前解析回复目标快照。
+   *
+   * 优先级:
+   * 1. pendingOneShotReplyTargetCharacterId 非空 → SelectedCharacters([oneShot])
+   * 2. persistentReplyTargetCharacterId 非空 → SelectedCharacters([persistent])
+   * 3. selectedReplyTarget(multi-select 草稿)→ 原样
+   * 4. REPLY_TARGET_ALL_ENABLED(默认全员)
+   *
+   * 此方法在 sendUserMessage 开头调用一次,返回值作为本轮固定快照,
+   * 不在 Runtime 执行过程中重新读取。
+   *
+   * @returns 解析后的 GroupReplyTarget 快照
+   */
+  private resolveReplyTargetSnapshot(): GroupReplyTarget {
+    if (this.pendingOneShotReplyTargetCharacterId.length > 0) {
+      return selectedCharactersReplyTarget([this.pendingOneShotReplyTargetCharacterId]);
+    }
+    if (this.persistentReplyTargetCharacterId.length > 0) {
+      return selectedCharactersReplyTarget([this.persistentReplyTargetCharacterId]);
+    }
+    return this.selectedReplyTarget;
   }
 
   /**

@@ -47,6 +47,10 @@ struct GroupChatSettingsPage {
   @State deleteConfirmVisible: boolean = false;
   /** 清空消息确认弹窗是否可见 */
   @State clearConfirmVisible: boolean = false;
+  /** GROUP-CHAT-TARGET-1: @角色回复模式('one_shot'|'persistent') */
+  @State replyTargetMode: string = 'one_shot';
+  /** GROUP-CHAT-TARGET-1: 回复模式选择 Sheet 是否可见 */
+  @State replyModePickerVisible: boolean = false;
   /** 顶部状态栏避让高度 */
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   /** 底部导航栏避让高度 */
@@ -95,6 +99,7 @@ struct GroupChatSettingsPage {
     this.isDeleting = this.viewModel.isDeleting;
     this.isClearing = this.viewModel.isClearing;
     this.isGenerating = this.viewModel.isGenerating;
+    this.replyTargetMode = this.viewModel.replyTargetMode;
   }
 
   build(): void {
@@ -124,6 +129,10 @@ struct GroupChatSettingsPage {
       }
       if (this.clearConfirmVisible) {
         this.clearConfirmDialog()
+      }
+      // GROUP-CHAT-TARGET-1: @角色回复模式选择 Sheet
+      if (this.replyModePickerVisible) {
+        this.replyModePickerDialog()
       }
     }
     .width('100%')
@@ -319,25 +328,31 @@ struct GroupChatSettingsPage {
     .margin({ top: $r('app.float.app_spacing_12') })
   }
 
-  /** 回复方式区(固定说明,不可切换) */
+  /** 回复设置区标题 + @角色回复模式 */
   @Builder
   replyModeSection(): void {
     Column() {
-      Text($r('app.string.group_settings_reply_mode'))
+      Text('回复设置')
         .fontSize($r('app.float.app_font_caption'))
         .fontColor($r('app.color.app_text_tertiary'))
         .width('100%')
         .margin({ bottom: 8 })
 
+      // @角色回复模式
       Row() {
-        Text($r('app.string.group_settings_reply_mode_sequential'))
+        Text('@角色回复模式')
           .fontSize($r('app.float.app_font_body'))
           .fontColor($r('app.color.app_text_primary'))
           .layoutWeight(1)
 
-        Text('●')
-          .fontSize(12)
+        Text(this.replyTargetMode === 'persistent' ? '持续对话' : '仅回复一次')
+          .fontSize($r('app.float.app_font_body'))
           .fontColor($r('app.color.app_accent'))
+          .margin({ right: 4 })
+
+        SymbolGlyph($r('sys.symbol.chevron_right'))
+          .fontSize(16)
+          .fontColor([$r('app.color.app_text_tertiary')])
       }
       .width('100%')
       .padding({
@@ -349,6 +364,9 @@ struct GroupChatSettingsPage {
       .backgroundColor($r('app.color.app_surface_1'))
       .borderRadius($r('app.float.app_radius_md'))
       .alignItems(VerticalAlign.Center)
+      .onClick(() => {
+        this.replyModePickerVisible = true;
+      })
     }
     .width('100%')
     .margin({ top: $r('app.float.app_spacing_16') })
@@ -725,5 +743,122 @@ struct GroupChatSettingsPage {
         promptAction.showToast({ message: '清空失败', duration: 1500 });
       }
     }
+  }
+
+  /** GROUP-CHAT-TARGET-1: @角色回复模式选择 Sheet(底部锚定) */
+  @Builder
+  replyModePickerDialog(): void {
+    Stack() {
+      Column() {
+        Blank().layoutWeight(1)
+        Column() {
+          Column()
+            .width(36)
+            .height(4)
+            .borderRadius(2)
+            .backgroundColor($r('app.color.app_divider'))
+            .margin({ top: 8, bottom: 12 })
+
+          Text('@角色回复模式')
+            .fontSize($r('app.float.app_font_subtitle'))
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.app_text_primary'))
+            .margin({ bottom: 12, left: 16, right: 16 })
+            .width('100%')
+
+          // 选项:仅回复一次
+          Row() {
+            Text('仅回复一次')
+              .fontSize($r('app.float.app_font_body'))
+              .fontColor(this.replyTargetMode === 'one_shot'
+                ? $r('app.color.app_accent')
+                : $r('app.color.app_text_primary'))
+              .layoutWeight(1)
+            if (this.replyTargetMode === 'one_shot') {
+              SymbolGlyph($r('sys.symbol.checkmark'))
+                .fontSize(16)
+                .fontColor([$r('app.color.app_accent')])
+            }
+          }
+          .width('100%')
+          .height(48)
+          .padding({ left: 16, right: 16 })
+          .alignItems(VerticalAlign.Center)
+          .margin({ left: 16, right: 16 })
+          .borderRadius($r('app.float.app_radius_sm'))
+          .onClick(() => {
+            this.handleSelectOneShotMode();
+          })
+
+          // 选项:持续与该角色对话
+          Row() {
+            Text('持续与该角色对话')
+              .fontSize($r('app.float.app_font_body'))
+              .fontColor(this.replyTargetMode === 'persistent'
+                ? $r('app.color.app_accent')
+                : $r('app.color.app_text_primary'))
+              .layoutWeight(1)
+            if (this.replyTargetMode === 'persistent') {
+              SymbolGlyph($r('sys.symbol.checkmark'))
+                .fontSize(16)
+                .fontColor([$r('app.color.app_accent')])
+            }
+          }
+          .width('100%')
+          .height(48)
+          .padding({ left: 16, right: 16 })
+          .alignItems(VerticalAlign.Center)
+          .margin({ left: 16, right: 16 })
+          .borderRadius($r('app.float.app_radius_sm'))
+          .onClick(() => {
+            this.handleSelectPersistentMode();
+          })
+
+          Button($r('app.string.group_cancel'))
+            .fontSize($r('app.float.app_font_body'))
+            .fontColor($r('app.color.app_text_secondary'))
+            .backgroundColor($r('app.color.app_surface_2'))
+            .borderRadius($r('app.float.app_radius_md'))
+            .width('100%')
+            .height(44)
+            .margin({ top: 12, left: 16, right: 16 })
+            .accessibilityText('关闭回复模式选择')
+            .onClick(() => {
+              this.replyModePickerVisible = false;
+            })
+        }
+        .width('100%')
+        .backgroundColor($r('app.color.app_surface_1'))
+        .borderRadius({ topLeft: 16, topRight: 16, bottomLeft: 0, bottomRight: 0 })
+        .padding({ top: 0, bottom: this.navBarHeight + 16 })
+      }
+      .width('100%')
+      .height('100%')
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor('rgba(0,0,0,0.5)')
+    .onClick(() => {
+      this.replyModePickerVisible = false;
+    })
+    .transition(TransitionEffect.OPACITY)
+  }
+
+  private handleSelectOneShotMode(): void {
+    if (this.viewModel === null) {
+      return;
+    }
+    this.viewModel.setAndPersistReplyTargetMode('one_shot');
+    this.replyModePickerVisible = false;
+    this.syncFromViewModel();
+  }
+
+  private handleSelectPersistentMode(): void {
+    if (this.viewModel === null) {
+      return;
+    }
+    this.viewModel.setAndPersistReplyTargetMode('persistent');
+    this.replyModePickerVisible = false;
+    this.syncFromViewModel();
   }
 }

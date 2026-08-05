@@ -24,6 +24,11 @@ import { GroupConversationMessageService } from '../../services/groupchat/GroupC
 import { GroupChatRuntimeService } from '../../services/groupchat/GroupChatRuntimeService';
 import { AppServices } from '../../services/AppServices';
 import { Logger } from '../../utils/Logger';
+import {
+  GroupReplyTargetModeSetting,
+  loadGroupReplyTargetMode,
+  persistGroupReplyTargetMode
+} from '../../utils/GroupReplyModeSetting';
 import { GroupChatDetailState } from './GroupChatUiModels';
 
 const LOG_TAG: string = 'GroupChatSettingsVM';
@@ -44,6 +49,8 @@ export class GroupChatSettingsViewModel {
   isClearing: boolean = false;
   /** G-RUNTIME-1C: 是否正在生成(生成中禁止清空/删除) */
   isGenerating: boolean = false;
+  /** GROUP-CHAT-TARGET-1: @角色回复模式 */
+  replyTargetMode: string = 'one_shot';
 
   private readonly groupService: GroupConversationPersistenceService;
   private readonly messageService: GroupConversationMessageService;
@@ -78,6 +85,8 @@ export class GroupChatSettingsViewModel {
       }
       this.title = target.title;
       this.state = GroupChatDetailState.Ready;
+      // GROUP-CHAT-TARGET-1: 加载 @角色回复模式
+      this.replyTargetMode = await loadGroupReplyTargetMode(chatId);
     } catch (e) {
       Logger.error(LOG_TAG, 'load failed: ' + String(e));
       this.state = GroupChatDetailState.Error;
@@ -170,5 +179,16 @@ export class GroupChatSettingsViewModel {
 
   dispose(): void {
     this.disposed = true;
+  }
+
+  /**
+   * GROUP-CHAT-TARGET-1: 设置并持久化 @角色回复模式。
+   * @param mode 'one_shot' | 'persistent'
+   */
+  setAndPersistReplyTargetMode(mode: string): void {
+    this.replyTargetMode = mode;
+    if (this.chatId.length > 0) {
+      persistGroupReplyTargetMode(this.chatId, mode === 'persistent' ? 'persistent' : 'one_shot');
+    }
   }
 }
