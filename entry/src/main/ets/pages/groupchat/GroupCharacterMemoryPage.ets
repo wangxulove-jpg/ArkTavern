@@ -63,6 +63,11 @@ import {
 } from '../../viewmodels/groupchat/GroupChatUiModels';
 import { GroupCharacterMemoryStatus } from '../../models/groupchat/GroupCharacterMemory';
 import { GroupRelationshipMemoryStatus } from '../../models/groupchat/GroupCharacterRelationshipMemory';
+import { GroupPromptInspectionSnapshot,
+  PromptMessageInspectionItem,
+  RelationshipInspectionItem,
+  TokenBudgetInspection
+} from '../../models/groupchat/GroupPromptInspectionModels';
 import { CharacterImageView } from '../../components/CharacterImageView';
 import { EmptyStateView } from '../../components/EmptyStateView';
 import { Logger } from '../../utils/Logger';
@@ -75,10 +80,11 @@ enum GroupMemoryFormMode {
   Edit
 }
 
-/** 页面视图模式:记忆列表 / 关系与经历列表 */
+/** 页面视图模式:记忆列表 / 关系与经历列表 / 上下文检查 */
 enum PageViewMode {
   Memory,
-  Relationship
+  Relationship,
+  ContextInspector
 }
 
 @Entry
@@ -174,6 +180,10 @@ struct GroupCharacterMemoryPage {
   @State private relFormKeywords: string = '';
   @State private relFormError: string = '';
 
+  // G-CONTEXT-INSPECTOR-1: 上下文检查状态
+  @State private inspectionSnapshot: GroupPromptInspectionSnapshot | null = null;
+  @State private isInspectionLoading: boolean = false;
+
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navBarHeight') navBarHeight: number = 0;
 
@@ -199,7 +209,8 @@ struct GroupCharacterMemoryPage {
         AppServices.getGroupCharacterMemoryService(),
         AppServices.getGroupCharacterSelfSummaryService(),
         AppServices.getGroupCharacterRelationshipMemoryService(),
-        AppServices.getGroupCharacterRelationshipSummaryService()
+        AppServices.getGroupCharacterRelationshipSummaryService(),
+        AppServices.getGroupPromptInspectionStore()
       );
       // G-MEMORY-UI-2: 先加载成员列表,确定默认角色
       await this.viewModel.loadMembers(groupConversationId, characterId);
@@ -451,6 +462,9 @@ struct GroupCharacterMemoryPage {
         if (this.viewMode === PageViewMode.Relationship) {
           // 关系与经历视图
           this.relationshipContentView()
+        } else if (this.viewMode === PageViewMode.ContextInspector) {
+          // G-CONTEXT-INSPECTOR-1: 上下文检查视图
+          this.contextInspectorContentView()
         } else {
           // 记忆视图(原有逻辑)
           this.filterBar()
@@ -488,8 +502,8 @@ struct GroupCharacterMemoryPage {
   }
 
   /**
-   * G-MEMORY-AUTO-1B 视图切换栏。
-   * 在角色头部下方显示两个切换按钮:记忆 / 关系与经历。
+   * G-MEMORY-AUTO-1B / G-CONTEXT-INSPECTOR-1 视图切换栏。
+   * 在角色头部下方显示三个切换按钮:记忆 / 关系与经历 / 上下文检查。
    * 切换时加载对应数据。
    */
   @Builder
@@ -509,7 +523,7 @@ struct GroupCharacterMemoryPage {
           && !this.isPreparingRelationship && !this.isApprovingRelationship)
         .onClick(() => { this.switchViewMode(PageViewMode.Memory); })
 
-      Button('关系与经历')
+      Button('关系')
         .fontSize($r('app.float.app_font_caption'))
         .fontColor(this.viewMode === PageViewMode.Relationship
           ? $r('app.color.app_on_accent') : $r('app.color.app_text_secondary'))
@@ -524,6 +538,23 @@ struct GroupCharacterMemoryPage {
           && !this.isPreparingRelationship && !this.isApprovingRelationship)
         .accessibilityText('关系与经历')
         .onClick(() => { this.switchViewMode(PageViewMode.Relationship); })
+
+      Button('上下文')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor(this.viewMode === PageViewMode.ContextInspector
+          ? $r('app.color.app_on_accent') : $r('app.color.app_text_secondary'))
+        .backgroundColor(this.viewMode === PageViewMode.ContextInspector
+          ? $r('app.color.app_accent') : $r('app.color.app_surface_2'))
+        .borderRadius($r('app.float.app_radius_sm'))
+        .height(30)
+        .padding({ left: 14, right: 14 })
+        .margin({ left: 8 })
+        .enabled(!this.isSaving && !this.isDeleting
+          && !this.isSummarizing && !this.isApprovingSummaryState
+          && !this.isPreparingRelationship && !this.isApprovingRelationship)
+        .accessibilityText('上下文检查')
+        .key('groupMemory.tab.context')
+        .onClick(() => { this.switchViewMode(PageViewMode.ContextInspector); })
 
       Blank().layoutWeight(1)
     }
@@ -1719,6 +1750,9 @@ struct GroupCharacterMemoryPage {
     if (this.viewMode === PageViewMode.Relationship) {
       await this.viewModel.loadRelationshipList();
       this.syncRelationshipFromViewModel();
+    } else if (this.viewMode === PageViewMode.ContextInspector) {
+      this.viewModel.loadInspectionSnapshot();
+      this.syncInspectionFromViewModel();
     }
   }
 
@@ -2299,6 +2333,476 @@ struct GroupCharacterMemoryPage {
   /** 是否可以使用关系功能 */
   private canUseRelationship(): boolean {
     return this.viewModel !== null && this.viewModel.canUseRelationship();
+  }
+
+  /**
+   * G-CONTEXT-INSPECTOR-1: 上下文检查视图。
+   * 只读诊断显示,不改变任何业务语义。
+   * 当前群聊记忆尚未注入 Prompt,如实反映 selected=0/injected=0。
+   */
+  @Builder
+  contextInspectorContentView(): void {
+    Scroll() {
+      Column() {
+        if (this.isInspectionLoading) {
+          Row() {
+            LoadingProgress().width(20).height(20)
+            Text('加载中…')
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_text_secondary'))
+              .margin({ left: 8 })
+          }
+          .width('100%')
+          .justifyContent(FlexAlign.Center)
+          .padding({ top: 32, bottom: 32 })
+        } else if (this.inspectionSnapshot === null) {
+          Column() {
+            Text('暂无上下文快照')
+              .fontSize($r('app.float.app_font_body'))
+              .fontColor($r('app.color.app_text_secondary'))
+              .textAlign(TextAlign.Center)
+            Text('发送消息后会自动捕获最近一次的 Prompt 诊断数据')
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_text_tertiary'))
+              .textAlign(TextAlign.Center)
+              .margin({ top: 8 })
+              .padding({ left: 32, right: 32 })
+          }
+          .width('100%')
+          .padding({ top: 48, bottom: 48 })
+          .alignItems(HorizontalAlign.Center)
+        } else {
+          this.inspectionOverviewSection()
+          this.inspectionMemorySection()
+          this.inspectionRelationshipSection()
+          this.inspectionTokenBudgetSection()
+          this.inspectionPromptMessagesSection()
+          this.inspectionGroupConstraintSection()
+        }
+      }
+      .width('100%')
+    }
+    .layoutWeight(1)
+    .width('100%')
+    .scrollBar(BarState.Auto)
+  }
+
+  /** 快照概览 */
+  @Builder
+  inspectionOverviewSection(): void {
+    if (this.inspectionSnapshot !== null) {
+      Column() {
+        Text('快照概览')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_tertiary'))
+          .fontWeight(FontWeight.Medium)
+          .width('100%')
+          .margin({ bottom: 6 })
+
+        Row() {
+          Text('角色:')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_tertiary'))
+          Text(this.inspectionSnapshot.speakerCharacterName)
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_secondary'))
+            .fontWeight(FontWeight.Medium)
+            .margin({ left: 4 })
+        }
+        .width('100%')
+
+        Row() {
+          Text('回复模式:')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_tertiary'))
+          Text(this.inspectionSnapshot.replyTargetMode)
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_secondary'))
+            .margin({ left: 4 })
+        }
+        .width('100%')
+        .margin({ top: 4 })
+
+        Row() {
+          Text('参与者:')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_tertiary'))
+          Text(this.inspectionSnapshot.participantNames.join('、'))
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_secondary'))
+            .margin({ left: 4 })
+            .layoutWeight(1)
+        }
+        .width('100%')
+        .margin({ top: 4 })
+        .alignItems(VerticalAlign.Center)
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+      .backgroundColor($r('app.color.app_surface_2'))
+      .borderRadius($r('app.float.app_radius_md'))
+      .margin({ left: 12, right: 12, top: 8 })
+    }
+  }
+
+  /** 记忆诊断 */
+  @Builder
+  inspectionMemorySection(): void {
+    if (this.inspectionSnapshot !== null) {
+      Column() {
+        Text('记忆注入状态')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_tertiary'))
+          .fontWeight(FontWeight.Medium)
+          .width('100%')
+          .margin({ bottom: 6 })
+
+        Row() {
+          Text('已存储:')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_tertiary'))
+          Text(String(this.inspectionSnapshot.totalMemoriesStored))
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_secondary'))
+            .fontWeight(FontWeight.Medium)
+            .margin({ left: 4, right: 16 })
+
+          Text('活跃:')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_tertiary'))
+          Text(String(this.inspectionSnapshot.totalMemoriesActive))
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_secondary'))
+            .margin({ left: 4, right: 16 })
+
+          Text('已选:')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_tertiary'))
+          Text(String(this.inspectionSnapshot.totalMemoriesSelected))
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_accent'))
+            .margin({ left: 4, right: 16 })
+
+          Text('已注入:')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_tertiary'))
+          Text(String(this.inspectionSnapshot.totalMemoriesInjected))
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor(this.inspectionSnapshot.totalMemoriesInjected > 0
+              ? $r('app.color.app_accent') : $r('app.color.app_text_tertiary'))
+            .margin({ left: 4 })
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
+
+        if (this.inspectionSnapshot.totalMemoriesStored > 0
+          && this.inspectionSnapshot.totalMemoriesInjected === 0) {
+          Text('当前群聊记忆尚未注入 Prompt')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_danger'))
+            .width('100%')
+            .margin({ top: 6 })
+            .textAlign(TextAlign.Start)
+        }
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+      .backgroundColor($r('app.color.app_surface_2'))
+      .borderRadius($r('app.float.app_radius_md'))
+      .margin({ left: 12, right: 12, top: 8 })
+    }
+  }
+
+  /** 关系诊断 */
+  @Builder
+  inspectionRelationshipSection(): void {
+    if (this.inspectionSnapshot !== null) {
+      Column() {
+      Text('关系注入状态')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_tertiary'))
+        .fontWeight(FontWeight.Medium)
+        .width('100%')
+        .margin({ bottom: 6 })
+
+      Row() {
+        Text('已存储:')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_tertiary'))
+        Text(String(this.inspectionSnapshot.totalRelationshipsStored))
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .fontWeight(FontWeight.Medium)
+          .margin({ left: 4, right: 16 })
+
+        Text('活跃:')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_tertiary'))
+        Text(String(this.inspectionSnapshot.totalRelationshipsActive))
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .margin({ left: 4, right: 16 })
+
+        Text('已选:')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_tertiary'))
+        Text(String(this.inspectionSnapshot.totalRelationshipsSelected))
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_accent'))
+          .margin({ left: 4, right: 16 })
+
+        Text('已注入:')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_tertiary'))
+        Text(String(this.inspectionSnapshot.totalRelationshipsInjected))
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor(this.inspectionSnapshot.totalRelationshipsInjected > 0
+            ? $r('app.color.app_accent') : $r('app.color.app_text_tertiary'))
+          .margin({ left: 4 })
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      if (this.inspectionSnapshot.reverseRelationships.length > 0) {
+        Text('反向关系(不会作为当前角色的关系注入):')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_tertiary'))
+          .width('100%')
+          .margin({ top: 8 })
+
+        ForEach(
+          this.inspectionSnapshot.reverseRelationships,
+          (rel: RelationshipInspectionItem) => {
+            Row() {
+              Text(rel.ownerCharacterName + ' → ' + rel.targetName)
+                .fontSize($r('app.float.app_font_caption'))
+                .fontColor($r('app.color.app_text_tertiary'))
+            }
+            .width('100%')
+            .padding({ left: 8, top: 2, bottom: 2 })
+          },
+          (rel: RelationshipInspectionItem) => rel.id
+        )
+      }
+
+      if (this.inspectionSnapshot.totalRelationshipsStored > 0
+        && this.inspectionSnapshot.totalRelationshipsInjected === 0) {
+        Text('当前群聊关系记忆尚未注入 Prompt')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_danger'))
+          .width('100%')
+          .margin({ top: 6 })
+          .textAlign(TextAlign.Start)
+      }
+    }
+    .width('100%')
+    .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+    .backgroundColor($r('app.color.app_surface_2'))
+    .borderRadius($r('app.float.app_radius_md'))
+    .margin({ left: 12, right: 12, top: 8 })
+    }
+  }
+
+  /** Token 预算 */
+  @Builder
+  inspectionTokenBudgetSection(): void {
+    if (this.inspectionSnapshot !== null) {
+      Column() {
+        Text('Token 预算')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_tertiary'))
+          .fontWeight(FontWeight.Medium)
+          .width('100%')
+          .margin({ bottom: 6 })
+
+        Row() {
+          Text('上下文窗口:')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_tertiary'))
+          Text(String(this.inspectionSnapshot.tokenBudget.contextWindow))
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_secondary'))
+            .margin({ left: 4, right: 16 })
+
+          Text('输入预算:')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_tertiary'))
+          Text(String(this.inspectionSnapshot.tokenBudget.availableInputTokens))
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_secondary'))
+            .margin({ left: 4, right: 16 })
+
+          Text('估算使用:')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_tertiary'))
+          Text(String(this.inspectionSnapshot.tokenBudget.estimatedTotalTokens)
+            + ' (' + String(this.inspectionSnapshot.tokenBudget.usagePercent) + '%)')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor(this.inspectionSnapshot.tokenBudget.usagePercent > 90
+              ? $r('app.color.app_danger') : $r('app.color.app_text_secondary'))
+            .margin({ left: 4 })
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
+
+        Row() {
+          Text('裁剪前:')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_tertiary'))
+          Text(String(this.inspectionSnapshot.tokenBudget.totalMessagesBeforeTrim) + ' 条')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_secondary'))
+            .margin({ left: 4, right: 16 })
+
+          Text('裁剪后:')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_tertiary'))
+          Text(String(this.inspectionSnapshot.tokenBudget.totalMessagesAfterTrim) + ' 条')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_secondary'))
+            .margin({ left: 4, right: 16 })
+
+          if (this.inspectionSnapshot.tokenBudget.trimmedMessageCount > 0) {
+            Text('裁剪:')
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_text_tertiary'))
+            Text('-' + String(this.inspectionSnapshot.tokenBudget.trimmedMessageCount) + ' 条')
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_danger'))
+              .margin({ left: 4 })
+          }
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
+        .margin({ top: 4 })
+
+        Progress({
+          value: this.inspectionSnapshot.tokenBudget.estimatedTotalTokens,
+          total: this.inspectionSnapshot.tokenBudget.availableInputTokens
+        })
+          .width('100%')
+          .height(6)
+          .borderRadius(3)
+          .margin({ top: 8 })
+          .color(this.inspectionSnapshot.tokenBudget.usagePercent > 90
+            ? $r('app.color.app_danger') : $r('app.color.app_accent'))
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+      .backgroundColor($r('app.color.app_surface_2'))
+      .borderRadius($r('app.float.app_radius_md'))
+      .margin({ left: 12, right: 12, top: 8 })
+    }
+  }
+
+  /** Prompt 消息列表 */
+  @Builder
+  inspectionPromptMessagesSection(): void {
+    if (this.inspectionSnapshot !== null) {
+      Column() {
+      Text('Prompt 消息 (' + String(this.inspectionSnapshot.promptMessages.length) + ' 条)')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_tertiary'))
+        .fontWeight(FontWeight.Medium)
+        .width('100%')
+        .margin({ bottom: 6 })
+
+      ForEach(
+        this.inspectionSnapshot.promptMessages,
+        (msg: PromptMessageInspectionItem, index: number) => {
+          Row() {
+            Text('[' + String(index) + ']')
+              .fontSize(11)
+              .fontColor($r('app.color.app_text_tertiary'))
+              .width(28)
+
+            Text(msg.category)
+              .fontSize(11)
+              .fontColor($r('app.color.app_accent'))
+              .backgroundColor($r('app.color.app_surface_1'))
+              .borderRadius(3)
+              .padding({ left: 4, right: 4, top: 1, bottom: 1 })
+              .width(52)
+              .textAlign(TextAlign.Center)
+
+            Text(msg.contentPreview)
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor($r('app.color.app_text_secondary'))
+              .layoutWeight(1)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .margin({ left: 6 })
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Center)
+          .padding({ top: 3, bottom: 3 })
+        },
+        (msg: PromptMessageInspectionItem, index: number) => String(index)
+      )
+
+      Row() {
+        Text('世界书匹配: ' + String(this.inspectionSnapshot.lorebook.matchedEntryCount) + ' 条')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_tertiary'))
+          .margin({ top: 4 })
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+    .backgroundColor($r('app.color.app_surface_2'))
+    .borderRadius($r('app.float.app_radius_md'))
+    .margin({ left: 12, right: 12, top: 8 })
+    }
+  }
+
+  /** 群聊约束 */
+  @Builder
+  inspectionGroupConstraintSection(): void {
+    if (this.inspectionSnapshot !== null) {
+      Column() {
+      Text('群聊约束指令')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_tertiary'))
+        .fontWeight(FontWeight.Medium)
+        .width('100%')
+        .margin({ bottom: 6 })
+
+      if (this.inspectionSnapshot.presetSystemPromptPreview.length > 0) {
+        Text('预设 System Prompt:')
+          .fontSize(11)
+          .fontColor($r('app.color.app_text_tertiary'))
+          .width('100%')
+          .margin({ bottom: 2 })
+        Text(this.inspectionSnapshot.presetSystemPromptPreview)
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .width('100%')
+          .maxLines(5)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .textAlign(TextAlign.Start)
+          .margin({ bottom: 8 })
+      }
+
+      Text('群聊约束:')
+        .fontSize(11)
+        .fontColor($r('app.color.app_text_tertiary'))
+        .width('100%')
+        .margin({ bottom: 2 })
+      Text(this.inspectionSnapshot.groupConstraintPreview)
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_secondary'))
+        .width('100%')
+        .maxLines(10)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .textAlign(TextAlign.Start)
+    }
+    .width('100%')
+    .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+    .backgroundColor($r('app.color.app_surface_2'))
+    .borderRadius($r('app.float.app_radius_md'))
+    .margin({ left: 12, right: 12, top: 8, bottom: 16 })
+    }
   }
 
   /**
@@ -3272,6 +3776,9 @@ struct GroupCharacterMemoryPage {
     if (mode === PageViewMode.Relationship && this.viewModel !== null) {
       await this.viewModel.loadRelationshipList();
       this.syncRelationshipFromViewModel();
+    } else if (mode === PageViewMode.ContextInspector && this.viewModel !== null) {
+      this.viewModel.loadInspectionSnapshot();
+      this.syncInspectionFromViewModel();
     }
   }
 
@@ -3289,6 +3796,15 @@ struct GroupCharacterMemoryPage {
     if (this.viewModel.relationshipError.length > 0) {
       this.relationshipActionError = this.viewModel.relationshipError;
     }
+  }
+
+  /** G-CONTEXT-INSPECTOR-1: 同步 ViewModel 上下文检查状态到页面 @State */
+  private syncInspectionFromViewModel(): void {
+    if (this.viewModel === null) {
+      return;
+    }
+    this.inspectionSnapshot = this.viewModel.inspectionSnapshot;
+    this.isInspectionLoading = this.viewModel.isInspectionLoading;
   }
 
   /** 点击"总结新关系"按钮 */

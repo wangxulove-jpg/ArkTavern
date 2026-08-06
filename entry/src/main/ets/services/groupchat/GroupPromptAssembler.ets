@@ -110,6 +110,18 @@ export interface GroupPromptAssemblyResult {
   readonly estimatedTokens: number;
   /** 匹配到的世界书条目数 */
   readonly matchedLorebookCount: number;
+  /** G-CONTEXT-INSPECTOR-1: 裁剪前消息数(诊断) */
+  readonly preTrimMessageCount: number;
+  /** G-CONTEXT-INSPECTOR-1: 裁剪后消息数(诊断) */
+  readonly postTrimMessageCount: number;
+  /** G-CONTEXT-INSPECTOR-1: 可用输入 Token 数(诊断) */
+  readonly availableInputTokens: number;
+  /** G-CONTEXT-INSPECTOR-1: 群聊约束文本(诊断) */
+  readonly groupConstraintText: string;
+  /** G-CONTEXT-INSPECTOR-1: 参与者角色名列表(诊断) */
+  readonly participantNames: string[];
+  /** G-CONTEXT-INSPECTOR-1: 回复目标模式(诊断) */
+  readonly replyTargetMode: string;
 }
 
 /**
@@ -306,7 +318,13 @@ export class GroupPromptAssembler {
       presetSystemPrompt: presetSystemPrompt,
       effectiveSettings: effectiveSettings,
       estimatedTokens: estimatedTokens,
-      matchedLorebookCount: buildResult.matchedLorebookEntryIds.length
+      matchedLorebookCount: buildResult.matchedLorebookEntryIds.length,
+      preTrimMessageCount: messagesWithConstraint.length,
+      postTrimMessageCount: trimmed.messages.length,
+      availableInputTokens: availableInputTokens,
+      groupConstraintText: groupConstraint,
+      participantNames: participantNames,
+      replyTargetMode: replyTarget.mode
     };
   }
 

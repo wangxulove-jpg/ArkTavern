@@ -88,6 +88,7 @@ import { GroupCharacterMemoryService } from './groupchat/GroupCharacterMemorySer
 import { GroupCharacterSelfSummaryService } from './groupchat/GroupCharacterSelfSummaryService';
 import { GroupCharacterRelationshipMemoryService } from './groupchat/GroupCharacterRelationshipMemoryService';
 import { GroupCharacterRelationshipSummaryService } from './groupchat/GroupCharacterRelationshipSummaryService';
+import { GroupPromptInspectionStore } from './groupchat/GroupPromptInspectionStore';
 import { WorldRepository } from '../repositories/world/WorldRepository';
 import { WorldLocationRepository } from '../repositories/world/WorldLocationRepository';
 import { WorldLocationEdgeRepository } from '../repositories/world/WorldLocationEdgeRepository';
@@ -221,6 +222,9 @@ export class AppServices {
   private readonly groupCharacterRelationshipMemoryService: GroupCharacterRelationshipMemoryService;
   /** GroupCharacterRelationshipSummaryService 多人角色关系与经历手动总结服务(G-MEMORY-AUTO-1B) */
   private readonly groupCharacterRelationshipSummaryService: GroupCharacterRelationshipSummaryService;
+
+  /** G-CONTEXT-INSPECTOR-1: Prompt 诊断快照内存存储 */
+  private readonly groupPromptInspectionStore: GroupPromptInspectionStore;
   /** WorldRepository 世界仓储(W-DATA-1A,不对页面公开) */
   private readonly worldRepository: WorldRepository;
   /** WorldLocationRepository 世界地点仓储(W-DATA-1A,不对页面公开) */
@@ -459,12 +463,15 @@ export class AppServices {
       this.promptPresetService,
       this.modelService
     );
+    // G-CONTEXT-INSPECTOR-1: Prompt 诊断快照内存存储(纯内存,无依赖)
+    this.groupPromptInspectionStore = new GroupPromptInspectionStore();
     this.groupChatRuntimeService = new GroupChatRuntimeService(
       this.groupRoundCoordinator,
       this.groupConversationMessageService,
       this.groupPromptAssembler,
       this.modelService,
-      this.groupRuntimeRegistry
+      this.groupRuntimeRegistry,
+      this.groupPromptInspectionStore
     );
     // G-MEMORY-1A: 多人聊天每角色独立记忆 Repository + Service。
     // Repository 仅依赖 DbHelper,不依赖任何 Service,不会形成循环。
@@ -979,6 +986,13 @@ export class AppServices {
    */
   static getGroupCharacterRelationshipSummaryService(): GroupCharacterRelationshipSummaryService {
     return AppServices.getInstance().groupCharacterRelationshipSummaryService;
+  }
+
+  /**
+   * 获取 GroupPromptInspectionStore 实例(G-CONTEXT-INSPECTOR-1 Prompt 诊断快照)。
+   */
+  static getGroupPromptInspectionStore(): GroupPromptInspectionStore {
+    return AppServices.getInstance().groupPromptInspectionStore;
   }
 
   /**

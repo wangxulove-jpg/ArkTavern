@@ -34,6 +34,7 @@
  */
 
 import { ChatMessage, ChatMessageStatus, MessageSenderType } from '../../models/ChatMessage';
+import { ChatRole } from '../../models/ChatRole';
 import { ChatStreamCallbacks, ChatStreamHandle, ChatDelta, ChatStreamResult } from '../../models/ChatStreamTypes';
 import { NetworkError, NetworkErrorType } from '../../models/NetworkError';
 import { ChatRequestOptions, ChatRequest } from '../../models/ChatRequest';
@@ -64,6 +65,15 @@ import {
   GroupNarrationPromptResult,
   buildNarrationPrompt
 } from './GroupNarrationPromptAssembler';
+import { GroupPromptInspectionStore } from './GroupPromptInspectionStore';
+import {
+  GroupPromptInspectionSnapshot,
+  MemoryInspectionItem,
+  RelationshipInspectionItem,
+  PromptMessageInspectionItem,
+  TokenBudgetInspection,
+  LorebookInspection
+} from '../../models/groupchat/GroupPromptInspectionModels';
 
 const LOG_TAG: string = 'GroupRuntime';
 
@@ -145,6 +155,8 @@ export class GroupChatRuntimeService {
   private readonly modelService: ModelService;
   /** G-RUNTIME-1D: 应用级运行注册表(跨群聊隔离 + 业务互斥) */
   private readonly registry: GroupRuntimeRegistry;
+  /** G-CONTEXT-INSPECTOR-1: Prompt 诊断快照内存存储 */
+  private readonly inspectionStore: GroupPromptInspectionStore;
 
   /** 当前轮次操作 ID(0 表示无活动轮次) */
   private activeOperationId: number = 0;
@@ -201,13 +213,15 @@ export class GroupChatRuntimeService {
     messageService: GroupConversationMessageService,
     promptAssembler: GroupPromptAssembler,
     modelService: ModelService,
-    registry: GroupRuntimeRegistry
+    registry: GroupRuntimeRegistry,
+    inspectionStore: GroupPromptInspectionStore
   ) {
     this.roundCoordinator = roundCoordinator;
     this.messageService = messageService;
     this.promptAssembler = promptAssembler;
     this.modelService = modelService;
     this.registry = registry;
+    this.inspectionStore = inspectionStore;
   }
 
   /**
@@ -904,6 +918,15 @@ export class GroupChatRuntimeService {
       return SpeakerResult.Cancelled;
     }
 
+    // G-CONTEXT-INSPECTOR-1: 捕获 Prompt 诊断快照(纯只读,不改变业务)
+    this.captureInspectionSnapshot(
+      ctx.chatId,
+      speakerCharacterId,
+      ctx.roundId,
+      promptResult,
+      participantCharacterIds
+    );
+
     // 8. 启动流式请求并等待完成
     return await this.streamForSpeaker(speakerCtx, promptResult, callbacks);
   }
@@ -1519,5 +1542,104 @@ export class GroupChatRuntimeService {
       return content.substring(bracketMatch[0].length);
     }
     return content;
+  }
+
+  /**
+   * G-CONTEXT-INSPECTOR-1: 捕获 Prompt 诊断快照。
+   * 纯只读诊断,不改变任何业务语义。
+   * 快照仅存内存,不持久化。
+   * 不记录 API Key / Authorization / 敏感信息。
+   *
+   * 当前群聊记忆尚未注入 Prompt,快照如实反映:
+   * - memories: selected=0, injected=0
+   * - relationships: selected=0, injected=0
+   */
+  private captureInspectionSnapshot(
+    chatId: string,
+    speakerCharacterId: string,
+    roundId: string,
+    promptResult: GroupPromptAssemblyResult,
+    participantCharacterIds: string[]
+  ): void {
+    const speakerName: string = promptResult.character !== null
+      ? promptResult.character.name : '未知角色';
+
+    const promptMsgs: PromptMessageInspectionItem[] = [];
+    for (let i = 0; i < promptResult.requestMessages.length; i++) {
+      const msg: ChatMessage = promptResult.requestMessages[i];
+      const role: string = msg.role;
+      const preview: string = msg.content.length > 80
+        ? msg.content.substring(0, 80) + '...' : msg.content;
+      let category: string = 'other';
+      if (msg.role === ChatRole.System) {
+        category = 'system';
+      } else if (msg.role === ChatRole.User) {
+        category = 'user';
+      } else if (msg.role === ChatRole.Assistant) {
+        category = 'assistant';
+      }
+      const item: PromptMessageInspectionItem = {
+        role: role,
+        contentPreview: preview,
+        estimatedTokens: 0,
+        category: category
+      };
+      promptMsgs.push(item);
+    }
+
+    const contextWindow: number = promptResult.effectiveSettings.contextWindow !== undefined
+      && promptResult.effectiveSettings.contextWindow > 0
+      ? promptResult.effectiveSettings.contextWindow : 8192;
+    const availableInputTokens: number = promptResult.availableInputTokens;
+    const estimatedTotal: number = promptResult.estimatedTokens;
+    const usagePercent: number = availableInputTokens > 0
+      ? Math.round(estimatedTotal / availableInputTokens * 100) : 0;
+
+    const budget: TokenBudgetInspection = {
+      contextWindow: contextWindow,
+      availableInputTokens: availableInputTokens,
+      estimatedTotalTokens: estimatedTotal,
+      usagePercent: usagePercent,
+      totalMessagesBeforeTrim: promptResult.preTrimMessageCount,
+      totalMessagesAfterTrim: promptResult.postTrimMessageCount,
+      trimmedMessageCount: promptResult.preTrimMessageCount - promptResult.postTrimMessageCount
+    };
+
+    const lorebookInfo: LorebookInspection = {
+      globalLorebookLoaded: false,
+      characterLorebookLoaded: false,
+      matchedEntryCount: promptResult.matchedLorebookCount
+    };
+
+    const snapshot: GroupPromptInspectionSnapshot = {
+      snapshotId: 'insp-' + roundId + '-' + speakerCharacterId,
+      groupConversationId: chatId,
+      speakerCharacterId: speakerCharacterId,
+      speakerCharacterName: speakerName,
+      roundId: roundId,
+      capturedAt: Date.now(),
+      memories: [],
+      totalMemoriesStored: 0,
+      totalMemoriesActive: 0,
+      totalMemoriesSelected: 0,
+      totalMemoriesInjected: 0,
+      relationships: [],
+      totalRelationshipsStored: 0,
+      totalRelationshipsActive: 0,
+      totalRelationshipsSelected: 0,
+      totalRelationshipsInjected: 0,
+      reverseRelationships: [],
+      promptMessages: promptMsgs,
+      tokenBudget: budget,
+      lorebook: lorebookInfo,
+      presetSystemPromptPreview: promptResult.presetSystemPrompt.length > 200
+        ? promptResult.presetSystemPrompt.substring(0, 200) + '...'
+        : promptResult.presetSystemPrompt,
+      groupConstraintPreview: promptResult.groupConstraintText,
+      replyTargetMode: promptResult.replyTargetMode,
+      participantNames: promptResult.participantNames
+    };
+
+    this.inspectionStore.store(snapshot);
   }
 }

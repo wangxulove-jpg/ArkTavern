@@ -58,6 +58,8 @@ import {
   RelationshipSummaryResult,
   RelationshipCandidate
 } from '../../services/groupchat/GroupCharacterRelationshipSummaryService';
+import { GroupPromptInspectionStore } from '../../services/groupchat/GroupPromptInspectionStore';
+import { GroupPromptInspectionSnapshot } from '../../models/groupchat/GroupPromptInspectionModels';
 import { Logger } from '../../utils/Logger';
 import { Chat } from '../../models/Chat';
 import { ChatParticipant } from '../../models/ChatParticipant';
@@ -281,6 +283,9 @@ export class GroupCharacterMemoryViewModel {
   private readonly relationshipMemoryService: GroupCharacterRelationshipMemoryService | null;
   private readonly relationshipSummaryService: GroupCharacterRelationshipSummaryService | null;
 
+  /** G-CONTEXT-INSPECTOR-1: Prompt 诊断快照内存存储 */
+  private readonly inspectionStore: GroupPromptInspectionStore;
+
   state: GroupCharacterMemoryLoadState = GroupCharacterMemoryLoadState.Loading;
   errorMessage: string = '';
   snapshot: GroupCharacterMemorySnapshotUiModel | null = null;
@@ -328,13 +333,18 @@ export class GroupCharacterMemoryViewModel {
   relationshipCandidates: RelationshipCandidateUiModel[] = [];
   private relationshipOperationId: number = 0;
 
+  // G-CONTEXT-INSPECTOR-1: Prompt 诊断快照状态
+  inspectionSnapshot: GroupPromptInspectionSnapshot | null = null;
+  isInspectionLoading: boolean = false;
+
   constructor(
     groupPersistenceService: GroupConversationPersistenceService,
     characterService: CharacterService,
     memoryService: GroupCharacterMemoryService,
     summaryService: GroupCharacterSelfSummaryService | null = null,
     relationshipMemoryService: GroupCharacterRelationshipMemoryService | null = null,
-    relationshipSummaryService: GroupCharacterRelationshipSummaryService | null = null
+    relationshipSummaryService: GroupCharacterRelationshipSummaryService | null = null,
+    inspectionStore: GroupPromptInspectionStore | null = null
   ) {
     this.groupPersistenceService = groupPersistenceService;
     this.characterService = characterService;
@@ -342,6 +352,7 @@ export class GroupCharacterMemoryViewModel {
     this.summaryService = summaryService;
     this.relationshipMemoryService = relationshipMemoryService;
     this.relationshipSummaryService = relationshipSummaryService;
+    this.inspectionStore = inspectionStore ?? new GroupPromptInspectionStore();
     this.instanceShortId = GroupCharacterMemoryViewModel.generateShortId();
   }
 
@@ -1293,6 +1304,37 @@ export class GroupCharacterMemoryViewModel {
       this.relationshipError = '关系记忆加载失败,请重试';
     } finally {
       this.isRelationshipListLoading = false;
+    }
+  }
+
+  /**
+   * G-CONTEXT-INSPECTOR-1: 加载 Prompt 诊断快照。
+   * 从内存存储读取最近一次快照,不调用数据库/网络。
+   * 当前群聊记忆尚未注入 Prompt,快照如实反映 selected=0/injected=0。
+   */
+  loadInspectionSnapshot(): void {
+    if (this.disposed) {
+      return;
+    }
+    if (this.expectedGroupConversationId.length === 0
+      || this.expectedCharacterId.length === 0) {
+      this.inspectionSnapshot = null;
+      return;
+    }
+    this.isInspectionLoading = true;
+    const snapshot: GroupPromptInspectionSnapshot | undefined =
+      this.inspectionStore.get(
+        this.expectedGroupConversationId,
+        this.expectedCharacterId
+      );
+    this.inspectionSnapshot = snapshot !== undefined ? snapshot : null;
+    this.isInspectionLoading = false;
+    if (snapshot !== undefined) {
+      Logger.info(LOG_TAG, 'loadInspectionSnapshot ok: roundId=' + snapshot.roundId
+        + ' msgs=' + String(snapshot.promptMessages.length)
+        + ' tokens=' + String(snapshot.tokenBudget.estimatedTotalTokens));
+    } else {
+      Logger.info(LOG_TAG, 'loadInspectionSnapshot: no snapshot available');
     }
   }
 
