@@ -29,6 +29,7 @@ import {
   COLUMN_ID,
   COLUMN_WORLD_ID,
   COLUMN_LOCATION_ID,
+  COLUMN_SCENE_TITLE,
   COLUMN_STATUS,
   COLUMN_STARTED_AT,
   COLUMN_ENDED_AT,
@@ -409,6 +410,7 @@ function sceneToBucket(scene: WorldScene): relationalStore.ValuesBucket {
   bucket[COLUMN_ID] = scene.id;
   bucket[COLUMN_WORLD_ID] = scene.worldId;
   bucket[COLUMN_LOCATION_ID] = scene.locationId;
+  bucket[COLUMN_SCENE_TITLE] = scene.title;
   bucket[COLUMN_STATUS] = scene.status;
   bucket[COLUMN_STARTED_AT] = scene.startedAt;
   bucket[COLUMN_ENDED_AT] = scene.endedAt !== undefined ? scene.endedAt : null;
@@ -428,6 +430,29 @@ function readOptionalLong(rs: relationalStore.ResultSet, columnName: string): nu
   return rs.getLong(col);
 }
 
+function readOptionalString(rs: relationalStore.ResultSet, columnName: string): string | undefined {
+  const col: number = rs.getColumnIndex(columnName);
+  if (col < 0) {
+    return undefined;
+  }
+  if (rs.isColumnNull(col)) {
+    return undefined;
+  }
+  return rs.getString(col);
+}
+
+function readStringWithDefault(rs: relationalStore.ResultSet, columnName: string, defaultValue: string): string {
+  const col: number = rs.getColumnIndex(columnName);
+  if (col < 0) {
+    return defaultValue;
+  }
+  if (rs.isColumnNull(col)) {
+    return defaultValue;
+  }
+  const value: string = rs.getString(col);
+  return value;
+}
+
 function sceneFromRow(rs: relationalStore.ResultSet): WorldScene {
   const id: string = rs.getString(rs.getColumnIndex(COLUMN_ID));
   if (id === '') {
@@ -441,6 +466,7 @@ function sceneFromRow(rs: relationalStore.ResultSet): WorldScene {
   if (locationId === '') {
     throw DatabaseError.invalidData('WorldScene.locationId empty in row');
   }
+  const title: string = readStringWithDefault(rs, COLUMN_SCENE_TITLE, '');
   const statusRaw: string = rs.getString(rs.getColumnIndex(COLUMN_STATUS));
   if (!isWorldSceneStatus(statusRaw)) {
     throw DatabaseError.invalidData(`WorldScene.status invalid in row: ${statusRaw}`);
@@ -461,6 +487,7 @@ function sceneFromRow(rs: relationalStore.ResultSet): WorldScene {
     id: id,
     worldId: worldId,
     locationId: locationId,
+    title: title !== undefined ? title : '',
     status: statusRaw as WorldSceneStatus,
     startedAt: startedAt,
     endedAt: readOptionalLong(rs, COLUMN_ENDED_AT),

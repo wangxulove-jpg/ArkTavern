@@ -81,7 +81,9 @@ export interface WorldSceneMessage {
   /** 公开用户消息希望哪些角色实例回复(仅 user+public 时允许) */
   readonly replyTargetCharacterInstanceIds?: string[];
 
-  /** 记录创建时间(毫秒) */
+  readonly sessionId?: string;
+  readonly locationId?: string;
+
   readonly createdAt: number;
   /** 记录最后更新时间(毫秒) */
   readonly updatedAt: number;
@@ -102,6 +104,8 @@ export interface CreateWorldSceneMessageOptions {
   readonly participantCharacterInstanceIds?: string[];
   readonly witnessCharacterInstanceIds?: string[];
   readonly replyTargetCharacterInstanceIds?: string[];
+  readonly sessionId?: string;
+  readonly locationId?: string;
   readonly createdAt?: number;
   readonly updatedAt?: number;
 }
@@ -258,6 +262,15 @@ export function createWorldSceneMessageRecord(
     }
   }
 
+  const sessionId: string | undefined = normalizeSessionId(options.sessionId);
+  const locationId: string | undefined = normalizeLocationId(options.locationId);
+  if (sessionId !== undefined && locationId === undefined) {
+    throw new Error('WorldSceneMessage: sessionId requires locationId');
+  }
+  if (locationId !== undefined && sessionId === undefined) {
+    throw new Error('WorldSceneMessage: locationId requires sessionId');
+  }
+
   const now: number = nowMillis();
   const createdAt: number = options.createdAt !== undefined ? options.createdAt : now;
   const updatedAt: number = options.updatedAt !== undefined ? options.updatedAt : now;
@@ -283,6 +296,8 @@ export function createWorldSceneMessageRecord(
     participantCharacterInstanceIds: participantIds,
     witnessCharacterInstanceIds: witnessIds,
     replyTargetCharacterInstanceIds: replyTargetIds,
+    sessionId: sessionId,
+    locationId: locationId,
     createdAt: createdAt,
     updatedAt: updatedAt
   };
@@ -319,6 +334,28 @@ function normalizeOptionalId(value: string | undefined): string | undefined {
     return undefined;
   }
   return value;
+}
+
+function normalizeSessionId(value: string | undefined): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const trimmed: string = value.trim();
+  if (trimmed === '') {
+    throw new Error('WorldSceneMessage: sessionId empty after trim');
+  }
+  return trimmed;
+}
+
+function normalizeLocationId(value: string | undefined): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const trimmed: string = value.trim();
+  if (trimmed === '') {
+    throw new Error('WorldSceneMessage: locationId empty after trim');
+  }
+  return trimmed;
 }
 
 function isValidTimestamp(value: number): boolean {

@@ -6,7 +6,7 @@
  */
 
 export const DATABASE_NAME: string = 'arktavern.db';
-export const DATABASE_VERSION: number = 20;
+export const DATABASE_VERSION: number = 21;
 
 export const TABLE_CHARACTERS: string = 'characters';
 export const TABLE_CHATS: string = 'chats';
@@ -504,3 +504,18 @@ export const INDEX_WORLD_PLAYER_PROFILES_WORLD_ID: string = 'idx_world_player_pr
 export const INDEX_WORLD_CONVERSATION_SESSIONS_SCENE_ID: string = 'idx_world_conversation_sessions_scene_id';
 export const INDEX_WORLD_CONVERSATION_SESSIONS_SCENE_SEQUENCE: string = 'idx_world_conversation_sessions_scene_sequence';
 export const INDEX_WORLD_CONVERSATION_SESSIONS_WORLD_ID: string = 'idx_world_conversation_sessions_world_id';
+
+// ===== v21: 世界场景/消息 Session 存储适配(W1B1-WORLD-SESSION-STORAGE-ADAPTER) =====
+// world_scenes 新增 title; world_scene_messages 新增 session_id / location_id。
+
+/** world_scenes.title 列名(场景标题,已存在于 characters/chats,此处复用常量值) */
+export const COLUMN_SCENE_TITLE: string = 'title';
+/** world_scene_messages.session_id 列名 */
+export const COLUMN_SESSION_ID: string = 'session_id';
+/** world_scene_messages.location_id 列名(复用 world_scenes.location_id 常量值) */
+export const COLUMN_LOCATION_ID_WS: string = 'location_id';
+
+// ===== v21: 新增索引名 =====
+export const INDEX_WORLD_SCENE_MESSAGES_SESSION_ID: string = 'idx_world_scene_messages_session_id';
+export const INDEX_WORLD_SCENE_MESSAGES_SESSION_SEQUENCE: string = 'idx_world_scene_messages_session_sequence';
+export const INDEX_WORLD_SCENE_MESSAGES_LOCATION_ID: string = 'idx_world_scene_messages_location_id';

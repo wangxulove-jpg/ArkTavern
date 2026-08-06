@@ -56,6 +56,8 @@ import {
   COLUMN_PARTICIPANT_CHARACTER_INSTANCE_IDS_JSON,
   COLUMN_WITNESS_CHARACTER_INSTANCE_IDS_JSON,
   COLUMN_REPLY_TARGET_CHARACTER_INSTANCE_IDS_JSON,
+  COLUMN_SESSION_ID,
+  COLUMN_LOCATION_ID_WS,
   COLUMN_CREATED_AT,
   COLUMN_UPDATED_AT
 } from '../../database/DatabaseConstants';
@@ -112,6 +114,16 @@ export class WorldSceneMessageRepository {
       throw DatabaseError.invalidData('WorldSceneMessage.listByScene: sceneId empty');
     }
     const store: relationalStore.RdbStore = this.dbHelper.getStore();
+    return await this.listBySceneWithStore(store, sceneId);
+  }
+
+  async listBySceneWithStore(
+    store: relationalStore.RdbStore,
+    sceneId: string
+  ): Promise<WorldSceneMessage[]> {
+    if (sceneId === '') {
+      throw DatabaseError.invalidData('WorldSceneMessage.listBySceneWithStore: sceneId empty');
+    }
     const predicates: relationalStore.RdbPredicates =
       new relationalStore.RdbPredicates(TABLE_WORLD_SCENE_MESSAGES);
     predicates.equalTo(COLUMN_SCENE_ID, sceneId);
@@ -123,6 +135,75 @@ export class WorldSceneMessageRepository {
         list.push(messageFromRow(rs));
       }
       return list;
+    } finally {
+      rs.close();
+    }
+  }
+
+  /**
+   * 列出指定 Session 的全部消息,按 sequenceNumber ASC 排序。
+   * NULL session_id 消息不会出现在结果中。
+   */
+  async listBySessionId(sessionId: string): Promise<WorldSceneMessage[]> {
+    if (sessionId === '') {
+      throw DatabaseError.invalidData('WorldSceneMessage.listBySessionId: sessionId empty');
+    }
+    const store: relationalStore.RdbStore = this.dbHelper.getStore();
+    return await this.listBySessionIdWithStore(store, sessionId);
+  }
+
+  async listBySessionIdWithStore(
+    store: relationalStore.RdbStore,
+    sessionId: string
+  ): Promise<WorldSceneMessage[]> {
+    if (sessionId === '') {
+      throw DatabaseError.invalidData('WorldSceneMessage.listBySessionIdWithStore: sessionId empty');
+    }
+    const predicates: relationalStore.RdbPredicates =
+      new relationalStore.RdbPredicates(TABLE_WORLD_SCENE_MESSAGES);
+    predicates.equalTo(COLUMN_SESSION_ID, sessionId);
+    predicates.orderByAsc(COLUMN_SEQUENCE_NUMBER);
+    const rs: relationalStore.ResultSet = await store.query(predicates);
+    try {
+      const list: WorldSceneMessage[] = [];
+      while (rs.goToNextRow()) {
+        list.push(messageFromRow(rs));
+      }
+      return list;
+    } finally {
+      rs.close();
+    }
+  }
+
+  /**
+   * 统计指定 Session 的消息数量。
+   * NULL session_id 消息不计入。
+   */
+  async countBySessionId(sessionId: string): Promise<number> {
+    if (sessionId === '') {
+      throw DatabaseError.invalidData('WorldSceneMessage.countBySessionId: sessionId empty');
+    }
+    const store: relationalStore.RdbStore = this.dbHelper.getStore();
+    return await this.countBySessionIdWithStore(store, sessionId);
+  }
+
+  async countBySessionIdWithStore(
+    store: relationalStore.RdbStore,
+    sessionId: string
+  ): Promise<number> {
+    if (sessionId === '') {
+      throw DatabaseError.invalidData('WorldSceneMessage.countBySessionIdWithStore: sessionId empty');
+    }
+    const predicates: relationalStore.RdbPredicates =
+      new relationalStore.RdbPredicates(TABLE_WORLD_SCENE_MESSAGES);
+    predicates.equalTo(COLUMN_SESSION_ID, sessionId);
+    const rs: relationalStore.ResultSet = await store.query(predicates);
+    try {
+      let count: number = 0;
+      while (rs.goToNextRow()) {
+        count++;
+      }
+      return count;
     } finally {
       rs.close();
     }
@@ -514,6 +595,8 @@ function messageToBucket(message: WorldSceneMessage): relationalStore.ValuesBuck
   bucket[COLUMN_PARTICIPANT_CHARACTER_INSTANCE_IDS_JSON] = idsToJson(message.participantCharacterInstanceIds);
   bucket[COLUMN_WITNESS_CHARACTER_INSTANCE_IDS_JSON] = idsToJson(message.witnessCharacterInstanceIds);
   bucket[COLUMN_REPLY_TARGET_CHARACTER_INSTANCE_IDS_JSON] = idsToJson(message.replyTargetCharacterInstanceIds);
+  bucket[COLUMN_SESSION_ID] = message.sessionId !== undefined ? message.sessionId : null;
+  bucket[COLUMN_LOCATION_ID_WS] = message.locationId !== undefined ? message.locationId : null;
   bucket[COLUMN_CREATED_AT] = message.createdAt;
   bucket[COLUMN_UPDATED_AT] = message.updatedAt;
   return bucket;
@@ -640,6 +723,8 @@ function messageFromRow(rs: relationalStore.ResultSet): WorldSceneMessage {
     participantCharacterInstanceIds: jsonToIds(readOptionalString(rs, COLUMN_PARTICIPANT_CHARACTER_INSTANCE_IDS_JSON)),
     witnessCharacterInstanceIds: jsonToIds(readOptionalString(rs, COLUMN_WITNESS_CHARACTER_INSTANCE_IDS_JSON)),
     replyTargetCharacterInstanceIds: jsonToIds(readOptionalString(rs, COLUMN_REPLY_TARGET_CHARACTER_INSTANCE_IDS_JSON)),
+    sessionId: readOptionalString(rs, COLUMN_SESSION_ID),
+    locationId: readOptionalString(rs, COLUMN_LOCATION_ID_WS),
     createdAt: createdAt,
     updatedAt: updatedAt
   };

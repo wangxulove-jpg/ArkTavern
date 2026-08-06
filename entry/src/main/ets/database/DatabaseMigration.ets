@@ -14,7 +14,7 @@
  */
 
 import { relationalStore } from '@kit.ArkData';
-import { V1_TO_V2_STATEMENTS, V2_TO_V3_STATEMENTS, V3_TO_V4_STATEMENTS, V4_TO_V5_DDL_STATEMENTS, V5_TO_V6_STATEMENTS, V6_TO_V7_STATEMENTS, V7_TO_V8_DDL_STATEMENTS, V8_TO_V9_STATEMENTS, V9_TO_V10_DDL_STATEMENTS, V10_TO_V11_DDL_STATEMENTS, V11_TO_V12_DDL_STATEMENTS, V11_TO_V12_DATA_MIGRATION_STATEMENTS, V12_TO_V13_DDL_STATEMENTS, V13_TO_V14_DDL_STATEMENTS, V13_TO_V14_DATA_MIGRATION_STATEMENTS, V14_TO_V15_DDL_STATEMENTS, V15_TO_V16_DDL_STATEMENTS, V16_TO_V17_DDL_STATEMENTS, V17_TO_V18_DDL_STATEMENTS, V18_TO_V19_DDL_STATEMENTS, V19_TO_V20_DDL_STATEMENTS } from './DatabaseSchema';
+import { V1_TO_V2_STATEMENTS, V2_TO_V3_STATEMENTS, V3_TO_V4_STATEMENTS, V4_TO_V5_DDL_STATEMENTS, V5_TO_V6_STATEMENTS, V6_TO_V7_STATEMENTS, V7_TO_V8_DDL_STATEMENTS, V8_TO_V9_STATEMENTS, V9_TO_V10_DDL_STATEMENTS, V10_TO_V11_DDL_STATEMENTS, V11_TO_V12_DDL_STATEMENTS, V11_TO_V12_DATA_MIGRATION_STATEMENTS, V12_TO_V13_DDL_STATEMENTS, V13_TO_V14_DDL_STATEMENTS, V13_TO_V14_DATA_MIGRATION_STATEMENTS, V14_TO_V15_DDL_STATEMENTS, V15_TO_V16_DDL_STATEMENTS, V16_TO_V17_DDL_STATEMENTS, V17_TO_V18_DDL_STATEMENTS, V18_TO_V19_DDL_STATEMENTS, V19_TO_V20_DDL_STATEMENTS, V20_TO_V21_DDL_STATEMENTS } from './DatabaseSchema';
 import {
   TABLE_CHATS,
   TABLE_MESSAGES,
@@ -890,6 +890,33 @@ class V19ToV20Migration implements DatabaseMigration {
     // 仅执行 DDL(建表 + 建索引),不修改任何现有表,不迁移任何现有数据
     for (let i = 0; i < V19_TO_V20_DDL_STATEMENTS.length; i++) {
       await store.executeSql(V19_TO_V20_DDL_STATEMENTS[i]);
+    }
+  }
+}
+
+/**
+ * v20→v21 迁移(W1B1-WORLD-SESSION-STORAGE-ADAPTER):
+ * 1. ALTER world_scenes 添加 title TEXT NOT NULL DEFAULT ''
+ * 2. ALTER world_scene_messages 添加 session_id TEXT / location_id TEXT
+ * 3. 创建 3 个新索引(session_id / session_id+sequence_number / location_id)
+ *
+ * 安全性:
+ * - ALTER TABLE ADD COLUMN 不重建表,不删除任何数据
+ * - 旧行 title 默认 '', session_id / location_id 默认 NULL
+ * - 不回填任何旧数据
+ * - 任一语句失败由 DbHelper 事务回滚,数据库版本保持 20
+ */
+export function createV20ToV21Migration(): DatabaseMigration {
+  return new V20ToV21Migration();
+}
+
+class V20ToV21Migration implements DatabaseMigration {
+  readonly fromVersion: number = 20;
+  readonly toVersion: number = 21;
+
+  async migrate(store: relationalStore.RdbStore): Promise<void> {
+    for (let i = 0; i < V20_TO_V21_DDL_STATEMENTS.length; i++) {
+      await store.executeSql(V20_TO_V21_DDL_STATEMENTS[i]);
     }
   }
 }

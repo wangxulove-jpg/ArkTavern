@@ -38,13 +38,13 @@ export default function worldConversationSessionContractTest(): void {
       }
     });
 
-    it('createWorldConversationSessionRecord 正常创建 Active', () => {
+    it('createWorldConversationSessionRecord 正常创建 Active', 0, () => {
       const session: WorldConversationSession = createWorldConversationSessionRecord({
         id: 'session-1',
         worldId: 'world-1',
         sceneId: 'scene-1',
         sequenceNumber: 0,
-        participantSnapshotJson: '[{"characterInstanceId":"ci-1","displayName":"Alice","locationId":"loc-1"}]',
+        participantSnapshotJson: '[{"characterInstanceId":"ci-1","displayNameSnapshot":"Alice","locationIdAtStart":"loc-1","isActiveAtStart":true,"joinedAt":1000}]',
         playerDisplayNameSnapshot: 'Hero'
       });
       expect(session.id).assertEqual('session-1');
@@ -54,7 +54,7 @@ export default function worldConversationSessionContractTest(): void {
       expect(session.createdAt > 0).assertTrue();
     });
 
-    it('createWorldConversationSessionRecord 空 sceneId 抛错', () => {
+    it('createWorldConversationSessionRecord 空 sceneId 抛错', 0, () => {
       try {
         createWorldConversationSessionRecord({
           id: 'session-2',
@@ -68,7 +68,7 @@ export default function worldConversationSessionContractTest(): void {
       }
     });
 
-    it('createWorldConversationSessionRecord 负 sequenceNumber 抛错', () => {
+    it('createWorldConversationSessionRecord 负 sequenceNumber 抛错', 0, () => {
       try {
         createWorldConversationSessionRecord({
           id: 'session-3',
@@ -82,13 +82,13 @@ export default function worldConversationSessionContractTest(): void {
       }
     });
 
-    it('isWorldConversationSessionStatus 校验', () => {
+    it('isWorldConversationSessionStatus 校验', 0, () => {
       expect(isWorldConversationSessionStatus('active')).assertTrue();
       expect(isWorldConversationSessionStatus('ended')).assertTrue();
       expect(isWorldConversationSessionStatus('invalid')).assertFalse();
     });
 
-    it('insert + getById 成功', async () => {
+    it('insert + getById 成功', 0, async () => {
       const session: WorldConversationSession = createWorldConversationSessionRecord({
         id: 'session-ins-1',
         worldId: 'world-ins-1',
@@ -104,7 +104,7 @@ export default function worldConversationSessionContractTest(): void {
       expect(found!.participantSnapshotJson).assertEqual('[]');
     });
 
-    it('UNIQUE(sceneId, sequenceNumber) 重复插入抛 alreadyExists', async () => {
+    it('UNIQUE(sceneId, sequenceNumber) 重复插入抛 alreadyExists', 0, async () => {
       const s1: WorldConversationSession = createWorldConversationSessionRecord({
         id: 'session-uniq-1',
         worldId: 'world-uniq-1',
@@ -126,7 +126,7 @@ export default function worldConversationSessionContractTest(): void {
       }
     });
 
-    it('getActiveBySceneId 多个 Active 抛 invalidData', async () => {
+    it('getActiveBySceneId 多个 Active 抛 invalidData', 0, async () => {
       const s1: WorldConversationSession = createWorldConversationSessionRecord({
         id: 'session-multi-1',
         worldId: 'world-multi-1',
@@ -141,7 +141,7 @@ export default function worldConversationSessionContractTest(): void {
         sequenceNumber: 1,
         status: WorldConversationSessionStatus.Active
       });
-      await dbHelper.runInTransaction('w1a_test', async (store) => {
+      await dbHelper.runInTransaction(async (store: relationalStore.RdbStore) => {
         await repo.insertWithStore(store, s1);
         await repo.insertWithStore(store, s2);
       });
@@ -153,7 +153,7 @@ export default function worldConversationSessionContractTest(): void {
       }
     });
 
-    it('listBySceneId 按 sequenceNumber ASC 排序', async () => {
+    it('listBySceneId 按 sequenceNumber ASC 排序', 0, async () => {
       const s1: WorldConversationSession = createWorldConversationSessionRecord({
         id: 'session-list-1',
         worldId: 'world-list-1',
@@ -172,7 +172,7 @@ export default function worldConversationSessionContractTest(): void {
         sceneId: 'scene-list-1',
         sequenceNumber: 1
       });
-      await dbHelper.runInTransaction('w1a_test', async (store) => {
+      await dbHelper.runInTransaction(async (store: relationalStore.RdbStore) => {
         await repo.insertWithStore(store, s1);
         await repo.insertWithStore(store, s2);
         await repo.insertWithStore(store, s3);
@@ -184,7 +184,7 @@ export default function worldConversationSessionContractTest(): void {
       expect(list[2].sequenceNumber).assertEqual(2);
     });
 
-    it('deleteByWorldIdWithStore 成功删除', async () => {
+    it('deleteByWorldIdWithStore 成功删除', 0, async () => {
       const session: WorldConversationSession = createWorldConversationSessionRecord({
         id: 'session-dw-1',
         worldId: 'world-dw-1',
@@ -192,19 +192,19 @@ export default function worldConversationSessionContractTest(): void {
         sequenceNumber: 0
       });
       await repo.insert(session);
-      await dbHelper.runInTransaction('w1a_test', async (store) => {
+      await dbHelper.runInTransaction(async (store: relationalStore.RdbStore) => {
         await repo.deleteByWorldIdWithStore(store, 'world-dw-1');
       });
       const found: WorldConversationSession | null = await repo.getById('session-dw-1');
       expect(found).assertNull();
     });
 
-    it('ID_PREFIX 格式正确', () => {
+    it('ID_PREFIX 格式正确', 0, () => {
       expect(WORLD_CONVERSATION_SESSION_ID_PREFIX).assertEqual('world-conversation-session-');
     });
 
-    it('ParticipantSnapshot 使用完整字段名(非缩写)', () => {
-      const json: string = '[{"characterInstanceId":"ci-1","displayName":"Alice","locationId":"loc-1"}]';
+    it('ParticipantSnapshot JSON 使用完整字段名', 0, () => {
+      const json: string = '[{"characterInstanceId":"ci-1","displayNameSnapshot":"Alice","locationIdAtStart":"loc-1","isActiveAtStart":true,"joinedAt":1000}]';
       const session: WorldConversationSession = createWorldConversationSessionRecord({
         id: 'session-snap-1',
         worldId: 'world-snap-1',
@@ -212,8 +212,12 @@ export default function worldConversationSessionContractTest(): void {
         sequenceNumber: 0,
         participantSnapshotJson: json
       });
-      expect(session.participantSnapshotJson.indexOf('cid')).assertEqual(-1);
-      expect(session.participantSnapshotJson.indexOf('characterInstanceId')).assertGreater(-1);
+      expect(session.participantSnapshotJson.indexOf('cid') < 0).assertTrue();
+      expect(session.participantSnapshotJson.indexOf('characterInstanceId') >= 0).assertTrue();
+      expect(session.participantSnapshotJson.indexOf('displayNameSnapshot') >= 0).assertTrue();
+      expect(session.participantSnapshotJson.indexOf('locationIdAtStart') >= 0).assertTrue();
+      expect(session.participantSnapshotJson.indexOf('isActiveAtStart') >= 0).assertTrue();
+      expect(session.participantSnapshotJson.indexOf('joinedAt') >= 0).assertTrue();
     });
   });
 }

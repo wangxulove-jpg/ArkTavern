@@ -24,21 +24,14 @@ export enum WorldSceneStatus {
 export const WORLD_SCENE_ID_PREFIX: string = 'world-scene-';
 
 export interface WorldScene {
-  /** 场景 ID(以 'world-scene-' 前缀开头) */
   readonly id: string;
-  /** 所属世界 ID */
   readonly worldId: string;
-  /** 场景所在地点 ID */
   readonly locationId: string;
-  /** 场景状态 */
+  readonly title: string;
   readonly status: WorldSceneStatus;
-  /** 场景开始时间(毫秒) */
   readonly startedAt: number;
-  /** 场景结束时间(毫秒,Ended 时必填) */
   readonly endedAt?: number;
-  /** 记录创建时间(毫秒) */
   readonly createdAt: number;
-  /** 记录最后更新时间(毫秒) */
   readonly updatedAt: number;
 }
 
@@ -46,10 +39,18 @@ export interface CreateWorldSceneOptions {
   readonly id: string;
   readonly worldId: string;
   readonly locationId: string;
+  readonly title?: string;
   readonly status?: WorldSceneStatus;
   readonly startedAt?: number;
   readonly endedAt?: number;
   readonly createdAt?: number;
+  readonly updatedAt?: number;
+}
+
+export interface UpdateWorldSceneOptions {
+  readonly title?: string;
+  readonly status?: WorldSceneStatus;
+  readonly endedAt?: number;
   readonly updatedAt?: number;
 }
 
@@ -86,6 +87,7 @@ export function createWorldSceneRecord(
   if (options.locationId === '') {
     throw new Error('WorldScene: locationId empty');
   }
+  const title: string = options.title !== undefined ? options.title.trim() : '';
   const status: WorldSceneStatus = options.status !== undefined
     ? options.status : WorldSceneStatus.Active;
   if (!isWorldSceneStatus(status)) {
@@ -124,6 +126,7 @@ export function createWorldSceneRecord(
     id: options.id,
     worldId: options.worldId,
     locationId: options.locationId,
+    title: title,
     status: status,
     startedAt: startedAt,
     endedAt: endedAt,
