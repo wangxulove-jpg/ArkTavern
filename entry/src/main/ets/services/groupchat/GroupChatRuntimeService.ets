@@ -80,6 +80,20 @@ import {
   LorebookInspection,
   HistoryVisibilityInspectionItem
 } from '../../models/groupchat/GroupPromptInspectionModels';
+import {
+  GroupCharacterMemorySelectionInput,
+  GroupCharacterMemorySelection,
+  GROUP_CHARACTER_PERSONAL_MEMORY_MAX_COUNT,
+  GROUP_CHARACTER_RELATIONSHIP_MEMORY_MAX_COUNT,
+  GROUP_CHARACTER_PERSONAL_MEMORY_TOKEN_BUDGET,
+  GROUP_CHARACTER_RELATIONSHIP_MEMORY_TOKEN_BUDGET
+} from '../../models/groupchat/GroupPromptInspectionModels';
+import { GroupCharacterMemorySelector } from './GroupCharacterMemorySelector';
+import { GroupCharacterMemoryStatus } from '../../models/groupchat/GroupCharacterMemory';
+import {
+  GroupRelationshipTargetType,
+  GroupRelationshipMemoryStatus
+} from '../../models/groupchat/GroupCharacterRelationshipMemory';
 
 const LOG_TAG: string = 'GroupRuntime';
 
@@ -163,6 +177,8 @@ export class GroupChatRuntimeService {
   private readonly registry: GroupRuntimeRegistry;
   /** G-CONTEXT-INSPECTOR-1: Prompt 诊断快照内存存储 */
   private readonly inspectionStore: GroupPromptInspectionStore;
+  /** G-CONTEXT-MEMORY-SELECTION-1: 记忆选择器(可选;null 时不创建选择,行为与接入前一致) */
+  private readonly memorySelector: GroupCharacterMemorySelector | null;
 
   /** 当前轮次操作 ID(0 表示无活动轮次) */
   private activeOperationId: number = 0;
@@ -220,7 +236,8 @@ export class GroupChatRuntimeService {
     promptAssembler: GroupPromptAssembler,
     modelService: ModelService,
     registry: GroupRuntimeRegistry,
-    inspectionStore: GroupPromptInspectionStore
+    inspectionStore: GroupPromptInspectionStore,
+    memorySelector: GroupCharacterMemorySelector | null = null
   ) {
     this.roundCoordinator = roundCoordinator;
     this.messageService = messageService;
@@ -228,6 +245,7 @@ export class GroupChatRuntimeService {
     this.modelService = modelService;
     this.registry = registry;
     this.inspectionStore = inspectionStore;
+    this.memorySelector = memorySelector;
   }
 
   /**
@@ -934,7 +952,22 @@ export class GroupChatRuntimeService {
       return SpeakerResult.Cancelled;
     }
 
+    // G-CONTEXT-MEMORY-SELECTION-1: 为当前 Speaker 创建真实选择(仅进入检查器,不注入 Prompt)
+    const memorySelection: GroupCharacterMemorySelection | null =
+      await this.captureMemorySelection(
+        ctx.chatId,
+        speakerCharacterId,
+        plan,
+        allMessages,
+        visibilityResult
+      );
+    if (!this.isRoundActive(operationId)) {
+      return SpeakerResult.Cancelled;
+    }
+
     // G-CONTEXT-INSPECTOR-1: 捕获 Prompt 诊断快照(纯只读,不改变业务)
+    const replyTargetCharacterIds: string[] =
+      plan.replyTarget.characterIds !== undefined ? plan.replyTarget.characterIds.slice() : [];
     await this.captureInspectionSnapshot(
       ctx.chatId,
       speakerCharacterId,
@@ -942,11 +975,83 @@ export class GroupChatRuntimeService {
       promptResult,
       participantCharacterIds,
       visibilityResult,
-      allMessages
+      allMessages,
+      memorySelection,
+      replyTargetCharacterIds
     );
 
     // 8. 启动流式请求并等待完成
     return await this.streamForSpeaker(speakerCtx, promptResult, callbacks);
+  }
+
+  /**
+   * G-CONTEXT-MEMORY-SELECTION-1 / -1B: 为当前 Speaker 创建记忆选择。
+   *
+   * 流程:
+   * 1. memorySelector 为空时返回 null(行为与接入前完全一致)
+   * 2. 从 allMessages 定位本轮触发用户消息(plan.userMessageId),取 currentUserMessage
+   * 3. G-CONTEXT-MEMORY-SELECTION-1B:
+   *    - 关系目标候选仅接受可靠结构化来源
+   *    - 当前代码库不存在 mentionedCharacterIds / relationTargetCharacterIds 等可靠字段,
+   *      replyTargetCharacterIds 只表示"谁回复",不表示"正在谈论谁",
+   *      因此不再把 replyTarget 映射为关系目标
+   *    - relationshipTargetCandidates = [](正常状态,不是错误)
+   * 4. 调用选择器,失败时安全降级返回 null,不阻止 Provider 调用
+   *
+   * 安全日志:仅记录 chatId 尾段 / owner 尾段 + 计数摘要,不记录正文。
+   */
+  private async captureMemorySelection(
+    chatId: string,
+    speakerCharacterId: string,
+    plan: GroupRoundPlan,
+    allMessages: ChatMessage[],
+    visibilityResult: GroupVisibleHistoryResult
+  ): Promise<GroupCharacterMemorySelection | null> {
+    if (this.memorySelector === null) {
+      return null;
+    }
+    let userMessageContent: string = '';
+    for (let i = 0; i < allMessages.length; i++) {
+      const msg: ChatMessage = allMessages[i];
+      if (msg.id === plan.userMessageId) {
+        userMessageContent = msg.content !== undefined ? msg.content : '';
+        break;
+      }
+    }
+    const visibleMessageIds: string[] = [];
+    for (let i = 0; i < visibilityResult.includedMessages.length; i++) {
+      visibleMessageIds.push(visibilityResult.includedMessages[i].id);
+    }
+    // 当前群聊成员快照(plan.speakers = 启用且存在的角色,用于验证候选归属)
+    const participantCharacterIds: string[] = [];
+    for (let i = 0; i < plan.speakers.length; i++) {
+      participantCharacterIds.push(plan.speakers[i].characterId);
+    }
+
+    const input: GroupCharacterMemorySelectionInput = {
+      groupConversationId: chatId,
+      ownerCharacterId: speakerCharacterId,
+      currentUserMessage: userMessageContent,
+      visibleMessageIds: visibleMessageIds,
+      participantCharacterIds: participantCharacterIds,
+      relationshipTargetCandidates: [],
+      includeUserRelationship: true,
+      personalMemoryMaxCount: GROUP_CHARACTER_PERSONAL_MEMORY_MAX_COUNT,
+      relationshipMemoryMaxCount: GROUP_CHARACTER_RELATIONSHIP_MEMORY_MAX_COUNT,
+      personalMemoryTokenBudget: GROUP_CHARACTER_PERSONAL_MEMORY_TOKEN_BUDGET,
+      relationshipMemoryTokenBudget: GROUP_CHARACTER_RELATIONSHIP_MEMORY_TOKEN_BUDGET
+    };
+    try {
+      const selection: GroupCharacterMemorySelection = await this.memorySelector.select(input);
+      Logger.info(LOG_TAG, 'memorySelection ok: chatTail=' + this.tailOf(chatId)
+        + ' ownerTail=' + this.tailOf(speakerCharacterId)
+        + ' ' + GroupCharacterMemorySelector.buildSafeDiagnosticSummary(selection));
+      return selection;
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'memorySelection failed(continue generation): chatTail='
+        + this.tailOf(chatId) + ' ownerTail=' + this.tailOf(speakerCharacterId));
+      return null;
+    }
   }
 
   /**
@@ -1568,9 +1673,10 @@ export class GroupChatRuntimeService {
    * 快照内存 + AppPreferences 持久化(G-CONTEXT-PERSIST-1)。
    * 不记录 API Key / Authorization / 敏感信息。
    *
-   * 当前群聊记忆尚未注入 Prompt,快照如实反映:
-   * - memories: selected=0, injected=0
-   * - relationships: selected=0, injected=0
+   * G-CONTEXT-MEMORY-SELECTION-1: 记忆已选择但尚未注入 Prompt,快照如实反映:
+   * - memories: selected>=0, injected=0
+   * - relationships: selected>=0, injected=0
+   * - memorySelection: 最近一次真实选择(仅内存,持久化恢复时为空)
    */
   private async captureInspectionSnapshot(
     chatId: string,
@@ -1579,7 +1685,9 @@ export class GroupChatRuntimeService {
     promptResult: GroupPromptAssemblyResult,
     participantCharacterIds: string[],
     visibilityResult: GroupVisibleHistoryResult,
-    allMessages: ChatMessage[]
+    allMessages: ChatMessage[],
+    memorySelection: GroupCharacterMemorySelection | null,
+    replyTargetCharacterIds: string[]
   ): Promise<void> {
     const speakerName: string = promptResult.character !== null
       ? promptResult.character.name : '未知角色';
@@ -1663,6 +1771,63 @@ export class GroupChatRuntimeService {
       matchedEntryCount: promptResult.matchedLorebookCount
     };
 
+    // G-CONTEXT-MEMORY-SELECTION-1: 从选择结果填充记忆/关系诊断计数(仅选择,未注入)
+    let totalMemoriesStored: number = 0;
+    let totalMemoriesActive: number = 0;
+    let totalMemoriesSelected: number = 0;
+    let totalRelationshipsStored: number = 0;
+    let totalRelationshipsActive: number = 0;
+    let totalRelationshipsSelected: number = 0;
+    let reverseRels: RelationshipInspectionItem[] = [];
+    if (memorySelection !== null) {
+      totalMemoriesStored = memorySelection.allPersonalMemories.length;
+      totalMemoriesActive = memorySelection.eligiblePersonalMemories.length;
+      totalMemoriesSelected = memorySelection.selectedPersonalMemories.length;
+      totalRelationshipsStored = memorySelection.allOwnedRelationships.length;
+      for (let i = 0; i < memorySelection.allOwnedRelationships.length; i++) {
+        if (memorySelection.allOwnedRelationships[i].status === GroupRelationshipMemoryStatus.Active) {
+          totalRelationshipsActive++;
+        }
+      }
+      totalRelationshipsSelected = memorySelection.selectedRelationships.length;
+      // 名称映射(participantCharacterIds 与 participantNames 索引对齐)
+      const nameMap: Map<string, string> = new Map<string, string>();
+      for (let i = 0; i < participantCharacterIds.length; i++) {
+        const name: string = i < promptResult.participantNames.length
+          ? promptResult.participantNames[i] : participantCharacterIds[i];
+        nameMap.set(participantCharacterIds[i], name);
+      }
+      const reverseItems: RelationshipInspectionItem[] = [];
+      for (let i = 0; i < memorySelection.reverseRelationships.length; i++) {
+        const rel = memorySelection.reverseRelationships[i];
+        const ownerLookup: string | undefined = nameMap.get(rel.ownerCharacterId);
+        const ownerName: string = ownerLookup !== undefined
+          ? ownerLookup : this.tailOf(rel.ownerCharacterId);
+        const targetLookup: string | undefined = nameMap.get(rel.targetId);
+        const targetName: string = rel.targetType === GroupRelationshipTargetType.User
+          ? '用户' : (targetLookup !== undefined
+            ? targetLookup : this.tailOf(rel.targetId));
+        reverseItems.push({
+          id: rel.id,
+          ownerCharacterId: rel.ownerCharacterId,
+          ownerCharacterName: ownerName,
+          targetId: rel.targetId,
+          targetType: rel.targetType,
+          targetName: targetName,
+          direction: ownerName + ' → ' + targetName,
+          experienceSummary: rel.experienceSummary,
+          attitudeSummary: rel.attitudeSummary,
+          relationshipSummary: rel.relationshipSummary,
+          importance: rel.importance,
+          status: rel.status,
+          selected: false,
+          injected: false,
+          isReverse: true
+        });
+      }
+      reverseRels = reverseItems;
+    }
+
     const snapshot: GroupPromptInspectionSnapshot = {
       snapshotId: 'insp-' + roundId + '-' + speakerCharacterId,
       groupConversationId: chatId,
@@ -1671,16 +1836,16 @@ export class GroupChatRuntimeService {
       roundId: roundId,
       capturedAt: Date.now(),
       memories: [],
-      totalMemoriesStored: 0,
-      totalMemoriesActive: 0,
-      totalMemoriesSelected: 0,
+      totalMemoriesStored: totalMemoriesStored,
+      totalMemoriesActive: totalMemoriesActive,
+      totalMemoriesSelected: totalMemoriesSelected,
       totalMemoriesInjected: 0,
       relationships: [],
-      totalRelationshipsStored: 0,
-      totalRelationshipsActive: 0,
-      totalRelationshipsSelected: 0,
+      totalRelationshipsStored: totalRelationshipsStored,
+      totalRelationshipsActive: totalRelationshipsActive,
+      totalRelationshipsSelected: totalRelationshipsSelected,
       totalRelationshipsInjected: 0,
-      reverseRelationships: [],
+      reverseRelationships: reverseRels,
       promptMessages: promptMsgs,
       tokenBudget: budget,
       lorebook: lorebookInfo,
@@ -1691,6 +1856,8 @@ export class GroupChatRuntimeService {
         excludedCount: visibilityResult.excludedCount,
         reasonCounts: reasonCounts
       },
+      memorySelection: memorySelection !== null ? memorySelection : undefined,
+      replyTargetCharacterIds: replyTargetCharacterIds,
       presetSystemPromptPreview: promptResult.presetSystemPrompt.length > 200
         ? promptResult.presetSystemPrompt.substring(0, 200) + '...'
         : promptResult.presetSystemPrompt,
@@ -1700,5 +1867,13 @@ export class GroupChatRuntimeService {
     };
 
     await this.inspectionStore.store(snapshot);
+  }
+
+  /** 安全日志辅助:返回 ID 尾段(<=8),不暴露完整 ID */
+  private tailOf(id: string): string {
+    if (id.length <= 8) {
+      return id;
+    }
+    return id.substring(id.length - 8);
   }
 }

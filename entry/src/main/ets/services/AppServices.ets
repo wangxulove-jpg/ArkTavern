@@ -89,6 +89,7 @@ import { GroupCharacterSelfSummaryService } from './groupchat/GroupCharacterSelf
 import { GroupCharacterRelationshipMemoryService } from './groupchat/GroupCharacterRelationshipMemoryService';
 import { GroupCharacterRelationshipSummaryService } from './groupchat/GroupCharacterRelationshipSummaryService';
 import { GroupPromptInspectionStore } from './groupchat/GroupPromptInspectionStore';
+import { GroupCharacterMemorySelector } from './groupchat/GroupCharacterMemorySelector';
 import { WorldRepository } from '../repositories/world/WorldRepository';
 import { WorldLocationRepository } from '../repositories/world/WorldLocationRepository';
 import { WorldLocationEdgeRepository } from '../repositories/world/WorldLocationEdgeRepository';
@@ -465,23 +466,29 @@ export class AppServices {
     );
     // G-CONTEXT-INSPECTOR-1 / G-CONTEXT-PERSIST-1: Prompt 诊断快照存储(内存 + AppPreferences)
     this.groupPromptInspectionStore = new GroupPromptInspectionStore(this.appPreferences);
+    // G-CONTEXT-MEMORY-SELECTION-1: 记忆选择器依赖的两个 Repository 提前创建(仅依赖 DbHelper)
+    this.groupCharacterMemoryRepository = new GroupCharacterMemoryRepository(this.dbHelper);
+    this.groupCharacterRelationshipMemoryRepository =
+      new GroupCharacterRelationshipMemoryRepository(this.dbHelper);
     this.groupChatRuntimeService = new GroupChatRuntimeService(
       this.groupRoundCoordinator,
       this.groupConversationMessageService,
       this.groupPromptAssembler,
       this.modelService,
       this.groupRuntimeRegistry,
-      this.groupPromptInspectionStore
+      this.groupPromptInspectionStore,
+      new GroupCharacterMemorySelector(
+        this.groupCharacterMemoryRepository,
+        this.groupCharacterRelationshipMemoryRepository
+      )
     );
-    // G-MEMORY-1A: 多人聊天每角色独立记忆 Repository + Service。
-    // Repository 仅依赖 DbHelper,不依赖任何 Service,不会形成循环。
+    // G-MEMORY-1A: 多人聊天每角色独立记忆 Service。
     // Service 依赖 chatRepository(只读 getByIdWithStore) + characterRepository(只读 getByIdWithStore)
     // + chatParticipantRepository(只读 listByChatIdWithStore) + memoryRepo(写入) + dbHelper(事务)。
     // 不调用 GroupChatRuntimeService / GroupPromptAssembler / ModelService,
     // 不影响多人聊天发送/Streaming/严格顺序/回复目标/@角色/停止整轮/重试等现有功能。
     // 群聊删除级联清理已通过 ChatPersistenceOperations 注入 memoryRepo 实现,
     // 此处 Service 仅用于手动记忆 CRUD,不参与群聊删除流程。
-    this.groupCharacterMemoryRepository = new GroupCharacterMemoryRepository(this.dbHelper);
     this.groupCharacterMemoryService = new GroupCharacterMemoryService(
       this.chatRepository,
       this.characterRepository,
@@ -499,16 +506,13 @@ export class AppServices {
       this.groupCharacterMemoryService,
       this.modelService
     );
-    // G-MEMORY-AUTO-1B: 多人角色关系记忆 Repository + Service + SummaryService。
-    // Repository 仅依赖 DbHelper,不依赖任何 Service,不会形成循环。
+    // G-MEMORY-AUTO-1B: 多人角色关系记忆 Service + SummaryService。
     // MemoryService 依赖 chatRepository(只读 getByIdWithStore) + characterRepository(只读 getByIdWithStore)
     //   + relationshipRepo(写入) + dbHelper(事务)。不校验 ChatParticipant(成员移除后关系保留)。
     // SummaryService 依赖 messageService(只读 listMessages) + groupPersistenceService(只读 getParticipants)
     //   + characterService(只读 getById 解析白名单) + relationshipMemoryService(只读 listByOwner 检查重复)
     //   + modelService(只读 getCurrentConfig / sendChat)。
     // 不依赖 ChatPage / ViewModel / Runtime,无构造循环。
-    this.groupCharacterRelationshipMemoryRepository =
-      new GroupCharacterRelationshipMemoryRepository(this.dbHelper);
     this.groupCharacterRelationshipMemoryService = new GroupCharacterRelationshipMemoryService(
       this.chatRepository,
       this.characterRepository,

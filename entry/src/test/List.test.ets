@@ -5,6 +5,8 @@ import groupChatRuntimeServiceTest from './GroupChatRuntimeService.test';
 import groupConversationMessageServiceTest from './GroupConversationMessageService.test';
 import groupMutationDeleteProtectionTest from './GroupMutationDeleteProtection.test';
 import groupMessageVisibilityPolicyTest from './GroupMessageVisibilityPolicy.test';
+import groupCharacterMemorySelectorTest from './GroupCharacterMemorySelector.test';
+import groupMemorySelectionInspectionTest from './GroupMemorySelectionInspection.test';
 
 export default function testsuite() {
   localUnitSmokeTest();
@@ -14,4 +16,6 @@ export default function testsuite() {
   groupConversationMessageServiceTest();
   groupMutationDeleteProtectionTest();
   groupMessageVisibilityPolicyTest();
+  groupCharacterMemorySelectorTest();
+  groupMemorySelectionInspectionTest();
 }

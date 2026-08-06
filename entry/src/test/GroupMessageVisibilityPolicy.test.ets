@@ -316,5 +316,52 @@ export default function groupMessageVisibilityPolicyTest() {
       expect(forC.includedCount).assertEqual(4);
     });
 
+    it('VIS_21_narrator_sender_with_narrator_visibility_explicit_decision', 0, () => {
+      // G-CONTEXT-MEMORY-SELECTION-1 补充:审计确认合法值中存在 visibility='narrator'。
+      // 当前业务不写入 visibility='narrator'(旁白写 public + senderType='narrator'),
+      // 但过滤器必须对"旁白身份 + narrator 可见性 + completed 状态"给出显式决策,
+      // 不得依赖默认分支。
+      const msg: ChatMessage = {
+        id: 'narr-v21',
+        role: ChatRole.Assistant,
+        content: 'scene',
+        createdAt: 1000,
+        updatedAt: 1000,
+        isStreaming: false,
+        status: ChatMessageStatus.Completed,
+        senderType: 'narrator' as MessageSenderType,
+        senderCharacterId: undefined,
+        visibility: 'narrator' as MessageVisibility
+      };
+      const decision: GroupMessageVisibilityDecision =
+        GroupMessageVisibilityPolicy.evaluate(msg, CHAR_A);
+      expect(decision.visible).assertFalse();
+      expect(decision.reason).assertEqual(GroupMessageVisibilityReason.EXCLUDED_UNSUPPORTED_VISIBILITY);
+    });
+
+    it('VIS_22_narrator_sender_private_visibility_follows_recipient_rule', 0, () => {
+      const msg: ChatMessage = {
+        id: 'narr-v22',
+        role: ChatRole.Assistant,
+        content: 'whisper',
+        createdAt: 1000,
+        updatedAt: 1000,
+        isStreaming: false,
+        status: ChatMessageStatus.Completed,
+        senderType: 'narrator' as MessageSenderType,
+        senderCharacterId: undefined,
+        visibility: 'private' as MessageVisibility,
+        recipientCharacterIds: [CHAR_A]
+      };
+      const forA: GroupMessageVisibilityDecision =
+        GroupMessageVisibilityPolicy.evaluate(msg, CHAR_A);
+      const forB: GroupMessageVisibilityDecision =
+        GroupMessageVisibilityPolicy.evaluate(msg, CHAR_B);
+      expect(forA.visible).assertTrue();
+      expect(forA.reason).assertEqual(GroupMessageVisibilityReason.INCLUDED_PRIVATE_RECIPIENT);
+      expect(forB.visible).assertFalse();
+      expect(forB.reason).assertEqual(GroupMessageVisibilityReason.EXCLUDED_PRIVATE_NOT_RECIPIENT);
+    });
+
   });
 }

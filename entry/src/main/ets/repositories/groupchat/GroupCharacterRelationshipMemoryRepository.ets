@@ -155,6 +155,49 @@ export class GroupCharacterRelationshipMemoryRepository {
   }
 
   /**
+   * 列出指定群聊中所有"指向目标角色 A"的关系记录(其他 owner → A)。
+   *
+   * G-CONTEXT-MEMORY-SELECTION-1 反向关系诊断专用窄查询:
+   * - 仅按 target_id + target_type='character' 过滤,不按 owner 过滤
+   * - 用于在检查器显示 B→A、C→A,不进入 A 的 selectedRelationships
+   * - 不修改 Schema / DATABASE_VERSION / 现有方法语义
+   *
+   * 排序:status ASC, importance DESC, updatedAt DESC, id ASC
+   */
+  async listByTarget(
+    groupConversationId: string,
+    targetCharacterId: string
+  ): Promise<GroupCharacterRelationshipMemory[]> {
+    if (groupConversationId === '') {
+      throw DatabaseError.invalidData('GroupCharacterRelationshipMemory.listByTarget: groupConversationId empty');
+    }
+    if (targetCharacterId === '') {
+      throw DatabaseError.invalidData('GroupCharacterRelationshipMemory.listByTarget: targetCharacterId empty');
+    }
+    const store: relationalStore.RdbStore = this.dbHelper.getStore();
+    const predicates: relationalStore.RdbPredicates =
+      new relationalStore.RdbPredicates(TABLE_GROUP_CHARACTER_RELATIONSHIP_MEMORIES);
+    predicates.equalTo(COLUMN_GROUP_CONVERSATION_ID, groupConversationId);
+    predicates.equalTo(COLUMN_TARGET_ID, targetCharacterId);
+    predicates.equalTo(COLUMN_TARGET_TYPE, GroupRelationshipTargetType.Character);
+    // 'active' < 'archived' < 'invalidated' 字典序恰好匹配
+    predicates.orderByAsc(COLUMN_STATUS);
+    predicates.orderByDesc(COLUMN_IMPORTANCE_GCRM);
+    predicates.orderByDesc(COLUMN_UPDATED_AT);
+    predicates.orderByAsc(COLUMN_ID);
+    const rs: relationalStore.ResultSet = await store.query(predicates);
+    try {
+      const list: GroupCharacterRelationshipMemory[] = [];
+      while (rs.goToNextRow()) {
+        list.push(memoryFromRow(rs));
+      }
+      return list;
+    } finally {
+      rs.close();
+    }
+  }
+
+  /**
    * 列出指定 owner 在某群聊的 Active 关系记忆。
    * 排序:importance DESC, updatedAt DESC, id ASC
    */
