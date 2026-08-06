@@ -29,6 +29,7 @@ import {
   PENDING_WORLD_ID_KEY,
   PENDING_WORLD_LOCATION_ID_KEY,
   PENDING_WORLD_SCENE_CHAT_ID_KEY,
+  PENDING_WORLD_INSTANCE_DETAIL_ID_KEY,
   WORLD_DETAIL_REFRESH_TOKEN_KEY,
   WORLD_SCENE_CHAT_REFRESH_TOKEN_KEY,
   formatWorldTimestamp
@@ -640,9 +641,13 @@ struct WorldDetailPage {
     detail: WorldDetailUiModel,
     selectedLocationId: string
   ): string {
-    const charCount: number = this.countCharactersAt(node.locationId, detail.characters);
+    const chars: WorldCharacterInstanceUiModel[] = this.filterCharactersAt(node.locationId, detail.characters);
+    let charSig: string = '';
+    for (let i: number = 0; i < chars.length; i++) {
+      charSig = charSig + chars[i].id.substring(chars[i].id.length - 6) + ',';
+    }
     const selected: boolean = selectedLocationId === node.locationId;
-    return node.locationId + '|' + charCount.toString() + '|' + (selected ? '1' : '0');
+    return node.locationId + '|' + charSig + '|' + (selected ? '1' : '0');
   }
 
   @Builder
@@ -689,6 +694,8 @@ struct WorldDetailPage {
           this.onLocationTapped(locationId);
         }
       })
+
+      this.characterBillboardRow(node.locationId, detail.characters)
     }
     .width(node.width)
     .height(node.height)
@@ -696,6 +703,52 @@ struct WorldDetailPage {
     .onClick(() => {
       this.onLocationTapped(node.locationId);
     })
+  }
+
+  /** 地图节点下方的角色头像广告牌(最多 3 个 + N) */
+  @Builder
+  characterBillboardRow(locationId: string, characters: WorldCharacterInstanceUiModel[]): void {
+    Row() {
+      ForEach(this.takeCharactersAt(locationId, characters, 3), (c: WorldCharacterInstanceUiModel, index: number) => {
+        Stack({ alignContent: Alignment.Bottom }) {
+          CharacterImageView({
+            imageUri: c.avatarUri,
+            fallbackName: c.fallbackName,
+            imgWidth: 22,
+            imgHeight: 22,
+            imgBorderRadius: 11,
+            displayMode: 'thumbnail',
+            objectFit: ImageFit.Cover
+          })
+        }
+        .width(22)
+        .height(22)
+        .margin({ left: index === 0 ? 0 : -6 })
+        .borderWidth(1.5)
+        .borderColor($r('app.color.world_map_bg'))
+        .borderRadius(11)
+        .onClick(() => {
+          this.openInstanceDetail(c.id);
+        })
+      }, (c: WorldCharacterInstanceUiModel) => c.id)
+
+      if (this.overflowCharacterCount(locationId, characters, 3) > 0) {
+        Text('+' + this.overflowCharacterCount(locationId, characters, 3).toString())
+          .fontSize(9)
+          .fontColor($r('app.color.world_text_secondary'))
+          .backgroundColor($r('app.color.world_surface_2'))
+          .borderRadius(8)
+          .width(16)
+          .height(16)
+          .textAlign(TextAlign.Center)
+          .margin({ left: 2 })
+          .onClick(() => {
+            this.openCharacterManage();
+          })
+      }
+    }
+    .margin({ top: 4 })
+    .alignItems(VerticalAlign.Center)
   }
 
   // ===== 选中地点详情 =====
@@ -1739,6 +1792,40 @@ struct WorldDetailPage {
       }
     }
     return result;
+  }
+
+  /** 取某地点下最多 max 个角色(用于广告牌头像) */
+  private takeCharactersAt(
+    locationId: string,
+    characters: WorldCharacterInstanceUiModel[],
+    max: number
+  ): WorldCharacterInstanceUiModel[] {
+    const result: WorldCharacterInstanceUiModel[] = [];
+    for (let i: number = 0; i < characters.length && result.length < max; i++) {
+      if (characters[i].currentLocationId === locationId) {
+        result.push(characters[i]);
+      }
+    }
+    return result;
+  }
+
+  /** 超出 max 数量的角色数 */
+  private overflowCharacterCount(
+    locationId: string,
+    characters: WorldCharacterInstanceUiModel[],
+    max: number
+  ): number {
+    const total: number = this.countCharactersAt(locationId, characters);
+    return total > max ? total - max : 0;
+  }
+
+  /** 跳转角色实例详情页 */
+  private openInstanceDetail(instanceId: string): void {
+    if (instanceId.length === 0) {
+      return;
+    }
+    AppStorage.setOrCreate<string>(PENDING_WORLD_INSTANCE_DETAIL_ID_KEY, instanceId);
+    router.pushUrl({ url: 'pages/world/WorldCharacterInstanceDetailPage' });
   }
 
   private countOutgoingEdges(locationId: string, edges: WorldEdgeUiModel[]): number {

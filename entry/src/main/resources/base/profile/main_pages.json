@@ -37,6 +37,8 @@
     "pages/world/WorldSceneManagePage",
     "pages/world/WorldSceneDetailPage",
     "pages/world/WorldSceneChatPage",
-    "pages/world/WorldCharacterMemoryPage"
+    "pages/world/WorldCharacterMemoryPage",
+    "pages/world/WorldCharacterAnalysisPreviewPage",
+    "pages/world/WorldCharacterInstanceDetailPage"
   ]
 }

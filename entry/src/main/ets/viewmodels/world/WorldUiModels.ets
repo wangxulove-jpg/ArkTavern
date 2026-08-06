@@ -44,6 +44,12 @@ export const PENDING_WORLD_SCENE_CHAT_ID_KEY: string = 'pendingWorldSceneChatId'
  */
 export const PENDING_WORLD_MEMORY_CHARACTER_INSTANCE_ID_KEY: string = 'pendingWorldMemoryCharacterInstanceId';
 
+/** 跨页面路由用的角色卡 ID 暂存键(W-UI-1B,分析预览流程) */
+export const PENDING_WORLD_ANALYSIS_CHARACTER_ID_KEY: string = 'pendingWorldAnalysisCharacterId';
+
+/** 跨页面路由用的实例 ID 暒存键(W-UI-1B,实例详情流程,不复用移动页 key) */
+export const PENDING_WORLD_INSTANCE_DETAIL_ID_KEY: string = 'pendingWorldInstanceDetailId';
+
 /** 跨页面路由用的 worldId 暂存键(W-MEMORY-1A,与 PENDING_WORLD_ID_KEY 区分,避免与移动页等流程互相覆盖) */
 export const PENDING_WORLD_MEMORY_WORLD_ID_KEY: string = 'pendingWorldMemoryWorldId';
 
@@ -218,4 +224,56 @@ export function formatWorldTimestamp(ts: number): string {
   const hour: string = d.getHours().toString().padStart(2, '0');
   const minute: string = d.getMinutes().toString().padStart(2, '0');
   return year + '-' + month + '-' + day + ' ' + hour + ':' + minute;
+}
+
+/** 世界角色实例摘要 UI 模型(W-UI-1B,用于实例详情页) */
+export interface WorldCharacterInstanceDetailUiModel {
+  readonly instanceId: string;
+  readonly worldId: string;
+  readonly worldName: string;
+  readonly characterId: string;
+  readonly displayName: string;
+  readonly avatarUri: string;
+  readonly fallbackName: string;
+  readonly isActive: boolean;
+  readonly currentLocationId: string;
+  readonly currentLocationName: string;
+  readonly locationMissing: boolean;
+  readonly characterCardMissing: boolean;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+}
+
+/** 角色分析预览 UI 模型(W-UI-1B,纯本地确定性预览,不调用 AI) */
+export interface CharacterAnalysisPreviewUiModel {
+  readonly characterId: string;
+  readonly characterName: string;
+  readonly avatarUri: string;
+  readonly fallbackName: string;
+  readonly description: string;
+  readonly personality: string;
+  readonly scenario: string;
+  readonly tags: string[];
+  readonly suggestedWorldIdentity: string;
+  readonly suggestedLocationId: string;
+  readonly suggestedLocationName: string;
+  readonly iconStyle: string;
+  readonly initialState: string;
+  readonly initialGoal: string;
+}
+
+/** 角色分析预览加载状态 */
+export enum CharacterPreviewLoadState {
+  Loading = 'loading',
+  Ready = 'ready',
+  NotFound = 'not_found',
+  Error = 'error'
+}
+
+/** 角色实例详情加载状态 */
+export enum WorldInstanceDetailLoadState {
+  Loading = 'loading',
+  Ready = 'ready',
+  NotFound = 'not_found',
+  Error = 'error'
 }

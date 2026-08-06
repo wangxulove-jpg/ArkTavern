@@ -3015,6 +3015,206 @@
     {
       "name": "world_ui_no_cover",
       "value": "无封面"
+    },
+    {
+      "name": "world_char_analysis_title",
+      "value": "角色分析预览"
+    },
+    {
+      "name": "world_char_analysis_ai_not_connected",
+      "value": "AI 分析尚未接入,以下为 UI 预览"
+    },
+    {
+      "name": "world_char_analysis_original_card",
+      "value": "原始角色卡信息"
+    },
+    {
+      "name": "world_char_analysis_world_draft",
+      "value": "世界实例草案"
+    },
+    {
+      "name": "world_char_analysis_suggested_identity",
+      "value": "建议世界身份"
+    },
+    {
+      "name": "world_char_analysis_suggested_location",
+      "value": "建议初始地点"
+    },
+    {
+      "name": "world_char_analysis_icon_style",
+      "value": "图标样式"
+    },
+    {
+      "name": "world_char_analysis_initial_state",
+      "value": "初始状态"
+    },
+    {
+      "name": "world_char_analysis_initial_goal",
+      "value": "初始目标草案"
+    },
+    {
+      "name": "world_char_analysis_no_location",
+      "value": "暂不设置地点"
+    },
+    {
+      "name": "world_char_analysis_create_location",
+      "value": "创建地点"
+    },
+    {
+      "name": "world_char_analysis_join_world",
+      "value": "加入世界"
+    },
+    {
+      "name": "world_char_analysis_no_locations",
+      "value": "这个世界还没有地点"
+    },
+    {
+      "name": "world_char_detail_title",
+      "value": "角色详情"
+    },
+    {
+      "name": "world_char_detail_world_identity",
+      "value": "世界内身份"
+    },
+    {
+      "name": "world_char_detail_current_status",
+      "value": "当前状态"
+    },
+    {
+      "name": "world_char_detail_current_goal",
+      "value": "当前目标"
+    },
+    {
+      "name": "world_char_detail_recent_activity",
+      "value": "近期活动"
+    },
+    {
+      "name": "world_char_detail_memory_summary",
+      "value": "当前记忆摘要"
+    },
+    {
+      "name": "world_char_detail_relationships",
+      "value": "关系摘要"
+    },
+    {
+      "name": "world_char_detail_scenes",
+      "value": "参与过的场景"
+    },
+    {
+      "name": "world_char_detail_original_card",
+      "value": "原始角色卡"
+    },
+    {
+      "name": "world_char_detail_not_established",
+      "value": "尚未建立"
+    },
+    {
+      "name": "world_char_detail_start_conversation",
+      "value": "开始对话"
+    },
+    {
+      "name": "world_char_detail_view_memory",
+      "value": "查看记忆"
+    },
+    {
+      "name": "world_char_detail_move_character",
+      "value": "移动角色"
+    },
+    {
+      "name": "world_char_detail_world_instance_id",
+      "value": "世界实例 ID"
+    },
+    {
+      "name": "world_scene_launcher_title",
+      "value": "开始场景"
+    },
+    {
+      "name": "world_scene_launcher_current_location",
+      "value": "当前地点"
+    },
+    {
+      "name": "world_scene_launcher_current_character",
+      "value": "当前角色"
+    },
+    {
+      "name": "world_scene_launcher_same_location_chars",
+      "value": "同地点角色"
+    },
+    {
+      "name": "world_scene_launcher_active_scene",
+      "value": "已有活动场景"
+    },
+    {
+      "name": "world_scene_launcher_last_ended",
+      "value": "最近一次结束场景"
+    },
+    {
+      "name": "world_scene_launcher_solo_talk",
+      "value": "与该角色单独交谈"
+    },
+    {
+      "name": "world_scene_launcher_group_talk",
+      "value": "与此处所有角色交谈"
+    },
+    {
+      "name": "world_scene_launcher_select_participants",
+      "value": "选择参与角色"
+    },
+    {
+      "name": "world_scene_launcher_continue_last",
+      "value": "继续上次会话"
+    },
+    {
+      "name": "world_scene_launcher_create_new",
+      "value": "创建新会话"
+    },
+    {
+      "name": "world_scene_launcher_coming_soon",
+      "value": "即将支持"
+    },
+    {
+      "name": "world_scene_launcher_view_scenes",
+      "value": "查看现有场景"
+    },
+    {
+      "name": "world_scene_launcher_create_new_scene",
+      "value": "创建新场景"
+    },
+    {
+      "name": "world_char_manage_search_placeholder",
+      "value": "搜索角色名称"
+    },
+    {
+      "name": "world_char_manage_filter_all",
+      "value": "全部"
+    },
+    {
+      "name": "world_char_manage_filter_not_joined",
+      "value": "未加入"
+    },
+    {
+      "name": "world_char_manage_filter_joined",
+      "value": "已加入"
+    },
+    {
+      "name": "world_char_manage_analyze_and_join",
+      "value": "分析并加入"
+    },
+    {
+      "name": "world_char_manage_view_character",
+      "value": "查看角色"
+    },
+    {
+      "name": "world_char_manage_no_character_cards",
+      "value": "当前没有可用角色卡"
+    },
+    {
+      "name": "world_char_manage_create_character_hint",
+      "value": "请先在角色管理中创建角色"
+    },
+    {
+      "name": "world_char_manage_go_to_character_management",
+      "value": "前往角色管理"
     }
   ]
 }
