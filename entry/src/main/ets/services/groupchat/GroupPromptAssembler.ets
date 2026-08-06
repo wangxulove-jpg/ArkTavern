@@ -33,7 +33,7 @@
  * - 只打印消息数量、Token 估算、操作类别
  */
 
-import { ChatMessage, createChatMessage } from '../../models/ChatMessage';
+import { ChatMessage, createChatMessage, MessageSenderType } from '../../models/ChatMessage';
 import { ChatRole } from '../../models/ChatRole';
 import { Character } from '../../models/Character';
 import { Lorebook } from '../../models/Lorebook';
@@ -76,6 +76,10 @@ import {
   FormattedPersonalMemoryItem,
   FormattedRelationshipItem
 } from './GroupMemoryPromptFormatter';
+import {
+  GroupUserIdentitySnapshot,
+  DEFAULT_USER_DISPLAY_NAME
+} from '../../models/groupchat/GroupUserIdentitySnapshot';
 
 const LOG_TAG: string = 'GroupPromptAssembler';
 
@@ -105,6 +109,8 @@ export interface GroupPromptAssemblyContext {
   readonly replyTarget?: GroupReplyTarget;
   /** G-CONTEXT-PROMPT-INJECTION-1: 当前 Speaker 的记忆选择(唯一注入来源;为空时不注入) */
   readonly memorySelection?: GroupCharacterMemorySelection;
+  /** G-GROUP-USER-IDENTITY-1: 本轮唯一用户身份快照(所有角色共享) */
+  readonly userIdentity: GroupUserIdentitySnapshot;
 }
 
 /**
@@ -143,6 +149,8 @@ export interface GroupPromptAssemblyResult {
   readonly personalMemorySegmentText?: string;
   /** G-CONTEXT-PROMPT-INJECTION-1: 最终注入的关系 System 段完整正文(空字符串表示未注入) */
   readonly relationshipMemorySegmentText?: string;
+  /** G-GROUP-USER-IDENTITY-1: 用户身份快照(诊断用) */
+  readonly userIdentity: GroupUserIdentitySnapshot;
 }
 
 /**
@@ -272,19 +280,22 @@ export class GroupPromptAssembler {
     const effectiveSettings: EffectiveGenerationSettings =
       resolveEffectiveGenerationSettings(base, preset !== null ? preset : undefined);
 
-    // 6. 转换历史消息(AI 消息加 [角色名]: 前缀)
+    // 6. 转换历史消息(AI 消息加 [角色·名]: 前缀,用户消息加 [用户·名]:)
     const characterMap: Map<string, Character | null> = await this.loadCharacterMap(
       context.messages
     );
     const convertedMessages: ChatMessage[] = this.convertHistoryMessages(
       context.messages,
-      characterMap
+      characterMap,
+      context.speakerCharacterId,
+      speaker.name,
+      context.userIdentity
     );
 
-    // 7. 构建宏替换上下文
+    // 7. 构建宏替换上下文(使用快照中的用户名称)
     const macroContext: MacroContext = this.promptBuilder.buildMacroContext(
       speaker,
-      'User',
+      context.userIdentity.displayName,
       convertedMessages
     );
 
@@ -316,7 +327,8 @@ export class GroupPromptAssembler {
         context.memorySelection,
         ownerName,
         nameMap,
-        'group-memory-' + context.roundId
+        'group-memory-' + context.roundId,
+        context.userIdentity.displayName
       );
       baseMessages = this.injectMemorySegments(
         baseMessages,
@@ -325,17 +337,23 @@ export class GroupPromptAssembler {
       );
     }
 
-    // 9. 追加群聊约束 System 消息
+    // 9. 生成群聊身份边界 System 段 + 约束
     const replyTarget: GroupReplyTarget = context.replyTarget !== undefined
       ? context.replyTarget : REPLY_TARGET_ALL_ENABLED;
+    const identityBoundary: string = this.buildIdentityBoundary(
+      context.userIdentity,
+      speaker.name,
+      participantNames
+    );
     const groupConstraint: string = this.buildGroupConstraint(
       speaker.name,
       participantNames,
       replyTarget
     );
+    const constraintFull: string = identityBoundary + '\n\n' + groupConstraint;
     const messagesWithConstraint: ChatMessage[] = this.injectGroupConstraint(
       baseMessages,
-      groupConstraint
+      constraintFull
     );
 
     // 10. 通过 HistoryTrimmer 裁剪
@@ -413,7 +431,8 @@ export class GroupPromptAssembler {
       memoryInjectionItems: memoryInjectionItems,
       relationshipInjectionItems: relationshipInjectionItems,
       personalMemorySegmentText: personalMemorySegmentText,
-      relationshipMemorySegmentText: relationshipMemorySegmentText
+      relationshipMemorySegmentText: relationshipMemorySegmentText,
+      userIdentity: context.userIdentity
     };
   }
 
@@ -565,67 +584,57 @@ export class GroupPromptAssembler {
   }
 
   /**
-   * 转换历史消息。
+   * 转换历史消息(G-GROUP-USER-IDENTITY-1: 身份标签版)。
    *
    * 规则:
-   * - 用户消息:role=user, content=原始正文
-   * - 角色 AI 消息:role=assistant, content="[角色名]: 消息正文"
-   *   (角色已删除时显示 "[未知角色]:")
-   * - 旁白消息(senderType='narrator'):role=assistant, content="[旁白]: 消息正文"
-   * - System 消息:本阶段直接跳过(不混入内部错误/状态)
-   *
-   * G-CONTEXT-VISIBILITY-1:旁白身份修正
-   * - senderType='narrator' 的消息格式化为 [旁白]: 而非 [未知角色]:
-   *
-   * 不修改原始 messages 数组,返回新数组。
+   * - 用户消息:role=user, content="[用户·{displayName}]: 正文"
+   * - 当前 Speaker 角色:role=assistant, content="[当前角色·{name}]: 正文"
+   * - 其他角色:role=assistant, content="[其他角色·{name}]: 正文"
+   * - 旁白:role=assistant, content="[旁白]: 正文"
+   * - System 消息:跳过
    */
   private convertHistoryMessages(
     messages: ChatMessage[],
-    characterMap: Map<string, Character | null>
+    characterMap: Map<string, Character | null>,
+    speakerCharacterId: string,
+    speakerName: string,
+    userIdentity: GroupUserIdentitySnapshot
   ): ChatMessage[] {
     const result: ChatMessage[] = [];
     const now: number = nowMillis();
+    const userLabel: string = userIdentity.displayName;
     for (let i = 0; i < messages.length; i++) {
       const msg: ChatMessage = messages[i];
       if (msg.role === ChatRole.System) {
-        // 跳过内部 System 消息(不发送给模型)
         continue;
       }
       if (msg.role === ChatRole.Assistant) {
-        // G-CONTEXT-VISIBILITY-1: 旁白身份修正
-        if (msg.senderType === 'narrator') {
-          const narrationContent: string = '[旁白]: ' + msg.content;
+        const senderType: MessageSenderType =
+          msg.senderType !== undefined ? msg.senderType : 'user';
+        if (senderType === 'narrator') {
           const converted: ChatMessage = createChatMessage(
-            msg.id,
-            ChatRole.Assistant,
-            narrationContent,
-            msg.createdAt
+            msg.id, ChatRole.Assistant, '[旁白]: ' + msg.content, msg.createdAt
           );
           result.push(converted);
           continue;
         }
-        // AI 消息:加 [角色名]: 前缀(方括号格式,与 stripSpeakerPrefix 对齐)
-        const charId: string = msg.senderCharacterId !== undefined
-          ? msg.senderCharacterId : '';
+        const charId: string = msg.senderCharacterId !== undefined ? msg.senderCharacterId : '';
         const character: Character | null = charId.length > 0
-          ? (characterMap.get(charId) ?? null)
-          : null;
+          ? (characterMap.get(charId) ?? null) : null;
         const name: string = character !== null ? character.name : '未知角色';
-        const prefixedContent: string = '[' + name + ']: ' + msg.content;
+        let prefix: string;
+        if (charId === speakerCharacterId) {
+          prefix = '[当前角色·' + name + ']: ';
+        } else {
+          prefix = '[其他角色·' + name + ']: ';
+        }
         const converted: ChatMessage = createChatMessage(
-          msg.id,
-          ChatRole.Assistant,
-          prefixedContent,
-          msg.createdAt
+          msg.id, ChatRole.Assistant, prefix + msg.content, msg.createdAt
         );
         result.push(converted);
       } else {
-        // 用户消息:原样使用
         const converted: ChatMessage = createChatMessage(
-          msg.id,
-          msg.role,
-          msg.content,
-          msg.createdAt
+          msg.id, ChatRole.User, '[用户·' + userLabel + ']: ' + msg.content, msg.createdAt
         );
         result.push(converted);
       }
@@ -634,14 +643,43 @@ export class GroupPromptAssembler {
   }
 
   /**
-   * 构建群聊约束 System 消息。
-   *
-   * G-CONTROL-2A:
-   * - SelectedCharacters 模式下追加"本轮由用户指定一组角色回复"指令,
-   *   明确告知当前角色只以自己身份回应,不替其他被指定角色发言。
-   * - 单目标时使用"本轮由用户指定你回复"(兼容 G-CONTROL-1 语义)
-   * - 多目标时使用"本轮由用户指定一组角色回复。你是本轮被指定的角色之一。"
-   * - AllEnabled 模式保持原有约束。
+   * G-GROUP-USER-IDENTITY-1: 构建身份边界 System 段。
+   */
+  private buildIdentityBoundary(
+    userIdentity: GroupUserIdentitySnapshot,
+    speakerName: string,
+    participantNames: string[]
+  ): string {
+    const charList: string = participantNames.join('、');
+    const lines: string[] = [
+      '【群聊身份边界】',
+      '',
+      '当前唯一的真人用户：',
+      '名称：' + userIdentity.displayName,
+      '用户信息：' + userIdentity.personaText,
+      '',
+      '当前群聊角色：',
+      '- ' + participantNames.join('\n- '),
+      '',
+      '你当前扮演：',
+      speakerName,
+      '',
+      '必须遵守：',
+      '- 用户和所有群聊角色是不同的人；',
+      '- ' + participantNames.join('、') + ' 都不是用户；',
+      '- 不得把其他角色的姓名、经历、身份、关系或发言归属于用户；',
+      '- 其他角色的发言只是该角色说过的话，不能自动成为用户事实；',
+      '- 用户身份只以本身份区块和明确的用户消息为准；',
+      '- 当前角色对用户的关系记忆是主观认知，不是用户的客观身份；',
+      '- 只以当前角色身份回复；',
+      '- 不替用户或其他角色说话；',
+      '- 不在正文中解释这些规则。'
+    ];
+    return lines.join('\n');
+  }
+
+  /**
+   * 构建群聊回复约束(不含身份边界,身份已由 buildIdentityBoundary 提供)。
    */
   private buildGroupConstraint(
     speakerName: string,
@@ -650,10 +688,8 @@ export class GroupPromptAssembler {
   ): string {
     const participantList: string = participantNames.join('、');
     const lines: string[] = [
-      '重要：无论角色设定如何要求，不使用 [角色名] 或 [] 等方括号格式。',
+      '【回复规则】',
       '只输出你自己的回复正文，不要包含其他角色的发言。',
-      '',
-      '你当前扮演：' + speakerName,
       '',
       '这是一个多人聊天。',
       '当前参与者：' + participantList,

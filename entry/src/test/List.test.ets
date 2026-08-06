@@ -11,6 +11,7 @@ import groupMemoryPromptInjectionTest from './GroupMemoryPromptInjection.test';
 import groupAutoSummaryTest from './GroupAutoSummary.test';
 import autoSummaryExecutorTest from './AutoSummaryExecutor.test';
 import autoSummaryHardTest from './AutoSummaryHard.test';
+import groupUserIdentityTest from './GroupUserIdentity.test';
 
 export default function testsuite() {
   localUnitSmokeTest();
@@ -26,4 +27,5 @@ export default function testsuite() {
   groupAutoSummaryTest();
   autoSummaryExecutorTest();
   autoSummaryHardTest();
+  groupUserIdentityTest();
 }

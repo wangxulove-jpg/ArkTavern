@@ -21,6 +21,7 @@ import { ProviderConfig } from '../../models/ProviderConfig';
 import { ModelService } from '../ModelService';
 import { GroupCharacterSelfSummaryService } from './GroupCharacterSelfSummaryService';
 import { GroupAutoSummaryPlan, GroupAutoSummaryDetailLevel, GroupAutoSummaryExecutionInput, GroupAutoSummaryExecutionResult, GroupAutoSummaryExecutionStatus, getGroupAutoSummaryLevelSpec, GroupAutoSummaryLevelSpec, getOutputHardCap, computeSummaryInputHash, loadGroupAutoSummarySettings, GroupAutoSummarySettings } from '../../models/groupchat/GroupAutoSummaryModels';
+import { GroupUserIdentitySnapshot, DEFAULT_USER_DISPLAY_NAME } from '../../models/groupchat/GroupUserIdentitySnapshot';
 import { UpsertRollingSummaryPayload } from '../../repositories/groupchat/GroupCharacterMemoryRepository';
 import { nowMillis } from '../../utils/Time';
 import { Logger } from '../../utils/Logger';
@@ -344,7 +345,7 @@ function buildUserPrompt(
   parts.push('');
 
   parts.push('本次新增的可见对话:');
-  const formatted: string = formatVisibleMessages(plan, input.participantNames);
+  const formatted: string = formatVisibleMessages(plan, input.participantNames, input.userIdentity);
   parts.push(formatted);
   parts.push('');
 
@@ -355,8 +356,10 @@ function buildUserPrompt(
 
 function formatVisibleMessages(
   plan: GroupAutoSummaryPlan,
-  participantNames: Record<string, string>
+  participantNames: Record<string, string>,
+  userIdentity?: GroupUserIdentitySnapshot
 ): string {
+  const userName: string = userIdentity !== undefined ? userIdentity.displayName : '用户';
   const parts: string[] = [];
   for (let i = 0; i < plan.candidateMessages.length; i++) {
     const msg: ChatMessage = plan.candidateMessages[i];
@@ -365,11 +368,13 @@ function formatVisibleMessages(
     const charId: string = msg.senderCharacterId !== undefined ? msg.senderCharacterId : '';
     const visibility: string = msg.visibility !== undefined ? msg.visibility : 'public';
 
-    let speaker: string = '用户';
-    if (senderType === 'character') {
+    let speaker: string;
+    if (senderType === 'user') {
+      speaker = '用户·' + userName;
+    } else if (senderType === 'character') {
       const name: string | undefined = participantNames[charId];
-      speaker = name !== undefined && name.length > 0 ? name : '角色';
-    } else if (senderType === 'narrator' || visibility === 'narrator') {
+      speaker = '角色·' + (name !== undefined && name.length > 0 ? name : '角色');
+    } else {
       speaker = '旁白';
     }
 

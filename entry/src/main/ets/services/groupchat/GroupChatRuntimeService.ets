@@ -100,6 +100,11 @@ import { GroupCharacterMemoryService, GroupCharacterMemoryFilter } from './Group
 import { GroupAutoSummaryExecutor } from './GroupAutoSummaryExecutor';
 import { GroupAutoSummaryPlanner, GroupAutoSummaryPlanInput } from './GroupAutoSummaryPlanner';
 import { GroupAutoSummaryPlan, GroupAutoSummaryExecutionResult, GroupAutoSummaryExecutionStatus, GroupAutoSummarySettings, loadGroupAutoSummarySettings } from '../../models/groupchat/GroupAutoSummaryModels';
+import {
+  GroupUserIdentitySnapshot,
+  createDefaultUserIdentitySnapshot,
+  loadGroupUserIdentitySettings
+} from '../../models/groupchat/GroupUserIdentitySnapshot';
 
 const LOG_TAG: string = 'GroupRuntime';
 
@@ -189,6 +194,8 @@ export class GroupChatRuntimeService {
   private readonly groupMemoryService: GroupCharacterMemoryService | null;
   /** G-GROUP-AUTO-SUMMARY-1B: 自动总结执行器(可选;null 时不执行总结) */
   private readonly autoSummaryExecutor: GroupAutoSummaryExecutor | null;
+  /** G-GROUP-USER-IDENTITY-1: 当前轮次用户身份快照(所有角色共享) */
+  private userIdentitySnapshot: GroupUserIdentitySnapshot = createDefaultUserIdentitySnapshot();
 
   /** 当前轮次操作 ID(0 表示无活动轮次) */
   private activeOperationId: number = 0;
@@ -337,12 +344,18 @@ export class GroupChatRuntimeService {
       this.configSnapshot = null;
     }
     if (this.configSnapshot === null) {
-      // 没有当前配置,直接失败
       this.roundCoordinator.markFailed(plan.operationId);
       callbacks.onRoundStateChanged(GroupRoundState.Failed);
       callbacks.onRoundFailed('', '未配置当前模型,请先在设置中选择');
       this.releaseRegistryForCurrentRun();
       return;
+    }
+
+    // G-GROUP-USER-IDENTITY-1: 创建本轮唯一用户身份快照(所有角色共享)
+    try {
+      this.userIdentitySnapshot = await loadGroupUserIdentitySettings(plan.chatId);
+    } catch (e) {
+      this.userIdentitySnapshot = createDefaultUserIdentitySnapshot();
     }
 
     // 进入 Generating
@@ -966,10 +979,9 @@ export class GroupChatRuntimeService {
         speakerCharacterId: speakerCharacterId,
         participantCharacterIds: participantCharacterIds,
         messages: history,
-        // G-CONTROL-1: 传递本轮回复目标,单角色模式会注入指定角色指令
         replyTarget: plan.replyTarget,
-        // G-CONTEXT-PROMPT-INJECTION-1: 仅注入当前 Speaker 已选择的记忆(失败时为空,不阻止生成)
-        memorySelection: memorySelection !== null ? memorySelection : undefined
+        memorySelection: memorySelection !== null ? memorySelection : undefined,
+        userIdentity: this.userIdentitySnapshot
       });
     } catch (e) {
       Logger.error(LOG_TAG, 'assemble prompt failed: ' + String(e));
@@ -1755,7 +1767,8 @@ export class GroupChatRuntimeService {
           roundId: plan.roundId,
           operationId: operationId,
           ownerCharacterName: ownerName,
-          participantNames: participantNames
+          participantNames: participantNames,
+          userIdentity: this.userIdentitySnapshot
         }, validateContext);
       } finally {
         // 1C:finally 清理 in-flight key

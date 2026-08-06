@@ -147,10 +147,11 @@ export function renderRelationshipItem(
 
 function resolveTargetLabel(
   rel: GroupCharacterRelationshipMemory,
-  characterIdToName: Map<string, string>
+  characterIdToName: Map<string, string>,
+  userDisplayName: string
 ): string {
   if (rel.targetType === GroupRelationshipTargetType.User) {
-    return RELATIONSHIP_TARGET_USER_LABEL;
+    return '用户（' + userDisplayName + '）';
   }
   const name: string | undefined = characterIdToName.get(rel.targetId);
   if (name !== undefined && name.trim().length > 0) {
@@ -175,7 +176,8 @@ export class GroupMemoryPromptFormatter {
     selection: GroupCharacterMemorySelection,
     ownerCharacterName: string,
     characterIdToName: Map<string, string>,
-    messageIdPrefix: string
+    messageIdPrefix: string,
+    userDisplayName: string = '用户'
   ): GroupMemoryFormatResult {
     // 1. 个人记忆条目(防御性校验)
     const personalMemoryItems: FormattedPersonalMemoryItem[] = [];
@@ -214,7 +216,7 @@ export class GroupMemoryPromptFormatter {
       const selected: SelectedRelationshipMemory = selection.selectedRelationships[i];
       const rel: GroupCharacterRelationshipMemory = selected.memory;
       const failure: string = GroupMemoryPromptFormatter.validateRelationship(rel, selection);
-      const targetLabel: string = resolveTargetLabel(rel, characterIdToName);
+      const targetLabel: string = resolveTargetLabel(rel, characterIdToName, userDisplayName);
       const direction: string = ownerCharacterName + ' → ' + targetLabel;
       if (failure.length > 0) {
         relationshipItems.push({

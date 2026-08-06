@@ -41,6 +41,11 @@ import {
   persistGroupAutoSummaryEnabled,
   persistGroupAutoSummaryDetailLevel
 } from '../../models/groupchat/GroupAutoSummaryModels';
+import {
+  GroupUserIdentitySnapshot,
+  persistGroupUserIdentitySettings,
+  loadGroupUserIdentitySettings
+} from '../../models/groupchat/GroupUserIdentitySnapshot';
 
 const LOG_TAG: string = 'GroupChatSettingsVM';
 
@@ -70,6 +75,8 @@ export class GroupChatSettingsViewModel {
   autoSummaryEnabled: boolean = false;
   /** G-GROUP-AUTO-SUMMARY-1A: 自动总结详细程度档位 */
   autoSummaryDetailLevel: GroupAutoSummaryDetailLevel = GroupAutoSummaryDetailLevel.Medium;
+  /** G-GROUP-USER-IDENTITY-1: 当前群聊的用户显示名称(空=使用全局设置) */
+  userName: string = '';
 
   private readonly groupService: GroupConversationPersistenceService;
   private readonly messageService: GroupConversationMessageService;
@@ -114,6 +121,13 @@ export class GroupChatSettingsViewModel {
         await loadGroupAutoSummarySettings(chatId);
       this.autoSummaryEnabled = autoSummarySettings.enabled;
       this.autoSummaryDetailLevel = autoSummarySettings.detailLevel;
+      // G-GROUP-USER-IDENTITY-1: 加载该群聊的用户名称
+      try {
+        const snap: GroupUserIdentitySnapshot = await loadGroupUserIdentitySettings(chatId);
+        this.userName = snap.displayName;
+      } catch (_e) {
+        this.userName = '';
+      }
     } catch (e) {
       Logger.error(LOG_TAG, 'load failed: ' + String(e));
       this.state = GroupChatDetailState.Error;
@@ -256,6 +270,18 @@ export class GroupChatSettingsViewModel {
     this.autoSummaryDetailLevel = level;
     if (this.chatId.length > 0) {
       persistGroupAutoSummaryDetailLevel(this.chatId, level);
+    }
+  }
+
+  /**
+   * G-GROUP-USER-IDENTITY-1: 设置并持久化该群聊的用户显示名称。
+   * 空字符串表示"使用全局设置"。
+   */
+  setAndPersistUserName(name: string): void {
+    const trimmed: string = name.trim();
+    this.userName = trimmed;
+    if (this.chatId.length > 0) {
+      persistGroupUserIdentitySettings(this.chatId, trimmed, '');
     }
   }
 }

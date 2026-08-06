@@ -67,6 +67,10 @@ struct GroupChatSettingsPage {
   @State autoSummaryDetailLevel: GroupAutoSummaryDetailLevel = GroupAutoSummaryDetailLevel.Medium;
   /** G-GROUP-AUTO-SUMMARY-1A: 档位选择 Sheet 是否可见 */
   @State autoSummaryLevelPickerVisible: boolean = false;
+  /** G-GROUP-USER-IDENTITY-1: 该群聊的用户显示名称(空=使用全局) */
+  @State userName: string = '';
+  /** G-GROUP-USER-IDENTITY-1: 用户名称输入中(用于 TextInput 联动) */
+  @State userNameInput: string = '';
   /** 顶部状态栏避让高度 */
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   /** 底部导航栏避让高度 */
@@ -121,6 +125,8 @@ struct GroupChatSettingsPage {
     this.narrationTokensInput = String(this.viewModel.narrationMaxTokens);
     this.autoSummaryEnabled = this.viewModel.autoSummaryEnabled;
     this.autoSummaryDetailLevel = this.viewModel.autoSummaryDetailLevel;
+    this.userName = this.viewModel.userName;
+    this.userNameInput = this.viewModel.userName;
   }
 
   build(): void {
@@ -279,6 +285,8 @@ struct GroupChatSettingsPage {
       Column() {
         // 群聊名称
         this.nameSection()
+        // G-GROUP-USER-IDENTITY-1: 用户名称
+        this.userIdentitySection()
         // 回复方式(固定说明)
         this.replyModeSection()
         // G-GROUP-AUTO-SUMMARY-1A: 自动记忆总结设置
@@ -338,6 +346,56 @@ struct GroupChatSettingsPage {
           .onClick(() => {
             this.renameInput = this.title;
             this.renameVisible = true;
+          })
+      }
+      .width('100%')
+      .padding({
+        left: $r('app.float.app_spacing_12'),
+        right: $r('app.float.app_spacing_12'),
+        top: $r('app.float.app_spacing_12'),
+        bottom: $r('app.float.app_spacing_12')
+      })
+      .backgroundColor($r('app.color.app_surface_1'))
+      .borderRadius($r('app.float.app_radius_md'))
+      .alignItems(VerticalAlign.Center)
+    }
+    .width('100%')
+    .margin({ top: $r('app.float.app_spacing_12') })
+  }
+
+  /** G-GROUP-USER-IDENTITY-1: 用户名称设置 */
+  @Builder
+  userIdentitySection(): void {
+    Column() {
+      Text('用户身份')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_tertiary'))
+        .width('100%')
+        .margin({ bottom: 8 })
+
+      Row() {
+        Text('我的名称')
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor($r('app.color.app_text_primary'))
+          .layoutWeight(1)
+
+        TextInput({ text: this.userNameInput, placeholder: '使用全局设置' })
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor($r('app.color.app_text_secondary'))
+          .textAlign(TextAlign.End)
+          .width(140)
+          .backgroundColor(Color.Transparent)
+          .border({ width: 0 })
+          .onChange((value: string) => {
+            this.userNameInput = value;
+          })
+          .onSubmit(() => {
+            const trimmed: string = this.userNameInput.trim();
+            this.userName = trimmed;
+            this.userNameInput = trimmed;
+            if (this.viewModel !== null && this.viewModel.chatId.length > 0) {
+              this.viewModel.setAndPersistUserName(trimmed);
+            }
           })
       }
       .width('100%')

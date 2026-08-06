@@ -21,6 +21,7 @@
 
 import { ChatMessage } from '../ChatMessage';
 import { ProviderConfig } from '../ProviderConfig';
+import { GroupUserIdentitySnapshot } from './GroupUserIdentitySnapshot';
 import { preferences } from '@kit.ArkData';
 
 /** 自动总结详细程度档位 */
@@ -287,6 +288,8 @@ export interface GroupAutoSummaryExecutionInput {
   readonly ownerCharacterName: string;
   /** 用于消息格式化:参与角色名称映射 characterId→name */
   readonly participantNames: Record<string, string>;
+  /** G-GROUP-USER-IDENTITY-1: 本轮唯一用户身份快照 */
+  readonly userIdentity?: GroupUserIdentitySnapshot;
 }
 
 /** 执行器输出(不可变,不含完整正文/API Key) */
