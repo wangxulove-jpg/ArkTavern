@@ -98,6 +98,8 @@ import { WorldEventRepository } from '../repositories/world/WorldEventRepository
 import { WorldSceneRepository } from '../repositories/world/WorldSceneRepository';
 import { WorldSceneMessageRepository } from '../repositories/world/WorldSceneMessageRepository';
 import { WorldCharacterMemoryRepository } from '../repositories/world/WorldCharacterMemoryRepository';
+import { WorldPlayerProfileRepository } from '../repositories/world/WorldPlayerProfileRepository';
+import { WorldConversationSessionRepository } from '../repositories/world/WorldConversationSessionRepository';
 import { WorldStateService } from './world/WorldStateService';
 import { WorldSceneService } from './world/WorldSceneService';
 import { WorldCharacterMemoryService } from './world/WorldCharacterMemoryService';
@@ -242,6 +244,10 @@ export class AppServices {
   private readonly worldSceneMessageRepository: WorldSceneMessageRepository;
   /** WorldCharacterMemoryRepository 世界角色记忆仓储(W-MEMORY-1A,记忆 CRUD) */
   private readonly worldCharacterMemoryRepository: WorldCharacterMemoryRepository;
+  /** WorldPlayerProfileRepository 世界玩家档案仓储(W1A-WORLD-CORE-STORE) */
+  private readonly worldPlayerProfileRepository: WorldPlayerProfileRepository;
+  /** WorldConversationSessionRepository 世界会话仓储(W1A-WORLD-CORE-STORE) */
+  private readonly worldConversationSessionRepository: WorldConversationSessionRepository;
   /** WorldStateService 世界模式状态业务服务(W-DATA-1B,世界基础数据唯一正式写入口) */
   private readonly worldStateService: WorldStateService;
   /** WorldSceneService 世界场景业务服务(W-SCENE-1B,场景和场景消息唯一正式写入口) */
@@ -282,6 +288,9 @@ export class AppServices {
     this.worldSceneMessageRepository = new WorldSceneMessageRepository(this.dbHelper);
     // W-MEMORY-1A: 世界角色记忆仓储,仅依赖 DbHelper,不依赖任何 Service,不会形成循环。
     this.worldCharacterMemoryRepository = new WorldCharacterMemoryRepository(this.dbHelper);
+    // W1A-WORLD-CORE-STORE: 世界玩家档案与会话仓储,仅依赖 DbHelper,不依赖任何 Service,不会形成循环。
+    this.worldPlayerProfileRepository = new WorldPlayerProfileRepository(this.dbHelper);
+    this.worldConversationSessionRepository = new WorldConversationSessionRepository(this.dbHelper);
     this.characterService = new CharacterService(
       this.characterRepository,
       this.characterSelectionStore,
@@ -1096,5 +1105,23 @@ export class AppServices {
    */
   static getWorldCharacterMemoryRepository(): WorldCharacterMemoryRepository {
     return AppServices.getInstance().worldCharacterMemoryRepository;
+  }
+
+  /**
+   * 获取 WorldPlayerProfileRepository 实例(W1A-WORLD-CORE-STORE 世界玩家档案仓储)。
+   * 用于 world_player_profiles 表的 CRUD 操作。
+   * 页面与 ViewModel 不直接调用,留待后续 Service 使用。
+   */
+  static getWorldPlayerProfileRepository(): WorldPlayerProfileRepository {
+    return AppServices.getInstance().worldPlayerProfileRepository;
+  }
+
+  /**
+   * 获取 WorldConversationSessionRepository 实例(W1A-WORLD-CORE-STORE 世界会话仓储)。
+   * 用于 world_conversation_sessions 表的 CRUD 操作。
+   * 页面与 ViewModel 不直接调用,留待后续 Service 使用。
+   */
+  static getWorldConversationSessionRepository(): WorldConversationSessionRepository {
+    return AppServices.getInstance().worldConversationSessionRepository;
   }
 }

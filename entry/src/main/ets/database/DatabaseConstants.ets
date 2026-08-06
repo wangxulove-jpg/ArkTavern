@@ -6,7 +6,7 @@
  */
 
 export const DATABASE_NAME: string = 'arktavern.db';
-export const DATABASE_VERSION: number = 19;
+export const DATABASE_VERSION: number = 20;
 
 export const TABLE_CHARACTERS: string = 'characters';
 export const TABLE_CHATS: string = 'chats';
@@ -484,3 +484,23 @@ export const INDEX_GROUP_CHARACTER_RELATIONSHIP_MEMORIES_OWNER_STATUS: string = 
 export const INDEX_GROUP_CHARACTER_RELATIONSHIP_MEMORIES_TARGET: string = 'idx_group_character_relationship_memories_target';
 export const INDEX_GROUP_CHARACTER_RELATIONSHIP_MEMORIES_SOURCE_HASH: string = 'idx_group_character_relationship_memories_source_hash';
 export const INDEX_GROUP_CHARACTER_RELATIONSHIP_MEMORIES_UPDATED_AT: string = 'idx_group_character_relationship_memories_updated_at';
+
+// ===== v20: 世界模式玩家档案与会话(W1A-WORLD-CORE-STORE) =====
+// 独立数据域,不复用 world_scenes / world_scene_messages。
+// 2 张新表: world_player_profiles / world_conversation_sessions。
+// 表名 / 列名 / 索引名集中定义,Repository / Schema / Migration 只读取此处。
+export const TABLE_WORLD_PLAYER_PROFILES: string = 'world_player_profiles';
+export const TABLE_WORLD_CONVERSATION_SESSIONS: string = 'world_conversation_sessions';
+
+/** world_player_profiles.display_name 列名 */
+export const COLUMN_DISPLAY_NAME: string = 'display_name';
+/** world_conversation_sessions.participant_snapshot_json 列名 */
+export const COLUMN_PARTICIPANT_SNAPSHOT_JSON: string = 'participant_snapshot_json';
+/** world_conversation_sessions.player_display_name_snapshot 列名 */
+export const COLUMN_PLAYER_DISPLAY_NAME_SNAPSHOT: string = 'player_display_name_snapshot';
+
+// ===== v20: 世界模式玩家档案与会话索引名 =====
+export const INDEX_WORLD_PLAYER_PROFILES_WORLD_ID: string = 'idx_world_player_profiles_world_id';
+export const INDEX_WORLD_CONVERSATION_SESSIONS_SCENE_ID: string = 'idx_world_conversation_sessions_scene_id';
+export const INDEX_WORLD_CONVERSATION_SESSIONS_SCENE_SEQUENCE: string = 'idx_world_conversation_sessions_scene_sequence';
+export const INDEX_WORLD_CONVERSATION_SESSIONS_WORLD_ID: string = 'idx_world_conversation_sessions_world_id';
