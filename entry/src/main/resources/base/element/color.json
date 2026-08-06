@@ -199,6 +199,98 @@
     {
       "name": "worldbook_disabled_badge",
       "value": "#9E9E9E"
+    },
+    {
+      "name": "world_bg",
+      "value": "#1A1510"
+    },
+    {
+      "name": "world_surface_1",
+      "value": "#2A2118"
+    },
+    {
+      "name": "world_surface_2",
+      "value": "#3A2F22"
+    },
+    {
+      "name": "world_surface_elevated",
+      "value": "#332A1E"
+    },
+    {
+      "name": "world_border",
+      "value": "#4A3D2E"
+    },
+    {
+      "name": "world_text_primary",
+      "value": "#F5E6CA"
+    },
+    {
+      "name": "world_text_secondary",
+      "value": "#B8A88A"
+    },
+    {
+      "name": "world_text_tertiary",
+      "value": "#8A7B62"
+    },
+    {
+      "name": "world_gold",
+      "value": "#D4A843"
+    },
+    {
+      "name": "world_on_gold",
+      "value": "#1A1510"
+    },
+    {
+      "name": "world_gold_surface",
+      "value": "#3D3220"
+    },
+    {
+      "name": "world_gold_border",
+      "value": "#D4A843"
+    },
+    {
+      "name": "world_success",
+      "value": "#6B9E47"
+    },
+    {
+      "name": "world_warning",
+      "value": "#D49B43"
+    },
+    {
+      "name": "world_error",
+      "value": "#C45A4A"
+    },
+    {
+      "name": "world_info",
+      "value": "#5B8AB5"
+    },
+    {
+      "name": "world_grid_line",
+      "value": "#2E2519"
+    },
+    {
+      "name": "world_map_bg",
+      "value": "#15110C"
+    },
+    {
+      "name": "world_edge",
+      "value": "#6B5B42"
+    },
+    {
+      "name": "world_edge_disabled",
+      "value": "#4A3D2E"
+    },
+    {
+      "name": "world_fab_bg",
+      "value": "#D4A843"
+    },
+    {
+      "name": "world_toolbar_bg",
+      "value": "#2A2118"
+    },
+    {
+      "name": "world_scrim",
+      "value": "#99000000"
     }
   ]
 }

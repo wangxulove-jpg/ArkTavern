@@ -2895,6 +2895,126 @@
     {
       "name": "world_memory_character_sheet_title",
       "value": "人物信息"
+    },
+    {
+      "name": "world_ui_search_placeholder",
+      "value": "搜索世界名称"
+    },
+    {
+      "name": "world_ui_filter_all",
+      "value": "全部"
+    },
+    {
+      "name": "world_ui_filter_active",
+      "value": "进行中"
+    },
+    {
+      "name": "world_ui_filter_archived",
+      "value": "已归档"
+    },
+    {
+      "name": "world_ui_recent_activity",
+      "value": "最近活动"
+    },
+    {
+      "name": "world_ui_locations_label",
+      "value": "地点"
+    },
+    {
+      "name": "world_ui_characters_label",
+      "value": "角色"
+    },
+    {
+      "name": "world_ui_active_scenes_label",
+      "value": "活动场景"
+    },
+    {
+      "name": "world_ui_map_empty_title",
+      "value": "这个世界还是空白的"
+    },
+    {
+      "name": "world_ui_map_empty_desc",
+      "value": "添加角色或创建地点,开始构建你的世界"
+    },
+    {
+      "name": "world_ui_map_empty_add_character",
+      "value": "添加角色"
+    },
+    {
+      "name": "world_ui_map_empty_create_location",
+      "value": "创建地点"
+    },
+    {
+      "name": "world_ui_map_toolbar_layers",
+      "value": "图层"
+    },
+    {
+      "name": "world_ui_map_toolbar_filter",
+      "value": "筛选"
+    },
+    {
+      "name": "world_ui_map_toolbar_locate",
+      "value": "定位"
+    },
+    {
+      "name": "world_ui_map_toolbar_compass",
+      "value": "指南针"
+    },
+    {
+      "name": "world_ui_map_toolbar_zoom_in",
+      "value": "放大"
+    },
+    {
+      "name": "world_ui_map_toolbar_zoom_out",
+      "value": "缩小"
+    },
+    {
+      "name": "world_ui_map_toolbar_reset",
+      "value": "重置视角"
+    },
+    {
+      "name": "world_ui_more_menu_title",
+      "value": "世界管理"
+    },
+    {
+      "name": "world_ui_more_edit_world",
+      "value": "编辑世界"
+    },
+    {
+      "name": "world_ui_more_location_manage",
+      "value": "地点管理"
+    },
+    {
+      "name": "world_ui_more_edge_manage",
+      "value": "连接管理"
+    },
+    {
+      "name": "world_ui_more_character_manage",
+      "value": "角色管理"
+    },
+    {
+      "name": "world_ui_more_scene_history",
+      "value": "场景历史"
+    },
+    {
+      "name": "world_ui_more_delete_world",
+      "value": "删除世界"
+    },
+    {
+      "name": "world_ui_fab_add_character",
+      "value": "添加角色"
+    },
+    {
+      "name": "world_ui_fab_add_character_a11y",
+      "value": "向世界添加角色"
+    },
+    {
+      "name": "world_ui_map_summary",
+      "value": "地图概览"
+    },
+    {
+      "name": "world_ui_no_cover",
+      "value": "无封面"
     }
   ]
 }
