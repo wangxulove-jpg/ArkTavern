@@ -291,6 +291,10 @@
     {
       "name": "world_scrim",
       "value": "#99000000"
+    },
+    {
+      "name": "world_on_danger",
+      "value": "#FFE8E0"
     }
   ]
 }

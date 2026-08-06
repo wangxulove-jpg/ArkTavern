@@ -1,13 +1,9 @@
 /**
- * WorldSceneManagePage 世界场景管理页(W-SCENE-1B)
+ * WorldSceneManagePage 历史会话页(W-UI-1C 重构)
  *
- * 职责:
- * - 显示世界名称
- * - 列出全部地点
- * - 每个地点显示:Active Scene / 已结束场景数量 / 开始场景按钮 / 查看 Active Scene 入口
- * - Archived World 只读
- * - Archived Location 不能开始场景
- * - 已有 Active Scene 的地点不能再次开始
+ * 重构:深色酒馆质感,场景扁平列表(不再按地点分组),
+ * 搜索 + 筛选(全部/活动中/已结束),历史会话卡片,
+ * 新建会话入口(选择地点),Active 场景可继续/查看,Ended 场景只读。
  *
  * 路由:通过 AppStorage PENDING_WORLD_ID_KEY 传 worldId
  * 写入调用 WorldSceneService.startScene。
@@ -19,20 +15,29 @@ import {
   WorldSceneManageViewModel,
   WorldSceneManageLoadState,
   WorldSceneManageUiModel,
-  LocationSceneUiModel
+  HistorySceneCardUiModel,
+  StartSceneResult
 } from '../../viewmodels/world/WorldSceneManageViewModel';
 import {
   PENDING_WORLD_ID_KEY,
   PENDING_WORLD_SCENE_ID_KEY,
-  WORLD_DETAIL_REFRESH_TOKEN_KEY
+  PENDING_WORLD_SCENE_CHAT_ID_KEY,
+  WORLD_DETAIL_REFRESH_TOKEN_KEY,
+  formatWorldTimestamp
 } from '../../viewmodels/world/WorldUiModels';
 import { World, WorldStatus } from '../../models/world/World';
-import { WorldLocationStatus } from '../../models/world/WorldLocation';
 import { WorldSceneStatus } from '../../models/world/WorldScene';
-import { EmptyStateView } from '../../components/EmptyStateView';
+import { WorldSurfaceCard } from '../../components/world/WorldSurfaceCard';
+import { WorldSectionHeader } from '../../components/world/WorldSectionHeader';
+import { WorldStatusChip } from '../../components/world/WorldStatusChip';
+import { WorldEmptyState } from '../../components/world/WorldEmptyState';
+import { WorldPrimaryButton } from '../../components/world/WorldPrimaryButton';
+import { WorldSecondaryButton } from '../../components/world/WorldSecondaryButton';
 import { Logger } from '../../utils/Logger';
 
 const LOG_TAG: string = 'WorldSceneManagePage';
+
+type HistoryFilter = 'all' | 'active' | 'ended';
 
 @Entry
 @Component
@@ -43,9 +48,14 @@ struct WorldSceneManagePage {
   @State private errorMessage: string = '';
   @State private detail: WorldSceneManageUiModel | null = null;
   @State private worldStatus: WorldStatus = WorldStatus.Active;
-  /** 错误提示(开始场景失败等) */
   @State private actionError: string = '';
+
+  @State private searchText: string = '';
+  @State private currentFilter: HistoryFilter = 'all';
+  @State private filteredScenes: HistorySceneCardUiModel[] = [];
+
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
+  @StorageProp('navigationBarHeight') navBarHeight: number = 0;
   @StorageProp(WORLD_DETAIL_REFRESH_TOKEN_KEY) @Watch('onRefreshTokenChange')
   refreshToken: number = 0;
 
@@ -68,11 +78,13 @@ struct WorldSceneManagePage {
         return;
       }
       this.worldStatus = world.status;
+      AppStorage.setOrCreate<string>(PENDING_WORLD_ID_KEY, worldId);
 
       this.viewModel = new WorldSceneManageViewModel(
         AppServices.getWorldRepository(),
         AppServices.getWorldLocationRepository(),
         AppServices.getWorldSceneRepository(),
+        AppServices.getWorldSceneMessageRepository(),
         AppServices.getWorldSceneService()
       );
       this.viewModel.setWorldId(worldId);
@@ -82,7 +94,7 @@ struct WorldSceneManagePage {
       Logger.error(LOG_TAG, 'aboutToAppear failed: ' + (e as Error).message);
       this.isInitializing = false;
       this.loadState = WorldSceneManageLoadState.Error;
-      this.errorMessage = '场景数据加载失败,请重试';
+      this.errorMessage = '历史会话数据加载失败';
     }
   }
 
@@ -123,104 +135,166 @@ struct WorldSceneManagePage {
     this.loadState = this.viewModel.state;
     this.errorMessage = this.viewModel.errorMessage;
     this.detail = this.viewModel.detail;
+    this.updateFilteredScenes();
   }
 
-  private async startScene(locationId: string): Promise<void> {
-    if (this.viewModel === null) {
+  private updateFilteredScenes(): void {
+    if (this.detail === null) {
+      this.filteredScenes = [];
       return;
     }
-    this.actionError = '';
-    const result = await this.viewModel.startScene(locationId);
-    if (!result.success) {
-      this.actionError = result.errorMessage;
-      return;
+    let scenes: HistorySceneCardUiModel[] = this.detail.scenes;
+    if (this.searchText.length > 0) {
+      const q: string = this.searchText;
+      scenes = scenes.filter((s: HistorySceneCardUiModel): boolean =>
+        s.sceneName.includes(q) || s.locationName.includes(q));
     }
-    this.syncFromViewModel();
-  }
-
-  private openSceneDetail(sceneId: string): void {
-    if (sceneId.length === 0) {
-      return;
+    if (this.currentFilter === 'active') {
+      scenes = scenes.filter((s: HistorySceneCardUiModel): boolean =>
+        s.sceneStatus === WorldSceneStatus.Active);
+    } else if (this.currentFilter === 'ended') {
+      scenes = scenes.filter((s: HistorySceneCardUiModel): boolean =>
+        s.sceneStatus === WorldSceneStatus.Ended);
     }
-    if (this.viewModel === null) {
-      return;
-    }
-    const worldId: string = this.viewModel.expectedWorldIdOfPage();
-    AppStorage.setOrCreate<string>(PENDING_WORLD_ID_KEY, worldId);
-    AppStorage.setOrCreate<string>(PENDING_WORLD_SCENE_ID_KEY, sceneId);
-    router.pushUrl({ url: 'pages/world/WorldSceneDetailPage' });
+    this.filteredScenes = scenes;
   }
 
   build(): void {
     Column() {
-      this.headerArea();
-      if (this.isInitializing) {
-        this.loadingView();
-      } else if (this.loadState === WorldSceneManageLoadState.Loading) {
-        this.loadingView();
-      } else if (this.loadState === WorldSceneManageLoadState.NotFound) {
-        this.notFoundView();
-      } else if (this.loadState === WorldSceneManageLoadState.Error) {
-        this.errorView(this.errorMessage.length > 0 ? this.errorMessage : '场景数据加载失败,请重试');
-      } else if (this.loadState === WorldSceneManageLoadState.Ready && this.detail !== null) {
-        this.contentView(this.detail)
-      }
+      this.topNav()
+      this.searchAndFilterArea()
+      this.contentArea()
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.app_bg'))
+    .backgroundColor($r('app.color.world_bg'))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 
   @Builder
-  headerArea(): void {
+  topNav(): void {
     Row() {
-      Button($r('app.string.world_home_back'))
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_accent'))
+      Button('←')
+        .fontSize(22)
+        .fontColor($r('app.color.world_text_secondary'))
         .backgroundColor(Color.Transparent)
-        .height(36)
-        .padding({ left: 0, right: 8 })
+        .width(40)
+        .height(40)
+        .padding(0)
         .onClick(() => {
           router.back();
         })
 
-      Text($r('app.string.world_scene_manage_title'))
-        .fontSize($r('app.float.app_font_title'))
+      Text($r('app.string.world_scene_history_title'))
+        .fontSize($r('app.float.world_font_title'))
         .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor($r('app.color.world_text_primary'))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .layoutWeight(1)
+        .margin({ left: 4 })
 
-      Button($r('app.string.world_home_reload'))
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_secondary'))
-        .backgroundColor($r('app.color.app_surface_2'))
-        .borderRadius($r('app.float.app_radius_sm'))
-        .height(32)
-        .padding({ left: 12, right: 12 })
-        .onClick(() => {
-          this.loadSnapshot();
-        })
+      if (this.worldStatus === WorldStatus.Active) {
+        Button($r('app.string.world_scene_history_new_scene'))
+          .fontSize($r('app.float.world_font_caption'))
+          .fontColor($r('app.color.world_on_gold'))
+          .backgroundColor($r('app.color.world_gold'))
+          .borderRadius($r('app.float.world_radius_button'))
+          .height(32)
+          .padding({ left: 12, right: 12 })
+          .onClick(() => {
+            router.back();
+          })
+      }
     }
     .width('100%')
     .padding({
-      left: $r('app.float.app_spacing_16'),
-      right: $r('app.float.app_spacing_16'),
-      top: this.statusBarHeight + 8,
-      bottom: $r('app.float.app_spacing_8')
+      left: $r('app.float.world_page_padding'),
+      right: $r('app.float.world_page_padding'),
+      top: this.statusBarHeight + 4,
+      bottom: 4
     })
     .alignItems(VerticalAlign.Center)
   }
 
   @Builder
+  searchAndFilterArea(): void {
+    Column() {
+      Row() {
+        TextInput({
+          text: this.searchText,
+          placeholder: $r('app.string.world_scene_history_search_placeholder')
+        })
+          .fontSize($r('app.float.world_font_body'))
+          .fontColor($r('app.color.world_text_primary'))
+          .placeholderColor($r('app.color.world_text_tertiary'))
+          .backgroundColor($r('app.color.world_surface_1'))
+          .borderRadius($r('app.float.world_radius_chip'))
+          .height(40)
+          .layoutWeight(1)
+          .onChange((value: string) => {
+            this.searchText = value;
+            this.updateFilteredScenes();
+          })
+      }
+      .width('100%')
+      .padding({
+        left: $r('app.float.world_page_padding'),
+        right: $r('app.float.world_page_padding'),
+        top: $r('app.float.world_card_spacing'),
+        bottom: $r('app.float.world_card_spacing')
+      })
+
+      Row() {
+        this.filterTab($r('app.string.world_scene_history_filter_all'), 'all')
+        this.filterTab($r('app.string.world_scene_history_filter_active'), 'active')
+        this.filterTab($r('app.string.world_scene_history_filter_ended'), 'ended')
+      }
+      .width('100%')
+      .padding({
+        left: $r('app.float.world_page_padding'),
+        right: $r('app.float.world_page_padding'),
+        bottom: $r('app.float.world_card_spacing')
+      })
+    }
+  }
+
+  @Builder
+  filterTab(label: ResourceStr, filter: HistoryFilter): void {
+    Text(label)
+      .fontSize($r('app.float.world_font_caption'))
+      .fontColor(this.currentFilter === filter
+        ? $r('app.color.world_on_gold')
+        : $r('app.color.world_text_secondary'))
+      .backgroundColor(this.currentFilter === filter
+        ? $r('app.color.world_gold')
+        : $r('app.color.world_surface_1'))
+      .borderRadius($r('app.float.world_radius_chip'))
+      .padding({ left: 14, right: 14, top: 6, bottom: 6 })
+      .margin({ right: 8 })
+      .onClick(() => {
+        this.currentFilter = filter;
+        this.updateFilteredScenes();
+      })
+  }
+
+  @Builder
+  contentArea(): void {
+    if (this.isInitializing || this.loadState === WorldSceneManageLoadState.Loading) {
+      this.loadingView();
+    } else if (this.loadState === WorldSceneManageLoadState.NotFound) {
+      this.notFoundView();
+    } else if (this.loadState === WorldSceneManageLoadState.Error) {
+      this.errorView();
+    } else if (this.loadState === WorldSceneManageLoadState.Ready && this.detail !== null) {
+      this.contentView();
+    }
+  }
+
+  @Builder
   loadingView(): void {
     Column() {
-      LoadingProgress()
-        .width(40)
-        .height(40)
-        .color($r('app.color.app_accent'))
+      LoadingProgress().width(40).height(40).color($r('app.color.world_gold'))
     }
     .width('100%')
     .layoutWeight(1)
@@ -231,60 +305,13 @@ struct WorldSceneManagePage {
   @Builder
   notFoundView(): void {
     Column() {
-      EmptyStateView({
+      WorldEmptyState({
         title: $r('app.string.world_detail_not_found'),
-        description: ''
-      })
-      Button($r('app.string.world_back_to_list'))
-        .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_on_accent'))
-        .backgroundColor($r('app.color.app_accent'))
-        .borderRadius($r('app.float.app_radius_sm'))
-        .height(40)
-        .padding({ left: 24, right: 24 })
-        .margin({ top: $r('app.float.app_spacing_16') })
-        .onClick(() => {
+        primaryLabel: $r('app.string.world_back_to_list'),
+        onPrimary: (): void => {
           router.back();
-        })
-    }
-    .width('100%')
-    .layoutWeight(1)
-    .justifyContent(FlexAlign.Center)
-    .alignItems(HorizontalAlign.Center)
-  }
-
-  @Builder
-  errorView(message: string): void {
-    Column() {
-      EmptyStateView({
-        title: $r('app.string.world_home_load_failed'),
-        description: message
+        }
       })
-      Row() {
-        Button($r('app.string.world_back_to_list'))
-          .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_secondary'))
-          .backgroundColor($r('app.color.app_surface_2'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(40)
-          .padding({ left: 20, right: 20 })
-          .onClick(() => {
-            router.back();
-          })
-        Button($r('app.string.world_home_reload'))
-          .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_on_accent'))
-          .backgroundColor($r('app.color.app_accent'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(40)
-          .padding({ left: 20, right: 20 })
-          .margin({ left: 12 })
-          .onClick(() => {
-            this.loadSnapshot();
-          })
-      }
-      .margin({ top: $r('app.float.app_spacing_16') })
-      .alignItems(VerticalAlign.Center)
     }
     .width('100%')
     .layoutWeight(1)
@@ -293,269 +320,221 @@ struct WorldSceneManagePage {
   }
 
   @Builder
-  contentView(detail: WorldSceneManageUiModel): void {
-    Scroll() {
-      Column() {
-        // 世界头部
-        this.worldHeaderSection(detail)
-        // 操作错误提示
-        if (this.actionError.length > 0) {
-          this.actionErrorBanner(this.actionError)
+  errorView(): void {
+    Column() {
+      WorldEmptyState({
+        title: $r('app.string.world_home_load_failed'),
+        description: this.errorMessage.length > 0 ? this.errorMessage : '',
+        primaryLabel: $r('app.string.world_home_reload'),
+        onPrimary: (): void => {
+          this.loadSnapshot();
         }
-        // 地点列表
-        if (detail.locations.length === 0) {
-          this.emptyLocationsView()
-        } else {
-          ForEach(detail.locations, (loc: LocationSceneUiModel) => {
-            this.locationSceneCard(loc, detail.worldStatus)
-          }, (loc: LocationSceneUiModel) => loc.locationId + '|' + (loc.activeScene !== null ? loc.activeScene.id : '') + '|' + loc.endedSceneCount.toString())
-        }
-        Column().width('100%').height(120)
-      }
-      .width('100%')
-      .alignItems(HorizontalAlign.Start)
+      })
     }
     .width('100%')
     .layoutWeight(1)
-    .scrollBar(BarState.Off)
-    .edgeEffect(EdgeEffect.Spring)
-    .padding({
-      left: $r('app.float.app_spacing_16'),
-      right: $r('app.float.app_spacing_16'),
-      top: 0,
-      bottom: 0
-    })
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
   }
 
   @Builder
-  worldHeaderSection(detail: WorldSceneManageUiModel): void {
-    Column() {
-      Row() {
-        Text(detail.worldName.length > 0 ? detail.worldName : '(未命名世界)')
-          .fontSize($r('app.float.app_font_subtitle'))
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.app_text_primary'))
-          .maxLines(2)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .layoutWeight(1)
-        Text(detail.worldStatus === WorldStatus.Active ? '活跃' : '已归档')
-          .fontSize(11)
-          .fontColor(detail.worldStatus === WorldStatus.Active
-            ? $r('app.color.app_accent')
-            : $r('app.color.app_text_tertiary'))
-          .backgroundColor($r('app.color.app_surface_2'))
-          .borderRadius(4)
-          .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-          .margin({ left: 8 })
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Top)
-      Text($r('app.string.world_scene_manage_subtitle'))
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
-        .margin({ top: 6 })
-    }
-    .width('100%')
-    .padding({
-      left: $r('app.float.app_spacing_12'),
-      right: $r('app.float.app_spacing_12'),
-      top: $r('app.float.app_spacing_12'),
-      bottom: $r('app.float.app_spacing_12')
-    })
-    .backgroundColor($r('app.color.app_surface_1'))
-    .borderRadius($r('app.float.app_radius_md'))
-    .margin({ top: $r('app.float.app_spacing_8') })
-    .alignItems(HorizontalAlign.Start)
-  }
-
-  @Builder
-  actionErrorBanner(message: string): void {
-    Row() {
-      SymbolGlyph($r('sys.symbol.exclamationmark_triangle'))
-        .fontSize(16)
-        .fontColor([$r('app.color.app_danger')])
-      Text(message)
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_danger'))
-        .margin({ left: 8 })
-        .layoutWeight(1)
-      Button('×')
-        .fontSize(14)
-        .fontColor($r('app.color.app_text_tertiary'))
-        .backgroundColor(Color.Transparent)
-        .height(24)
-        .width(24)
-        .padding(0)
-        .onClick(() => {
-          this.actionError = '';
+  contentView(): void {
+    if (this.actionError.length > 0) {
+      Text(this.actionError)
+        .fontSize($r('app.float.world_font_caption'))
+        .fontColor($r('app.color.world_error'))
+        .width('100%')
+        .padding(10)
+        .backgroundColor($r('app.color.world_surface_1'))
+        .borderRadius($r('app.float.world_radius_chip'))
+        .margin({
+          left: $r('app.float.world_page_padding'),
+          right: $r('app.float.world_page_padding'),
+          bottom: 8
         })
     }
-    .width('100%')
-    .padding({
-      left: $r('app.float.app_spacing_12'),
-      right: $r('app.float.app_spacing_12'),
-      top: $r('app.float.app_spacing_8'),
-      bottom: $r('app.float.app_spacing_8')
-    })
-    .backgroundColor($r('app.color.app_surface_1'))
-    .borderRadius($r('app.float.app_radius_md'))
-    .margin({ top: $r('app.float.app_spacing_8') })
-    .alignItems(VerticalAlign.Center)
-  }
 
-  @Builder
-  emptyLocationsView(): void {
-    Column() {
-      Text($r('app.string.world_detail_no_locations'))
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
-        .textAlign(TextAlign.Center)
+    if (this.filteredScenes.length === 0) {
+      Column() {
+        WorldEmptyState({
+          title: $r('app.string.world_scene_history_no_scenes'),
+          primaryLabel: this.worldStatus === WorldStatus.Active
+            ? $r('app.string.world_scene_history_new_scene') : '',
+          onPrimary: (): void => {
+            if (this.worldStatus === WorldStatus.Active) {
+              router.back();
+            }
+          }
+        })
+      }
+      .width('100%')
+      .layoutWeight(1)
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+    } else {
+      Scroll() {
+        Column() {
+          ForEach(this.filteredScenes, (sc: HistorySceneCardUiModel) => {
+            this.sceneHistoryCard(sc)
+          }, (sc: HistorySceneCardUiModel) => sc.sceneId + '|' + sc.messageCount.toString())
+
+          Column().width('100%').height(120)
+        }
         .width('100%')
         .padding({
-          top: $r('app.float.app_spacing_24'),
-          bottom: $r('app.float.app_spacing_24')
+          left: $r('app.float.world_page_padding'),
+          right: $r('app.float.world_page_padding')
         })
+        .alignItems(HorizontalAlign.Start)
+      }
+      .width('100%')
+      .layoutWeight(1)
+      .scrollBar(BarState.Off)
+      .edgeEffect(EdgeEffect.Spring)
     }
-    .width('100%')
-    .padding({
-      left: $r('app.float.app_spacing_12'),
-      right: $r('app.float.app_spacing_12'),
-      top: $r('app.float.app_spacing_12'),
-      bottom: $r('app.float.app_spacing_12')
-    })
-    .backgroundColor($r('app.color.app_surface_1'))
-    .borderRadius($r('app.float.app_radius_md'))
-    .margin({ top: $r('app.float.app_spacing_8') })
   }
 
   @Builder
-  locationSceneCard(loc: LocationSceneUiModel, worldStatus: WorldStatus): void {
-    Column() {
-      // 第1行:地点名称 + 状态标签
-      Row() {
-        Text(loc.locationName.length > 0 ? loc.locationName : '(未命名地点)')
-          .fontSize($r('app.float.app_font_body'))
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.app_text_primary'))
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .layoutWeight(1)
-        Text(loc.locationStatus === WorldLocationStatus.Active ? '活跃' : '已归档')
-          .fontSize(11)
-          .fontColor(loc.locationStatus === WorldLocationStatus.Active
-            ? $r('app.color.app_accent')
-            : $r('app.color.app_text_tertiary'))
-          .backgroundColor($r('app.color.app_surface_2'))
-          .borderRadius(4)
-          .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-          .margin({ left: 8 })
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Center)
-
-      // 第2行:场景状态
-      if (loc.activeScene !== null) {
+  sceneHistoryCard(sc: HistorySceneCardUiModel): void {
+    WorldSurfaceCard({ elevated: sc.sceneStatus === WorldSceneStatus.Active }) {
+      Column() {
+        // 第1行:场景名称 + 状态标签
         Row() {
-          Circle({ width: 8, height: 8 })
-            .fill($r('app.color.app_accent'))
-          Text($r('app.string.world_scene_active_label'))
-            .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_accent'))
-            .margin({ left: 6 })
-          Text(this.formatStartedAt(loc.activeScene.startedAt))
-            .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_tertiary'))
-            .margin({ left: 8 })
+          Text(sc.locationName)
+            .fontSize($r('app.float.world_font_body'))
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.world_text_primary'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
             .layoutWeight(1)
+
+          WorldStatusChip({
+            label: sc.sceneStatus === WorldSceneStatus.Active ? '活动中' : '已结束',
+            isActive: sc.sceneStatus === WorldSceneStatus.Active
+          })
         }
         .width('100%')
-        .margin({ top: 8 })
         .alignItems(VerticalAlign.Center)
-      } else {
-        Text($r('app.string.world_scene_no_active_label'))
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
-          .margin({ top: 8 })
-      }
 
-      // 第3行:已结束场景数量
-      if (loc.endedSceneCount > 0) {
-        Text(this.formatEndedCount(loc.endedSceneCount))
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
-          .margin({ top: 4 })
-      }
+        // 第2行:时间信息
+        Column() {
+          Text('开始: ' + formatWorldTimestamp(sc.startedAt))
+            .fontSize($r('app.float.world_font_micro'))
+            .fontColor($r('app.color.world_text_tertiary'))
+            .width('100%')
 
-      // 操作按钮行
-      Row() {
-        // 查看 Active Scene
-        if (loc.activeScene !== null) {
-          Button($r('app.string.world_scene_view_active'))
-            .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_on_accent'))
-            .backgroundColor($r('app.color.app_accent'))
-            .borderRadius($r('app.float.app_radius_sm'))
-            .height(32)
-            .padding({ left: 12, right: 12 })
-            .onClick(() => {
-              this.openSceneDetail(loc.activeScene!.id);
-            })
+          if (sc.endedAt > 0) {
+            Text('结束: ' + formatWorldTimestamp(sc.endedAt))
+              .fontSize($r('app.float.world_font_micro'))
+              .fontColor($r('app.color.world_text_tertiary'))
+              .width('100%')
+              .margin({ top: 2 })
+          }
+
+          if (sc.lastMessageTime > 0) {
+            Text('最近消息: ' + formatWorldTimestamp(sc.lastMessageTime))
+              .fontSize($r('app.float.world_font_micro'))
+              .fontColor($r('app.color.world_text_tertiary'))
+              .width('100%')
+              .margin({ top: 2 })
+          }
         }
-        // 开始场景(条件:World Active + Location Active + 无 Active Scene)
-        if (loc.activeScene === null) {
-          Button($r('app.string.world_scene_start'))
-            .fontSize($r('app.float.app_font_caption'))
-            .fontColor(this.canStartScene(worldStatus, loc) ? $r('app.color.app_on_accent') : $r('app.color.app_text_tertiary'))
-            .backgroundColor(this.canStartScene(worldStatus, loc) ? $r('app.color.app_accent') : $r('app.color.app_surface_2'))
-            .borderRadius($r('app.float.app_radius_sm'))
-            .height(32)
-            .padding({ left: 12, right: 12 })
-            .enabled(this.canStartScene(worldStatus, loc) && this.viewModel !== null && !this.viewModel.isStarting)
-            .onClick(() => {
-              this.startScene(loc.locationId);
-            })
+        .margin({ top: 6 })
+        .alignItems(HorizontalAlign.Start)
+
+        Divider().color($r('app.color.world_border')).margin({ top: 8, bottom: 8 })
+
+        // 第3行:统计信息
+        Row() {
+          Text(sc.messageCount.toString() + ' 条消息')
+            .fontSize($r('app.float.world_font_caption'))
+            .fontColor($r('app.color.world_text_secondary'))
+            .backgroundColor($r('app.color.world_surface_2'))
+            .borderRadius(3)
+            .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+
+          Text($r('app.string.world_scene_history_card_no_summary'))
+            .fontSize($r('app.float.world_font_micro'))
+            .fontColor($r('app.color.world_text_tertiary'))
+            .backgroundColor($r('app.color.world_surface_2'))
+            .borderRadius(3)
+            .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+            .margin({ left: 6 })
         }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
+
+        // 第4行:操作入口
+        Row() {
+          if (sc.sceneStatus === WorldSceneStatus.Active) {
+            WorldPrimaryButton({
+              label: $r('app.string.world_scene_history_card_continue'),
+              onButtonClick: (): void => {
+                this.openSceneChat(sc.sceneId);
+              }
+            })
+            WorldSecondaryButton({
+              label: $r('app.string.world_scene_history_card_view_record'),
+              onButtonClick: (): void => {
+                this.openSceneDetail(sc.sceneId);
+              }
+            })
+              .margin({ left: 8 })
+          } else {
+            WorldSecondaryButton({
+              label: $r('app.string.world_scene_history_card_view_record'),
+              onButtonClick: (): void => {
+                this.openSceneDetail(sc.sceneId);
+              }
+            })
+            WorldPrimaryButton({
+              label: $r('app.string.world_scene_history_card_create_from'),
+              isEnabled: this.worldStatus === WorldStatus.Active,
+              onButtonClick: (): void => {
+                this.createNewFromEnded(sc);
+              }
+            })
+              .margin({ left: 8 })
+          }
+        }
+        .width('100%')
+        .margin({ top: 10 })
+        .alignItems(VerticalAlign.Center)
       }
-      .width('100%')
-      .margin({ top: 10 })
-      .alignItems(VerticalAlign.Center)
+      .padding(12)
+      .alignItems(HorizontalAlign.Start)
     }
-    .width('100%')
-    .padding({
-      left: $r('app.float.app_spacing_12'),
-      right: $r('app.float.app_spacing_12'),
-      top: $r('app.float.app_spacing_12'),
-      bottom: $r('app.float.app_spacing_12')
-    })
-    .backgroundColor($r('app.color.app_surface_1'))
-    .borderRadius($r('app.float.app_radius_md'))
-    .margin({ top: $r('app.float.app_spacing_8') })
-    .alignItems(HorizontalAlign.Start)
   }
 
-  private canStartScene(worldStatus: WorldStatus, loc: LocationSceneUiModel): boolean {
-    if (worldStatus !== WorldStatus.Active) {
-      return false;
+  private openSceneChat(sceneId: string): void {
+    if (sceneId.length === 0 || this.viewModel === null) {
+      return;
     }
-    if (loc.locationStatus !== WorldLocationStatus.Active) {
-      return false;
-    }
-    return loc.activeScene === null;
+    AppStorage.setOrCreate<string>(PENDING_WORLD_SCENE_CHAT_ID_KEY, sceneId);
+    router.pushUrl({ url: 'pages/world/WorldSceneChatPage' });
   }
 
-  private formatStartedAt(ts: number): string {
-    if (!Number.isFinite(ts) || ts <= 0) {
-      return '';
+  private openSceneDetail(sceneId: string): void {
+    if (sceneId.length === 0 || this.viewModel === null) {
+      return;
     }
-    const d: Date = new Date(ts);
-    const month: string = (d.getMonth() + 1).toString().padStart(2, '0');
-    const day: string = d.getDate().toString().padStart(2, '0');
-    const hour: string = d.getHours().toString().padStart(2, '0');
-    const minute: string = d.getMinutes().toString().padStart(2, '0');
-    return '开始于 ' + month + '-' + day + ' ' + hour + ':' + minute;
+    const worldId: string = this.viewModel.expectedWorldIdOfPage();
+    AppStorage.setOrCreate<string>(PENDING_WORLD_ID_KEY, worldId);
+    AppStorage.setOrCreate<string>(PENDING_WORLD_SCENE_ID_KEY, sceneId);
+    router.pushUrl({ url: 'pages/world/WorldSceneDetailPage' });
   }
 
-  private formatEndedCount(count: number): string {
-    return '已结束场景:' + count.toString();
+  private async createNewFromEnded(sc: HistorySceneCardUiModel): Promise<void> {
+    if (this.viewModel === null) {
+      return;
+    }
+    this.actionError = '';
+    const result: StartSceneResult = await this.viewModel.startScene(sc.locationId);
+    if (result.success) {
+      this.openSceneChat(result.sceneId);
+    } else {
+      this.actionError = result.errorMessage;
+    }
+    this.syncFromViewModel();
   }
 }

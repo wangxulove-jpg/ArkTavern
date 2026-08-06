@@ -58,7 +58,7 @@ export interface LocationSheetUiModel {
   readonly characters: SheetCharacterUiModel[];
   readonly activeScene: WorldScene | null;
   readonly endedSceneCount: number;
-  /** 是否允许创建新场景(World 和 Location 均 Active) */
+  readonly lastEndedScene: WorldScene | null;
   readonly canStartScene: boolean;
 }
 
@@ -227,9 +227,22 @@ export class WorldLocationSceneSheetViewModel {
       if (operationId !== this.loadOperationId || this.disposed) {
         return;
       }
-      const endedSceneCount: number = await this.safeCountEndedScenes(worldId, locationId);
+      const endedScenes: WorldScene[] = await this.safeListEndedScenes(worldId, locationId);
       if (operationId !== this.loadOperationId || this.disposed) {
         return;
+      }
+      const endedSceneCount: number = endedScenes.length;
+      let lastEndedScene: WorldScene | null = null;
+      if (endedScenes.length > 0) {
+        let latestTime: number = 0;
+        for (let i = 0; i < endedScenes.length; i++) {
+          const endedAtValue: number | undefined = endedScenes[i].endedAt;
+          const endedAt: number = endedAtValue !== undefined ? endedAtValue : 0;
+          if (endedAt > latestTime) {
+            latestTime = endedAt;
+            lastEndedScene = endedScenes[i];
+          }
+        }
       }
 
       const canStartScene: boolean = world.status === WorldStatus.Active
@@ -246,6 +259,7 @@ export class WorldLocationSceneSheetViewModel {
         characters: characterUiModels,
         activeScene: activeScene,
         endedSceneCount: endedSceneCount,
+        lastEndedScene: lastEndedScene,
         canStartScene: canStartScene
       };
 
@@ -333,19 +347,19 @@ export class WorldLocationSceneSheetViewModel {
     }
   }
 
-  private async safeCountEndedScenes(worldId: string, locationId: string): Promise<number> {
+  private async safeListEndedScenes(worldId: string, locationId: string): Promise<WorldScene[]> {
     try {
       const scenes: WorldScene[] = await this.sceneRepo.listByLocation(locationId);
-      let count: number = 0;
+      const ended: WorldScene[] = [];
       for (let i = 0; i < scenes.length; i++) {
         if (scenes[i].status === WorldSceneStatus.Ended) {
-          count = count + 1;
+          ended.push(scenes[i]);
         }
       }
-      return count;
+      return ended;
     } catch (e) {
       Logger.warn(LOG_TAG, 'listByLocation(scenes) failed: ' + this.safeErrorCategory(e));
-      return 0;
+      return [];
     }
   }
 

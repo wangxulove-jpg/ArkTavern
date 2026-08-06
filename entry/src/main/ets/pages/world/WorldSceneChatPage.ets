@@ -1,19 +1,11 @@
 /**
- * WorldSceneChatPage 世界场景共享对话页(W-UX-1)
+ * WorldSceneChatPage 世界场景共享对话页(W-UI-1C 重构)
  *
- * 职责:
- * - 显示场景状态、地点名称、当前人物栏
- * - 按 sequenceNumber ASC 展示共享消息时间线
- * - 用户公开消息发送(含回复目标选择)
- * - 用户私下消息发送
- * - 手动角色发言 / 旁白(从更多菜单弹出)
- * - 结束场景
- * - Ended Scene 只读
+ * 重构:深色酒馆质感,场景头+状态+参与者数,
+ * [玩家]/[角色·name]/[旁白] 标签,消息状态徽章,
+ * 输入区含发送者身份/可见性切换,Ended Scene 只读横幅。
  *
  * 路由:通过 AppStorage PENDING_WORLD_SCENE_CHAT_ID_KEY 传 sceneId
- * 写入调用 WorldSceneService。
- *
- * 视觉参考:GroupChatPage 的人物栏 + 消息列表 + 输入区,但数据完全来自 WorldScene。
  */
 
 import { router } from '@kit.ArkUI';
@@ -44,12 +36,13 @@ import {
 import { WorldStatus } from '../../models/world/World';
 import { WorldLocationStatus } from '../../models/world/WorldLocation';
 import { CharacterImageView } from '../../components/CharacterImageView';
-import { EmptyStateView } from '../../components/EmptyStateView';
+import { WorldStatusChip } from '../../components/world/WorldStatusChip';
+import { WorldPrimaryButton } from '../../components/world/WorldPrimaryButton';
+import { WorldSecondaryButton } from '../../components/world/WorldSecondaryButton';
 import { Logger } from '../../utils/Logger';
 
 const LOG_TAG: string = 'WorldSceneChatPage';
 
-/** 次级表单类型(从更多菜单触发) */
 enum SecondaryFormType {
   None,
   Character,
@@ -57,7 +50,6 @@ enum SecondaryFormType {
   EndConfirm
 }
 
-/** 回复目标选择面板 */
 enum ReplyTargetPickerMode {
   Hidden,
   PublicReply,
@@ -76,24 +68,20 @@ struct WorldSceneChatPage {
   @State private moreMenuVisible: boolean = false;
   @State private secondaryForm: SecondaryFormType = SecondaryFormType.None;
 
-  // 主输入区
   @State private inputContent: string = '';
   @State private replyTargetPickerMode: ReplyTargetPickerMode = ReplyTargetPickerMode.Hidden;
   @State private selectedReplyTargetIds: string[] = [];
   @State private isPrivateMode: boolean = false;
   @State private selectedRecipientIds: string[] = [];
 
-  // 角色消息表单
   @State private charSenderId: string = '';
   @State private charContent: string = '';
   @State private charVisibility: WorldSceneMessageVisibility = WorldSceneMessageVisibility.Public;
   @State private charRecipientIds: string[] = [];
 
-  // 旁白消息表单
   @State private narratorContent: string = '';
   @State private narratorWitnessIds: string[] = [];
 
-  // 人物操作 Sheet(W-MEMORY-1A):点击人物头像/名称打开,提供"查看记忆"入口
   @State private characterSheetInstanceId: string = '';
 
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
@@ -162,13 +150,12 @@ struct WorldSceneChatPage {
     }
     await this.viewModel.loadSnapshot(this.viewModel.expectedSceneIdOfPage());
     this.syncFromViewModel();
-    // 加载完成后滚动到底部
     if (this.loadState === WorldSceneChatLoadState.Ready) {
       setTimeout(() => {
         try {
           this.scroller.scrollEdge(Edge.Bottom);
         } catch (e) {
-          // 忽略滚动错误
+          // ignore
         }
       }, 100);
     }
@@ -181,7 +168,6 @@ struct WorldSceneChatPage {
     this.loadState = this.viewModel.state;
     this.errorMessage = this.viewModel.errorMessage;
     this.detail = this.viewModel.detail;
-    // Ended Scene 时关闭输入相关状态
     if (this.detail !== null && this.detail.sceneStatus !== WorldSceneStatus.Active) {
       this.secondaryForm = SecondaryFormType.None;
       this.replyTargetPickerMode = ReplyTargetPickerMode.Hidden;
@@ -189,7 +175,6 @@ struct WorldSceneChatPage {
     }
   }
 
-  /** 获取当前 Active 角色列表(用于回复目标/接收者选择) */
   private activeCharacters(): ChatCharacterUiModel[] {
     if (this.detail === null) {
       return [];
@@ -203,7 +188,6 @@ struct WorldSceneChatPage {
     return result;
   }
 
-  /** 场景是否可写 */
   private isSceneWritable(): boolean {
     if (this.detail === null) {
       return false;
@@ -215,35 +199,31 @@ struct WorldSceneChatPage {
 
   build(): void {
     Column() {
-      this.headerArea();
-      if (this.isInitializing) {
-        this.loadingView();
-      } else if (this.loadState === WorldSceneChatLoadState.Loading) {
-        this.loadingView();
+      this.headerArea()
+      if (this.isInitializing || this.loadState === WorldSceneChatLoadState.Loading) {
+        this.loadingView()
       } else if (this.loadState === WorldSceneChatLoadState.NotFound) {
-        this.notFoundView();
+        this.notFoundView()
       } else if (this.loadState === WorldSceneChatLoadState.Error) {
-        this.errorView(this.errorMessage.length > 0 ? this.errorMessage : '场景数据加载失败,请重试');
+        this.errorView()
       } else if (this.loadState === WorldSceneChatLoadState.Ready && this.detail !== null) {
         this.contentView(this.detail)
       }
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.app_bg'))
+    .backgroundColor($r('app.color.world_bg'))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .bindSheet(this.moreMenuVisible, this.moreMenuSheet, {
       height: SheetSize.FIT_CONTENT,
       dragBar: true,
-      backgroundColor: $r('app.color.app_surface_1'),
-      onDisappear: () => {
-        this.moreMenuVisible = false;
-      }
+      backgroundColor: $r('app.color.world_surface_1'),
+      onDisappear: () => { this.moreMenuVisible = false; }
     })
     .bindSheet(this.secondaryForm === SecondaryFormType.Character, this.characterFormSheet, {
       height: SheetSize.FIT_CONTENT,
       dragBar: true,
-      backgroundColor: $r('app.color.app_surface_1'),
+      backgroundColor: $r('app.color.world_surface_1'),
       onDisappear: () => {
         if (this.secondaryForm === SecondaryFormType.Character) {
           this.secondaryForm = SecondaryFormType.None;
@@ -253,7 +233,7 @@ struct WorldSceneChatPage {
     .bindSheet(this.secondaryForm === SecondaryFormType.Narrator, this.narratorFormSheet, {
       height: SheetSize.FIT_CONTENT,
       dragBar: true,
-      backgroundColor: $r('app.color.app_surface_1'),
+      backgroundColor: $r('app.color.world_surface_1'),
       onDisappear: () => {
         if (this.secondaryForm === SecondaryFormType.Narrator) {
           this.secondaryForm = SecondaryFormType.None;
@@ -263,7 +243,7 @@ struct WorldSceneChatPage {
     .bindSheet(this.secondaryForm === SecondaryFormType.EndConfirm, this.endConfirmSheet, {
       height: SheetSize.FIT_CONTENT,
       dragBar: true,
-      backgroundColor: $r('app.color.app_surface_1'),
+      backgroundColor: $r('app.color.world_surface_1'),
       onDisappear: () => {
         if (this.secondaryForm === SecondaryFormType.EndConfirm) {
           this.secondaryForm = SecondaryFormType.None;
@@ -273,10 +253,8 @@ struct WorldSceneChatPage {
     .bindSheet(this.characterSheetInstanceId.length > 0, this.characterInfoSheet, {
       height: SheetSize.FIT_CONTENT,
       dragBar: true,
-      backgroundColor: $r('app.color.app_surface_1'),
-      onDisappear: () => {
-        this.characterSheetInstanceId = '';
-      }
+      backgroundColor: $r('app.color.world_surface_1'),
+      onDisappear: () => { this.characterSheetInstanceId = ''; }
     })
   }
 
@@ -284,78 +262,80 @@ struct WorldSceneChatPage {
   headerArea(): void {
     Column() {
       Row() {
-        Button($r('app.string.world_home_back'))
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_accent'))
+        Button('←')
+          .fontSize(22)
+          .fontColor($r('app.color.world_text_secondary'))
           .backgroundColor(Color.Transparent)
-          .height(36)
-          .padding({ left: 0, right: 8 })
-          .accessibilityText($r('app.string.world_home_back'))
-          .onClick(() => {
-            router.back();
-          })
+          .width(40)
+          .height(40)
+          .padding(0)
+          .onClick(() => { router.back(); })
 
         Column() {
           if (this.detail !== null) {
-            Text(this.detail.locationName)
-              .fontSize($r('app.float.app_font_title'))
+            Text(this.detail.sceneName)
+              .fontSize($r('app.float.world_font_title'))
               .fontWeight(FontWeight.Bold)
-              .fontColor($r('app.color.app_text_primary'))
+              .fontColor($r('app.color.world_text_primary'))
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
-            Text(this.sceneStatusText(this.detail.sceneStatus))
-              .fontSize($r('app.float.app_font_caption'))
-              .fontColor(this.detail.sceneStatus === WorldSceneStatus.Active
-                ? $r('app.color.app_accent') : $r('app.color.app_text_tertiary'))
+            Row() {
+              WorldStatusChip({
+                label: this.detail.sceneStatus === WorldSceneStatus.Active ? '活动中' : '已结束',
+                isActive: this.detail.sceneStatus === WorldSceneStatus.Active
+              })
+              Text(this.detail.participantCount.toString() + ' 位参与')
+                .fontSize($r('app.float.world_font_micro'))
+                .fontColor($r('app.color.world_text_tertiary'))
+                .margin({ left: 6 })
+            }
+            .margin({ top: 2 })
           } else {
             Text($r('app.string.world_scene_chat_title'))
-              .fontSize($r('app.float.app_font_title'))
+              .fontSize($r('app.float.world_font_title'))
               .fontWeight(FontWeight.Bold)
-              .fontColor($r('app.color.app_text_primary'))
+              .fontColor($r('app.color.world_text_primary'))
           }
         }
         .alignItems(HorizontalAlign.Start)
         .layoutWeight(1)
-        .margin({ left: 8 })
+        .margin({ left: 4 })
 
         if (this.detail !== null && this.isSceneWritable()) {
-          Button($r('app.string.world_scene_more'))
-            .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_secondary'))
-            .backgroundColor($r('app.color.app_surface_2'))
-            .borderRadius($r('app.float.app_radius_sm'))
-            .height(32)
-            .padding({ left: 12, right: 12 })
-            .accessibilityText($r('app.string.world_scene_more'))
-            .onClick(() => {
-              this.moreMenuVisible = true;
-            })
+          Text('⋯')
+            .fontSize(22)
+            .fontColor($r('app.color.world_text_secondary'))
+            .backgroundColor($r('app.color.world_surface_1'))
+            .borderRadius($r('app.float.world_radius_chip'))
+            .width(36)
+            .height(36)
+            .textAlign(TextAlign.Center)
+            .onClick(() => { this.moreMenuVisible = true; })
         }
       }
       .width('100%')
       .padding({
-        left: $r('app.float.app_spacing_16'),
-        right: $r('app.float.app_spacing_16'),
-        top: this.statusBarHeight + 8,
-        bottom: $r('app.float.app_spacing_8')
+        left: $r('app.float.world_page_padding'),
+        right: $r('app.float.world_page_padding'),
+        top: this.statusBarHeight + 4,
+        bottom: 4
       })
       .alignItems(VerticalAlign.Center)
 
-      // 当前人物栏
       if (this.detail !== null) {
         this.characterStripArea(this.detail.characters)
       }
     }
     .width('100%')
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor($r('app.color.world_surface_1'))
   }
 
   @Builder
   characterStripArea(characters: ChatCharacterUiModel[]): void {
     if (characters.length === 0) {
       Text($r('app.string.world_scene_no_characters'))
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontSize($r('app.float.world_font_caption'))
+        .fontColor($r('app.color.world_text_tertiary'))
         .width('100%')
         .textAlign(TextAlign.Center)
         .padding({ top: 8, bottom: 8 })
@@ -390,7 +370,7 @@ struct WorldSceneChatPage {
         })
         if (!c.isActive) {
           Circle({ width: 10, height: 10 })
-            .fill($r('app.color.app_text_tertiary'))
+            .fill($r('app.color.world_text_tertiary'))
             .position({ x: 26, y: 26 })
         }
       }
@@ -398,7 +378,7 @@ struct WorldSceneChatPage {
       .height(36)
       Text(c.displayName)
         .fontSize(10)
-        .fontColor(c.isActive ? $r('app.color.app_text_primary') : $r('app.color.app_text_tertiary'))
+        .fontColor(c.isActive ? $r('app.color.world_text_primary') : $r('app.color.world_text_tertiary'))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .margin({ top: 2 })
@@ -406,15 +386,12 @@ struct WorldSceneChatPage {
     .width(48)
     .margin({ right: 8 })
     .alignItems(HorizontalAlign.Center)
-    .onClick(() => {
-      this.characterSheetInstanceId = c.instanceId;
-    })
+    .onClick(() => { this.characterSheetInstanceId = c.instanceId; })
   }
 
   @Builder
   contentView(detail: WorldSceneChatUiModel): void {
     Column() {
-      // 消息列表
       if (detail.messages.length === 0) {
         this.emptyMessageView()
       } else {
@@ -423,7 +400,7 @@ struct WorldSceneChatPage {
             ListItem() {
               this.messageBubble(m)
             }
-          }, (m: ChatMessageUiModel) => m.id)
+          }, (m: ChatMessageUiModel) => m.id + '|' + m.messageStatus)
         }
         .layoutWeight(1)
         .width('100%')
@@ -431,16 +408,14 @@ struct WorldSceneChatPage {
         .scrollBar(BarState.Auto)
       }
 
-      // 错误提示
       if (this.actionError.length > 0) {
         Text(this.actionError)
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_danger'))
+          .fontSize($r('app.float.world_font_caption'))
+          .fontColor($r('app.color.world_error'))
           .width('100%')
           .padding({ left: 16, right: 16, top: 4, bottom: 4 })
       }
 
-      // 输入区
       if (this.isSceneWritable()) {
         this.inputArea(detail)
       } else if (detail.sceneStatus === WorldSceneStatus.Ended) {
@@ -455,8 +430,8 @@ struct WorldSceneChatPage {
   emptyMessageView(): void {
     Column() {
       Text($r('app.string.world_scene_empty_messages'))
-        .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontSize($r('app.float.world_font_body'))
+        .fontColor($r('app.color.world_text_tertiary'))
         .margin({ top: 40 })
     }
     .width('100%')
@@ -467,12 +442,11 @@ struct WorldSceneChatPage {
   @Builder
   messageBubble(m: ChatMessageUiModel): void {
     Column() {
-      // 发送者行
       Row() {
         if (m.senderType === WorldSceneMessageSenderType.Character && m.senderAvatarUri.length > 0) {
           CharacterImageView({
             imageUri: m.senderAvatarUri,
-            fallbackName: m.senderDisplayName,
+            fallbackName: m.senderFallbackName,
             imgWidth: 24,
             imgHeight: 24,
             imgBorderRadius: 12,
@@ -480,66 +454,76 @@ struct WorldSceneChatPage {
           })
           .margin({ right: 6 })
         }
-        Text(m.senderDisplayName.length > 0 ? m.senderDisplayName : this.senderTypeLabel(m.senderType))
-          .fontSize($r('app.float.app_font_caption'))
+
+        Text(this.senderLabel(m))
+          .fontSize($r('app.float.world_font_micro'))
           .fontWeight(FontWeight.Medium)
-          .fontColor(this.senderColor(m.senderType))
-        // 可见性标签
-        Text(this.visibilityLabel(m.visibility))
-          .fontSize(10)
-          .fontColor($r('app.color.app_text_tertiary'))
-          .backgroundColor($r('app.color.app_surface_2'))
+          .fontColor(this.senderLabelColor(m.senderType))
+          .backgroundColor(this.senderLabelBg(m.senderType))
           .borderRadius(3)
           .padding({ left: 4, right: 4, top: 1, bottom: 1 })
+
+        Text(this.visibilityTag(m.visibility))
+          .fontSize($r('app.float.world_font_micro'))
+          .fontColor(this.visibilityColor(m.visibility))
+          .backgroundColor($r('app.color.world_surface_2'))
+          .borderRadius(3)
+          .padding({ left: 4, right: 4, top: 1, bottom: 1 })
+          .margin({ left: 4 })
+
+        if (m.messageStatus !== 'completed') {
+          Text(this.statusTag(m.messageStatus))
+            .fontSize($r('app.float.world_font_micro'))
+            .fontColor(this.statusColor(m.messageStatus))
+            .backgroundColor($r('app.color.world_surface_2'))
+            .borderRadius(3)
+            .padding({ left: 4, right: 4, top: 1, bottom: 1 })
+            .margin({ left: 4 })
+        }
+
+        Text(formatChatTimestamp(m.createdAt))
+          .fontSize($r('app.float.world_font_micro'))
+          .fontColor($r('app.color.world_text_tertiary'))
           .margin({ left: 6 })
+          .layoutWeight(1)
+          .textAlign(TextAlign.End)
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
 
-      // 消息正文
       Text(m.content)
-        .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_primary'))
+        .fontSize($r('app.float.world_font_body'))
+        .fontColor($r('app.color.world_text_primary'))
         .width('100%')
         .margin({ top: 4 })
         .textAlign(TextAlign.Start)
 
-      // 回复目标 / 接收者 / 目击者
       if (m.replyTargetNames.length > 0) {
         Text($r('app.string.world_scene_reply_target_prefix') + m.replyTargetNames.join('、'))
-          .fontSize(10)
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontSize($r('app.float.world_font_micro'))
+          .fontColor($r('app.color.world_text_tertiary'))
           .width('100%')
           .margin({ top: 4 })
       }
       if (m.recipientNames.length > 0) {
         Text($r('app.string.world_scene_recipient_prefix') + m.recipientNames.join('、'))
-          .fontSize(10)
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontSize($r('app.float.world_font_micro'))
+          .fontColor($r('app.color.world_text_tertiary'))
           .width('100%')
           .margin({ top: 2 })
       }
       if (m.witnessNames.length > 0) {
         Text($r('app.string.world_scene_witness_prefix') + m.witnessNames.join('、'))
-          .fontSize(10)
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontSize($r('app.float.world_font_micro'))
+          .fontColor($r('app.color.world_text_tertiary'))
           .width('100%')
           .margin({ top: 2 })
       }
-
-      // 时间
-      Text(formatChatTimestamp(m.createdAt))
-        .fontSize(9)
-        .fontColor($r('app.color.app_text_tertiary'))
-        .width('100%')
-        .margin({ top: 4 })
     }
     .width('100%')
-    .padding({
-      left: 12, right: 12, top: 8, bottom: 8
-    })
-    .backgroundColor($r('app.color.app_surface_1'))
-    .borderRadius($r('app.float.app_radius_md'))
+    .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+    .backgroundColor($r('app.color.world_surface_1'))
+    .borderRadius($r('app.float.world_radius_card'))
     .margin({ bottom: 8 })
     .alignItems(HorizontalAlign.Start)
   }
@@ -547,19 +531,16 @@ struct WorldSceneChatPage {
   @Builder
   inputArea(detail: WorldSceneChatUiModel): void {
     Column() {
-      // 回复目标 / 私下接收者 Chip 行
       if (this.selectedReplyTargetIds.length > 0 || this.selectedRecipientIds.length > 0) {
         this.targetChipRow(detail)
       }
 
-      // 选择面板
       if (this.replyTargetPickerMode === ReplyTargetPickerMode.PublicReply) {
         this.replyTargetPicker(detail)
       } else if (this.replyTargetPickerMode === ReplyTargetPickerMode.PrivateRecipient) {
         this.recipientPicker(detail)
       }
 
-      // 输入框 + 发送
       Row() {
         TextInput({
           text: this.inputContent,
@@ -567,70 +548,52 @@ struct WorldSceneChatPage {
             ? $r('app.string.world_scene_private_input_placeholder')
             : $r('app.string.world_scene_public_input_placeholder')
         })
-          .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_primary'))
-          .backgroundColor($r('app.color.app_surface_2'))
-          .borderRadius($r('app.float.app_radius_md'))
+          .fontSize($r('app.float.world_font_body'))
+          .fontColor($r('app.color.world_text_primary'))
+          .placeholderColor($r('app.color.world_text_tertiary'))
+          .backgroundColor($r('app.color.world_surface_2'))
+          .borderRadius($r('app.float.world_radius_chip'))
           .layoutWeight(1)
-          .onChange((v: string) => {
-            this.inputContent = v;
-          })
+          .onChange((v: string) => { this.inputContent = v; })
 
-        // 模式切换:公开/私下
-        Button(this.isPrivateMode
-          ? $r('app.string.world_scene_mode_private')
-          : $r('app.string.world_scene_mode_public'))
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_accent'))
-          .backgroundColor($r('app.color.app_surface_2'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(36)
-          .padding({ left: 8, right: 8 })
-          .margin({ left: 8 })
-          .accessibilityText($r('app.string.world_scene_toggle_mode'))
-          .onClick(() => {
-            this.toggleMode();
-          })
+        Text(this.isPrivateMode ? '私下' : '公开')
+          .fontSize($r('app.float.world_font_caption'))
+          .fontColor(this.isPrivateMode ? $r('app.color.world_on_gold') : $r('app.color.world_text_secondary'))
+          .backgroundColor(this.isPrivateMode ? $r('app.color.world_gold') : $r('app.color.world_surface_2'))
+          .borderRadius($r('app.float.world_radius_chip'))
+          .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+          .margin({ left: 6 })
+          .onClick(() => { this.toggleMode(); })
 
-        // 选择目标按钮
-        Button(this.isPrivateMode
-          ? $r('app.string.world_scene_select_recipients')
-          : $r('app.string.world_scene_select_reply_target'))
-          .fontSize($r('app.float.app_font_caption'))
+        Text(this.isPrivateMode ? '选接收' : '选回复')
+          .fontSize($r('app.float.world_font_caption'))
           .fontColor((this.isPrivateMode && this.selectedRecipientIds.length > 0)
             || (!this.isPrivateMode && this.selectedReplyTargetIds.length > 0)
-            ? $r('app.color.app_accent') : $r('app.color.app_text_secondary'))
-          .backgroundColor($r('app.color.app_surface_2'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(36)
-          .padding({ left: 8, right: 8 })
+            ? $r('app.color.world_on_gold') : $r('app.color.world_text_secondary'))
+          .backgroundColor((this.isPrivateMode && this.selectedRecipientIds.length > 0)
+            || (!this.isPrivateMode && this.selectedReplyTargetIds.length > 0)
+            ? $r('app.color.world_gold') : $r('app.color.world_surface_2'))
+          .borderRadius($r('app.float.world_radius_chip'))
+          .padding({ left: 8, right: 8, top: 4, bottom: 4 })
           .margin({ left: 4 })
-          .accessibilityText($r('app.string.world_scene_select_reply_target'))
-          .onClick(() => {
-            this.openTargetPicker();
-          })
+          .onClick(() => { this.openTargetPicker(); })
 
-        // 发送
-        Button($r('app.string.world_scene_send'))
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_on_accent'))
-          .backgroundColor($r('app.color.app_accent'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(36)
-          .padding({ left: 12, right: 12 })
+        Text('发送')
+          .fontSize($r('app.float.world_font_caption'))
+          .fontColor($r('app.color.world_on_gold'))
+          .backgroundColor($r('app.color.world_gold'))
+          .borderRadius($r('app.float.world_radius_button'))
+          .padding({ left: 12, right: 12, top: 6, bottom: 6 })
           .margin({ left: 4 })
-          .accessibilityText($r('app.string.world_scene_send'))
           .enabled(this.viewModel !== null && !this.viewModel.isSending)
-          .onClick(() => {
-            this.sendUserMessage();
-          })
+          .onClick(() => { this.sendUserMessage(); })
       }
       .width('100%')
       .padding({ left: 12, right: 12, top: 8, bottom: 8 + this.navBarHeight })
       .alignItems(VerticalAlign.Center)
     }
     .width('100%')
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor($r('app.color.world_surface_1'))
   }
 
   @Builder
@@ -638,31 +601,31 @@ struct WorldSceneChatPage {
     Row() {
       if (this.selectedReplyTargetIds.length > 0) {
         Text($r('app.string.world_scene_reply_target_prefix'))
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontSize($r('app.float.world_font_micro'))
+          .fontColor($r('app.color.world_text_secondary'))
         ForEach(this.selectedReplyTargetIds, (id: string) => {
           Text(this.resolveInstanceName(detail, id))
-            .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_accent'))
-            .backgroundColor($r('app.color.app_surface_2'))
-            .borderRadius(8)
-            .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-            .margin({ left: 4 })
+            .fontSize($r('app.float.world_font_micro'))
+            .fontColor($r('app.color.world_on_gold'))
+            .backgroundColor($r('app.color.world_gold'))
+            .borderRadius(6)
+            .padding({ left: 4, right: 4, top: 1, bottom: 1 })
+            .margin({ left: 3 })
         }, (id: string) => id)
       }
       if (this.selectedRecipientIds.length > 0) {
         Text($r('app.string.world_scene_recipient_prefix'))
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_secondary'))
-          .margin({ left: 8 })
+          .fontSize($r('app.float.world_font_micro'))
+          .fontColor($r('app.color.world_text_secondary'))
+          .margin({ left: 6 })
         ForEach(this.selectedRecipientIds, (id: string) => {
           Text(this.resolveInstanceName(detail, id))
-            .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_accent'))
-            .backgroundColor($r('app.color.app_surface_2'))
-            .borderRadius(8)
-            .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-            .margin({ left: 4 })
+            .fontSize($r('app.float.world_font_micro'))
+            .fontColor($r('app.color.world_on_gold'))
+            .backgroundColor($r('app.color.world_gold'))
+            .borderRadius(6)
+            .padding({ left: 4, right: 4, top: 1, bottom: 1 })
+            .margin({ left: 3 })
         }, (id: string) => id)
       }
     }
@@ -675,23 +638,22 @@ struct WorldSceneChatPage {
   replyTargetPicker(detail: WorldSceneChatUiModel): void {
     Column() {
       Text($r('app.string.world_scene_select_reply_target'))
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontSize($r('app.float.world_font_caption'))
+        .fontColor($r('app.color.world_text_secondary'))
         .width('100%')
         .padding({ left: 12, top: 6, bottom: 4 })
 
       Row() {
         ForEach(this.activeCharacters(), (c: ChatCharacterUiModel) => {
-          Button(c.displayName)
-            .fontSize($r('app.float.app_font_caption'))
+          Text(c.displayName)
+            .fontSize($r('app.float.world_font_caption'))
             .fontColor(this.selectedReplyTargetIds.indexOf(c.instanceId) >= 0
-              ? $r('app.color.app_on_accent') : $r('app.color.app_text_primary'))
+              ? $r('app.color.world_on_gold') : $r('app.color.world_text_secondary'))
             .backgroundColor(this.selectedReplyTargetIds.indexOf(c.instanceId) >= 0
-              ? $r('app.color.app_accent') : $r('app.color.app_surface_2'))
-            .borderRadius($r('app.float.app_radius_sm'))
-            .height(32)
-            .padding({ left: 8, right: 8 })
-            .margin({ right: 6, bottom: 4 })
+              ? $r('app.color.world_gold') : $r('app.color.world_surface_2'))
+            .borderRadius($r('app.float.world_radius_chip'))
+            .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+            .margin({ right: 4, bottom: 4 })
             .onClick(() => {
               this.toggleInArray(this.selectedReplyTargetIds, c.instanceId, (v) => {
                 this.selectedReplyTargetIds = v;
@@ -703,30 +665,29 @@ struct WorldSceneChatPage {
       .padding({ left: 12, right: 12, bottom: 6 })
     }
     .width('100%')
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor($r('app.color.world_surface_1'))
   }
 
   @Builder
   recipientPicker(detail: WorldSceneChatUiModel): void {
     Column() {
       Text($r('app.string.world_scene_select_recipients'))
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontSize($r('app.float.world_font_caption'))
+        .fontColor($r('app.color.world_text_secondary'))
         .width('100%')
         .padding({ left: 12, top: 6, bottom: 4 })
 
       Row() {
         ForEach(this.activeCharacters(), (c: ChatCharacterUiModel) => {
-          Button(c.displayName)
-            .fontSize($r('app.float.app_font_caption'))
+          Text(c.displayName)
+            .fontSize($r('app.float.world_font_caption'))
             .fontColor(this.selectedRecipientIds.indexOf(c.instanceId) >= 0
-              ? $r('app.color.app_on_accent') : $r('app.color.app_text_primary'))
+              ? $r('app.color.world_on_gold') : $r('app.color.world_text_secondary'))
             .backgroundColor(this.selectedRecipientIds.indexOf(c.instanceId) >= 0
-              ? $r('app.color.app_accent') : $r('app.color.app_surface_2'))
-            .borderRadius($r('app.float.app_radius_sm'))
-            .height(32)
-            .padding({ left: 8, right: 8 })
-            .margin({ right: 6, bottom: 4 })
+              ? $r('app.color.world_gold') : $r('app.color.world_surface_2'))
+            .borderRadius($r('app.float.world_radius_chip'))
+            .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+            .margin({ right: 4, bottom: 4 })
             .onClick(() => {
               this.toggleInArray(this.selectedRecipientIds, c.instanceId, (v) => {
                 this.selectedRecipientIds = v;
@@ -738,236 +699,211 @@ struct WorldSceneChatPage {
       .padding({ left: 12, right: 12, bottom: 6 })
     }
     .width('100%')
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor($r('app.color.world_surface_1'))
   }
 
   @Builder
   endedSceneBar(): void {
     Column() {
       Text($r('app.string.world_scene_ended_hint'))
-        .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontSize($r('app.float.world_font_body'))
+        .fontColor($r('app.color.world_text_tertiary'))
         .width('100%')
         .textAlign(TextAlign.Center)
         .padding({ top: 12, bottom: 12 + this.navBarHeight })
     }
     .width('100%')
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor($r('app.color.world_surface_1'))
   }
 
   @Builder
   loadingView(): void {
     Column() {
-      LoadingProgress().width(48).height(48)
-      Text($r('app.string.world_scene_loading'))
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_secondary'))
-        .margin({ top: 12 })
+      LoadingProgress().width(40).height(40).color($r('app.color.world_gold'))
     }
     .width('100%')
     .layoutWeight(1)
     .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
   }
 
   @Builder
   notFoundView(): void {
     Column() {
-      EmptyStateView({
-        title: $r('app.string.world_scene_not_found'),
-        description: $r('app.string.world_scene_not_found_desc')
-      })
+      Text($r('app.string.world_scene_not_found'))
+        .fontSize($r('app.float.world_font_body'))
+        .fontColor($r('app.color.world_text_tertiary'))
     }
     .width('100%')
     .layoutWeight(1)
     .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
   }
 
   @Builder
-  errorView(msg: string): void {
+  errorView(): void {
     Column() {
-      EmptyStateView({
-        title: $r('app.string.world_scene_load_error'),
-        description: msg
-      })
-      Button($r('app.string.world_home_reload'))
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_accent'))
-        .backgroundColor($r('app.color.app_surface_2'))
-        .borderRadius($r('app.float.app_radius_sm'))
-        .height(36)
-        .padding({ left: 16, right: 16 })
+      Text(this.errorMessage.length > 0 ? this.errorMessage : '场景数据加载失败,请重试')
+        .fontSize($r('app.float.world_font_body'))
+        .fontColor($r('app.color.world_error'))
+      Text('重试')
+        .fontSize($r('app.float.world_font_caption'))
+        .fontColor($r('app.color.world_on_gold'))
+        .backgroundColor($r('app.color.world_gold'))
+        .borderRadius($r('app.float.world_radius_button'))
+        .padding({ left: 16, right: 16, top: 6, bottom: 6 })
         .margin({ top: 12 })
-        .onClick(() => {
-          this.loadSnapshot();
-        })
+        .onClick(() => { this.loadSnapshot(); })
     }
     .width('100%')
     .layoutWeight(1)
     .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
   }
-
-  // ===== 更多菜单和次级表单(用 bindSheet) =====
 
   @Builder
   moreMenuSheet(): void {
     Column() {
-      Text($r('app.string.world_scene_more_title'))
-        .fontSize($r('app.float.app_font_title'))
+      Text('更多操作')
+        .fontSize($r('app.float.world_font_subtitle'))
         .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor($r('app.color.world_text_primary'))
         .width('100%')
         .padding({ left: 16, top: 16, bottom: 12 })
 
-      Button($r('app.string.world_scene_manual_character'))
-        .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_primary'))
-        .backgroundColor($r('app.color.app_surface_2'))
-        .borderRadius($r('app.float.app_radius_sm'))
-        .height(44)
-        .width('100%')
-        .margin({ left: 16, right: 16, bottom: 8 })
-        .accessibilityText($r('app.string.world_scene_manual_character'))
-        .onClick(() => {
-          this.moreMenuVisible = false;
-          this.charSenderId = '';
-          this.charContent = '';
-          this.charVisibility = WorldSceneMessageVisibility.Public;
-          this.charRecipientIds = [];
-          this.secondaryForm = SecondaryFormType.Character;
-        })
+      this.sheetMenuRow($r('app.string.world_scene_manual_character'), () => {
+        this.moreMenuVisible = false;
+        this.charSenderId = '';
+        this.charContent = '';
+        this.charVisibility = WorldSceneMessageVisibility.Public;
+        this.charRecipientIds = [];
+        this.secondaryForm = SecondaryFormType.Character;
+      })
 
-      Button($r('app.string.world_scene_add_narrator'))
-        .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_primary'))
-        .backgroundColor($r('app.color.app_surface_2'))
-        .borderRadius($r('app.float.app_radius_sm'))
-        .height(44)
-        .width('100%')
-        .margin({ left: 16, right: 16, bottom: 8 })
-        .accessibilityText($r('app.string.world_scene_add_narrator'))
-        .onClick(() => {
-          this.moreMenuVisible = false;
-          this.narratorContent = '';
-          this.narratorWitnessIds = [];
-          this.secondaryForm = SecondaryFormType.Narrator;
-        })
+      this.sheetMenuRow($r('app.string.world_scene_add_narrator'), () => {
+        this.moreMenuVisible = false;
+        this.narratorContent = '';
+        this.narratorWitnessIds = [];
+        this.secondaryForm = SecondaryFormType.Narrator;
+      })
 
-      Button($r('app.string.world_scene_end'))
-        .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_danger'))
-        .backgroundColor($r('app.color.app_surface_2'))
-        .borderRadius($r('app.float.app_radius_sm'))
-        .height(44)
+      Text($r('app.string.world_scene_end'))
+        .fontSize($r('app.float.world_font_body'))
+        .fontColor($r('app.color.world_error'))
+        .backgroundColor($r('app.color.world_surface_2'))
+        .borderRadius($r('app.float.world_radius_chip'))
         .width('100%')
-        .margin({ left: 16, right: 16, bottom: 16 })
-        .accessibilityText($r('app.string.world_scene_end'))
+        .padding({ top: 12, bottom: 12 })
+        .margin({ left: 16, right: 16, bottom: 8 })
+        .textAlign(TextAlign.Center)
         .onClick(() => {
           this.moreMenuVisible = false;
           this.secondaryForm = SecondaryFormType.EndConfirm;
         })
 
-      Button($r('app.string.world_scene_cancel'))
-        .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_secondary'))
-        .backgroundColor(Color.Transparent)
-        .height(44)
+      Text($r('app.string.world_scene_cancel'))
+        .fontSize($r('app.float.world_font_body'))
+        .fontColor($r('app.color.world_text_tertiary'))
         .width('100%')
+        .padding({ top: 12, bottom: 12 })
         .margin({ left: 16, right: 16, bottom: 16 })
-        .onClick(() => {
-          this.moreMenuVisible = false;
-        })
+        .textAlign(TextAlign.Center)
+        .onClick(() => { this.moreMenuVisible = false; })
     }
     .width('100%')
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor($r('app.color.world_surface_1'))
+  }
+
+  @Builder
+  sheetMenuRow(label: ResourceStr, action: () => void): void {
+    Text(label)
+      .fontSize($r('app.float.world_font_body'))
+      .fontColor($r('app.color.world_text_primary'))
+      .backgroundColor($r('app.color.world_surface_2'))
+      .borderRadius($r('app.float.world_radius_chip'))
+      .width('100%')
+      .padding({ top: 12, bottom: 12 })
+      .margin({ left: 16, right: 16, bottom: 8 })
+      .textAlign(TextAlign.Center)
+      .onClick(() => { action(); })
   }
 
   @Builder
   characterFormSheet(): void {
     Column() {
-      Text($r('app.string.world_scene_manual_character'))
-        .fontSize($r('app.float.app_font_title'))
+      Text('角色台词(手工)')
+        .fontSize($r('app.float.world_font_subtitle'))
         .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor($r('app.color.world_text_primary'))
         .width('100%')
         .padding({ left: 16, top: 16, bottom: 12 })
 
-      // 发言角色选择
       Text($r('app.string.world_scene_sender'))
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontSize($r('app.float.world_font_caption'))
+        .fontColor($r('app.color.world_text_secondary'))
         .width('100%')
         .padding({ left: 16, bottom: 4 })
       Row() {
         ForEach(this.activeCharacters(), (c: ChatCharacterUiModel) => {
-          Button(c.displayName)
-            .fontSize($r('app.float.app_font_caption'))
+          Text(c.displayName)
+            .fontSize($r('app.float.world_font_caption'))
             .fontColor(this.charSenderId === c.instanceId
-              ? $r('app.color.app_on_accent') : $r('app.color.app_text_primary'))
+              ? $r('app.color.world_on_gold') : $r('app.color.world_text_secondary'))
             .backgroundColor(this.charSenderId === c.instanceId
-              ? $r('app.color.app_accent') : $r('app.color.app_surface_2'))
-            .borderRadius($r('app.float.app_radius_sm'))
-            .height(32)
-            .padding({ left: 8, right: 8 })
-            .margin({ right: 6, bottom: 4 })
-            .onClick(() => {
-              this.charSenderId = c.instanceId;
-            })
+              ? $r('app.color.world_gold') : $r('app.color.world_surface_2'))
+            .borderRadius($r('app.float.world_radius_chip'))
+            .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+            .margin({ right: 4, bottom: 4 })
+            .onClick(() => { this.charSenderId = c.instanceId; })
         }, (c: ChatCharacterUiModel) => c.instanceId)
       }
       .width('100%')
       .padding({ left: 16, right: 16, bottom: 8 })
 
-      // 可见性
       Row() {
-        Button($r('app.string.world_scene_mode_public'))
-          .fontSize($r('app.float.app_font_caption'))
+        Text('公开')
+          .fontSize($r('app.float.world_font_caption'))
           .fontColor(this.charVisibility === WorldSceneMessageVisibility.Public
-            ? $r('app.color.app_on_accent') : $r('app.color.app_text_primary'))
+            ? $r('app.color.world_on_gold') : $r('app.color.world_text_secondary'))
           .backgroundColor(this.charVisibility === WorldSceneMessageVisibility.Public
-            ? $r('app.color.app_accent') : $r('app.color.app_surface_2'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(32)
-          .padding({ left: 12, right: 12 })
-          .margin({ right: 8 })
+            ? $r('app.color.world_gold') : $r('app.color.world_surface_2'))
+          .borderRadius($r('app.float.world_radius_chip'))
+          .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+          .margin({ right: 6 })
           .onClick(() => {
             this.charVisibility = WorldSceneMessageVisibility.Public;
             this.charRecipientIds = [];
           })
-        Button($r('app.string.world_scene_mode_private'))
-          .fontSize($r('app.float.app_font_caption'))
+        Text('私下')
+          .fontSize($r('app.float.world_font_caption'))
           .fontColor(this.charVisibility === WorldSceneMessageVisibility.Private
-            ? $r('app.color.app_on_accent') : $r('app.color.app_text_primary'))
+            ? $r('app.color.world_on_gold') : $r('app.color.world_text_secondary'))
           .backgroundColor(this.charVisibility === WorldSceneMessageVisibility.Private
-            ? $r('app.color.app_accent') : $r('app.color.app_surface_2'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(32)
-          .padding({ left: 12, right: 12 })
-          .onClick(() => {
-            this.charVisibility = WorldSceneMessageVisibility.Private;
-          })
+            ? $r('app.color.world_gold') : $r('app.color.world_surface_2'))
+          .borderRadius($r('app.float.world_radius_chip'))
+          .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+          .onClick(() => { this.charVisibility = WorldSceneMessageVisibility.Private; })
       }
       .width('100%')
       .padding({ left: 16, bottom: 8 })
 
-      // 私下接收者(仅 Private)
       if (this.charVisibility === WorldSceneMessageVisibility.Private) {
         Text($r('app.string.world_scene_select_recipients'))
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontSize($r('app.float.world_font_caption'))
+          .fontColor($r('app.color.world_text_secondary'))
           .width('100%')
           .padding({ left: 16, bottom: 4 })
         Row() {
           ForEach(this.activeCharacters(), (c: ChatCharacterUiModel) => {
-            Button(c.displayName)
-              .fontSize($r('app.float.app_font_caption'))
+            Text(c.displayName)
+              .fontSize($r('app.float.world_font_caption'))
               .fontColor(this.charRecipientIds.indexOf(c.instanceId) >= 0
-                ? $r('app.color.app_on_accent') : $r('app.color.app_text_primary'))
+                ? $r('app.color.world_on_gold') : $r('app.color.world_text_secondary'))
               .backgroundColor(this.charRecipientIds.indexOf(c.instanceId) >= 0
-                ? $r('app.color.app_accent') : $r('app.color.app_surface_2'))
-              .borderRadius($r('app.float.app_radius_sm'))
-              .height(32)
-              .padding({ left: 8, right: 8 })
-              .margin({ right: 6, bottom: 4 })
+                ? $r('app.color.world_gold') : $r('app.color.world_surface_2'))
+              .borderRadius($r('app.float.world_radius_chip'))
+              .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+              .margin({ right: 4, bottom: 4 })
               .onClick(() => {
                 this.toggleInArray(this.charRecipientIds, c.instanceId, (v) => {
                   this.charRecipientIds = v;
@@ -979,83 +915,65 @@ struct WorldSceneChatPage {
         .padding({ left: 16, right: 16, bottom: 8 })
       }
 
-      // 正文
-      TextArea({
-        text: this.charContent,
-        placeholder: $r('app.string.world_scene_content_placeholder')
-      })
-        .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_primary'))
-        .backgroundColor($r('app.color.app_surface_2'))
-        .borderRadius($r('app.float.app_radius_md'))
+      TextArea({ text: this.charContent, placeholder: $r('app.string.world_scene_content_placeholder') })
+        .fontSize($r('app.float.world_font_body'))
+        .fontColor($r('app.color.world_text_primary'))
+        .placeholderColor($r('app.color.world_text_tertiary'))
+        .backgroundColor($r('app.color.world_surface_2'))
+        .borderRadius($r('app.float.world_radius_chip'))
         .width('100%')
         .height(120)
         .margin({ left: 16, right: 16, bottom: 8 })
-        .onChange((v: string) => {
-          this.charContent = v;
-        })
+        .onChange((v: string) => { this.charContent = v; })
 
-      // 操作按钮
       Row() {
-        Button($r('app.string.world_scene_cancel'))
-          .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_secondary'))
-          .backgroundColor($r('app.color.app_surface_2'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(40)
+        WorldSecondaryButton({
+          label: $r('app.string.world_scene_cancel'),
+          onButtonClick: (): void => { this.secondaryForm = SecondaryFormType.None; }
+        })
           .layoutWeight(1)
-          .margin({ right: 8 })
-          .onClick(() => {
-            this.secondaryForm = SecondaryFormType.None;
-          })
-        Button($r('app.string.world_scene_save'))
-          .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_on_accent'))
-          .backgroundColor($r('app.color.app_accent'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(40)
+        WorldPrimaryButton({
+          label: $r('app.string.world_scene_save'),
+          isEnabled: this.viewModel !== null && !this.viewModel.isSending
+            && this.charSenderId.length > 0,
+          onButtonClick: (): void => { this.sendCharacterMessage(); }
+        })
           .layoutWeight(1)
-          .enabled(this.viewModel !== null && !this.viewModel.isSending
-            && this.charSenderId.length > 0 && this.charContent.trim().length > 0)
-          .onClick(() => {
-            this.sendCharacterMessage();
-          })
+          .margin({ left: 8 })
       }
       .width('100%')
       .padding({ left: 16, right: 16, bottom: 16 })
     }
     .width('100%')
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor($r('app.color.world_surface_1'))
   }
 
   @Builder
   narratorFormSheet(): void {
     Column() {
-      Text($r('app.string.world_scene_add_narrator'))
-        .fontSize($r('app.float.app_font_title'))
+      Text('旁白/动作')
+        .fontSize($r('app.float.world_font_subtitle'))
         .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor($r('app.color.world_text_primary'))
         .width('100%')
         .padding({ left: 16, top: 16, bottom: 12 })
 
-      // 目击者(可选)
       Text($r('app.string.world_scene_witness'))
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontSize($r('app.float.world_font_caption'))
+        .fontColor($r('app.color.world_text_secondary'))
         .width('100%')
         .padding({ left: 16, bottom: 4 })
       Row() {
         ForEach(this.activeCharacters(), (c: ChatCharacterUiModel) => {
-          Button(c.displayName)
-            .fontSize($r('app.float.app_font_caption'))
+          Text(c.displayName)
+            .fontSize($r('app.float.world_font_caption'))
             .fontColor(this.narratorWitnessIds.indexOf(c.instanceId) >= 0
-              ? $r('app.color.app_on_accent') : $r('app.color.app_text_primary'))
+              ? $r('app.color.world_on_gold') : $r('app.color.world_text_secondary'))
             .backgroundColor(this.narratorWitnessIds.indexOf(c.instanceId) >= 0
-              ? $r('app.color.app_accent') : $r('app.color.app_surface_2'))
-            .borderRadius($r('app.float.app_radius_sm'))
-            .height(32)
-            .padding({ left: 8, right: 8 })
-            .margin({ right: 6, bottom: 4 })
+              ? $r('app.color.world_gold') : $r('app.color.world_surface_2'))
+            .borderRadius($r('app.float.world_radius_chip'))
+            .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+            .margin({ right: 4, bottom: 4 })
             .onClick(() => {
               this.toggleInArray(this.narratorWitnessIds, c.instanceId, (v) => {
                 this.narratorWitnessIds = v;
@@ -1066,108 +984,85 @@ struct WorldSceneChatPage {
       .width('100%')
       .padding({ left: 16, right: 16, bottom: 8 })
 
-      TextArea({
-        text: this.narratorContent,
-        placeholder: $r('app.string.world_scene_content_placeholder')
-      })
-        .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_primary'))
-        .backgroundColor($r('app.color.app_surface_2'))
-        .borderRadius($r('app.float.app_radius_md'))
+      TextArea({ text: this.narratorContent, placeholder: $r('app.string.world_scene_content_placeholder') })
+        .fontSize($r('app.float.world_font_body'))
+        .fontColor($r('app.color.world_text_primary'))
+        .placeholderColor($r('app.color.world_text_tertiary'))
+        .backgroundColor($r('app.color.world_surface_2'))
+        .borderRadius($r('app.float.world_radius_chip'))
         .width('100%')
         .height(120)
         .margin({ left: 16, right: 16, bottom: 8 })
-        .onChange((v: string) => {
-          this.narratorContent = v;
-        })
+        .onChange((v: string) => { this.narratorContent = v; })
 
       Row() {
-        Button($r('app.string.world_scene_cancel'))
-          .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_secondary'))
-          .backgroundColor($r('app.color.app_surface_2'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(40)
+        WorldSecondaryButton({
+          label: $r('app.string.world_scene_cancel'),
+          onButtonClick: (): void => { this.secondaryForm = SecondaryFormType.None; }
+        })
           .layoutWeight(1)
-          .margin({ right: 8 })
-          .onClick(() => {
-            this.secondaryForm = SecondaryFormType.None;
-          })
-        Button($r('app.string.world_scene_save'))
-          .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_on_accent'))
-          .backgroundColor($r('app.color.app_accent'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(40)
+        WorldPrimaryButton({
+          label: $r('app.string.world_scene_save'),
+          isEnabled: this.viewModel !== null && !this.viewModel.isSending,
+          onButtonClick: (): void => { this.sendNarratorMessage(); }
+        })
           .layoutWeight(1)
-          .enabled(this.viewModel !== null && !this.viewModel.isSending
-            && this.narratorContent.trim().length > 0)
-          .onClick(() => {
-            this.sendNarratorMessage();
-          })
+          .margin({ left: 8 })
       }
       .width('100%')
       .padding({ left: 16, right: 16, bottom: 16 })
     }
     .width('100%')
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor($r('app.color.world_surface_1'))
   }
 
   @Builder
   endConfirmSheet(): void {
     Column() {
       Text($r('app.string.world_scene_end_confirm_title'))
-        .fontSize($r('app.float.app_font_title'))
+        .fontSize($r('app.float.world_font_subtitle'))
         .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor($r('app.color.world_text_primary'))
         .width('100%')
         .padding({ left: 16, top: 16, bottom: 12 })
 
       Text($r('app.string.world_scene_end_confirm_desc'))
-        .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontSize($r('app.float.world_font_body'))
+        .fontColor($r('app.color.world_text_secondary'))
         .width('100%')
         .padding({ left: 16, right: 16, bottom: 16 })
 
       Row() {
-        Button($r('app.string.world_scene_cancel'))
-          .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_secondary'))
-          .backgroundColor($r('app.color.app_surface_2'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(40)
+        WorldSecondaryButton({
+          label: $r('app.string.world_scene_cancel'),
+          onButtonClick: (): void => { this.secondaryForm = SecondaryFormType.None; }
+        })
           .layoutWeight(1)
-          .margin({ right: 8 })
-          .onClick(() => {
-            this.secondaryForm = SecondaryFormType.None;
-          })
-        Button($r('app.string.world_scene_end'))
-          .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_on_accent'))
-          .backgroundColor($r('app.color.app_danger'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(40)
+        Text($r('app.string.world_scene_end'))
+          .fontSize($r('app.float.world_font_body'))
+          .fontColor($r('app.color.world_on_danger'))
+          .backgroundColor($r('app.color.world_error'))
+          .borderRadius($r('app.float.world_radius_button'))
+          .padding({ left: 16, right: 16, top: 8, bottom: 8 })
           .layoutWeight(1)
+          .textAlign(TextAlign.Center)
           .enabled(this.viewModel !== null && !this.viewModel.isEnding)
-          .onClick(() => {
-            this.endScene();
-          })
+          .onClick(() => { this.endScene(); })
       }
       .width('100%')
       .padding({ left: 16, right: 16, bottom: 16 })
     }
     .width('100%')
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor($r('app.color.world_surface_1'))
   }
 
-  /** 人物信息 Sheet(W-MEMORY-1A):点击人物栏头像/名称打开,提供"查看记忆"入口 */
   @Builder
   characterInfoSheet(): void {
     Column() {
       Text($r('app.string.world_memory_character_sheet_title'))
-        .fontSize($r('app.float.app_font_title'))
+        .fontSize($r('app.float.world_font_subtitle'))
         .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor($r('app.color.world_text_primary'))
         .width('100%')
         .padding({ left: 16, top: 16, bottom: 12 })
 
@@ -1184,38 +1079,31 @@ struct WorldSceneChatPage {
 
           Column() {
             Text(this.resolveCharacterName(this.characterSheetInstanceId))
-              .fontSize($r('app.float.app_font_body'))
+              .fontSize($r('app.float.world_font_body'))
               .fontWeight(FontWeight.Medium)
-              .fontColor($r('app.color.app_text_primary'))
+              .fontColor($r('app.color.world_text_primary'))
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .width('100%')
 
             Row() {
-              Text(this.resolveCharacterActive(this.characterSheetInstanceId)
-                ? $r('app.string.world_character_active')
-                : $r('app.string.world_character_inactive'))
-                .fontSize(10)
-                .fontColor(this.resolveCharacterActive(this.characterSheetInstanceId)
-                  ? $r('app.color.app_accent') : $r('app.color.app_text_tertiary'))
-                .backgroundColor($r('app.color.app_surface_2'))
-                .borderRadius(3)
-                .padding({ left: 4, right: 4, top: 1, bottom: 1 })
-
+              WorldStatusChip({
+                label: this.resolveCharacterActive(this.characterSheetInstanceId) ? '活跃' : '停用',
+                isActive: this.resolveCharacterActive(this.characterSheetInstanceId)
+              })
               if (this.resolveCharacterCardMissing(this.characterSheetInstanceId)) {
                 Text($r('app.string.world_character_card_missing'))
                   .fontSize(10)
-                  .fontColor($r('app.color.app_danger'))
-                  .backgroundColor($r('app.color.app_surface_2'))
+                  .fontColor($r('app.color.world_error'))
+                  .backgroundColor($r('app.color.world_surface_2'))
                   .borderRadius(3)
                   .padding({ left: 4, right: 4, top: 1, bottom: 1 })
                   .margin({ left: 4 })
               }
-
               Text(this.detail.locationName)
                 .fontSize(10)
-                .fontColor($r('app.color.app_text_secondary'))
-                .backgroundColor($r('app.color.app_surface_2'))
+                .fontColor($r('app.color.world_text_secondary'))
+                .backgroundColor($r('app.color.world_surface_2'))
                 .borderRadius(3)
                 .padding({ left: 4, right: 4, top: 1, bottom: 1 })
                 .margin({ left: 4 })
@@ -1231,44 +1119,34 @@ struct WorldSceneChatPage {
         .padding({ left: 16, right: 16, bottom: 12 })
         .alignItems(VerticalAlign.Center)
 
-        Button($r('app.string.world_memory_view_entry'))
-          .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_on_accent'))
-          .backgroundColor($r('app.color.app_accent'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(40)
+        WorldPrimaryButton({
+          label: $r('app.string.world_memory_view_entry'),
+          onButtonClick: (): void => {
+            this.openCharacterMemoryFromScene(this.characterSheetInstanceId);
+          }
+        })
           .width('100%')
           .margin({ left: 16, right: 16, bottom: 8 })
-          .accessibilityText($r('app.string.world_memory_view_entry'))
-          .onClick(() => {
-            this.openCharacterMemoryFromScene(this.characterSheetInstanceId);
-          })
 
-        Button($r('app.string.world_scene_cancel'))
-          .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_secondary'))
-          .backgroundColor(Color.Transparent)
-          .height(40)
+        Text($r('app.string.world_scene_cancel'))
+          .fontSize($r('app.float.world_font_body'))
+          .fontColor($r('app.color.world_text_tertiary'))
           .width('100%')
+          .padding({ top: 12, bottom: 12 })
           .margin({ left: 16, right: 16, bottom: 16 })
-          .onClick(() => {
-            this.characterSheetInstanceId = '';
-          })
+          .textAlign(TextAlign.Center)
+          .onClick(() => { this.characterSheetInstanceId = ''; })
       }
     }
     .width('100%')
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor($r('app.color.world_surface_1'))
   }
-
-  // ===== 事件处理 =====
 
   private toggleMode(): void {
     this.isPrivateMode = !this.isPrivateMode;
     if (this.isPrivateMode) {
-      // 切到私下:清空回复目标
       this.selectedReplyTargetIds = [];
     } else {
-      // 切到公开:清空接收者
       this.selectedRecipientIds = [];
     }
     this.replyTargetPickerMode = ReplyTargetPickerMode.Hidden;
@@ -1296,9 +1174,7 @@ struct WorldSceneChatPage {
   }
 
   private async sendUserMessage(): Promise<void> {
-    if (this.viewModel === null || this.detail === null) {
-      return;
-    }
+    if (this.viewModel === null || this.detail === null) return;
     const content: string = this.inputContent.trim();
     if (content.length === 0) {
       this.actionError = '消息不能为空';
@@ -1320,7 +1196,6 @@ struct WorldSceneChatPage {
     const result = await this.viewModel.addUserMessage(input);
     if (result.success) {
       this.inputContent = '';
-      // 公开模式下保留回复目标,私下模式清空接收者(可继续选)
       this.actionError = '';
     } else {
       this.actionError = result.errorMessage;
@@ -1329,9 +1204,7 @@ struct WorldSceneChatPage {
   }
 
   private async sendCharacterMessage(): Promise<void> {
-    if (this.viewModel === null) {
-      return;
-    }
+    if (this.viewModel === null) return;
     const content: string = this.charContent.trim();
     if (this.charSenderId.length === 0) {
       this.actionError = '请选择发言角色';
@@ -1363,9 +1236,7 @@ struct WorldSceneChatPage {
   }
 
   private async sendNarratorMessage(): Promise<void> {
-    if (this.viewModel === null) {
-      return;
-    }
+    if (this.viewModel === null) return;
     const content: string = this.narratorContent.trim();
     if (content.length === 0) {
       this.actionError = '消息不能为空';
@@ -1387,9 +1258,7 @@ struct WorldSceneChatPage {
   }
 
   private async endScene(): Promise<void> {
-    if (this.viewModel === null) {
-      return;
-    }
+    if (this.viewModel === null) return;
     this.actionError = '';
     const result = await this.viewModel.endScene();
     if (result.success) {
@@ -1401,43 +1270,54 @@ struct WorldSceneChatPage {
     this.syncFromViewModel();
   }
 
-  // ===== 辅助方法 =====
-
-  private sceneStatusText(status: WorldSceneStatus): string {
-    if (status === WorldSceneStatus.Active) {
-      return '进行中';
+  private senderLabel(m: ChatMessageUiModel): string {
+    if (m.senderType === WorldSceneMessageSenderType.User) {
+      return '[玩家]';
     }
-    return '已结束';
+    if (m.senderType === WorldSceneMessageSenderType.Character) {
+      if (m.senderRemoved) {
+        return '[角色·已移除]';
+      }
+      return '[角色·' + (m.senderDisplayName.length > 0 ? m.senderDisplayName : '未命名') + ']';
+    }
+    return '[旁白]';
   }
 
-  private senderTypeLabel(t: WorldSceneMessageSenderType): string {
-    if (t === WorldSceneMessageSenderType.User) {
-      return '用户';
-    }
-    if (t === WorldSceneMessageSenderType.Character) {
-      return '角色';
-    }
+  private senderLabelColor(t: WorldSceneMessageSenderType): ResourceColor {
+    if (t === WorldSceneMessageSenderType.User) return $r('app.color.world_on_gold');
+    if (t === WorldSceneMessageSenderType.Character) return $r('app.color.world_text_primary');
+    return $r('app.color.world_text_tertiary');
+  }
+
+  private senderLabelBg(t: WorldSceneMessageSenderType): ResourceColor {
+    if (t === WorldSceneMessageSenderType.User) return $r('app.color.world_gold');
+    if (t === WorldSceneMessageSenderType.Character) return $r('app.color.world_surface_2');
+    return $r('app.color.world_surface_1');
+  }
+
+  private visibilityTag(v: WorldSceneMessageVisibility): string {
+    if (v === WorldSceneMessageVisibility.Public) return '公开';
+    if (v === WorldSceneMessageVisibility.Private) return '私下';
     return '旁白';
   }
 
-  private senderColor(t: WorldSceneMessageSenderType): ResourceColor {
-    if (t === WorldSceneMessageSenderType.User) {
-      return $r('app.color.app_accent');
-    }
-    if (t === WorldSceneMessageSenderType.Character) {
-      return $r('app.color.app_text_primary');
-    }
-    return $r('app.color.app_text_tertiary');
+  private visibilityColor(v: WorldSceneMessageVisibility): ResourceColor {
+    if (v === WorldSceneMessageVisibility.Private) return $r('app.color.world_error');
+    return $r('app.color.world_text_secondary');
   }
 
-  private visibilityLabel(v: WorldSceneMessageVisibility): string {
-    if (v === WorldSceneMessageVisibility.Public) {
-      return '公开';
-    }
-    if (v === WorldSceneMessageVisibility.Private) {
-      return '私下';
-    }
-    return '旁白';
+  private statusTag(s: string): string {
+    if (s === 'streaming') return '生成中';
+    if (s === 'cancelled') return '已取消';
+    if (s === 'failed') return '失败';
+    return '已完成';
+  }
+
+  private statusColor(s: string): ResourceColor {
+    if (s === 'streaming') return $r('app.color.world_gold');
+    if (s === 'cancelled') return $r('app.color.world_text_tertiary');
+    if (s === 'failed') return $r('app.color.world_error');
+    return $r('app.color.world_text_secondary');
   }
 
   private resolveInstanceName(detail: WorldSceneChatUiModel, instanceId: string): string {
@@ -1449,19 +1329,13 @@ struct WorldSceneChatPage {
     return '已移除角色';
   }
 
-  /** 人物信息 Sheet 用:解析实例显示名称 */
   private resolveCharacterName(instanceId: string): string {
-    if (this.detail === null || instanceId.length === 0) {
-      return '';
-    }
+    if (this.detail === null || instanceId.length === 0) return '';
     return this.resolveInstanceName(this.detail, instanceId);
   }
 
-  /** 人物信息 Sheet 用:解析实例头像 */
   private resolveCharacterAvatar(instanceId: string): string {
-    if (this.detail === null) {
-      return '';
-    }
+    if (this.detail === null) return '';
     for (let i = 0; i < this.detail.characters.length; i++) {
       if (this.detail.characters[i].instanceId === instanceId) {
         return this.detail.characters[i].avatarUri;
@@ -1470,11 +1344,8 @@ struct WorldSceneChatPage {
     return '';
   }
 
-  /** 人物信息 Sheet 用:解析实例降级名称 */
   private resolveCharacterFallback(instanceId: string): string {
-    if (this.detail === null) {
-      return '';
-    }
+    if (this.detail === null) return '';
     for (let i = 0; i < this.detail.characters.length; i++) {
       if (this.detail.characters[i].instanceId === instanceId) {
         return this.detail.characters[i].fallbackName;
@@ -1483,11 +1354,8 @@ struct WorldSceneChatPage {
     return '';
   }
 
-  /** 人物信息 Sheet 用:解析实例是否活跃 */
   private resolveCharacterActive(instanceId: string): boolean {
-    if (this.detail === null) {
-      return false;
-    }
+    if (this.detail === null) return false;
     for (let i = 0; i < this.detail.characters.length; i++) {
       if (this.detail.characters[i].instanceId === instanceId) {
         return this.detail.characters[i].isActive;
@@ -1496,11 +1364,8 @@ struct WorldSceneChatPage {
     return false;
   }
 
-  /** 人物信息 Sheet 用:解析角色卡是否缺失 */
   private resolveCharacterCardMissing(instanceId: string): boolean {
-    if (this.detail === null) {
-      return false;
-    }
+    if (this.detail === null) return false;
     for (let i = 0; i < this.detail.characters.length; i++) {
       if (this.detail.characters[i].instanceId === instanceId) {
         return this.detail.characters[i].characterCardMissing;
@@ -1509,15 +1374,10 @@ struct WorldSceneChatPage {
     return false;
   }
 
-  /** 从场景聊天页打开角色记忆页(传 worldId + instanceId) */
   private openCharacterMemoryFromScene(instanceId: string): void {
-    if (this.detail === null || instanceId.length === 0) {
-      return;
-    }
+    if (this.detail === null || instanceId.length === 0) return;
     const worldId: string = this.detail.worldId;
-    if (worldId.length === 0) {
-      return;
-    }
+    if (worldId.length === 0) return;
     this.characterSheetInstanceId = '';
     AppStorage.setOrCreate<string>(PENDING_WORLD_MEMORY_WORLD_ID_KEY, worldId);
     AppStorage.setOrCreate<string>(PENDING_WORLD_MEMORY_CHARACTER_INSTANCE_ID_KEY, instanceId);

@@ -1,28 +1,9 @@
-/**
- * WorldCharacterMemoryViewModel 世界角色记忆页 ViewModel(W-MEMORY-1A)
- *
- * 职责:
- * - 根据 worldId + characterInstanceId 加载角色实例 + 头部信息 + 当前 World 地点列表 + 记忆列表
- * - 创建 / 编辑 / 归档 / 恢复 / 删除 记忆(调用 WorldCharacterMemoryService)
- * - 处理页面切换(expectedWorldId + expectedCharacterInstanceId + loadOperationId)和销毁(disposed)
- * - 写操作防重复(operationId + isSaving + isDeleting)
- * - 角色名称解析:实例+Character 存在→Character.name;实例存在+Character 缺失→displayNameSnapshot;实例已移除→"已移除角色"
- *
- * 不负责:
- * - AI 自动提取记忆 / Prompt 注入 / 检索排序
- * - 直接调用 Repository 的写入方法(只走 Service)
- *
- * 依赖方向:
- * Page → ViewModel → Repository(只读) / CharacterService(只读 getById) /
- *                    WorldCharacterMemoryService(写入)
- *
- * 日志安全:不记录完整记忆正文 / 完整 ID / SQL,仅记录操作类型、memoryType、importance、
- * status、数量、operationId、截断短 ID。
- */
-
 import { WorldRepository } from '../../repositories/world/WorldRepository';
 import { WorldLocationRepository } from '../../repositories/world/WorldLocationRepository';
 import { WorldCharacterInstanceRepository } from '../../repositories/world/WorldCharacterInstanceRepository';
+import { WorldSceneRepository } from '../../repositories/world/WorldSceneRepository';
+import { WorldSceneMessageRepository } from '../../repositories/world/WorldSceneMessageRepository';
+import { WorldEventRepository } from '../../repositories/world/WorldEventRepository';
 import { CharacterService } from '../../services/CharacterService';
 import {
   WorldCharacterMemoryService,
@@ -34,6 +15,9 @@ import { Logger } from '../../utils/Logger';
 import { World } from '../../models/world/World';
 import { WorldLocation } from '../../models/world/WorldLocation';
 import { WorldCharacterInstance } from '../../models/world/WorldCharacterInstance';
+import { WorldScene, WorldSceneStatus } from '../../models/world/WorldScene';
+import { WorldSceneMessage, WorldSceneMessageSenderType } from '../../models/world/WorldSceneMessage';
+import { WorldEvent, WorldEventType } from '../../models/world/WorldEvent';
 import { Character } from '../../models/Character';
 import {
   WorldCharacterMemory,
@@ -47,7 +31,6 @@ import { formatWorldTimestamp } from './WorldUiModels';
 
 const LOG_TAG: string = 'WorldCharacterMemoryViewModel';
 
-/** 记忆页加载状态 */
 export enum WorldCharacterMemoryLoadState {
   Loading,
   Ready,
@@ -55,16 +38,24 @@ export enum WorldCharacterMemoryLoadState {
   Error
 }
 
-/** 记忆筛选 */
 export enum WorldCharacterMemoryListFilter {
   All = 'all',
   Active = 'active',
-  Archived = 'archived'
+  Archived = 'archived',
+  Manual = 'manual',
+  Scene = 'scene'
 }
 
-/** 角色头部 UI 模型 */
+export enum ArchiveTab {
+  Memory = 'memory',
+  Activity = 'activity',
+  Relationship = 'relationship',
+  Diagnostic = 'diagnostic'
+}
+
 export interface MemoryCharacterHeaderUiModel {
   readonly worldId: string;
+  readonly worldName: string;
   readonly characterInstanceId: string;
   readonly displayName: string;
   readonly fallbackName: string;
@@ -75,16 +66,25 @@ export interface MemoryCharacterHeaderUiModel {
   readonly currentLocationName: string;
   readonly locationMissing: boolean;
   readonly memoryCount: number;
+  readonly lastActivityTime: number;
+  readonly instanceId: string;
+  readonly characterId: string;
 }
 
-/** 地点候选项 UI 模型(用于"发生地点"选择) */
+export interface CharacterSwitcherItemUiModel {
+  readonly instanceId: string;
+  readonly displayName: string;
+  readonly avatarUri: string;
+  readonly fallbackName: string;
+  readonly isActive: boolean;
+}
+
 export interface MemoryLocationOptionUiModel {
   readonly id: string;
   readonly name: string;
   readonly status: string;
 }
 
-/** 记忆卡片 UI 模型(已本地化类型/状态/来源摘要) */
 export interface MemoryItemUiModel {
   readonly id: string;
   readonly type: WorldCharacterMemoryType;
@@ -99,23 +99,102 @@ export interface MemoryItemUiModel {
   readonly sourceLocationName: string;
   readonly sourceLocationMissing: boolean;
   readonly sourceSceneId: string;
+  readonly sourceSceneName: string;
+  readonly sourceSceneMissing: boolean;
   readonly sourceMessageId: string;
+  readonly sourceMessageMissing: boolean;
   readonly sourceSummary: string;
   readonly occurredAt: number;
   readonly occurredAtLabel: string;
   readonly createdAt: number;
   readonly createdAtLabel: string;
   readonly updatedAt: number;
+  readonly updatedAtLabel: string;
+  readonly worldId: string;
+  readonly characterInstanceId: string;
+  readonly hasEvidence: boolean;
 }
 
-/** 记忆页 UI 快照 */
+export interface ActivitySceneUiModel {
+  readonly sceneId: string;
+  readonly locationName: string;
+  readonly locationMissing: boolean;
+  readonly startedAt: number;
+  readonly startedAtLabel: string;
+  readonly endedAt: number;
+  readonly endedAtLabel: string;
+  readonly status: WorldSceneStatus;
+  readonly statusLabel: string;
+  readonly messageCount: number;
+  readonly participantCount: number;
+  readonly characterSpoke: boolean;
+}
+
+export interface ActivityMessageUiModel {
+  readonly messageId: string;
+  readonly sceneId: string;
+  readonly locationName: string;
+  readonly locationMissing: boolean;
+  readonly sentAt: number;
+  readonly sentAtLabel: string;
+  readonly contentPreview: string;
+  readonly visibility: string;
+  readonly visibilityLabel: string;
+  readonly coParticipantNames: string[];
+}
+
+export interface ActivityMoveUiModel {
+  readonly eventId: string;
+  readonly fromLocationName: string;
+  readonly fromLocationMissing: boolean;
+  readonly toLocationName: string;
+  readonly toLocationMissing: boolean;
+  readonly occurredAt: number;
+  readonly occurredAtLabel: string;
+}
+
+export enum DiagnosticRiskLevel {
+  Info = 'info',
+  Notice = 'notice',
+  Warning = 'warning',
+  Critical = 'critical'
+}
+
+export interface DiagnosticIssueUiModel {
+  readonly id: string;
+  readonly issueType: string;
+  readonly riskLevel: DiagnosticRiskLevel;
+  readonly description: string;
+  readonly affectedMemoryId: string;
+  readonly affectedRecordId: string;
+}
+
+export interface DiagnosticSummaryUiModel {
+  readonly totalMemories: number;
+  readonly withSourceCount: number;
+  readonly withoutSourceCount: number;
+  readonly archivedCount: number;
+  readonly duplicateSourceMessageCount: number;
+  readonly ownerMismatchCount: number;
+  readonly worldMismatchCount: number;
+  readonly missingSceneRefCount: number;
+  readonly missingMessageRefCount: number;
+  readonly missingLocationRefCount: number;
+  readonly missingCharacterRefCount: number;
+  readonly issues: DiagnosticIssueUiModel[];
+}
+
 export interface WorldCharacterMemorySnapshotUiModel {
   readonly header: MemoryCharacterHeaderUiModel;
   readonly memories: MemoryItemUiModel[];
   readonly locationOptions: MemoryLocationOptionUiModel[];
+  readonly characterSwitcherItems: CharacterSwitcherItemUiModel[];
+  readonly activityScenes: ActivitySceneUiModel[];
+  readonly activityMessages: ActivityMessageUiModel[];
+  readonly activityMoves: ActivityMoveUiModel[];
+  readonly diagnostic: DiagnosticSummaryUiModel;
 }
 
-/** 创建记忆表单输入 */
 export interface CreateMemoryFormInput {
   readonly content: string;
   readonly type: WorldCharacterMemoryType;
@@ -124,7 +203,6 @@ export interface CreateMemoryFormInput {
   readonly occurredAt?: number;
 }
 
-/** 编辑记忆表单输入 */
 export interface UpdateMemoryFormInput {
   readonly memoryId: string;
   readonly content: string;
@@ -134,7 +212,6 @@ export interface UpdateMemoryFormInput {
   readonly occurredAt?: number;
 }
 
-/** 写操作结果 */
 export interface MemorySaveResult {
   readonly success: boolean;
   readonly errorMessage: string;
@@ -144,6 +221,9 @@ export class WorldCharacterMemoryViewModel {
   private readonly worldRepo: WorldRepository;
   private readonly locationRepo: WorldLocationRepository;
   private readonly instanceRepo: WorldCharacterInstanceRepository;
+  private readonly sceneRepo: WorldSceneRepository;
+  private readonly messageRepo: WorldSceneMessageRepository;
+  private readonly eventRepo: WorldEventRepository;
   private readonly characterService: CharacterService;
   private readonly memoryService: WorldCharacterMemoryService;
 
@@ -164,12 +244,18 @@ export class WorldCharacterMemoryViewModel {
     worldRepo: WorldRepository,
     locationRepo: WorldLocationRepository,
     instanceRepo: WorldCharacterInstanceRepository,
+    sceneRepo: WorldSceneRepository,
+    messageRepo: WorldSceneMessageRepository,
+    eventRepo: WorldEventRepository,
     characterService: CharacterService,
     memoryService: WorldCharacterMemoryService
   ) {
     this.worldRepo = worldRepo;
     this.locationRepo = locationRepo;
     this.instanceRepo = instanceRepo;
+    this.sceneRepo = sceneRepo;
+    this.messageRepo = messageRepo;
+    this.eventRepo = eventRepo;
     this.characterService = characterService;
     this.memoryService = memoryService;
     this.instanceShortId = WorldCharacterMemoryViewModel.generateShortId();
@@ -184,13 +270,11 @@ export class WorldCharacterMemoryViewModel {
   activate(): void {
     if (this.disposed) {
       this.disposed = false;
-      Logger.info(LOG_TAG, 'activate: vmInstance=' + this.instanceShortId);
     }
   }
 
   dispose(): void {
     this.disposed = true;
-    Logger.info(LOG_TAG, 'dispose: vmInstance=' + this.instanceShortId);
   }
 
   setTarget(worldId: string, characterInstanceId: string): void {
@@ -210,16 +294,12 @@ export class WorldCharacterMemoryViewModel {
     return this.expectedCharacterInstanceId;
   }
 
-  /**
-   * 加载记忆页快照。每次 onPageShow 和写操作完成后调用。
-   */
   async loadSnapshot(
     worldId: string,
     characterInstanceId: string,
     filter: WorldCharacterMemoryListFilter
   ): Promise<void> {
     if (this.disposed) {
-      Logger.warn(LOG_TAG, 'loadSnapshot skipped: disposed vmInstance=' + this.instanceShortId);
       return;
     }
     this.expectedWorldId = worldId;
@@ -254,13 +334,11 @@ export class WorldCharacterMemoryViewModel {
         return;
       }
 
-      // 解析角色卡
       let character: Character | null = null;
       if (instance.characterId.length > 0) {
         try {
           character = await this.characterService.getById(instance.characterId);
         } catch (e) {
-          Logger.warn(LOG_TAG, 'characterService.getById failed: ' + this.safeErrorCategory(e));
           character = null;
         }
       }
@@ -273,7 +351,6 @@ export class WorldCharacterMemoryViewModel {
       const avatarUri: string = !characterMissing && character !== null
         ? character.avatarUri : '';
 
-      // 解析当前位置名称
       let currentLocationName: string = '';
       let locationMissing: boolean = false;
       if (instance.currentLocationId !== undefined && instance.currentLocationId.length > 0) {
@@ -286,7 +363,6 @@ export class WorldCharacterMemoryViewModel {
             locationMissing = true;
           }
         } catch (e) {
-          Logger.warn(LOG_TAG, 'locationRepo.getById(current) failed: ' + this.safeErrorCategory(e));
           locationMissing = true;
         }
       }
@@ -294,52 +370,262 @@ export class WorldCharacterMemoryViewModel {
         return;
       }
 
-      // 加载当前 World 全部地点(用于"发生地点"候选,允许 Archived)
       let locations: WorldLocation[] = [];
       try {
         locations = await this.locationRepo.listByWorld(worldId);
       } catch (e) {
-        Logger.warn(LOG_TAG, 'locationRepo.listByWorld failed: ' + this.safeErrorCategory(e));
         locations = [];
       }
       if (operationId !== this.loadOperationId || this.disposed) {
         return;
       }
 
-      // 加载记忆列表
+      const locationMap: Map<string, WorldLocation> = new Map<string, WorldLocation>();
+      for (let i = 0; i < locations.length; i++) {
+        locationMap.set(locations[i].id, locations[i]);
+      }
+
       const memoryFilter: WorldCharacterMemoryFilter = this.toServiceFilter(filter);
       let memories: WorldCharacterMemory[] = [];
       try {
         memories = await this.memoryService.listByCharacterInstance(characterInstanceId, memoryFilter);
       } catch (e) {
-        Logger.warn(LOG_TAG, 'listByCharacterInstance failed: ' + this.safeErrorCategory(e));
         memories = [];
       }
       if (operationId !== this.loadOperationId || this.disposed) {
         return;
       }
 
-      // 记忆总数(不受筛选影响)
-      let memoryCount: number = 0;
+      let allMemories: WorldCharacterMemory[] = [];
       try {
-        memoryCount = await this.memoryService.countByCharacterInstance(characterInstanceId);
+        allMemories = await this.memoryService.listByCharacterInstance(
+          characterInstanceId, WorldCharacterMemoryFilter.All);
       } catch (e) {
-        Logger.warn(LOG_TAG, 'countByCharacterInstance failed: ' + this.safeErrorCategory(e));
-        memoryCount = memories.length;
+        allMemories = memories;
       }
       if (operationId !== this.loadOperationId || this.disposed) {
         return;
       }
 
-      // 构建地点 Map(用于来源地点名称解析)
-      const locationMap: Map<string, WorldLocation> = new Map<string, WorldLocation>();
-      for (let i = 0; i < locations.length; i++) {
-        locationMap.set(locations[i].id, locations[i]);
+      let memoryCount: number = 0;
+      try {
+        memoryCount = await this.memoryService.countByCharacterInstance(characterInstanceId);
+      } catch (e) {
+        memoryCount = allMemories.length;
+      }
+      if (operationId !== this.loadOperationId || this.disposed) {
+        return;
       }
 
-      // 构建 UI 模型
+      let worldInstances: WorldCharacterInstance[] = [];
+      try {
+        worldInstances = await this.instanceRepo.listByWorld(worldId);
+      } catch (e) {
+        worldInstances = [];
+      }
+      if (operationId !== this.loadOperationId || this.disposed) {
+        return;
+      }
+
+      const instanceCharacterCache: Map<string, Character | null> = new Map<string, Character | null>();
+      const switcherItems: CharacterSwitcherItemUiModel[] = [];
+      for (let i = 0; i < worldInstances.length; i++) {
+        const inst: WorldCharacterInstance = worldInstances[i];
+        let char: Character | null | undefined = instanceCharacterCache.get(inst.characterId);
+        if (char === undefined) {
+          try {
+            char = await this.characterService.getById(inst.characterId);
+          } catch (e) {
+            char = null;
+          }
+          instanceCharacterCache.set(inst.characterId, char);
+        }
+        const iName: string = char !== null ? char.name : inst.displayNameSnapshot;
+        const iAvatar: string = char !== null ? char.avatarUri : '';
+        const iFallback: string = inst.displayNameSnapshot;
+        switcherItems.push({
+          instanceId: inst.id,
+          displayName: iName,
+          avatarUri: iAvatar,
+          fallbackName: iFallback,
+          isActive: inst.isActive
+        });
+      }
+      if (operationId !== this.loadOperationId || this.disposed) {
+        return;
+      }
+
+      let lastActivityTime: number = instance.updatedAt;
+
+      let worldScenes: WorldScene[] = [];
+      try {
+        worldScenes = await this.sceneRepo.listByWorld(worldId);
+      } catch (e) {
+        worldScenes = [];
+      }
+      if (operationId !== this.loadOperationId || this.disposed) {
+        return;
+      }
+
+      const sceneCache: Map<string, WorldScene> = new Map<string, WorldScene>();
+      for (let i = 0; i < worldScenes.length; i++) {
+        sceneCache.set(worldScenes[i].id, worldScenes[i]);
+      }
+
+      const activityScenes: ActivitySceneUiModel[] = [];
+      const relevantSceneIds: Set<string> = new Set<string>();
+      for (let i = 0; i < worldScenes.length; i++) {
+        const scene: WorldScene = worldScenes[i];
+        try {
+          const msgs: WorldSceneMessage[] = await this.messageRepo.listByScene(scene.id);
+          let charSpoke: boolean = false;
+          let participantIds: Set<string> = new Set<string>();
+          for (let j = 0; j < msgs.length; j++) {
+            if (msgs[j].senderCharacterInstanceId === characterInstanceId) {
+              charSpoke = true;
+            }
+            if (msgs[j].participantCharacterInstanceIds !== undefined) {
+              for (let k = 0; k < msgs[j].participantCharacterInstanceIds!.length; k++) {
+                participantIds.add(msgs[j].participantCharacterInstanceIds![k]);
+              }
+            }
+          }
+          if (charSpoke || participantIds.has(characterInstanceId)) {
+            relevantSceneIds.add(scene.id);
+            const locInfo: WorldLocation | undefined = locationMap.get(scene.locationId);
+            const endedAtVal: number = scene.endedAt !== undefined ? scene.endedAt : 0;
+            activityScenes.push({
+              sceneId: scene.id,
+              locationName: locInfo !== undefined ? locInfo.name : '',
+              locationMissing: locInfo === undefined,
+              startedAt: scene.startedAt,
+              startedAtLabel: formatWorldTimestamp(scene.startedAt),
+              endedAt: endedAtVal,
+              endedAtLabel: endedAtVal > 0 ? formatWorldTimestamp(endedAtVal) : '',
+              status: scene.status,
+              statusLabel: scene.status === WorldSceneStatus.Active ? '进行中' : '已结束',
+              messageCount: msgs.length,
+              participantCount: participantIds.size,
+              characterSpoke: charSpoke
+            });
+            if (scene.updatedAt > lastActivityTime) {
+              lastActivityTime = scene.updatedAt;
+            }
+          }
+        } catch (e) {
+          continue;
+        }
+      }
+      activityScenes.sort((a: ActivitySceneUiModel, b: ActivitySceneUiModel) => {
+        return b.startedAt - a.startedAt;
+      });
+      if (operationId !== this.loadOperationId || this.disposed) {
+        return;
+      }
+
+      const activityMessages: ActivityMessageUiModel[] = [];
+      for (let i = 0; i < activityScenes.length && i < 20; i++) {
+        const ascene: ActivitySceneUiModel = activityScenes[i];
+        try {
+          const msgs: WorldSceneMessage[] = await this.messageRepo.listByScene(ascene.sceneId);
+          for (let j = 0; j < msgs.length; j++) {
+            if (msgs[j].senderCharacterInstanceId === characterInstanceId) {
+              const locInfo: WorldLocation | undefined = locationMap.get(ascene.sceneId.length > 0
+                ? (sceneCache.has(ascene.sceneId)
+                  ? sceneCache.get(ascene.sceneId)!.locationId
+                  : '')
+                : '');
+              const locName: string = locInfo !== undefined ? locInfo.name : ascene.locationName;
+              const locMissing: boolean = locInfo === undefined && ascene.locationMissing;
+              const coNames: string[] = [];
+              if (msgs[j].participantCharacterInstanceIds !== undefined) {
+                for (let k = 0; k < msgs[j].participantCharacterInstanceIds!.length; k++) {
+                  const pid: string = msgs[j].participantCharacterInstanceIds![k];
+                  if (pid !== characterInstanceId) {
+                    const pInst: WorldCharacterInstance | undefined =
+                      worldInstances.find((inst: WorldCharacterInstance) => inst.id === pid);
+                    if (pInst !== undefined) {
+                      const pChar: Character | null | undefined =
+                        instanceCharacterCache.get(pInst.characterId);
+                      coNames.push(pChar !== null && pChar !== undefined
+                        ? pChar.name : pInst.displayNameSnapshot);
+                    }
+                  }
+                }
+              }
+              const preview: string = msgs[j].content.length > 80
+                ? msgs[j].content.substring(0, 80) + '…'
+                : msgs[j].content;
+              activityMessages.push({
+                messageId: msgs[j].id,
+                sceneId: ascene.sceneId,
+                locationName: locName,
+                locationMissing: locMissing,
+                sentAt: msgs[j].createdAt,
+                sentAtLabel: formatWorldTimestamp(msgs[j].createdAt),
+                contentPreview: preview,
+                visibility: msgs[j].visibility,
+                visibilityLabel: this.visibilityLabel(msgs[j].visibility),
+                coParticipantNames: coNames
+              });
+              if (msgs[j].createdAt > lastActivityTime) {
+                lastActivityTime = msgs[j].createdAt;
+              }
+            }
+          }
+        } catch (e) {
+          continue;
+        }
+      }
+      activityMessages.sort((a: ActivityMessageUiModel, b: ActivityMessageUiModel) => {
+        return b.sentAt - a.sentAt;
+      });
+      if (operationId !== this.loadOperationId || this.disposed) {
+        return;
+      }
+
+      const activityMoves: ActivityMoveUiModel[] = [];
+      try {
+        const events: WorldEvent[] = await this.eventRepo.listByWorld(worldId);
+        for (let i = 0; i < events.length; i++) {
+          if (events[i].eventType === WorldEventType.CharacterMoved
+            && events[i].sourceCharacterInstanceId === characterInstanceId) {
+            const fromLoc: WorldLocation | undefined =
+              events[i].sourceLocationId !== undefined
+                ? locationMap.get(events[i].sourceLocationId!) : undefined;
+            const toLoc: WorldLocation | undefined =
+              events[i].targetLocationId !== undefined
+                ? locationMap.get(events[i].targetLocationId!) : undefined;
+            activityMoves.push({
+              eventId: events[i].id,
+              fromLocationName: fromLoc !== undefined ? fromLoc.name : '',
+              fromLocationMissing: fromLoc === undefined
+                && events[i].sourceLocationId !== undefined,
+              toLocationName: toLoc !== undefined ? toLoc.name : '',
+              toLocationMissing: toLoc === undefined
+                && events[i].targetLocationId !== undefined,
+              occurredAt: events[i].occurredAt,
+              occurredAtLabel: formatWorldTimestamp(events[i].occurredAt)
+            });
+          }
+        }
+      } catch (e) {
+        // ignored
+      }
+      activityMoves.sort((a: ActivityMoveUiModel, b: ActivityMoveUiModel) => {
+        return b.occurredAt - a.occurredAt;
+      });
+      if (operationId !== this.loadOperationId || this.disposed) {
+        return;
+      }
+
+      const diagnostic: DiagnosticSummaryUiModel =
+        this.buildDiagnostic(allMemories, worldId, characterInstanceId,
+          worldInstances, sceneCache, locationMap);
+
       const header: MemoryCharacterHeaderUiModel = {
         worldId: world.id,
+        worldName: world.name,
         characterInstanceId: instance.id,
         displayName: displayName,
         fallbackName: instance.displayNameSnapshot,
@@ -349,7 +635,10 @@ export class WorldCharacterMemoryViewModel {
         currentLocationId: instance.currentLocationId !== undefined ? instance.currentLocationId : '',
         currentLocationName: currentLocationName,
         locationMissing: locationMissing,
-        memoryCount: memoryCount
+        memoryCount: memoryCount,
+        lastActivityTime: lastActivityTime,
+        instanceId: instance.id,
+        characterId: instance.characterId
       };
 
       const locationOptions: MemoryLocationOptionUiModel[] =
@@ -364,13 +653,18 @@ export class WorldCharacterMemoryViewModel {
 
       const memoryItems: MemoryItemUiModel[] = new Array<MemoryItemUiModel>(memories.length);
       for (let i = 0; i < memories.length; i++) {
-        memoryItems[i] = this.buildMemoryItem(memories[i], locationMap);
+        memoryItems[i] = this.buildMemoryItem(memories[i], locationMap, sceneCache);
       }
 
       const snapshot: WorldCharacterMemorySnapshotUiModel = {
         header: header,
         memories: memoryItems,
-        locationOptions: locationOptions
+        locationOptions: locationOptions,
+        characterSwitcherItems: switcherItems,
+        activityScenes: activityScenes,
+        activityMessages: activityMessages,
+        activityMoves: activityMoves,
+        diagnostic: diagnostic
       };
 
       if (operationId !== this.loadOperationId || this.disposed) {
@@ -378,27 +672,17 @@ export class WorldCharacterMemoryViewModel {
       }
       this.snapshot = snapshot;
       this.state = WorldCharacterMemoryLoadState.Ready;
-      Logger.info(LOG_TAG, 'loadSnapshot done: vmInstance=' + this.instanceShortId
-        + ', operation=' + operationId.toString()
-        + ', state=ready, memoryCount=' + memoryItems.length.toString()
-        + ', instanceShortId=' + this.shortId(characterInstanceId));
     } catch (e) {
       if (operationId !== this.loadOperationId || this.disposed) {
         return;
       }
-      Logger.error(LOG_TAG, 'loadSnapshot failed: vmInstance=' + this.instanceShortId
-        + ', operation=' + operationId.toString()
-        + ', ' + this.safeErrorCategory(e)
-        + ', instanceShortId=' + this.shortId(characterInstanceId));
       this.errorMessage = '记忆数据加载失败,请重试';
       this.state = WorldCharacterMemoryLoadState.Error;
     }
   }
 
-  /** 创建手动记忆 */
   async createMemory(input: CreateMemoryFormInput): Promise<MemorySaveResult> {
     if (this.isSaving) {
-      Logger.warn(LOG_TAG, 'createMemory skipped: isSaving');
       return { success: false, errorMessage: '正在处理,请稍候' } as MemorySaveResult;
     }
     if (this.expectedWorldId.length === 0 || this.expectedCharacterInstanceId.length === 0) {
@@ -421,18 +705,12 @@ export class WorldCharacterMemoryViewModel {
       if (opId !== this.operationId || this.disposed) {
         return { success: false, errorMessage: '操作已过期' } as MemorySaveResult;
       }
-      Logger.info(LOG_TAG, 'createMemory ok: type=' + input.type
-        + ', importance=' + input.importance.toString()
-        + ', instanceShortId=' + this.shortId(this.expectedCharacterInstanceId));
       return { success: true, errorMessage: '' } as MemorySaveResult;
     } catch (e) {
       if (opId !== this.operationId || this.disposed) {
         return { success: false, errorMessage: '操作已过期' } as MemorySaveResult;
       }
       const msg: string = this.resolveErrorMessage(e);
-      Logger.warn(LOG_TAG, 'createMemory failed: ' + this.safeErrorCategory(e)
-        + ', type=' + input.type
-        + ', instanceShortId=' + this.shortId(this.expectedCharacterInstanceId));
       return { success: false, errorMessage: msg } as MemorySaveResult;
     } finally {
       if (opId === this.operationId) {
@@ -441,10 +719,8 @@ export class WorldCharacterMemoryViewModel {
     }
   }
 
-  /** 编辑记忆 */
   async updateMemory(input: UpdateMemoryFormInput): Promise<MemorySaveResult> {
     if (this.isSaving) {
-      Logger.warn(LOG_TAG, 'updateMemory skipped: isSaving');
       return { success: false, errorMessage: '正在处理,请稍候' } as MemorySaveResult;
     }
     if (input.memoryId.length === 0) {
@@ -466,18 +742,12 @@ export class WorldCharacterMemoryViewModel {
       if (opId !== this.operationId || this.disposed) {
         return { success: false, errorMessage: '操作已过期' } as MemorySaveResult;
       }
-      Logger.info(LOG_TAG, 'updateMemory ok: type=' + input.type
-        + ', importance=' + input.importance.toString()
-        + ', memoryShortId=' + this.shortId(input.memoryId));
       return { success: true, errorMessage: '' } as MemorySaveResult;
     } catch (e) {
       if (opId !== this.operationId || this.disposed) {
         return { success: false, errorMessage: '操作已过期' } as MemorySaveResult;
       }
       const msg: string = this.resolveErrorMessage(e);
-      Logger.warn(LOG_TAG, 'updateMemory failed: ' + this.safeErrorCategory(e)
-        + ', type=' + input.type
-        + ', memoryShortId=' + this.shortId(input.memoryId));
       return { success: false, errorMessage: msg } as MemorySaveResult;
     } finally {
       if (opId === this.operationId) {
@@ -486,13 +756,11 @@ export class WorldCharacterMemoryViewModel {
     }
   }
 
-  /** 归档 / 恢复记忆 */
   async setMemoryArchived(
     memoryId: string,
     archived: boolean
   ): Promise<MemorySaveResult> {
     if (this.isSaving || this.isDeleting) {
-      Logger.warn(LOG_TAG, 'setMemoryArchived skipped: busy');
       return { success: false, errorMessage: '正在处理,请稍候' } as MemorySaveResult;
     }
     if (memoryId.length === 0) {
@@ -506,16 +774,12 @@ export class WorldCharacterMemoryViewModel {
       if (opId !== this.operationId || this.disposed) {
         return { success: false, errorMessage: '操作已过期' } as MemorySaveResult;
       }
-      Logger.info(LOG_TAG, 'setMemoryArchived ok: archived=' + archived.toString()
-        + ', memoryShortId=' + this.shortId(memoryId));
       return { success: true, errorMessage: '' } as MemorySaveResult;
     } catch (e) {
       if (opId !== this.operationId || this.disposed) {
         return { success: false, errorMessage: '操作已过期' } as MemorySaveResult;
       }
       const msg: string = this.resolveErrorMessage(e);
-      Logger.warn(LOG_TAG, 'setMemoryArchived failed: ' + this.safeErrorCategory(e)
-        + ', memoryShortId=' + this.shortId(memoryId));
       return { success: false, errorMessage: msg } as MemorySaveResult;
     } finally {
       if (opId === this.operationId) {
@@ -524,10 +788,8 @@ export class WorldCharacterMemoryViewModel {
     }
   }
 
-  /** 永久删除记忆 */
   async deleteMemory(memoryId: string): Promise<MemorySaveResult> {
     if (this.isDeleting) {
-      Logger.warn(LOG_TAG, 'deleteMemory skipped: isDeleting');
       return { success: false, errorMessage: '正在处理,请稍候' } as MemorySaveResult;
     }
     if (memoryId.length === 0) {
@@ -541,15 +803,12 @@ export class WorldCharacterMemoryViewModel {
       if (opId !== this.operationId || this.disposed) {
         return { success: false, errorMessage: '操作已过期' } as MemorySaveResult;
       }
-      Logger.info(LOG_TAG, 'deleteMemory ok: memoryShortId=' + this.shortId(memoryId));
       return { success: true, errorMessage: '' } as MemorySaveResult;
     } catch (e) {
       if (opId !== this.operationId || this.disposed) {
         return { success: false, errorMessage: '操作已过期' } as MemorySaveResult;
       }
       const msg: string = this.resolveErrorMessage(e);
-      Logger.warn(LOG_TAG, 'deleteMemory failed: ' + this.safeErrorCategory(e)
-        + ', memoryShortId=' + this.shortId(memoryId));
       return { success: false, errorMessage: msg } as MemorySaveResult;
     } finally {
       if (opId === this.operationId) {
@@ -558,8 +817,6 @@ export class WorldCharacterMemoryViewModel {
     }
   }
 
-  // ===== 私有辅助 =====
-
   private toServiceFilter(filter: WorldCharacterMemoryListFilter): WorldCharacterMemoryFilter {
     if (filter === WorldCharacterMemoryListFilter.Active) {
       return WorldCharacterMemoryFilter.Active;
@@ -567,12 +824,19 @@ export class WorldCharacterMemoryViewModel {
     if (filter === WorldCharacterMemoryListFilter.Archived) {
       return WorldCharacterMemoryFilter.Archived;
     }
+    if (filter === WorldCharacterMemoryListFilter.Manual) {
+      return WorldCharacterMemoryFilter.All;
+    }
+    if (filter === WorldCharacterMemoryListFilter.Scene) {
+      return WorldCharacterMemoryFilter.All;
+    }
     return WorldCharacterMemoryFilter.All;
   }
 
   private buildMemoryItem(
     memory: WorldCharacterMemory,
-    locationMap: Map<string, WorldLocation>
+    locationMap: Map<string, WorldLocation>,
+    sceneMap: Map<string, WorldScene>
   ): MemoryItemUiModel {
     let sourceLocationName: string = '';
     let sourceLocationMissing: boolean = false;
@@ -584,7 +848,26 @@ export class WorldCharacterMemoryViewModel {
         sourceLocationMissing = true;
       }
     }
-    const sourceSummary: string = this.buildSourceSummary(memory, sourceLocationName, sourceLocationMissing);
+    let sourceSceneName: string = '';
+    let sourceSceneMissing: boolean = false;
+    if (memory.sourceSceneId !== undefined && memory.sourceSceneId.length > 0) {
+      const scene: WorldScene | undefined = sceneMap.get(memory.sourceSceneId);
+      if (scene !== undefined) {
+        const loc: WorldLocation | undefined = locationMap.get(scene.locationId);
+        sourceSceneName = loc !== undefined ? loc.name : '未知地点';
+      } else {
+        sourceSceneMissing = true;
+      }
+    }
+    let sourceMessageMissing: boolean = false;
+    if (memory.sourceMessageId !== undefined && memory.sourceMessageId.length > 0) {
+      sourceMessageMissing = false;
+    }
+    const hasEvidence: boolean = memory.sourceSceneId !== undefined
+      || memory.sourceMessageId !== undefined;
+    const sourceSummary: string = this.buildSourceSummary(
+      memory, sourceLocationName, sourceLocationMissing,
+      sourceSceneName, sourceSceneMissing);
     return {
       id: memory.id,
       type: memory.type,
@@ -599,29 +882,36 @@ export class WorldCharacterMemoryViewModel {
       sourceLocationName: sourceLocationName,
       sourceLocationMissing: sourceLocationMissing,
       sourceSceneId: memory.sourceSceneId !== undefined ? memory.sourceSceneId : '',
+      sourceSceneName: sourceSceneName,
+      sourceSceneMissing: sourceSceneMissing,
       sourceMessageId: memory.sourceMessageId !== undefined ? memory.sourceMessageId : '',
+      sourceMessageMissing: sourceMessageMissing,
       sourceSummary: sourceSummary,
       occurredAt: memory.occurredAt !== undefined ? memory.occurredAt : 0,
       occurredAtLabel: memory.occurredAt !== undefined ? formatWorldTimestamp(memory.occurredAt) : '',
       createdAt: memory.createdAt,
       createdAtLabel: formatWorldTimestamp(memory.createdAt),
-      updatedAt: memory.updatedAt
+      updatedAt: memory.updatedAt,
+      updatedAtLabel: formatWorldTimestamp(memory.updatedAt),
+      worldId: memory.worldId,
+      characterInstanceId: memory.characterInstanceId,
+      hasEvidence: hasEvidence
     };
   }
 
   private buildSourceSummary(
     memory: WorldCharacterMemory,
     locationName: string,
-    locationMissing: boolean
+    locationMissing: boolean,
+    sceneName: string,
+    sceneMissing: boolean
   ): string {
     const parts: string[] = [];
     if (memory.origin === WorldCharacterMemoryOrigin.SceneMessage) {
-      const sceneId: string = memory.sourceSceneId ?? '';
-      const messageId: string = memory.sourceMessageId ?? '';
-      if (sceneId.length === 0) {
+      if (sceneMissing) {
         parts.push('场景已删除');
-      } else if (messageId.length === 0) {
-        parts.push('消息已删除');
+      } else if (sceneName.length > 0) {
+        parts.push(sceneName);
       } else {
         parts.push('场景消息');
       }
@@ -637,6 +927,125 @@ export class WorldCharacterMemoryViewModel {
     return parts.join(' · ');
   }
 
+  private buildDiagnostic(
+    allMemories: WorldCharacterMemory[],
+    worldId: string,
+    characterInstanceId: string,
+    worldInstances: WorldCharacterInstance[],
+    sceneMap: Map<string, WorldScene>,
+    locationMap: Map<string, WorldLocation>
+  ): DiagnosticSummaryUiModel {
+    let withSourceCount: number = 0;
+    let withoutSourceCount: number = 0;
+    let archivedCount: number = 0;
+    let ownerMismatchCount: number = 0;
+    let worldMismatchCount: number = 0;
+    let missingSceneRefCount: number = 0;
+    let missingMessageRefCount: number = 0;
+    let missingLocationRefCount: number = 0;
+    const sourceMessageIds: Map<string, number> = new Map<string, number>();
+    const issues: DiagnosticIssueUiModel[] = [];
+
+    for (let i = 0; i < allMemories.length; i++) {
+      const m: WorldCharacterMemory = allMemories[i];
+      if (m.status === WorldCharacterMemoryStatus.Archived) {
+        archivedCount++;
+      }
+      if (m.sourceSceneId !== undefined || m.sourceMessageId !== undefined) {
+        withSourceCount++;
+      } else {
+        withoutSourceCount++;
+      }
+      if (m.worldId !== worldId) {
+        worldMismatchCount++;
+        issues.push({
+          id: 'world-mismatch-' + m.id,
+          issueType: 'MEMORY_WORLD_MISMATCH',
+          riskLevel: DiagnosticRiskLevel.Critical,
+          description: '记忆 worldId 指向其他世界',
+          affectedMemoryId: m.id,
+          affectedRecordId: m.worldId
+        });
+      }
+      if (m.characterInstanceId !== characterInstanceId) {
+        ownerMismatchCount++;
+        issues.push({
+          id: 'owner-mismatch-' + m.id,
+          issueType: 'MEMORY_OWNER_MISMATCH',
+          riskLevel: DiagnosticRiskLevel.Critical,
+          description: '记忆 characterInstanceId 不匹配当前角色',
+          affectedMemoryId: m.id,
+          affectedRecordId: m.characterInstanceId
+        });
+      }
+      if (m.sourceSceneId !== undefined && m.sourceSceneId.length > 0) {
+        if (!sceneMap.has(m.sourceSceneId)) {
+          missingSceneRefCount++;
+          issues.push({
+            id: 'missing-scene-' + m.id,
+            issueType: 'MISSING_SOURCE_SCENE',
+            riskLevel: DiagnosticRiskLevel.Warning,
+            description: '来源场景不存在',
+            affectedMemoryId: m.id,
+            affectedRecordId: m.sourceSceneId
+          });
+        }
+      }
+      if (m.sourceMessageId !== undefined && m.sourceMessageId.length > 0) {
+        const count: number | undefined = sourceMessageIds.get(m.sourceMessageId);
+        if (count !== undefined) {
+          sourceMessageIds.set(m.sourceMessageId, count + 1);
+        } else {
+          sourceMessageIds.set(m.sourceMessageId, 1);
+        }
+      }
+      if (m.sourceLocationId !== undefined && m.sourceLocationId.length > 0) {
+        if (!locationMap.has(m.sourceLocationId)) {
+          missingLocationRefCount++;
+          issues.push({
+            id: 'missing-location-' + m.id,
+            issueType: 'MISSING_LOCATION',
+            riskLevel: DiagnosticRiskLevel.Notice,
+            description: '来源地点不存在',
+            affectedMemoryId: m.id,
+            affectedRecordId: m.sourceLocationId
+          });
+        }
+      }
+    }
+
+    let duplicateSourceMessageCount: number = 0;
+    const keys: string[] = Array.from(sourceMessageIds.keys());
+    for (let i = 0; i < keys.length; i++) {
+      if (sourceMessageIds.get(keys[i])! > 1) {
+        duplicateSourceMessageCount++;
+        issues.push({
+          id: 'dup-source-' + keys[i],
+          issueType: 'DUPLICATE_SOURCE_REFERENCE',
+          riskLevel: DiagnosticRiskLevel.Notice,
+          description: '同一来源消息被多条记忆引用',
+          affectedMemoryId: '',
+          affectedRecordId: keys[i]
+        });
+      }
+    }
+
+    return {
+      totalMemories: allMemories.length,
+      withSourceCount: withSourceCount,
+      withoutSourceCount: withoutSourceCount,
+      archivedCount: archivedCount,
+      duplicateSourceMessageCount: duplicateSourceMessageCount,
+      ownerMismatchCount: ownerMismatchCount,
+      worldMismatchCount: worldMismatchCount,
+      missingSceneRefCount: missingSceneRefCount,
+      missingMessageRefCount: missingMessageRefCount,
+      missingLocationRefCount: missingLocationRefCount,
+      missingCharacterRefCount: 0,
+      issues: issues
+    };
+  }
+
   private typeLabel(type: WorldCharacterMemoryType): string {
     if (type === WorldCharacterMemoryType.Episodic) {
       return '事件记忆';
@@ -648,11 +1057,24 @@ export class WorldCharacterMemoryViewModel {
   }
 
   private originLabel(origin: WorldCharacterMemoryOrigin): string {
-    return origin === WorldCharacterMemoryOrigin.Manual ? '手动' : '场景消息';
+    return origin === WorldCharacterMemoryOrigin.Manual ? '手动' : '场景';
   }
 
   private statusLabel(status: WorldCharacterMemoryStatus): string {
     return status === WorldCharacterMemoryStatus.Active ? '活跃' : '已归档';
+  }
+
+  private visibilityLabel(v: string): string {
+    if (v === 'public') {
+      return '公开';
+    }
+    if (v === 'private') {
+      return '私下';
+    }
+    if (v === 'narrator') {
+      return '旁白';
+    }
+    return v;
   }
 
   private resolveErrorMessage(e: Object): string {

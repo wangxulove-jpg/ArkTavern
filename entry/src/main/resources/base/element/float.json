@@ -117,6 +117,10 @@
       "value": "22fp"
     },
     {
+      "name": "world_font_subtitle",
+      "value": "18fp"
+    },
+    {
       "name": "world_font_section",
       "value": "14fp"
     },

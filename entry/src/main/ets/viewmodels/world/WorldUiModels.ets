@@ -53,6 +53,12 @@ export const PENDING_WORLD_INSTANCE_DETAIL_ID_KEY: string = 'pendingWorldInstanc
 /** 跨页面路由用的 worldId 暂存键(W-MEMORY-1A,与 PENDING_WORLD_ID_KEY 区分,避免与移动页等流程互相覆盖) */
 export const PENDING_WORLD_MEMORY_WORLD_ID_KEY: string = 'pendingWorldMemoryWorldId';
 
+/** 跨页面路由用的记忆 ID 暂存键(W-UI-1D,证据查看流程) */
+export const PENDING_WORLD_MEMORY_EVIDENCE_ID_KEY: string = 'pendingWorldMemoryEvidenceId';
+
+/** 跨页面路由用的世界 ID 暂存键(W-UI-1D,档案管理员流程) */
+export const PENDING_WORLD_CURATOR_WORLD_ID_KEY: string = 'pendingWorldCuratorWorldId';
+
 /**
  * 世界详情页刷新令牌键。
  * 子页面(WorldLocationEditPage / WorldEdgeEditPage / WorldEdgeManagePage /

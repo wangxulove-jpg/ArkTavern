@@ -33,7 +33,8 @@ import { WorldScene, WorldSceneStatus } from '../../models/world/WorldScene';
 import {
   WorldSceneMessage,
   WorldSceneMessageSenderType,
-  WorldSceneMessageVisibility
+  WorldSceneMessageVisibility,
+  WorldSceneMessageStatus
 } from '../../models/world/WorldSceneMessage';
 import { Character } from '../../models/Character';
 import { DatabaseError } from '../../models/DatabaseError';
@@ -73,8 +74,10 @@ export interface ChatMessageUiModel {
   readonly senderDisplayName: string;
   readonly senderInstanceId: string;
   readonly senderAvatarUri: string;
+  readonly senderFallbackName: string;
   readonly content: string;
   readonly visibility: WorldSceneMessageVisibility;
+  readonly messageStatus: string;
   readonly recipientNames: string[];
   readonly witnessNames: string[];
   readonly replyTargetNames: string[];
@@ -85,6 +88,7 @@ export interface ChatMessageUiModel {
 /** 聊天页 UI 模型 */
 export interface WorldSceneChatUiModel {
   readonly sceneId: string;
+  readonly sceneName: string;
   readonly worldId: string;
   readonly worldName: string;
   readonly worldStatus: WorldStatus;
@@ -94,6 +98,7 @@ export interface WorldSceneChatUiModel {
   readonly sceneStatus: WorldSceneStatus;
   readonly startedAt: number;
   readonly endedAt: number;
+  readonly participantCount: number;
   readonly characters: ChatCharacterUiModel[];
   readonly messages: ChatMessageUiModel[];
 }
@@ -337,8 +342,10 @@ export class WorldSceneChatViewModel {
           senderDisplayName: senderDisplayName,
           senderInstanceId: m.senderCharacterInstanceId !== undefined ? m.senderCharacterInstanceId : '',
           senderAvatarUri: senderAvatarUri,
+          senderFallbackName: senderInst !== undefined ? senderInst.displayNameSnapshot : '',
           content: m.content,
           visibility: m.visibility,
+          messageStatus: m.status,
           recipientNames: this.resolveInstanceNames(m.recipientCharacterInstanceIds, instanceMap, characterMap),
           witnessNames: this.resolveInstanceNames(m.witnessCharacterInstanceIds, instanceMap, characterMap),
           replyTargetNames: this.resolveInstanceNames(m.replyTargetCharacterInstanceIds, instanceMap, characterMap),
@@ -348,8 +355,11 @@ export class WorldSceneChatViewModel {
         };
       }
 
+      const activeCharCount: number = characterUiModels.filter((c: ChatCharacterUiModel): boolean => c.isActive).length;
+
       const uiModel: WorldSceneChatUiModel = {
         sceneId: scene.id,
+        sceneName: locationName + ' · 会话',
         worldId: world.id,
         worldName: world.name,
         worldStatus: world.status as WorldStatus,
@@ -359,6 +369,7 @@ export class WorldSceneChatViewModel {
         sceneStatus: scene.status as WorldSceneStatus,
         startedAt: scene.startedAt,
         endedAt: scene.endedAt !== undefined ? scene.endedAt : 0,
+        participantCount: activeCharCount,
         characters: characterUiModels,
         messages: messageUiModels
       };

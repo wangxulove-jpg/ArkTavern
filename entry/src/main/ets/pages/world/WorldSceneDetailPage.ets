@@ -1,15 +1,9 @@
 /**
- * WorldSceneDetailPage 场景详情页(W-SCENE-1B)
+ * WorldSceneDetailPage 场景详情页(W-UI-1C 重构)
  *
- * 职责:
- * - 显示场景状态、地点、开始/结束时间
- * - 显示当前地点 Active 角色
- * - 按顺序展示消息列表(区分 sender / visibility / recipient / witness / replyTarget)
- * - 结束场景(Ended Scene 只读)
- * - 手动添加 User / Character / Narrator 消息(三个独立表单)
- *
- * 路由:通过 AppStorage PENDING_WORLD_SCENE_ID_KEY 传 sceneId
- * 写入调用 WorldSceneService。
+ * 重构:深色酒馆质感,场景头+状态标签+消息时间线,
+ * [玩家]/[角色·name]/[旁白] 标签,消息状态徽章,
+ * Ended Scene 只读横幅,Active Scene 操作表单。
  */
 
 import { router } from '@kit.ArkUI';
@@ -34,12 +28,16 @@ import {
   WorldSceneMessageVisibility,
   WorldSceneMessageSenderType
 } from '../../models/world/WorldSceneMessage';
-import { EmptyStateView } from '../../components/EmptyStateView';
+import { WorldSurfaceCard } from '../../components/world/WorldSurfaceCard';
+import { WorldSectionHeader } from '../../components/world/WorldSectionHeader';
+import { WorldStatusChip } from '../../components/world/WorldStatusChip';
+import { WorldEmptyState } from '../../components/world/WorldEmptyState';
+import { WorldPrimaryButton } from '../../components/world/WorldPrimaryButton';
+import { WorldSecondaryButton } from '../../components/world/WorldSecondaryButton';
 import { Logger } from '../../utils/Logger';
 
 const LOG_TAG: string = 'WorldSceneDetailPage';
 
-/** 手动消息表单类型 */
 enum MessageFormType {
   None,
   User,
@@ -58,19 +56,16 @@ struct WorldSceneDetailPage {
   @State private actionError: string = '';
   @State private currentForm: MessageFormType = MessageFormType.None;
 
-  // User 消息表单
   @State private userContent: string = '';
   @State private userVisibility: WorldSceneMessageVisibility = WorldSceneMessageVisibility.Public;
   @State private userRecipientIds: string[] = [];
   @State private userReplyTargetIds: string[] = [];
 
-  // Character 消息表单
   @State private charSenderId: string = '';
   @State private charContent: string = '';
   @State private charVisibility: WorldSceneMessageVisibility = WorldSceneMessageVisibility.Public;
   @State private charRecipientIds: string[] = [];
 
-  // Narrator 消息表单
   @State private narratorContent: string = '';
   @State private narratorWitnessIds: string[] = [];
 
@@ -146,7 +141,6 @@ struct WorldSceneDetailPage {
     this.loadState = this.viewModel.state;
     this.errorMessage = this.viewModel.errorMessage;
     this.detail = this.viewModel.detail;
-    // 重置表单(防止旧选择残留)
     if (this.detail !== null && this.detail.sceneStatus !== WorldSceneStatus.Active) {
       this.currentForm = MessageFormType.None;
     }
@@ -154,49 +148,51 @@ struct WorldSceneDetailPage {
 
   build(): void {
     Column() {
-      this.headerArea();
-      if (this.isInitializing) {
-        this.loadingView();
-      } else if (this.loadState === WorldSceneDetailLoadState.Loading) {
+      this.topNav()
+      if (this.isInitializing || this.loadState === WorldSceneDetailLoadState.Loading) {
         this.loadingView();
       } else if (this.loadState === WorldSceneDetailLoadState.NotFound) {
         this.notFoundView();
       } else if (this.loadState === WorldSceneDetailLoadState.Error) {
-        this.errorView(this.errorMessage.length > 0 ? this.errorMessage : '场景详情加载失败,请重试');
+        this.errorView();
       } else if (this.loadState === WorldSceneDetailLoadState.Ready && this.detail !== null) {
         this.contentView(this.detail)
       }
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.app_bg'))
+    .backgroundColor($r('app.color.world_bg'))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 
   @Builder
-  headerArea(): void {
+  topNav(): void {
     Row() {
-      Button($r('app.string.world_home_back'))
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_accent'))
+      Button('←')
+        .fontSize(22)
+        .fontColor($r('app.color.world_text_secondary'))
         .backgroundColor(Color.Transparent)
-        .height(36)
-        .padding({ left: 0, right: 8 })
+        .width(40)
+        .height(40)
+        .padding(0)
         .onClick(() => {
           router.back();
         })
+
       Text($r('app.string.world_scene_detail_title'))
-        .fontSize($r('app.float.app_font_title'))
+        .fontSize($r('app.float.world_font_title'))
         .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor($r('app.color.world_text_primary'))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .layoutWeight(1)
+        .margin({ left: 4 })
+
       Button($r('app.string.world_home_reload'))
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_secondary'))
-        .backgroundColor($r('app.color.app_surface_2'))
-        .borderRadius($r('app.float.app_radius_sm'))
+        .fontSize($r('app.float.world_font_caption'))
+        .fontColor($r('app.color.world_text_secondary'))
+        .backgroundColor($r('app.color.world_surface_1'))
+        .borderRadius($r('app.float.world_radius_chip'))
         .height(32)
         .padding({ left: 12, right: 12 })
         .onClick(() => {
@@ -205,10 +201,10 @@ struct WorldSceneDetailPage {
     }
     .width('100%')
     .padding({
-      left: $r('app.float.app_spacing_16'),
-      right: $r('app.float.app_spacing_16'),
-      top: this.statusBarHeight + 8,
-      bottom: $r('app.float.app_spacing_8')
+      left: $r('app.float.world_page_padding'),
+      right: $r('app.float.world_page_padding'),
+      top: this.statusBarHeight + 4,
+      bottom: 4
     })
     .alignItems(VerticalAlign.Center)
   }
@@ -216,7 +212,7 @@ struct WorldSceneDetailPage {
   @Builder
   loadingView(): void {
     Column() {
-      LoadingProgress().width(40).height(40).color($r('app.color.app_accent'))
+      LoadingProgress().width(40).height(40).color($r('app.color.world_gold'))
     }
     .width('100%')
     .layoutWeight(1)
@@ -227,16 +223,13 @@ struct WorldSceneDetailPage {
   @Builder
   notFoundView(): void {
     Column() {
-      EmptyStateView({ title: $r('app.string.world_detail_not_found'), description: '' })
-      Button($r('app.string.world_back_to_list'))
-        .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_on_accent'))
-        .backgroundColor($r('app.color.app_accent'))
-        .borderRadius($r('app.float.app_radius_sm'))
-        .height(40)
-        .padding({ left: 24, right: 24 })
-        .margin({ top: $r('app.float.app_spacing_16') })
-        .onClick(() => { router.back(); })
+      WorldEmptyState({
+        title: $r('app.string.world_detail_not_found'),
+        primaryLabel: $r('app.string.world_back_to_list'),
+        onPrimary: (): void => {
+          router.back();
+        }
+      })
     }
     .width('100%')
     .layoutWeight(1)
@@ -245,30 +238,16 @@ struct WorldSceneDetailPage {
   }
 
   @Builder
-  errorView(message: string): void {
+  errorView(): void {
     Column() {
-      EmptyStateView({ title: $r('app.string.world_home_load_failed'), description: message })
-      Row() {
-        Button($r('app.string.world_back_to_list'))
-          .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_secondary'))
-          .backgroundColor($r('app.color.app_surface_2'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(40)
-          .padding({ left: 20, right: 20 })
-          .onClick(() => { router.back(); })
-        Button($r('app.string.world_home_reload'))
-          .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_on_accent'))
-          .backgroundColor($r('app.color.app_accent'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(40)
-          .padding({ left: 20, right: 20 })
-          .margin({ left: 12 })
-          .onClick(() => { this.loadSnapshot(); })
-      }
-      .margin({ top: $r('app.float.app_spacing_16') })
-      .alignItems(VerticalAlign.Center)
+      WorldEmptyState({
+        title: $r('app.string.world_home_load_failed'),
+        description: this.errorMessage.length > 0 ? this.errorMessage : '',
+        primaryLabel: $r('app.string.world_home_reload'),
+        onPrimary: (): void => {
+          this.loadSnapshot();
+        }
+      })
     }
     .width('100%')
     .layoutWeight(1)
@@ -280,19 +259,18 @@ struct WorldSceneDetailPage {
   contentView(detail: WorldSceneDetailUiModel): void {
     Scroll() {
       Column() {
-        this.sceneHeaderSection(detail)
+        this.sceneHeaderCard(detail)
         if (this.actionError.length > 0) {
-          this.actionErrorBanner(this.actionError)
+          this.actionErrorBanner()
         }
-        // 操作区(Active Scene 才显示)
+        if (detail.sceneStatus === WorldSceneStatus.Ended) {
+          this.endedBanner()
+        }
         if (detail.sceneStatus === WorldSceneStatus.Active) {
           this.actionButtonsSection(detail)
         }
-        // 当前地点 Active 角色
         this.characterSection(detail)
-        // 消息列表
         this.messageListSection(detail)
-        // 手动消息表单(根据 currentForm 显示)
         if (detail.sceneStatus === WorldSceneStatus.Active && this.currentForm !== MessageFormType.None) {
           if (this.currentForm === MessageFormType.User) {
             this.userMessageForm(detail)
@@ -305,81 +283,85 @@ struct WorldSceneDetailPage {
         Column().width('100%').height(120)
       }
       .width('100%')
+      .padding({
+        left: $r('app.float.world_page_padding'),
+        right: $r('app.float.world_page_padding')
+      })
       .alignItems(HorizontalAlign.Start)
     }
     .width('100%')
     .layoutWeight(1)
     .scrollBar(BarState.Off)
     .edgeEffect(EdgeEffect.Spring)
-    .padding({ left: $r('app.float.app_spacing_16'), right: $r('app.float.app_spacing_16'), top: 0, bottom: 0 })
   }
 
   @Builder
-  sceneHeaderSection(detail: WorldSceneDetailUiModel): void {
-    Column() {
-      Row() {
-        Text(detail.locationName.length > 0 ? detail.locationName : '(未命名地点)')
-          .fontSize($r('app.float.app_font_subtitle'))
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.app_text_primary'))
-          .maxLines(2)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .layoutWeight(1)
-        Text(detail.sceneStatus === WorldSceneStatus.Active ? '进行中' : '已结束')
-          .fontSize(11)
-          .fontColor(detail.sceneStatus === WorldSceneStatus.Active
-            ? $r('app.color.app_accent')
-            : $r('app.color.app_text_tertiary'))
-          .backgroundColor($r('app.color.app_surface_2'))
-          .borderRadius(4)
-          .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-          .margin({ left: 8 })
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Top)
+  sceneHeaderCard(detail: WorldSceneDetailUiModel): void {
+    WorldSurfaceCard({ elevated: detail.sceneStatus === WorldSceneStatus.Active }) {
+      Column() {
+        Row() {
+          Text(detail.locationName.length > 0 ? detail.locationName : '(未命名地点)')
+            .fontSize($r('app.float.world_font_subtitle'))
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.world_text_primary'))
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .layoutWeight(1)
 
-      Text('所属世界:' + detail.worldName)
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_secondary'))
-        .margin({ top: 6 })
-      Text('开始时间:' + formatSceneTimestamp(detail.startedAt))
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
-        .margin({ top: 4 })
-      if (detail.endedAt > 0) {
-        Text('结束时间:' + formatSceneTimestamp(detail.endedAt))
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          WorldStatusChip({
+            label: detail.sceneStatus === WorldSceneStatus.Active ? '活动中' : '已结束',
+            isActive: detail.sceneStatus === WorldSceneStatus.Active
+          })
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Top)
+
+        Text('所属世界: ' + detail.worldName)
+          .fontSize($r('app.float.world_font_caption'))
+          .fontColor($r('app.color.world_text_secondary'))
+          .margin({ top: 6 })
+        Text('开始: ' + formatSceneTimestamp(detail.startedAt))
+          .fontSize($r('app.float.world_font_micro'))
+          .fontColor($r('app.color.world_text_tertiary'))
           .margin({ top: 4 })
+        if (detail.endedAt > 0) {
+          Text('结束: ' + formatSceneTimestamp(detail.endedAt))
+            .fontSize($r('app.float.world_font_micro'))
+            .fontColor($r('app.color.world_text_tertiary'))
+            .margin({ top: 2 })
+        }
       }
+      .padding(12)
+      .alignItems(HorizontalAlign.Start)
+    }
+  }
+
+  @Builder
+  endedBanner(): void {
+    Row() {
+      Text($r('app.string.world_scene_ended_hint'))
+        .fontSize($r('app.float.world_font_caption'))
+        .fontColor($r('app.color.world_text_tertiary'))
+        .layoutWeight(1)
     }
     .width('100%')
-    .padding({
-      left: $r('app.float.app_spacing_12'),
-      right: $r('app.float.app_spacing_12'),
-      top: $r('app.float.app_spacing_12'),
-      bottom: $r('app.float.app_spacing_12')
-    })
-    .backgroundColor($r('app.color.app_surface_1'))
-    .borderRadius($r('app.float.app_radius_md'))
-    .margin({ top: $r('app.float.app_spacing_8') })
-    .alignItems(HorizontalAlign.Start)
+    .padding(12)
+    .backgroundColor($r('app.color.world_surface_1'))
+    .borderRadius($r('app.float.world_radius_card'))
+    .margin({ top: $r('app.float.world_card_spacing') })
+    .alignItems(VerticalAlign.Center)
   }
 
   @Builder
-  actionErrorBanner(message: string): void {
+  actionErrorBanner(): void {
     Row() {
-      SymbolGlyph($r('sys.symbol.exclamationmark_triangle'))
-        .fontSize(16)
-        .fontColor([$r('app.color.app_danger')])
-      Text(message)
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_danger'))
-        .margin({ left: 8 })
+      Text(this.actionError)
+        .fontSize($r('app.float.world_font_caption'))
+        .fontColor($r('app.color.world_error'))
         .layoutWeight(1)
       Button('×')
         .fontSize(14)
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor($r('app.color.world_text_tertiary'))
         .backgroundColor(Color.Transparent)
         .height(24)
         .width(24)
@@ -387,588 +369,424 @@ struct WorldSceneDetailPage {
         .onClick(() => { this.actionError = ''; })
     }
     .width('100%')
-    .padding({
-      left: $r('app.float.app_spacing_12'),
-      right: $r('app.float.app_spacing_12'),
-      top: $r('app.float.app_spacing_8'),
-      bottom: $r('app.float.app_spacing_8')
-    })
-    .backgroundColor($r('app.color.app_surface_1'))
-    .borderRadius($r('app.float.app_radius_md'))
-    .margin({ top: $r('app.float.app_spacing_8') })
+    .padding(10)
+    .backgroundColor($r('app.color.world_surface_1'))
+    .borderRadius($r('app.float.world_radius_chip'))
+    .margin({ top: $r('app.float.world_card_spacing') })
     .alignItems(VerticalAlign.Center)
   }
 
   @Builder
   actionButtonsSection(detail: WorldSceneDetailUiModel): void {
-    Column() {
-      Row() {
-        Button($r('app.string.world_scene_add_user_message'))
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor(this.currentForm === MessageFormType.User
-            ? $r('app.color.app_on_accent')
-            : $r('app.color.app_accent'))
-          .backgroundColor(this.currentForm === MessageFormType.User
-            ? $r('app.color.app_accent')
-            : $r('app.color.app_surface_2'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(36)
-          .padding({ left: 12, right: 12 })
-          .onClick(() => {
-            this.currentForm = this.currentForm === MessageFormType.User
-              ? MessageFormType.None : MessageFormType.User;
-            this.actionError = '';
-          })
-        Button($r('app.string.world_scene_add_character_message'))
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor(this.currentForm === MessageFormType.Character
-            ? $r('app.color.app_on_accent')
-            : $r('app.color.app_accent'))
-          .backgroundColor(this.currentForm === MessageFormType.Character
-            ? $r('app.color.app_accent')
-            : $r('app.color.app_surface_2'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(36)
-          .padding({ left: 12, right: 12 })
-          .margin({ left: 8 })
-          .onClick(() => {
-            this.currentForm = this.currentForm === MessageFormType.Character
-              ? MessageFormType.None : MessageFormType.Character;
-            this.actionError = '';
-          })
-        Button($r('app.string.world_scene_add_narrator_message'))
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor(this.currentForm === MessageFormType.Narrator
-            ? $r('app.color.app_on_accent')
-            : $r('app.color.app_accent'))
-          .backgroundColor(this.currentForm === MessageFormType.Narrator
-            ? $r('app.color.app_accent')
-            : $r('app.color.app_surface_2'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(36)
-          .padding({ left: 12, right: 12 })
-          .margin({ left: 8 })
-          .onClick(() => {
-            this.currentForm = this.currentForm === MessageFormType.Narrator
-              ? MessageFormType.None : MessageFormType.Narrator;
-            this.actionError = '';
-          })
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Center)
-
-      // 结束场景按钮
-      Button($r('app.string.world_scene_end'))
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_on_accent'))
-        .backgroundColor($r('app.color.app_danger'))
-        .borderRadius($r('app.float.app_radius_sm'))
-        .height(36)
-        .padding({ left: 12, right: 12 })
-        .margin({ top: 8 })
+    WorldSurfaceCard({ elevated: false }) {
+      Column() {
+        Row() {
+          this.formTabButton('用户消息', MessageFormType.User)
+          this.formTabButton('角色台词', MessageFormType.Character)
+          this.formTabButton('旁白', MessageFormType.Narrator)
+        }
         .width('100%')
-        .enabled(this.viewModel !== null && !this.viewModel.isEnding)
-        .onClick(() => { this.confirmEndScene(); })
+        .alignItems(VerticalAlign.Center)
+
+        Button($r('app.string.world_scene_end'))
+          .fontSize($r('app.float.world_font_caption'))
+          .fontColor($r('app.color.world_on_danger'))
+          .backgroundColor($r('app.color.world_error'))
+          .borderRadius($r('app.float.world_radius_button'))
+          .height(36)
+          .margin({ top: 8 })
+          .width('100%')
+          .enabled(this.viewModel !== null && !this.viewModel.isEnding)
+          .onClick(() => { this.confirmEndScene(); })
+      }
+      .padding(12)
+      .alignItems(HorizontalAlign.Start)
     }
-    .width('100%')
-    .padding({
-      left: $r('app.float.app_spacing_12'),
-      right: $r('app.float.app_spacing_12'),
-      top: $r('app.float.app_spacing_12'),
-      bottom: $r('app.float.app_spacing_12')
-    })
-    .backgroundColor($r('app.color.app_surface_1'))
-    .borderRadius($r('app.float.app_radius_md'))
-    .margin({ top: $r('app.float.app_spacing_8') })
-    .alignItems(HorizontalAlign.Start)
+  }
+
+  @Builder
+  formTabButton(label: string, formType: MessageFormType): void {
+    Text(label)
+      .fontSize($r('app.float.world_font_caption'))
+      .fontColor(this.currentForm === formType
+        ? $r('app.color.world_on_gold')
+        : $r('app.color.world_text_secondary'))
+      .backgroundColor(this.currentForm === formType
+        ? $r('app.color.world_gold')
+        : $r('app.color.world_surface_2'))
+      .borderRadius($r('app.float.world_radius_chip'))
+      .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+      .margin({ right: 8 })
+      .onClick(() => {
+        this.currentForm = this.currentForm === formType ? MessageFormType.None : formType;
+        this.actionError = '';
+      })
   }
 
   @Builder
   characterSection(detail: WorldSceneDetailUiModel): void {
-    Column() {
-      Text($r('app.string.world_scene_active_characters'))
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
-        .margin({ bottom: 8 })
-      if (detail.characters.length === 0) {
-        Text($r('app.string.world_scene_no_characters'))
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
-          .width('100%')
-          .textAlign(TextAlign.Center)
-          .padding({ top: 8, bottom: 8 })
-      } else {
-        ForEach(detail.characters, (c: SceneCharacterUiModel) => {
-          Row() {
-            Text(c.displayName.length > 0 ? c.displayName : '(未命名)')
-              .fontSize($r('app.float.app_font_body'))
-              .fontColor($r('app.color.app_text_primary'))
-              .layoutWeight(1)
-            Text(c.isActive ? '活跃' : '停用')
-              .fontSize(11)
-              .fontColor(c.isActive ? $r('app.color.app_accent') : $r('app.color.app_text_tertiary'))
-              .margin({ left: 8 })
-          }
-          .width('100%')
-          .padding({ top: 6, bottom: 6 })
-          .alignItems(VerticalAlign.Center)
-        }, (c: SceneCharacterUiModel) => c.instanceId + '|' + (c.isActive ? '1' : '0'))
+    WorldSectionHeader({ title: '当前角色' })
+    WorldSurfaceCard({ elevated: false }) {
+      Column() {
+        if (detail.characters.length === 0) {
+          Text($r('app.string.world_scene_no_characters'))
+            .fontSize($r('app.float.world_font_caption'))
+            .fontColor($r('app.color.world_text_tertiary'))
+            .width('100%')
+            .textAlign(TextAlign.Center)
+            .padding({ top: 8, bottom: 8 })
+        } else {
+          ForEach(detail.characters, (c: SceneCharacterUiModel) => {
+            Row() {
+              Text(c.displayName.length > 0 ? c.displayName : '(未命名)')
+                .fontSize($r('app.float.world_font_body'))
+                .fontColor($r('app.color.world_text_primary'))
+                .layoutWeight(1)
+              WorldStatusChip({
+                label: c.isActive ? '活跃' : '停用',
+                isActive: c.isActive
+              })
+            }
+            .width('100%')
+            .padding({ top: 6, bottom: 6 })
+            .alignItems(VerticalAlign.Center)
+          }, (c: SceneCharacterUiModel) => c.instanceId + '|' + (c.isActive ? '1' : '0'))
+        }
       }
+      .padding(12)
+      .alignItems(HorizontalAlign.Start)
     }
-    .width('100%')
-    .padding({
-      left: $r('app.float.app_spacing_12'),
-      right: $r('app.float.app_spacing_12'),
-      top: $r('app.float.app_spacing_12'),
-      bottom: $r('app.float.app_spacing_12')
-    })
-    .backgroundColor($r('app.color.app_surface_1'))
-    .borderRadius($r('app.float.app_radius_md'))
-    .margin({ top: $r('app.float.app_spacing_8') })
-    .alignItems(HorizontalAlign.Start)
   }
 
   @Builder
   messageListSection(detail: WorldSceneDetailUiModel): void {
-    Column() {
-      Text($r('app.string.world_scene_messages'))
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
-        .margin({ bottom: 8 })
-      if (detail.messages.length === 0) {
+    WorldSectionHeader({ title: '消息记录', subtitle: detail.messages.length.toString() + ' 条' })
+    if (detail.messages.length === 0) {
+      WorldSurfaceCard({ elevated: false }) {
         Text($r('app.string.world_scene_no_messages'))
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontSize($r('app.float.world_font_caption'))
+          .fontColor($r('app.color.world_text_tertiary'))
           .width('100%')
           .textAlign(TextAlign.Center)
           .padding({ top: 16, bottom: 16 })
-      } else {
-        ForEach(detail.messages, (m: SceneMessageUiModel) => {
-          this.messageCard(m)
-        }, (m: SceneMessageUiModel) => m.id + '|' + m.sequenceNumber.toString())
       }
+    } else {
+      ForEach(detail.messages, (m: SceneMessageUiModel) => {
+        this.messageCard(m)
+      }, (m: SceneMessageUiModel) => m.id + '|' + m.sequenceNumber.toString() + '|' + m.messageStatus)
     }
-    .width('100%')
-    .padding({
-      left: $r('app.float.app_spacing_12'),
-      right: $r('app.float.app_spacing_12'),
-      top: $r('app.float.app_spacing_12'),
-      bottom: $r('app.float.app_spacing_12')
-    })
-    .backgroundColor($r('app.color.app_surface_1'))
-    .borderRadius($r('app.float.app_radius_md'))
-    .margin({ top: $r('app.float.app_spacing_8') })
-    .alignItems(HorizontalAlign.Start)
   }
 
   @Builder
   messageCard(m: SceneMessageUiModel): void {
-    Column() {
-      // 第1行:序号 + 发送者类型标签 + 可见性标签
-      Row() {
-        Text('#' + m.sequenceNumber.toString())
-          .fontSize(11)
-          .fontColor($r('app.color.app_text_tertiary'))
-        Text(this.senderTypeLabel(m.senderType))
-          .fontSize(11)
-          .fontColor($r('app.color.app_accent'))
-          .backgroundColor($r('app.color.app_surface_2'))
-          .borderRadius(3)
-          .padding({ left: 4, right: 4, top: 1, bottom: 1 })
-          .margin({ left: 6 })
-        Text(this.visibilityLabel(m.visibility))
-          .fontSize(11)
-          .fontColor(this.visibilityColor(m.visibility))
-          .backgroundColor($r('app.color.app_surface_2'))
-          .borderRadius(3)
-          .padding({ left: 4, right: 4, top: 1, bottom: 1 })
-          .margin({ left: 4 })
-        Text(formatSceneTimestamp(m.createdAt))
-          .fontSize(11)
-          .fontColor($r('app.color.app_text_tertiary'))
-          .margin({ left: 8 })
-          .layoutWeight(1)
-          .textAlign(TextAlign.End)
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Center)
+    WorldSurfaceCard({ elevated: m.senderType === WorldSceneMessageSenderType.User }) {
+      Column() {
+        Row() {
+          Text(this.senderLabel(m))
+            .fontSize($r('app.float.world_font_micro'))
+            .fontWeight(FontWeight.Medium)
+            .fontColor(this.senderLabelColor(m.senderType))
+            .backgroundColor(this.senderLabelBg(m.senderType))
+            .borderRadius(3)
+            .padding({ left: 4, right: 4, top: 1, bottom: 1 })
 
-      // 第2行:发送者名称
-      if (m.senderType === WorldSceneMessageSenderType.Character) {
-        Text(this.senderDisplayLabel(m))
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor(m.senderRemoved ? $r('app.color.app_text_tertiary') : $r('app.color.app_text_secondary'))
-          .margin({ top: 4 })
-      }
+          Text(this.visibilityTag(m.visibility))
+            .fontSize($r('app.float.world_font_micro'))
+            .fontColor(this.visibilityColor(m.visibility))
+            .backgroundColor($r('app.color.world_surface_2'))
+            .borderRadius(3)
+            .padding({ left: 4, right: 4, top: 1, bottom: 1 })
+            .margin({ left: 4 })
 
-      // 第3行:消息正文
-      Text(m.content)
-        .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_primary'))
+          if (m.messageStatus !== 'completed') {
+            Text(this.statusTag(m.messageStatus))
+              .fontSize($r('app.float.world_font_micro'))
+              .fontColor(this.statusColor(m.messageStatus))
+              .backgroundColor($r('app.color.world_surface_2'))
+              .borderRadius(3)
+              .padding({ left: 4, right: 4, top: 1, bottom: 1 })
+              .margin({ left: 4 })
+          }
+
+          Text('#' + m.sequenceNumber.toString())
+            .fontSize($r('app.float.world_font_micro'))
+            .fontColor($r('app.color.world_text_tertiary'))
+            .margin({ left: 6 })
+
+          Text(formatSceneTimestamp(m.createdAt))
+            .fontSize($r('app.float.world_font_micro'))
+            .fontColor($r('app.color.world_text_tertiary'))
+            .layoutWeight(1)
+            .textAlign(TextAlign.End)
+        }
         .width('100%')
-        .margin({ top: 6 })
-        .textAlign(TextAlign.Start)
+        .alignItems(VerticalAlign.Center)
 
-      // 第4行:接收者/目击者/回复目标(可选)
-      if (m.recipientNames.length > 0) {
-        Text('接收者:' + m.recipientNames.join('、'))
-          .fontSize(11)
-          .fontColor($r('app.color.app_text_tertiary'))
-          .margin({ top: 4 })
+        Text(m.content)
+          .fontSize($r('app.float.world_font_body'))
+          .fontColor($r('app.color.world_text_primary'))
+          .width('100%')
+          .margin({ top: 6 })
+          .textAlign(TextAlign.Start)
+
+        if (m.recipientNames.length > 0) {
+          Text('接收者: ' + m.recipientNames.join('、'))
+            .fontSize($r('app.float.world_font_micro'))
+            .fontColor($r('app.color.world_text_tertiary'))
+            .margin({ top: 4 })
+        }
+        if (m.witnessNames.length > 0) {
+          Text('目击者: ' + m.witnessNames.join('、'))
+            .fontSize($r('app.float.world_font_micro'))
+            .fontColor($r('app.color.world_text_tertiary'))
+            .margin({ top: 2 })
+        }
+        if (m.replyTargetNames.length > 0) {
+          Text('回复目标: ' + m.replyTargetNames.join('、'))
+            .fontSize($r('app.float.world_font_micro'))
+            .fontColor($r('app.color.world_text_tertiary'))
+            .margin({ top: 2 })
+        }
       }
-      if (m.witnessNames.length > 0) {
-        Text('目击者:' + m.witnessNames.join('、'))
-          .fontSize(11)
-          .fontColor($r('app.color.app_text_tertiary'))
-          .margin({ top: 4 })
-      }
-      if (m.replyTargetNames.length > 0) {
-        Text('回复目标:' + m.replyTargetNames.join('、'))
-          .fontSize(11)
-          .fontColor($r('app.color.app_text_tertiary'))
-          .margin({ top: 4 })
-      }
+      .padding(12)
+      .alignItems(HorizontalAlign.Start)
     }
-    .width('100%')
-    .padding({
-      left: $r('app.float.app_spacing_12'),
-      right: $r('app.float.app_spacing_12'),
-      top: $r('app.float.app_spacing_8'),
-      bottom: $r('app.float.app_spacing_8')
-    })
-    .backgroundColor($r('app.color.app_bg'))
-    .borderRadius($r('app.float.app_radius_sm'))
-    .margin({ top: 6 })
-    .alignItems(HorizontalAlign.Start)
   }
-
-  // ===== 手动消息表单 =====
 
   @Builder
   userMessageForm(detail: WorldSceneDetailUiModel): void {
-    Column() {
-      Text($r('app.string.world_scene_user_message_form_title'))
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_primary'))
-        .fontWeight(FontWeight.Medium)
-        .margin({ bottom: 8 })
+    WorldSurfaceCard({ elevated: true }) {
+      Column() {
+        Text('用户消息')
+          .fontSize($r('app.float.world_font_caption'))
+          .fontColor($r('app.color.world_text_primary'))
+          .fontWeight(FontWeight.Medium)
+          .margin({ bottom: 8 })
 
-      // 正文输入
-      TextArea({ text: this.userContent, placeholder: '请输入用户消息正文' })
-        .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_primary'))
-        .backgroundColor($r('app.color.app_surface_2'))
-        .borderRadius($r('app.float.app_radius_sm'))
-        .height(80)
-        .padding(8)
-        .onChange((v: string) => { this.userContent = v; })
+        TextArea({ text: this.userContent, placeholder: '请输入用户消息正文' })
+          .fontSize($r('app.float.world_font_body'))
+          .fontColor($r('app.color.world_text_primary'))
+          .placeholderColor($r('app.color.world_text_tertiary'))
+          .backgroundColor($r('app.color.world_surface_2'))
+          .borderRadius($r('app.float.world_radius_chip'))
+          .height(80)
+          .padding(8)
+          .onChange((v: string) => { this.userContent = v; })
 
-      // 可见性选择(Public / Private 互斥)
-      Row() {
-        Text('可见性')
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_secondary'))
-          .margin({ right: 8 })
-        Button('公开')
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor(this.userVisibility === WorldSceneMessageVisibility.Public
-            ? $r('app.color.app_on_accent') : $r('app.color.app_accent'))
-          .backgroundColor(this.userVisibility === WorldSceneMessageVisibility.Public
-            ? $r('app.color.app_accent') : $r('app.color.app_surface_2'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(32)
-          .padding({ left: 12, right: 12 })
-          .onClick(() => {
-            this.userVisibility = WorldSceneMessageVisibility.Public;
-            this.userRecipientIds = [];
-          })
-        Button('私下')
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor(this.userVisibility === WorldSceneMessageVisibility.Private
-            ? $r('app.color.app_on_accent') : $r('app.color.app_accent'))
-          .backgroundColor(this.userVisibility === WorldSceneMessageVisibility.Private
-            ? $r('app.color.app_accent') : $r('app.color.app_surface_2'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(32)
-          .padding({ left: 12, right: 12 })
-          .margin({ left: 8 })
-          .onClick(() => {
-            this.userVisibility = WorldSceneMessageVisibility.Private;
-            this.userReplyTargetIds = [];
-          })
-      }
-      .width('100%')
-      .margin({ top: 8 })
-      .alignItems(VerticalAlign.Center)
+        Row() {
+          Text('可见性')
+            .fontSize($r('app.float.world_font_caption'))
+            .fontColor($r('app.color.world_text_secondary'))
+            .margin({ right: 8 })
+          this.visibilityToggle('公开', WorldSceneMessageVisibility.Public, this.userVisibility,
+            () => {
+              this.userVisibility = WorldSceneMessageVisibility.Public;
+              this.userRecipientIds = [];
+            })
+          this.visibilityToggle('私下', WorldSceneMessageVisibility.Private, this.userVisibility,
+            () => {
+              this.userVisibility = WorldSceneMessageVisibility.Private;
+              this.userReplyTargetIds = [];
+            })
+        }
+        .width('100%')
+        .margin({ top: 8 })
+        .alignItems(VerticalAlign.Center)
 
-      // Private:接收者多选
-      if (this.userVisibility === WorldSceneMessageVisibility.Private) {
-        this.instanceMultiSelect($r('app.string.world_scene_recipients'), detail.characters, this.userRecipientIds,
-          (id: string) => {
-            this.toggleIdInArray(id, this.userRecipientIds, (newArr: string[]) => { this.userRecipientIds = newArr; });
-          })
-      }
-      // Public:回复目标多选(可选)
-      if (this.userVisibility === WorldSceneMessageVisibility.Public) {
-        this.instanceMultiSelect($r('app.string.world_scene_reply_targets'), detail.characters, this.userReplyTargetIds,
-          (id: string) => {
-            this.toggleIdInArray(id, this.userReplyTargetIds, (newArr: string[]) => { this.userReplyTargetIds = newArr; });
-          })
-      }
+        if (this.userVisibility === WorldSceneMessageVisibility.Private) {
+          this.instanceMultiSelect('接收者', detail.characters, this.userRecipientIds,
+            (id: string) => {
+              this.toggleIdInArray(id, this.userRecipientIds, (newArr: string[]) => { this.userRecipientIds = newArr; });
+            })
+        }
+        if (this.userVisibility === WorldSceneMessageVisibility.Public) {
+          this.instanceMultiSelect('回复目标', detail.characters, this.userReplyTargetIds,
+            (id: string) => {
+              this.toggleIdInArray(id, this.userReplyTargetIds, (newArr: string[]) => { this.userReplyTargetIds = newArr; });
+            })
+        }
 
-      // 保存 + 取消
-      Row() {
-        Button($r('app.string.world_scene_cancel'))
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_secondary'))
-          .backgroundColor($r('app.color.app_surface_2'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(36)
-          .padding({ left: 16, right: 16 })
-          .layoutWeight(1)
-          .onClick(() => { this.cancelForm(); })
-        Button($r('app.string.world_scene_save'))
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_on_accent'))
-          .backgroundColor($r('app.color.app_accent'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(36)
-          .padding({ left: 16, right: 16 })
-          .margin({ left: 8 })
-          .layoutWeight(1)
-          .enabled(this.viewModel !== null && !this.viewModel.isSaving)
-          .onClick(() => { this.saveUserMessage(); })
+        Row() {
+          WorldSecondaryButton({
+            label: $r('app.string.world_scene_cancel'),
+            onButtonClick: (): void => { this.cancelForm(); }
+          })
+          WorldPrimaryButton({
+            label: $r('app.string.world_scene_save'),
+            isEnabled: this.viewModel !== null && !this.viewModel.isSaving,
+            onButtonClick: (): void => { this.saveUserMessage(); }
+          })
+        }
+        .width('100%')
+        .margin({ top: 10 })
+        .justifyContent(FlexAlign.End)
       }
-      .width('100%')
-      .margin({ top: 10 })
-      .alignItems(VerticalAlign.Center)
+      .padding(12)
+      .alignItems(HorizontalAlign.Start)
     }
-    .width('100%')
-    .padding({
-      left: $r('app.float.app_spacing_12'),
-      right: $r('app.float.app_spacing_12'),
-      top: $r('app.float.app_spacing_12'),
-      bottom: $r('app.float.app_spacing_12')
-    })
-    .backgroundColor($r('app.color.app_surface_1'))
-    .borderRadius($r('app.float.app_radius_md'))
-    .margin({ top: $r('app.float.app_spacing_8') })
-    .alignItems(HorizontalAlign.Start)
   }
 
   @Builder
   characterMessageForm(detail: WorldSceneDetailUiModel): void {
-    Column() {
-      Text($r('app.string.world_scene_character_message_form_title'))
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_primary'))
-        .fontWeight(FontWeight.Medium)
-        .margin({ bottom: 8 })
+    WorldSurfaceCard({ elevated: true }) {
+      Column() {
+        Text('角色台词(手工)')
+          .fontSize($r('app.float.world_font_caption'))
+          .fontColor($r('app.color.world_text_primary'))
+          .fontWeight(FontWeight.Medium)
+          .margin({ bottom: 8 })
 
-      // 发言角色选择(只能是当前地点 Active 实例)
-      Text('发言角色')
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_secondary'))
-        .margin({ bottom: 4 })
-      this.activeInstanceSingleSelect(detail.characters, this.charSenderId, (id: string) => {
-        this.charSenderId = id;
-      })
+        Text('发言角色')
+          .fontSize($r('app.float.world_font_caption'))
+          .fontColor($r('app.color.world_text_secondary'))
+          .margin({ bottom: 4 })
+        this.activeInstanceSingleSelect(detail.characters, this.charSenderId, (id: string) => {
+          this.charSenderId = id;
+        })
 
-      // 正文输入
-      TextArea({ text: this.charContent, placeholder: '请输入角色台词' })
-        .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_primary'))
-        .backgroundColor($r('app.color.app_surface_2'))
-        .borderRadius($r('app.float.app_radius_sm'))
-        .height(80)
-        .padding(8)
+        TextArea({ text: this.charContent, placeholder: '请输入角色台词' })
+          .fontSize($r('app.float.world_font_body'))
+          .fontColor($r('app.color.world_text_primary'))
+          .placeholderColor($r('app.color.world_text_tertiary'))
+          .backgroundColor($r('app.color.world_surface_2'))
+          .borderRadius($r('app.float.world_radius_chip'))
+          .height(80)
+          .padding(8)
+          .margin({ top: 8 })
+          .onChange((v: string) => { this.charContent = v; })
+
+        Row() {
+          Text('可见性')
+            .fontSize($r('app.float.world_font_caption'))
+            .fontColor($r('app.color.world_text_secondary'))
+            .margin({ right: 8 })
+          this.visibilityToggle('公开', WorldSceneMessageVisibility.Public, this.charVisibility,
+            () => {
+              this.charVisibility = WorldSceneMessageVisibility.Public;
+              this.charRecipientIds = [];
+            })
+          this.visibilityToggle('私下', WorldSceneMessageVisibility.Private, this.charVisibility,
+            () => {
+              this.charVisibility = WorldSceneMessageVisibility.Private;
+            })
+        }
+        .width('100%')
         .margin({ top: 8 })
-        .onChange((v: string) => { this.charContent = v; })
+        .alignItems(VerticalAlign.Center)
 
-      // 可见性
-      Row() {
-        Text('可见性')
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_secondary'))
-          .margin({ right: 8 })
-        Button('公开')
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor(this.charVisibility === WorldSceneMessageVisibility.Public
-            ? $r('app.color.app_on_accent') : $r('app.color.app_accent'))
-          .backgroundColor(this.charVisibility === WorldSceneMessageVisibility.Public
-            ? $r('app.color.app_accent') : $r('app.color.app_surface_2'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(32)
-          .padding({ left: 12, right: 12 })
-          .onClick(() => {
-            this.charVisibility = WorldSceneMessageVisibility.Public;
-            this.charRecipientIds = [];
-          })
-        Button('私下')
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor(this.charVisibility === WorldSceneMessageVisibility.Private
-            ? $r('app.color.app_on_accent') : $r('app.color.app_accent'))
-          .backgroundColor(this.charVisibility === WorldSceneMessageVisibility.Private
-            ? $r('app.color.app_accent') : $r('app.color.app_surface_2'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(32)
-          .padding({ left: 12, right: 12 })
-          .margin({ left: 8 })
-          .onClick(() => {
-            this.charVisibility = WorldSceneMessageVisibility.Private;
-          })
-      }
-      .width('100%')
-      .margin({ top: 8 })
-      .alignItems(VerticalAlign.Center)
+        if (this.charVisibility === WorldSceneMessageVisibility.Private) {
+          this.instanceMultiSelect('接收者',
+            this.filterOutSender(detail.characters, this.charSenderId),
+            this.charRecipientIds,
+            (id: string) => {
+              this.toggleIdInArray(id, this.charRecipientIds, (newArr: string[]) => { this.charRecipientIds = newArr; });
+            })
+        }
 
-      // Private:接收者多选(排除 sender)
-      if (this.charVisibility === WorldSceneMessageVisibility.Private) {
-        this.instanceMultiSelect($r('app.string.world_scene_recipients'),
-          this.filterOutSender(detail.characters, this.charSenderId),
-          this.charRecipientIds,
-          (id: string) => {
-            this.toggleIdInArray(id, this.charRecipientIds, (newArr: string[]) => { this.charRecipientIds = newArr; });
+        Row() {
+          WorldSecondaryButton({
+            label: $r('app.string.world_scene_cancel'),
+            onButtonClick: (): void => { this.cancelForm(); }
           })
+          WorldPrimaryButton({
+            label: $r('app.string.world_scene_save'),
+            isEnabled: this.viewModel !== null && !this.viewModel.isSaving
+              && this.charSenderId.length > 0,
+            onButtonClick: (): void => { this.saveCharacterMessage(); }
+          })
+        }
+        .width('100%')
+        .margin({ top: 10 })
+        .justifyContent(FlexAlign.End)
       }
-
-      Row() {
-        Button($r('app.string.world_scene_cancel'))
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_secondary'))
-          .backgroundColor($r('app.color.app_surface_2'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(36)
-          .padding({ left: 16, right: 16 })
-          .layoutWeight(1)
-          .onClick(() => { this.cancelForm(); })
-        Button($r('app.string.world_scene_save'))
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_on_accent'))
-          .backgroundColor($r('app.color.app_accent'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(36)
-          .padding({ left: 16, right: 16 })
-          .margin({ left: 8 })
-          .layoutWeight(1)
-          .enabled(this.viewModel !== null && !this.viewModel.isSaving)
-          .onClick(() => { this.saveCharacterMessage(); })
-      }
-      .width('100%')
-      .margin({ top: 10 })
-      .alignItems(VerticalAlign.Center)
+      .padding(12)
+      .alignItems(HorizontalAlign.Start)
     }
-    .width('100%')
-    .padding({
-      left: $r('app.float.app_spacing_12'),
-      right: $r('app.float.app_spacing_12'),
-      top: $r('app.float.app_spacing_12'),
-      bottom: $r('app.float.app_spacing_12')
-    })
-    .backgroundColor($r('app.color.app_surface_1'))
-    .borderRadius($r('app.float.app_radius_md'))
-    .margin({ top: $r('app.float.app_spacing_8') })
-    .alignItems(HorizontalAlign.Start)
   }
 
   @Builder
   narratorMessageForm(detail: WorldSceneDetailUiModel): void {
-    Column() {
-      Text($r('app.string.world_scene_narrator_message_form_title'))
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_primary'))
-        .fontWeight(FontWeight.Medium)
-        .margin({ bottom: 8 })
+    WorldSurfaceCard({ elevated: true }) {
+      Column() {
+        Text('旁白/动作')
+          .fontSize($r('app.float.world_font_caption'))
+          .fontColor($r('app.color.world_text_primary'))
+          .fontWeight(FontWeight.Medium)
+          .margin({ bottom: 8 })
 
-      TextArea({ text: this.narratorContent, placeholder: '请输入旁白或动作描述' })
-        .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_primary'))
-        .backgroundColor($r('app.color.app_surface_2'))
-        .borderRadius($r('app.float.app_radius_sm'))
-        .height(80)
-        .padding(8)
-        .onChange((v: string) => { this.narratorContent = v; })
+        TextArea({ text: this.narratorContent, placeholder: '请输入旁白或动作描述' })
+          .fontSize($r('app.float.world_font_body'))
+          .fontColor($r('app.color.world_text_primary'))
+          .placeholderColor($r('app.color.world_text_tertiary'))
+          .backgroundColor($r('app.color.world_surface_2'))
+          .borderRadius($r('app.float.world_radius_chip'))
+          .height(80)
+          .padding(8)
+          .onChange((v: string) => { this.narratorContent = v; })
 
-      // 目击者多选(可为空)
-      Text($r('app.string.world_scene_witnesses'))
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_secondary'))
-        .margin({ top: 8, bottom: 4 })
-      this.instanceMultiSelect($r('app.string.world_scene_witnesses'), detail.characters, this.narratorWitnessIds,
-        (id: string) => {
-          this.toggleIdInArray(id, this.narratorWitnessIds, (newArr: string[]) => { this.narratorWitnessIds = newArr; });
-        })
+        this.instanceMultiSelect('目击者', detail.characters, this.narratorWitnessIds,
+          (id: string) => {
+            this.toggleIdInArray(id, this.narratorWitnessIds, (newArr: string[]) => { this.narratorWitnessIds = newArr; });
+          })
 
-      Row() {
-        Button($r('app.string.world_scene_cancel'))
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_secondary'))
-          .backgroundColor($r('app.color.app_surface_2'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(36)
-          .padding({ left: 16, right: 16 })
-          .layoutWeight(1)
-          .onClick(() => { this.cancelForm(); })
-        Button($r('app.string.world_scene_save'))
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_on_accent'))
-          .backgroundColor($r('app.color.app_accent'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(36)
-          .padding({ left: 16, right: 16 })
-          .margin({ left: 8 })
-          .layoutWeight(1)
-          .enabled(this.viewModel !== null && !this.viewModel.isSaving)
-          .onClick(() => { this.saveNarratorMessage(); })
+        Row() {
+          WorldSecondaryButton({
+            label: $r('app.string.world_scene_cancel'),
+            onButtonClick: (): void => { this.cancelForm(); }
+          })
+          WorldPrimaryButton({
+            label: $r('app.string.world_scene_save'),
+            isEnabled: this.viewModel !== null && !this.viewModel.isSaving,
+            onButtonClick: (): void => { this.saveNarratorMessage(); }
+          })
+        }
+        .width('100%')
+        .margin({ top: 10 })
+        .justifyContent(FlexAlign.End)
       }
-      .width('100%')
-      .margin({ top: 10 })
-      .alignItems(VerticalAlign.Center)
+      .padding(12)
+      .alignItems(HorizontalAlign.Start)
     }
-    .width('100%')
-    .padding({
-      left: $r('app.float.app_spacing_12'),
-      right: $r('app.float.app_spacing_12'),
-      top: $r('app.float.app_spacing_12'),
-      bottom: $r('app.float.app_spacing_12')
-    })
-    .backgroundColor($r('app.color.app_surface_1'))
-    .borderRadius($r('app.float.app_radius_md'))
-    .margin({ top: $r('app.float.app_spacing_8') })
-    .alignItems(HorizontalAlign.Start)
   }
 
-  /** 实例多选列表 */
   @Builder
-  instanceMultiSelect(
-    label: ResourceStr,
-    instances: SceneCharacterUiModel[],
-    selectedIds: string[],
-    onToggle: (id: string) => void
-  ): void {
+  visibilityToggle(label: string, value: WorldSceneMessageVisibility, current: WorldSceneMessageVisibility,
+    onSelect: () => void): void {
+    Text(label)
+      .fontSize($r('app.float.world_font_caption'))
+      .fontColor(current === value ? $r('app.color.world_on_gold') : $r('app.color.world_text_secondary'))
+      .backgroundColor(current === value ? $r('app.color.world_gold') : $r('app.color.world_surface_2'))
+      .borderRadius($r('app.float.world_radius_chip'))
+      .padding({ left: 12, right: 12, top: 4, bottom: 4 })
+      .margin({ right: 6 })
+      .onClick(() => { onSelect(); })
+  }
+
+  @Builder
+  instanceMultiSelect(label: string, instances: SceneCharacterUiModel[], selectedIds: string[],
+    onToggle: (id: string) => void): void {
     Column() {
       Text(label)
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontSize($r('app.float.world_font_caption'))
+        .fontColor($r('app.color.world_text_secondary'))
         .margin({ top: 8, bottom: 4 })
       if (instances.length === 0) {
-        Text($r('app.string.world_scene_no_active_instances'))
-          .fontSize(11)
-          .fontColor($r('app.color.app_text_tertiary'))
+        Text('无可用角色')
+          .fontSize($r('app.float.world_font_micro'))
+          .fontColor($r('app.color.world_text_tertiary'))
           .padding({ top: 4, bottom: 4 })
       } else {
         Flex({ wrap: FlexWrap.Wrap }) {
           ForEach(instances, (c: SceneCharacterUiModel) => {
-            Button(c.displayName.length > 0 ? c.displayName : '(未命名)')
-              .fontSize(11)
+            Text(c.displayName.length > 0 ? c.displayName : '(未命名)')
+              .fontSize($r('app.float.world_font_micro'))
               .fontColor(this.isIdSelected(c.instanceId, selectedIds)
-                ? $r('app.color.app_on_accent') : $r('app.color.app_text_secondary'))
+                ? $r('app.color.world_on_gold') : $r('app.color.world_text_secondary'))
               .backgroundColor(this.isIdSelected(c.instanceId, selectedIds)
-                ? $r('app.color.app_accent') : $r('app.color.app_surface_2'))
-              .borderRadius(12)
-              .height(28)
-              .padding({ left: 10, right: 10 })
-              .margin({ right: 6, bottom: 6 })
+                ? $r('app.color.world_gold') : $r('app.color.world_surface_2'))
+              .borderRadius($r('app.float.world_radius_chip'))
+              .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+              .margin({ right: 4, bottom: 4 })
               .onClick(() => { onToggle(c.instanceId); })
           }, (c: SceneCharacterUiModel) => c.instanceId)
         }
@@ -979,31 +797,26 @@ struct WorldSceneDetailPage {
     .alignItems(HorizontalAlign.Start)
   }
 
-  /** Active 实例单选列表(用于发言角色选择) */
   @Builder
-  activeInstanceSingleSelect(
-    instances: SceneCharacterUiModel[],
-    selectedId: string,
-    onSelect: (id: string) => void
-  ): void {
+  activeInstanceSingleSelect(instances: SceneCharacterUiModel[], selectedId: string,
+    onSelect: (id: string) => void): void {
     if (instances.length === 0) {
-      Text($r('app.string.world_scene_no_active_instances'))
-        .fontSize(11)
-        .fontColor($r('app.color.app_text_tertiary'))
+      Text('无可用角色')
+        .fontSize($r('app.float.world_font_micro'))
+        .fontColor($r('app.color.world_text_tertiary'))
         .padding({ top: 4, bottom: 4 })
     } else {
       Flex({ wrap: FlexWrap.Wrap }) {
         ForEach(instances, (c: SceneCharacterUiModel) => {
-          Button(c.displayName.length > 0 ? c.displayName : '(未命名)')
-            .fontSize(11)
+          Text(c.displayName.length > 0 ? c.displayName : '(未命名)')
+            .fontSize($r('app.float.world_font_micro'))
             .fontColor(selectedId === c.instanceId
-              ? $r('app.color.app_on_accent') : $r('app.color.app_text_secondary'))
+              ? $r('app.color.world_on_gold') : $r('app.color.world_text_secondary'))
             .backgroundColor(selectedId === c.instanceId
-              ? $r('app.color.app_accent') : $r('app.color.app_surface_2'))
-            .borderRadius(12)
-            .height(28)
-            .padding({ left: 10, right: 10 })
-            .margin({ right: 6, bottom: 6 })
+              ? $r('app.color.world_gold') : $r('app.color.world_surface_2'))
+            .borderRadius($r('app.float.world_radius_chip'))
+            .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+            .margin({ right: 4, bottom: 4 })
             .onClick(() => { onSelect(c.instanceId); })
         }, (c: SceneCharacterUiModel) => c.instanceId)
       }
@@ -1011,30 +824,62 @@ struct WorldSceneDetailPage {
     }
   }
 
-  // ===== 辅助方法 =====
-
-  private senderTypeLabel(t: WorldSceneMessageSenderType): string {
-    if (t === WorldSceneMessageSenderType.User) return '用户';
-    if (t === WorldSceneMessageSenderType.Character) return '角色';
-    return '旁白';
+  private senderLabel(m: SceneMessageUiModel): string {
+    if (m.senderType === WorldSceneMessageSenderType.User) {
+      return '[玩家]';
+    }
+    if (m.senderType === WorldSceneMessageSenderType.Character) {
+      if (m.senderRemoved) {
+        return '[角色·已移除]';
+      }
+      return '[角色·' + (m.senderDisplayName.length > 0 ? m.senderDisplayName : '未命名') + ']';
+    }
+    return '[旁白]';
   }
 
-  private visibilityLabel(v: WorldSceneMessageVisibility): string {
+  private senderLabelColor(t: WorldSceneMessageSenderType): ResourceColor {
+    if (t === WorldSceneMessageSenderType.User) {
+      return $r('app.color.world_on_gold');
+    }
+    if (t === WorldSceneMessageSenderType.Character) {
+      return $r('app.color.world_text_primary');
+    }
+    return $r('app.color.world_text_tertiary');
+  }
+
+  private senderLabelBg(t: WorldSceneMessageSenderType): ResourceColor {
+    if (t === WorldSceneMessageSenderType.User) {
+      return $r('app.color.world_gold');
+    }
+    if (t === WorldSceneMessageSenderType.Character) {
+      return $r('app.color.world_surface_2');
+    }
+    return $r('app.color.world_surface_1');
+  }
+
+  private visibilityTag(v: WorldSceneMessageVisibility): string {
     if (v === WorldSceneMessageVisibility.Public) return '公开';
     if (v === WorldSceneMessageVisibility.Private) return '私下';
     return '旁白';
   }
 
   private visibilityColor(v: WorldSceneMessageVisibility): ResourceColor {
-    if (v === WorldSceneMessageVisibility.Private) return $r('app.color.app_danger');
-    return $r('app.color.app_text_secondary');
+    if (v === WorldSceneMessageVisibility.Private) return $r('app.color.world_error');
+    return $r('app.color.world_text_secondary');
   }
 
-  private senderDisplayLabel(m: SceneMessageUiModel): string {
-    if (m.senderRemoved) {
-      return '已移除角色';
-    }
-    return m.senderDisplayName.length > 0 ? m.senderDisplayName : '(未命名)';
+  private statusTag(s: string): string {
+    if (s === 'streaming') return '生成中';
+    if (s === 'cancelled') return '已取消';
+    if (s === 'failed') return '失败';
+    return '已完成';
+  }
+
+  private statusColor(s: string): ResourceColor {
+    if (s === 'streaming') return $r('app.color.world_gold');
+    if (s === 'cancelled') return $r('app.color.world_text_tertiary');
+    if (s === 'failed') return $r('app.color.world_error');
+    return $r('app.color.world_text_secondary');
   }
 
   private isIdSelected(id: string, selectedIds: string[]): boolean {
@@ -1137,8 +982,6 @@ struct WorldSceneDetailPage {
 
   private confirmEndScene(): void {
     if (this.viewModel === null) return;
-    // 简单确认:直接调用结束(没有 AlertDialog,因为 ArkUI 的 AlertDialog 在 @Builder 外使用复杂,
-    // 这里采用直接调用 + 错误反馈的方式,用户可通过按钮状态判断)
     this.actionError = '';
     this.viewModel.endScene().then((result) => {
       if (!result.success) {

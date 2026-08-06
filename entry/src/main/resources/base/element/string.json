@@ -3215,6 +3215,442 @@
     {
       "name": "world_char_manage_go_to_character_management",
       "value": "前往角色管理"
+    },
+    {
+      "name": "world_scene_history_title",
+      "value": "历史会话"
+    },
+    {
+      "name": "world_scene_history_search_placeholder",
+      "value": "搜索场景名称"
+    },
+    {
+      "name": "world_scene_history_filter_all",
+      "value": "全部"
+    },
+    {
+      "name": "world_scene_history_filter_active",
+      "value": "活动中"
+    },
+    {
+      "name": "world_scene_history_filter_ended",
+      "value": "已结束"
+    },
+    {
+      "name": "world_scene_history_no_scenes",
+      "value": "暂无会话记录"
+    },
+    {
+      "name": "world_scene_history_card_messages",
+      "value": "消息"
+    },
+    {
+      "name": "world_scene_history_card_participants",
+      "value": "参与角色"
+    },
+    {
+      "name": "world_scene_history_card_no_summary",
+      "value": "尚未生成会话摘要"
+    },
+    {
+      "name": "world_scene_history_card_continue",
+      "value": "继续"
+    },
+    {
+      "name": "world_scene_history_card_view_record",
+      "value": "查看记录"
+    },
+    {
+      "name": "world_scene_history_card_create_from",
+      "value": "基于此会话新建"
+    },
+    {
+      "name": "world_scene_history_new_scene",
+      "value": "新建会话"
+    },
+    {
+      "name": "world_scene_chat_player_label",
+      "value": "[玩家]"
+    },
+    {
+      "name": "world_scene_chat_narrator_label",
+      "value": "[旁白]"
+    },
+    {
+      "name": "world_scene_chat_status_streaming",
+      "value": "正在生成"
+    },
+    {
+      "name": "world_scene_chat_status_completed",
+      "value": "已完成"
+    },
+    {
+      "name": "world_scene_chat_status_cancelled",
+      "value": "已取消"
+    },
+    {
+      "name": "world_scene_chat_status_failed",
+      "value": "发送失败"
+    },
+    {
+      "name": "world_scene_chat_manual_char_hint",
+      "value": "手工角色消息"
+    },
+    {
+      "name": "world_scene_chat_sender_player",
+      "value": "玩家"
+    },
+    {
+      "name": "world_scene_chat_sender_narrator",
+      "value": "旁白"
+    },
+    {
+      "name": "world_scene_chat_no_summary_hint",
+      "value": "当前版本尚未接入会话摘要,新场景不会自动带入旧会话内容"
+    },
+    {
+      "name": "world_scene_chat_ended_readonly",
+      "value": "该场景已结束,为只读历史会话"
+    },
+    {
+      "name": "world_scene_chat_new_from_ended",
+      "value": "基于此会话新建场景"
+    },
+    {
+      "name": "world_scene_launcher_no_active",
+      "value": "无活动场景"
+    },
+    {
+      "name": "world_scene_launcher_continue_active",
+      "value": "继续当前场景"
+    },
+    {
+      "name": "world_scene_launcher_select_hint",
+      "value": "当前版本仅支持地点全部角色参与,自定义参与者将在升级后支持"
+    },
+    {
+      "name": "world_scene_launcher_multi_active_warning",
+      "value": "当前地点存在异常的多个活动场景"
+    },
+    {
+      "name": "world_scene_launcher_scene_name_label",
+      "value": "场景名称"
+    },
+    {
+      "name": "world_scene_launcher_default_scene_name",
+      "value": "新会话"
+    },
+    {
+      "name": "world_scene_launcher_confirm_create",
+      "value": "确认创建"
+    },
+    {
+      "name": "world_scene_launcher_selected_count",
+      "value": "已选择"
+    },
+    {
+      "name": "world_scene_launcher_select_all",
+      "value": "全选"
+    },
+    {
+      "name": "world_scene_launcher_clear_all",
+      "value": "清空"
+    },
+    {
+      "name": "world_scene_launcher_min_one",
+      "value": "至少选择1个角色"
+    },
+    {
+      "name": "world_scene_launcher_no_chars",
+      "value": "当前地点没有活跃角色"
+    },
+    {
+      "name": "world_scene_history_continue_no_copy",
+      "value": "新场景不会自动带入旧会话内容"
+    },
+    {
+      "name": "world_archive_page_title",
+      "value": "角色档案"
+    },
+    {
+      "name": "world_archive_tab_memory",
+      "value": "记忆"
+    },
+    {
+      "name": "world_archive_tab_activity",
+      "value": "活动"
+    },
+    {
+      "name": "world_archive_tab_relationship",
+      "value": "关系"
+    },
+    {
+      "name": "world_archive_tab_diagnostic",
+      "value": "诊断"
+    },
+    {
+      "name": "world_archive_filter_manual",
+      "value": "手动"
+    },
+    {
+      "name": "world_archive_filter_scene",
+      "value": "场景"
+    },
+    {
+      "name": "world_archive_filter_not_connected",
+      "value": "尚未接入"
+    },
+    {
+      "name": "world_archive_not_recorded",
+      "value": "未记录"
+    },
+    {
+      "name": "world_archive_view_evidence",
+      "value": "查看来源"
+    },
+    {
+      "name": "world_archive_expand",
+      "value": "展开"
+    },
+    {
+      "name": "world_archive_collapse",
+      "value": "收起"
+    },
+    {
+      "name": "world_archive_copy",
+      "value": "复制"
+    },
+    {
+      "name": "world_archive_activity_scenes",
+      "value": "场景记录"
+    },
+    {
+      "name": "world_archive_activity_messages",
+      "value": "发言记录"
+    },
+    {
+      "name": "world_archive_activity_moves",
+      "value": "地点轨迹"
+    },
+    {
+      "name": "world_archive_no_move_history",
+      "value": "当前仅记录当前位置,完整移动轨迹尚未接入"
+    },
+    {
+      "name": "world_archive_relationship_not_available",
+      "value": "世界角色关系尚未接入"
+    },
+    {
+      "name": "world_archive_relationship_direction_out",
+      "value": "当前角色 →"
+    },
+    {
+      "name": "world_archive_relationship_direction_in",
+      "value": "→ 当前角色"
+    },
+    {
+      "name": "world_archive_player_identity_not_available",
+      "value": "世界玩家身份尚未接入"
+    },
+    {
+      "name": "world_archive_original_card",
+      "value": "原始角色卡"
+    },
+    {
+      "name": "world_archive_world_instance",
+      "value": "世界实例"
+    },
+    {
+      "name": "world_archive_instance_id",
+      "value": "实例 ID"
+    },
+    {
+      "name": "world_archive_view_original_card",
+      "value": "查看原始角色卡"
+    },
+    {
+      "name": "world_archive_diagnostic_title",
+      "value": "规则检查结果"
+    },
+    {
+      "name": "world_archive_diagnostic_total",
+      "value": "记忆总数"
+    },
+    {
+      "name": "world_archive_diagnostic_with_source",
+      "value": "有来源"
+    },
+    {
+      "name": "world_archive_diagnostic_without_source",
+      "value": "无来源"
+    },
+    {
+      "name": "world_archive_diagnostic_archived",
+      "value": "已归档"
+    },
+    {
+      "name": "world_archive_diagnostic_dup_source",
+      "value": "重复来源引用"
+    },
+    {
+      "name": "world_archive_diagnostic_owner_mismatch",
+      "value": "归属不匹配"
+    },
+    {
+      "name": "world_archive_diagnostic_world_mismatch",
+      "value": "世界归属不匹配"
+    },
+    {
+      "name": "world_archive_diagnostic_missing_scene",
+      "value": "缺失场景引用"
+    },
+    {
+      "name": "world_archive_diagnostic_missing_message",
+      "value": "缺失消息引用"
+    },
+    {
+      "name": "world_archive_diagnostic_missing_location",
+      "value": "缺失地点引用"
+    },
+    {
+      "name": "world_archive_diagnostic_missing_character",
+      "value": "缺失角色引用"
+    },
+    {
+      "name": "world_archive_diagnostic_no_issues",
+      "value": "规则检查未发现异常"
+    },
+    {
+      "name": "world_evidence_page_title",
+      "value": "来源证据"
+    },
+    {
+      "name": "world_evidence_memory_summary",
+      "value": "记忆摘要"
+    },
+    {
+      "name": "world_evidence_source_info",
+      "value": "来源信息"
+    },
+    {
+      "name": "world_evidence_original_messages",
+      "value": "原始证据"
+    },
+    {
+      "name": "world_evidence_no_source",
+      "value": "这条记忆没有可追溯的原始消息记录"
+    },
+    {
+      "name": "world_evidence_original_label",
+      "value": "原始证据"
+    },
+    {
+      "name": "world_curator_page_title",
+      "value": "世界档案管理员"
+    },
+    {
+      "name": "world_curator_rule_mode_banner",
+      "value": "当前为规则检查模式"
+    },
+    {
+      "name": "world_curator_ai_not_available",
+      "value": "AI 档案管理员尚未接入"
+    },
+    {
+      "name": "world_curator_tab_overview",
+      "value": "概览"
+    },
+    {
+      "name": "world_curator_tab_issues",
+      "value": "一致性问题"
+    },
+    {
+      "name": "world_curator_tab_suggestions",
+      "value": "修正建议"
+    },
+    {
+      "name": "world_curator_tab_audit",
+      "value": "审计记录"
+    },
+    {
+      "name": "world_curator_summary_characters",
+      "value": "角色"
+    },
+    {
+      "name": "world_curator_summary_locations",
+      "value": "地点"
+    },
+    {
+      "name": "world_curator_summary_scenes",
+      "value": "场景"
+    },
+    {
+      "name": "world_curator_summary_memories",
+      "value": "记忆"
+    },
+    {
+      "name": "world_curator_summary_pending",
+      "value": "待检查"
+    },
+    {
+      "name": "world_curator_overview_total",
+      "value": "总数"
+    },
+    {
+      "name": "world_curator_overview_valid",
+      "value": "有效"
+    },
+    {
+      "name": "world_curator_overview_missing_ref",
+      "value": "缺失引用"
+    },
+    {
+      "name": "world_curator_overview_pending",
+      "value": "待检查"
+    },
+    {
+      "name": "world_curator_no_suggestions",
+      "value": "尚无 AI 修正建议"
+    },
+    {
+      "name": "world_curator_suggestions_future_desc",
+      "value": "未来档案管理员将基于原始消息、地点、场景和角色归属,生成可审查的修正建议。"
+    },
+    {
+      "name": "world_curator_no_audit",
+      "value": "尚未接入审计记录"
+    },
+    {
+      "name": "world_curator_audit_future_desc",
+      "value": "未来审计记录将包含:检查时间、检查方式、问题数量、处理数量、操作者。"
+    },
+    {
+      "name": "world_curator_issue_view_detail",
+      "value": "查看详情"
+    },
+    {
+      "name": "world_curator_issue_ignore",
+      "value": "忽略"
+    },
+    {
+      "name": "world_curator_entry",
+      "value": "世界档案管理员"
+    },
+    {
+      "name": "world_risk_info",
+      "value": "信息"
+    },
+    {
+      "name": "world_risk_notice",
+      "value": "提醒"
+    },
+    {
+      "name": "world_risk_warning",
+      "value": "警告"
+    },
+    {
+      "name": "world_risk_critical",
+      "value": "严重"
     }
   ]
 }

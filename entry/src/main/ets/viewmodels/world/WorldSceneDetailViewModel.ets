@@ -31,7 +31,8 @@ import { WorldScene, WorldSceneStatus } from '../../models/world/WorldScene';
 import {
   WorldSceneMessage,
   WorldSceneMessageSenderType,
-  WorldSceneMessageVisibility
+  WorldSceneMessageVisibility,
+  WorldSceneMessageStatus
 } from '../../models/world/WorldSceneMessage';
 import { Character } from '../../models/Character';
 import { DatabaseError } from '../../models/DatabaseError';
@@ -62,7 +63,6 @@ export interface SceneCharacterUiModel {
   readonly characterCardMissing: boolean;
 }
 
-/** 场景消息 UI 模型 */
 export interface SceneMessageUiModel {
   readonly id: string;
   readonly sequenceNumber: number;
@@ -71,6 +71,7 @@ export interface SceneMessageUiModel {
   readonly senderInstanceId: string;
   readonly content: string;
   readonly visibility: WorldSceneMessageVisibility;
+  readonly messageStatus: string;
   readonly recipientNames: string[];
   readonly witnessNames: string[];
   readonly replyTargetNames: string[];
@@ -322,6 +323,7 @@ export class WorldSceneDetailViewModel {
           senderInstanceId: m.senderCharacterInstanceId !== undefined ? m.senderCharacterInstanceId : '',
           content: m.content,
           visibility: m.visibility,
+          messageStatus: m.status,
           recipientNames: this.resolveInstanceNames(m.recipientCharacterInstanceIds, instanceMap, characterMap),
           witnessNames: this.resolveInstanceNames(m.witnessCharacterInstanceIds, instanceMap, characterMap),
           replyTargetNames: this.resolveInstanceNames(m.replyTargetCharacterInstanceIds, instanceMap, characterMap),
