@@ -463,8 +463,8 @@ export class AppServices {
       this.promptPresetService,
       this.modelService
     );
-    // G-CONTEXT-INSPECTOR-1: Prompt 诊断快照内存存储(纯内存,无依赖)
-    this.groupPromptInspectionStore = new GroupPromptInspectionStore();
+    // G-CONTEXT-INSPECTOR-1 / G-CONTEXT-PERSIST-1: Prompt 诊断快照存储(内存 + AppPreferences)
+    this.groupPromptInspectionStore = new GroupPromptInspectionStore(this.appPreferences);
     this.groupChatRuntimeService = new GroupChatRuntimeService(
       this.groupRoundCoordinator,
       this.groupConversationMessageService,
@@ -566,6 +566,10 @@ export class AppServices {
       })
       .then((): Promise<void> => services.lorebookService.initialize())
       .then((): Promise<void> => services.promptPresetService.initialize())
+      .then(async (): Promise<void> => {
+        // G-CONTEXT-PERSIST-1: 恢复 Prompt 诊断快照(appPreferences 已就绪)
+        await services.groupPromptInspectionStore.restore();
+      })
       .then((): void => {
         // 创建 ChatBackgroundService(需要已初始化的 appPreferences + appContext)
         if (services.appContext !== null) {

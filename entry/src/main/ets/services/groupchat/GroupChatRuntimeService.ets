@@ -919,7 +919,7 @@ export class GroupChatRuntimeService {
     }
 
     // G-CONTEXT-INSPECTOR-1: 捕获 Prompt 诊断快照(纯只读,不改变业务)
-    this.captureInspectionSnapshot(
+    await this.captureInspectionSnapshot(
       ctx.chatId,
       speakerCharacterId,
       ctx.roundId,
@@ -1547,20 +1547,20 @@ export class GroupChatRuntimeService {
   /**
    * G-CONTEXT-INSPECTOR-1: 捕获 Prompt 诊断快照。
    * 纯只读诊断,不改变任何业务语义。
-   * 快照仅存内存,不持久化。
+   * 快照内存 + AppPreferences 持久化(G-CONTEXT-PERSIST-1)。
    * 不记录 API Key / Authorization / 敏感信息。
    *
    * 当前群聊记忆尚未注入 Prompt,快照如实反映:
    * - memories: selected=0, injected=0
    * - relationships: selected=0, injected=0
    */
-  private captureInspectionSnapshot(
+  private async captureInspectionSnapshot(
     chatId: string,
     speakerCharacterId: string,
     roundId: string,
     promptResult: GroupPromptAssemblyResult,
     participantCharacterIds: string[]
-  ): void {
+  ): Promise<void> {
     const speakerName: string = promptResult.character !== null
       ? promptResult.character.name : '未知角色';
 
@@ -1589,7 +1589,7 @@ export class GroupChatRuntimeService {
 
     const contextWindow: number = promptResult.effectiveSettings.contextWindow !== undefined
       && promptResult.effectiveSettings.contextWindow > 0
-      ? promptResult.effectiveSettings.contextWindow : 8192;
+      ? promptResult.effectiveSettings.contextWindow : 65536;
     const availableInputTokens: number = promptResult.availableInputTokens;
     const estimatedTotal: number = promptResult.estimatedTokens;
     const usagePercent: number = availableInputTokens > 0
@@ -1640,6 +1640,6 @@ export class GroupChatRuntimeService {
       participantNames: promptResult.participantNames
     };
 
-    this.inspectionStore.store(snapshot);
+    await this.inspectionStore.store(snapshot);
   }
 }

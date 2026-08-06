@@ -68,8 +68,8 @@ import {
 
 const LOG_TAG: string = 'GroupPromptAssembler';
 
-/** 默认上下文窗口(无配置时) */
-const DEFAULT_CONTEXT_WINDOW: number = 8192;
+/** 默认上下文窗口(无配置时,64k = 65536) */
+const DEFAULT_CONTEXT_WINDOW: number = 65536;
 
 /**
  * 群聊 Prompt 构建上下文。

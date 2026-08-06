@@ -327,6 +327,26 @@ function validateAndExtractFields(obj: Object): TryParseItemResult {
   if (!updatedAt.success) { return { success: false, error: updatedAt.error }; }
   if (!isValidTimestamp(updatedAt.value)) { return { success: false, error: 'invalid updatedAt' }; }
 
+  // contextWindow 可选字段(缺省时回退为默认值)
+  let contextWindowValue: number | undefined = undefined;
+  const contextWindowRaw: Object | undefined = (obj as Record<string, Object>)['contextWindow'];
+  if (contextWindowRaw !== undefined) {
+    if (typeof contextWindowRaw !== 'number' || !Number.isFinite(contextWindowRaw)) {
+      return { success: false, error: 'contextWindow is not finite number' };
+    }
+    contextWindowValue = contextWindowRaw;
+  }
+
+  if (contextWindowValue !== undefined) {
+    const itemWithContext: ProviderConfigItemV1 = {
+      id: id.value, name: name.value, type: type.value, baseUrl: baseUrl.value, modelName: modelName.value,
+      temperature: temperature.value, topP: topP.value, maxTokens: maxTokens.value,
+      stream: stream.value, enabled: enabled.value, createdAt: createdAt.value, updatedAt: updatedAt.value,
+      contextWindow: contextWindowValue
+    };
+    return { success: true, item: itemWithContext, error: '' };
+  }
+
   const item: ProviderConfigItemV1 = {
     id: id.value, name: name.value, type: type.value, baseUrl: baseUrl.value, modelName: modelName.value,
     temperature: temperature.value, topP: topP.value, maxTokens: maxTokens.value,

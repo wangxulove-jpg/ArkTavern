@@ -45,8 +45,8 @@ export const STREAM_DEFAULT: boolean = true;
 /** enabled 默认值 */
 export const ENABLED_DEFAULT: boolean = true;
 
-/** 默认上下文窗口大小(未显式配置时使用) */
-export const CONTEXT_WINDOW_DEFAULT: number = 32768;
+/** 默认上下文窗口大小(未显式配置时使用,64k = 65536) */
+export const CONTEXT_WINDOW_DEFAULT: number = 65536;
 
 // ===== 校验函数 =====
 
@@ -137,7 +137,7 @@ export class ProviderConfig {
   readonly topP: number;
   /** 最大生成 token 数 */
   readonly maxTokens: number;
-  /** 上下文窗口大小(可选)。未提供时使用 CONTEXT_WINDOW_DEFAULT(32768)。 */
+  /** 上下文窗口大小(可选)。未提供时使用 CONTEXT_WINDOW_DEFAULT(65536, 64k)。 */
   readonly contextWindow?: number;
   /** 是否流式请求 */
   readonly stream: boolean;

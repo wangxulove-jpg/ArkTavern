@@ -183,6 +183,12 @@ struct GroupCharacterMemoryPage {
   // G-CONTEXT-INSPECTOR-1: 上下文检查状态
   @State private inspectionSnapshot: GroupPromptInspectionSnapshot | null = null;
   @State private isInspectionLoading: boolean = false;
+  // G-CONTEXT-INSPECTOR-1: 上下文调整状态
+  @State private contextWindowInput: string = '';
+  @State private isContextAdjustLoaded: boolean = false;
+  @State private isSavingContextWindow: boolean = false;
+  @State private contextAdjustMessage: string = '';
+  @State private contextAdjustIsError: boolean = false;
 
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navBarHeight') navBarHeight: number = 0;
@@ -210,7 +216,8 @@ struct GroupCharacterMemoryPage {
         AppServices.getGroupCharacterSelfSummaryService(),
         AppServices.getGroupCharacterRelationshipMemoryService(),
         AppServices.getGroupCharacterRelationshipSummaryService(),
-        AppServices.getGroupPromptInspectionStore()
+        AppServices.getGroupPromptInspectionStore(),
+        AppServices.getModelService()
       );
       // G-MEMORY-UI-2: 先加载成员列表,确定默认角色
       await this.viewModel.loadMembers(groupConversationId, characterId);
@@ -1753,6 +1760,8 @@ struct GroupCharacterMemoryPage {
     } else if (this.viewMode === PageViewMode.ContextInspector) {
       this.viewModel.loadInspectionSnapshot();
       this.syncInspectionFromViewModel();
+      await this.viewModel.loadContextAdjustment();
+      this.syncInspectionFromViewModel();
     }
   }
 
@@ -2373,6 +2382,7 @@ struct GroupCharacterMemoryPage {
           .alignItems(HorizontalAlign.Center)
         } else {
           this.inspectionOverviewSection()
+          this.contextAdjustmentSection()
           this.inspectionMemorySection()
           this.inspectionRelationshipSection()
           this.inspectionTokenBudgetSection()
@@ -2443,6 +2453,100 @@ struct GroupCharacterMemoryPage {
       .borderRadius($r('app.float.app_radius_md'))
       .margin({ left: 12, right: 12, top: 8 })
     }
+  }
+
+  /**
+   * G-CONTEXT-INSPECTOR-1: 调整上下文窗口。
+   * 持久化到当前 ProviderConfig,仅修改 contextWindow 字段。
+   * 新的一轮对话生效;已运行中的轮次不受影响。
+   */
+  @Builder
+  contextAdjustmentSection(): void {
+    Column() {
+      Text('调整上下文窗口')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_tertiary'))
+        .fontWeight(FontWeight.Medium)
+        .width('100%')
+        .margin({ bottom: 6 })
+
+      // 当前生效值(来自快照,只读)
+      Row() {
+        Text('当前生效:')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_tertiary'))
+        if (this.inspectionSnapshot !== null) {
+          Text(String(this.inspectionSnapshot.tokenBudget.contextWindow))
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_secondary'))
+            .fontWeight(FontWeight.Medium)
+            .margin({ left: 4 })
+        } else {
+          Text('-')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_tertiary'))
+            .margin({ left: 4 })
+        }
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      // 配置值(可编辑)
+      Row() {
+        Text('配置值:')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_tertiary'))
+
+        TextInput({ text: this.contextWindowInput, placeholder: '如 65536' })
+          .fontSize($r('app.float.app_font_caption'))
+          .type(InputType.Number)
+          .layoutWeight(1)
+          .height(34)
+          .margin({ left: 8 })
+          .onChange((value: string) => {
+            this.contextWindowInput = value;
+          })
+          .accessibilityText('上下文窗口输入')
+
+        Button(this.isSavingContextWindow ? '保存中…' : '保存')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_on_accent'))
+          .backgroundColor($r('app.color.app_accent'))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(32)
+          .padding({ left: 12, right: 12 })
+          .margin({ left: 8 })
+          .enabled(!this.isSavingContextWindow)
+          .accessibilityText('保存上下文窗口')
+          .key('groupMemory.context.saveContextWindow')
+          .onClick(() => { this.handleSaveContextWindow(); })
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+      .margin({ top: 6 })
+
+      Text('范围 1024 ~ 1048576,持久化到当前模型配置,下一轮对话生效')
+        .fontSize(11)
+        .fontColor($r('app.color.app_text_tertiary'))
+        .width('100%')
+        .margin({ top: 6 })
+        .textAlign(TextAlign.Start)
+
+      if (this.contextAdjustMessage.length > 0) {
+        Text(this.contextAdjustMessage)
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor(this.contextAdjustIsError
+            ? $r('app.color.app_danger') : $r('app.color.app_accent'))
+          .width('100%')
+          .margin({ top: 4 })
+          .textAlign(TextAlign.Start)
+      }
+    }
+    .width('100%')
+    .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+    .backgroundColor($r('app.color.app_surface_2'))
+    .borderRadius($r('app.float.app_radius_md'))
+    .margin({ left: 12, right: 12, top: 8 })
   }
 
   /** 记忆诊断 */
@@ -3779,6 +3883,8 @@ struct GroupCharacterMemoryPage {
     } else if (mode === PageViewMode.ContextInspector && this.viewModel !== null) {
       this.viewModel.loadInspectionSnapshot();
       this.syncInspectionFromViewModel();
+      await this.viewModel.loadContextAdjustment();
+      this.syncInspectionFromViewModel();
     }
   }
 
@@ -3805,6 +3911,33 @@ struct GroupCharacterMemoryPage {
     }
     this.inspectionSnapshot = this.viewModel.inspectionSnapshot;
     this.isInspectionLoading = this.viewModel.isInspectionLoading;
+    this.isContextAdjustLoaded = this.viewModel.isContextAdjustLoaded;
+    this.isSavingContextWindow = this.viewModel.isSavingContextWindow;
+    this.contextAdjustMessage = this.viewModel.contextAdjustMessage;
+    this.contextAdjustIsError = this.viewModel.contextAdjustIsError;
+    if (this.contextWindowInput.length === 0
+      && this.viewModel.configuredContextWindow !== undefined) {
+      this.contextWindowInput = String(this.viewModel.configuredContextWindow);
+    }
+  }
+
+  /** G-CONTEXT-INSPECTOR-1: 保存上下文窗口调整 */
+  private async handleSaveContextWindow(): Promise<void> {
+    if (this.viewModel === null || this.isSavingContextWindow) {
+      return;
+    }
+    const trimmed: string = this.contextWindowInput.trim();
+    const parsed: number = parseInt(trimmed, 10);
+    if (isNaN(parsed) || trimmed.length === 0) {
+      this.contextAdjustMessage = '请输入有效的上下文窗口数值';
+      this.contextAdjustIsError = true;
+      return;
+    }
+    const saved: boolean = await this.viewModel.saveContextWindow(parsed);
+    if (saved) {
+      this.contextWindowInput = String(parsed);
+    }
+    this.syncInspectionFromViewModel();
   }
 
   /** 点击"总结新关系"按钮 */

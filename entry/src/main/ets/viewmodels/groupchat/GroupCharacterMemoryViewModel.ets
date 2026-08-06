@@ -31,6 +31,8 @@
 
 import { GroupConversationPersistenceService } from '../../services/groupchat/GroupConversationPersistenceService';
 import { CharacterService } from '../../services/CharacterService';
+import { ModelService } from '../../services/ModelService';
+import { ProviderConfig } from '../../models/ProviderConfig';
 import {
   GroupCharacterMemoryService,
   GroupCharacterMemoryFilter,
@@ -285,6 +287,8 @@ export class GroupCharacterMemoryViewModel {
 
   /** G-CONTEXT-INSPECTOR-1: Prompt 诊断快照内存存储 */
   private readonly inspectionStore: GroupPromptInspectionStore;
+  /** G-CONTEXT-INSPECTOR-1: 模型服务(用于读取/更新 contextWindow,可空) */
+  private readonly modelService: ModelService | null;
 
   state: GroupCharacterMemoryLoadState = GroupCharacterMemoryLoadState.Loading;
   errorMessage: string = '';
@@ -337,6 +341,18 @@ export class GroupCharacterMemoryViewModel {
   inspectionSnapshot: GroupPromptInspectionSnapshot | null = null;
   isInspectionLoading: boolean = false;
 
+  // G-CONTEXT-INSPECTOR-1: 上下文调整状态
+  /** 当前 ProviderConfig 中配置的 contextWindow(undefined 表示未显式配置) */
+  configuredContextWindow: number | undefined = undefined;
+  /** 是否已读取到当前配置 */
+  isContextAdjustLoaded: boolean = false;
+  /** 保存 contextWindow 进行中 */
+  isSavingContextWindow: boolean = false;
+  /** 调整结果提示(成功/失败) */
+  contextAdjustMessage: string = '';
+  /** 是否为成功提示(决定文字颜色) */
+  contextAdjustIsError: boolean = false;
+
   constructor(
     groupPersistenceService: GroupConversationPersistenceService,
     characterService: CharacterService,
@@ -344,7 +360,8 @@ export class GroupCharacterMemoryViewModel {
     summaryService: GroupCharacterSelfSummaryService | null = null,
     relationshipMemoryService: GroupCharacterRelationshipMemoryService | null = null,
     relationshipSummaryService: GroupCharacterRelationshipSummaryService | null = null,
-    inspectionStore: GroupPromptInspectionStore | null = null
+    inspectionStore: GroupPromptInspectionStore | null = null,
+    modelService: ModelService | null = null
   ) {
     this.groupPersistenceService = groupPersistenceService;
     this.characterService = characterService;
@@ -353,6 +370,7 @@ export class GroupCharacterMemoryViewModel {
     this.relationshipMemoryService = relationshipMemoryService;
     this.relationshipSummaryService = relationshipSummaryService;
     this.inspectionStore = inspectionStore ?? new GroupPromptInspectionStore();
+    this.modelService = modelService;
     this.instanceShortId = GroupCharacterMemoryViewModel.generateShortId();
   }
 
@@ -1335,6 +1353,89 @@ export class GroupCharacterMemoryViewModel {
         + ' tokens=' + String(snapshot.tokenBudget.estimatedTotalTokens));
     } else {
       Logger.info(LOG_TAG, 'loadInspectionSnapshot: no snapshot available');
+    }
+  }
+
+  /**
+   * G-CONTEXT-INSPECTOR-1: 加载当前 ProviderConfig 的 contextWindow。
+   * 供上下文调整卡片显示当前配置值。
+   */
+  async loadContextAdjustment(): Promise<void> {
+    if (this.disposed || this.modelService === null) {
+      return;
+    }
+    this.isContextAdjustLoaded = false;
+    this.contextAdjustMessage = '';
+    try {
+      const config: ProviderConfig | null = await this.modelService.getCurrentConfig();
+      if (this.disposed) {
+        return;
+      }
+      this.configuredContextWindow = config !== null ? config.contextWindow : undefined;
+      this.isContextAdjustLoaded = true;
+      Logger.info(LOG_TAG, 'loadContextAdjustment ok: configured='
+        + (this.configuredContextWindow !== undefined
+          ? String(this.configuredContextWindow) : 'undefined'));
+    } catch (e) {
+      if (this.disposed) {
+        return;
+      }
+      Logger.warn(LOG_TAG, 'loadContextAdjustment failed: ' + this.safeErrorCategory(e));
+      this.contextAdjustMessage = '读取模型配置失败';
+      this.contextAdjustIsError = true;
+    }
+  }
+
+  /**
+   * G-CONTEXT-INSPECTOR-1: 保存 contextWindow 到当前 ProviderConfig。
+   * 仅更新 contextWindow,不触碰 API Key / 其他字段。
+   * 新的一轮对话生效;已运行中的轮次不受影响(configSnapshot 快照)。
+   */
+  async saveContextWindow(value: number): Promise<boolean> {
+    if (this.disposed || this.modelService === null) {
+      this.contextAdjustMessage = '模型服务不可用';
+      this.contextAdjustIsError = true;
+      return false;
+    }
+    const MAX: number = 1048576;
+    if (!Number.isInteger(value) || value < 1024 || value > MAX) {
+      this.contextAdjustMessage = '上下文窗口需在 1024 ~ 1048576 之间';
+      this.contextAdjustIsError = true;
+      return false;
+    }
+    this.isSavingContextWindow = true;
+    this.contextAdjustMessage = '';
+    try {
+      const config: ProviderConfig | null = await this.modelService.getCurrentConfig();
+      if (this.disposed) {
+        return false;
+      }
+      if (config === null) {
+        this.contextAdjustMessage = '未找到当前模型配置';
+        this.contextAdjustIsError = true;
+        return false;
+      }
+      const updated: ProviderConfig = config.withUpdates(undefined, undefined,
+        undefined, undefined, undefined, undefined, undefined, undefined, undefined, value);
+      await this.modelService.updateConfig(updated);
+      if (this.disposed) {
+        return false;
+      }
+      this.configuredContextWindow = value;
+      this.contextAdjustMessage = '已保存,下一轮对话生效';
+      this.contextAdjustIsError = false;
+      Logger.info(LOG_TAG, 'saveContextWindow ok: value=' + String(value));
+      return true;
+    } catch (e) {
+      if (this.disposed) {
+        return false;
+      }
+      Logger.warn(LOG_TAG, 'saveContextWindow failed: ' + this.safeErrorCategory(e));
+      this.contextAdjustMessage = '保存失败,请重试';
+      this.contextAdjustIsError = true;
+      return false;
+    } finally {
+      this.isSavingContextWindow = false;
     }
   }
 
