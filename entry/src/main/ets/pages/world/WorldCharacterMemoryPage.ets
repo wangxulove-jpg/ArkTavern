@@ -1,33 +1,27 @@
-/**
- * WorldCharacterMemoryPage 世界角色记忆页(W-MEMORY-1A)
- *
- * 职责:
- * - 显示角色实例头部(头像/名称/Active/当前位置/记忆数量)
- * - 列出该实例的世界记忆(全部/活跃/已归档)
- * - 手动新增 / 编辑 / 归档 / 恢复 / 删除 记忆
- * - 来源地点/Scene/Message 失效时安全降级显示
- *
- * 路由:通过 AppStorage PENDING_WORLD_MEMORY_WORLD_ID_KEY +
- *      PENDING_WORLD_MEMORY_CHARACTER_INSTANCE_ID_KEY 传参,读取后清除。
- *
- * 写入调用 WorldCharacterMemoryService(经 ViewModel),不直接访问 Repository。
- */
-
 import { router } from '@kit.ArkUI';
 import { AppServices } from '../../services/AppServices';
 import {
   WorldCharacterMemoryViewModel,
   WorldCharacterMemoryLoadState,
   WorldCharacterMemoryListFilter,
+  ArchiveTab,
   MemoryItemUiModel,
   MemoryLocationOptionUiModel,
   MemoryCharacterHeaderUiModel,
+  CharacterSwitcherItemUiModel,
+  ActivitySceneUiModel,
+  ActivityMessageUiModel,
+  ActivityMoveUiModel,
+  DiagnosticSummaryUiModel,
+  DiagnosticIssueUiModel,
+  DiagnosticRiskLevel,
   CreateMemoryFormInput,
   UpdateMemoryFormInput
 } from '../../viewmodels/world/WorldCharacterMemoryViewModel';
 import {
   PENDING_WORLD_MEMORY_WORLD_ID_KEY,
   PENDING_WORLD_MEMORY_CHARACTER_INSTANCE_ID_KEY,
+  PENDING_WORLD_MEMORY_EVIDENCE_ID_KEY,
   WORLD_CHARACTER_MEMORY_REFRESH_TOKEN_KEY
 } from '../../viewmodels/world/WorldUiModels';
 import {
@@ -38,13 +32,18 @@ import {
   WORLD_CHARACTER_MEMORY_IMPORTANCE_MAX,
   WORLD_CHARACTER_MEMORY_CONTENT_MAX
 } from '../../models/world/WorldCharacterMemory';
+import { WorldSceneStatus } from '../../models/world/WorldScene';
 import { CharacterImageView } from '../../components/CharacterImageView';
 import { EmptyStateView } from '../../components/EmptyStateView';
+import { WorldSurfaceCard } from '../../components/world/WorldSurfaceCard';
+import { WorldSectionHeader } from '../../components/world/WorldSectionHeader';
+import { WorldStatusChip } from '../../components/world/WorldStatusChip';
+import { WorldEmptyState } from '../../components/world/WorldEmptyState';
+import { WorldColors } from '../../components/world/WorldDesignTokens';
 import { Logger } from '../../utils/Logger';
 
 const LOG_TAG: string = 'WorldCharacterMemoryPage';
 
-/** 表单模式 */
 enum MemoryFormMode {
   None,
   Create,
@@ -67,8 +66,15 @@ struct WorldCharacterMemoryPage {
   @State private isActive: boolean = true;
   @State private characterCardMissing: boolean = false;
   @State private currentLocationLabel: string = '';
-
+  @State private switcherItems: CharacterSwitcherItemUiModel[] = [];
+  @State private selectedTab: ArchiveTab = ArchiveTab.Memory;
   @State private filter: WorldCharacterMemoryListFilter = WorldCharacterMemoryListFilter.Active;
+
+  @State private activityScenes: ActivitySceneUiModel[] = [];
+  @State private activityMessages: ActivityMessageUiModel[] = [];
+  @State private activityMoves: ActivityMoveUiModel[] = [];
+  @State private diagnostic: DiagnosticSummaryUiModel | null = null;
+
   @State private formMode: MemoryFormMode = MemoryFormMode.None;
   @State private editingMemoryId: string = '';
   @State private formContent: string = '';
@@ -79,7 +85,6 @@ struct WorldCharacterMemoryPage {
   @State private isSaving: boolean = false;
   @State private isDeleting: boolean = false;
   @State private actionError: string = '';
-  /** 删除确认弹窗(非空表示正在确认删除该 memoryId) */
   @State private deletingMemoryId: string = '';
 
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
@@ -105,6 +110,9 @@ struct WorldCharacterMemoryPage {
         AppServices.getWorldRepository(),
         AppServices.getWorldLocationRepository(),
         AppServices.getWorldCharacterInstanceRepository(),
+        AppServices.getWorldSceneRepository(),
+        AppServices.getWorldSceneMessageRepository(),
+        AppServices.getWorldEventRepository(),
         AppServices.getCharacterService(),
         AppServices.getWorldCharacterMemoryService()
       );
@@ -173,6 +181,11 @@ struct WorldCharacterMemoryPage {
       this.isActive = true;
       this.characterCardMissing = false;
       this.currentLocationLabel = '';
+      this.switcherItems = [];
+      this.activityScenes = [];
+      this.activityMessages = [];
+      this.activityMoves = [];
+      this.diagnostic = null;
       return;
     }
     this.memories = snapshot.memories;
@@ -184,31 +197,36 @@ struct WorldCharacterMemoryPage {
     this.isActive = snapshot.header.isActive;
     this.characterCardMissing = snapshot.header.characterCardMissing;
     this.currentLocationLabel = this.resolveCurrentLocationLabel(snapshot.header);
+    this.switcherItems = snapshot.characterSwitcherItems;
+    this.activityScenes = snapshot.activityScenes;
+    this.activityMessages = snapshot.activityMessages;
+    this.activityMoves = snapshot.activityMoves;
+    this.diagnostic = snapshot.diagnostic;
   }
 
   build(): void {
     Column() {
-      this.headerArea();
+      this.headerArea()
       if (this.isInitializing) {
-        this.loadingView();
+        this.loadingView()
       } else if (this.loadState === WorldCharacterMemoryLoadState.Loading) {
-        this.loadingView();
+        this.loadingView()
       } else if (this.loadState === WorldCharacterMemoryLoadState.NotFound) {
-        this.notFoundView();
+        this.notFoundView()
       } else if (this.loadState === WorldCharacterMemoryLoadState.Error) {
-        this.errorView(this.errorMessage.length > 0 ? this.errorMessage : '记忆数据加载失败,请重试');
+        this.errorView(this.errorMessage.length > 0 ? this.errorMessage : '记忆数据加载失败,请重试')
       } else {
         this.contentView()
       }
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.app_bg'))
+    .backgroundColor($r('app.color.world_bg'))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .bindSheet(this.formMode === MemoryFormMode.Create, this.createFormSheet, {
       height: SheetSize.FIT_CONTENT,
       dragBar: true,
-      backgroundColor: $r('app.color.app_surface_1'),
+      backgroundColor: $r('app.color.world_surface_1'),
       onDisappear: () => {
         if (this.formMode === MemoryFormMode.Create) {
           this.formMode = MemoryFormMode.None;
@@ -218,7 +236,7 @@ struct WorldCharacterMemoryPage {
     .bindSheet(this.formMode === MemoryFormMode.Edit, this.editFormSheet, {
       height: SheetSize.FIT_CONTENT,
       dragBar: true,
-      backgroundColor: $r('app.color.app_surface_1'),
+      backgroundColor: $r('app.color.world_surface_1'),
       onDisappear: () => {
         if (this.formMode === MemoryFormMode.Edit) {
           this.formMode = MemoryFormMode.None;
@@ -228,7 +246,7 @@ struct WorldCharacterMemoryPage {
     .bindSheet(this.deletingMemoryId.length > 0, this.deleteConfirmSheet, {
       height: SheetSize.FIT_CONTENT,
       dragBar: true,
-      backgroundColor: $r('app.color.app_surface_1'),
+      backgroundColor: $r('app.color.world_surface_1'),
       onDisappear: () => {
         this.deletingMemoryId = '';
       }
@@ -238,31 +256,41 @@ struct WorldCharacterMemoryPage {
   @Builder
   headerArea(): void {
     Row() {
-      Button($r('app.string.world_home_back'))
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_accent'))
+      Button('←')
+        .fontSize(22)
+        .fontColor($r('app.color.world_text_secondary'))
         .backgroundColor(Color.Transparent)
-        .height(36)
-        .padding({ left: 0, right: 8 })
-        .accessibilityText($r('app.string.world_home_back'))
+        .width(40)
+        .height(40)
+        .padding(0)
         .onClick(() => {
           router.back();
         })
 
-      Text($r('app.string.world_memory_page_title'))
-        .fontSize($r('app.float.app_font_title'))
-        .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.app_text_primary'))
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .layoutWeight(1)
+      Column() {
+        Text($r('app.string.world_archive_page_title'))
+          .fontSize($r('app.float.world_font_title'))
+          .fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.world_text_primary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+        Text(this.displayName)
+          .fontSize($r('app.float.world_font_caption'))
+          .fontColor($r('app.color.world_text_tertiary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .margin({ top: 2 })
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+      .margin({ left: 4 })
     }
     .width('100%')
     .padding({
-      left: $r('app.float.app_spacing_16'),
-      right: $r('app.float.app_spacing_16'),
-      top: this.statusBarHeight + 8,
-      bottom: $r('app.float.app_spacing_8')
+      left: $r('app.float.world_page_padding'),
+      right: $r('app.float.world_page_padding'),
+      top: this.statusBarHeight + 4,
+      bottom: 4
     })
     .alignItems(VerticalAlign.Center)
   }
@@ -270,7 +298,7 @@ struct WorldCharacterMemoryPage {
   @Builder
   loadingView(): void {
     Column() {
-      LoadingProgress().width(40).height(40).color($r('app.color.app_accent'))
+      LoadingProgress().width(40).height(40).color($r('app.color.world_gold'))
     }
     .width('100%')
     .layoutWeight(1)
@@ -281,16 +309,13 @@ struct WorldCharacterMemoryPage {
   @Builder
   notFoundView(): void {
     Column() {
-      EmptyStateView({ title: $r('app.string.world_memory_not_found'), description: '' })
-      Button($r('app.string.world_home_back'))
-        .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_on_accent'))
-        .backgroundColor($r('app.color.app_accent'))
-        .borderRadius($r('app.float.app_radius_sm'))
-        .height(40)
-        .padding({ left: 24, right: 24 })
-        .margin({ top: $r('app.float.app_spacing_16') })
-        .onClick(() => { router.back(); })
+      WorldEmptyState({
+        title: $r('app.string.world_memory_not_found'),
+        primaryLabel: $r('app.string.world_home_back'),
+        onPrimary: (): void => {
+          router.back();
+        }
+      })
     }
     .width('100%')
     .layoutWeight(1)
@@ -301,16 +326,18 @@ struct WorldCharacterMemoryPage {
   @Builder
   errorView(msg: string): void {
     Column() {
-      EmptyStateView({ title: $r('app.string.world_memory_load_error'), description: msg })
-      Button($r('app.string.world_home_reload'))
-        .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_on_accent'))
-        .backgroundColor($r('app.color.app_accent'))
-        .borderRadius($r('app.float.app_radius_sm'))
-        .height(40)
-        .padding({ left: 24, right: 24 })
-        .margin({ top: $r('app.float.app_spacing_16') })
-        .onClick(() => { this.loadSnapshot(); })
+      WorldEmptyState({
+        title: $r('app.string.world_memory_load_error'),
+        description: msg,
+        primaryLabel: $r('app.string.world_home_reload'),
+        secondaryLabel: $r('app.string.world_home_back'),
+        onPrimary: (): void => {
+          this.loadSnapshot();
+        },
+        onSecondary: (): void => {
+          router.back();
+        }
+      })
     }
     .width('100%')
     .layoutWeight(1)
@@ -321,37 +348,10 @@ struct WorldCharacterMemoryPage {
   @Builder
   contentView(): void {
     Column() {
-      // 角色头部
       this.characterHeaderArea()
-
-      // 筛选
-      this.filterBar()
-
-      // 错误提示
-      if (this.actionError.length > 0) {
-        Text(this.actionError)
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_danger'))
-          .width('100%')
-          .padding({ left: 16, right: 16, top: 4, bottom: 4 })
-      }
-
-      // 列表
-      if (this.memories.length === 0) {
-        this.emptyMemoryView()
-      } else {
-        List() {
-          ForEach(this.memories, (m: MemoryItemUiModel) => {
-            ListItem() {
-              this.memoryCard(m)
-            }
-          }, (m: MemoryItemUiModel) => m.id)
-        }
-        .layoutWeight(1)
-        .width('100%')
-        .padding({ left: 12, right: 12, top: 4, bottom: 4 })
-        .scrollBar(BarState.Auto)
-      }
+      this.characterSwitcherArea()
+      this.tabBar()
+      this.tabContent()
     }
     .width('100%')
     .layoutWeight(1)
@@ -363,37 +363,32 @@ struct WorldCharacterMemoryPage {
       CharacterImageView({
         imageUri: this.avatarUri,
         fallbackName: this.fallbackName,
-        imgWidth: 44,
-        imgHeight: 44,
-        imgBorderRadius: 22,
+        imgWidth: 40,
+        imgHeight: 40,
+        imgBorderRadius: 20,
         displayMode: 'thumbnail'
       })
 
       Column() {
         Text(this.displayName)
-          .fontSize($r('app.float.app_font_body'))
+          .fontSize($r('app.float.world_font_body'))
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor($r('app.color.world_text_primary'))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .width('100%')
 
         Row() {
-          Text(this.isActive
-            ? $r('app.string.world_character_active')
-            : $r('app.string.world_character_inactive'))
-            .fontSize(10)
-            .fontColor(this.isActive
-              ? $r('app.color.app_accent') : $r('app.color.app_text_tertiary'))
-            .backgroundColor($r('app.color.app_surface_2'))
-            .borderRadius(3)
-            .padding({ left: 4, right: 4, top: 1, bottom: 1 })
+          WorldStatusChip({
+            label: this.isActive ? '活跃' : '已停用',
+            isActive: this.isActive
+          })
 
           if (this.characterCardMissing) {
             Text($r('app.string.world_character_card_missing'))
               .fontSize(10)
-              .fontColor($r('app.color.app_danger'))
-              .backgroundColor($r('app.color.app_surface_2'))
+              .fontColor($r('app.color.world_error'))
+              .backgroundColor($r('app.color.world_surface_2'))
               .borderRadius(3)
               .padding({ left: 4, right: 4, top: 1, bottom: 1 })
               .margin({ left: 4 })
@@ -401,8 +396,8 @@ struct WorldCharacterMemoryPage {
 
           Text(this.currentLocationLabel)
             .fontSize(10)
-            .fontColor($r('app.color.app_text_secondary'))
-            .backgroundColor($r('app.color.app_surface_2'))
+            .fontColor($r('app.color.world_text_secondary'))
+            .backgroundColor($r('app.color.world_surface_2'))
             .borderRadius(3)
             .padding({ left: 4, right: 4, top: 1, bottom: 1 })
             .margin({ left: 4 })
@@ -410,9 +405,9 @@ struct WorldCharacterMemoryPage {
         .margin({ top: 4 })
         .alignItems(VerticalAlign.Center)
 
-        Text($r('app.string.world_memory_count_label', this.memoryCount))
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+        Text('记忆 ' + this.memoryCount.toString())
+          .fontSize($r('app.float.world_font_micro'))
+          .fontColor($r('app.color.world_text_tertiary'))
           .margin({ top: 4 })
       }
       .layoutWeight(1)
@@ -421,234 +416,744 @@ struct WorldCharacterMemoryPage {
     }
     .width('100%')
     .padding({
-      left: $r('app.float.app_spacing_16'),
-      right: $r('app.float.app_spacing_16'),
+      left: $r('app.float.world_page_padding'),
+      right: $r('app.float.world_page_padding'),
       top: $r('app.float.app_spacing_12'),
-      bottom: $r('app.float.app_spacing_12')
+      bottom: $r('app.float.app_spacing_8')
     })
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor($r('app.color.world_surface_1'))
     .alignItems(VerticalAlign.Center)
+  }
+
+  @Builder
+  characterSwitcherArea(): void {
+    if (this.switcherItems.length > 1) {
+      Scroll() {
+        Row() {
+          ForEach(this.switcherItems, (item: CharacterSwitcherItemUiModel) => {
+            Row() {
+              CharacterImageView({
+                imageUri: item.avatarUri,
+                fallbackName: item.fallbackName,
+                imgWidth: 24,
+                imgHeight: 24,
+                imgBorderRadius: 12,
+                displayMode: 'thumbnail'
+              })
+              Text(item.displayName)
+                .fontSize($r('app.float.world_font_micro'))
+                .fontColor(item.instanceId === this.viewModel?.expectedCharacterInstanceIdOfPage()
+                  ? $r('app.color.world_gold') : $r('app.color.world_text_secondary'))
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .margin({ left: 4 })
+            }
+            .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+            .borderRadius($r('app.float.world_radius_chip'))
+            .backgroundColor(item.instanceId === this.viewModel?.expectedCharacterInstanceIdOfPage()
+              ? $r('app.color.world_surface_2') : Color.Transparent)
+            .borderWidth(item.instanceId === this.viewModel?.expectedCharacterInstanceIdOfPage() ? 1 : 0)
+            .borderColor($r('app.color.world_gold'))
+            .alignItems(VerticalAlign.Center)
+            .onClick(() => {
+              this.switchCharacter(item.instanceId);
+            })
+          }, (item: CharacterSwitcherItemUiModel) => item.instanceId)
+        }
+        .alignItems(VerticalAlign.Center)
+      }
+      .scrollable(ScrollDirection.Horizontal)
+      .scrollBar(BarState.Off)
+      .width('100%')
+      .padding({
+        left: $r('app.float.world_page_padding'),
+        right: $r('app.float.world_page_padding'),
+        top: 6,
+        bottom: 6
+      })
+      .backgroundColor($r('app.color.world_surface_1'))
+      .borderWidth({ top: 1 })
+      .borderColor($r('app.color.world_border'))
+    }
+  }
+
+  @Builder
+  tabBar(): void {
+    Row() {
+      this.tabItem($r('app.string.world_archive_tab_memory'), ArchiveTab.Memory)
+      this.tabItem($r('app.string.world_archive_tab_activity'), ArchiveTab.Activity)
+      this.tabItem($r('app.string.world_archive_tab_relationship'), ArchiveTab.Relationship)
+      this.tabItem($r('app.string.world_archive_tab_diagnostic'), ArchiveTab.Diagnostic)
+    }
+    .width('100%')
+    .padding({
+      left: $r('app.float.world_page_padding'),
+      right: $r('app.float.world_page_padding')
+    })
+    .backgroundColor($r('app.color.world_bg'))
+    .justifyContent(FlexAlign.Start)
+    .alignItems(VerticalAlign.Center)
+  }
+
+  @Builder
+  tabItem(label: ResourceStr, tab: ArchiveTab): void {
+    Column() {
+      Text(label)
+        .fontSize($r('app.float.world_font_body'))
+        .fontColor(this.selectedTab === tab
+          ? $r('app.color.world_gold') : $r('app.color.world_text_secondary'))
+        .fontWeight(this.selectedTab === tab ? FontWeight.Medium : FontWeight.Normal)
+        .padding({ top: 10, bottom: 8 })
+
+      Divider()
+        .width(this.selectedTab === tab ? 24 : 0)
+        .height(2)
+        .color($r('app.color.world_gold'))
+        .borderRadius(1)
+    }
+    .margin({ right: 16 })
+    .onClick(() => {
+      this.selectedTab = tab;
+    })
+  }
+
+  @Builder
+  tabContent(): void {
+    Scroll() {
+      Column() {
+        if (this.selectedTab === ArchiveTab.Memory) {
+          this.memoryTab()
+        } else if (this.selectedTab === ArchiveTab.Activity) {
+          this.activityTab()
+        } else if (this.selectedTab === ArchiveTab.Relationship) {
+          this.relationshipTab()
+        } else {
+          this.diagnosticTab()
+        }
+        Column().width('100%').height(100)
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Start)
+      .padding({
+        left: $r('app.float.world_page_padding'),
+        right: $r('app.float.world_page_padding'),
+        top: 12
+      })
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.Spring)
+  }
+
+  @Builder
+  memoryTab(): void {
+    this.filterBar()
+
+    if (this.actionError.length > 0) {
+      Text(this.actionError)
+        .fontSize($r('app.float.world_font_caption'))
+        .fontColor($r('app.color.world_error'))
+        .width('100%')
+        .padding({ left: 4, right: 4, top: 4, bottom: 4 })
+    }
+
+    if (this.memories.length === 0) {
+      Column() {
+        WorldEmptyState({
+          title: $r('app.string.world_memory_empty_title'),
+          description: $r('app.string.world_memory_empty_desc'),
+          primaryLabel: $r('app.string.world_memory_add'),
+          onPrimary: (): void => {
+            this.openCreateForm();
+          }
+        })
+      }
+      .width('100%')
+      .padding({ top: 32, bottom: 32 })
+    } else {
+      ForEach(this.memories, (m: MemoryItemUiModel) => {
+        this.memoryCard(m)
+      }, (m: MemoryItemUiModel) => m.id)
+    }
   }
 
   @Builder
   filterBar(): void {
     Row() {
       Button($r('app.string.world_memory_filter_all'))
-        .fontSize($r('app.float.app_font_caption'))
+        .fontSize($r('app.float.world_font_caption'))
         .fontColor(this.filter === WorldCharacterMemoryListFilter.All
-          ? $r('app.color.app_on_accent') : $r('app.color.app_text_primary'))
+          ? $r('app.color.world_on_gold') : $r('app.color.world_text_primary'))
         .backgroundColor(this.filter === WorldCharacterMemoryListFilter.All
-          ? $r('app.color.app_accent') : $r('app.color.app_surface_2'))
-        .borderRadius($r('app.float.app_radius_sm'))
-        .height(32)
-        .padding({ left: 12, right: 12 })
+          ? $r('app.color.world_gold') : $r('app.color.world_surface_2'))
+        .borderRadius($r('app.float.world_radius_chip'))
+        .height(30)
+        .padding({ left: 10, right: 10 })
         .onClick(() => { this.changeFilter(WorldCharacterMemoryListFilter.All); })
-      Button($r('app.string.world_memory_filter_active'))
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor(this.filter === WorldCharacterMemoryListFilter.Active
-          ? $r('app.color.app_on_accent') : $r('app.color.app_text_primary'))
-        .backgroundColor(this.filter === WorldCharacterMemoryListFilter.Active
-          ? $r('app.color.app_accent') : $r('app.color.app_surface_2'))
-        .borderRadius($r('app.float.app_radius_sm'))
-        .height(32)
-        .padding({ left: 12, right: 12 })
-        .margin({ left: 8 })
-        .onClick(() => { this.changeFilter(WorldCharacterMemoryListFilter.Active); })
-      Button($r('app.string.world_memory_filter_archived'))
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor(this.filter === WorldCharacterMemoryListFilter.Archived
-          ? $r('app.color.app_on_accent') : $r('app.color.app_text_primary'))
-        .backgroundColor(this.filter === WorldCharacterMemoryListFilter.Archived
-          ? $r('app.color.app_accent') : $r('app.color.app_surface_2'))
-        .borderRadius($r('app.float.app_radius_sm'))
-        .height(32)
-        .padding({ left: 12, right: 12 })
-        .margin({ left: 8 })
-        .onClick(() => { this.changeFilter(WorldCharacterMemoryListFilter.Archived); })
+      Button($r('app.string.world_archive_filter_manual'))
+        .fontSize($r('app.float.world_font_caption'))
+        .fontColor(this.filter === WorldCharacterMemoryListFilter.Manual
+          ? $r('app.color.world_on_gold') : $r('app.color.world_text_primary'))
+        .backgroundColor(this.filter === WorldCharacterMemoryListFilter.Manual
+          ? $r('app.color.world_gold') : $r('app.color.world_surface_2'))
+        .borderRadius($r('app.float.world_radius_chip'))
+        .height(30)
+        .padding({ left: 10, right: 10 })
+        .margin({ left: 6 })
+        .onClick(() => { this.changeFilter(WorldCharacterMemoryListFilter.Manual); })
+      Button($r('app.string.world_archive_filter_scene'))
+        .fontSize($r('app.float.world_font_caption'))
+        .fontColor(this.filter === WorldCharacterMemoryListFilter.Scene
+          ? $r('app.color.world_on_gold') : $r('app.color.world_text_primary'))
+        .backgroundColor(this.filter === WorldCharacterMemoryListFilter.Scene
+          ? $r('app.color.world_gold') : $r('app.color.world_surface_2'))
+        .borderRadius($r('app.float.world_radius_chip'))
+        .height(30)
+        .padding({ left: 10, right: 10 })
+        .margin({ left: 6 })
+        .onClick(() => { this.changeFilter(WorldCharacterMemoryListFilter.Scene); })
 
       Blank().layoutWeight(1)
 
-      Button($r('app.string.world_memory_add'))
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_on_accent'))
-        .backgroundColor($r('app.color.app_accent'))
-        .borderRadius($r('app.float.app_radius_sm'))
-        .height(32)
-        .padding({ left: 12, right: 12 })
+      Button('+')
+        .fontSize(18)
+        .fontColor($r('app.color.world_on_gold'))
+        .backgroundColor($r('app.color.world_gold'))
+        .borderRadius(15)
+        .width(30)
+        .height(30)
+        .padding(0)
         .enabled(!this.isSaving && !this.isDeleting)
-        .accessibilityText($r('app.string.world_memory_add'))
         .onClick(() => { this.openCreateForm(); })
     }
     .width('100%')
-    .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+    .padding({ top: 4, bottom: 8 })
     .alignItems(VerticalAlign.Center)
   }
 
   @Builder
-  emptyMemoryView(): void {
-    Column() {
-      EmptyStateView({
-        title: $r('app.string.world_memory_empty_title'),
-        description: $r('app.string.world_memory_empty_desc')
-      })
-      Button($r('app.string.world_memory_add'))
-        .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_on_accent'))
-        .backgroundColor($r('app.color.app_accent'))
-        .borderRadius($r('app.float.app_radius_sm'))
-        .height(40)
-        .padding({ left: 24, right: 24 })
-        .margin({ top: 12 })
-        .enabled(!this.isSaving && !this.isDeleting)
-        .onClick(() => { this.openCreateForm(); })
+  memoryCard(m: MemoryItemUiModel): void {
+    WorldSurfaceCard({}) {
+      Column() {
+        Row() {
+          Text(m.typeLabel)
+            .fontSize(11)
+            .fontColor($r('app.color.world_gold'))
+            .backgroundColor($r('app.color.world_surface_2'))
+            .borderRadius(3)
+            .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+
+          Text(this.importanceLabel(m.importance))
+            .fontSize(11)
+            .fontColor($r('app.color.world_text_secondary'))
+            .backgroundColor($r('app.color.world_surface_2'))
+            .borderRadius(3)
+            .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+            .margin({ left: 6 })
+
+          Text(m.originLabel)
+            .fontSize(11)
+            .fontColor($r('app.color.world_text_tertiary'))
+            .backgroundColor($r('app.color.world_surface_2'))
+            .borderRadius(3)
+            .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+            .margin({ left: 6 })
+
+          Blank().layoutWeight(1)
+
+          WorldStatusChip({
+            label: m.statusLabel,
+            isActive: m.status === WorldCharacterMemoryStatus.Active
+          })
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
+
+        Text(m.content)
+          .fontSize($r('app.float.world_font_body'))
+          .fontColor($r('app.color.world_text_primary'))
+          .width('100%')
+          .margin({ top: 8 })
+          .maxLines(5)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .textAlign(TextAlign.Start)
+          .onClick(() => { this.openEditForm(m); })
+
+        if (m.sourceSummary.length > 0) {
+          Text(m.sourceSummary)
+            .fontSize($r('app.float.world_font_caption'))
+            .fontColor($r('app.color.world_text_tertiary'))
+            .width('100%')
+            .margin({ top: 6 })
+        }
+
+        Row() {
+          if (m.occurredAtLabel.length > 0) {
+            Text(m.occurredAtLabel)
+              .fontSize(10)
+              .fontColor($r('app.color.world_text_tertiary'))
+          }
+          Text(m.createdAtLabel)
+            .fontSize(10)
+            .fontColor($r('app.color.world_text_tertiary'))
+            .margin({ left: m.occurredAtLabel.length > 0 ? 8 : 0 })
+        }
+        .width('100%')
+        .margin({ top: 6 })
+        .alignItems(VerticalAlign.Center)
+
+        Divider().color($r('app.color.world_border')).margin({ top: 8, bottom: 6 })
+
+        Row() {
+          if (m.hasEvidence) {
+            Button($r('app.string.world_archive_view_evidence'))
+              .fontSize($r('app.float.world_font_caption'))
+              .fontColor($r('app.color.world_gold'))
+              .backgroundColor($r('app.color.world_surface_2'))
+              .borderRadius($r('app.float.world_radius_chip'))
+              .height(28)
+              .padding({ left: 8, right: 8 })
+              .onClick(() => { this.openEvidence(m.id); })
+          }
+
+          Blank().layoutWeight(1)
+
+          Button($r('app.string.world_memory_edit'))
+            .fontSize($r('app.float.world_font_caption'))
+            .fontColor($r('app.color.world_gold'))
+            .backgroundColor($r('app.color.world_surface_2'))
+            .borderRadius($r('app.float.world_radius_chip'))
+            .height(28)
+            .padding({ left: 8, right: 8 })
+            .enabled(!this.isSaving && !this.isDeleting)
+            .onClick(() => { this.openEditForm(m); })
+
+          if (m.status === WorldCharacterMemoryStatus.Active) {
+            Button($r('app.string.world_memory_archive'))
+              .fontSize($r('app.float.world_font_caption'))
+              .fontColor($r('app.color.world_text_secondary'))
+              .backgroundColor($r('app.color.world_surface_2'))
+              .borderRadius($r('app.float.world_radius_chip'))
+              .height(28)
+              .padding({ left: 8, right: 8 })
+              .margin({ left: 4 })
+              .enabled(!this.isSaving && !this.isDeleting)
+              .onClick(() => { this.handleArchive(m.id, true); })
+          } else {
+            Button($r('app.string.world_memory_restore'))
+              .fontSize($r('app.float.world_font_caption'))
+              .fontColor($r('app.color.world_gold'))
+              .backgroundColor($r('app.color.world_surface_2'))
+              .borderRadius($r('app.float.world_radius_chip'))
+              .height(28)
+              .padding({ left: 8, right: 8 })
+              .margin({ left: 4 })
+              .enabled(!this.isSaving && !this.isDeleting)
+              .onClick(() => { this.handleArchive(m.id, false); })
+          }
+
+          Button($r('app.string.world_memory_delete'))
+            .fontSize($r('app.float.world_font_caption'))
+            .fontColor($r('app.color.world_error'))
+            .backgroundColor($r('app.color.world_surface_2'))
+            .borderRadius($r('app.float.world_radius_chip'))
+            .height(28)
+            .padding({ left: 8, right: 8 })
+            .margin({ left: 4 })
+            .enabled(!this.isSaving && !this.isDeleting)
+            .onClick(() => { this.deletingMemoryId = m.id; })
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.End)
+        .alignItems(VerticalAlign.Center)
+      }
+      .width('100%')
+      .padding(14)
+      .alignItems(HorizontalAlign.Start)
     }
-    .width('100%')
-    .layoutWeight(1)
-    .justifyContent(FlexAlign.Center)
-    .alignItems(HorizontalAlign.Center)
   }
 
   @Builder
-  memoryCard(m: MemoryItemUiModel): void {
-    Column() {
-      // 第一行:类型 + 重要度 + 来源标签 + 状态
-      Row() {
-        Text(m.typeLabel)
-          .fontSize(11)
-          .fontColor($r('app.color.app_accent'))
-          .backgroundColor($r('app.color.app_surface_2'))
-          .borderRadius(3)
-          .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+  activityTab(): void {
+    WorldSectionHeader({ title: $r('app.string.world_archive_activity_scenes') })
 
-        Text(this.importanceLabel(m.importance))
-          .fontSize(11)
-          .fontColor($r('app.color.app_text_secondary'))
-          .backgroundColor($r('app.color.app_surface_2'))
-          .borderRadius(3)
-          .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-          .margin({ left: 6 })
+    if (this.activityScenes.length === 0) {
+      Text('该角色尚未参与任何场景')
+        .fontSize($r('app.float.world_font_body'))
+        .fontColor($r('app.color.world_text_secondary'))
+        .margin({ top: 12 })
+    } else {
+      ForEach(this.activityScenes, (scene: ActivitySceneUiModel) => {
+        this.activitySceneCard(scene)
+      }, (scene: ActivitySceneUiModel) => scene.sceneId)
+    }
 
-        Text(m.originLabel)
-          .fontSize(11)
-          .fontColor($r('app.color.app_text_tertiary'))
-          .backgroundColor($r('app.color.app_surface_2'))
-          .borderRadius(3)
-          .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-          .margin({ left: 6 })
+    WorldSectionHeader({ title: $r('app.string.world_archive_activity_messages') })
+      .margin({ top: 16 })
 
-        Blank().layoutWeight(1)
+    if (this.activityMessages.length === 0) {
+      Text('该角色尚未发送任何消息')
+        .fontSize($r('app.float.world_font_body'))
+        .fontColor($r('app.color.world_text_secondary'))
+        .margin({ top: 12 })
+    } else {
+      ForEach(this.activityMessages.slice(0, 20), (msg: ActivityMessageUiModel) => {
+        this.activityMessageCard(msg)
+      }, (msg: ActivityMessageUiModel) => msg.messageId)
+    }
 
-        Text(m.statusLabel)
-          .fontSize(11)
-          .fontColor(m.status === WorldCharacterMemoryStatus.Active
-            ? $r('app.color.app_accent') : $r('app.color.app_text_tertiary'))
-          .backgroundColor($r('app.color.app_surface_2'))
-          .borderRadius(3)
-          .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+    WorldSectionHeader({ title: $r('app.string.world_archive_activity_moves') })
+      .margin({ top: 16 })
+
+    if (this.activityMoves.length === 0) {
+      Text($r('app.string.world_archive_no_move_history'))
+        .fontSize($r('app.float.world_font_caption'))
+        .fontColor($r('app.color.world_text_tertiary'))
+        .margin({ top: 8 })
+    } else {
+      ForEach(this.activityMoves, (move: ActivityMoveUiModel) => {
+        this.activityMoveCard(move)
+      }, (move: ActivityMoveUiModel) => move.eventId)
+    }
+  }
+
+  @Builder
+  activitySceneCard(scene: ActivitySceneUiModel): void {
+    WorldSurfaceCard({}) {
+      Column() {
+        Row() {
+          Text(scene.locationMissing ? '地点已删除' : scene.locationName)
+            .fontSize($r('app.float.world_font_body'))
+            .fontColor($r('app.color.world_text_primary'))
+            .layoutWeight(1)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+          WorldStatusChip({
+            label: scene.statusLabel,
+            isActive: scene.status === WorldSceneStatus.Active
+          })
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
+
+        Row() {
+          Text(scene.startedAtLabel)
+            .fontSize($r('app.float.world_font_micro'))
+            .fontColor($r('app.color.world_text_tertiary'))
+          if (scene.endedAtLabel.length > 0) {
+            Text(' → ' + scene.endedAtLabel)
+              .fontSize($r('app.float.world_font_micro'))
+              .fontColor($r('app.color.world_text_tertiary'))
+          }
+        }
+        .margin({ top: 4 })
+
+        Row() {
+          Text('消息 ' + scene.messageCount.toString())
+            .fontSize($r('app.float.world_font_micro'))
+            .fontColor($r('app.color.world_text_tertiary'))
+          Text('参与 ' + scene.participantCount.toString())
+            .fontSize($r('app.float.world_font_micro'))
+            .fontColor($r('app.color.world_text_tertiary'))
+            .margin({ left: 8 })
+          if (scene.characterSpoke) {
+            Text('已发言')
+              .fontSize($r('app.float.world_font_micro'))
+              .fontColor($r('app.color.world_gold'))
+              .backgroundColor($r('app.color.world_surface_2'))
+              .borderRadius(3)
+              .padding({ left: 4, right: 4, top: 1, bottom: 1 })
+              .margin({ left: 8 })
+          }
+        }
+        .margin({ top: 4 })
       }
       .width('100%')
-      .alignItems(VerticalAlign.Center)
+      .padding(14)
+      .alignItems(HorizontalAlign.Start)
+    }
+  }
 
-      // 正文(最多 5 行,点击编辑)
-      Text(m.content)
-        .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_primary'))
+  @Builder
+  activityMessageCard(msg: ActivityMessageUiModel): void {
+    WorldSurfaceCard({}) {
+      Column() {
+        Row() {
+          Text(msg.locationMissing ? '地点已删除' : msg.locationName)
+            .fontSize($r('app.float.world_font_micro'))
+            .fontColor($r('app.color.world_text_tertiary'))
+          Text(msg.sentAtLabel)
+            .fontSize($r('app.float.world_font_micro'))
+            .fontColor($r('app.color.world_text_tertiary'))
+            .margin({ left: 8 })
+          Text(msg.visibilityLabel)
+            .fontSize($r('app.float.world_font_micro'))
+            .fontColor($r('app.color.world_text_tertiary'))
+            .backgroundColor($r('app.color.world_surface_2'))
+            .borderRadius(3)
+            .padding({ left: 4, right: 4, top: 1, bottom: 1 })
+            .margin({ left: 8 })
+        }
         .width('100%')
-        .margin({ top: 8 })
-        .maxLines(5)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .textAlign(TextAlign.Start)
-        .onClick(() => { this.openEditForm(m); })
+        .alignItems(VerticalAlign.Center)
 
-      // 来源摘要
-      if (m.sourceSummary.length > 0) {
-        Text(m.sourceSummary)
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+        Text(msg.contentPreview)
+          .fontSize($r('app.float.world_font_caption'))
+          .fontColor($r('app.color.world_text_secondary'))
           .width('100%')
           .margin({ top: 6 })
-      }
+          .maxLines(3)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-      // 时间
-      Row() {
-        if (m.occurredAtLabel.length > 0) {
-          Text($r('app.string.world_memory_occurred_at_label', m.occurredAtLabel))
-            .fontSize(10)
-            .fontColor($r('app.color.app_text_tertiary'))
+        if (msg.coParticipantNames.length > 0) {
+          Text('同场: ' + msg.coParticipantNames.join(', '))
+            .fontSize($r('app.float.world_font_micro'))
+            .fontColor($r('app.color.world_text_tertiary'))
+            .margin({ top: 4 })
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
         }
-        Text($r('app.string.world_memory_created_at_label', m.createdAtLabel))
-          .fontSize(10)
-          .fontColor($r('app.color.app_text_tertiary'))
-          .margin({ left: m.occurredAtLabel.length > 0 ? 8 : 0 })
       }
       .width('100%')
-      .margin({ top: 6 })
-      .alignItems(VerticalAlign.Center)
+      .padding(14)
+      .alignItems(HorizontalAlign.Start)
+    }
+  }
 
-      // 操作按钮
+  @Builder
+  activityMoveCard(move: ActivityMoveUiModel): void {
+    WorldSurfaceCard({}) {
       Row() {
-        Button($r('app.string.world_memory_edit'))
-          .fontSize(12)
-          .backgroundColor($r('app.color.app_surface_2'))
-          .fontColor($r('app.color.app_accent'))
-          .borderRadius(6)
-          .height(32)
-          .padding({ left: 10, right: 10 })
-          .enabled(!this.isSaving && !this.isDeleting)
-          .accessibilityText($r('app.string.world_memory_edit'))
-          .onClick(() => { this.openEditForm(m); })
+        Text(move.fromLocationMissing ? '未知' : move.fromLocationName)
+          .fontSize($r('app.float.world_font_caption'))
+          .fontColor($r('app.color.world_text_primary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-        if (m.status === WorldCharacterMemoryStatus.Active) {
-          Button($r('app.string.world_memory_archive'))
-            .fontSize(12)
-            .backgroundColor($r('app.color.app_surface_2'))
-            .fontColor($r('app.color.app_text_secondary'))
-            .borderRadius(6)
-            .height(32)
-            .padding({ left: 10, right: 10 })
-            .margin({ left: 6 })
-            .enabled(!this.isSaving && !this.isDeleting)
-            .accessibilityText($r('app.string.world_memory_archive'))
-            .onClick(() => { this.handleArchive(m.id, true); })
-        } else {
-          Button($r('app.string.world_memory_restore'))
-            .fontSize(12)
-            .backgroundColor($r('app.color.app_surface_2'))
-            .fontColor($r('app.color.app_accent'))
-            .borderRadius(6)
-            .height(32)
-            .padding({ left: 10, right: 10 })
-            .margin({ left: 6 })
-            .enabled(!this.isSaving && !this.isDeleting)
-            .accessibilityText($r('app.string.world_memory_restore'))
-            .onClick(() => { this.handleArchive(m.id, false); })
-        }
+        Text(' → ')
+          .fontSize($r('app.float.world_font_caption'))
+          .fontColor($r('app.color.world_text_tertiary'))
 
-        Button($r('app.string.world_memory_delete'))
-          .fontSize(12)
-          .backgroundColor($r('app.color.app_surface_2'))
-          .fontColor($r('app.color.app_danger'))
-          .borderRadius(6)
-          .height(32)
-          .padding({ left: 10, right: 10 })
-          .margin({ left: 6 })
-          .enabled(!this.isSaving && !this.isDeleting)
-          .accessibilityText($r('app.string.world_memory_delete'))
-          .onClick(() => { this.deletingMemoryId = m.id; })
+        Text(move.toLocationMissing ? '未知' : move.toLocationName)
+          .fontSize($r('app.float.world_font_caption'))
+          .fontColor($r('app.color.world_text_primary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .layoutWeight(1)
+
+        Text(move.occurredAtLabel)
+          .fontSize($r('app.float.world_font_micro'))
+          .fontColor($r('app.color.world_text_tertiary'))
+          .margin({ left: 8 })
       }
       .width('100%')
-      .justifyContent(FlexAlign.End)
-      .margin({ top: 8 })
+      .padding(14)
       .alignItems(VerticalAlign.Center)
     }
+  }
+
+  @Builder
+  relationshipTab(): void {
+    Column() {
+      Text($r('app.string.world_archive_relationship_not_available'))
+        .fontSize($r('app.float.world_font_title'))
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.world_text_primary'))
+        .textAlign(TextAlign.Center)
+
+      Text('世界角色关系模型尚未建立,未来将支持角色间关系图谱、好感度追踪与认知分析。')
+        .fontSize($r('app.float.world_font_body'))
+        .fontColor($r('app.color.world_text_secondary'))
+        .margin({ top: 8 })
+        .textAlign(TextAlign.Center)
+
+      Text($r('app.string.world_archive_player_identity_not_available'))
+        .fontSize($r('app.float.world_font_section'))
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.world_text_secondary'))
+        .margin({ top: 24 })
+        .textAlign(TextAlign.Center)
+
+      Text('世界玩家身份尚未接入,未来将支持玩家在世界中的角色定位、与 NPC 的关系记录。')
+        .fontSize($r('app.float.world_font_body'))
+        .fontColor($r('app.color.world_text_tertiary'))
+        .margin({ top: 8 })
+        .textAlign(TextAlign.Center)
+
+      Divider().color($r('app.color.world_border')).margin({ top: 24, bottom: 16 })
+
+      Text($r('app.string.world_archive_original_card'))
+        .fontSize($r('app.float.world_font_section'))
+        .fontColor($r('app.color.world_text_secondary'))
+
+      if (this.characterCardMissing) {
+        Text($r('app.string.world_character_card_missing'))
+          .fontSize($r('app.float.world_font_caption'))
+          .fontColor($r('app.color.world_error'))
+          .margin({ top: 6 })
+      } else {
+        Row() {
+          CharacterImageView({
+            imageUri: this.avatarUri,
+            fallbackName: this.fallbackName,
+            imgWidth: 36,
+            imgHeight: 36,
+            imgBorderRadius: 18,
+            displayMode: 'thumbnail'
+          })
+          Text(this.displayName)
+            .fontSize($r('app.float.world_font_body'))
+            .fontColor($r('app.color.world_text_primary'))
+            .margin({ left: 8 })
+        }
+        .margin({ top: 8 })
+        .alignItems(VerticalAlign.Center)
+      }
+
+      Row() {
+        Text($r('app.string.world_archive_world_instance'))
+          .fontSize($r('app.float.world_font_caption'))
+          .fontColor($r('app.color.world_text_tertiary'))
+          .width(72)
+          .flexShrink(0)
+        Text(this.isActive ? '活跃' : '已停用')
+          .fontSize($r('app.float.world_font_caption'))
+          .fontColor($r('app.color.world_text_secondary'))
+      }
+      .margin({ top: 8 })
+    }
     .width('100%')
-    .padding({
-      left: 12, right: 12, top: 10, bottom: 10
-    })
-    .backgroundColor($r('app.color.app_surface_1'))
-    .borderRadius($r('app.float.app_radius_md'))
-    .margin({ bottom: 8 })
-    .alignItems(HorizontalAlign.Start)
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+    .padding({ top: 32, bottom: 32 })
+  }
+
+  @Builder
+  diagnosticTab(): void {
+    if (this.diagnostic === null) {
+      Text('诊断数据不可用')
+        .fontSize($r('app.float.world_font_body'))
+        .fontColor($r('app.color.world_text_secondary'))
+        .margin({ top: 24 })
+    } else {
+      WorldSectionHeader({ title: $r('app.string.world_archive_diagnostic_title') })
+
+      WorldSurfaceCard({}) {
+        Column() {
+          Row() {
+            this.diagnosticMetric($r('app.string.world_archive_diagnostic_total'),
+              this.diagnostic.totalMemories, $r('app.color.world_text_primary'))
+            this.diagnosticMetric($r('app.string.world_archive_diagnostic_with_source'),
+              this.diagnostic.withSourceCount, $r('app.color.world_success'))
+            this.diagnosticMetric($r('app.string.world_archive_diagnostic_without_source'),
+              this.diagnostic.withoutSourceCount, $r('app.color.world_text_tertiary'))
+            this.diagnosticMetric($r('app.string.world_archive_diagnostic_archived'),
+              this.diagnostic.archivedCount, $r('app.color.world_text_tertiary'))
+          }
+          .width('100%')
+          .justifyContent(FlexAlign.SpaceBetween)
+          .alignItems(VerticalAlign.Top)
+
+          Divider().color($r('app.color.world_border')).margin({ top: 12, bottom: 8 })
+
+          Row() {
+            this.diagnosticMetric($r('app.string.world_archive_diagnostic_dup_source'),
+              this.diagnostic.duplicateSourceMessageCount, $r('app.color.world_warning'))
+            this.diagnosticMetric($r('app.string.world_archive_diagnostic_owner_mismatch'),
+              this.diagnostic.ownerMismatchCount, $r('app.color.world_error'))
+            this.diagnosticMetric($r('app.string.world_archive_diagnostic_world_mismatch'),
+              this.diagnostic.worldMismatchCount, $r('app.color.world_error'))
+          }
+          .width('100%')
+          .justifyContent(FlexAlign.SpaceBetween)
+          .alignItems(VerticalAlign.Top)
+
+          Row() {
+            this.diagnosticMetric($r('app.string.world_archive_diagnostic_missing_scene'),
+              this.diagnostic.missingSceneRefCount, $r('app.color.world_warning'))
+            this.diagnosticMetric($r('app.string.world_archive_diagnostic_missing_message'),
+              this.diagnostic.missingMessageRefCount, $r('app.color.world_warning'))
+            this.diagnosticMetric($r('app.string.world_archive_diagnostic_missing_location'),
+              this.diagnostic.missingLocationRefCount, $r('app.color.world_text_tertiary'))
+            this.diagnosticMetric($r('app.string.world_archive_diagnostic_missing_character'),
+              this.diagnostic.missingCharacterRefCount, $r('app.color.world_text_tertiary'))
+          }
+          .width('100%')
+          .justifyContent(FlexAlign.SpaceBetween)
+          .alignItems(VerticalAlign.Top)
+          .margin({ top: 8 })
+        }
+        .width('100%')
+        .padding(14)
+        .alignItems(HorizontalAlign.Start)
+      }
+
+      if (this.diagnostic.issues.length === 0) {
+        Column() {
+          Text($r('app.string.world_archive_diagnostic_no_issues'))
+            .fontSize($r('app.float.world_font_body'))
+            .fontColor($r('app.color.world_success'))
+            .margin({ top: 16 })
+        }
+        .width('100%')
+        .alignItems(HorizontalAlign.Center)
+      } else {
+        ForEach(this.diagnostic.issues, (issue: DiagnosticIssueUiModel) => {
+          this.diagnosticIssueCard(issue)
+        }, (issue: DiagnosticIssueUiModel) => issue.id)
+      }
+    }
+  }
+
+  @Builder
+  diagnosticMetric(label: ResourceStr, value: number, color: ResourceColor): void {
+    Column() {
+      Text(value.toString())
+        .fontSize($r('app.float.world_font_title'))
+        .fontWeight(FontWeight.Medium)
+        .fontColor(color)
+      Text(label)
+        .fontSize($r('app.float.world_font_micro'))
+        .fontColor($r('app.color.world_text_tertiary'))
+        .margin({ top: 2 })
+    }
+    .alignItems(HorizontalAlign.Center)
+    .layoutWeight(1)
+  }
+
+  @Builder
+  diagnosticIssueCard(issue: DiagnosticIssueUiModel): void {
+    WorldSurfaceCard({}) {
+      Row() {
+        Text(issue.issueType)
+          .fontSize($r('app.float.world_font_caption'))
+          .fontColor($r('app.color.world_text_primary'))
+          .layoutWeight(1)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+        Text(this.riskLabel(issue.riskLevel))
+          .fontSize($r('app.float.world_font_micro'))
+          .fontColor(this.riskColor(issue.riskLevel))
+          .backgroundColor(this.riskBgColor(issue.riskLevel))
+          .borderRadius($r('app.float.world_radius_chip'))
+          .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+          .borderWidth(1)
+          .borderColor(this.riskColor(issue.riskLevel))
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      Text(issue.description)
+        .fontSize($r('app.float.world_font_micro'))
+        .fontColor($r('app.color.world_text_secondary'))
+        .margin({ top: 4 })
+        .width('100%')
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+    }
   }
 
   @Builder
@@ -667,26 +1172,25 @@ struct WorldCharacterMemoryPage {
       Text(isEdit
         ? $r('app.string.world_memory_edit_title')
         : $r('app.string.world_memory_create_title'))
-        .fontSize($r('app.float.app_font_title'))
+        .fontSize($r('app.float.world_font_title'))
         .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor($r('app.color.world_text_primary'))
         .width('100%')
         .padding({ left: 16, top: 16, bottom: 12 })
 
-      // 正文
       Text($r('app.string.world_memory_form_content'))
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontSize($r('app.float.world_font_caption'))
+        .fontColor($r('app.color.world_text_secondary'))
         .width('100%')
         .padding({ left: 16, bottom: 4 })
       TextArea({
         text: this.formContent,
         placeholder: $r('app.string.world_memory_form_content_placeholder')
       })
-        .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_primary'))
-        .backgroundColor($r('app.color.app_surface_2'))
-        .borderRadius($r('app.float.app_radius_md'))
+        .fontSize($r('app.float.world_font_body'))
+        .fontColor($r('app.color.world_text_primary'))
+        .backgroundColor($r('app.color.world_surface_2'))
+        .borderRadius($r('app.float.world_radius_card'))
         .width('100%')
         .height(120)
         .margin({ left: 16, right: 16, bottom: 4 })
@@ -697,69 +1201,67 @@ struct WorldCharacterMemoryPage {
       Text($r('app.string.world_memory_form_content_count',
         this.formContent.length, WORLD_CHARACTER_MEMORY_CONTENT_MAX))
         .fontSize(10)
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor($r('app.color.world_text_tertiary'))
         .width('100%')
         .padding({ left: 16, right: 16, bottom: 8 })
 
-      // 类型
       Text($r('app.string.world_memory_form_type'))
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontSize($r('app.float.world_font_caption'))
+        .fontColor($r('app.color.world_text_secondary'))
         .width('100%')
         .padding({ left: 16, bottom: 4 })
       Row() {
         Button($r('app.string.world_memory_type_episodic'))
-          .fontSize($r('app.float.app_font_caption'))
+          .fontSize($r('app.float.world_font_caption'))
           .fontColor(this.formType === WorldCharacterMemoryType.Episodic
-            ? $r('app.color.app_on_accent') : $r('app.color.app_text_primary'))
+            ? $r('app.color.world_on_gold') : $r('app.color.world_text_primary'))
           .backgroundColor(this.formType === WorldCharacterMemoryType.Episodic
-            ? $r('app.color.app_accent') : $r('app.color.app_surface_2'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(32)
-          .padding({ left: 12, right: 12 })
+            ? $r('app.color.world_gold') : $r('app.color.world_surface_2'))
+          .borderRadius($r('app.float.world_radius_chip'))
+          .height(30)
+          .padding({ left: 10, right: 10 })
           .onClick(() => { this.formType = WorldCharacterMemoryType.Episodic; })
         Button($r('app.string.world_memory_type_semantic'))
-          .fontSize($r('app.float.app_font_caption'))
+          .fontSize($r('app.float.world_font_caption'))
           .fontColor(this.formType === WorldCharacterMemoryType.Semantic
-            ? $r('app.color.app_on_accent') : $r('app.color.app_text_primary'))
+            ? $r('app.color.world_on_gold') : $r('app.color.world_text_primary'))
           .backgroundColor(this.formType === WorldCharacterMemoryType.Semantic
-            ? $r('app.color.app_accent') : $r('app.color.app_surface_2'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(32)
-          .padding({ left: 12, right: 12 })
+            ? $r('app.color.world_gold') : $r('app.color.world_surface_2'))
+          .borderRadius($r('app.float.world_radius_chip'))
+          .height(30)
+          .padding({ left: 10, right: 10 })
           .margin({ left: 6 })
           .onClick(() => { this.formType = WorldCharacterMemoryType.Semantic; })
         Button($r('app.string.world_memory_type_reflection'))
-          .fontSize($r('app.float.app_font_caption'))
+          .fontSize($r('app.float.world_font_caption'))
           .fontColor(this.formType === WorldCharacterMemoryType.Reflection
-            ? $r('app.color.app_on_accent') : $r('app.color.app_text_primary'))
+            ? $r('app.color.world_on_gold') : $r('app.color.world_text_primary'))
           .backgroundColor(this.formType === WorldCharacterMemoryType.Reflection
-            ? $r('app.color.app_accent') : $r('app.color.app_surface_2'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(32)
-          .padding({ left: 12, right: 12 })
+            ? $r('app.color.world_gold') : $r('app.color.world_surface_2'))
+          .borderRadius($r('app.float.world_radius_chip'))
+          .height(30)
+          .padding({ left: 10, right: 10 })
           .margin({ left: 6 })
           .onClick(() => { this.formType = WorldCharacterMemoryType.Reflection; })
       }
       .width('100%')
       .padding({ left: 16, right: 16, bottom: 8 })
 
-      // 重要度
       Text($r('app.string.world_memory_form_importance'))
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontSize($r('app.float.world_font_caption'))
+        .fontColor($r('app.color.world_text_secondary'))
         .width('100%')
         .padding({ left: 16, bottom: 4 })
       Row() {
         ForEach(this.importanceOptions(), (n: number) => {
           Button(n.toString())
-            .fontSize($r('app.float.app_font_caption'))
+            .fontSize($r('app.float.world_font_caption'))
             .fontColor(this.formImportance === n
-              ? $r('app.color.app_on_accent') : $r('app.color.app_text_primary'))
+              ? $r('app.color.world_on_gold') : $r('app.color.world_text_primary'))
             .backgroundColor(this.formImportance === n
-              ? $r('app.color.app_accent') : $r('app.color.app_surface_2'))
-            .borderRadius($r('app.float.app_radius_sm'))
-            .height(32)
+              ? $r('app.color.world_gold') : $r('app.color.world_surface_2'))
+            .borderRadius($r('app.float.world_radius_chip'))
+            .height(30)
             .width(44)
             .margin({ right: 6 })
             .onClick(() => { this.formImportance = n; })
@@ -769,44 +1271,42 @@ struct WorldCharacterMemoryPage {
       .padding({ left: 16, right: 16, bottom: 8 })
       .alignItems(VerticalAlign.Center)
 
-      // 发生地点(可选)
       Text($r('app.string.world_memory_form_location'))
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontSize($r('app.float.world_font_caption'))
+        .fontColor($r('app.color.world_text_secondary'))
         .width('100%')
         .padding({ left: 16, bottom: 4 })
       Row() {
         Button(this.formLocationId.length === 0
           ? $r('app.string.world_memory_form_location_none')
           : this.resolveLocationName(this.formLocationId))
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_primary'))
-          .backgroundColor($r('app.color.app_surface_2'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(36)
-          .padding({ left: 12, right: 12 })
+          .fontSize($r('app.float.world_font_caption'))
+          .fontColor($r('app.color.world_text_primary'))
+          .backgroundColor($r('app.color.world_surface_2'))
+          .borderRadius($r('app.float.world_radius_chip'))
+          .height(30)
+          .padding({ left: 10, right: 10 })
           .onClick(() => {
             this.formLocationId = '';
           })
         Text($r('app.string.world_memory_form_location_clear'))
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontSize($r('app.float.world_font_caption'))
+          .fontColor($r('app.color.world_text_tertiary'))
           .margin({ left: 8 })
       }
       .width('100%')
       .padding({ left: 16, right: 16, bottom: 4 })
       .alignItems(VerticalAlign.Center)
-      // 地点候选列表
       Row() {
         ForEach(this.locationOptions, (loc: MemoryLocationOptionUiModel) => {
           Button(loc.name)
-            .fontSize($r('app.float.app_font_caption'))
+            .fontSize($r('app.float.world_font_caption'))
             .fontColor(this.formLocationId === loc.id
-              ? $r('app.color.app_on_accent') : $r('app.color.app_text_primary'))
+              ? $r('app.color.world_on_gold') : $r('app.color.world_text_primary'))
             .backgroundColor(this.formLocationId === loc.id
-              ? $r('app.color.app_accent') : $r('app.color.app_surface_2'))
-            .borderRadius($r('app.float.app_radius_sm'))
-            .height(32)
+              ? $r('app.color.world_gold') : $r('app.color.world_surface_2'))
+            .borderRadius($r('app.float.world_radius_chip'))
+            .height(30)
             .padding({ left: 8, right: 8 })
             .margin({ right: 6, bottom: 4 })
             .onClick(() => { this.formLocationId = loc.id; })
@@ -815,31 +1315,29 @@ struct WorldCharacterMemoryPage {
       .width('100%')
       .padding({ left: 16, right: 16, bottom: 8 })
 
-      // 发生时间(可选)
       Text($r('app.string.world_memory_form_occurred_at'))
-        .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontSize($r('app.float.world_font_caption'))
+        .fontColor($r('app.color.world_text_secondary'))
         .width('100%')
         .padding({ left: 16, bottom: 4 })
       Row() {
         Text(this.formOccurredAt > 0
-          ? this.formatTimestamp(this.formOccurredAt)
-          : '未指定')
-          .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_primary'))
-          .backgroundColor($r('app.color.app_surface_2'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(36)
-          .padding({ left: 12, right: 12 })
+          ? this.formatTimestamp(this.formOccurredAt) : '未指定')
+          .fontSize($r('app.float.world_font_body'))
+          .fontColor($r('app.color.world_text_primary'))
+          .backgroundColor($r('app.color.world_surface_2'))
+          .borderRadius($r('app.float.world_radius_chip'))
+          .height(30)
+          .padding({ left: 10, right: 10 })
           .layoutWeight(1)
         Button(this.formOccurredAt > 0
           ? $r('app.string.world_memory_form_occurred_clear')
           : $r('app.string.world_memory_form_occurred_now'))
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_accent'))
-          .backgroundColor($r('app.color.app_surface_2'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(36)
+          .fontSize($r('app.float.world_font_caption'))
+          .fontColor($r('app.color.world_gold'))
+          .backgroundColor($r('app.color.world_surface_2'))
+          .borderRadius($r('app.float.world_radius_chip'))
+          .height(30)
           .padding({ left: 8, right: 8 })
           .margin({ left: 8 })
           .onClick(() => {
@@ -854,25 +1352,24 @@ struct WorldCharacterMemoryPage {
       .padding({ left: 16, right: 16, bottom: 12 })
       .alignItems(VerticalAlign.Center)
 
-      // 操作按钮
       Row() {
         Button($r('app.string.world_memory_cancel'))
-          .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_secondary'))
-          .backgroundColor($r('app.color.app_surface_2'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(40)
+          .fontSize($r('app.float.world_font_body'))
+          .fontColor($r('app.color.world_text_secondary'))
+          .backgroundColor($r('app.color.world_surface_2'))
+          .borderRadius($r('app.float.world_radius_chip'))
+          .height(36)
           .layoutWeight(1)
           .margin({ right: 8 })
           .onClick(() => { this.formMode = MemoryFormMode.None; })
         Button(isEdit
           ? $r('app.string.world_memory_save')
           : $r('app.string.world_memory_create'))
-          .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_on_accent'))
-          .backgroundColor($r('app.color.app_accent'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(40)
+          .fontSize($r('app.float.world_font_body'))
+          .fontColor($r('app.color.world_on_gold'))
+          .backgroundColor($r('app.color.world_gold'))
+          .borderRadius($r('app.float.world_radius_chip'))
+          .height(36)
           .layoutWeight(1)
           .enabled(!this.isSaving && this.formContent.trim().length > 0)
           .onClick(() => { this.submitForm(isEdit); })
@@ -881,41 +1378,41 @@ struct WorldCharacterMemoryPage {
       .padding({ left: 16, right: 16, bottom: 16 })
     }
     .width('100%')
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor($r('app.color.world_surface_1'))
   }
 
   @Builder
   deleteConfirmSheet(): void {
     Column() {
       Text($r('app.string.world_memory_delete_title'))
-        .fontSize($r('app.float.app_font_title'))
+        .fontSize($r('app.float.world_font_title'))
         .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor($r('app.color.world_text_primary'))
         .width('100%')
         .padding({ left: 16, top: 16, bottom: 12 })
 
       Text($r('app.string.world_memory_delete_confirm'))
-        .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontSize($r('app.float.world_font_body'))
+        .fontColor($r('app.color.world_text_secondary'))
         .width('100%')
         .padding({ left: 16, right: 16, bottom: 16 })
 
       Row() {
         Button($r('app.string.world_memory_cancel'))
-          .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_secondary'))
-          .backgroundColor($r('app.color.app_surface_2'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(40)
+          .fontSize($r('app.float.world_font_body'))
+          .fontColor($r('app.color.world_text_secondary'))
+          .backgroundColor($r('app.color.world_surface_2'))
+          .borderRadius($r('app.float.world_radius_chip'))
+          .height(36)
           .layoutWeight(1)
           .margin({ right: 8 })
           .onClick(() => { this.deletingMemoryId = ''; })
         Button($r('app.string.world_memory_delete'))
-          .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_on_accent'))
-          .backgroundColor($r('app.color.app_danger'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(40)
+          .fontSize($r('app.float.world_font_body'))
+          .fontColor($r('app.color.world_on_gold'))
+          .backgroundColor($r('app.color.world_error'))
+          .borderRadius($r('app.float.world_radius_chip'))
+          .height(36)
           .layoutWeight(1)
           .enabled(!this.isDeleting)
           .onClick(() => { this.handleDelete(this.deletingMemoryId); })
@@ -924,10 +1421,8 @@ struct WorldCharacterMemoryPage {
       .padding({ left: 16, right: 16, bottom: 16 })
     }
     .width('100%')
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor($r('app.color.world_surface_1'))
   }
-
-  // ===== 事件处理 =====
 
   private async changeFilter(filter: WorldCharacterMemoryListFilter): Promise<void> {
     if (this.filter === filter) {
@@ -935,6 +1430,20 @@ struct WorldCharacterMemoryPage {
     }
     this.filter = filter;
     await this.loadSnapshot();
+  }
+
+  private switchCharacter(instanceId: string): void {
+    if (this.viewModel === null) {
+      return;
+    }
+    if (instanceId === this.viewModel.expectedCharacterInstanceIdOfPage()) {
+      return;
+    }
+    const worldId: string = this.viewModel.expectedWorldIdOfPage();
+    this.viewModel.setTarget(worldId, instanceId);
+    this.filter = WorldCharacterMemoryListFilter.Active;
+    this.selectedTab = ArchiveTab.Memory;
+    this.loadSnapshot();
   }
 
   private openCreateForm(): void {
@@ -957,6 +1466,11 @@ struct WorldCharacterMemoryPage {
     this.formLocationId = m.sourceLocationId;
     this.formOccurredAt = m.occurredAt;
     this.formMode = MemoryFormMode.Edit;
+  }
+
+  private openEvidence(memoryId: string): void {
+    AppStorage.setOrCreate<string>(PENDING_WORLD_MEMORY_EVIDENCE_ID_KEY, memoryId);
+    router.pushUrl({ url: 'pages/world/WorldMemoryEvidencePage' });
   }
 
   private async submitForm(isEdit: boolean): Promise<void> {
@@ -1038,8 +1552,6 @@ struct WorldCharacterMemoryPage {
     }
   }
 
-  // ===== 辅助方法 =====
-
   private resolveCurrentLocationLabel(header: MemoryCharacterHeaderUiModel): string {
     if (header.currentLocationId.length === 0) {
       return '未放置';
@@ -1055,7 +1567,7 @@ struct WorldCharacterMemoryPage {
     for (let i = 0; i < importance; i++) {
       stars += '★';
     }
-    return '重要度 ' + stars;
+    return stars;
   }
 
   private importanceOptions(): number[] {
@@ -1086,5 +1598,44 @@ struct WorldCharacterMemoryPage {
     const hour: string = d.getHours().toString().padStart(2, '0');
     const minute: string = d.getMinutes().toString().padStart(2, '0');
     return year + '-' + month + '-' + day + ' ' + hour + ':' + minute;
+  }
+
+  private riskLabel(level: DiagnosticRiskLevel): string {
+    if (level === DiagnosticRiskLevel.Critical) {
+      return '严重';
+    }
+    if (level === DiagnosticRiskLevel.Warning) {
+      return '警告';
+    }
+    if (level === DiagnosticRiskLevel.Notice) {
+      return '提醒';
+    }
+    return '信息';
+  }
+
+  private riskColor(level: DiagnosticRiskLevel): string {
+    if (level === DiagnosticRiskLevel.Critical) {
+      return WorldColors.ERROR;
+    }
+    if (level === DiagnosticRiskLevel.Warning) {
+      return WorldColors.WARNING;
+    }
+    if (level === DiagnosticRiskLevel.Notice) {
+      return WorldColors.INFO;
+    }
+    return WorldColors.TEXT_TERTIARY;
+  }
+
+  private riskBgColor(level: DiagnosticRiskLevel): string {
+    if (level === DiagnosticRiskLevel.Critical) {
+      return '#3D2020';
+    }
+    if (level === DiagnosticRiskLevel.Warning) {
+      return '#3D3220';
+    }
+    if (level === DiagnosticRiskLevel.Notice) {
+      return '#1E2D3D';
+    }
+    return WorldColors.SURFACE_2;
   }
 }

@@ -30,6 +30,7 @@ import {
   PENDING_WORLD_LOCATION_ID_KEY,
   PENDING_WORLD_SCENE_CHAT_ID_KEY,
   PENDING_WORLD_INSTANCE_DETAIL_ID_KEY,
+  PENDING_WORLD_CURATOR_WORLD_ID_KEY,
   WORLD_DETAIL_REFRESH_TOKEN_KEY,
   WORLD_SCENE_CHAT_REFRESH_TOKEN_KEY,
   formatWorldTimestamp
@@ -290,6 +291,10 @@ struct WorldDetailPage {
         this.moreMenuItem($r('app.string.world_ui_more_scene_history'), false, (): void => {
           this.moreMenuVisible = false;
           this.openSceneManage();
+        })
+        this.moreMenuItem($r('app.string.world_curator_entry'), false, (): void => {
+          this.moreMenuVisible = false;
+          this.openCurator();
         })
 
         Divider().color($r('app.color.world_border')).margin({ top: 4, bottom: 4 })
@@ -1697,6 +1702,14 @@ struct WorldDetailPage {
     }
     AppStorage.setOrCreate<string>(PENDING_WORLD_ID_KEY, this.currentWorldId);
     router.pushUrl({ url: 'pages/world/WorldSceneManagePage' });
+  }
+
+  private openCurator(): void {
+    if (this.currentWorldId.length === 0) {
+      return;
+    }
+    AppStorage.setOrCreate<string>(PENDING_WORLD_CURATOR_WORLD_ID_KEY, this.currentWorldId);
+    router.pushUrl({ url: 'pages/world/WorldCuratorPage' });
   }
 
   // ===== 辅助方法 =====
