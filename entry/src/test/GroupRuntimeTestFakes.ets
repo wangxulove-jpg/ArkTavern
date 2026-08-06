@@ -501,7 +501,13 @@ export class FakePromptAssembler {
       presetSystemPrompt: '',
       effectiveSettings: settings,
       estimatedTokens: 100,
-      matchedLorebookCount: 0
+      matchedLorebookCount: 0,
+      preTrimMessageCount: context.messages.length,
+      postTrimMessageCount: context.messages.length,
+      availableInputTokens: 6144,
+      groupConstraintText: '',
+      participantNames: [],
+      replyTargetMode: 'all_enabled'
     };
   }
 }

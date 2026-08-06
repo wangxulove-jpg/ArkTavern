@@ -26,6 +26,7 @@ import { GroupRuntimeRegistry } from '../main/ets/services/groupchat/GroupRuntim
 import { GroupConversationMessageService } from '../main/ets/services/groupchat/GroupConversationMessageService';
 import { GroupConversationPersistenceService } from '../main/ets/services/groupchat/GroupConversationPersistenceService';
 import { GroupPromptAssembler } from '../main/ets/services/groupchat/GroupPromptAssembler';
+import { GroupPromptInspectionStore } from '../main/ets/services/groupchat/GroupPromptInspectionStore';
 import { ModelService } from '../main/ets/services/ModelService';
 import { CharacterService } from '../main/ets/services/CharacterService';
 import { ChatMessage, ChatMessageStatus } from '../main/ets/models/ChatMessage';
@@ -147,7 +148,8 @@ function setupRuntime(): RuntimeTestContext {
     fakeMsg as Object as GroupConversationMessageService,
     fakePrompt as Object as GroupPromptAssembler,
     fakeModel as Object as ModelService,
-    registry
+    registry,
+    new GroupPromptInspectionStore()
   );
 
   const log: RuntimeCallbackLog = createRuntimeCallbackLog();

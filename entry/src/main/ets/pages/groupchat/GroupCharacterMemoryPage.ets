@@ -66,7 +66,8 @@ import { GroupRelationshipMemoryStatus } from '../../models/groupchat/GroupChara
 import { GroupPromptInspectionSnapshot,
   PromptMessageInspectionItem,
   RelationshipInspectionItem,
-  TokenBudgetInspection
+  TokenBudgetInspection,
+  HistoryVisibilityInspectionItem
 } from '../../models/groupchat/GroupPromptInspectionModels';
 import { CharacterImageView } from '../../components/CharacterImageView';
 import { EmptyStateView } from '../../components/EmptyStateView';
@@ -2383,6 +2384,7 @@ struct GroupCharacterMemoryPage {
         } else {
           this.inspectionOverviewSection()
           this.contextAdjustmentSection()
+          this.inspectionHistoryVisibilitySection()
           this.inspectionMemorySection()
           this.inspectionRelationshipSection()
           this.inspectionTokenBudgetSection()
@@ -2547,6 +2549,134 @@ struct GroupCharacterMemoryPage {
     .backgroundColor($r('app.color.app_surface_2'))
     .borderRadius($r('app.float.app_radius_md'))
     .margin({ left: 12, right: 12, top: 8 })
+  }
+
+  /**
+   * G-CONTEXT-VISIBILITY-1: 历史消息可见性诊断。
+   * 显示每条原始历史消息是否进入 Prompt 及原因。
+   * 本地页面显示完整正文;不持久化。
+   */
+  @Builder
+  inspectionHistoryVisibilitySection(): void {
+    if (this.inspectionSnapshot !== null) {
+      Column() {
+        Text('历史可见性 (' + String(this.inspectionSnapshot.historyVisibility !== undefined
+          ? this.inspectionSnapshot.historyVisibility.length : 0) + ' 条)')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_tertiary'))
+          .fontWeight(FontWeight.Medium)
+          .width('100%')
+          .margin({ bottom: 6 })
+
+        Row() {
+          Text('输入:')
+            .fontSize(11)
+            .fontColor($r('app.color.app_text_tertiary'))
+          Text(String(this.inspectionSnapshot.visibilitySummary !== undefined
+            ? this.inspectionSnapshot.visibilitySummary.inputCount : 0))
+            .fontSize(11)
+            .fontColor($r('app.color.app_text_secondary'))
+            .margin({ left: 2, right: 10 })
+
+          Text('进入:')
+            .fontSize(11)
+            .fontColor($r('app.color.app_text_tertiary'))
+          Text(String(this.inspectionSnapshot.visibilitySummary !== undefined
+            ? this.inspectionSnapshot.visibilitySummary.includedCount : 0))
+            .fontSize(11)
+            .fontColor($r('app.color.app_accent'))
+            .margin({ left: 2, right: 10 })
+
+          Text('排除:')
+            .fontSize(11)
+            .fontColor($r('app.color.app_text_tertiary'))
+          Text(String(this.inspectionSnapshot.visibilitySummary !== undefined
+            ? this.inspectionSnapshot.visibilitySummary.excludedCount : 0))
+            .fontSize(11)
+            .fontColor($r('app.color.app_danger'))
+            .margin({ left: 2 })
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
+        .margin({ bottom: 6 })
+
+        if (this.inspectionSnapshot.historyVisibility !== undefined) {
+          ForEach(
+            this.inspectionSnapshot.historyVisibility,
+            (item: HistoryVisibilityInspectionItem, index: number) => {
+              Column() {
+                Row() {
+                  Text('[' + String(index) + ']')
+                    .fontSize(11)
+                    .fontColor($r('app.color.app_text_tertiary'))
+                    .width(28)
+
+                  Text(item.visibleToCurrentCharacter ? '进入' : '排除')
+                    .fontSize(11)
+                    .fontColor(item.visibleToCurrentCharacter
+                      ? $r('app.color.app_accent') : $r('app.color.app_danger'))
+                    .backgroundColor($r('app.color.app_surface_1'))
+                    .borderRadius(3)
+                    .padding({ left: 4, right: 4, top: 1, bottom: 1 })
+                    .width(34)
+                    .textAlign(TextAlign.Center)
+
+                  Text(item.senderType === 'narrator' ? '旁白' : item.senderType)
+                    .fontSize(11)
+                    .fontColor($r('app.color.app_text_tertiary'))
+                    .margin({ left: 4 })
+
+                  Text(item.status)
+                    .fontSize(11)
+                    .fontColor($r('app.color.app_text_tertiary'))
+                    .margin({ left: 4 })
+
+                  Text(item.visibility)
+                    .fontSize(11)
+                    .fontColor($r('app.color.app_text_tertiary'))
+                    .margin({ left: 4 })
+                }
+                .width('100%')
+                .alignItems(VerticalAlign.Center)
+
+                Text(item.decisionReason)
+                  .fontSize(11)
+                  .fontColor(item.visibleToCurrentCharacter
+                    ? $r('app.color.app_accent') : $r('app.color.app_danger'))
+                  .width('100%')
+                  .margin({ top: 2 })
+                  .textAlign(TextAlign.Start)
+
+                if (!item.enteredFinalPrompt && item.visibleToCurrentCharacter) {
+                  Text('可见但被裁剪,未进入最终 Prompt')
+                    .fontSize(11)
+                    .fontColor($r('app.color.app_text_tertiary'))
+                    .width('100%')
+                    .textAlign(TextAlign.Start)
+                }
+
+                Text(item.content)
+                  .fontSize(11)
+                  .fontColor($r('app.color.app_text_secondary'))
+                  .width('100%')
+                  .maxLines(2)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .textAlign(TextAlign.Start)
+                  .margin({ top: 2 })
+              }
+              .width('100%')
+              .padding({ top: 4, bottom: 4 })
+            },
+            (item: HistoryVisibilityInspectionItem, index: number) => item.messageId
+          )
+        }
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+      .backgroundColor($r('app.color.app_surface_2'))
+      .borderRadius($r('app.float.app_radius_md'))
+      .margin({ left: 12, right: 12, top: 8 })
+    }
   }
 
   /** 记忆诊断 */

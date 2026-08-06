@@ -53,6 +53,32 @@ export interface PromptMessageInspectionItem {
   readonly category: string;
 }
 
+/** G-CONTEXT-VISIBILITY-1: 原始历史消息可见性诊断项 */
+export interface HistoryVisibilityInspectionItem {
+  readonly messageId: string;
+  readonly senderType: string;
+  readonly senderCharacterId: string;
+  readonly status: string;
+  readonly visibility: string;
+  readonly recipientCharacterIds: string[];
+  readonly replyTargetCharacterIds: string[];
+  /** 完整正文(仅本地页面显示,不持久化) */
+  readonly content: string;
+  readonly visibleToCurrentCharacter: boolean;
+  readonly decisionReason: string;
+  /** 是否进入最终 Prompt(经过可见性过滤 + 裁剪后仍在 requestMessages) */
+  readonly enteredFinalPrompt: boolean;
+}
+
+/** G-CONTEXT-VISIBILITY-1: 可见性过滤统计 */
+export interface VisibilitySummaryInspection {
+  readonly inputCount: number;
+  readonly includedCount: number;
+  readonly excludedCount: number;
+  /** reason -> 数量(仅枚举值,无正文) */
+  readonly reasonCounts: Record<string, number>;
+}
+
 /** Token 预算诊断 */
 export interface TokenBudgetInspection {
   readonly contextWindow: number;
@@ -96,6 +122,11 @@ export interface GroupPromptInspectionSnapshot {
   readonly promptMessages: PromptMessageInspectionItem[];
   readonly tokenBudget: TokenBudgetInspection;
   readonly lorebook: LorebookInspection;
+
+  /** G-CONTEXT-VISIBILITY-1: 原始历史可见性诊断(仅本地页面显示,不持久化;从持久化恢复时为空) */
+  readonly historyVisibility?: HistoryVisibilityInspectionItem[];
+  /** G-CONTEXT-VISIBILITY-1: 可见性过滤统计(持久化恢复时默认空) */
+  readonly visibilitySummary?: VisibilitySummaryInspection;
 
   readonly presetSystemPromptPreview: string;
   readonly groupConstraintPreview: string;

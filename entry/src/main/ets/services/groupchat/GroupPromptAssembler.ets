@@ -382,7 +382,11 @@ export class GroupPromptAssembler {
    * - 用户消息:role=user, content=原始正文
    * - 角色 AI 消息:role=assistant, content="[角色名]: 消息正文"
    *   (角色已删除时显示 "[未知角色]:")
+   * - 旁白消息(senderType='narrator'):role=assistant, content="[旁白]: 消息正文"
    * - System 消息:本阶段直接跳过(不混入内部错误/状态)
+   *
+   * G-CONTEXT-VISIBILITY-1:旁白身份修正
+   * - senderType='narrator' 的消息格式化为 [旁白]: 而非 [未知角色]:
    *
    * 不修改原始 messages 数组,返回新数组。
    */
@@ -399,6 +403,18 @@ export class GroupPromptAssembler {
         continue;
       }
       if (msg.role === ChatRole.Assistant) {
+        // G-CONTEXT-VISIBILITY-1: 旁白身份修正
+        if (msg.senderType === 'narrator') {
+          const narrationContent: string = '[旁白]: ' + msg.content;
+          const converted: ChatMessage = createChatMessage(
+            msg.id,
+            ChatRole.Assistant,
+            narrationContent,
+            msg.createdAt
+          );
+          result.push(converted);
+          continue;
+        }
         // AI 消息:加 [角色名]: 前缀(方括号格式,与 stripSpeakerPrefix 对齐)
         const charId: string = msg.senderCharacterId !== undefined
           ? msg.senderCharacterId : '';

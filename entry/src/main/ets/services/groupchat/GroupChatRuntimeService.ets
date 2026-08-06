@@ -67,12 +67,18 @@ import {
 } from './GroupNarrationPromptAssembler';
 import { GroupPromptInspectionStore } from './GroupPromptInspectionStore';
 import {
+  GroupMessageVisibilityPolicy,
+  GroupVisibleHistoryResult,
+  GroupMessageVisibilityDecision
+} from './GroupMessageVisibilityPolicy';
+import {
   GroupPromptInspectionSnapshot,
   MemoryInspectionItem,
   RelationshipInspectionItem,
   PromptMessageInspectionItem,
   TokenBudgetInspection,
-  LorebookInspection
+  LorebookInspection,
+  HistoryVisibilityInspectionItem
 } from '../../models/groupchat/GroupPromptInspectionModels';
 
 const LOG_TAG: string = 'GroupRuntime';
@@ -829,10 +835,20 @@ export class GroupChatRuntimeService {
 
     // 2. 读取完整消息历史(包含同轮前序角色回复)
     let history: ChatMessage[];
+    let visibilityResult: GroupVisibleHistoryResult;
+    let allMessages: ChatMessage[] = [];
     try {
-      history = await this.messageService.listMessages(ctx.chatId);
+      allMessages = await this.messageService.listMessages(ctx.chatId);
+      if (!this.isRoundActive(operationId)) {
+        return SpeakerResult.Cancelled;
+      }
+      // G-CONTEXT-VISIBILITY-1: 按当前 Speaker 过滤可见历史(安全失败会抛错)
+      visibilityResult = GroupMessageVisibilityPolicy.filterVisible(
+        allMessages, speakerCharacterId
+      );
+      history = visibilityResult.includedMessages;
     } catch (e) {
-      Logger.error(LOG_TAG, 'listMessages failed: ' + String(e));
+      Logger.error(LOG_TAG, 'listMessages/filterVisible failed: ' + String(e));
       this.roundCoordinator.markFailed(operationId);
       callbacks.onRoundStateChanged(GroupRoundState.Failed);
       callbacks.onRoundFailed(speakerCharacterId, '无法读取消息历史');
@@ -924,7 +940,9 @@ export class GroupChatRuntimeService {
       speakerCharacterId,
       ctx.roundId,
       promptResult,
-      participantCharacterIds
+      participantCharacterIds,
+      visibilityResult,
+      allMessages
     );
 
     // 8. 启动流式请求并等待完成
@@ -1559,10 +1577,44 @@ export class GroupChatRuntimeService {
     speakerCharacterId: string,
     roundId: string,
     promptResult: GroupPromptAssemblyResult,
-    participantCharacterIds: string[]
+    participantCharacterIds: string[],
+    visibilityResult: GroupVisibleHistoryResult,
+    allMessages: ChatMessage[]
   ): Promise<void> {
     const speakerName: string = promptResult.character !== null
       ? promptResult.character.name : '未知角色';
+
+    // G-CONTEXT-VISIBILITY-1: 记录原始历史可见性诊断(仅本地页面显示)
+    const historyInspection: HistoryVisibilityInspectionItem[] = [];
+    const requestMessageIds: Set<string> = new Set<string>();
+    for (let i = 0; i < promptResult.requestMessages.length; i++) {
+      requestMessageIds.add(promptResult.requestMessages[i].id);
+    }
+    const reasonCounts: Record<string, number> = {};
+    for (let i = 0; i < allMessages.length; i++) {
+      const msg: ChatMessage = allMessages[i];
+      const decision: GroupMessageVisibilityDecision | undefined =
+        GroupMessageVisibilityPolicy.evaluate(msg, speakerCharacterId);
+      const reasonKey: string = decision.reason;
+      const existing: number | undefined = reasonCounts[reasonKey];
+      reasonCounts[reasonKey] = existing !== undefined ? existing + 1 : 1;
+      const isVisible: boolean = decision.visible;
+      historyInspection.push({
+        messageId: msg.id,
+        senderType: msg.senderType !== undefined ? msg.senderType : 'user',
+        senderCharacterId: msg.senderCharacterId !== undefined ? msg.senderCharacterId : '',
+        status: msg.status !== undefined ? msg.status : 'completed',
+        visibility: msg.visibility !== undefined ? msg.visibility : 'public',
+        recipientCharacterIds: msg.recipientCharacterIds !== undefined
+          ? msg.recipientCharacterIds.slice() : [],
+        replyTargetCharacterIds: msg.replyTargetCharacterIds !== undefined
+          ? msg.replyTargetCharacterIds.slice() : [],
+        content: msg.content,
+        visibleToCurrentCharacter: isVisible,
+        decisionReason: reasonKey,
+        enteredFinalPrompt: isVisible && requestMessageIds.has(msg.id)
+      });
+    }
 
     const promptMsgs: PromptMessageInspectionItem[] = [];
     for (let i = 0; i < promptResult.requestMessages.length; i++) {
@@ -1632,6 +1684,13 @@ export class GroupChatRuntimeService {
       promptMessages: promptMsgs,
       tokenBudget: budget,
       lorebook: lorebookInfo,
+      historyVisibility: historyInspection,
+      visibilitySummary: {
+        inputCount: allMessages.length,
+        includedCount: visibilityResult.includedCount,
+        excludedCount: visibilityResult.excludedCount,
+        reasonCounts: reasonCounts
+      },
       presetSystemPromptPreview: promptResult.presetSystemPrompt.length > 200
         ? promptResult.presetSystemPrompt.substring(0, 200) + '...'
         : promptResult.presetSystemPrompt,
