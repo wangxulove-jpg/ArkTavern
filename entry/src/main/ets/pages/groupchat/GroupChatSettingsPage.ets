@@ -21,6 +21,10 @@ import {
   GroupChatDetailState,
   PENDING_GROUP_CHAT_ID_KEY
 } from '../../viewmodels/groupchat/GroupChatUiModels';
+import {
+  GroupAutoSummaryDetailLevel,
+  getGroupAutoSummaryLevelSpec
+} from '../../models/groupchat/GroupAutoSummaryModels';
 
 @Entry
 @Component
@@ -57,6 +61,12 @@ struct GroupChatSettingsPage {
   @State narrationMaxTokens: number = 256;
   /** GROUP-NARRATION-1A: 旁白 token 编辑时临时值 */
   @State narrationTokensInput: string = '256';
+  /** G-GROUP-AUTO-SUMMARY-1A: 自动记忆总结开关 */
+  @State autoSummaryEnabled: boolean = false;
+  /** G-GROUP-AUTO-SUMMARY-1A: 自动总结详细程度档位 */
+  @State autoSummaryDetailLevel: GroupAutoSummaryDetailLevel = GroupAutoSummaryDetailLevel.Medium;
+  /** G-GROUP-AUTO-SUMMARY-1A: 档位选择 Sheet 是否可见 */
+  @State autoSummaryLevelPickerVisible: boolean = false;
   /** 顶部状态栏避让高度 */
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   /** 底部导航栏避让高度 */
@@ -109,6 +119,8 @@ struct GroupChatSettingsPage {
     this.narrationEnabled = this.viewModel.narrationEnabled;
     this.narrationMaxTokens = this.viewModel.narrationMaxTokens;
     this.narrationTokensInput = String(this.viewModel.narrationMaxTokens);
+    this.autoSummaryEnabled = this.viewModel.autoSummaryEnabled;
+    this.autoSummaryDetailLevel = this.viewModel.autoSummaryDetailLevel;
   }
 
   build(): void {
@@ -142,6 +154,10 @@ struct GroupChatSettingsPage {
       // GROUP-CHAT-TARGET-1: @角色回复模式选择 Sheet
       if (this.replyModePickerVisible) {
         this.replyModePickerDialog()
+      }
+      // G-GROUP-AUTO-SUMMARY-1A: 自动总结档位选择 Sheet
+      if (this.autoSummaryLevelPickerVisible) {
+        this.autoSummaryLevelPickerDialog()
       }
     }
     .width('100%')
@@ -265,6 +281,8 @@ struct GroupChatSettingsPage {
         this.nameSection()
         // 回复方式(固定说明)
         this.replyModeSection()
+        // G-GROUP-AUTO-SUMMARY-1A: 自动记忆总结设置
+        this.autoSummarySection()
         // 失败处理方式(尚未开放)
         this.failurePolicySection()
         // 管理成员入口
@@ -454,10 +472,213 @@ struct GroupChatSettingsPage {
     .margin({ top: $r('app.float.app_spacing_16') })
   }
 
+  /** G-GROUP-AUTO-SUMMARY-1A: 自动记忆总结设置区 */
+  @Builder
+  autoSummarySection(): void {
+    Column() {
+      Text('记忆总结')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_tertiary'))
+        .width('100%')
+        .margin({ bottom: 8 })
+
+      // 自动记忆总结开关
+      Row() {
+        Column() {
+          Text('自动记忆总结')
+            .fontSize($r('app.float.app_font_body'))
+            .fontColor($r('app.color.app_text_primary'))
+          Text('聊天积累到一定程度后自动更新角色记忆')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_tertiary'))
+            .margin({ top: 2 })
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
+
+        Toggle({ type: ToggleType.Switch, isOn: this.autoSummaryEnabled })
+          .selectedColor($r('app.color.app_accent'))
+          .onChange((isOn: boolean) => {
+            if (this.viewModel !== null) {
+              this.viewModel.setAndPersistAutoSummaryEnabled(isOn);
+              this.autoSummaryEnabled = isOn;
+            }
+          })
+      }
+      .width('100%')
+      .padding({
+        left: $r('app.float.app_spacing_12'),
+        right: $r('app.float.app_spacing_12'),
+        top: $r('app.float.app_spacing_12'),
+        bottom: $r('app.float.app_spacing_12')
+      })
+      .backgroundColor($r('app.color.app_surface_1'))
+      .borderRadius($r('app.float.app_radius_md'))
+      .alignItems(VerticalAlign.Center)
+
+      // 总结详细程度(关闭时禁用但保留当前值)
+      Row() {
+        Text('总结详细程度')
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor(this.autoSummaryEnabled
+            ? $r('app.color.app_text_primary') : $r('app.color.app_text_tertiary'))
+          .layoutWeight(1)
+
+        Text(this.autoSummaryLevelLabel(this.autoSummaryDetailLevel))
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor(this.autoSummaryEnabled
+            ? $r('app.color.app_accent') : $r('app.color.app_text_tertiary'))
+          .margin({ right: 4 })
+
+        SymbolGlyph($r('sys.symbol.chevron_right'))
+          .fontSize(16)
+          .fontColor([$r('app.color.app_text_tertiary')])
+      }
+      .width('100%')
+      .padding({
+        left: $r('app.float.app_spacing_12'),
+        right: $r('app.float.app_spacing_12'),
+        top: $r('app.float.app_spacing_12'),
+        bottom: $r('app.float.app_spacing_12')
+      })
+      .backgroundColor($r('app.color.app_surface_1'))
+      .borderRadius($r('app.float.app_radius_md'))
+      .alignItems(VerticalAlign.Center)
+      .margin({ top: $r('app.float.app_spacing_8') })
+      .enabled(this.autoSummaryEnabled)
+      .onClick(() => {
+        this.autoSummaryLevelPickerVisible = true;
+      })
+    }
+    .width('100%')
+    .margin({ top: $r('app.float.app_spacing_16') })
+  }
+
+  /** G-GROUP-AUTO-SUMMARY-1A: 档位选择底部 Sheet(Stack 覆盖层) */
+  @Builder
+  autoSummaryLevelPickerDialog(): void {
+    Stack() {
+      Column() {
+        Blank().layoutWeight(1)
+        Column() {
+          Column()
+            .width(36)
+            .height(4)
+            .borderRadius(2)
+            .backgroundColor($r('app.color.app_divider'))
+            .margin({ top: 8, bottom: 12 })
+
+          Text('总结详细程度')
+            .fontSize($r('app.float.app_font_subtitle'))
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.app_text_primary'))
+            .margin({ bottom: 4, left: 16, right: 16 })
+            .width('100%')
+
+          Text('档位只影响总结深度和输出长度,不改变角色可见性规则')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_tertiary'))
+            .margin({ bottom: 12, left: 16, right: 16 })
+            .width('100%')
+
+          // 简洁
+          this.autoSummaryLevelOption(GroupAutoSummaryDetailLevel.Concise)
+          // 中等
+          this.autoSummaryLevelOption(GroupAutoSummaryDetailLevel.Medium)
+          // 详细
+          this.autoSummaryLevelOption(GroupAutoSummaryDetailLevel.Detailed)
+
+          Button($r('app.string.group_cancel'))
+            .fontSize($r('app.float.app_font_body'))
+            .fontColor($r('app.color.app_text_secondary'))
+            .backgroundColor($r('app.color.app_surface_2'))
+            .borderRadius($r('app.float.app_radius_md'))
+            .width('100%')
+            .height(44)
+            .margin({ top: 12, left: 16, right: 16 })
+            .accessibilityText('关闭详细程度选择')
+            .onClick(() => {
+              this.autoSummaryLevelPickerVisible = false;
+            })
+        }
+        .width('100%')
+        .backgroundColor($r('app.color.app_surface_1'))
+        .borderRadius({ topLeft: 16, topRight: 16, bottomLeft: 0, bottomRight: 0 })
+        .padding({ top: 0, bottom: this.navBarHeight + 16 })
+      }
+      .width('100%')
+      .height('100%')
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor('rgba(0,0,0,0.5)')
+    .onClick(() => {
+      this.autoSummaryLevelPickerVisible = false;
+    })
+    .transition(TransitionEffect.OPACITY)
+  }
+
+  /** 单个档位选项行 */
+  @Builder
+  autoSummaryLevelOption(level: GroupAutoSummaryDetailLevel): void {
+    Row() {
+      Column() {
+        Text(getGroupAutoSummaryLevelSpec(level).label)
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor(this.autoSummaryDetailLevel === level
+            ? $r('app.color.app_accent') : $r('app.color.app_text_primary'))
+          .width('100%')
+        Text(this.autoSummaryLevelDescription(level))
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_tertiary'))
+          .margin({ top: 2 })
+          .width('100%')
+      }
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
+
+      if (this.autoSummaryDetailLevel === level) {
+        SymbolGlyph($r('sys.symbol.checkmark'))
+          .fontSize(16)
+          .fontColor([$r('app.color.app_accent')])
+      }
+    }
+    .width('100%')
+    .padding({ left: 16, right: 16, top: 10, bottom: 10 })
+    .alignItems(VerticalAlign.Center)
+    .margin({ left: 16, right: 16 })
+    .borderRadius($r('app.float.app_radius_sm'))
+    .onClick(() => {
+      this.handleSelectAutoSummaryLevel(level);
+    })
+  }
+
+  private handleSelectAutoSummaryLevel(level: GroupAutoSummaryDetailLevel): void {
+    if (this.viewModel === null) {
+      return;
+    }
+    this.viewModel.setAndPersistAutoSummaryDetailLevel(level);
+    this.autoSummaryLevelPickerVisible = false;
+    this.syncFromViewModel();
+  }
+
+  private autoSummaryLevelLabel(level: GroupAutoSummaryDetailLevel): string {
+    return getGroupAutoSummaryLevelSpec(level).label;
+  }
+
+  private autoSummaryLevelDescription(level: GroupAutoSummaryDetailLevel): string {
+    if (level === GroupAutoSummaryDetailLevel.Concise) {
+      return '适合节省上下文,只保留关键事实';
+    }
+    if (level === GroupAutoSummaryDetailLevel.Detailed) {
+      return '保留更多事件和长期细节';
+    }
+    return '兼顾连续性和上下文长度';
+  }
+
   /** 失败处理方式区(尚无正式 Schema,显示为尚未开放) */
   @Builder
-  failurePolicySection(): void {
-    Column() {
+  failurePolicySection(): void {    Column() {
       Text($r('app.string.group_settings_failure_policy'))
         .fontSize($r('app.float.app_font_caption'))
         .fontColor($r('app.color.app_text_tertiary'))

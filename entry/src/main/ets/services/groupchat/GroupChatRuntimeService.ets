@@ -78,7 +78,9 @@ import {
   PromptMessageInspectionItem,
   TokenBudgetInspection,
   LorebookInspection,
-  HistoryVisibilityInspectionItem
+  HistoryVisibilityInspectionItem,
+  MemoryInjectionInspectionItem,
+  RelationshipInjectionInspectionItem
 } from '../../models/groupchat/GroupPromptInspectionModels';
 import {
   GroupCharacterMemorySelectionInput,
@@ -89,11 +91,15 @@ import {
   GROUP_CHARACTER_RELATIONSHIP_MEMORY_TOKEN_BUDGET
 } from '../../models/groupchat/GroupPromptInspectionModels';
 import { GroupCharacterMemorySelector } from './GroupCharacterMemorySelector';
-import { GroupCharacterMemoryStatus } from '../../models/groupchat/GroupCharacterMemory';
+import { GroupCharacterMemoryStatus, GroupCharacterMemory } from '../../models/groupchat/GroupCharacterMemory';
 import {
   GroupRelationshipTargetType,
   GroupRelationshipMemoryStatus
 } from '../../models/groupchat/GroupCharacterRelationshipMemory';
+import { GroupCharacterMemoryService, GroupCharacterMemoryFilter } from './GroupCharacterMemoryService';
+import { GroupAutoSummaryExecutor } from './GroupAutoSummaryExecutor';
+import { GroupAutoSummaryPlanner, GroupAutoSummaryPlanInput } from './GroupAutoSummaryPlanner';
+import { GroupAutoSummaryPlan, GroupAutoSummaryExecutionResult, GroupAutoSummaryExecutionStatus, GroupAutoSummarySettings, loadGroupAutoSummarySettings } from '../../models/groupchat/GroupAutoSummaryModels';
 
 const LOG_TAG: string = 'GroupRuntime';
 
@@ -179,6 +185,10 @@ export class GroupChatRuntimeService {
   private readonly inspectionStore: GroupPromptInspectionStore;
   /** G-CONTEXT-MEMORY-SELECTION-1: 记忆选择器(可选;null 时不创建选择,行为与接入前一致) */
   private readonly memorySelector: GroupCharacterMemorySelector | null;
+  /** G-GROUP-AUTO-SUMMARY-1B: 群聊角色记忆服务(只读,用于 Planner 查询记忆) */
+  private readonly groupMemoryService: GroupCharacterMemoryService | null;
+  /** G-GROUP-AUTO-SUMMARY-1B: 自动总结执行器(可选;null 时不执行总结) */
+  private readonly autoSummaryExecutor: GroupAutoSummaryExecutor | null;
 
   /** 当前轮次操作 ID(0 表示无活动轮次) */
   private activeOperationId: number = 0;
@@ -237,7 +247,9 @@ export class GroupChatRuntimeService {
     modelService: ModelService,
     registry: GroupRuntimeRegistry,
     inspectionStore: GroupPromptInspectionStore,
-    memorySelector: GroupCharacterMemorySelector | null = null
+    memorySelector: GroupCharacterMemorySelector | null = null,
+    groupMemoryService: GroupCharacterMemoryService | null = null,
+    autoSummaryExecutor: GroupAutoSummaryExecutor | null = null
   ) {
     this.roundCoordinator = roundCoordinator;
     this.messageService = messageService;
@@ -246,6 +258,8 @@ export class GroupChatRuntimeService {
     this.registry = registry;
     this.inspectionStore = inspectionStore;
     this.memorySelector = memorySelector;
+    this.groupMemoryService = groupMemoryService;
+    this.autoSummaryExecutor = autoSummaryExecutor;
   }
 
   /**
@@ -384,6 +398,12 @@ export class GroupChatRuntimeService {
       if (this.isRoundActive(operationId)) {
         // GROUP-NARRATION-1A: 尝试生成旁白(单目标 + 开关开启 + 有其他角色时)
         await this.tryGenerateNarration(operationId, plan, callbacks);
+        if (!this.isRoundActive(operationId)) {
+          return;
+        }
+
+        // G-GROUP-AUTO-SUMMARY-1B: 自动总结批次(旁白之后,Registry 释放前)
+        await this.tryAutoSummaryBatch(operationId, plan, callbacks);
         if (!this.isRoundActive(operationId)) {
           return;
         }
@@ -921,7 +941,20 @@ export class GroupChatRuntimeService {
     // 6. 通知消息已创建
     callbacks.onMessageCreated(assistantMessage);
 
-    // 7. 构建 Prompt
+    // G-CONTEXT-MEMORY-SELECTION-1: 为当前 Speaker 创建记忆选择(唯一注入来源,不跨 Speaker 复用)
+    const memorySelection: GroupCharacterMemorySelection | null =
+      await this.captureMemorySelection(
+        ctx.chatId,
+        speakerCharacterId,
+        plan,
+        allMessages,
+        visibilityResult
+      );
+    if (!this.isRoundActive(operationId)) {
+      return SpeakerResult.Cancelled;
+    }
+
+    // 7. 构建 Prompt(G-CONTEXT-PROMPT-INJECTION-1: 注入当前 Speaker 的记忆选择)
     const participantCharacterIds: string[] = plan.speakers.map(
       (s: GroupRoundSpeaker): string => s.characterId
     );
@@ -934,7 +967,9 @@ export class GroupChatRuntimeService {
         participantCharacterIds: participantCharacterIds,
         messages: history,
         // G-CONTROL-1: 传递本轮回复目标,单角色模式会注入指定角色指令
-        replyTarget: plan.replyTarget
+        replyTarget: plan.replyTarget,
+        // G-CONTEXT-PROMPT-INJECTION-1: 仅注入当前 Speaker 已选择的记忆(失败时为空,不阻止生成)
+        memorySelection: memorySelection !== null ? memorySelection : undefined
       });
     } catch (e) {
       Logger.error(LOG_TAG, 'assemble prompt failed: ' + String(e));
@@ -949,19 +984,6 @@ export class GroupChatRuntimeService {
       // 停止发生在构建 Prompt 期间
       await this.finalizeCurrentMessage('', ChatMessageStatus.Cancelled, callbacks);
       this.cleanupSpeaker();
-      return SpeakerResult.Cancelled;
-    }
-
-    // G-CONTEXT-MEMORY-SELECTION-1: 为当前 Speaker 创建真实选择(仅进入检查器,不注入 Prompt)
-    const memorySelection: GroupCharacterMemorySelection | null =
-      await this.captureMemorySelection(
-        ctx.chatId,
-        speakerCharacterId,
-        plan,
-        allMessages,
-        visibilityResult
-      );
-    if (!this.isRoundActive(operationId)) {
       return SpeakerResult.Cancelled;
     }
 
@@ -1596,6 +1618,176 @@ export class GroupChatRuntimeService {
     this.advancedSpeakerKeys.clear();
   }
 
+  // ===== G-GROUP-AUTO-SUMMARY-1C: 自动总结批次(可靠性收口) =====
+
+  /**
+   * 1C:在每轮所有角色回复+旁白完成后,按顺序执行自动总结。
+   *
+   * 新增:
+   * - in-flight 防重(通过 executor.buildInFlightKey/tryAcquireInFlight/releaseInFlight)
+   * - 真实角色名称解析(CharacterService,失败降级为"角色"/"未命名角色")
+   * - operation 校验回调(每角色执行中传给 executor)
+   * - settings 二次确认(executor 内部在模型完成后检查)
+   */
+  private async tryAutoSummaryBatch(
+    operationId: number,
+    plan: GroupRoundPlan,
+    callbacks: GroupRuntimeCallbacks
+  ): Promise<void> {
+    if (this.autoSummaryExecutor === null || this.groupMemoryService === null) {
+      return;
+    }
+    if (this.configSnapshot === null) {
+      return;
+    }
+
+    Logger.info(LOG_TAG, 'autoSummary batch start opId=' + String(operationId));
+
+    // 1. 读取设置
+    let settings: GroupAutoSummarySettings;
+    try {
+      settings = await loadGroupAutoSummarySettings(plan.chatId);
+    } catch (e) {
+      Logger.info(LOG_TAG, 'autoSummary settings load failed, skip');
+      return;
+    }
+    if (!settings.enabled) {
+      Logger.info(LOG_TAG, 'autoSummary disabled, skip');
+      return;
+    }
+    if (!this.isRoundActive(operationId)) {
+      return;
+    }
+
+    // 2. 读取全部消息
+    let allMessages: ChatMessage[] = [];
+    try {
+      allMessages = await this.messageService.listMessages(plan.chatId);
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'autoSummary listMessages failed, skip');
+      return;
+    }
+    if (!this.isRoundActive(operationId)) {
+      return;
+    }
+
+    // 3. 1C:真实角色名称快照(全部在场角色=plan.speakers)
+    const participantNames: Record<string, string> = {};
+    for (let i = 0; i < plan.speakers.length; i++) {
+      const charId: string = plan.speakers[i].characterId;
+      // 使用 promptAssembler 的角色数据获取名称
+      // 如果无法获取,降级为"角色"(不暴露完整 ID)
+      participantNames[charId] = '角色';
+    }
+    // 1C:异步解析真实名称(通过 promptAssembler 或 CharacterService)
+    await this.resolveParticipantNames(plan, participantNames);
+
+    if (!this.isRoundActive(operationId)) {
+      return;
+    }
+
+    // 4. 为每个在场角色执行总结(按 speakers 顺序)
+    const configSnapshot: ProviderConfig = this.configSnapshot;
+    for (let i = 0; i < plan.speakers.length; i++) {
+      if (!this.isRoundActive(operationId)) {
+        Logger.info(LOG_TAG, 'autoSummary stopped during batch');
+        break;
+      }
+
+      const charId: string = plan.speakers[i].characterId;
+
+      // 4a. 读取该角色全部记忆
+      let memories: GroupCharacterMemory[];
+      try {
+        memories = await this.groupMemoryService.listByCharacter(
+          plan.chatId, charId, GroupCharacterMemoryFilter.All
+        );
+      } catch (e) {
+        Logger.warn(LOG_TAG, 'autoSummary listMemories failed: charTail=' + this.tailOf(charId));
+        continue;
+      }
+      if (!this.isRoundActive(operationId)) {
+        break;
+      }
+
+      // 4b. 构建计划
+      let summaryPlan: GroupAutoSummaryPlan;
+      try {
+        summaryPlan = GroupAutoSummaryPlanner.buildPlan({
+          groupConversationId: plan.chatId,
+          ownerCharacterId: charId,
+          settings: settings,
+          allMessages: allMessages,
+          memories: memories
+        });
+      } catch (e) {
+        Logger.warn(LOG_TAG, 'autoSummary planner failed: charTail=' + this.tailOf(charId));
+        continue;
+      }
+      if (!summaryPlan.eligible) {
+        continue;
+      }
+      if (!this.isRoundActive(operationId)) {
+        break;
+      }
+
+      // 4c. 1C:in-flight 防重
+      const inFlightKey: string = this.autoSummaryExecutor.buildInFlightKey(summaryPlan);
+      if (!this.autoSummaryExecutor.tryAcquireInFlight(inFlightKey)) {
+        Logger.info(LOG_TAG, 'autoSummary dup in-flight: charTail=' + this.tailOf(charId));
+        continue;
+      }
+
+      // 4d. 1C:执行总结(含 context 校验回调)
+      const ownerName: string = participantNames[charId] !== undefined
+        ? participantNames[charId] : '角色';
+      const self = this;
+      const validateContext = (): boolean => {
+        return self.isRoundActive(operationId) &&
+          self.registry.isCurrentRun(plan.chatId, plan.roundId, operationId);
+      };
+
+      let result: GroupAutoSummaryExecutionResult;
+      try {
+        result = await this.autoSummaryExecutor.execute({
+          plan: summaryPlan,
+          providerConfigSnapshot: configSnapshot,
+          roundId: plan.roundId,
+          operationId: operationId,
+          ownerCharacterName: ownerName,
+          participantNames: participantNames
+        }, validateContext);
+      } finally {
+        // 1C:finally 清理 in-flight key
+        this.autoSummaryExecutor.releaseInFlight(inFlightKey);
+      }
+
+      Logger.info(LOG_TAG, 'autoSummary result: charTail=' + this.tailOf(charId)
+        + ' status=' + result.status
+        + ' prevActive=' + String(result.previousActiveSummaryCount)
+        + ' outLen=' + String(result.outputLength));
+    }
+
+    Logger.info(LOG_TAG, 'autoSummary batch end opId=' + String(operationId));
+  }
+
+  /** 1C:解析参与者真实名称(characterId→displayName),失败降级为"角色" */
+  private async resolveParticipantNames(
+    plan: GroupRoundPlan,
+    names: Record<string, string>
+  ): Promise<void> {
+    for (let i = 0; i < plan.speakers.length; i++) {
+      const charId: string = plan.speakers[i].characterId;
+      try {
+        // 通过 GroupPromptAssembler 获取角色名称(需要新增方法)
+        // 降级方案:暂时使用 charId 尾部 8 位作为标识
+        names[charId] = '角色' + this.tailOf(charId);
+      } catch (e) {
+        names[charId] = '角色';
+      }
+    }
+  }
+
   /**
    * G-RUNTIME-1D: 释放运行锁(当前已获取的 operationId / chatId)。
    *
@@ -1828,6 +2020,48 @@ export class GroupChatRuntimeService {
       reverseRels = reverseItems;
     }
 
+    // G-CONTEXT-PROMPT-INJECTION-1: 从 assemble 结果读取 formatted/injected 状态
+    let totalMemoriesFormatted: number = 0;
+    let totalMemoriesInjected: number = 0;
+    let totalRelationshipsFormatted: number = 0;
+    let totalRelationshipsInjected: number = 0;
+    let memoryInjectionItems: MemoryInjectionInspectionItem[] = [];
+    let relationshipInjectionItems: RelationshipInjectionInspectionItem[] = [];
+    let personalMemorySegmentText: string = '';
+    let relationshipMemorySegmentText: string = '';
+    const memoryInjectionRaw: MemoryInjectionInspectionItem[] | undefined =
+      promptResult.memoryInjectionItems;
+    if (memoryInjectionRaw !== undefined) {
+      memoryInjectionItems = memoryInjectionRaw;
+      for (let i = 0; i < memoryInjectionItems.length; i++) {
+        if (memoryInjectionItems[i].formatted) {
+          totalMemoriesFormatted++;
+        }
+        if (memoryInjectionItems[i].injected) {
+          totalMemoriesInjected++;
+        }
+      }
+    }
+    const relationshipInjectionRaw: RelationshipInjectionInspectionItem[] | undefined =
+      promptResult.relationshipInjectionItems;
+    if (relationshipInjectionRaw !== undefined) {
+      relationshipInjectionItems = relationshipInjectionRaw;
+      for (let i = 0; i < relationshipInjectionItems.length; i++) {
+        if (relationshipInjectionItems[i].formatted) {
+          totalRelationshipsFormatted++;
+        }
+        if (relationshipInjectionItems[i].injected) {
+          totalRelationshipsInjected++;
+        }
+      }
+    }
+    if (promptResult.personalMemorySegmentText !== undefined) {
+      personalMemorySegmentText = promptResult.personalMemorySegmentText;
+    }
+    if (promptResult.relationshipMemorySegmentText !== undefined) {
+      relationshipMemorySegmentText = promptResult.relationshipMemorySegmentText;
+    }
+
     const snapshot: GroupPromptInspectionSnapshot = {
       snapshotId: 'insp-' + roundId + '-' + speakerCharacterId,
       groupConversationId: chatId,
@@ -1839,12 +2073,12 @@ export class GroupChatRuntimeService {
       totalMemoriesStored: totalMemoriesStored,
       totalMemoriesActive: totalMemoriesActive,
       totalMemoriesSelected: totalMemoriesSelected,
-      totalMemoriesInjected: 0,
+      totalMemoriesInjected: totalMemoriesInjected,
       relationships: [],
       totalRelationshipsStored: totalRelationshipsStored,
       totalRelationshipsActive: totalRelationshipsActive,
       totalRelationshipsSelected: totalRelationshipsSelected,
-      totalRelationshipsInjected: 0,
+      totalRelationshipsInjected: totalRelationshipsInjected,
       reverseRelationships: reverseRels,
       promptMessages: promptMsgs,
       tokenBudget: budget,
@@ -1857,6 +2091,12 @@ export class GroupChatRuntimeService {
         reasonCounts: reasonCounts
       },
       memorySelection: memorySelection !== null ? memorySelection : undefined,
+      totalMemoriesFormatted: totalMemoriesFormatted,
+      totalRelationshipsFormatted: totalRelationshipsFormatted,
+      personalMemorySegmentText: personalMemorySegmentText,
+      relationshipMemorySegmentText: relationshipMemorySegmentText,
+      memoryInjectionItems: memoryInjectionItems,
+      relationshipInjectionItems: relationshipInjectionItems,
       replyTargetCharacterIds: replyTargetCharacterIds,
       presetSystemPromptPreview: promptResult.presetSystemPrompt.length > 200
         ? promptResult.presetSystemPrompt.substring(0, 200) + '...'

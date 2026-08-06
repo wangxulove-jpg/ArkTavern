@@ -65,6 +65,17 @@ import {
   GroupReplyTargetMode,
   REPLY_TARGET_ALL_ENABLED
 } from './GroupRoundTypes';
+import {
+  GroupCharacterMemorySelection,
+  MemoryInjectionInspectionItem,
+  RelationshipInjectionInspectionItem
+} from '../../models/groupchat/GroupPromptInspectionModels';
+import {
+  GroupMemoryPromptFormatter,
+  GroupMemoryFormatResult,
+  FormattedPersonalMemoryItem,
+  FormattedRelationshipItem
+} from './GroupMemoryPromptFormatter';
 
 const LOG_TAG: string = 'GroupPromptAssembler';
 
@@ -92,6 +103,8 @@ export interface GroupPromptAssemblyContext {
   readonly messages: ChatMessage[];
   /** G-CONTROL-1: 回复目标(默认全员) */
   readonly replyTarget?: GroupReplyTarget;
+  /** G-CONTEXT-PROMPT-INJECTION-1: 当前 Speaker 的记忆选择(唯一注入来源;为空时不注入) */
+  readonly memorySelection?: GroupCharacterMemorySelection;
 }
 
 /**
@@ -122,6 +135,14 @@ export interface GroupPromptAssemblyResult {
   readonly participantNames: string[];
   /** G-CONTEXT-INSPECTOR-1: 回复目标模式(诊断) */
   readonly replyTargetMode: string;
+  /** G-CONTEXT-PROMPT-INJECTION-1: 每条已选个人记忆的注入状态(无注入时为空数组) */
+  readonly memoryInjectionItems?: MemoryInjectionInspectionItem[];
+  /** G-CONTEXT-PROMPT-INJECTION-1: 每条已选关系的注入状态(无注入时为空数组) */
+  readonly relationshipInjectionItems?: RelationshipInjectionInspectionItem[];
+  /** G-CONTEXT-PROMPT-INJECTION-1: 最终注入的个人记忆 System 段完整正文(空字符串表示未注入) */
+  readonly personalMemorySegmentText?: string;
+  /** G-CONTEXT-PROMPT-INJECTION-1: 最终注入的关系 System 段完整正文(空字符串表示未注入) */
+  readonly relationshipMemorySegmentText?: string;
 }
 
 /**
@@ -278,6 +299,32 @@ export class GroupPromptAssembler {
     };
     const buildResult: PromptBuildResult = this.promptBuilder.build(buildContext);
 
+    // 8.5 G-CONTEXT-PROMPT-INJECTION-1: 注入群聊专用记忆段(仅使用当前 Speaker 的 Selection)
+    // 个人记忆段与关系段作为 System 消息插入到首个对话历史消息之前
+    let memoryFormatResult: GroupMemoryFormatResult | null = null;
+    let baseMessages: ChatMessage[] = buildResult.messages;
+    if (context.memorySelection !== undefined && context.memorySelection !== null) {
+      const nameMap: Map<string, string> = new Map<string, string>();
+      for (let i = 0; i < context.participantCharacterIds.length; i++) {
+        const name: string = i < participantNames.length
+          ? participantNames[i] : context.participantCharacterIds[i];
+        nameMap.set(context.participantCharacterIds[i], name);
+      }
+      const ownerNameEntry: string | undefined = nameMap.get(context.speakerCharacterId);
+      const ownerName: string = ownerNameEntry !== undefined ? ownerNameEntry : speaker.name;
+      memoryFormatResult = GroupMemoryPromptFormatter.format(
+        context.memorySelection,
+        ownerName,
+        nameMap,
+        'group-memory-' + context.roundId
+      );
+      baseMessages = this.injectMemorySegments(
+        baseMessages,
+        memoryFormatResult.personalMemoryMessage,
+        memoryFormatResult.relationshipMemoryMessage
+      );
+    }
+
     // 9. 追加群聊约束 System 消息
     const replyTarget: GroupReplyTarget = context.replyTarget !== undefined
       ? context.replyTarget : REPLY_TARGET_ALL_ENABLED;
@@ -287,7 +334,7 @@ export class GroupPromptAssembler {
       replyTarget
     );
     const messagesWithConstraint: ChatMessage[] = this.injectGroupConstraint(
-      buildResult.messages,
+      baseMessages,
       groupConstraint
     );
 
@@ -303,6 +350,42 @@ export class GroupPromptAssembler {
     };
     const trimmed = this.historyTrimmer.trim(messagesWithConstraint, trimOptions);
 
+    // 10.5 G-CONTEXT-PROMPT-INJECTION-1: 计算 selected/formatted/injected 状态
+    const requestMessageIds: Set<string> = new Set<string>();
+    for (let i = 0; i < trimmed.messages.length; i++) {
+      requestMessageIds.add(trimmed.messages[i].id);
+    }
+    let memoryInjectionItems: MemoryInjectionInspectionItem[] = [];
+    let relationshipInjectionItems: RelationshipInjectionInspectionItem[] = [];
+    let personalMemorySegmentText: string = '';
+    let relationshipMemorySegmentText: string = '';
+    if (memoryFormatResult !== null) {
+      const personalMessageId: string = memoryFormatResult.personalMemoryMessage !== null
+        ? memoryFormatResult.personalMemoryMessage.id : '';
+      const relationshipMessageId: string = memoryFormatResult.relationshipMemoryMessage !== null
+        ? memoryFormatResult.relationshipMemoryMessage.id : '';
+      const personalInjected: boolean = personalMessageId.length > 0
+        && requestMessageIds.has(personalMessageId);
+      const relationshipInjected: boolean = relationshipMessageId.length > 0
+        && requestMessageIds.has(relationshipMessageId);
+      const personalMessageIndex: number = personalInjected
+        ? this.findMessageIndex(trimmed.messages, personalMessageId) : -1;
+      const relationshipMessageIndex: number = relationshipInjected
+        ? this.findMessageIndex(trimmed.messages, relationshipMessageId) : -1;
+      memoryInjectionItems = this.buildMemoryInjectionItems(
+        memoryFormatResult.personalMemoryItems, personalInjected, personalMessageIndex
+      );
+      relationshipInjectionItems = this.buildRelationshipInjectionItems(
+        memoryFormatResult.relationshipItems, relationshipInjected, relationshipMessageIndex
+      );
+      if (personalInjected && memoryFormatResult.personalMemoryMessage !== null) {
+        personalMemorySegmentText = memoryFormatResult.personalMemoryMessage.content;
+      }
+      if (relationshipInjected && memoryFormatResult.relationshipMemoryMessage !== null) {
+        relationshipMemorySegmentText = memoryFormatResult.relationshipMemoryMessage.content;
+      }
+    }
+
     // 11. 估算 Token 数
     const estimatedTokens: number = estimateMessagesTokens(trimmed.messages);
 
@@ -310,7 +393,9 @@ export class GroupPromptAssembler {
       + ' msgs=' + String(context.messages.length)
       + ' trimmed=' + String(trimmed.messages.length)
       + ' tokens=' + String(estimatedTokens)
-      + ' lorebook=' + String(buildResult.matchedLorebookEntryIds.length));
+      + ' lorebook=' + String(buildResult.matchedLorebookEntryIds.length)
+      + ' memoryInjected=' + String(memoryInjectionItems.length > 0
+        ? (personalMemorySegmentText.length > 0 ? 'yes' : 'trimmed') : 'no'));
 
     return {
       requestMessages: trimmed.messages,
@@ -324,8 +409,112 @@ export class GroupPromptAssembler {
       availableInputTokens: availableInputTokens,
       groupConstraintText: groupConstraint,
       participantNames: participantNames,
-      replyTargetMode: replyTarget.mode
+      replyTargetMode: replyTarget.mode,
+      memoryInjectionItems: memoryInjectionItems,
+      relationshipInjectionItems: relationshipInjectionItems,
+      personalMemorySegmentText: personalMemorySegmentText,
+      relationshipMemorySegmentText: relationshipMemorySegmentText
     };
+  }
+
+  /**
+   * G-CONTEXT-PROMPT-INJECTION-1: 在首个对话历史消息前插入记忆段(System 消息)。
+   * 两个段都为空时返回原数组(行为与注入前完全一致)。
+   */
+  private injectMemorySegments(
+    messages: ChatMessage[],
+    personalMessage: ChatMessage | null,
+    relationshipMessage: ChatMessage | null
+  ): ChatMessage[] {
+    if (personalMessage === null && relationshipMessage === null) {
+      return messages;
+    }
+    let firstNonSystem: number = -1;
+    for (let i = 0; i < messages.length; i++) {
+      if (messages[i].role !== ChatRole.System) {
+        firstNonSystem = i;
+        break;
+      }
+    }
+    const insertIndex: number = firstNonSystem === -1 ? messages.length : firstNonSystem;
+    const result: ChatMessage[] = [];
+    for (let i = 0; i < insertIndex; i++) {
+      result.push(messages[i]);
+    }
+    if (personalMessage !== null) {
+      result.push(personalMessage);
+    }
+    if (relationshipMessage !== null) {
+      result.push(relationshipMessage);
+    }
+    for (let i = insertIndex; i < messages.length; i++) {
+      result.push(messages[i]);
+    }
+    return result;
+  }
+
+  private buildMemoryInjectionItems(
+    formattedItems: FormattedPersonalMemoryItem[],
+    injected: boolean,
+    messageIndex: number
+  ): MemoryInjectionInspectionItem[] {
+    const items: MemoryInjectionInspectionItem[] = [];
+    for (let i = 0; i < formattedItems.length; i++) {
+      const item: FormattedPersonalMemoryItem = formattedItems[i];
+      const formatted: boolean = item.failureReason.length === 0;
+      const itemInjected: boolean = formatted && injected;
+      items.push({
+        memoryId: item.memoryId,
+        title: item.title,
+        content: item.content,
+        selected: true,
+        formatted: formatted,
+        injected: itemInjected,
+        messageIndex: itemInjected ? messageIndex : -1,
+        failureReason: item.failureReason,
+        estimatedTokens: item.estimatedTokens
+      });
+    }
+    return items;
+  }
+
+  private buildRelationshipInjectionItems(
+    formattedItems: FormattedRelationshipItem[],
+    injected: boolean,
+    messageIndex: number
+  ): RelationshipInjectionInspectionItem[] {
+    const items: RelationshipInjectionInspectionItem[] = [];
+    for (let i = 0; i < formattedItems.length; i++) {
+      const item: FormattedRelationshipItem = formattedItems[i];
+      const formatted: boolean = item.failureReason.length === 0;
+      const itemInjected: boolean = formatted && injected;
+      items.push({
+        relationshipId: item.relationshipId,
+        direction: item.direction,
+        targetId: item.targetId,
+        targetType: item.targetType,
+        experienceSummary: item.experienceSummary,
+        attitudeSummary: item.attitudeSummary,
+        relationshipSummary: item.relationshipSummary,
+        selected: true,
+        formatted: formatted,
+        injected: itemInjected,
+        messageIndex: itemInjected ? messageIndex : -1,
+        source: item.source,
+        failureReason: item.failureReason,
+        estimatedTokens: item.estimatedTokens
+      });
+    }
+    return items;
+  }
+
+  private findMessageIndex(messages: ChatMessage[], id: string): number {
+    for (let i = 0; i < messages.length; i++) {
+      if (messages[i].id === id) {
+        return i;
+      }
+    }
+    return -1;
   }
 
   /**

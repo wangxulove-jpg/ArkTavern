@@ -138,6 +138,19 @@ export interface GroupPromptInspectionSnapshot {
   /** G-CONTEXT-MEMORY-SELECTION-1: 最近一次真实记忆选择(仅内存,不持久化;从持久化恢复时为空) */
   readonly memorySelection?: GroupCharacterMemorySelection;
 
+  /** G-CONTEXT-PROMPT-INJECTION-1: 已格式化个人记忆数(仅内存) */
+  readonly totalMemoriesFormatted?: number;
+  /** G-CONTEXT-PROMPT-INJECTION-1: 已格式化关系数(仅内存) */
+  readonly totalRelationshipsFormatted?: number;
+  /** G-CONTEXT-PROMPT-INJECTION-1: 最终注入的个人记忆 System 段完整正文(仅内存,空字符串表示未注入) */
+  readonly personalMemorySegmentText?: string;
+  /** G-CONTEXT-PROMPT-INJECTION-1: 最终注入的关系 System 段完整正文(仅内存) */
+  readonly relationshipMemorySegmentText?: string;
+  /** G-CONTEXT-PROMPT-INJECTION-1: 每条已选个人记忆的 selected/formatted/injected 状态(仅内存) */
+  readonly memoryInjectionItems?: MemoryInjectionInspectionItem[];
+  /** G-CONTEXT-PROMPT-INJECTION-1: 每条已选关系的 selected/formatted/injected 状态(仅内存) */
+  readonly relationshipInjectionItems?: RelationshipInjectionInspectionItem[];
+
   /** G-CONTEXT-MEMORY-SELECTION-1B: 本轮回复目标角色 ID 列表(仅诊断,不用于选择关系记忆) */
   readonly replyTargetCharacterIds?: string[];
 
@@ -145,6 +158,43 @@ export interface GroupPromptInspectionSnapshot {
   readonly groupConstraintPreview: string;
   readonly replyTargetMode: string;
   readonly participantNames: string[];
+}
+
+// ===== G-CONTEXT-PROMPT-INJECTION-1 记忆注入诊断 =====
+
+/** 单条个人记忆注入状态(selected / formatted / injected) */
+export interface MemoryInjectionInspectionItem {
+  readonly memoryId: string;
+  readonly title: string;
+  /** 完整正文(仅本地页面显示,不持久化) */
+  readonly content: string;
+  readonly selected: boolean;
+  readonly formatted: boolean;
+  readonly injected: boolean;
+  /** 最终 Prompt 中所在消息索引(-1 表示未注入) */
+  readonly messageIndex: number;
+  /** 防御校验/格式化失败原因(空字符串 = 正常;如 INJECTION_OWNER_MISMATCH / FORMAT_FAILED) */
+  readonly failureReason: string;
+  readonly estimatedTokens: number;
+}
+
+/** 单条关系注入状态 */
+export interface RelationshipInjectionInspectionItem {
+  readonly relationshipId: string;
+  readonly direction: string;
+  readonly targetId: string;
+  readonly targetType: string;
+  readonly experienceSummary: string;
+  readonly attitudeSummary: string;
+  readonly relationshipSummary: string;
+  readonly selected: boolean;
+  readonly formatted: boolean;
+  readonly injected: boolean;
+  readonly messageIndex: number;
+  /** 选择目标来源(USER_RELATION_DEFAULT / EXPLICIT_STRUCTURED_TARGET) */
+  readonly source: string;
+  readonly failureReason: string;
+  readonly estimatedTokens: number;
 }
 
 // ===== G-CONTEXT-MEMORY-SELECTION-1 记忆选择模型 =====

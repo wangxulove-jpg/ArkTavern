@@ -91,11 +91,15 @@ import {
   GroupCharacterMemoryFilter,
   CreateInteractionMemoryInput
 } from './GroupCharacterMemoryService';
+import { UpsertRollingSummaryPayload } from '../../repositories/groupchat/GroupCharacterMemoryRepository';
 import {
   GroupCharacterMemory,
   GroupCharacterMemoryOrigin,
-  GroupCharacterMemoryStatus
+  GroupCharacterMemoryStatus,
+  createGroupCharacterMemoryRecord
 } from '../../models/groupchat/GroupCharacterMemory';
+import { generateUuid } from '../../utils/Uuid';
+import { nowMillis } from '../../utils/Time';
 import { Logger } from '../../utils/Logger';
 
 const LOG_TAG: string = 'GroupCharSelfSummary';
@@ -387,8 +391,7 @@ export class GroupCharacterSelfSummaryService {
 
   /**
    * 批准保存 draft(用户审核后)。
-   * 调用 GroupCharacterMemoryService.createInteractionMemory。
-   * 保存失败时不修改 draft,用户编辑内容不丢失。
+   * 1C:使用 upsertRollingSelfSummaryAtomically 保证原地更新不膨胀。
    */
   async approveSelfSummary(
     draft: SelfSummaryDraft,
@@ -406,7 +409,7 @@ export class GroupCharacterSelfSummaryService {
       return { success: false, errorMessage: '记忆内容不能为空' };
     }
 
-    const input: CreateInteractionMemoryInput = {
+    const payload: UpsertRollingSummaryPayload = {
       groupConversationId: draft.source.groupConversationId,
       characterId: draft.source.characterId,
       title: title,
@@ -417,12 +420,12 @@ export class GroupCharacterSelfSummaryService {
       sourceRoundId: draft.source.sourceRoundId.length > 0
         ? draft.source.sourceRoundId : undefined,
       sourceSenderCharacterId: draft.source.characterId,
-      sourceType: SOURCE_TYPE_SELF_SUMMARY_V1,
-      sourceHash: draft.source.sourceHash
+      sourceHash: draft.source.sourceHash,
+      updatedAt: nowMillis()
     };
 
     try {
-      await this.memoryService.createInteractionMemory(input);
+      await this.memoryService.upsertRollingSelfSummaryAtomically(payload);
       Logger.info(LOG_TAG, 'approve ok: sourceHash=' + draft.source.sourceHash.substring(0, 10)
         + ' charShort=' + shortId(draft.source.characterId));
       return { success: true, errorMessage: '' };
@@ -431,6 +434,34 @@ export class GroupCharacterSelfSummaryService {
         + ' sourceHash=' + draft.source.sourceHash.substring(0, 10));
       return { success: false, errorMessage: '保存失败,请重试' };
     }
+  }
+
+  /**
+   * 1C:原地更新滚动总结(供自动总结执行器调用)。
+   */
+  async replaceActiveSelfSummary(memory: GroupCharacterMemory): Promise<number> {
+    const payload: UpsertRollingSummaryPayload = {
+      groupConversationId: memory.groupConversationId,
+      characterId: memory.characterId,
+      title: memory.title,
+      content: memory.content,
+      importance: memory.importance,
+      keywords: memory.keywords,
+      sourceMessageId: memory.sourceMessageId !== undefined ? memory.sourceMessageId : '',
+      sourceRoundId: memory.sourceRoundId,
+      sourceSenderCharacterId: memory.sourceSenderCharacterId !== undefined
+        ? memory.sourceSenderCharacterId : '',
+      sourceHash: memory.sourceHash !== undefined ? memory.sourceHash : '',
+      updatedAt: memory.updatedAt
+    };
+    return await this.memoryService.upsertRollingSelfSummaryAtomically(payload);
+  }
+
+  /**
+   * 1C:使用 UpsertRollingSummaryPayload 原地更新(供 Executor 调用)。
+   */
+  async replaceActiveSelfSummaryFromPayload(payload: UpsertRollingSummaryPayload): Promise<number> {
+    return await this.memoryService.upsertRollingSelfSummaryAtomically(payload);
   }
 
   // ===== 内部方法 =====

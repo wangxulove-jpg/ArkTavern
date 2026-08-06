@@ -38,6 +38,14 @@ import {
 } from '../../models/groupchat/GroupCharacterRelationshipMemory';
 import { estimateTextTokens } from '../TokenCounter';
 import {
+  renderPersonalMemoryItem,
+  renderRelationshipItem,
+  PERSONAL_MEMORY_SEGMENT_HEADER,
+  RELATIONSHIP_MEMORY_SEGMENT_HEADER,
+  RELATIONSHIP_TARGET_USER_LABEL,
+  RELATIONSHIP_TARGET_NEUTRAL_LABEL
+} from './GroupMemoryPromptFormatter';
+import {
   GroupCharacterMemorySelectionInput,
   GroupCharacterMemorySelection,
   SelectedPersonalMemory,
@@ -224,6 +232,9 @@ export class GroupCharacterMemorySelector {
     }
 
     const selectedPersonal: SelectedPersonalMemory[] = [];
+    // G-CONTEXT-PROMPT-INJECTION-1: Token 估算覆盖实际格式化文本。
+    // 个人记忆段固定开销(段头 + 安全说明)预先预留,计入预算。
+    const personalFixedTokens: number = estimateTextTokens(PERSONAL_MEMORY_SEGMENT_HEADER);
     let personalCumulative: number = 0;
     for (let i = 0; i < dedupedMemories.length; i++) {
       const r: RankedMemory = dedupedMemories[i];
@@ -234,7 +245,7 @@ export class GroupCharacterMemorySelector {
         ));
         continue;
       }
-      if (personalCumulative + tokens > personalTokenBudget) {
+      if (personalCumulative + personalFixedTokens + tokens > personalTokenBudget) {
         excludedPersonal.push(buildExcludedPersonalMemory(
           r.memory, GroupCharacterMemoryExclusionReason.EXCLUDED_TOKEN_BUDGET, '', tokens
         ));
@@ -242,9 +253,12 @@ export class GroupCharacterMemorySelector {
       }
       personalCumulative += tokens;
       selectedPersonal.push(buildSelectedPersonalMemory(
-        r, selectedPersonal.length + 1, personalCumulative, tokens
+        r, selectedPersonal.length + 1, personalCumulative + personalFixedTokens, tokens
       ));
     }
+    // 无选中条目时不注入段头,Token 计为 0
+    const personalEstimatedTokens: number = selectedPersonal.length > 0
+      ? personalCumulative + personalFixedTokens : 0;
 
     // ===== 3. 拥有关系检索与分类 =====
     let rawOwned: GroupCharacterRelationshipMemory[] = [];
@@ -386,6 +400,8 @@ export class GroupCharacterMemorySelector {
     }
 
     const selectedRelationships: SelectedRelationshipMemory[] = [];
+    // 关系段固定开销(段头 + 安全说明)预先预留,计入独立 Token 预算
+    const relationshipFixedTokens: number = estimateTextTokens(RELATIONSHIP_MEMORY_SEGMENT_HEADER);
     let relationshipCumulative: number = 0;
     for (let i = 0; i < dedupedRelationships.length; i++) {
       const r: RankedRelationship = dedupedRelationships[i];
@@ -396,7 +412,7 @@ export class GroupCharacterMemorySelector {
         ));
         continue;
       }
-      if (relationshipCumulative + tokens > relationshipTokenBudget) {
+      if (relationshipCumulative + relationshipFixedTokens + tokens > relationshipTokenBudget) {
         excludedRelationships.push(buildExcludedRelationship(
           r.memory, GroupCharacterRelationshipExclusionReason.EXCLUDED_TOKEN_BUDGET, '', tokens
         ));
@@ -404,9 +420,11 @@ export class GroupCharacterMemorySelector {
       }
       relationshipCumulative += tokens;
       selectedRelationships.push(buildSelectedRelationship(
-        r, selectedRelationships.length + 1, relationshipCumulative, tokens
+        r, selectedRelationships.length + 1, relationshipCumulative + relationshipFixedTokens, tokens
       ));
     }
+    const relationshipEstimatedTokens: number = selectedRelationships.length > 0
+      ? relationshipCumulative + relationshipFixedTokens : 0;
 
     // ===== 5. 反向关系查询(仅诊断) =====
     let reverseRelationships: GroupCharacterRelationshipMemory[] = [];
@@ -439,8 +457,8 @@ export class GroupCharacterMemorySelector {
       selectedRelationships: selectedRelationships,
       excludedRelationships: excludedRelationships,
       reverseRelationships: reverseRelationships,
-      personalEstimatedTokens: personalCumulative,
-      relationshipEstimatedTokens: relationshipCumulative,
+      personalEstimatedTokens: personalEstimatedTokens,
+      relationshipEstimatedTokens: relationshipEstimatedTokens,
       personalQueryFailed: personalQueryFailed,
       relationshipQueryFailed: relationshipQueryFailed,
       reverseQueryFailed: reverseQueryFailed,
@@ -598,16 +616,19 @@ function countKeywordHits(keywords: string[], userMessage: string): number {
   return hits;
 }
 
-// ===== Token 估算(保守估算值,非精确 tokenizer) =====
+// ===== Token 估算(复用 Formatter 实际格式化文本,估算值非精确 tokenizer) =====
 
 function estimateMemoryTokens(m: GroupCharacterMemory): number {
-  return estimateTextTokens(m.title) + estimateTextTokens(m.content) + 4;
+  // 以实际注入的单条 item 渲染文本估算(标题/来源/内容/边界),index 固定为 1(长度一致)
+  return estimateTextTokens(renderPersonalMemoryItem(m, 1));
 }
 
 function estimateRelationshipTokens(rel: GroupCharacterRelationshipMemory): number {
-  return estimateTextTokens(rel.experienceSummary)
-    + estimateTextTokens(rel.attitudeSummary)
-    + estimateTextTokens(rel.relationshipSummary) + 8;
+  // 以实际注入的单条 item 渲染文本估算(方向/经历/态度/关系/边界)
+  // target 标签在名称解析前使用中性占位;User 固定为"用户"
+  const label: string = rel.targetType === GroupRelationshipTargetType.User
+    ? RELATIONSHIP_TARGET_USER_LABEL : RELATIONSHIP_TARGET_NEUTRAL_LABEL;
+  return estimateTextTokens(renderRelationshipItem(rel, label, 1));
 }
 
 // ===== 工具函数 =====

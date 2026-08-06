@@ -73,7 +73,9 @@ import { GroupPromptInspectionSnapshot,
   ExcludedRelationshipMemory,
   GroupCharacterMemoryExclusionReason,
   GroupCharacterRelationshipExclusionReason,
-  RelationshipSelectionTargetSource
+  RelationshipSelectionTargetSource,
+  MemoryInjectionInspectionItem,
+  RelationshipInjectionInspectionItem
 } from '../../models/groupchat/GroupPromptInspectionModels';
 import {
   GroupCharacterMemory,
@@ -85,6 +87,12 @@ import {
   GroupRelationshipMemoryStatus,
   GroupRelationshipTargetType
 } from '../../models/groupchat/GroupCharacterRelationshipMemory';
+import {
+  GroupAutoSummaryDetailLevel,
+  GroupAutoSummarySettings,
+  GroupAutoSummaryPlan,
+  getGroupAutoSummaryLevelSpec
+} from '../../models/groupchat/GroupAutoSummaryModels';
 import { CharacterImageView } from '../../components/CharacterImageView';
 import { EmptyStateView } from '../../components/EmptyStateView';
 import { Logger } from '../../utils/Logger';
@@ -207,6 +215,17 @@ struct GroupCharacterMemoryPage {
   @State private contextAdjustMessage: string = '';
   @State private contextAdjustIsError: boolean = false;
 
+  // G-GROUP-AUTO-SUMMARY-1A: 自动总结诊断状态
+  @State private autoSummarySettings: GroupAutoSummarySettings | null = null;
+  @State private autoSummaryPlan: GroupAutoSummaryPlan | null = null;
+  @State private isAutoSummaryLoading: boolean = false;
+  // G-GROUP-AUTO-SUMMARY-1B: 执行诊断状态
+  @State private autoSummaryExecutionStatus: string = '';
+  @State private autoSummaryActiveCount: number = 0;
+  @State private autoSummaryConsolidationPerformed: boolean = false;
+  @State private autoSummaryIsExecuting: boolean = false;
+  @State private autoSummaryExecutingLabel: string = '';
+
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navBarHeight') navBarHeight: number = 0;
 
@@ -234,7 +253,8 @@ struct GroupCharacterMemoryPage {
         AppServices.getGroupCharacterRelationshipMemoryService(),
         AppServices.getGroupCharacterRelationshipSummaryService(),
         AppServices.getGroupPromptInspectionStore(),
-        AppServices.getModelService()
+        AppServices.getModelService(),
+        AppServices.getGroupConversationMessageService()
       );
       // G-MEMORY-UI-2: 先加载成员列表,确定默认角色
       await this.viewModel.loadMembers(groupConversationId, characterId);
@@ -287,6 +307,9 @@ struct GroupCharacterMemoryPage {
     // G-MEMORY-UI-2: 同步选中角色(防止角色被删除后 ViewModel 自动切换)
     this.selectedCharacterId = this.viewModel.selectedCharacterId;
     this.members = this.viewModel.members;
+    // G-GROUP-AUTO-SUMMARY-1A: 加载当前角色自动总结计划(诊断显示)
+    await this.viewModel.loadAutoSummaryPlan();
+    this.syncAutoSummaryFromViewModel();
   }
 
   /**
@@ -313,6 +336,22 @@ struct GroupCharacterMemoryPage {
     }
     this.memories = snapshot.memories;
     this.header = snapshot.header;
+  }
+
+  /** G-GROUP-AUTO-SUMMARY-1A: 同步 ViewModel 自动总结诊断状态到页面 */
+  private syncAutoSummaryFromViewModel(): void {
+    if (this.viewModel === null) {
+      return;
+    }
+    this.autoSummarySettings = this.viewModel.autoSummarySettings;
+    this.autoSummaryPlan = this.viewModel.autoSummaryPlan;
+    this.isAutoSummaryLoading = this.viewModel.isAutoSummaryLoading;
+    // 1B execution diagnostics
+    this.autoSummaryExecutionStatus = this.viewModel.autoSummaryExecutionStatus;
+    this.autoSummaryActiveCount = this.viewModel.autoSummaryActiveCount;
+    this.autoSummaryConsolidationPerformed = this.viewModel.autoSummaryConsolidationPerformed;
+    this.autoSummaryIsExecuting = this.viewModel.autoSummaryIsExecuting;
+    this.autoSummaryExecutingLabel = this.viewModel.autoSummaryExecutingLabel;
   }
 
   build(): void {
@@ -491,6 +530,8 @@ struct GroupCharacterMemoryPage {
           this.contextInspectorContentView()
         } else {
           // 记忆视图(原有逻辑)
+          // G-GROUP-AUTO-SUMMARY-1A: 自动总结诊断区
+          this.autoSummaryDiagnosticSection()
           this.filterBar()
 
           // 错误提示
@@ -716,11 +757,154 @@ struct GroupCharacterMemoryPage {
     .alignItems(VerticalAlign.Center)
   }
 
+  /**
+   * G-GROUP-AUTO-SUMMARY-1A: 自动总结诊断区。
+   * 显示:开关状态 / 档位 / 最近总结边界 / 新增可见消息统计 / 触发判定。
+   * 本阶段不提供"立即总结"按钮;显示"自动执行将在下一阶段接入"。
+   */
+  @Builder
+  autoSummaryDiagnosticSection(): void {
+    Column() {
+      Row() {
+        Text('自动总结')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_tertiary'))
+          .fontWeight(FontWeight.Medium)
+          .layoutWeight(1)
+        if (this.isAutoSummaryLoading) {
+          LoadingProgress().width(16).height(16)
+        }
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+      .margin({ bottom: 6 })
+
+      if (this.autoSummarySettings !== null) {
+        this.autoSummaryDiagnosticRow('状态',
+          this.autoSummarySettings.enabled ? '开启' : '关闭')
+        this.autoSummaryDiagnosticRow('档位',
+          getGroupAutoSummaryLevelSpec(this.autoSummarySettings.detailLevel).label)
+      } else {
+        this.autoSummaryDiagnosticRow('状态', '未加载')
+      }
+
+      if (this.autoSummaryPlan !== null) {
+        if (this.autoSummaryPlan.previousSummaryBoundaryMessageId.length > 0) {
+          this.autoSummaryDiagnosticRow('最近总结边界消息',
+            this.autoSummaryPlan.previousSummaryBoundaryMessageId.length > 12
+              ? this.autoSummaryPlan.previousSummaryBoundaryMessageId.substring(0, 12) + '…'
+              : this.autoSummaryPlan.previousSummaryBoundaryMessageId)
+          this.autoSummaryDiagnosticRow('最近总结边界轮次',
+            this.autoSummaryPlan.previousSummaryBoundaryRoundId.length > 0
+              ? (this.autoSummaryPlan.previousSummaryBoundaryRoundId.length > 12
+                ? this.autoSummaryPlan.previousSummaryBoundaryRoundId.substring(0, 12) + '…'
+                : this.autoSummaryPlan.previousSummaryBoundaryRoundId) : '无')
+        } else {
+          this.autoSummaryDiagnosticRow('最近总结边界', '尚无(首次总结)')
+        }
+        this.autoSummaryDiagnosticRow('新增可见消息',
+          String(this.autoSummaryPlan.completedVisibleMessageCount) + ' 条')
+        this.autoSummaryDiagnosticRow('新增估算 Token',
+          String(this.autoSummaryPlan.estimatedInputTokens))
+        this.autoSummaryDiagnosticRow('用户消息',
+          String(this.autoSummaryPlan.userMessageCount) + ' 条')
+        this.autoSummaryDiagnosticRow('角色消息',
+          String(this.autoSummaryPlan.characterMessageCount) + ' 条')
+        this.autoSummaryDiagnosticRow('旁白消息',
+          String(this.autoSummaryPlan.narrationMessageCount) + ' 条')
+        this.autoSummaryDiagnosticRow('达到触发条件',
+          this.autoSummaryPlan.eligible ? '是' : '否')
+        if (!this.autoSummaryPlan.eligible && this.autoSummaryPlan.ineligibleReason.length > 0) {
+          this.autoSummaryDiagnosticRow('未触发原因',
+            this.autoSummaryReasonLabel(this.autoSummaryPlan.ineligibleReason))
+        }
+      } else if (!this.isAutoSummaryLoading) {
+        this.autoSummaryDiagnosticRow('计划', '未生成')
+      }
+
+      Divider().color($r('app.color.app_divider')).margin({ top: 8, bottom: 8 })
+
+      // G-GROUP-AUTO-SUMMARY-1B: 执行状态诊断
+      if (this.autoSummaryIsExecuting) {
+        Text(this.autoSummaryExecutingLabel.length > 0
+          ? this.autoSummaryExecutingLabel : '正在自动整理该角色的记忆…')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_text_primary'))
+          .width('100%')
+          .textAlign(TextAlign.Start)
+      }
+      if (this.autoSummaryExecutionStatus.length > 0) {
+        this.autoSummaryDiagnosticRow('最近执行状态', this.autoSummaryExecutionStatus)
+      }
+      if (this.autoSummaryActiveCount > 0) {
+        this.autoSummaryDiagnosticRow('旧 Active 总结', String(this.autoSummaryActiveCount) + ' 条')
+      }
+      if (this.autoSummaryConsolidationPerformed) {
+        this.autoSummaryDiagnosticRow('旧数据归并', '已执行')
+      }
+
+      Text('自动总结将在本轮对话结束后执行')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_tertiary'))
+        .width('100%')
+        .textAlign(TextAlign.Start)
+    }
+    .width('100%')
+    .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+    .backgroundColor($r('app.color.app_surface_2'))
+    .borderRadius($r('app.float.app_radius_md'))
+    .margin({ left: 12, right: 12, top: 8 })
+  }
+
+  /** 自动总结诊断单行 */
+  @Builder
+  autoSummaryDiagnosticRow(label: string, value: string): void {
+    Row() {
+      Text(label)
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_tertiary'))
+      Text(value)
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_secondary'))
+        .fontWeight(FontWeight.Medium)
+        .margin({ left: 8 })
+        .layoutWeight(1)
+    }
+    .width('100%')
+    .padding({ top: 3, bottom: 3 })
+    .alignItems(VerticalAlign.Center)
+  }
+
+  /** 自动总结未触发原因标签 */
+  private autoSummaryReasonLabel(reason: string): string {
+    if (reason === 'auto_summary_disabled') {
+      return '自动总结已关闭';
+    }
+    if (reason === 'no_new_messages') {
+      return '没有新增可见消息';
+    }
+    if (reason === 'below_threshold') {
+      return '未达到触发阈值';
+    }
+    if (reason === 'no_user_message') {
+      return '缺少用户消息';
+    }
+    if (reason === 'no_character_message') {
+      return '缺少角色消息';
+    }
+    if (reason === 'multiple_active_self_summaries') {
+      return '存在多条活跃总结记录';
+    }
+    if (reason === 'boundary_message_missing') {
+      return '上次总结边界消息缺失';
+    }
+    return reason;
+  }
+
   @Builder
   filterBar(): void {
     Row() {
-      Button('全部')
-        .fontSize($r('app.float.app_font_caption'))
+      Button('全部')        .fontSize($r('app.float.app_font_caption'))
         .fontColor(this.filter === GroupCharacterMemoryListFilter.All
           ? $r('app.color.app_on_accent') : $r('app.color.app_text_primary'))
         .backgroundColor(this.filter === GroupCharacterMemoryListFilter.All
@@ -2507,6 +2691,8 @@ struct GroupCharacterMemoryPage {
           this.inspectionMemorySelectionStatusSection()
           this.inspectionMemorySelectionSection()
           this.inspectionRelationshipSelectionSection()
+          this.inspectionMemoryInjectionSection()
+          this.inspectionRelationshipInjectionSection()
           this.inspectionMemorySection()
           this.inspectionRelationshipSection()
           this.inspectionTokenBudgetSection()
@@ -3250,6 +3436,201 @@ struct GroupCharacterMemoryPage {
           .width('100%')
           .padding({ top: 2, bottom: 2 })
         }, (r: GroupCharacterRelationshipMemory) => r.id)
+      }
+    }
+    .width('100%')
+    .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+    .backgroundColor($r('app.color.app_surface_2'))
+    .borderRadius($r('app.float.app_radius_md'))
+    .margin({ left: 12, right: 12, top: 8 })
+  }
+
+  /**
+   * G-CONTEXT-PROMPT-INJECTION-1: 个人记忆注入详情。
+   * 展示 selected/formatted/injected 逐条状态 + 最终注入段完整正文。
+   */
+  @Builder
+  inspectionMemoryInjectionSection(): void {
+    if (this.inspectionSnapshot !== null
+      && this.inspectionSnapshot.memoryInjectionItems !== undefined) {
+      this.inspectionMemoryInjectionSectionBody(this.inspectionSnapshot)
+    }
+  }
+
+  @Builder
+  inspectionMemoryInjectionSectionBody(snap: GroupPromptInspectionSnapshot): void {
+    Column() {
+      Text('个人记忆注入 (' + String(snap.totalMemoriesFormatted !== undefined
+        ? snap.totalMemoriesFormatted : 0) + ' 格式化 / '
+        + String(snap.totalMemoriesInjected) + ' 注入)')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_tertiary'))
+        .fontWeight(FontWeight.Medium)
+        .width('100%')
+        .margin({ bottom: 6 })
+
+      ForEach(snap.memoryInjectionItems !== undefined ? snap.memoryInjectionItems : [],
+        (item: MemoryInjectionInspectionItem) => {
+          Column() {
+            Row() {
+              Text(item.injected ? '注入' : (item.formatted ? '已格式化' : '未格式化'))
+                .fontSize(10)
+                .fontColor(item.injected
+                  ? $r('app.color.app_accent')
+                  : (item.formatted ? $r('app.color.app_text_secondary') : $r('app.color.app_danger')))
+                .backgroundColor($r('app.color.app_surface_1'))
+                .borderRadius(3)
+                .padding({ left: 4, right: 4, top: 1, bottom: 1 })
+              Text(item.title)
+                .fontSize(11)
+                .fontColor($r('app.color.app_text_primary'))
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .layoutWeight(1)
+                .margin({ left: 6 })
+              Text('msg#' + (item.messageIndex >= 0 ? String(item.messageIndex) : '-'))
+                .fontSize(10)
+                .fontColor($r('app.color.app_text_tertiary'))
+            }
+            .width('100%')
+            .alignItems(VerticalAlign.Center)
+            if (item.failureReason.length > 0) {
+              Text('未注入: ' + item.failureReason)
+                .fontSize(10)
+                .fontColor($r('app.color.app_danger'))
+                .width('100%')
+                .textAlign(TextAlign.Start)
+            }
+            Text('估 ' + String(item.estimatedTokens) + ' Token · ID: ' + item.memoryId)
+              .fontSize(10)
+              .fontColor($r('app.color.app_text_tertiary'))
+              .width('100%')
+              .textAlign(TextAlign.Start)
+          }
+          .width('100%')
+          .padding({ top: 3, bottom: 3 })
+        },
+        (item: MemoryInjectionInspectionItem) => item.memoryId
+      )
+
+      if (snap.personalMemorySegmentText !== undefined
+        && snap.personalMemorySegmentText.length > 0) {
+        Text('最终注入段完整正文')
+          .fontSize(11)
+          .fontColor($r('app.color.app_text_secondary'))
+          .width('100%')
+          .margin({ top: 6, bottom: 4 })
+        Text(snap.personalMemorySegmentText)
+          .fontSize(10)
+          .fontColor($r('app.color.app_text_secondary'))
+          .width('100%')
+          .textAlign(TextAlign.Start)
+          .lineHeight(14)
+      } else {
+        Text('本阶段未注入个人记忆段(无选中或段被裁剪)')
+          .fontSize(10)
+          .fontColor($r('app.color.app_text_tertiary'))
+          .width('100%')
+          .textAlign(TextAlign.Start)
+          .margin({ top: 4 })
+      }
+    }
+    .width('100%')
+    .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+    .backgroundColor($r('app.color.app_surface_2'))
+    .borderRadius($r('app.float.app_radius_md'))
+    .margin({ left: 12, right: 12, top: 8 })
+  }
+
+  /**
+   * G-CONTEXT-PROMPT-INJECTION-1: 关系注入详情。
+   * 展示 selected/formatted/injected 逐条状态 + 来源 + 最终注入段完整正文。
+   */
+  @Builder
+  inspectionRelationshipInjectionSection(): void {
+    if (this.inspectionSnapshot !== null
+      && this.inspectionSnapshot.relationshipInjectionItems !== undefined) {
+      this.inspectionRelationshipInjectionSectionBody(this.inspectionSnapshot)
+    }
+  }
+
+  @Builder
+  inspectionRelationshipInjectionSectionBody(snap: GroupPromptInspectionSnapshot): void {
+    Column() {
+      Text('关系注入 (' + String(snap.totalRelationshipsFormatted !== undefined
+        ? snap.totalRelationshipsFormatted : 0) + ' 格式化 / '
+        + String(snap.totalRelationshipsInjected) + ' 注入)')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor($r('app.color.app_text_tertiary'))
+        .fontWeight(FontWeight.Medium)
+        .width('100%')
+        .margin({ bottom: 6 })
+
+      ForEach(snap.relationshipInjectionItems !== undefined ? snap.relationshipInjectionItems : [],
+        (item: RelationshipInjectionInspectionItem) => {
+          Column() {
+            Row() {
+              Text(item.injected ? '注入' : (item.formatted ? '已格式化' : '未格式化'))
+                .fontSize(10)
+                .fontColor(item.injected
+                  ? $r('app.color.app_accent')
+                  : (item.formatted ? $r('app.color.app_text_secondary') : $r('app.color.app_danger')))
+                .backgroundColor($r('app.color.app_surface_1'))
+                .borderRadius(3)
+                .padding({ left: 4, right: 4, top: 1, bottom: 1 })
+              Text(item.direction)
+                .fontSize(11)
+                .fontColor($r('app.color.app_text_primary'))
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .layoutWeight(1)
+                .margin({ left: 6 })
+              Text('msg#' + (item.messageIndex >= 0 ? String(item.messageIndex) : '-'))
+                .fontSize(10)
+                .fontColor($r('app.color.app_text_tertiary'))
+            }
+            .width('100%')
+            .alignItems(VerticalAlign.Center)
+            if (item.failureReason.length > 0) {
+              Text('未注入: ' + item.failureReason)
+                .fontSize(10)
+                .fontColor($r('app.color.app_danger'))
+                .width('100%')
+                .textAlign(TextAlign.Start)
+            }
+            Text('来源: ' + item.source + ' · 估 ' + String(item.estimatedTokens)
+              + ' Token · ID: ' + item.relationshipId)
+              .fontSize(10)
+              .fontColor($r('app.color.app_text_tertiary'))
+              .width('100%')
+              .textAlign(TextAlign.Start)
+          }
+          .width('100%')
+          .padding({ top: 3, bottom: 3 })
+        },
+        (item: RelationshipInjectionInspectionItem) => item.relationshipId
+      )
+
+      if (snap.relationshipMemorySegmentText !== undefined
+        && snap.relationshipMemorySegmentText.length > 0) {
+        Text('最终注入段完整正文')
+          .fontSize(11)
+          .fontColor($r('app.color.app_text_secondary'))
+          .width('100%')
+          .margin({ top: 6, bottom: 4 })
+        Text(snap.relationshipMemorySegmentText)
+          .fontSize(10)
+          .fontColor($r('app.color.app_text_secondary'))
+          .width('100%')
+          .textAlign(TextAlign.Start)
+          .lineHeight(14)
+      } else {
+        Text('本阶段未注入关系段(无选中或段被裁剪)')
+          .fontSize(10)
+          .fontColor($r('app.color.app_text_tertiary'))
+          .width('100%')
+          .textAlign(TextAlign.Start)
+          .margin({ top: 4 })
       }
     }
     .width('100%')

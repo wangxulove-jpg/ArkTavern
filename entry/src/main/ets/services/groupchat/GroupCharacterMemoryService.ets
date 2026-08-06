@@ -36,7 +36,7 @@ import { DbHelper } from '../../database/DbHelper';
 import { ChatRepository } from '../../repositories/ChatRepository';
 import { CharacterRepository } from '../../repositories/CharacterRepository';
 import { ChatParticipantRepository } from '../../repositories/ChatParticipantRepository';
-import { GroupCharacterMemoryRepository } from '../../repositories/groupchat/GroupCharacterMemoryRepository';
+import { GroupCharacterMemoryRepository, UpsertRollingSummaryPayload } from '../../repositories/groupchat/GroupCharacterMemoryRepository';
 import { Chat } from '../../models/Chat';
 import { Character } from '../../models/Character';
 import { ChatParticipant } from '../../models/ChatParticipant';
@@ -354,6 +354,59 @@ export class GroupCharacterMemoryService {
       + ' sourceType=' + created.sourceType
       + ' id=' + shortId(created.id));
     return created;
+  }
+
+  /**
+   * 1C:原子原地更新滚动总结(保持 id + createdAt,不产生 Archived 膨胀)。
+   *
+   * 0 条 Active → 插入
+   * 1 条 Active → 原地更新(同一 id + createdAt)
+   * ≥2 条 Active → canonical 原地更新 + 归档其余
+   *
+   * @returns archivedCount(本次归档的旧 Active 数量)
+   */
+  async upsertRollingSelfSummaryAtomically(payload: UpsertRollingSummaryPayload): Promise<number> {
+    let archivedCount: number = 0;
+    await this.dbHelper.runInTransaction(
+      async (store: relationalStore.RdbStore): Promise<void> => {
+        const chat: Chat | null = await this.chatRepo.getByIdWithStore(store, payload.groupConversationId);
+        if (chat === null) {
+          throw GroupCharacterMemoryError.groupNotFound();
+        }
+        const character: Character | null =
+          await this.characterRepo.getByIdWithStore(store, payload.characterId);
+        if (character === null) {
+          throw GroupCharacterMemoryError.characterNotFound();
+        }
+        const result = await this.memoryRepo.upsertRollingSelfSummaryWithStore(store, payload);
+        archivedCount = result.archivedCount;
+      },
+      'group_auto_summary_replace'
+    );
+    Logger.info(LOG_TAG, 'upsertRollingSelfSummaryAtomically: archived=' + String(archivedCount)
+      + ' charShort=' + shortId(payload.characterId));
+    return archivedCount;
+  }
+
+  /**
+   * 1B 旧方法(已废弃,1C 改为内部调用 upsertRollingSelfSummaryAtomically)。
+   */
+  async replaceActiveSelfSummaryAtomically(newMemory: GroupCharacterMemory): Promise<number> {
+    const payload: UpsertRollingSummaryPayload = {
+      groupConversationId: newMemory.groupConversationId,
+      characterId: newMemory.characterId,
+      title: newMemory.title,
+      content: newMemory.content,
+      importance: newMemory.importance,
+      keywords: newMemory.keywords,
+      sourceMessageId: newMemory.sourceMessageId !== undefined ? newMemory.sourceMessageId : '',
+      sourceRoundId: newMemory.sourceRoundId,
+      sourceSenderCharacterId: newMemory.sourceSenderCharacterId !== undefined
+        ? newMemory.sourceSenderCharacterId : '',
+      sourceHash: newMemory.sourceHash !== undefined ? newMemory.sourceHash : '',
+      updatedAt: newMemory.updatedAt
+    };
+    return await this.upsertRollingSelfSummaryAtomically(payload);
   }
 
   /**

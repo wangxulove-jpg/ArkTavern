@@ -38,6 +38,11 @@ import {
   RelationshipSelectionTargetSource,
   GroupRelationshipTargetCandidate
 } from '../main/ets/models/groupchat/GroupPromptInspectionModels';
+import { estimateTextTokens } from '../main/ets/services/TokenCounter';
+import {
+  renderPersonalMemoryItem,
+  PERSONAL_MEMORY_SEGMENT_HEADER
+} from '../main/ets/services/groupchat/GroupMemoryPromptFormatter';
 
 const CHAT_1: string = 'chat-1';
 const CHAT_2: string = 'chat-2';
@@ -644,17 +649,21 @@ export default function groupCharacterMemorySelectorTest() {
 
     it('MEMSEL_16_token_budget', 0, async () => {
       const ctx = setup();
-      ctx.memoryRepo.setMemories([
-        makeMemory('m1', CHAT_1, CHAR_A, 't1', '一二三', 3),
-        makeMemory('m2', CHAT_1, CHAR_A, 't2', '一二三', 3)
-      ]);
-      // 每条估算 = 标题1 + 正文3 + 4 = 8;预算 11 → 第一条通过,第二条超预算
+      const m1: GroupCharacterMemory = makeMemory('m1', CHAT_1, CHAR_A, 't1', '一二三', 3);
+      const m2: GroupCharacterMemory = makeMemory('m2', CHAT_1, CHAR_A, 't2', '一二三', 3);
+      ctx.memoryRepo.setMemories([m1, m2]);
+      // G-CONTEXT-PROMPT-INJECTION-1: Token 估算基于实际格式化 item 文本 + 段头固定开销
+      const headerTokens: number = estimateTextTokens(PERSONAL_MEMORY_SEGMENT_HEADER);
+      const item1Tokens: number = estimateTextTokens(renderPersonalMemoryItem(m1, 1));
+      const item2Tokens: number = estimateTextTokens(renderPersonalMemoryItem(m2, 1));
+      const budget: number = headerTokens + item1Tokens;
       const sel: GroupCharacterMemorySelection =
-        await ctx.selector.select(makeInput(CHAT_1, CHAR_A, '', [], true, 5, 3, 11, 400));
+        await ctx.selector.select(makeInput(CHAT_1, CHAR_A, '', [], true, 5, 3, budget, 400));
+      // 只允许第一条;第二条超预算 → EXCLUDED_TOKEN_BUDGET
       expect(sel.selectedPersonalMemories.length).assertEqual(1);
       const reasons: Map<string, string> = excludedReasonMap(sel);
       expect(reasons.get('m2')).assertEqual(GroupCharacterMemoryExclusionReason.EXCLUDED_TOKEN_BUDGET);
-      expect(sel.personalEstimatedTokens).assertEqual(sel.selectedPersonalMemories[0].estimatedTokens);
+      expect(sel.personalEstimatedTokens).assertEqual(headerTokens + item1Tokens);
     });
 
     it('MEMSEL_17_owner_relationship_full_list', 0, async () => {

@@ -110,6 +110,7 @@ export type TransactionOperation =
   | 'group_character_memory_archive'
   | 'group_character_memory_delete'
   | 'group_character_memory_delete_by_group'
+  | 'group_auto_summary_replace'
   | 'unknown';
 
 export class DbHelper {

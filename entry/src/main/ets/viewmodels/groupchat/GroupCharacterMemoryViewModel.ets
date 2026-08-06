@@ -62,8 +62,16 @@ import {
 } from '../../services/groupchat/GroupCharacterRelationshipSummaryService';
 import { GroupPromptInspectionStore } from '../../services/groupchat/GroupPromptInspectionStore';
 import { GroupPromptInspectionSnapshot } from '../../models/groupchat/GroupPromptInspectionModels';
+import { GroupConversationMessageService } from '../../services/groupchat/GroupConversationMessageService';
+import { GroupAutoSummaryPlanner } from '../../services/groupchat/GroupAutoSummaryPlanner';
+import {
+  GroupAutoSummarySettings,
+  GroupAutoSummaryPlan,
+  loadGroupAutoSummarySettings
+} from '../../models/groupchat/GroupAutoSummaryModels';
 import { Logger } from '../../utils/Logger';
 import { Chat } from '../../models/Chat';
+import { ChatMessage } from '../../models/ChatMessage';
 import { ChatParticipant } from '../../models/ChatParticipant';
 import { Character } from '../../models/Character';
 import {
@@ -289,10 +297,31 @@ export class GroupCharacterMemoryViewModel {
   private readonly inspectionStore: GroupPromptInspectionStore;
   /** G-CONTEXT-INSPECTOR-1: 模型服务(用于读取/更新 contextWindow,可空) */
   private readonly modelService: ModelService | null;
+  /** G-GROUP-AUTO-SUMMARY-1A: 群聊消息服务(只读,用于自动总结窗口) */
+  private readonly messageService: GroupConversationMessageService | null;
 
   state: GroupCharacterMemoryLoadState = GroupCharacterMemoryLoadState.Loading;
   errorMessage: string = '';
   snapshot: GroupCharacterMemorySnapshotUiModel | null = null;
+
+  // G-GROUP-AUTO-SUMMARY-1A: 自动总结诊断状态
+  autoSummarySettings: GroupAutoSummarySettings | null = null;
+  autoSummaryPlan: GroupAutoSummaryPlan | null = null;
+  isAutoSummaryLoading: boolean = false;
+
+  // G-GROUP-AUTO-SUMMARY-1B: 执行诊断状态
+  autoSummaryExecutionStatus: string = '';
+  autoSummaryLastExecutedAt: number = 0;
+  autoSummaryLastSuccessAt: number = 0;
+  autoSummaryLastFailureCode: string = '';
+  autoSummaryActiveCount: number = 0;
+  autoSummaryConsolidationPerformed: boolean = false;
+  autoSummaryBoundaryMessageId: string = '';
+  autoSummaryBoundaryRoundId: string = '';
+  autoSummarySourceHash: string = '';
+  autoSummaryOutputCharCount: number = 0;
+  autoSummaryIsExecuting: boolean = false;
+  autoSummaryExecutingLabel: string = '';
 
   // G-MEMORY-UI-2: 角色切换
   members: GroupCharacterSwitcherItemUiModel[] = [];
@@ -361,7 +390,8 @@ export class GroupCharacterMemoryViewModel {
     relationshipMemoryService: GroupCharacterRelationshipMemoryService | null = null,
     relationshipSummaryService: GroupCharacterRelationshipSummaryService | null = null,
     inspectionStore: GroupPromptInspectionStore | null = null,
-    modelService: ModelService | null = null
+    modelService: ModelService | null = null,
+    messageService: GroupConversationMessageService | null = null
   ) {
     this.groupPersistenceService = groupPersistenceService;
     this.characterService = characterService;
@@ -371,6 +401,7 @@ export class GroupCharacterMemoryViewModel {
     this.relationshipSummaryService = relationshipSummaryService;
     this.inspectionStore = inspectionStore ?? new GroupPromptInspectionStore();
     this.modelService = modelService;
+    this.messageService = messageService;
     this.instanceShortId = GroupCharacterMemoryViewModel.generateShortId();
   }
 
@@ -395,6 +426,23 @@ export class GroupCharacterMemoryViewModel {
     this.isApprovingSummary = false;
     this.summaryDraft = null;
     this.summaryError = '';
+    // G-GROUP-AUTO-SUMMARY-1A: 清理自动总结诊断状态
+    this.autoSummarySettings = null;
+    this.autoSummaryPlan = null;
+    this.isAutoSummaryLoading = false;
+    // G-GROUP-AUTO-SUMMARY-1B: 清理执行诊断
+    this.autoSummaryExecutionStatus = '';
+    this.autoSummaryLastExecutedAt = 0;
+    this.autoSummaryLastSuccessAt = 0;
+    this.autoSummaryLastFailureCode = '';
+    this.autoSummaryActiveCount = 0;
+    this.autoSummaryConsolidationPerformed = false;
+    this.autoSummaryBoundaryMessageId = '';
+    this.autoSummaryBoundaryRoundId = '';
+    this.autoSummarySourceHash = '';
+    this.autoSummaryOutputCharCount = 0;
+    this.autoSummaryIsExecuting = false;
+    this.autoSummaryExecutingLabel = '';
     // G-MEMORY-AUTO-1B: 清理关系总结状态
     this.relationshipOperationId = this.relationshipOperationId + 1;
     this.isPreparingRelationship = false;
@@ -554,6 +602,23 @@ export class GroupCharacterMemoryViewModel {
     this.isApprovingSummary = false;
     this.summaryDraft = null;
     this.summaryError = '';
+    // G-GROUP-AUTO-SUMMARY-1A: 切换角色时清空上一角色的计划状态
+    this.autoSummarySettings = null;
+    this.autoSummaryPlan = null;
+    this.isAutoSummaryLoading = false;
+    // G-GROUP-AUTO-SUMMARY-1B: 清空执行诊断
+    this.autoSummaryExecutionStatus = '';
+    this.autoSummaryLastExecutedAt = 0;
+    this.autoSummaryLastSuccessAt = 0;
+    this.autoSummaryLastFailureCode = '';
+    this.autoSummaryActiveCount = 0;
+    this.autoSummaryConsolidationPerformed = false;
+    this.autoSummaryBoundaryMessageId = '';
+    this.autoSummaryBoundaryRoundId = '';
+    this.autoSummarySourceHash = '';
+    this.autoSummaryOutputCharCount = 0;
+    this.autoSummaryIsExecuting = false;
+    this.autoSummaryExecutingLabel = '';
     this.relationshipOperationId = this.relationshipOperationId + 1;
     this.isPreparingRelationship = false;
     this.isApprovingRelationship = false;
@@ -1357,11 +1422,115 @@ export class GroupCharacterMemoryViewModel {
   }
 
   /**
+   * G-GROUP-AUTO-SUMMARY-1A: 加载当前角色的自动总结计划。
+   *
+   * 流程:
+   * 1. 读取当前群聊自动总结设置
+   * 2. 读取群聊全部消息(listMessages,只读)
+   * 3. 读取当前角色全部记忆(listByCharacter All,只读)
+   * 4. 调用 GroupAutoSummaryPlanner.buildPlan 构建计划
+   *
+   * 本阶段只构建计划供诊断显示,不调用模型、不写入记忆(SUMPLAN-20/21)。
+   * 防迟到:loadOperationId / disposed 校验。
+   */
+  async loadAutoSummaryPlan(): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
+    if (this.expectedGroupConversationId.length === 0
+      || this.expectedCharacterId.length === 0) {
+      this.autoSummarySettings = null;
+      this.autoSummaryPlan = null;
+      return;
+    }
+    const operationId: number = this.loadOperationId;
+    const groupId: string = this.expectedGroupConversationId;
+    const charId: string = this.expectedCharacterId;
+    this.isAutoSummaryLoading = true;
+
+    try {
+      // 1. 设置(按群聊独立)
+      const settings: GroupAutoSummarySettings =
+        await loadGroupAutoSummarySettings(groupId);
+      if (operationId !== this.loadOperationId || this.disposed) {
+        return;
+      }
+      this.autoSummarySettings = settings;
+
+      // 2. 消息(只读)
+      let allMessages: ChatMessage[] = [];
+      if (this.messageService !== null) {
+        try {
+          allMessages = await this.messageService.listMessages(groupId);
+        } catch (e) {
+          Logger.warn(LOG_TAG, 'loadAutoSummaryPlan listMessages failed: '
+            + this.safeErrorCategory(e));
+          allMessages = [];
+        }
+      }
+      if (operationId !== this.loadOperationId || this.disposed) {
+        return;
+      }
+
+      // 3. 记忆(只读,全部)
+      let memories: GroupCharacterMemory[] = [];
+      try {
+        memories = await this.memoryService.listByCharacter(
+          groupId, charId, GroupCharacterMemoryFilter.All
+        );
+      } catch (e) {
+        Logger.warn(LOG_TAG, 'loadAutoSummaryPlan listByCharacter failed: '
+          + this.safeErrorCategory(e));
+        memories = [];
+      }
+      if (operationId !== this.loadOperationId || this.disposed) {
+        return;
+      }
+
+      // 4. 构建计划
+      const plan: GroupAutoSummaryPlan = GroupAutoSummaryPlanner.buildPlan({
+        groupConversationId: groupId,
+        ownerCharacterId: charId,
+        settings: settings,
+        allMessages: allMessages,
+        memories: memories
+      });
+      if (operationId !== this.loadOperationId || this.disposed) {
+        return;
+      }
+      this.autoSummaryPlan = plan;
+
+      // G-GROUP-AUTO-SUMMARY-1B: 从计划填充执行诊断
+      this.autoSummaryActiveCount = plan.activeSummaryCount;
+      this.autoSummaryConsolidationPerformed = plan.requiresConsolidation;
+      this.autoSummaryBoundaryMessageId = plan.previousSummaryBoundaryMessageId;
+      this.autoSummaryBoundaryRoundId = plan.previousSummaryBoundaryRoundId;
+      this.autoSummarySourceHash = plan.previousSummarySourceHash;
+      this.autoSummaryOutputCharCount = 0;
+
+      Logger.info(LOG_TAG, 'loadAutoSummaryPlan ok: eligible=' + plan.eligible
+        + ' reason=' + plan.ineligibleReason
+        + ' visible=' + String(plan.completedVisibleMessageCount)
+        + ' tokens=' + String(plan.estimatedInputTokens)
+        + ' charShort=' + this.shortId(charId));
+    } catch (e) {
+      if (operationId !== this.loadOperationId || this.disposed) {
+        return;
+      }
+      Logger.warn(LOG_TAG, 'loadAutoSummaryPlan failed: ' + this.safeErrorCategory(e));
+      this.autoSummaryPlan = null;
+    } finally {
+      if (operationId === this.loadOperationId && !this.disposed) {
+        this.isAutoSummaryLoading = false;
+      }
+    }
+  }
+
+  /**
    * G-CONTEXT-INSPECTOR-1: 加载当前 ProviderConfig 的 contextWindow。
    * 供上下文调整卡片显示当前配置值。
    */
-  async loadContextAdjustment(): Promise<void> {
-    if (this.disposed || this.modelService === null) {
+  async loadContextAdjustment(): Promise<void> {    if (this.disposed || this.modelService === null) {
       return;
     }
     this.isContextAdjustLoaded = false;

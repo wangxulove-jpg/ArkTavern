@@ -7,6 +7,10 @@ import groupMutationDeleteProtectionTest from './GroupMutationDeleteProtection.t
 import groupMessageVisibilityPolicyTest from './GroupMessageVisibilityPolicy.test';
 import groupCharacterMemorySelectorTest from './GroupCharacterMemorySelector.test';
 import groupMemorySelectionInspectionTest from './GroupMemorySelectionInspection.test';
+import groupMemoryPromptInjectionTest from './GroupMemoryPromptInjection.test';
+import groupAutoSummaryTest from './GroupAutoSummary.test';
+import autoSummaryExecutorTest from './AutoSummaryExecutor.test';
+import autoSummaryHardTest from './AutoSummaryHard.test';
 
 export default function testsuite() {
   localUnitSmokeTest();
@@ -18,4 +22,8 @@ export default function testsuite() {
   groupMessageVisibilityPolicyTest();
   groupCharacterMemorySelectorTest();
   groupMemorySelectionInspectionTest();
+  groupMemoryPromptInjectionTest();
+  groupAutoSummaryTest();
+  autoSummaryExecutorTest();
+  autoSummaryHardTest();
 }

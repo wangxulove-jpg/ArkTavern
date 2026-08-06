@@ -34,6 +34,13 @@ import {
   persistGroupNarrationMaxTokens
 } from '../../utils/GroupReplyModeSetting';
 import { GroupChatDetailState } from './GroupChatUiModels';
+import {
+  GroupAutoSummaryDetailLevel,
+  GroupAutoSummarySettings,
+  loadGroupAutoSummarySettings,
+  persistGroupAutoSummaryEnabled,
+  persistGroupAutoSummaryDetailLevel
+} from '../../models/groupchat/GroupAutoSummaryModels';
 
 const LOG_TAG: string = 'GroupChatSettingsVM';
 
@@ -59,6 +66,10 @@ export class GroupChatSettingsViewModel {
   narrationEnabled: boolean = false;
   /** GROUP-NARRATION-1A: 旁白最大 token 数 */
   narrationMaxTokens: number = 256;
+  /** G-GROUP-AUTO-SUMMARY-1A: 自动记忆总结开关 */
+  autoSummaryEnabled: boolean = false;
+  /** G-GROUP-AUTO-SUMMARY-1A: 自动总结详细程度档位 */
+  autoSummaryDetailLevel: GroupAutoSummaryDetailLevel = GroupAutoSummaryDetailLevel.Medium;
 
   private readonly groupService: GroupConversationPersistenceService;
   private readonly messageService: GroupConversationMessageService;
@@ -98,6 +109,11 @@ export class GroupChatSettingsViewModel {
       // GROUP-NARRATION-1A: 加载旁白开关
       this.narrationEnabled = await loadGroupNarrationEnabled(chatId);
       this.narrationMaxTokens = await loadGroupNarrationMaxTokens(chatId);
+      // G-GROUP-AUTO-SUMMARY-1A: 加载自动记忆总结设置
+      const autoSummarySettings: GroupAutoSummarySettings =
+        await loadGroupAutoSummarySettings(chatId);
+      this.autoSummaryEnabled = autoSummarySettings.enabled;
+      this.autoSummaryDetailLevel = autoSummarySettings.detailLevel;
     } catch (e) {
       Logger.error(LOG_TAG, 'load failed: ' + String(e));
       this.state = GroupChatDetailState.Error;
@@ -217,6 +233,29 @@ export class GroupChatSettingsViewModel {
     this.narrationMaxTokens = tokens;
     if (this.chatId.length > 0) {
       persistGroupNarrationMaxTokens(this.chatId, tokens);
+    }
+  }
+
+  /**
+   * G-GROUP-AUTO-SUMMARY-1A: 设置并持久化自动记忆总结开关。
+   * 按群聊独立保存,不同群聊互不影响。
+   * 关闭后不生成新的自动总结;已保存旧总结继续保留。
+   */
+  setAndPersistAutoSummaryEnabled(enabled: boolean): void {
+    this.autoSummaryEnabled = enabled;
+    if (this.chatId.length > 0) {
+      persistGroupAutoSummaryEnabled(this.chatId, enabled);
+    }
+  }
+
+  /**
+   * G-GROUP-AUTO-SUMMARY-1A: 设置并持久化自动总结档位。
+   * 切换档位只影响下一次成功总结。
+   */
+  setAndPersistAutoSummaryDetailLevel(level: GroupAutoSummaryDetailLevel): void {
+    this.autoSummaryDetailLevel = level;
+    if (this.chatId.length > 0) {
+      persistGroupAutoSummaryDetailLevel(this.chatId, level);
     }
   }
 }

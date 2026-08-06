@@ -34,8 +34,11 @@ import {
   isGroupCharacterMemoryOrigin,
   isGroupCharacterMemoryStatus,
   isGroupCharacterMemoryImportance,
-  normalizeKeywords
+  normalizeKeywords,
+  GROUP_CHARACTER_MEMORY_ID_PREFIX,
+  GROUP_CHARACTER_MEMORY_IMPORTANCE_DEFAULT
 } from '../../models/groupchat/GroupCharacterMemory';
+import { generateUuid } from '../../utils/Uuid';
 import { DatabaseError } from '../../models/DatabaseError';
 import {
   TABLE_GROUP_CHARACTER_MEMORIES,
@@ -338,6 +341,175 @@ export class GroupCharacterMemoryRepository {
     }
   }
 
+  /**
+   * 1C:原地更新滚动总结(保证滚动不产生 Archived 膨胀 + canonical 归并确定性)。
+   *
+   * 事务内保证:(groupConversationId, characterId) 最终恰好一条 Active self_summary_v1。
+   *
+   * 规则:
+   * - 0 条 Active:插入一条新记录(payload 提供全部字段)
+   * - 1 条 Active:原地更新同一记录(保持 id + createdAt)
+   * - ≥2 条 Active:
+   *   canonical = updatedAt DESC → id DESC 第一条
+   *   原地更新 canonical(保持 id + createdAt)
+   *   其余 Active 归档(Archived)
+   *
+   * @param payload 滚动总结载荷(不含 id/createdAt,由方法内部决定)
+   * @returns { insertedId(新插入后), updatedId(原地更新后), archivedCount }
+   */
+  async upsertRollingSelfSummaryWithStore(
+    store: relationalStore.RdbStore,
+    payload: UpsertRollingSummaryPayload
+  ): Promise<UpsertRollingSummaryResult> {
+    if (payload.groupConversationId === '') {
+      throw DatabaseError.invalidData('upsertRollingSelfSummary: groupConversationId empty');
+    }
+    if (payload.characterId === '') {
+      throw DatabaseError.invalidData('upsertRollingSelfSummary: characterId empty');
+    }
+    if (payload.content === '') {
+      throw DatabaseError.invalidData('upsertRollingSelfSummary: content empty');
+    }
+
+    const SELF_SUMMARY_V1: string = 'self_summary_v1';
+
+    const pred: relationalStore.RdbPredicates =
+      new relationalStore.RdbPredicates(TABLE_GROUP_CHARACTER_MEMORIES);
+    pred.equalTo(COLUMN_GROUP_CONVERSATION_ID, payload.groupConversationId);
+    pred.equalTo(COLUMN_CHARACTER_ID, payload.characterId);
+    pred.equalTo(COLUMN_ORIGIN_TYPE, GroupCharacterMemoryOrigin.Interaction);
+    pred.equalTo(COLUMN_SOURCE_TYPE, SELF_SUMMARY_V1);
+    pred.equalTo(COLUMN_STATUS, GroupCharacterMemoryStatus.Active);
+
+    const rs: relationalStore.ResultSet = await store.query(pred);
+    const oldRows: ActiveSummaryRow[] = [];
+    try {
+      while (rs.goToNextRow()) {
+        const row: ActiveSummaryRow = {
+          id: rs.getString(rs.getColumnIndex(COLUMN_ID)),
+          createdAt: rs.getLong(rs.getColumnIndex(COLUMN_CREATED_AT)),
+          updatedAt: rs.getLong(rs.getColumnIndex(COLUMN_UPDATED_AT))
+        };
+        oldRows.push(row);
+      }
+    } finally {
+      rs.close();
+    }
+
+    // 排序:updatedAt DESC, tie by id DESC(确定性 canonical)
+    oldRows.sort((a, b) => {
+      if (a.updatedAt !== b.updatedAt) {
+        return b.updatedAt - a.updatedAt;
+      }
+      if (a.id < b.id) {
+        return 1;
+      }
+      if (a.id > b.id) {
+        return -1;
+      }
+      return 0;
+    });
+
+    const now: number = payload.updatedAt;
+    let result: UpsertRollingSummaryResult;
+
+    if (oldRows.length === 0) {
+      // 0 Active:插入新记录
+      const newId: string = GROUP_CHARACTER_MEMORY_ID_PREFIX + generateUuid();
+      const bucket: relationalStore.ValuesBucket = buildRollingSummaryBucket(
+        newId, payload, now, now
+      );
+      await store.insert(TABLE_GROUP_CHARACTER_MEMORIES, bucket);
+      const r0: UpsertRollingSummaryResult = { updatedId: newId, inserted: true, archivedCount: 0 };
+      result = r0;
+    } else if (oldRows.length === 1) {
+      // 1 Active:原地更新(保持 id + createdAt)
+      const existing: ActiveSummaryRow = oldRows[0];
+      const bucket: relationalStore.ValuesBucket = buildRollingSummaryBucket(
+        existing.id, payload, existing.createdAt, now
+      );
+      const updatePred: relationalStore.RdbPredicates =
+        new relationalStore.RdbPredicates(TABLE_GROUP_CHARACTER_MEMORIES);
+      updatePred.equalTo(COLUMN_ID, existing.id);
+      await store.update(bucket, updatePred);
+      const r1: UpsertRollingSummaryResult = { updatedId: existing.id, inserted: false, archivedCount: 0 };
+      result = r1;
+    } else {
+      // ≥2 Active:更新 canonical(第一条),归档其余
+      const canonical: ActiveSummaryRow = oldRows[0];
+      const bucket: relationalStore.ValuesBucket = buildRollingSummaryBucket(
+        canonical.id, payload, canonical.createdAt, now
+      );
+      const updatePred: relationalStore.RdbPredicates =
+        new relationalStore.RdbPredicates(TABLE_GROUP_CHARACTER_MEMORIES);
+      updatePred.equalTo(COLUMN_ID, canonical.id);
+      await store.update(bucket, updatePred);
+
+      // 归档其余旧 Active
+      const archBucket: relationalStore.ValuesBucket = {};
+      archBucket[COLUMN_STATUS] = GroupCharacterMemoryStatus.Archived;
+      archBucket[COLUMN_UPDATED_AT] = now;
+      for (let i = 1; i < oldRows.length; i++) {
+        const archPred: relationalStore.RdbPredicates =
+          new relationalStore.RdbPredicates(TABLE_GROUP_CHARACTER_MEMORIES);
+        archPred.equalTo(COLUMN_ID, oldRows[i].id);
+        await store.update(archBucket, archPred);
+      }
+      const rN: UpsertRollingSummaryResult = { updatedId: canonical.id, inserted: false, archivedCount: oldRows.length - 1 };
+      result = rN;
+    }
+
+    // 验证不变式:恰好 1 条 Active
+    const verifyPred: relationalStore.RdbPredicates =
+      new relationalStore.RdbPredicates(TABLE_GROUP_CHARACTER_MEMORIES);
+    verifyPred.equalTo(COLUMN_GROUP_CONVERSATION_ID, payload.groupConversationId);
+    verifyPred.equalTo(COLUMN_CHARACTER_ID, payload.characterId);
+    verifyPred.equalTo(COLUMN_ORIGIN_TYPE, GroupCharacterMemoryOrigin.Interaction);
+    verifyPred.equalTo(COLUMN_SOURCE_TYPE, SELF_SUMMARY_V1);
+    verifyPred.equalTo(COLUMN_STATUS, GroupCharacterMemoryStatus.Active);
+    const verifyRs: relationalStore.ResultSet = await store.query(verifyPred);
+    let activeCount: number = 0;
+    try {
+      activeCount = verifyRs.rowCount;
+    } finally {
+      verifyRs.close();
+    }
+    if (activeCount !== 1) {
+      throw DatabaseError.queryFailed(
+        'upsertRollingSelfSummary: invariant violation, activeCount=' + String(activeCount)
+      );
+    }
+
+    return result;
+  }
+
+  /**
+   * 1B 旧方法(已废弃,1C 用 upsertRollingSelfSummaryWithStore 替代)。
+   */
+  async replaceActiveSelfSummaryWithStore(
+    store: relationalStore.RdbStore,
+    groupConversationId: string,
+    characterId: string,
+    newMemory: GroupCharacterMemory
+  ): Promise<number> {
+    const payload: UpsertRollingSummaryPayload = {
+      groupConversationId: groupConversationId,
+      characterId: characterId,
+      title: newMemory.title,
+      content: newMemory.content,
+      importance: newMemory.importance,
+      keywords: newMemory.keywords,
+      sourceMessageId: newMemory.sourceMessageId !== undefined ? newMemory.sourceMessageId : '',
+      sourceRoundId: newMemory.sourceRoundId,
+      sourceSenderCharacterId: newMemory.sourceSenderCharacterId !== undefined
+        ? newMemory.sourceSenderCharacterId : '',
+      sourceHash: newMemory.sourceHash !== undefined ? newMemory.sourceHash : '',
+      updatedAt: newMemory.updatedAt
+    };
+    const result: UpsertRollingSummaryResult = await this.upsertRollingSelfSummaryWithStore(store, payload);
+    return result.archivedCount;
+  }
+
   // ===== 内部辅助 =====
 
   private async queryListByCharacter(
@@ -411,6 +583,69 @@ export class GroupCharacterMemoryRepository {
       throw DatabaseError.invalidData('GroupCharacterMemory.updatedAt invalid');
     }
   }
+}
+
+// ===== 1C: 滚动总结载荷与结果 =====
+
+/** 1C: 旧 Active 总结行(用于 canonical 排序) */
+interface ActiveSummaryRow {
+  id: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** 1C: 滚动总结载荷 */
+export interface UpsertRollingSummaryPayload {
+  readonly groupConversationId: string;
+  readonly characterId: string;
+  readonly title: string;
+  readonly content: string;
+  readonly importance: number;
+  readonly keywords: string[];
+  readonly sourceMessageId: string;
+  readonly sourceRoundId?: string;
+  readonly sourceSenderCharacterId: string;
+  readonly sourceHash: string;
+  readonly updatedAt: number;
+}
+
+/** 滚动总结原地更新结果 */
+export interface UpsertRollingSummaryResult {
+  /** 最终 Active 记录 ID(新插入或更新后) */
+  readonly updatedId: string;
+  /** 是否新插入(false 表示原地更新) */
+  readonly inserted: boolean;
+  /** 本次归档的旧 Active 数量 */
+  readonly archivedCount: number;
+}
+
+/** 构建滚动总结 ValuesBucket(统一 id 来源与 createdAt 来源) */
+function buildRollingSummaryBucket(
+  id: string,
+  payload: UpsertRollingSummaryPayload,
+  createdAt: number,
+  updatedAt: number
+): relationalStore.ValuesBucket {
+  const bucket: relationalStore.ValuesBucket = {};
+  bucket[COLUMN_ID] = id;
+  bucket[COLUMN_GROUP_CONVERSATION_ID] = payload.groupConversationId;
+  bucket[COLUMN_CHARACTER_ID] = payload.characterId;
+  bucket[COLUMN_ORIGIN_TYPE] = GroupCharacterMemoryOrigin.Interaction;
+  bucket[COLUMN_STATUS] = GroupCharacterMemoryStatus.Active;
+  bucket[COLUMN_MEMORY_TITLE_GCM] = payload.title;
+  bucket[COLUMN_CONTENT] = payload.content;
+  bucket[COLUMN_IMPORTANCE_GCM] = payload.importance;
+  bucket[COLUMN_MEMORY_KEYWORDS_JSON] = JSON.stringify(payload.keywords);
+  bucket[COLUMN_SOURCE_MESSAGE_ID] = payload.sourceMessageId.length > 0 ? payload.sourceMessageId : null;
+  bucket[COLUMN_SOURCE_ROUND_ID] = payload.sourceRoundId !== undefined && payload.sourceRoundId.length > 0
+    ? payload.sourceRoundId : null;
+  bucket[COLUMN_SOURCE_SENDER_CHARACTER_ID] = payload.sourceSenderCharacterId.length > 0
+    ? payload.sourceSenderCharacterId : null;
+  bucket[COLUMN_SOURCE_TYPE] = 'self_summary_v1';
+  bucket[COLUMN_MEMORY_SOURCE_HASH] = payload.sourceHash.length > 0 ? payload.sourceHash : null;
+  bucket[COLUMN_CREATED_AT] = createdAt;
+  bucket[COLUMN_UPDATED_AT] = updatedAt;
+  return bucket;
 }
 
 function memoryToBucket(memory: GroupCharacterMemory): relationalStore.ValuesBucket {
