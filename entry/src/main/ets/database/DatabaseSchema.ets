@@ -1026,8 +1026,6 @@ const CREATE_WORLD_CHARACTER_INSTANCES_TABLE: string =
   `${COLUMN_DISPLAY_NAME_SNAPSHOT} TEXT NOT NULL, ` +
   `${COLUMN_CURRENT_LOCATION_ID} TEXT, ` +
   `${COLUMN_IS_ACTIVE} INTEGER NOT NULL DEFAULT 1, ` +
-  `${COLUMN_CURRENT_GOAL} TEXT NOT NULL DEFAULT '', ` +
-  `${COLUMN_MAP_ICON_STYLE} TEXT, ` +
   `${COLUMN_CREATED_AT} INTEGER NOT NULL, ` +
   `${COLUMN_UPDATED_AT} INTEGER NOT NULL, ` +
   `UNIQUE(${COLUMN_WORLD_ID}, ${COLUMN_CHARACTER_ID})` +
@@ -1503,10 +1501,6 @@ const CREATE_WORLD_PLAYER_PROFILES_TABLE: string =
   `${COLUMN_ID} TEXT PRIMARY KEY NOT NULL, ` +
   `${COLUMN_WORLD_ID} TEXT NOT NULL, ` +
   `${COLUMN_DISPLAY_NAME} TEXT NOT NULL, ` +
-  `${COLUMN_PERSONA} TEXT NOT NULL DEFAULT '', ` +
-  `${COLUMN_PUBLIC_IDENTITY} TEXT NOT NULL DEFAULT '', ` +
-  `${COLUMN_PRIVATE_IDENTITY} TEXT NOT NULL DEFAULT '', ` +
-  `${COLUMN_CURRENT_LOCATION_ID} TEXT, ` +
   `${COLUMN_CREATED_AT} INTEGER NOT NULL, ` +
   `${COLUMN_UPDATED_AT} INTEGER NOT NULL, ` +
   `UNIQUE(${COLUMN_WORLD_ID})` +
@@ -1651,13 +1645,17 @@ export const V22_SCHEMA_STATEMENTS: string[] = [
 ];
 
 // ===== v23: 世界角色实例领域增强(W2A1-WORLD-PLAYER-CHARACTER-DOMAIN) =====
-// world_character_instances 增加 current_goal / map_icon_style 列。
-// world_player_profiles 增加 persona / public_identity / private_identity / current_location_id 列。
+// world_character_instances 增加 current_goal / map_icon_style 列(V22 缺失)。
+// world_player_profiles 增加 persona / public_identity / private_identity / current_location_id 列(V22 缺失)。
+// 注意:CREATE_WORLD_*_TABLE 保持 V22 原始列集合(不包含新增列),
+// 新增列仅通过 ALTER TABLE ADD COLUMN 引入,确保 fresh schema 与 incremental migration 一致。
 
 /**
  * v22→v23 迁移 DDL(W2A1-WORLD-PLAYER-CHARACTER-DOMAIN 世界角色实例领域增强)。
  *
- * 仅修改 2 张现有表(ALTER ADD COLUMN),不创建新表。
+ * 修改 2 张现有表(ALTER ADD COLUMN),不创建新表。
+ * world_character_instances: 新增 current_goal / map_icon_style(V22 确实缺失)。
+ * world_player_profiles: 新增 persona / public_identity / private_identity / current_location_id(V22 确实缺失)。
  * 新增列均有 DEFAULT 值,不影响现有数据。
  * 任一语句失败由 DbHelper 事务回滚,数据库版本保持 22。
  */

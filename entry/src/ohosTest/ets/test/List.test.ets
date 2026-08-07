@@ -16,6 +16,8 @@ import playerProfileModelContractTest from './PlayerProfileModelContract.test';
 import characterInstanceModelContractTest from './CharacterInstanceModelContract.test';
 import playerProfileRepositoryContractTest from './PlayerProfileRepositoryContract.test';
 import worldPlayerCharacterDomainContractTest from './WorldPlayerCharacterDomainContract.test';
+import w2a1fixSchemaContractTest from './W2a1fixSchemaContract.test';
+import w2a1fixMigrationContractTest from './W2a1fixMigrationContract.test';
  
 export default function testsuite() {
   groupRuntimeDeviceTest();
@@ -36,4 +38,6 @@ export default function testsuite() {
   characterInstanceModelContractTest();
   playerProfileRepositoryContractTest();
   worldPlayerCharacterDomainContractTest();
+  w2a1fixSchemaContractTest();
+  w2a1fixMigrationContractTest();
 }
