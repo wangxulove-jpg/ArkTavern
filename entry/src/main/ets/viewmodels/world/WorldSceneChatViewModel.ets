@@ -1,23 +1,3 @@
-/**
- * WorldSceneChatViewModel 世界场景共享对话页 ViewModel(W-UX-1)
- *
- * 职责:
- * - 根据 sceneId 加载场景 + 地点 + 当前地点角色(实时,人物栏按当前地点状态)
- * - 加载场景消息列表(按 sequenceNumber ASC,共享时间线)
- * - 用户公开消息发送(含回复目标)
- * - 用户私下消息发送
- * - 手动角色发言 / 旁白(从更多菜单弹出)
- * - 结束场景
- * - 角色名称解析:实例+Character 存在→Character.name;实例存在+Character 缺失→displayNameSnapshot;实例已移除→"已移除角色"
- * - 处理页面切换(expectedSceneId + loadOperationId)和销毁(disposed)
- * - 写操作防重复(operationId + isSending + isEnding)
- *
- * 依赖方向:
- * Page → ViewModel → Repository(只读) / CharacterService(只读 getById) / WorldSceneService(写入)
- *
- * 日志安全:不记录完整消息正文 / ID 数组 / SQL,仅记录操作类型、visibility、sequenceNumber、数量、截断短 ID。
- */
-
 import { WorldRepository } from '../../repositories/world/WorldRepository';
 import { WorldLocationRepository } from '../../repositories/world/WorldLocationRepository';
 import { WorldCharacterInstanceRepository } from '../../repositories/world/WorldCharacterInstanceRepository';
@@ -26,12 +6,23 @@ import { WorldSceneMessageRepository } from '../../repositories/world/WorldScene
 import { WorldConversationSessionRepository } from '../../repositories/world/WorldConversationSessionRepository';
 import { CharacterService } from '../../services/CharacterService';
 import { WorldSceneService } from '../../services/world/WorldSceneService';
+import {
+  WorldSceneRuntimeService,
+  WorldRuntimeObserver,
+  WorldRuntimeTurnOptions,
+  WorldRuntimeRetryOptions
+} from '../../services/world/WorldSceneRuntimeService';
 import { Logger } from '../../utils/Logger';
 import { World, WorldStatus } from '../../models/world/World';
 import { WorldLocation, WorldLocationStatus } from '../../models/world/WorldLocation';
 import { WorldCharacterInstance } from '../../models/world/WorldCharacterInstance';
 import { WorldScene, WorldSceneStatus } from '../../models/world/WorldScene';
-import { WorldConversationSession, WorldConversationSessionStatus, WorldSessionParticipantSnapshot, deserializeParticipantSnapshots } from '../../models/world/WorldConversationSession';
+import {
+  WorldConversationSession,
+  WorldConversationSessionStatus,
+  WorldSessionParticipantSnapshot,
+  deserializeParticipantSnapshots
+} from '../../models/world/WorldConversationSession';
 import {
   WorldSceneMessage,
   WorldSceneMessageSenderType,
@@ -40,6 +31,8 @@ import {
 } from '../../models/world/WorldSceneMessage';
 import { Character } from '../../models/Character';
 import { DatabaseError } from '../../models/DatabaseError';
+import { WorldRuntimeError } from '../../models/world/WorldRuntimeError';
+import { mapWorldRuntimeErrorToMessage, isWorldRuntimeError } from './WorldRuntimeErrorMapper';
 import { mapWorldSceneErrorToMessage } from './WorldSceneErrorMapper';
 import { mapWorldStateErrorToMessage } from './WorldStateErrorMapper';
 import {
@@ -48,9 +41,8 @@ import {
   formatWorldTimestamp
 } from './WorldUiModels';
 
-const LOG_TAG: string = 'WorldSceneChatViewModel';
+const LOG_TAG: string = 'WorldSceneChatVM';
 
-/** 聊天页加载状态 */
 export enum WorldSceneChatLoadState {
   Loading,
   Ready,
@@ -58,7 +50,6 @@ export enum WorldSceneChatLoadState {
   Error
 }
 
-/** 角色实例解析后的 UI 模型(用于人物栏) */
 export interface ChatCharacterUiModel {
   readonly instanceId: string;
   readonly displayName: string;
@@ -68,7 +59,6 @@ export interface ChatCharacterUiModel {
   readonly characterCardMissing: boolean;
 }
 
-/** 消息 UI 模型 */
 export interface ChatMessageUiModel {
   readonly id: string;
   readonly sequenceNumber: number;
@@ -87,7 +77,6 @@ export interface ChatMessageUiModel {
   readonly senderRemoved: boolean;
 }
 
-/** 聊天页 UI 模型 */
 export interface WorldSceneChatUiModel {
   readonly sceneId: string;
   readonly sceneName: string;
@@ -110,35 +99,7 @@ export interface WorldSceneChatUiModel {
   readonly messages: ChatMessageUiModel[];
 }
 
-/** 用户消息表单输入 */
-export interface ChatUserMessageInput {
-  readonly content: string;
-  readonly visibility: WorldSceneMessageVisibility;
-  readonly recipientInstanceIds: string[];
-  readonly replyTargetInstanceIds: string[];
-}
-
-/** 角色消息表单输入 */
-export interface ChatCharacterMessageInput {
-  readonly senderInstanceId: string;
-  readonly content: string;
-  readonly visibility: WorldSceneMessageVisibility;
-  readonly recipientInstanceIds: string[];
-}
-
-/** 旁白消息表单输入 */
-export interface ChatNarratorMessageInput {
-  readonly content: string;
-  readonly witnessInstanceIds: string[];
-}
-
-/** 写操作结果 */
-export interface ChatSaveResult {
-  readonly success: boolean;
-  readonly errorMessage: string;
-}
-
-export class WorldSceneChatViewModel {
+export class WorldSceneChatViewModel implements WorldRuntimeObserver {
   private readonly worldRepo: WorldRepository;
   private readonly locationRepo: WorldLocationRepository;
   private readonly instanceRepo: WorldCharacterInstanceRepository;
@@ -147,18 +108,27 @@ export class WorldSceneChatViewModel {
   private readonly sessionRepo: WorldConversationSessionRepository;
   private readonly characterService: CharacterService;
   private readonly sceneService: WorldSceneService;
+  private readonly runtimeService: WorldSceneRuntimeService;
 
   state: WorldSceneChatLoadState = WorldSceneChatLoadState.Loading;
   errorMessage: string = '';
   detail: WorldSceneChatUiModel | null = null;
 
+  isSending: boolean = false;
+  isGenerating: boolean = false;
+  isStopping: boolean = false;
+  runtimeError: string = '';
+
+  streamingMessageId: string = '';
+  streamingContent: string = '';
+  private currentOperationId: number = -1;
+
   private expectedSceneId: string = '';
   private expectedSessionId: string = '';
+  private expectedWorldId: string = '';
+  private expectedLocationId: string = '';
   private loadOperationId: number = 0;
   private operationId: number = 0;
-  isSending: boolean = false;
-  isStarting: boolean = false;
-  isEnding: boolean = false;
   private disposed: boolean = false;
   readonly instanceShortId: string;
 
@@ -170,7 +140,8 @@ export class WorldSceneChatViewModel {
     messageRepo: WorldSceneMessageRepository,
     sessionRepo: WorldConversationSessionRepository,
     characterService: CharacterService,
-    sceneService: WorldSceneService
+    sceneService: WorldSceneService,
+    runtimeService: WorldSceneRuntimeService
   ) {
     this.worldRepo = worldRepo;
     this.locationRepo = locationRepo;
@@ -180,7 +151,9 @@ export class WorldSceneChatViewModel {
     this.sessionRepo = sessionRepo;
     this.characterService = characterService;
     this.sceneService = sceneService;
+    this.runtimeService = runtimeService;
     this.instanceShortId = WorldSceneChatViewModel.generateShortId();
+    this.runtimeService.addObserver(this);
   }
 
   private static generateShortId(): string {
@@ -198,6 +171,7 @@ export class WorldSceneChatViewModel {
 
   dispose(): void {
     this.disposed = true;
+    this.runtimeService.removeObserver(this);
     Logger.info(LOG_TAG, 'dispose: vmInstance=' + this.instanceShortId);
   }
 
@@ -215,16 +189,52 @@ export class WorldSceneChatViewModel {
     }
   }
 
+  setWorldId(worldId: string): void {
+    this.expectedWorldId = worldId;
+  }
+
+  setLocationId(locationId: string): void {
+    this.expectedLocationId = locationId;
+  }
+
   expectedSceneIdOfPage(): string {
     return this.expectedSceneId;
   }
 
-  /**
-   * 加载聊天页快照。每次 onPageShow 和发送完成后调用。
-   */
+  expectedSessionIdOfPage(): string {
+    return this.expectedSessionId;
+  }
+
+  isSingleParticipant(): boolean {
+    if (this.detail === null) {
+      return false;
+    }
+    return this.detail.sessionParticipantSnapshot.length === 1;
+  }
+
+  isMultiParticipant(): boolean {
+    if (this.detail === null) {
+      return false;
+    }
+    return this.detail.sessionParticipantSnapshot.length >= 2;
+  }
+
+  isZeroParticipant(): boolean {
+    if (this.detail === null) {
+      return false;
+    }
+    return this.detail.sessionParticipantSnapshot.length === 0;
+  }
+
   async loadSnapshot(sceneId: string): Promise<void> {
     if (this.disposed) {
       Logger.warn(LOG_TAG, 'loadSnapshot skipped: disposed vmInstance=' + this.instanceShortId);
+      return;
+    }
+    if (this.expectedSessionId.length === 0) {
+      Logger.warn(LOG_TAG, 'loadSnapshot skipped: sessionId empty');
+      this.state = WorldSceneChatLoadState.Error;
+      this.errorMessage = '会话ID缺失,无法加载聊天';
       return;
     }
     this.expectedSceneId = sceneId;
@@ -262,7 +272,6 @@ export class WorldSceneChatViewModel {
       const locationStatus: WorldLocationStatus = location !== null
         ? location.status as WorldLocationStatus : WorldLocationStatus.Archived;
 
-      // Load session by sessionId
       let session: WorldConversationSession | null = null;
       if (this.expectedSessionId.length > 0) {
         session = await this.safeGetSession(this.expectedSessionId);
@@ -278,18 +287,35 @@ export class WorldSceneChatViewModel {
         ? this.safeDeserializeSnapshots(session.participantSnapshotJson) : [];
       const playerDisplayName: string = session !== null ? session.playerDisplayNameSnapshot : '玩家';
 
-      // 加载消息:按 sessionId 加载,回退到按 sceneId
       let messages: WorldSceneMessage[] = [];
       if (sessionId.length > 0) {
         messages = await this.safeListMessagesBySession(sessionId);
-      } else {
-        messages = await this.safeListMessages(targetSceneId);
       }
       if (operationId !== this.loadOperationId || this.disposed) {
         return;
       }
 
-      // 加载参与者快照中的角色实例(优先从快照),补充当前地点活跃实例
+      if (session !== null && !this.runtimeService.isBusy(sessionId)) {
+        const recovered: number = await this.runtimeService.recoverOrphanedStreamingMessages(sessionId);
+        if (recovered > 0) {
+          Logger.info(LOG_TAG, 'orphan recovery: ' + recovered.toString() + ' messages');
+          messages = await this.safeListMessagesBySession(sessionId);
+        }
+      }
+
+      if (this.runtimeService.isBusy(sessionId)) {
+        this.isGenerating = true;
+        const opId: number = this.runtimeService.getOperationId(sessionId);
+        if (opId >= 0) {
+          this.currentOperationId = opId;
+        }
+      } else {
+        this.isGenerating = false;
+        this.currentOperationId = -1;
+        this.streamingMessageId = '';
+        this.streamingContent = '';
+      }
+
       const instanceMap: Map<string, WorldCharacterInstance> = new Map<string, WorldCharacterInstance>();
       const characterIdSet: Set<string> = new Set<string>();
 
@@ -304,20 +330,8 @@ export class WorldSceneChatViewModel {
             }
           }
         }
-      } else {
-        const instances: WorldCharacterInstance[] = await this.safeListInstancesAtLocation(scene.worldId, scene.locationId);
-        for (let i = 0; i < instances.length; i++) {
-          instanceMap.set(instances[i].id, instances[i]);
-          if (instances[i].characterId.length > 0) {
-            characterIdSet.add(instances[i].characterId);
-          }
-        }
-      }
-      if (operationId !== this.loadOperationId || this.disposed) {
-        return;
       }
 
-      // 历史消息中的实例可能已移除,尝试加载
       for (let i = 0; i < messages.length; i++) {
         const m: WorldSceneMessage = messages[i];
         if (m.senderCharacterInstanceId !== undefined && !instanceMap.has(m.senderCharacterInstanceId)) {
@@ -334,7 +348,6 @@ export class WorldSceneChatViewModel {
         return;
       }
 
-      // 批量解析角色卡
       const characterMap: Map<string, Character | null> = new Map<string, Character | null>();
       const characterIds: string[] = Array.from(characterIdSet);
       for (let i = 0; i < characterIds.length; i++) {
@@ -354,7 +367,6 @@ export class WorldSceneChatViewModel {
         return;
       }
 
-      // 构建角色 UI 模型(从参与者快照顺序)
       const characterUiModels: ChatCharacterUiModel[] = [];
       if (participantSnapshot.length > 0) {
         for (let i = 0; i < participantSnapshot.length; i++) {
@@ -386,28 +398,8 @@ export class WorldSceneChatViewModel {
             characterCardMissing: missing
           });
         }
-      } else {
-        const instances: WorldCharacterInstance[] = Array.from(instanceMap.values());
-        for (let i = 0; i < instances.length; i++) {
-          const inst: WorldCharacterInstance = instances[i];
-          const character: Character | null | undefined = characterMap.get(inst.characterId);
-          const missing: boolean = character === null || character === undefined;
-          const displayName: string = !missing && character !== null && character !== undefined
-            ? character.name : inst.displayNameSnapshot;
-          const avatarUri: string = !missing && character !== null && character !== undefined
-            ? character.avatarUri : '';
-          characterUiModels.push({
-            instanceId: inst.id,
-            displayName: displayName,
-            avatarUri: avatarUri,
-            fallbackName: inst.displayNameSnapshot,
-            isActive: inst.isActive,
-            characterCardMissing: missing
-          });
-        }
       }
 
-      // 构建消息 UI 模型
       const messageUiModels: ChatMessageUiModel[] = new Array<ChatMessageUiModel>(messages.length);
       for (let i = 0; i < messages.length; i++) {
         const m: WorldSceneMessage = messages[i];
@@ -418,8 +410,7 @@ export class WorldSceneChatViewModel {
         const senderDisplayName: string = this.resolveInstanceDisplayName(
           m.senderCharacterInstanceId, instanceMap, characterMap);
         const senderAvatarUri: string = senderCharacter !== null && senderCharacter !== undefined
-          ? senderCharacter.avatarUri
-          : (senderInst !== undefined ? '' : '');
+          ? senderCharacter.avatarUri : '';
         messageUiModels[i] = {
           id: m.id,
           sequenceNumber: m.sequenceNumber,
@@ -487,181 +478,178 @@ export class WorldSceneChatViewModel {
     }
   }
 
-  /** 发送 User 消息(公开或私下) */
-  async addUserMessage(input: ChatUserMessageInput): Promise<ChatSaveResult> {
-    if (this.isSending) {
-      Logger.warn(LOG_TAG, 'addUserMessage skipped: isSending');
-      return { success: false, errorMessage: '正在处理,请稍候' } as ChatSaveResult;
+  async sendMessage(content: string): Promise<string> {
+    if (this.isGenerating || this.isSending) {
+      return '当前角色正在回复中';
     }
-    if (this.expectedSceneId.length === 0) {
-      return { success: false, errorMessage: '场景未加载' } as ChatSaveResult;
+    if (this.detail === null) {
+      return '页面未加载完成';
     }
+    if (!this.isSingleParticipant()) {
+      return '多人世界聊天将在下一阶段接入';
+    }
+    const trimmed: string = content.trim();
+    if (trimmed.length === 0) {
+      return '消息不能为空';
+    }
+
     this.isSending = true;
+    this.runtimeError = '';
     this.operationId = this.operationId + 1;
-    const opId: number = this.operationId;
+
     try {
-      await this.sceneService.addUserMessage({
+      const options: WorldRuntimeTurnOptions = {
+        worldId: this.expectedWorldId,
         sceneId: this.expectedSceneId,
-        content: input.content,
-        visibility: input.visibility,
-        recipientCharacterInstanceIds: input.recipientInstanceIds.length > 0 ? input.recipientInstanceIds : undefined,
-        replyTargetCharacterInstanceIds: input.replyTargetInstanceIds.length > 0 ? input.replyTargetInstanceIds : undefined
-      });
-      if (opId !== this.operationId || this.disposed) {
-        return { success: false, errorMessage: '操作已过期' } as ChatSaveResult;
-      }
+        sessionId: this.expectedSessionId,
+        userContent: trimmed
+      };
+
+      const result = await this.runtimeService.sendAndGenerate(options);
+
+      this.isGenerating = true;
+      this.currentOperationId = this.runtimeService.getOperationId(this.expectedSessionId);
+      this.streamingMessageId = result.characterMessage.id;
+      this.streamingContent = '';
+
       this.bumpRefreshTokens();
       await this.loadSnapshot(this.expectedSceneId);
-      return { success: true, errorMessage: '' } as ChatSaveResult;
+      return '';
     } catch (e) {
-      if (opId !== this.operationId || this.disposed) {
-        return { success: false, errorMessage: '操作已过期' } as ChatSaveResult;
-      }
-      const msg: string = this.resolveErrorMessage(e);
-      Logger.warn(LOG_TAG, 'addUserMessage failed: ' + this.safeErrorCategory(e)
-        + ', visibility=' + input.visibility
-        + ', sceneShortId=' + this.shortId(this.expectedSceneId));
-      return { success: false, errorMessage: msg } as ChatSaveResult;
+      const msg: string = this.resolveRuntimeError(e);
+      this.runtimeError = msg;
+      Logger.warn(LOG_TAG, 'sendMessage failed: ' + this.safeErrorCategory(e));
+      return msg;
     } finally {
-      if (opId === this.operationId) {
-        this.isSending = false;
-      }
+      this.isSending = false;
     }
   }
 
-  /** 手动添加角色消息 */
-  async addCharacterMessage(input: ChatCharacterMessageInput): Promise<ChatSaveResult> {
-    if (this.isSending) {
-      Logger.warn(LOG_TAG, 'addCharacterMessage skipped: isSending');
-      return { success: false, errorMessage: '正在处理,请稍候' } as ChatSaveResult;
+  stopGeneration(): void {
+    if (!this.isGenerating) {
+      return;
     }
-    if (this.expectedSceneId.length === 0) {
-      return { success: false, errorMessage: '场景未加载' } as ChatSaveResult;
+    this.isStopping = true;
+    this.runtimeService.stop(this.expectedSessionId);
+  }
+
+  async retryFailedMessage(failedMessageId: string): Promise<string> {
+    if (this.isGenerating || this.isSending) {
+      return '当前角色正在回复中';
     }
+    if (this.detail === null) {
+      return '页面未加载完成';
+    }
+    if (!this.isSingleParticipant()) {
+      return '多人世界聊天将在下一阶段接入';
+    }
+
     this.isSending = true;
+    this.runtimeError = '';
     this.operationId = this.operationId + 1;
-    const opId: number = this.operationId;
+
     try {
-      await this.sceneService.addCharacterMessage({
+      const options: WorldRuntimeRetryOptions = {
+        worldId: this.expectedWorldId,
         sceneId: this.expectedSceneId,
-        senderCharacterInstanceId: input.senderInstanceId,
-        content: input.content,
-        visibility: input.visibility,
-        recipientCharacterInstanceIds: input.recipientInstanceIds.length > 0 ? input.recipientInstanceIds : undefined
-      });
-      if (opId !== this.operationId || this.disposed) {
-        return { success: false, errorMessage: '操作已过期' } as ChatSaveResult;
-      }
+        sessionId: this.expectedSessionId,
+        failedMessageId: failedMessageId
+      };
+
+      const result = await this.runtimeService.retryFailedCharacterMessage(options);
+
+      this.isGenerating = true;
+      this.currentOperationId = this.runtimeService.getOperationId(this.expectedSessionId);
+      this.streamingMessageId = result.characterMessage.id;
+      this.streamingContent = '';
+
       this.bumpRefreshTokens();
       await this.loadSnapshot(this.expectedSceneId);
-      return { success: true, errorMessage: '' } as ChatSaveResult;
+      return '';
     } catch (e) {
-      if (opId !== this.operationId || this.disposed) {
-        return { success: false, errorMessage: '操作已过期' } as ChatSaveResult;
-      }
-      const msg: string = this.resolveErrorMessage(e);
-      Logger.warn(LOG_TAG, 'addCharacterMessage failed: ' + this.safeErrorCategory(e)
-        + ', sceneShortId=' + this.shortId(this.expectedSceneId));
-      return { success: false, errorMessage: msg } as ChatSaveResult;
+      const msg: string = this.resolveRuntimeError(e);
+      this.runtimeError = msg;
+      Logger.warn(LOG_TAG, 'retryFailedMessage failed: ' + this.safeErrorCategory(e));
+      return msg;
     } finally {
-      if (opId === this.operationId) {
-        this.isSending = false;
-      }
+      this.isSending = false;
     }
   }
 
-  /** 添加旁白消息 */
-  async addNarratorMessage(input: ChatNarratorMessageInput): Promise<ChatSaveResult> {
-    if (this.isSending) {
-      Logger.warn(LOG_TAG, 'addNarratorMessage skipped: isSending');
-      return { success: false, errorMessage: '正在处理,请稍候' } as ChatSaveResult;
+  async endScene(): Promise<string> {
+    if (this.isGenerating) {
+      return '生成中不能结束场景,请先停止';
     }
-    if (this.expectedSceneId.length === 0) {
-      return { success: false, errorMessage: '场景未加载' } as ChatSaveResult;
-    }
-    this.isSending = true;
     this.operationId = this.operationId + 1;
-    const opId: number = this.operationId;
-    try {
-      await this.sceneService.addNarratorMessage({
-        sceneId: this.expectedSceneId,
-        content: input.content,
-        witnessCharacterInstanceIds: input.witnessInstanceIds.length > 0 ? input.witnessInstanceIds : undefined
-      });
-      if (opId !== this.operationId || this.disposed) {
-        return { success: false, errorMessage: '操作已过期' } as ChatSaveResult;
-      }
-      this.bumpRefreshTokens();
-      await this.loadSnapshot(this.expectedSceneId);
-      return { success: true, errorMessage: '' } as ChatSaveResult;
-    } catch (e) {
-      if (opId !== this.operationId || this.disposed) {
-        return { success: false, errorMessage: '操作已过期' } as ChatSaveResult;
-      }
-      const msg: string = this.resolveErrorMessage(e);
-      Logger.warn(LOG_TAG, 'addNarratorMessage failed: ' + this.safeErrorCategory(e)
-        + ', sceneShortId=' + this.shortId(this.expectedSceneId));
-      return { success: false, errorMessage: msg } as ChatSaveResult;
-    } finally {
-      if (opId === this.operationId) {
-        this.isSending = false;
-      }
-    }
-  }
-
-  /** 结束场景 */
-  async endScene(): Promise<ChatSaveResult> {
-    if (this.isEnding) {
-      Logger.warn(LOG_TAG, 'endScene skipped: isEnding');
-      return { success: false, errorMessage: '正在处理,请稍候' } as ChatSaveResult;
-    }
-    if (this.expectedSceneId.length === 0) {
-      return { success: false, errorMessage: '场景未加载' } as ChatSaveResult;
-    }
-    this.isEnding = true;
-    this.operationId = this.operationId + 1;
-    const opId: number = this.operationId;
     try {
       await this.sceneService.endScene(this.expectedSceneId);
-      if (opId !== this.operationId || this.disposed) {
-        return { success: false, errorMessage: '操作已过期' } as ChatSaveResult;
-      }
       this.bumpRefreshTokens();
       await this.loadSnapshot(this.expectedSceneId);
-      return { success: true, errorMessage: '' } as ChatSaveResult;
+      return '';
     } catch (e) {
-      if (opId !== this.operationId || this.disposed) {
-        return { success: false, errorMessage: '操作已过期' } as ChatSaveResult;
-      }
-      const msg: string = this.resolveErrorMessage(e);
-      Logger.warn(LOG_TAG, 'endScene failed: ' + this.safeErrorCategory(e)
-        + ', sceneShortId=' + this.shortId(this.expectedSceneId));
-      return { success: false, errorMessage: msg } as ChatSaveResult;
-    } finally {
-      if (opId === this.operationId) {
-        this.isEnding = false;
-      }
+      return this.resolveErrorMessage(e);
     }
   }
 
-  // ===== 私有辅助 =====
-
-  private async safeListInstancesAtLocation(worldId: string, locationId: string): Promise<WorldCharacterInstance[]> {
-    try {
-      return await this.instanceRepo.listByLocation(worldId, locationId);
-    } catch (e) {
-      Logger.warn(LOG_TAG, 'listByLocation(instances) failed: ' + this.safeErrorCategory(e));
-      return [];
+  onStreamingDelta(sessionId: string, messageId: string, content: string, operationId: number): void {
+    if (sessionId !== this.expectedSessionId) {
+      return;
     }
+    if (operationId !== this.currentOperationId) {
+      return;
+    }
+    this.streamingMessageId = messageId;
+    this.streamingContent = content;
+    this.isGenerating = true;
   }
 
-  private async safeListMessages(sceneId: string): Promise<WorldSceneMessage[]> {
-    try {
-      return await this.messageRepo.listByScene(sceneId);
-    } catch (e) {
-      Logger.warn(LOG_TAG, 'listByScene(messages) failed: ' + this.safeErrorCategory(e));
-      return [];
+  onStreamingCompleted(sessionId: string, messageId: string, content: string, operationId: number): void {
+    if (sessionId !== this.expectedSessionId) {
+      return;
     }
+    if (operationId !== this.currentOperationId) {
+      return;
+    }
+    this.isGenerating = false;
+    this.isStopping = false;
+    this.streamingMessageId = '';
+    this.streamingContent = '';
+    this.currentOperationId = -1;
+    this.loadSnapshot(this.expectedSceneId);
+  }
+
+  onStreamingFailed(sessionId: string, messageId: string, operationId: number): void {
+    if (sessionId !== this.expectedSessionId) {
+      return;
+    }
+    if (operationId !== this.currentOperationId) {
+      return;
+    }
+    this.isGenerating = false;
+    this.isStopping = false;
+    this.streamingMessageId = '';
+    this.streamingContent = '';
+    this.currentOperationId = -1;
+    this.loadSnapshot(this.expectedSceneId);
+  }
+
+  onStreamingCancelled(sessionId: string, messageId: string, operationId: number): void {
+    if (sessionId !== this.expectedSessionId) {
+      return;
+    }
+    if (operationId !== this.currentOperationId) {
+      return;
+    }
+    this.isGenerating = false;
+    this.isStopping = false;
+    this.streamingMessageId = '';
+    this.streamingContent = '';
+    this.currentOperationId = -1;
+    this.loadSnapshot(this.expectedSceneId);
+  }
+
+  async reload(): Promise<void> {
+    await this.loadSnapshot(this.expectedSceneId);
   }
 
   private async safeListMessagesBySession(sessionId: string): Promise<WorldSceneMessage[]> {
@@ -700,7 +688,6 @@ export class WorldSceneChatViewModel {
     }
   }
 
-  /** 递增刷新令牌,通知世界详情页和场景详情页刷新 */
   private bumpRefreshTokens(): void {
     const detailToken: number = AppStorage.get<number>(WORLD_DETAIL_REFRESH_TOKEN_KEY) ?? 0;
     AppStorage.setOrCreate<number>(WORLD_DETAIL_REFRESH_TOKEN_KEY, detailToken + 1);
@@ -708,7 +695,6 @@ export class WorldSceneChatViewModel {
     AppStorage.setOrCreate<number>(WORLD_SCENE_DETAIL_REFRESH_TOKEN_KEY, sceneToken + 1);
   }
 
-  /** 解析单个实例显示名称 */
   private resolveInstanceDisplayName(
     instanceId: string | undefined,
     instanceMap: Map<string, WorldCharacterInstance>,
@@ -728,7 +714,6 @@ export class WorldSceneChatViewModel {
     return inst.displayNameSnapshot;
   }
 
-  /** 解析多个实例显示名称 */
   private resolveInstanceNames(
     instanceIds: string[] | undefined,
     instanceMap: Map<string, WorldCharacterInstance>,
@@ -742,6 +727,13 @@ export class WorldSceneChatViewModel {
       names.push(this.resolveInstanceDisplayName(instanceIds[i], instanceMap, characterMap));
     }
     return names;
+  }
+
+  private resolveRuntimeError(e: Object): string {
+    if (isWorldRuntimeError(e)) {
+      return mapWorldRuntimeErrorToMessage(e);
+    }
+    return this.resolveErrorMessage(e);
   }
 
   private resolveErrorMessage(e: Object): string {
@@ -760,6 +752,9 @@ export class WorldSceneChatViewModel {
     if (e instanceof DatabaseError) {
       return 'DatabaseError:' + e.type;
     }
+    if (e instanceof WorldRuntimeError) {
+      return 'WorldRuntimeError:' + (e as WorldRuntimeError).kind.toString();
+    }
     const msg: string = (e as Error).message ?? 'unknown';
     if (msg.length > 60) {
       return 'Error:' + msg.substring(0, 60);
@@ -775,7 +770,6 @@ export class WorldSceneChatViewModel {
   }
 }
 
-/** 格式化场景时间戳(复用 WorldUiModels.formatWorldTimestamp) */
 export function formatChatTimestamp(ts: number): string {
   return formatWorldTimestamp(ts);
 }

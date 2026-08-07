@@ -1,13 +1,3 @@
-/**
- * WorldSceneChatPage 世界场景共享对话页(W-UI-1C 重构)
- *
- * 重构:深色酒馆质感,场景头+状态+参与者数,
- * [玩家]/[角色·name]/[旁白] 标签,消息状态徽章,
- * 输入区含发送者身份/可见性切换,Ended Scene 只读横幅。
- *
- * 路由:通过 AppStorage PENDING_WORLD_SCENE_CHAT_ID_KEY 传 sceneId
- */
-
 import { router } from '@kit.ArkUI';
 import { AppServices } from '../../services/AppServices';
 import {
@@ -16,9 +6,6 @@ import {
   WorldSceneChatUiModel,
   ChatMessageUiModel,
   ChatCharacterUiModel,
-  ChatUserMessageInput,
-  ChatCharacterMessageInput,
-  ChatNarratorMessageInput,
   formatChatTimestamp
 } from '../../viewmodels/world/WorldSceneChatViewModel';
 import {
@@ -26,14 +13,14 @@ import {
   PENDING_WORLD_SESSION_ID_KEY,
   PENDING_WORLD_MEMORY_WORLD_ID_KEY,
   PENDING_WORLD_MEMORY_CHARACTER_INSTANCE_ID_KEY,
-  WORLD_SCENE_CHAT_REFRESH_TOKEN_KEY,
-  formatWorldTimestamp
+  WORLD_SCENE_CHAT_REFRESH_TOKEN_KEY
 } from '../../viewmodels/world/WorldUiModels';
 import { WorldSceneStatus } from '../../models/world/WorldScene';
 import { WorldConversationSessionStatus } from '../../models/world/WorldConversationSession';
 import {
   WorldSceneMessageVisibility,
-  WorldSceneMessageSenderType
+  WorldSceneMessageSenderType,
+  WorldSceneMessageStatus
 } from '../../models/world/WorldSceneMessage';
 import { WorldStatus } from '../../models/world/World';
 import { WorldLocationStatus } from '../../models/world/WorldLocation';
@@ -45,19 +32,6 @@ import { Logger } from '../../utils/Logger';
 
 const LOG_TAG: string = 'WorldSceneChatPage';
 
-enum SecondaryFormType {
-  None,
-  Character,
-  Narrator,
-  EndConfirm
-}
-
-enum ReplyTargetPickerMode {
-  Hidden,
-  PublicReply,
-  PrivateRecipient
-}
-
 @Entry
 @Component
 struct WorldSceneChatPage {
@@ -67,22 +41,15 @@ struct WorldSceneChatPage {
   @State private errorMessage: string = '';
   @State private detail: WorldSceneChatUiModel | null = null;
   @State private actionError: string = '';
-  @State private moreMenuVisible: boolean = false;
-  @State private secondaryForm: SecondaryFormType = SecondaryFormType.None;
+  @State private endConfirmVisible: boolean = false;
 
   @State private inputContent: string = '';
-  @State private replyTargetPickerMode: ReplyTargetPickerMode = ReplyTargetPickerMode.Hidden;
-  @State private selectedReplyTargetIds: string[] = [];
-  @State private isPrivateMode: boolean = false;
-  @State private selectedRecipientIds: string[] = [];
-
-  @State private charSenderId: string = '';
-  @State private charContent: string = '';
-  @State private charVisibility: WorldSceneMessageVisibility = WorldSceneMessageVisibility.Public;
-  @State private charRecipientIds: string[] = [];
-
-  @State private narratorContent: string = '';
-  @State private narratorWitnessIds: string[] = [];
+  @State private isGenerating: boolean = false;
+  @State private isStopping: boolean = false;
+  @State private isSending: boolean = false;
+  @State private runtimeError: string = '';
+  @State private streamingMessageId: string = '';
+  @State private streamingContent: string = '';
 
   @State private characterSheetInstanceId: string = '';
 
@@ -100,8 +67,8 @@ struct WorldSceneChatPage {
       AppStorage.set<string>(PENDING_WORLD_SCENE_CHAT_ID_KEY, '');
       const sessionId: string = AppStorage.get<string>(PENDING_WORLD_SESSION_ID_KEY) ?? '';
       AppStorage.set<string>(PENDING_WORLD_SESSION_ID_KEY, '');
-      if (sceneId.length === 0) {
-        Logger.warn(LOG_TAG, 'aboutToAppear: sceneId empty');
+      if (sceneId.length === 0 || sessionId.length === 0) {
+        Logger.warn(LOG_TAG, 'aboutToAppear: sceneId or sessionId empty');
         this.isInitializing = false;
         this.loadState = WorldSceneChatLoadState.NotFound;
         return;
@@ -114,7 +81,8 @@ struct WorldSceneChatPage {
         AppServices.getWorldSceneMessageRepository(),
         AppServices.getWorldConversationSessionRepository(),
         AppServices.getCharacterService(),
-        AppServices.getWorldSceneService()
+        AppServices.getWorldSceneService(),
+        AppServices.getWorldSceneRuntimeService()
       );
       this.viewModel.setSceneId(sceneId);
       this.viewModel.setSessionId(sessionId);
@@ -156,15 +124,6 @@ struct WorldSceneChatPage {
     }
     await this.viewModel.loadSnapshot(this.viewModel.expectedSceneIdOfPage());
     this.syncFromViewModel();
-    if (this.loadState === WorldSceneChatLoadState.Ready) {
-      setTimeout(() => {
-        try {
-          this.scroller.scrollEdge(Edge.Bottom);
-        } catch (e) {
-          // ignore
-        }
-      }, 100);
-    }
   }
 
   private syncFromViewModel(): void {
@@ -174,34 +133,19 @@ struct WorldSceneChatPage {
     this.loadState = this.viewModel.state;
     this.errorMessage = this.viewModel.errorMessage;
     this.detail = this.viewModel.detail;
-    if (this.detail !== null && this.detail.sceneStatus !== WorldSceneStatus.Active) {
-      this.secondaryForm = SecondaryFormType.None;
-      this.replyTargetPickerMode = ReplyTargetPickerMode.Hidden;
-      this.moreMenuVisible = false;
-    }
+    this.isGenerating = this.viewModel.isGenerating;
+    this.isStopping = this.viewModel.isStopping;
+    this.isSending = this.viewModel.isSending;
+    this.runtimeError = this.viewModel.runtimeError;
+    this.streamingMessageId = this.viewModel.streamingMessageId;
+    this.streamingContent = this.viewModel.streamingContent;
   }
 
-  private activeCharacters(): ChatCharacterUiModel[] {
-    if (this.detail === null) {
-      return [];
-    }
-    const result: ChatCharacterUiModel[] = [];
-    for (let i = 0; i < this.detail.characters.length; i++) {
-      if (this.detail.characters[i].isActive) {
-        result.push(this.detail.characters[i]);
-      }
-    }
-    return result;
-  }
-
-  private isSceneWritable(): boolean {
+  private isSessionActive(): boolean {
     if (this.detail === null) {
       return false;
     }
-    return this.detail.sceneStatus === WorldSceneStatus.Active
-      && this.detail.worldStatus === WorldStatus.Active
-      && this.detail.locationStatus === WorldLocationStatus.Active
-      && this.detail.sessionStatus === WorldConversationSessionStatus.Active;
+    return this.detail.sessionStatus === WorldConversationSessionStatus.Active;
   }
 
   private isSessionEnded(): boolean {
@@ -211,11 +155,32 @@ struct WorldSceneChatPage {
     return this.detail.sessionStatus === WorldConversationSessionStatus.Ended;
   }
 
-  private isSessionActive(): boolean {
+  private isSceneWritable(): boolean {
     if (this.detail === null) {
       return false;
     }
-    return this.detail.sessionStatus === WorldConversationSessionStatus.Active;
+    return this.detail.sceneStatus === WorldSceneStatus.Active
+      && this.detail.worldStatus === WorldStatus.Active
+      && this.detail.locationStatus === WorldLocationStatus.Active;
+  }
+
+  private canSend(): boolean {
+    if (this.viewModel === null) {
+      return false;
+    }
+    if (this.isGenerating || this.isSending) {
+      return false;
+    }
+    if (!this.isSessionActive()) {
+      return false;
+    }
+    if (!this.isSceneWritable()) {
+      return false;
+    }
+    if (!this.viewModel.isSingleParticipant()) {
+      return false;
+    }
+    return true;
   }
 
   build(): void {
@@ -235,41 +200,11 @@ struct WorldSceneChatPage {
     .height('100%')
     .backgroundColor($r('app.color.world_bg'))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-    .bindSheet(this.moreMenuVisible, this.moreMenuSheet, {
+    .bindSheet(this.endConfirmVisible, this.endConfirmSheet, {
       height: SheetSize.FIT_CONTENT,
       dragBar: true,
       backgroundColor: $r('app.color.world_surface_1'),
-      onDisappear: () => { this.moreMenuVisible = false; }
-    })
-    .bindSheet(this.secondaryForm === SecondaryFormType.Character, this.characterFormSheet, {
-      height: SheetSize.FIT_CONTENT,
-      dragBar: true,
-      backgroundColor: $r('app.color.world_surface_1'),
-      onDisappear: () => {
-        if (this.secondaryForm === SecondaryFormType.Character) {
-          this.secondaryForm = SecondaryFormType.None;
-        }
-      }
-    })
-    .bindSheet(this.secondaryForm === SecondaryFormType.Narrator, this.narratorFormSheet, {
-      height: SheetSize.FIT_CONTENT,
-      dragBar: true,
-      backgroundColor: $r('app.color.world_surface_1'),
-      onDisappear: () => {
-        if (this.secondaryForm === SecondaryFormType.Narrator) {
-          this.secondaryForm = SecondaryFormType.None;
-        }
-      }
-    })
-    .bindSheet(this.secondaryForm === SecondaryFormType.EndConfirm, this.endConfirmSheet, {
-      height: SheetSize.FIT_CONTENT,
-      dragBar: true,
-      backgroundColor: $r('app.color.world_surface_1'),
-      onDisappear: () => {
-        if (this.secondaryForm === SecondaryFormType.EndConfirm) {
-          this.secondaryForm = SecondaryFormType.None;
-        }
-      }
+      onDisappear: () => { this.endConfirmVisible = false; }
     })
     .bindSheet(this.characterSheetInstanceId.length > 0, this.characterInfoSheet, {
       height: SheetSize.FIT_CONTENT,
@@ -302,13 +237,19 @@ struct WorldSceneChatPage {
               .textOverflow({ overflow: TextOverflow.Ellipsis })
             Row() {
               WorldStatusChip({
-                label: this.detail.sceneStatus === WorldSceneStatus.Active ? '活动中' : '已结束',
-                isActive: this.detail.sceneStatus === WorldSceneStatus.Active
+                label: this.detail.sessionStatus === WorldConversationSessionStatus.Active ? '进行中' : '已结束',
+                isActive: this.detail.sessionStatus === WorldConversationSessionStatus.Active
               })
-              Text(this.detail.participantCount.toString() + ' 位参与')
+              Text('会话 #' + this.detail.sessionSequenceNumber.toString())
                 .fontSize($r('app.float.world_font_micro'))
                 .fontColor($r('app.color.world_text_tertiary'))
                 .margin({ left: 6 })
+              if (this.detail.characters.length > 0) {
+                Text(this.detail.characters[0].displayName)
+                  .fontSize($r('app.float.world_font_micro'))
+                  .fontColor($r('app.color.world_text_secondary'))
+                  .margin({ left: 6 })
+              }
             }
             .margin({ top: 2 })
           } else {
@@ -322,7 +263,8 @@ struct WorldSceneChatPage {
         .layoutWeight(1)
         .margin({ left: 4 })
 
-        if (this.detail !== null && this.isSceneWritable()) {
+        if (this.detail !== null && this.isSceneWritable() && this.isSessionActive()
+          && !this.isGenerating) {
           Text('⋯')
             .fontSize(22)
             .fontColor($r('app.color.world_text_secondary'))
@@ -331,7 +273,7 @@ struct WorldSceneChatPage {
             .width(36)
             .height(36)
             .textAlign(TextAlign.Center)
-            .onClick(() => { this.moreMenuVisible = true; })
+            .onClick(() => { this.endConfirmVisible = true; })
         }
       }
       .width('100%')
@@ -413,20 +355,26 @@ struct WorldSceneChatPage {
   @Builder
   contentView(detail: WorldSceneChatUiModel): void {
     Column() {
-      if (detail.messages.length === 0) {
-        this.emptyMessageView()
+      if (this.viewModel !== null && this.viewModel.isZeroParticipant()) {
+        this.participantErrorView('会话参与者数据异常')
+      } else if (this.viewModel !== null && this.viewModel.isMultiParticipant()) {
+        this.multiParticipantView()
       } else {
-        List({ scroller: this.scroller }) {
-          ForEach(detail.messages, (m: ChatMessageUiModel) => {
-            ListItem() {
-              this.messageBubble(m)
-            }
-          }, (m: ChatMessageUiModel) => m.id + '|' + m.messageStatus)
+        if (detail.messages.length === 0) {
+          this.emptyMessageView()
+        } else {
+          List({ scroller: this.scroller }) {
+            ForEach(detail.messages, (m: ChatMessageUiModel) => {
+              ListItem() {
+                this.messageBubble(m)
+              }
+            }, (m: ChatMessageUiModel) => m.id + '|' + m.messageStatus)
+          }
+          .layoutWeight(1)
+          .width('100%')
+          .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+          .scrollBar(BarState.Auto)
         }
-        .layoutWeight(1)
-        .width('100%')
-        .padding({ left: 12, right: 12, top: 8, bottom: 8 })
-        .scrollBar(BarState.Auto)
       }
 
       if (this.actionError.length > 0) {
@@ -437,14 +385,24 @@ struct WorldSceneChatPage {
           .padding({ left: 16, right: 16, top: 4, bottom: 4 })
       }
 
-      if (this.isSceneWritable() && this.isSessionActive()) {
-        this.sessionActiveBar()
-      } else if (this.isSceneWritable()) {
-        this.inputArea(detail)
-      } else if (this.isSessionEnded()) {
+      if (this.runtimeError.length > 0) {
+        Text(this.runtimeError)
+          .fontSize($r('app.float.world_font_caption'))
+          .fontColor($r('app.color.world_error'))
+          .width('100%')
+          .padding({ left: 16, right: 16, top: 2, bottom: 4 })
+      }
+
+      if (this.isSessionEnded()) {
         this.endedSessionBar()
-      } else if (detail.sceneStatus === WorldSceneStatus.Ended) {
+      } else if (!this.isSceneWritable()) {
         this.endedSceneBar()
+      } else if (this.viewModel !== null && this.viewModel.isMultiParticipant()) {
+        this.multiParticipantBar()
+      } else if (this.viewModel !== null && this.viewModel.isZeroParticipant()) {
+        this.participantErrorBar()
+      } else if (this.isSessionActive()) {
+        this.runtimeInputArea()
       }
     }
     .width('100%')
@@ -462,6 +420,43 @@ struct WorldSceneChatPage {
     .width('100%')
     .layoutWeight(1)
     .justifyContent(FlexAlign.Start)
+  }
+
+  @Builder
+  participantErrorView(msg: string): void {
+    Column() {
+      Text(msg)
+        .fontSize($r('app.float.world_font_body'))
+        .fontColor($r('app.color.world_error'))
+        .margin({ top: 40 })
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .justifyContent(FlexAlign.Start)
+    .alignItems(HorizontalAlign.Center)
+  }
+
+  @Builder
+  multiParticipantView(): void {
+    Column() {
+      if (this.detail !== null && this.detail.messages.length > 0) {
+        List({ scroller: this.scroller }) {
+          ForEach(this.detail.messages, (m: ChatMessageUiModel) => {
+            ListItem() {
+              this.messageBubble(m)
+            }
+          }, (m: ChatMessageUiModel) => m.id + '|' + m.messageStatus)
+        }
+        .layoutWeight(1)
+        .width('100%')
+        .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+        .scrollBar(BarState.Auto)
+      } else {
+        this.emptyMessageView()
+      }
+    }
+    .width('100%')
+    .layoutWeight(1)
   }
 
   @Builder
@@ -488,14 +483,6 @@ struct WorldSceneChatPage {
           .borderRadius(3)
           .padding({ left: 4, right: 4, top: 1, bottom: 1 })
 
-        Text(this.visibilityTag(m.visibility))
-          .fontSize($r('app.float.world_font_micro'))
-          .fontColor(this.visibilityColor(m.visibility))
-          .backgroundColor($r('app.color.world_surface_2'))
-          .borderRadius(3)
-          .padding({ left: 4, right: 4, top: 1, bottom: 1 })
-          .margin({ left: 4 })
-
         if (m.messageStatus !== 'completed') {
           Text(this.statusTag(m.messageStatus))
             .fontSize($r('app.float.world_font_micro'))
@@ -516,33 +503,54 @@ struct WorldSceneChatPage {
       .width('100%')
       .alignItems(VerticalAlign.Center)
 
-      Text(m.content)
-        .fontSize($r('app.float.world_font_body'))
-        .fontColor($r('app.color.world_text_primary'))
-        .width('100%')
-        .margin({ top: 4 })
-        .textAlign(TextAlign.Start)
-
-      if (m.replyTargetNames.length > 0) {
-        Text($r('app.string.world_scene_reply_target_prefix') + m.replyTargetNames.join('、'))
-          .fontSize($r('app.float.world_font_micro'))
-          .fontColor($r('app.color.world_text_tertiary'))
+      if (m.id === this.streamingMessageId && this.streamingContent.length > 0) {
+        Text(this.streamingContent)
+          .fontSize($r('app.float.world_font_body'))
+          .fontColor($r('app.color.world_text_primary'))
           .width('100%')
           .margin({ top: 4 })
-      }
-      if (m.recipientNames.length > 0) {
-        Text($r('app.string.world_scene_recipient_prefix') + m.recipientNames.join('、'))
-          .fontSize($r('app.float.world_font_micro'))
-          .fontColor($r('app.color.world_text_tertiary'))
+          .textAlign(TextAlign.Start)
+      } else if (m.messageStatus === 'streaming') {
+        Row() {
+          LoadingProgress().width(14).height(14).color($r('app.color.world_gold'))
+          Text('生成中')
+            .fontSize($r('app.float.world_font_caption'))
+            .fontColor($r('app.color.world_text_tertiary'))
+            .margin({ left: 6 })
+        }
+        .margin({ top: 4 })
+      } else {
+        Text(m.content)
+          .fontSize($r('app.float.world_font_body'))
+          .fontColor($r('app.color.world_text_primary'))
           .width('100%')
-          .margin({ top: 2 })
+          .margin({ top: 4 })
+          .textAlign(TextAlign.Start)
       }
-      if (m.witnessNames.length > 0) {
-        Text($r('app.string.world_scene_witness_prefix') + m.witnessNames.join('、'))
-          .fontSize($r('app.float.world_font_micro'))
+
+      if (m.messageStatus === 'failed') {
+        Row() {
+          Text('角色回复失败')
+            .fontSize($r('app.float.world_font_caption'))
+            .fontColor($r('app.color.world_error'))
+          Text('重试')
+            .fontSize($r('app.float.world_font_caption'))
+            .fontColor($r('app.color.world_on_gold'))
+            .backgroundColor($r('app.color.world_gold'))
+            .borderRadius($r('app.float.world_radius_chip'))
+            .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+            .margin({ left: 8 })
+            .enabled(this.canSend())
+            .onClick(() => { this.retryFailed(m.id); })
+        }
+        .margin({ top: 6 })
+      }
+
+      if (m.messageStatus === 'cancelled') {
+        Text('已停止')
+          .fontSize($r('app.float.world_font_caption'))
           .fontColor($r('app.color.world_text_tertiary'))
-          .width('100%')
-          .margin({ top: 2 })
+          .margin({ top: 4 })
       }
     }
     .width('100%')
@@ -554,174 +562,51 @@ struct WorldSceneChatPage {
   }
 
   @Builder
-  inputArea(detail: WorldSceneChatUiModel): void {
+  runtimeInputArea(): void {
     Column() {
-      if (this.selectedReplyTargetIds.length > 0 || this.selectedRecipientIds.length > 0) {
-        this.targetChipRow(detail)
-      }
-
-      if (this.replyTargetPickerMode === ReplyTargetPickerMode.PublicReply) {
-        this.replyTargetPicker(detail)
-      } else if (this.replyTargetPickerMode === ReplyTargetPickerMode.PrivateRecipient) {
-        this.recipientPicker(detail)
-      }
-
       Row() {
-        TextInput({
-          text: this.inputContent,
-          placeholder: this.isPrivateMode
-            ? $r('app.string.world_scene_private_input_placeholder')
-            : $r('app.string.world_scene_public_input_placeholder')
-        })
+        TextArea({ text: this.inputContent, placeholder: '输入消息...' })
           .fontSize($r('app.float.world_font_body'))
           .fontColor($r('app.color.world_text_primary'))
           .placeholderColor($r('app.color.world_text_tertiary'))
           .backgroundColor($r('app.color.world_surface_2'))
           .borderRadius($r('app.float.world_radius_chip'))
           .layoutWeight(1)
+          .height(44)
           .onChange((v: string) => { this.inputContent = v; })
 
-        Text(this.isPrivateMode ? '私下' : '公开')
-          .fontSize($r('app.float.world_font_caption'))
-          .fontColor(this.isPrivateMode ? $r('app.color.world_on_gold') : $r('app.color.world_text_secondary'))
-          .backgroundColor(this.isPrivateMode ? $r('app.color.world_gold') : $r('app.color.world_surface_2'))
-          .borderRadius($r('app.float.world_radius_chip'))
-          .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-          .margin({ left: 6 })
-          .onClick(() => { this.toggleMode(); })
-
-        Text(this.isPrivateMode ? '选接收' : '选回复')
-          .fontSize($r('app.float.world_font_caption'))
-          .fontColor((this.isPrivateMode && this.selectedRecipientIds.length > 0)
-            || (!this.isPrivateMode && this.selectedReplyTargetIds.length > 0)
-            ? $r('app.color.world_on_gold') : $r('app.color.world_text_secondary'))
-          .backgroundColor((this.isPrivateMode && this.selectedRecipientIds.length > 0)
-            || (!this.isPrivateMode && this.selectedReplyTargetIds.length > 0)
-            ? $r('app.color.world_gold') : $r('app.color.world_surface_2'))
-          .borderRadius($r('app.float.world_radius_chip'))
-          .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-          .margin({ left: 4 })
-          .onClick(() => { this.openTargetPicker(); })
-
-        Text('发送')
-          .fontSize($r('app.float.world_font_caption'))
-          .fontColor($r('app.color.world_on_gold'))
-          .backgroundColor($r('app.color.world_gold'))
-          .borderRadius($r('app.float.world_radius_button'))
-          .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-          .margin({ left: 4 })
-          .enabled(this.viewModel !== null && !this.viewModel.isSending)
-          .onClick(() => { this.sendUserMessage(); })
+        if (this.isGenerating && !this.isStopping) {
+          Text('停止')
+            .fontSize($r('app.float.world_font_caption'))
+            .fontColor($r('app.color.world_on_danger'))
+            .backgroundColor($r('app.color.world_error'))
+            .borderRadius($r('app.float.world_radius_button'))
+            .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+            .margin({ left: 6 })
+            .onClick(() => { this.stopGeneration(); })
+        } else if (this.isStopping) {
+          Text('停止中')
+            .fontSize($r('app.float.world_font_caption'))
+            .fontColor($r('app.color.world_text_tertiary'))
+            .backgroundColor($r('app.color.world_surface_2'))
+            .borderRadius($r('app.float.world_radius_button'))
+            .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+            .margin({ left: 6 })
+        } else {
+          Text('发送')
+            .fontSize($r('app.float.world_font_caption'))
+            .fontColor($r('app.color.world_on_gold'))
+            .backgroundColor($r('app.color.world_gold'))
+            .borderRadius($r('app.float.world_radius_button'))
+            .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+            .margin({ left: 6 })
+            .enabled(this.canSend() && this.inputContent.trim().length > 0)
+            .onClick(() => { this.sendUserMessage(); })
+        }
       }
       .width('100%')
       .padding({ left: 12, right: 12, top: 8, bottom: 8 + this.navBarHeight })
       .alignItems(VerticalAlign.Center)
-    }
-    .width('100%')
-    .backgroundColor($r('app.color.world_surface_1'))
-  }
-
-  @Builder
-  targetChipRow(detail: WorldSceneChatUiModel): void {
-    Row() {
-      if (this.selectedReplyTargetIds.length > 0) {
-        Text($r('app.string.world_scene_reply_target_prefix'))
-          .fontSize($r('app.float.world_font_micro'))
-          .fontColor($r('app.color.world_text_secondary'))
-        ForEach(this.selectedReplyTargetIds, (id: string) => {
-          Text(this.resolveInstanceName(detail, id))
-            .fontSize($r('app.float.world_font_micro'))
-            .fontColor($r('app.color.world_on_gold'))
-            .backgroundColor($r('app.color.world_gold'))
-            .borderRadius(6)
-            .padding({ left: 4, right: 4, top: 1, bottom: 1 })
-            .margin({ left: 3 })
-        }, (id: string) => id)
-      }
-      if (this.selectedRecipientIds.length > 0) {
-        Text($r('app.string.world_scene_recipient_prefix'))
-          .fontSize($r('app.float.world_font_micro'))
-          .fontColor($r('app.color.world_text_secondary'))
-          .margin({ left: 6 })
-        ForEach(this.selectedRecipientIds, (id: string) => {
-          Text(this.resolveInstanceName(detail, id))
-            .fontSize($r('app.float.world_font_micro'))
-            .fontColor($r('app.color.world_on_gold'))
-            .backgroundColor($r('app.color.world_gold'))
-            .borderRadius(6)
-            .padding({ left: 4, right: 4, top: 1, bottom: 1 })
-            .margin({ left: 3 })
-        }, (id: string) => id)
-      }
-    }
-    .width('100%')
-    .padding({ left: 12, right: 12, top: 6 })
-    .alignItems(VerticalAlign.Center)
-  }
-
-  @Builder
-  replyTargetPicker(detail: WorldSceneChatUiModel): void {
-    Column() {
-      Text($r('app.string.world_scene_select_reply_target'))
-        .fontSize($r('app.float.world_font_caption'))
-        .fontColor($r('app.color.world_text_secondary'))
-        .width('100%')
-        .padding({ left: 12, top: 6, bottom: 4 })
-
-      Row() {
-        ForEach(this.activeCharacters(), (c: ChatCharacterUiModel) => {
-          Text(c.displayName)
-            .fontSize($r('app.float.world_font_caption'))
-            .fontColor(this.selectedReplyTargetIds.indexOf(c.instanceId) >= 0
-              ? $r('app.color.world_on_gold') : $r('app.color.world_text_secondary'))
-            .backgroundColor(this.selectedReplyTargetIds.indexOf(c.instanceId) >= 0
-              ? $r('app.color.world_gold') : $r('app.color.world_surface_2'))
-            .borderRadius($r('app.float.world_radius_chip'))
-            .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-            .margin({ right: 4, bottom: 4 })
-            .onClick(() => {
-              this.toggleInArray(this.selectedReplyTargetIds, c.instanceId, (v) => {
-                this.selectedReplyTargetIds = v;
-              });
-            })
-        }, (c: ChatCharacterUiModel) => c.instanceId)
-      }
-      .width('100%')
-      .padding({ left: 12, right: 12, bottom: 6 })
-    }
-    .width('100%')
-    .backgroundColor($r('app.color.world_surface_1'))
-  }
-
-  @Builder
-  recipientPicker(detail: WorldSceneChatUiModel): void {
-    Column() {
-      Text($r('app.string.world_scene_select_recipients'))
-        .fontSize($r('app.float.world_font_caption'))
-        .fontColor($r('app.color.world_text_secondary'))
-        .width('100%')
-        .padding({ left: 12, top: 6, bottom: 4 })
-
-      Row() {
-        ForEach(this.activeCharacters(), (c: ChatCharacterUiModel) => {
-          Text(c.displayName)
-            .fontSize($r('app.float.world_font_caption'))
-            .fontColor(this.selectedRecipientIds.indexOf(c.instanceId) >= 0
-              ? $r('app.color.world_on_gold') : $r('app.color.world_text_secondary'))
-            .backgroundColor(this.selectedRecipientIds.indexOf(c.instanceId) >= 0
-              ? $r('app.color.world_gold') : $r('app.color.world_surface_2'))
-            .borderRadius($r('app.float.world_radius_chip'))
-            .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-            .margin({ right: 4, bottom: 4 })
-            .onClick(() => {
-              this.toggleInArray(this.selectedRecipientIds, c.instanceId, (v) => {
-                this.selectedRecipientIds = v;
-              });
-            })
-        }, (c: ChatCharacterUiModel) => c.instanceId)
-      }
-      .width('100%')
-      .padding({ left: 12, right: 12, bottom: 6 })
     }
     .width('100%')
     .backgroundColor($r('app.color.world_surface_1'))
@@ -756,11 +641,25 @@ struct WorldSceneChatPage {
   }
 
   @Builder
-  sessionActiveBar(): void {
+  multiParticipantBar(): void {
     Column() {
-      Text('世界AI会话将在下一阶段接入')
+      Text('当前会话包含多名角色,多人世界聊天将在下一阶段接入')
         .fontSize($r('app.float.world_font_caption'))
         .fontColor($r('app.color.world_text_secondary'))
+        .width('100%')
+        .textAlign(TextAlign.Center)
+        .padding({ top: 12, bottom: 12 + this.navBarHeight })
+    }
+    .width('100%')
+    .backgroundColor($r('app.color.world_surface_1'))
+  }
+
+  @Builder
+  participantErrorBar(): void {
+    Column() {
+      Text('会话参与者数据异常')
+        .fontSize($r('app.float.world_font_caption'))
+        .fontColor($r('app.color.world_error'))
         .width('100%')
         .textAlign(TextAlign.Center)
         .padding({ top: 12, bottom: 12 + this.navBarHeight })
@@ -815,261 +714,6 @@ struct WorldSceneChatPage {
   }
 
   @Builder
-  moreMenuSheet(): void {
-    Column() {
-      Text('更多操作')
-        .fontSize($r('app.float.world_font_subtitle'))
-        .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.world_text_primary'))
-        .width('100%')
-        .padding({ left: 16, top: 16, bottom: 12 })
-
-      this.sheetMenuRow($r('app.string.world_scene_manual_character'), () => {
-        this.moreMenuVisible = false;
-        this.charSenderId = '';
-        this.charContent = '';
-        this.charVisibility = WorldSceneMessageVisibility.Public;
-        this.charRecipientIds = [];
-        this.secondaryForm = SecondaryFormType.Character;
-      })
-
-      this.sheetMenuRow($r('app.string.world_scene_add_narrator'), () => {
-        this.moreMenuVisible = false;
-        this.narratorContent = '';
-        this.narratorWitnessIds = [];
-        this.secondaryForm = SecondaryFormType.Narrator;
-      })
-
-      Text($r('app.string.world_scene_end'))
-        .fontSize($r('app.float.world_font_body'))
-        .fontColor($r('app.color.world_error'))
-        .backgroundColor($r('app.color.world_surface_2'))
-        .borderRadius($r('app.float.world_radius_chip'))
-        .width('100%')
-        .padding({ top: 12, bottom: 12 })
-        .margin({ left: 16, right: 16, bottom: 8 })
-        .textAlign(TextAlign.Center)
-        .onClick(() => {
-          this.moreMenuVisible = false;
-          this.secondaryForm = SecondaryFormType.EndConfirm;
-        })
-
-      Text($r('app.string.world_scene_cancel'))
-        .fontSize($r('app.float.world_font_body'))
-        .fontColor($r('app.color.world_text_tertiary'))
-        .width('100%')
-        .padding({ top: 12, bottom: 12 })
-        .margin({ left: 16, right: 16, bottom: 16 })
-        .textAlign(TextAlign.Center)
-        .onClick(() => { this.moreMenuVisible = false; })
-    }
-    .width('100%')
-    .backgroundColor($r('app.color.world_surface_1'))
-  }
-
-  @Builder
-  sheetMenuRow(label: ResourceStr, action: () => void): void {
-    Text(label)
-      .fontSize($r('app.float.world_font_body'))
-      .fontColor($r('app.color.world_text_primary'))
-      .backgroundColor($r('app.color.world_surface_2'))
-      .borderRadius($r('app.float.world_radius_chip'))
-      .width('100%')
-      .padding({ top: 12, bottom: 12 })
-      .margin({ left: 16, right: 16, bottom: 8 })
-      .textAlign(TextAlign.Center)
-      .onClick(() => { action(); })
-  }
-
-  @Builder
-  characterFormSheet(): void {
-    Column() {
-      Text('角色台词(手工)')
-        .fontSize($r('app.float.world_font_subtitle'))
-        .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.world_text_primary'))
-        .width('100%')
-        .padding({ left: 16, top: 16, bottom: 12 })
-
-      Text($r('app.string.world_scene_sender'))
-        .fontSize($r('app.float.world_font_caption'))
-        .fontColor($r('app.color.world_text_secondary'))
-        .width('100%')
-        .padding({ left: 16, bottom: 4 })
-      Row() {
-        ForEach(this.activeCharacters(), (c: ChatCharacterUiModel) => {
-          Text(c.displayName)
-            .fontSize($r('app.float.world_font_caption'))
-            .fontColor(this.charSenderId === c.instanceId
-              ? $r('app.color.world_on_gold') : $r('app.color.world_text_secondary'))
-            .backgroundColor(this.charSenderId === c.instanceId
-              ? $r('app.color.world_gold') : $r('app.color.world_surface_2'))
-            .borderRadius($r('app.float.world_radius_chip'))
-            .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-            .margin({ right: 4, bottom: 4 })
-            .onClick(() => { this.charSenderId = c.instanceId; })
-        }, (c: ChatCharacterUiModel) => c.instanceId)
-      }
-      .width('100%')
-      .padding({ left: 16, right: 16, bottom: 8 })
-
-      Row() {
-        Text('公开')
-          .fontSize($r('app.float.world_font_caption'))
-          .fontColor(this.charVisibility === WorldSceneMessageVisibility.Public
-            ? $r('app.color.world_on_gold') : $r('app.color.world_text_secondary'))
-          .backgroundColor(this.charVisibility === WorldSceneMessageVisibility.Public
-            ? $r('app.color.world_gold') : $r('app.color.world_surface_2'))
-          .borderRadius($r('app.float.world_radius_chip'))
-          .padding({ left: 10, right: 10, top: 4, bottom: 4 })
-          .margin({ right: 6 })
-          .onClick(() => {
-            this.charVisibility = WorldSceneMessageVisibility.Public;
-            this.charRecipientIds = [];
-          })
-        Text('私下')
-          .fontSize($r('app.float.world_font_caption'))
-          .fontColor(this.charVisibility === WorldSceneMessageVisibility.Private
-            ? $r('app.color.world_on_gold') : $r('app.color.world_text_secondary'))
-          .backgroundColor(this.charVisibility === WorldSceneMessageVisibility.Private
-            ? $r('app.color.world_gold') : $r('app.color.world_surface_2'))
-          .borderRadius($r('app.float.world_radius_chip'))
-          .padding({ left: 10, right: 10, top: 4, bottom: 4 })
-          .onClick(() => { this.charVisibility = WorldSceneMessageVisibility.Private; })
-      }
-      .width('100%')
-      .padding({ left: 16, bottom: 8 })
-
-      if (this.charVisibility === WorldSceneMessageVisibility.Private) {
-        Text($r('app.string.world_scene_select_recipients'))
-          .fontSize($r('app.float.world_font_caption'))
-          .fontColor($r('app.color.world_text_secondary'))
-          .width('100%')
-          .padding({ left: 16, bottom: 4 })
-        Row() {
-          ForEach(this.activeCharacters(), (c: ChatCharacterUiModel) => {
-            Text(c.displayName)
-              .fontSize($r('app.float.world_font_caption'))
-              .fontColor(this.charRecipientIds.indexOf(c.instanceId) >= 0
-                ? $r('app.color.world_on_gold') : $r('app.color.world_text_secondary'))
-              .backgroundColor(this.charRecipientIds.indexOf(c.instanceId) >= 0
-                ? $r('app.color.world_gold') : $r('app.color.world_surface_2'))
-              .borderRadius($r('app.float.world_radius_chip'))
-              .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-              .margin({ right: 4, bottom: 4 })
-              .onClick(() => {
-                this.toggleInArray(this.charRecipientIds, c.instanceId, (v) => {
-                  this.charRecipientIds = v;
-                });
-              })
-          }, (c: ChatCharacterUiModel) => c.instanceId)
-        }
-        .width('100%')
-        .padding({ left: 16, right: 16, bottom: 8 })
-      }
-
-      TextArea({ text: this.charContent, placeholder: $r('app.string.world_scene_content_placeholder') })
-        .fontSize($r('app.float.world_font_body'))
-        .fontColor($r('app.color.world_text_primary'))
-        .placeholderColor($r('app.color.world_text_tertiary'))
-        .backgroundColor($r('app.color.world_surface_2'))
-        .borderRadius($r('app.float.world_radius_chip'))
-        .width('100%')
-        .height(120)
-        .margin({ left: 16, right: 16, bottom: 8 })
-        .onChange((v: string) => { this.charContent = v; })
-
-      Row() {
-        WorldSecondaryButton({
-          label: $r('app.string.world_scene_cancel'),
-          onButtonClick: (): void => { this.secondaryForm = SecondaryFormType.None; }
-        })
-          .layoutWeight(1)
-        WorldPrimaryButton({
-          label: $r('app.string.world_scene_save'),
-          isEnabled: this.viewModel !== null && !this.viewModel.isSending
-            && this.charSenderId.length > 0,
-          onButtonClick: (): void => { this.sendCharacterMessage(); }
-        })
-          .layoutWeight(1)
-          .margin({ left: 8 })
-      }
-      .width('100%')
-      .padding({ left: 16, right: 16, bottom: 16 })
-    }
-    .width('100%')
-    .backgroundColor($r('app.color.world_surface_1'))
-  }
-
-  @Builder
-  narratorFormSheet(): void {
-    Column() {
-      Text('旁白/动作')
-        .fontSize($r('app.float.world_font_subtitle'))
-        .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.world_text_primary'))
-        .width('100%')
-        .padding({ left: 16, top: 16, bottom: 12 })
-
-      Text($r('app.string.world_scene_witness'))
-        .fontSize($r('app.float.world_font_caption'))
-        .fontColor($r('app.color.world_text_secondary'))
-        .width('100%')
-        .padding({ left: 16, bottom: 4 })
-      Row() {
-        ForEach(this.activeCharacters(), (c: ChatCharacterUiModel) => {
-          Text(c.displayName)
-            .fontSize($r('app.float.world_font_caption'))
-            .fontColor(this.narratorWitnessIds.indexOf(c.instanceId) >= 0
-              ? $r('app.color.world_on_gold') : $r('app.color.world_text_secondary'))
-            .backgroundColor(this.narratorWitnessIds.indexOf(c.instanceId) >= 0
-              ? $r('app.color.world_gold') : $r('app.color.world_surface_2'))
-            .borderRadius($r('app.float.world_radius_chip'))
-            .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-            .margin({ right: 4, bottom: 4 })
-            .onClick(() => {
-              this.toggleInArray(this.narratorWitnessIds, c.instanceId, (v) => {
-                this.narratorWitnessIds = v;
-              });
-            })
-        }, (c: ChatCharacterUiModel) => c.instanceId)
-      }
-      .width('100%')
-      .padding({ left: 16, right: 16, bottom: 8 })
-
-      TextArea({ text: this.narratorContent, placeholder: $r('app.string.world_scene_content_placeholder') })
-        .fontSize($r('app.float.world_font_body'))
-        .fontColor($r('app.color.world_text_primary'))
-        .placeholderColor($r('app.color.world_text_tertiary'))
-        .backgroundColor($r('app.color.world_surface_2'))
-        .borderRadius($r('app.float.world_radius_chip'))
-        .width('100%')
-        .height(120)
-        .margin({ left: 16, right: 16, bottom: 8 })
-        .onChange((v: string) => { this.narratorContent = v; })
-
-      Row() {
-        WorldSecondaryButton({
-          label: $r('app.string.world_scene_cancel'),
-          onButtonClick: (): void => { this.secondaryForm = SecondaryFormType.None; }
-        })
-          .layoutWeight(1)
-        WorldPrimaryButton({
-          label: $r('app.string.world_scene_save'),
-          isEnabled: this.viewModel !== null && !this.viewModel.isSending,
-          onButtonClick: (): void => { this.sendNarratorMessage(); }
-        })
-          .layoutWeight(1)
-          .margin({ left: 8 })
-      }
-      .width('100%')
-      .padding({ left: 16, right: 16, bottom: 16 })
-    }
-    .width('100%')
-    .backgroundColor($r('app.color.world_surface_1'))
-  }
-
-  @Builder
   endConfirmSheet(): void {
     Column() {
       Text($r('app.string.world_scene_end_confirm_title'))
@@ -1088,7 +732,7 @@ struct WorldSceneChatPage {
       Row() {
         WorldSecondaryButton({
           label: $r('app.string.world_scene_cancel'),
-          onButtonClick: (): void => { this.secondaryForm = SecondaryFormType.None; }
+          onButtonClick: (): void => { this.endConfirmVisible = false; }
         })
           .layoutWeight(1)
         Text($r('app.string.world_scene_end'))
@@ -1099,7 +743,6 @@ struct WorldSceneChatPage {
           .padding({ left: 16, right: 16, top: 8, bottom: 8 })
           .layoutWeight(1)
           .textAlign(TextAlign.Center)
-          .enabled(this.viewModel !== null && !this.viewModel.isEnding)
           .onClick(() => { this.endScene(); })
       }
       .width('100%')
@@ -1195,136 +838,65 @@ struct WorldSceneChatPage {
     .backgroundColor($r('app.color.world_surface_1'))
   }
 
-  private toggleMode(): void {
-    this.isPrivateMode = !this.isPrivateMode;
-    if (this.isPrivateMode) {
-      this.selectedReplyTargetIds = [];
-    } else {
-      this.selectedRecipientIds = [];
-    }
-    this.replyTargetPickerMode = ReplyTargetPickerMode.Hidden;
-  }
-
-  private openTargetPicker(): void {
-    if (this.isPrivateMode) {
-      this.replyTargetPickerMode = this.replyTargetPickerMode === ReplyTargetPickerMode.PrivateRecipient
-        ? ReplyTargetPickerMode.Hidden : ReplyTargetPickerMode.PrivateRecipient;
-    } else {
-      this.replyTargetPickerMode = this.replyTargetPickerMode === ReplyTargetPickerMode.PublicReply
-        ? ReplyTargetPickerMode.Hidden : ReplyTargetPickerMode.PublicReply;
-    }
-  }
-
-  private toggleInArray(arr: string[], id: string, setter: (v: string[]) => void): void {
-    const idx: number = arr.indexOf(id);
-    const newArr: string[] = arr.slice();
-    if (idx >= 0) {
-      newArr.splice(idx, 1);
-    } else {
-      newArr.push(id);
-    }
-    setter(newArr);
-  }
-
   private async sendUserMessage(): Promise<void> {
-    if (this.viewModel === null || this.detail === null) return;
+    if (this.viewModel === null || this.detail === null) {
+      return;
+    }
     const content: string = this.inputContent.trim();
     if (content.length === 0) {
       this.actionError = '消息不能为空';
       return;
     }
-    if (this.isPrivateMode && this.selectedRecipientIds.length === 0) {
-      this.actionError = '私下消息必须选择接收者';
-      return;
-    }
     this.actionError = '';
-    const visibility: WorldSceneMessageVisibility = this.isPrivateMode
-      ? WorldSceneMessageVisibility.Private : WorldSceneMessageVisibility.Public;
-    const input: ChatUserMessageInput = {
-      content: content,
-      visibility: visibility,
-      recipientInstanceIds: this.isPrivateMode ? this.selectedRecipientIds : [],
-      replyTargetInstanceIds: !this.isPrivateMode ? this.selectedReplyTargetIds : []
-    };
-    const result = await this.viewModel.addUserMessage(input);
-    if (result.success) {
-      this.inputContent = '';
-      this.actionError = '';
-    } else {
-      this.actionError = result.errorMessage;
+    this.runtimeError = '';
+    this.inputContent = '';
+    const errorMsg: string = await this.viewModel.sendMessage(content);
+    if (errorMsg.length > 0) {
+      this.actionError = errorMsg;
     }
     this.syncFromViewModel();
   }
 
-  private async sendCharacterMessage(): Promise<void> {
-    if (this.viewModel === null) return;
-    const content: string = this.charContent.trim();
-    if (this.charSenderId.length === 0) {
-      this.actionError = '请选择发言角色';
+  private stopGeneration(): void {
+    if (this.viewModel === null) {
       return;
     }
-    if (content.length === 0) {
-      this.actionError = '消息不能为空';
-      return;
-    }
-    if (this.charVisibility === WorldSceneMessageVisibility.Private && this.charRecipientIds.length === 0) {
-      this.actionError = '私下消息必须选择接收者';
-      return;
-    }
-    this.actionError = '';
-    const input: ChatCharacterMessageInput = {
-      senderInstanceId: this.charSenderId,
-      content: content,
-      visibility: this.charVisibility,
-      recipientInstanceIds: this.charVisibility === WorldSceneMessageVisibility.Private ? this.charRecipientIds : []
-    };
-    const result = await this.viewModel.addCharacterMessage(input);
-    if (result.success) {
-      this.secondaryForm = SecondaryFormType.None;
-      this.actionError = '';
-    } else {
-      this.actionError = result.errorMessage;
-    }
+    this.viewModel.stopGeneration();
     this.syncFromViewModel();
   }
 
-  private async sendNarratorMessage(): Promise<void> {
-    if (this.viewModel === null) return;
-    const content: string = this.narratorContent.trim();
-    if (content.length === 0) {
-      this.actionError = '消息不能为空';
+  private async retryFailed(messageId: string): Promise<void> {
+    if (this.viewModel === null) {
       return;
     }
     this.actionError = '';
-    const input: ChatNarratorMessageInput = {
-      content: content,
-      witnessInstanceIds: this.narratorWitnessIds
-    };
-    const result = await this.viewModel.addNarratorMessage(input);
-    if (result.success) {
-      this.secondaryForm = SecondaryFormType.None;
-      this.actionError = '';
-    } else {
-      this.actionError = result.errorMessage;
+    this.runtimeError = '';
+    const errorMsg: string = await this.viewModel.retryFailedMessage(messageId);
+    if (errorMsg.length > 0) {
+      this.actionError = errorMsg;
     }
     this.syncFromViewModel();
   }
 
   private async endScene(): Promise<void> {
-    if (this.viewModel === null) return;
+    if (this.viewModel === null) {
+      return;
+    }
     this.actionError = '';
-    const result = await this.viewModel.endScene();
-    if (result.success) {
-      this.secondaryForm = SecondaryFormType.None;
-      this.actionError = '';
+    const errorMsg: string = await this.viewModel.endScene();
+    if (errorMsg.length > 0) {
+      this.actionError = errorMsg;
     } else {
-      this.actionError = result.errorMessage;
+      this.endConfirmVisible = false;
     }
     this.syncFromViewModel();
   }
 
   private senderLabel(m: ChatMessageUiModel): string {
     if (m.senderType === WorldSceneMessageSenderType.User) {
+      if (this.detail !== null && this.detail.playerDisplayNameSnapshot.length > 0) {
+        return '[玩家·' + this.detail.playerDisplayNameSnapshot + ']';
+      }
       return '[玩家]';
     }
     if (m.senderType === WorldSceneMessageSenderType.Character) {
@@ -1337,40 +909,56 @@ struct WorldSceneChatPage {
   }
 
   private senderLabelColor(t: WorldSceneMessageSenderType): ResourceColor {
-    if (t === WorldSceneMessageSenderType.User) return $r('app.color.world_on_gold');
-    if (t === WorldSceneMessageSenderType.Character) return $r('app.color.world_text_primary');
+    if (t === WorldSceneMessageSenderType.User) {
+      return $r('app.color.world_on_gold');
+    }
+    if (t === WorldSceneMessageSenderType.Character) {
+      return $r('app.color.world_text_primary');
+    }
     return $r('app.color.world_text_tertiary');
   }
 
   private senderLabelBg(t: WorldSceneMessageSenderType): ResourceColor {
-    if (t === WorldSceneMessageSenderType.User) return $r('app.color.world_gold');
-    if (t === WorldSceneMessageSenderType.Character) return $r('app.color.world_surface_2');
+    if (t === WorldSceneMessageSenderType.User) {
+      return $r('app.color.world_gold');
+    }
+    if (t === WorldSceneMessageSenderType.Character) {
+      return $r('app.color.world_surface_2');
+    }
     return $r('app.color.world_surface_1');
   }
 
-  private visibilityTag(v: WorldSceneMessageVisibility): string {
-    if (v === WorldSceneMessageVisibility.Public) return '公开';
-    if (v === WorldSceneMessageVisibility.Private) return '私下';
-    return '旁白';
-  }
-
-  private visibilityColor(v: WorldSceneMessageVisibility): ResourceColor {
-    if (v === WorldSceneMessageVisibility.Private) return $r('app.color.world_error');
-    return $r('app.color.world_text_secondary');
-  }
-
   private statusTag(s: string): string {
-    if (s === 'streaming') return '生成中';
-    if (s === 'cancelled') return '已取消';
-    if (s === 'failed') return '失败';
+    if (s === 'streaming') {
+      return '生成中';
+    }
+    if (s === 'cancelled') {
+      return '已停止';
+    }
+    if (s === 'failed') {
+      return '失败';
+    }
     return '已完成';
   }
 
   private statusColor(s: string): ResourceColor {
-    if (s === 'streaming') return $r('app.color.world_gold');
-    if (s === 'cancelled') return $r('app.color.world_text_tertiary');
-    if (s === 'failed') return $r('app.color.world_error');
+    if (s === 'streaming') {
+      return $r('app.color.world_gold');
+    }
+    if (s === 'cancelled') {
+      return $r('app.color.world_text_tertiary');
+    }
+    if (s === 'failed') {
+      return $r('app.color.world_error');
+    }
     return $r('app.color.world_text_secondary');
+  }
+
+  private resolveCharacterName(instanceId: string): string {
+    if (this.detail === null || instanceId.length === 0) {
+      return '';
+    }
+    return this.resolveInstanceName(this.detail, instanceId);
   }
 
   private resolveInstanceName(detail: WorldSceneChatUiModel, instanceId: string): string {
@@ -1382,13 +970,10 @@ struct WorldSceneChatPage {
     return '已移除角色';
   }
 
-  private resolveCharacterName(instanceId: string): string {
-    if (this.detail === null || instanceId.length === 0) return '';
-    return this.resolveInstanceName(this.detail, instanceId);
-  }
-
   private resolveCharacterAvatar(instanceId: string): string {
-    if (this.detail === null) return '';
+    if (this.detail === null) {
+      return '';
+    }
     for (let i = 0; i < this.detail.characters.length; i++) {
       if (this.detail.characters[i].instanceId === instanceId) {
         return this.detail.characters[i].avatarUri;
@@ -1398,7 +983,9 @@ struct WorldSceneChatPage {
   }
 
   private resolveCharacterFallback(instanceId: string): string {
-    if (this.detail === null) return '';
+    if (this.detail === null) {
+      return '';
+    }
     for (let i = 0; i < this.detail.characters.length; i++) {
       if (this.detail.characters[i].instanceId === instanceId) {
         return this.detail.characters[i].fallbackName;
@@ -1408,7 +995,9 @@ struct WorldSceneChatPage {
   }
 
   private resolveCharacterActive(instanceId: string): boolean {
-    if (this.detail === null) return false;
+    if (this.detail === null) {
+      return false;
+    }
     for (let i = 0; i < this.detail.characters.length; i++) {
       if (this.detail.characters[i].instanceId === instanceId) {
         return this.detail.characters[i].isActive;
@@ -1418,7 +1007,9 @@ struct WorldSceneChatPage {
   }
 
   private resolveCharacterCardMissing(instanceId: string): boolean {
-    if (this.detail === null) return false;
+    if (this.detail === null) {
+      return false;
+    }
     for (let i = 0; i < this.detail.characters.length; i++) {
       if (this.detail.characters[i].instanceId === instanceId) {
         return this.detail.characters[i].characterCardMissing;
@@ -1428,9 +1019,13 @@ struct WorldSceneChatPage {
   }
 
   private openCharacterMemoryFromScene(instanceId: string): void {
-    if (this.detail === null || instanceId.length === 0) return;
+    if (this.detail === null || instanceId.length === 0) {
+      return;
+    }
     const worldId: string = this.detail.worldId;
-    if (worldId.length === 0) return;
+    if (worldId.length === 0) {
+      return;
+    }
     this.characterSheetInstanceId = '';
     AppStorage.setOrCreate<string>(PENDING_WORLD_MEMORY_WORLD_ID_KEY, worldId);
     AppStorage.setOrCreate<string>(PENDING_WORLD_MEMORY_CHARACTER_INSTANCE_ID_KEY, instanceId);
