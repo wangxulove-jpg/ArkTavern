@@ -29,6 +29,7 @@ import {
   PENDING_WORLD_ID_KEY,
   PENDING_WORLD_LOCATION_ID_KEY,
   PENDING_WORLD_SCENE_CHAT_ID_KEY,
+  PENDING_WORLD_SESSION_ID_KEY,
   PENDING_WORLD_INSTANCE_DETAIL_ID_KEY,
   PENDING_WORLD_CURATOR_WORLD_ID_KEY,
   WORLD_DETAIL_REFRESH_TOKEN_KEY,
@@ -36,11 +37,11 @@ import {
   formatWorldTimestamp
 } from '../../viewmodels/world/WorldUiModels';
 import {
-  WorldLocationSceneSheetViewModel,
-  LocationSheetLoadState,
-  LocationSheetUiModel,
-  SheetCharacterUiModel
-} from '../../viewmodels/world/WorldLocationSceneSheetViewModel';
+  WorldSceneLauncherViewModel,
+  LauncherLoadState,
+  LauncherUiModel,
+  LauncherParticipantUiModel
+} from '../../viewmodels/world/WorldSceneLauncherViewModel';
 import {
   WorldImmersiveMapViewModel,
   MapEditMode,
@@ -49,6 +50,8 @@ import {
 import { ImmersiveMapLayout, ImmersiveMapViewport, BILLBOARD_MAX_VISIBLE } from '../../viewmodels/world/WorldImmersiveMapLayout';
 import { WorldStatus } from '../../models/world/World';
 import { WorldLocationStatus } from '../../models/world/WorldLocation';
+import { WorldSceneStatus } from '../../models/world/WorldScene';
+import { WorldConversationSessionStatus } from '../../models/world/WorldConversationSession';
 import { WorldImmersiveMap, NodeBillboardData } from '../../components/world/WorldImmersiveMap';
 import { BillboardCharacterSlotData } from '../../components/world/WorldMapCharacterBillboard';
 import { ActiveLocationOptionUiModel } from '../../viewmodels/world/WorldCharacterManageViewModel';
@@ -87,15 +90,14 @@ struct WorldDetailPage {
   @State private isEditMode: boolean = false;
   @State private billboardData: NodeBillboardData[] = [];
 
-  @State private sheetViewModel: WorldLocationSceneSheetViewModel | null = null;
-  @State private locationSheetVisible: boolean = false;
-  @State private sheetLoadState: LocationSheetLoadState = LocationSheetLoadState.Loading;
-  @State private sheetErrorMessage: string = '';
-  @State private sheetDetail: LocationSheetUiModel | null = null;
-  @State private sheetWorldId: string = '';
-  @State private sheetLocationId: string = '';
-  @State private sheetActionError: string = '';
-  @State private sheetStartConfirmVisible: boolean = false;
+  @State private launcherViewModel: WorldSceneLauncherViewModel | null = null;
+  @State private launcherSheetVisible: boolean = false;
+  @State private launcherLoadState: LauncherLoadState = LauncherLoadState.Loading;
+  @State private launcherErrorMessage: string = '';
+  @State private launcherDetail: LauncherUiModel | null = null;
+  @State private launcherWorldId: string = '';
+  @State private launcherLocationId: string = '';
+  @State private launcherActionError: string = '';
 
   @State private moreMenuVisible: boolean = false;
   @State private dragError: string = '';
@@ -249,19 +251,18 @@ struct WorldDetailPage {
     }
     .width('100%')
     .height('100%')
-    .bindSheet(this.locationSheetVisible, this.locationSceneSheet, {
+    .bindSheet(this.launcherSheetVisible, this.sceneLauncherSheet, {
       height: SheetSize.FIT_CONTENT,
       dragBar: true,
       backgroundColor: $r('app.color.world_surface_1'),
       onDisappear: () => {
-        if (this.sheetViewModel !== null) {
-          this.sheetViewModel.dispose();
-          this.sheetViewModel = null;
+        if (this.launcherViewModel !== null) {
+          this.launcherViewModel.dispose();
+          this.launcherViewModel = null;
         }
-        this.locationSheetVisible = false;
-        this.sheetDetail = null;
-        this.sheetActionError = '';
-        this.sheetStartConfirmVisible = false;
+        this.launcherSheetVisible = false;
+        this.launcherDetail = null;
+        this.launcherActionError = '';
       }
     })
     .bindSheet(this.unplacedSheetVisible, this.unplacedCharactersSheet, {
@@ -555,7 +556,7 @@ struct WorldDetailPage {
           this.addMenuVisible = true;
         },
         onCharacterTap: (instanceId: string): void => {
-          this.openInstanceDetail(instanceId);
+          this.onCharacterTapped(instanceId);
         },
         onOverflowTap: (): void => {
           this.openCharacterManage();
@@ -841,7 +842,7 @@ struct WorldDetailPage {
   }
 
   @Builder
-  locationSceneSheet(): void {
+  sceneLauncherSheet(): void {
     Column() {
       Row() {
         Text($r('app.string.world_location_sheet_title'))
@@ -858,14 +859,14 @@ struct WorldDetailPage {
           .padding(0)
           .align(Alignment.Center)
           .onClick(() => {
-            this.closeLocationSheet();
+            this.closeLauncherSheet();
           })
       }
       .width('100%')
       .padding({ left: 16, right: 16, top: 12, bottom: 8 })
       .alignItems(VerticalAlign.Center)
 
-      if (this.sheetLoadState === LocationSheetLoadState.Loading) {
+      if (this.launcherLoadState === LauncherLoadState.Loading) {
         Column() {
           LoadingProgress().width(32).height(32).color($r('app.color.world_gold'))
           Text($r('app.string.world_location_sheet_loading'))
@@ -877,7 +878,7 @@ struct WorldDetailPage {
         .padding({ top: 24, bottom: 24 })
         .justifyContent(FlexAlign.Center)
         .alignItems(HorizontalAlign.Center)
-      } else if (this.sheetLoadState === LocationSheetLoadState.NotFound) {
+      } else if (this.launcherLoadState === LauncherLoadState.NotFound) {
         Column() {
           Text($r('app.string.world_detail_not_found'))
             .fontSize($r('app.float.world_font_body'))
@@ -886,17 +887,17 @@ struct WorldDetailPage {
         .width('100%')
         .padding({ top: 24, bottom: 24 })
         .alignItems(HorizontalAlign.Center)
-      } else if (this.sheetLoadState === LocationSheetLoadState.Error) {
+      } else if (this.launcherLoadState === LauncherLoadState.Error) {
         Column() {
-          Text(this.sheetErrorMessage.length > 0 ? this.sheetErrorMessage : '加载失败')
+          Text(this.launcherErrorMessage.length > 0 ? this.launcherErrorMessage : '加载失败')
             .fontSize($r('app.float.world_font_body'))
             .fontColor($r('app.color.world_error'))
         }
         .width('100%')
         .padding({ top: 24, bottom: 24 })
         .alignItems(HorizontalAlign.Center)
-      } else if (this.sheetLoadState === LocationSheetLoadState.Ready && this.sheetDetail !== null) {
-        this.locationSheetContent(this.sheetDetail)
+      } else if (this.launcherLoadState === LauncherLoadState.Ready && this.launcherDetail !== null) {
+        this.launcherContent(this.launcherDetail)
       }
     }
     .width('100%')
@@ -904,64 +905,127 @@ struct WorldDetailPage {
   }
 
   @Builder
-  locationSheetContent(detail: LocationSheetUiModel): void {
+  launcherContent(detail: LauncherUiModel): void {
     Scroll() {
       Column() {
-        Row() {
-          Text(detail.locationName.length > 0 ? detail.locationName : '(未命名地点)')
-            .fontSize($r('app.float.world_font_title'))
-            .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.world_text_primary'))
-            .maxLines(2)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .layoutWeight(1)
-          WorldStatusChip({
-            label: detail.locationStatus === WorldLocationStatus.Active
-              ? '活跃'
-              : '已归档',
-            isActive: detail.locationStatus === WorldLocationStatus.Active
-          })
-        }
-        .width('100%')
-        .alignItems(VerticalAlign.Top)
-
-        if (detail.locationDescription.length > 0) {
-          Text(detail.locationDescription)
-            .fontSize($r('app.float.world_font_body'))
-            .fontColor($r('app.color.world_text_secondary'))
-            .maxLines(6)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .margin({ top: 8 })
-            .width('100%')
-        }
+        Text(detail.locationName.length > 0 ? detail.locationName : '(未命名地点)')
+          .fontSize($r('app.float.world_font_title'))
+          .fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.world_text_primary'))
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
 
         Divider().color($r('app.color.world_border')).margin({ top: 12, bottom: 8 })
-        Row() {
-          Text(detail.activeScene !== null
-            ? $r('app.string.world_location_sheet_active_scene')
-            : $r('app.string.world_location_sheet_no_active_scene'))
-            .fontSize($r('app.float.world_font_caption'))
-            .fontColor(detail.activeScene !== null
-              ? $r('app.color.world_gold') : $r('app.color.world_text_tertiary'))
-            .layoutWeight(1)
-          if (detail.endedSceneCount > 0) {
-            Text($r('app.string.world_location_sheet_ended_count') + ': ' + detail.endedSceneCount.toString())
-              .fontSize(11)
-              .fontColor($r('app.color.world_text_tertiary'))
+
+        if (detail.canContinueSession) {
+          Row() {
+            Text('当前有进行中的会话')
+              .fontSize($r('app.float.world_font_caption'))
+              .fontColor($r('app.color.world_gold'))
+              .layoutWeight(1)
+            WorldStatusChip({ label: '活动中', isActive: true })
           }
+          .width('100%')
+          .alignItems(VerticalAlign.Center)
+
+          WorldPrimaryButton({
+            label: '继续会话',
+            fullWidth: true,
+            onButtonClick: (): void => {
+              this.onContinueSessionClick();
+            }
+          })
+            .margin({ top: 12 })
+        } else if (detail.hasActiveScene && detail.isSceneEnded) {
+          Row() {
+            Text('该地点场景已结束')
+              .fontSize($r('app.float.world_font_caption'))
+              .fontColor($r('app.color.world_text_tertiary'))
+              .layoutWeight(1)
+            WorldStatusChip({ label: '已结束', isActive: false })
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Center)
+        } else if (!detail.hasActiveScene) {
+          Text('该地点尚无场景,选择角色后创建')
+            .fontSize($r('app.float.world_font_caption'))
+            .fontColor($r('app.color.world_text_secondary'))
+            .width('100%')
+        } else if (detail.hasActiveSession) {
+          Row() {
+            Text('会话已结束,可选择角色开启新会话')
+              .fontSize($r('app.float.world_font_caption'))
+              .fontColor($r('app.color.world_text_secondary'))
+              .layoutWeight(1)
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Center)
         }
-        .width('100%')
-        .alignItems(VerticalAlign.Center)
 
         Divider().color($r('app.color.world_border')).margin({ top: 12, bottom: 8 })
-        Text($r('app.string.world_scene_active_characters'))
+        Text('选择参与角色')
           .fontSize($r('app.float.world_font_caption'))
           .fontColor($r('app.color.world_text_secondary'))
           .width('100%')
-        this.sheetCharactersList(detail.characters)
 
-        if (this.sheetActionError.length > 0) {
-          Text(this.sheetActionError)
+        if (detail.participants.length === 0) {
+          Text($r('app.string.world_scene_no_characters'))
+            .fontSize($r('app.float.world_font_caption'))
+            .fontColor($r('app.color.world_text_tertiary'))
+            .width('100%')
+            .margin({ top: 6 })
+        } else {
+          Scroll() {
+            Row() {
+              ForEach(detail.participants, (p: LauncherParticipantUiModel) => {
+                Column() {
+                  Stack() {
+                    CharacterImageView({
+                      imageUri: p.avatarUri,
+                      fallbackName: p.displayName,
+                      imgWidth: 36,
+                      imgHeight: 36,
+                      imgBorderRadius: 18,
+                      displayMode: 'thumbnail',
+                      objectFit: ImageFit.Cover
+                    })
+                    if (p.selected) {
+                      Circle({ width: 10, height: 10 })
+                        .fill($r('app.color.world_gold'))
+                        .position({ x: 26, y: 26 })
+                    }
+                  }
+                  .width(36)
+                  .height(36)
+                  Text(p.displayName)
+                    .fontSize(10)
+                    .fontColor(p.selected ? $r('app.color.world_gold') : $r('app.color.world_text_primary'))
+                    .maxLines(1)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                    .margin({ top: 2 })
+                }
+                .width(48)
+                .margin({ right: 8 })
+                .alignItems(HorizontalAlign.Center)
+                .onClick(() => {
+                  if (this.launcherViewModel !== null) {
+                    this.launcherViewModel.toggleParticipant(p.instanceId);
+                    this.launcherDetail = this.launcherViewModel.detail;
+                  }
+                })
+              }, (p: LauncherParticipantUiModel) => p.instanceId + '|' + (p.selected ? '1' : '0'))
+            }
+          }
+          .scrollable(ScrollDirection.Horizontal)
+          .scrollBar(BarState.Off)
+          .width('100%')
+          .height(64)
+          .margin({ top: 4 })
+        }
+
+        if (this.launcherActionError.length > 0) {
+          Text(this.launcherActionError)
             .fontSize($r('app.float.world_font_caption'))
             .fontColor($r('app.color.world_error'))
             .width('100%')
@@ -971,50 +1035,7 @@ struct WorldDetailPage {
             .borderRadius($r('app.float.world_radius_chip'))
         }
 
-        if (this.sheetStartConfirmVisible) {
-          Column() {
-            Text($r('app.string.world_location_sheet_start_confirm_title'))
-              .fontSize($r('app.float.world_font_title'))
-              .fontWeight(FontWeight.Medium)
-              .fontColor($r('app.color.world_text_primary'))
-              .width('100%')
-            Text($r('app.string.world_location_sheet_start_confirm_desc'))
-              .fontSize($r('app.float.world_font_body'))
-              .fontColor($r('app.color.world_text_secondary'))
-              .margin({ top: 6 })
-              .width('100%')
-            Row() {
-              WorldSecondaryButton({
-                label: $r('app.string.world_scene_cancel'),
-                fullWidth: true,
-                onButtonClick: (): void => {
-                  this.sheetStartConfirmVisible = false;
-                }
-              })
-                .layoutWeight(1)
-                .margin({ right: 8 })
-              WorldPrimaryButton({
-                label: $r('app.string.world_location_sheet_start_scene'),
-                fullWidth: true,
-                isEnabled: this.sheetViewModel !== null && !this.sheetViewModel.isStarting,
-                onButtonClick: (): void => {
-                  this.confirmStartScene();
-                }
-              })
-                .layoutWeight(1)
-            }
-            .width('100%')
-            .margin({ top: 12 })
-            .alignItems(VerticalAlign.Center)
-          }
-          .width('100%')
-          .padding(12)
-          .backgroundColor($r('app.color.world_surface_2'))
-          .borderRadius($r('app.float.world_radius_card'))
-          .margin({ top: 12 })
-        }
-
-        if (!this.sheetStartConfirmVisible) {
+        if (detail.canLaunchNewSession && !detail.canContinueSession) {
           Row() {
             WorldSecondaryButton({
               label: $r('app.string.world_location_sheet_view_history'),
@@ -1026,11 +1047,13 @@ struct WorldDetailPage {
               .layoutWeight(1)
               .margin({ right: 8 })
             WorldPrimaryButton({
-              label: $r('app.string.world_location_sheet_enter_scene'),
+              label: '开始会话',
               fullWidth: true,
-              isEnabled: detail.canStartScene || detail.activeScene !== null,
+              isEnabled: this.launcherViewModel !== null
+                && !this.launcherViewModel.isLaunching
+                && detail.participants.filter((p: LauncherParticipantUiModel): boolean => p.selected).length > 0,
               onButtonClick: (): void => {
-                this.onEnterSceneClick();
+                this.onLaunchNewSessionClick();
               }
             })
               .layoutWeight(1)
@@ -1038,6 +1061,15 @@ struct WorldDetailPage {
           .width('100%')
           .margin({ top: 16 })
           .alignItems(VerticalAlign.Center)
+        } else if (!detail.canContinueSession) {
+          WorldSecondaryButton({
+            label: $r('app.string.world_location_sheet_view_history'),
+            fullWidth: true,
+            onButtonClick: (): void => {
+              this.onViewSceneHistoryClick();
+            }
+          })
+            .margin({ top: 16 })
         }
 
         Column().width('100%').height(24)
@@ -1051,54 +1083,6 @@ struct WorldDetailPage {
     .edgeEffect(EdgeEffect.Spring)
   }
 
-  @Builder
-  sheetCharactersList(characters: SheetCharacterUiModel[]): void {
-    if (characters.length === 0) {
-      Text($r('app.string.world_scene_no_characters'))
-        .fontSize($r('app.float.world_font_caption'))
-        .fontColor($r('app.color.world_text_tertiary'))
-        .width('100%')
-        .margin({ top: 6 })
-    } else {
-      Column() {
-        ForEach(characters, (c: SheetCharacterUiModel) => {
-          Row() {
-            CharacterImageView({
-              imageUri: c.avatarUri,
-              fallbackName: c.displayName,
-              imgWidth: 32,
-              imgHeight: 32,
-              imgBorderRadius: 16,
-              displayMode: 'thumbnail',
-              objectFit: ImageFit.Cover
-            })
-            Column() {
-              Text(c.displayName)
-                .fontSize($r('app.float.world_font_body'))
-                .fontColor(c.isActive
-                  ? $r('app.color.world_text_primary') : $r('app.color.world_text_tertiary'))
-                .maxLines(1)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-                .width('100%')
-              Text(c.isActive ? '活跃' : '停用')
-                .fontSize($r('app.float.world_font_micro'))
-                .fontColor(c.isActive
-                  ? $r('app.color.world_gold') : $r('app.color.world_text_tertiary'))
-            }
-            .alignItems(HorizontalAlign.Start)
-            .layoutWeight(1)
-            .margin({ left: 8 })
-          }
-          .width('100%')
-          .padding({ top: 6, bottom: 6 })
-          .alignItems(VerticalAlign.Center)
-        }, (c: SheetCharacterUiModel) => c.instanceId + '|' + (c.isActive ? '1' : '0'))
-      }
-      .width('100%')
-      .margin({ top: 4 })
-    }
-  }
-
   // ===== Event handlers =====
 
   private onLocationTapped(locationId: string): void {
@@ -1106,7 +1090,7 @@ struct WorldDetailPage {
       return;
     }
     this.selectedLocationId = locationId;
-    this.openLocationSheet(this.currentWorldId, locationId);
+    this.openLauncherSheet(this.currentWorldId, locationId, '');
   }
 
   private async onLocationDragEnd(locationId: string, worldX: number, worldY: number): Promise<void> {
@@ -1123,104 +1107,125 @@ struct WorldDetailPage {
     }
   }
 
-  private openLocationSheet(worldId: string, locationId: string): void {
-    if (this.sheetViewModel !== null) {
-      this.sheetViewModel.dispose();
+  private onCharacterTapped(instanceId: string): void {
+    if (this.currentWorldId.length === 0 || instanceId.length === 0) {
+      return;
     }
-    const vm: WorldLocationSceneSheetViewModel = new WorldLocationSceneSheetViewModel(
-      AppServices.getWorldRepository(),
-      AppServices.getWorldLocationRepository(),
-      AppServices.getWorldCharacterInstanceRepository(),
-      AppServices.getWorldSceneRepository(),
-      AppServices.getWorldSceneService(),
-      AppServices.getCharacterService()
-    );
-    this.sheetViewModel = vm;
-    this.sheetWorldId = worldId;
-    this.sheetLocationId = locationId;
-    this.sheetLoadState = LocationSheetLoadState.Loading;
-    this.sheetErrorMessage = '';
-    this.sheetDetail = null;
-    this.sheetActionError = '';
-    this.sheetStartConfirmVisible = false;
+    const locationId: string = this.resolveCharacterLocationId(instanceId);
+    if (locationId.length === 0) {
+      this.openInstanceDetail(instanceId);
+      return;
+    }
     this.selectedLocationId = locationId;
-    this.locationSheetVisible = true;
-    Logger.info(LOG_TAG, 'openLocationSheet: locShortId=' + locationId.substring(locationId.length - 8)
+    this.openLauncherSheet(this.currentWorldId, locationId, instanceId);
+  }
+
+  private resolveCharacterLocationId(instanceId: string): string {
+    if (this.detail === null) {
+      return '';
+    }
+    for (let i = 0; i < this.detail.characters.length; i++) {
+      if (this.detail.characters[i].id === instanceId) {
+        return this.detail.characters[i].currentLocationId;
+      }
+    }
+    return '';
+  }
+
+  private openLauncherSheet(worldId: string, locationId: string, preselectedInstanceId: string): void {
+    if (this.launcherViewModel !== null) {
+      this.launcherViewModel.dispose();
+    }
+    const vm: WorldSceneLauncherViewModel = new WorldSceneLauncherViewModel(
+      AppServices.getWorldSceneLaunchService(),
+      AppServices.getCharacterService(),
+      AppServices.getWorldCharacterInstanceRepository()
+    );
+    vm.setPreselectedInstanceId(preselectedInstanceId);
+    this.launcherViewModel = vm;
+    this.launcherWorldId = worldId;
+    this.launcherLocationId = locationId;
+    this.launcherLoadState = LauncherLoadState.Loading;
+    this.launcherErrorMessage = '';
+    this.launcherDetail = null;
+    this.launcherActionError = '';
+    this.selectedLocationId = locationId;
+    this.launcherSheetVisible = true;
+    Logger.info(LOG_TAG, 'openLauncherSheet: locShortId=' + locationId.substring(locationId.length - 8)
+      + ', preselect=' + (preselectedInstanceId.length > 0 ? '1' : '0')
       + ', vmInstance=' + vm.instanceShortId);
-    this.loadSheetSnapshot(worldId, locationId);
+    this.loadLauncherSnapshot(worldId, locationId);
   }
 
-  private closeLocationSheet(): void {
-    if (this.sheetViewModel !== null) {
-      this.sheetViewModel.dispose();
-      this.sheetViewModel = null;
+  private closeLauncherSheet(): void {
+    if (this.launcherViewModel !== null) {
+      this.launcherViewModel.dispose();
+      this.launcherViewModel = null;
     }
-    this.locationSheetVisible = false;
-    this.sheetDetail = null;
-    this.sheetLoadState = LocationSheetLoadState.Loading;
-    this.sheetErrorMessage = '';
-    this.sheetActionError = '';
-    this.sheetStartConfirmVisible = false;
+    this.launcherSheetVisible = false;
+    this.launcherDetail = null;
+    this.launcherLoadState = LauncherLoadState.Loading;
+    this.launcherErrorMessage = '';
+    this.launcherActionError = '';
   }
 
-  private async loadSheetSnapshot(worldId: string, locationId: string): Promise<void> {
-    if (this.sheetViewModel === null) {
+  private async loadLauncherSnapshot(worldId: string, locationId: string): Promise<void> {
+    if (this.launcherViewModel === null) {
       return;
     }
-    await this.sheetViewModel.loadSnapshot(worldId, locationId);
-    if (this.sheetViewModel === null) {
+    await this.launcherViewModel.loadSnapshot(worldId, locationId);
+    if (this.launcherViewModel === null) {
       return;
     }
-    this.sheetLoadState = this.sheetViewModel.state;
-    this.sheetErrorMessage = this.sheetViewModel.errorMessage;
-    this.sheetDetail = this.sheetViewModel.detail;
+    this.launcherLoadState = this.launcherViewModel.state;
+    this.launcherErrorMessage = this.launcherViewModel.errorMessage;
+    this.launcherDetail = this.launcherViewModel.detail;
   }
 
-  private async onEnterSceneClick(): Promise<void> {
-    if (this.sheetViewModel === null || this.sheetDetail === null) {
+  private async onContinueSessionClick(): Promise<void> {
+    if (this.launcherViewModel === null || this.launcherDetail === null) {
       return;
     }
-    if (this.sheetDetail.activeScene !== null) {
-      this.navigateToSceneChat(this.sheetDetail.activeScene.id);
-      return;
-    }
-    if (!this.sheetDetail.canStartScene) {
-      this.sheetActionError = '当前世界或地点已归档,无法开始新场景';
-      return;
-    }
-    this.sheetStartConfirmVisible = true;
-  }
-
-  private async confirmStartScene(): Promise<void> {
-    if (this.sheetViewModel === null || this.sheetDetail === null) {
-      return;
-    }
-    this.sheetActionError = '';
-    const result = await this.sheetViewModel.enterScene();
+    this.launcherActionError = '';
+    const result = await this.launcherViewModel.continueActiveSession();
     if (result.success) {
-      this.sheetStartConfirmVisible = false;
       this.bumpSceneTokens();
-      this.navigateToSceneChat(result.sceneId);
+      this.navigateToSceneChat(result.sceneId, result.sessionId);
     } else {
-      this.sheetActionError = result.errorMessage;
+      this.launcherActionError = result.errorMessage;
     }
   }
 
-  private navigateToSceneChat(sceneId: string): void {
+  private async onLaunchNewSessionClick(): Promise<void> {
+    if (this.launcherViewModel === null || this.launcherDetail === null) {
+      return;
+    }
+    this.launcherActionError = '';
+    const result = await this.launcherViewModel.launchNewSession();
+    if (result.success) {
+      this.bumpSceneTokens();
+      this.navigateToSceneChat(result.sceneId, result.sessionId);
+    } else {
+      this.launcherActionError = result.errorMessage;
+    }
+  }
+
+  private navigateToSceneChat(sceneId: string, sessionId: string): void {
     if (sceneId.length === 0) {
       return;
     }
     AppStorage.setOrCreate<string>(PENDING_WORLD_SCENE_CHAT_ID_KEY, sceneId);
-    this.closeLocationSheet();
+    AppStorage.setOrCreate<string>(PENDING_WORLD_SESSION_ID_KEY, sessionId);
+    this.closeLauncherSheet();
     router.pushUrl({ url: 'pages/world/WorldSceneChatPage' });
   }
 
   private onViewSceneHistoryClick(): void {
-    if (this.sheetWorldId.length === 0) {
+    if (this.launcherWorldId.length === 0) {
       return;
     }
-    AppStorage.setOrCreate<string>(PENDING_WORLD_ID_KEY, this.sheetWorldId);
-    this.closeLocationSheet();
+    AppStorage.setOrCreate<string>(PENDING_WORLD_ID_KEY, this.launcherWorldId);
+    this.closeLauncherSheet();
     router.pushUrl({ url: 'pages/world/WorldSceneManagePage' });
   }
 

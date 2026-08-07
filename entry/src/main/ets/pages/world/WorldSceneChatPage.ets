@@ -23,12 +23,14 @@ import {
 } from '../../viewmodels/world/WorldSceneChatViewModel';
 import {
   PENDING_WORLD_SCENE_CHAT_ID_KEY,
+  PENDING_WORLD_SESSION_ID_KEY,
   PENDING_WORLD_MEMORY_WORLD_ID_KEY,
   PENDING_WORLD_MEMORY_CHARACTER_INSTANCE_ID_KEY,
   WORLD_SCENE_CHAT_REFRESH_TOKEN_KEY,
   formatWorldTimestamp
 } from '../../viewmodels/world/WorldUiModels';
 import { WorldSceneStatus } from '../../models/world/WorldScene';
+import { WorldConversationSessionStatus } from '../../models/world/WorldConversationSession';
 import {
   WorldSceneMessageVisibility,
   WorldSceneMessageSenderType
@@ -96,6 +98,8 @@ struct WorldSceneChatPage {
       await AppServices.whenReady();
       const sceneId: string = AppStorage.get<string>(PENDING_WORLD_SCENE_CHAT_ID_KEY) ?? '';
       AppStorage.set<string>(PENDING_WORLD_SCENE_CHAT_ID_KEY, '');
+      const sessionId: string = AppStorage.get<string>(PENDING_WORLD_SESSION_ID_KEY) ?? '';
+      AppStorage.set<string>(PENDING_WORLD_SESSION_ID_KEY, '');
       if (sceneId.length === 0) {
         Logger.warn(LOG_TAG, 'aboutToAppear: sceneId empty');
         this.isInitializing = false;
@@ -108,10 +112,12 @@ struct WorldSceneChatPage {
         AppServices.getWorldCharacterInstanceRepository(),
         AppServices.getWorldSceneRepository(),
         AppServices.getWorldSceneMessageRepository(),
+        AppServices.getWorldConversationSessionRepository(),
         AppServices.getCharacterService(),
         AppServices.getWorldSceneService()
       );
       this.viewModel.setSceneId(sceneId);
+      this.viewModel.setSessionId(sessionId);
       this.isInitializing = false;
       await this.loadSnapshot();
     } catch (e) {
@@ -194,7 +200,22 @@ struct WorldSceneChatPage {
     }
     return this.detail.sceneStatus === WorldSceneStatus.Active
       && this.detail.worldStatus === WorldStatus.Active
-      && this.detail.locationStatus === WorldLocationStatus.Active;
+      && this.detail.locationStatus === WorldLocationStatus.Active
+      && this.detail.sessionStatus === WorldConversationSessionStatus.Active;
+  }
+
+  private isSessionEnded(): boolean {
+    if (this.detail === null) {
+      return false;
+    }
+    return this.detail.sessionStatus === WorldConversationSessionStatus.Ended;
+  }
+
+  private isSessionActive(): boolean {
+    if (this.detail === null) {
+      return false;
+    }
+    return this.detail.sessionStatus === WorldConversationSessionStatus.Active;
   }
 
   build(): void {
@@ -416,8 +437,12 @@ struct WorldSceneChatPage {
           .padding({ left: 16, right: 16, top: 4, bottom: 4 })
       }
 
-      if (this.isSceneWritable()) {
+      if (this.isSceneWritable() && this.isSessionActive()) {
+        this.sessionActiveBar()
+      } else if (this.isSceneWritable()) {
         this.inputArea(detail)
+      } else if (this.isSessionEnded()) {
+        this.endedSessionBar()
       } else if (detail.sceneStatus === WorldSceneStatus.Ended) {
         this.endedSceneBar()
       }
@@ -708,6 +733,34 @@ struct WorldSceneChatPage {
       Text($r('app.string.world_scene_ended_hint'))
         .fontSize($r('app.float.world_font_body'))
         .fontColor($r('app.color.world_text_tertiary'))
+        .width('100%')
+        .textAlign(TextAlign.Center)
+        .padding({ top: 12, bottom: 12 + this.navBarHeight })
+    }
+    .width('100%')
+    .backgroundColor($r('app.color.world_surface_1'))
+  }
+
+  @Builder
+  endedSessionBar(): void {
+    Column() {
+      Text('该会话已结束')
+        .fontSize($r('app.float.world_font_body'))
+        .fontColor($r('app.color.world_text_tertiary'))
+        .width('100%')
+        .textAlign(TextAlign.Center)
+        .padding({ top: 12, bottom: 12 + this.navBarHeight })
+    }
+    .width('100%')
+    .backgroundColor($r('app.color.world_surface_1'))
+  }
+
+  @Builder
+  sessionActiveBar(): void {
+    Column() {
+      Text('世界AI会话将在下一阶段接入')
+        .fontSize($r('app.float.world_font_caption'))
+        .fontColor($r('app.color.world_text_secondary'))
         .width('100%')
         .textAlign(TextAlign.Center)
         .padding({ top: 12, bottom: 12 + this.navBarHeight })

@@ -35,6 +35,9 @@ export const PENDING_WORLD_SCENE_ID_KEY: string = 'pendingWorldSceneId';
 /** 跨页面路由用的 sceneId 暂存键(共享对话页读取后清除,W-UX-1) */
 export const PENDING_WORLD_SCENE_CHAT_ID_KEY: string = 'pendingWorldSceneChatId';
 
+/** 跨页面路由用的 sessionId 暂存键(W2B2 Session化对话页读取后清除) */
+export const PENDING_WORLD_SESSION_ID_KEY: string = 'pendingWorldSessionId';
+
 /**
  * 跨页面路由用的 characterInstanceId 暂存键(W-MEMORY-1A)。
  * 由 WorldCharacterManagePage / WorldSceneChatPage 写入,

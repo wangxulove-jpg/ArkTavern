@@ -14,6 +14,7 @@ import {
   WorldSceneDetailUiModel,
   SceneMessageUiModel,
   SceneCharacterUiModel,
+  SessionListItemUiModel,
   UserMessageFormInput,
   CharacterMessageFormInput,
   NarratorMessageFormInput,
@@ -21,9 +22,12 @@ import {
 } from '../../viewmodels/world/WorldSceneDetailViewModel';
 import {
   PENDING_WORLD_SCENE_ID_KEY,
+  PENDING_WORLD_SCENE_CHAT_ID_KEY,
+  PENDING_WORLD_SESSION_ID_KEY,
   WORLD_SCENE_DETAIL_REFRESH_TOKEN_KEY
 } from '../../viewmodels/world/WorldUiModels';
 import { WorldSceneStatus } from '../../models/world/WorldScene';
+import { WorldConversationSessionStatus } from '../../models/world/WorldConversationSession';
 import {
   WorldSceneMessageVisibility,
   WorldSceneMessageSenderType
@@ -90,6 +94,7 @@ struct WorldSceneDetailPage {
         AppServices.getWorldCharacterInstanceRepository(),
         AppServices.getWorldSceneRepository(),
         AppServices.getWorldSceneMessageRepository(),
+        AppServices.getWorldConversationSessionRepository(),
         AppServices.getCharacterService(),
         AppServices.getWorldSceneService()
       );
@@ -270,6 +275,7 @@ struct WorldSceneDetailPage {
           this.actionButtonsSection(detail)
         }
         this.characterSection(detail)
+        this.sessionListSection(detail)
         this.messageListSection(detail)
         if (detail.sceneStatus === WorldSceneStatus.Active && this.currentForm !== MessageFormType.None) {
           if (this.currentForm === MessageFormType.User) {
@@ -456,6 +462,56 @@ struct WorldSceneDetailPage {
       .padding(12)
       .alignItems(HorizontalAlign.Start)
     }
+  }
+
+  @Builder
+  sessionListSection(detail: WorldSceneDetailUiModel): void {
+    WorldSectionHeader({ title: '会话', subtitle: detail.sessions.length.toString() + ' 个' })
+    if (detail.sessions.length === 0) {
+      WorldSurfaceCard({ elevated: false }) {
+        Text('暂无会话')
+          .fontSize($r('app.float.world_font_caption'))
+          .fontColor($r('app.color.world_text_tertiary'))
+          .width('100%')
+          .textAlign(TextAlign.Center)
+          .padding({ top: 16, bottom: 16 })
+      }
+    } else {
+      ForEach(detail.sessions, (s: SessionListItemUiModel) => {
+        WorldSurfaceCard({ elevated: s.status === WorldConversationSessionStatus.Active }) {
+          Row() {
+            Column() {
+              Text('会话 #' + s.sequenceNumber.toString())
+                .fontSize($r('app.float.world_font_body'))
+                .fontColor($r('app.color.world_text_primary'))
+              Text(s.participantCount.toString() + ' 位参与者 · ' + formatSceneTimestamp(s.createdAt))
+                .fontSize($r('app.float.world_font_micro'))
+                .fontColor($r('app.color.world_text_tertiary'))
+                .margin({ top: 2 })
+            }
+            .alignItems(HorizontalAlign.Start)
+            .layoutWeight(1)
+
+            WorldStatusChip({
+              label: s.status === WorldConversationSessionStatus.Active ? '进行中' : '已结束',
+              isActive: s.status === WorldConversationSessionStatus.Active
+            })
+          }
+          .width('100%')
+          .padding(10)
+          .alignItems(VerticalAlign.Center)
+          .onClick(() => {
+            this.onSessionClick(s);
+          })
+        }
+      }, (s: SessionListItemUiModel) => s.sessionId)
+    }
+  }
+
+  private onSessionClick(s: SessionListItemUiModel): void {
+    AppStorage.setOrCreate<string>(PENDING_WORLD_SCENE_CHAT_ID_KEY, this.viewModel?.detail?.sceneId ?? '');
+    AppStorage.setOrCreate<string>(PENDING_WORLD_SESSION_ID_KEY, s.sessionId);
+    router.pushUrl({ url: 'pages/world/WorldSceneChatPage' });
   }
 
   @Builder

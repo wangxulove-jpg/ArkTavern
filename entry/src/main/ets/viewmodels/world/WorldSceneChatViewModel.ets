@@ -23,6 +23,7 @@ import { WorldLocationRepository } from '../../repositories/world/WorldLocationR
 import { WorldCharacterInstanceRepository } from '../../repositories/world/WorldCharacterInstanceRepository';
 import { WorldSceneRepository } from '../../repositories/world/WorldSceneRepository';
 import { WorldSceneMessageRepository } from '../../repositories/world/WorldSceneMessageRepository';
+import { WorldConversationSessionRepository } from '../../repositories/world/WorldConversationSessionRepository';
 import { CharacterService } from '../../services/CharacterService';
 import { WorldSceneService } from '../../services/world/WorldSceneService';
 import { Logger } from '../../utils/Logger';
@@ -30,6 +31,7 @@ import { World, WorldStatus } from '../../models/world/World';
 import { WorldLocation, WorldLocationStatus } from '../../models/world/WorldLocation';
 import { WorldCharacterInstance } from '../../models/world/WorldCharacterInstance';
 import { WorldScene, WorldSceneStatus } from '../../models/world/WorldScene';
+import { WorldConversationSession, WorldConversationSessionStatus, WorldSessionParticipantSnapshot, deserializeParticipantSnapshots } from '../../models/world/WorldConversationSession';
 import {
   WorldSceneMessage,
   WorldSceneMessageSenderType,
@@ -96,6 +98,11 @@ export interface WorldSceneChatUiModel {
   readonly locationName: string;
   readonly locationStatus: WorldLocationStatus;
   readonly sceneStatus: WorldSceneStatus;
+  readonly sessionId: string;
+  readonly sessionStatus: WorldConversationSessionStatus;
+  readonly sessionSequenceNumber: number;
+  readonly sessionParticipantSnapshot: WorldSessionParticipantSnapshot[];
+  readonly playerDisplayNameSnapshot: string;
   readonly startedAt: number;
   readonly endedAt: number;
   readonly participantCount: number;
@@ -137,6 +144,7 @@ export class WorldSceneChatViewModel {
   private readonly instanceRepo: WorldCharacterInstanceRepository;
   private readonly sceneRepo: WorldSceneRepository;
   private readonly messageRepo: WorldSceneMessageRepository;
+  private readonly sessionRepo: WorldConversationSessionRepository;
   private readonly characterService: CharacterService;
   private readonly sceneService: WorldSceneService;
 
@@ -145,6 +153,7 @@ export class WorldSceneChatViewModel {
   detail: WorldSceneChatUiModel | null = null;
 
   private expectedSceneId: string = '';
+  private expectedSessionId: string = '';
   private loadOperationId: number = 0;
   private operationId: number = 0;
   isSending: boolean = false;
@@ -159,6 +168,7 @@ export class WorldSceneChatViewModel {
     instanceRepo: WorldCharacterInstanceRepository,
     sceneRepo: WorldSceneRepository,
     messageRepo: WorldSceneMessageRepository,
+    sessionRepo: WorldConversationSessionRepository,
     characterService: CharacterService,
     sceneService: WorldSceneService
   ) {
@@ -167,6 +177,7 @@ export class WorldSceneChatViewModel {
     this.instanceRepo = instanceRepo;
     this.sceneRepo = sceneRepo;
     this.messageRepo = messageRepo;
+    this.sessionRepo = sessionRepo;
     this.characterService = characterService;
     this.sceneService = sceneService;
     this.instanceShortId = WorldSceneChatViewModel.generateShortId();
@@ -193,6 +204,13 @@ export class WorldSceneChatViewModel {
   setSceneId(sceneId: string): void {
     if (this.expectedSceneId !== sceneId) {
       this.expectedSceneId = sceneId;
+      this.loadOperationId = this.loadOperationId + 1;
+    }
+  }
+
+  setSessionId(sessionId: string): void {
+    if (this.expectedSessionId !== sessionId) {
+      this.expectedSessionId = sessionId;
       this.loadOperationId = this.loadOperationId + 1;
     }
   }
@@ -244,27 +262,61 @@ export class WorldSceneChatViewModel {
       const locationStatus: WorldLocationStatus = location !== null
         ? location.status as WorldLocationStatus : WorldLocationStatus.Archived;
 
-      // 加载当前地点全部角色实例(实时人物栏)
-      const instances: WorldCharacterInstance[] = await this.safeListInstancesAtLocation(scene.worldId, scene.locationId);
+      // Load session by sessionId
+      let session: WorldConversationSession | null = null;
+      if (this.expectedSessionId.length > 0) {
+        session = await this.safeGetSession(this.expectedSessionId);
+      }
+      if (operationId !== this.loadOperationId || this.disposed) {
+        return;
+      }
+      const sessionStatus: WorldConversationSessionStatus = session !== null
+        ? session.status as WorldConversationSessionStatus : WorldConversationSessionStatus.Ended;
+      const sessionId: string = session !== null ? session.id : '';
+      const sessionSequence: number = session !== null ? session.sequenceNumber : 0;
+      const participantSnapshot: WorldSessionParticipantSnapshot[] = session !== null
+        ? this.safeDeserializeSnapshots(session.participantSnapshotJson) : [];
+      const playerDisplayName: string = session !== null ? session.playerDisplayNameSnapshot : '玩家';
+
+      // 加载消息:按 sessionId 加载,回退到按 sceneId
+      let messages: WorldSceneMessage[] = [];
+      if (sessionId.length > 0) {
+        messages = await this.safeListMessagesBySession(sessionId);
+      } else {
+        messages = await this.safeListMessages(targetSceneId);
+      }
       if (operationId !== this.loadOperationId || this.disposed) {
         return;
       }
 
-      // 加载场景消息
-      const messages: WorldSceneMessage[] = await this.safeListMessages(targetSceneId);
-      if (operationId !== this.loadOperationId || this.disposed) {
-        return;
-      }
-
-      // 收集需要解析的 characterId 和历史消息中引用的 instanceId
-      const characterIdSet: Set<string> = new Set<string>();
+      // 加载参与者快照中的角色实例(优先从快照),补充当前地点活跃实例
       const instanceMap: Map<string, WorldCharacterInstance> = new Map<string, WorldCharacterInstance>();
-      for (let i = 0; i < instances.length; i++) {
-        instanceMap.set(instances[i].id, instances[i]);
-        if (instances[i].characterId.length > 0) {
-          characterIdSet.add(instances[i].characterId);
+      const characterIdSet: Set<string> = new Set<string>();
+
+      if (participantSnapshot.length > 0) {
+        for (let i = 0; i < participantSnapshot.length; i++) {
+          const ps: WorldSessionParticipantSnapshot = participantSnapshot[i];
+          const inst: WorldCharacterInstance | null = await this.safeGetInstance(ps.characterInstanceId);
+          if (inst !== null) {
+            instanceMap.set(inst.id, inst);
+            if (inst.characterId.length > 0) {
+              characterIdSet.add(inst.characterId);
+            }
+          }
+        }
+      } else {
+        const instances: WorldCharacterInstance[] = await this.safeListInstancesAtLocation(scene.worldId, scene.locationId);
+        for (let i = 0; i < instances.length; i++) {
+          instanceMap.set(instances[i].id, instances[i]);
+          if (instances[i].characterId.length > 0) {
+            characterIdSet.add(instances[i].characterId);
+          }
         }
       }
+      if (operationId !== this.loadOperationId || this.disposed) {
+        return;
+      }
+
       // 历史消息中的实例可能已移除,尝试加载
       for (let i = 0; i < messages.length; i++) {
         const m: WorldSceneMessage = messages[i];
@@ -302,24 +354,57 @@ export class WorldSceneChatViewModel {
         return;
       }
 
-      // 构建角色 UI 模型
-      const characterUiModels: ChatCharacterUiModel[] = new Array<ChatCharacterUiModel>(instances.length);
-      for (let i = 0; i < instances.length; i++) {
-        const inst: WorldCharacterInstance = instances[i];
-        const character: Character | null | undefined = characterMap.get(inst.characterId);
-        const missing: boolean = character === null || character === undefined;
-        const displayName: string = !missing && character !== null && character !== undefined
-          ? character.name : inst.displayNameSnapshot;
-        const avatarUri: string = !missing && character !== null && character !== undefined
-          ? character.avatarUri : '';
-        characterUiModels[i] = {
-          instanceId: inst.id,
-          displayName: displayName,
-          avatarUri: avatarUri,
-          fallbackName: inst.displayNameSnapshot,
-          isActive: inst.isActive,
-          characterCardMissing: missing
-        };
+      // 构建角色 UI 模型(从参与者快照顺序)
+      const characterUiModels: ChatCharacterUiModel[] = [];
+      if (participantSnapshot.length > 0) {
+        for (let i = 0; i < participantSnapshot.length; i++) {
+          const ps: WorldSessionParticipantSnapshot = participantSnapshot[i];
+          const inst: WorldCharacterInstance | undefined = instanceMap.get(ps.characterInstanceId);
+          if (inst === undefined) {
+            characterUiModels.push({
+              instanceId: ps.characterInstanceId,
+              displayName: ps.displayNameSnapshot,
+              avatarUri: '',
+              fallbackName: ps.displayNameSnapshot,
+              isActive: false,
+              characterCardMissing: true
+            });
+            continue;
+          }
+          const character: Character | null | undefined = characterMap.get(inst.characterId);
+          const missing: boolean = character === null || character === undefined;
+          const displayName: string = !missing && character !== null && character !== undefined
+            ? character.name : inst.displayNameSnapshot;
+          const avatarUri: string = !missing && character !== null && character !== undefined
+            ? character.avatarUri : '';
+          characterUiModels.push({
+            instanceId: inst.id,
+            displayName: displayName,
+            avatarUri: avatarUri,
+            fallbackName: inst.displayNameSnapshot,
+            isActive: inst.isActive,
+            characterCardMissing: missing
+          });
+        }
+      } else {
+        const instances: WorldCharacterInstance[] = Array.from(instanceMap.values());
+        for (let i = 0; i < instances.length; i++) {
+          const inst: WorldCharacterInstance = instances[i];
+          const character: Character | null | undefined = characterMap.get(inst.characterId);
+          const missing: boolean = character === null || character === undefined;
+          const displayName: string = !missing && character !== null && character !== undefined
+            ? character.name : inst.displayNameSnapshot;
+          const avatarUri: string = !missing && character !== null && character !== undefined
+            ? character.avatarUri : '';
+          characterUiModels.push({
+            instanceId: inst.id,
+            displayName: displayName,
+            avatarUri: avatarUri,
+            fallbackName: inst.displayNameSnapshot,
+            isActive: inst.isActive,
+            characterCardMissing: missing
+          });
+        }
       }
 
       // 构建消息 UI 模型
@@ -367,6 +452,11 @@ export class WorldSceneChatViewModel {
         locationName: locationName,
         locationStatus: locationStatus,
         sceneStatus: scene.status as WorldSceneStatus,
+        sessionId: sessionId,
+        sessionStatus: sessionStatus,
+        sessionSequenceNumber: sessionSequence,
+        sessionParticipantSnapshot: participantSnapshot,
+        playerDisplayNameSnapshot: playerDisplayName,
         startedAt: scene.startedAt,
         endedAt: scene.endedAt !== undefined ? scene.endedAt : 0,
         participantCount: activeCharCount,
@@ -382,6 +472,7 @@ export class WorldSceneChatViewModel {
       Logger.info(LOG_TAG, 'loadSnapshot done: vmInstance=' + this.instanceShortId
         + ', operation=' + operationId.toString()
         + ', state=ready, messageCount=' + messageUiModels.length.toString()
+        + ', sessionStatus=' + (session !== null ? session.status : 'null')
         + ', sceneShortId=' + this.shortId(targetSceneId));
     } catch (e) {
       if (operationId !== this.loadOperationId || this.disposed) {
@@ -569,6 +660,33 @@ export class WorldSceneChatViewModel {
       return await this.messageRepo.listByScene(sceneId);
     } catch (e) {
       Logger.warn(LOG_TAG, 'listByScene(messages) failed: ' + this.safeErrorCategory(e));
+      return [];
+    }
+  }
+
+  private async safeListMessagesBySession(sessionId: string): Promise<WorldSceneMessage[]> {
+    try {
+      return await this.messageRepo.listBySessionId(sessionId);
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'listBySessionId(messages) failed: ' + this.safeErrorCategory(e));
+      return [];
+    }
+  }
+
+  private async safeGetSession(sessionId: string): Promise<WorldConversationSession | null> {
+    try {
+      return await this.sessionRepo.getById(sessionId);
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'getById(session) failed: ' + this.safeErrorCategory(e));
+      return null;
+    }
+  }
+
+  private safeDeserializeSnapshots(json: string): WorldSessionParticipantSnapshot[] {
+    try {
+      return deserializeParticipantSnapshots(json);
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'deserializeParticipantSnapshots failed: ' + this.safeErrorCategory(e));
       return [];
     }
   }

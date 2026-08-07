@@ -21,6 +21,7 @@ import { WorldLocationRepository } from '../../repositories/world/WorldLocationR
 import { WorldCharacterInstanceRepository } from '../../repositories/world/WorldCharacterInstanceRepository';
 import { WorldSceneRepository } from '../../repositories/world/WorldSceneRepository';
 import { WorldSceneMessageRepository } from '../../repositories/world/WorldSceneMessageRepository';
+import { WorldConversationSessionRepository } from '../../repositories/world/WorldConversationSessionRepository';
 import { CharacterService } from '../../services/CharacterService';
 import { WorldSceneService } from '../../services/world/WorldSceneService';
 import { Logger } from '../../utils/Logger';
@@ -28,6 +29,7 @@ import { World, WorldStatus } from '../../models/world/World';
 import { WorldLocation, WorldLocationStatus } from '../../models/world/WorldLocation';
 import { WorldCharacterInstance } from '../../models/world/WorldCharacterInstance';
 import { WorldScene, WorldSceneStatus } from '../../models/world/WorldScene';
+import { WorldConversationSession, WorldConversationSessionStatus, deserializeParticipantSnapshots } from '../../models/world/WorldConversationSession';
 import {
   WorldSceneMessage,
   WorldSceneMessageSenderType,
@@ -93,6 +95,15 @@ export interface WorldSceneDetailUiModel {
   readonly endedAt: number;
   readonly characters: SceneCharacterUiModel[];
   readonly messages: SceneMessageUiModel[];
+  readonly sessions: SessionListItemUiModel[];
+}
+
+export interface SessionListItemUiModel {
+  readonly sessionId: string;
+  readonly sequenceNumber: number;
+  readonly status: WorldConversationSessionStatus;
+  readonly participantCount: number;
+  readonly createdAt: number;
 }
 
 /** 手动消息表单输入 */
@@ -126,6 +137,7 @@ export class WorldSceneDetailViewModel {
   private readonly instanceRepo: WorldCharacterInstanceRepository;
   private readonly sceneRepo: WorldSceneRepository;
   private readonly messageRepo: WorldSceneMessageRepository;
+  private readonly sessionRepo: WorldConversationSessionRepository;
   private readonly characterService: CharacterService;
   private readonly sceneService: WorldSceneService;
 
@@ -147,6 +159,7 @@ export class WorldSceneDetailViewModel {
     instanceRepo: WorldCharacterInstanceRepository,
     sceneRepo: WorldSceneRepository,
     messageRepo: WorldSceneMessageRepository,
+    sessionRepo: WorldConversationSessionRepository,
     characterService: CharacterService,
     sceneService: WorldSceneService
   ) {
@@ -155,6 +168,7 @@ export class WorldSceneDetailViewModel {
     this.instanceRepo = instanceRepo;
     this.sceneRepo = sceneRepo;
     this.messageRepo = messageRepo;
+    this.sessionRepo = sessionRepo;
     this.characterService = characterService;
     this.sceneService = sceneService;
     this.instanceShortId = WorldSceneDetailViewModel.generateShortId();
@@ -333,6 +347,28 @@ export class WorldSceneDetailViewModel {
         };
       }
 
+      const sessions: WorldConversationSession[] = await this.safeListSessions(targetSceneId);
+      if (operationId !== this.loadOperationId || this.disposed) {
+        return;
+      }
+      const sessionUiModels: SessionListItemUiModel[] = [];
+      for (let i = 0; i < sessions.length; i++) {
+        const s: WorldConversationSession = sessions[i];
+        let pCount: number = 0;
+        try {
+          pCount = deserializeParticipantSnapshots(s.participantSnapshotJson).length;
+        } catch (e) {
+          pCount = 0;
+        }
+        sessionUiModels.push({
+          sessionId: s.id,
+          sequenceNumber: s.sequenceNumber,
+          status: s.status as WorldConversationSessionStatus,
+          participantCount: pCount,
+          createdAt: s.createdAt
+        });
+      }
+
       const uiModel: WorldSceneDetailUiModel = {
         sceneId: scene.id,
         worldId: world.id,
@@ -345,7 +381,8 @@ export class WorldSceneDetailViewModel {
         startedAt: scene.startedAt,
         endedAt: scene.endedAt !== undefined ? scene.endedAt : 0,
         characters: characterUiModels,
-        messages: messageUiModels
+        messages: messageUiModels,
+        sessions: sessionUiModels
       };
 
       if (operationId !== this.loadOperationId || this.disposed) {
@@ -547,6 +584,15 @@ export class WorldSceneDetailViewModel {
       return await this.messageRepo.listByScene(sceneId);
     } catch (e) {
       Logger.warn(LOG_TAG, 'listByScene(messages) failed: ' + this.safeErrorCategory(e));
+      return [];
+    }
+  }
+
+  private async safeListSessions(sceneId: string): Promise<WorldConversationSession[]> {
+    try {
+      return await this.sessionRepo.listBySceneId(sceneId);
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'listBySceneId(sessions) failed: ' + this.safeErrorCategory(e));
       return [];
     }
   }
