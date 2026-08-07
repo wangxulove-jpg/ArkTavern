@@ -648,6 +648,25 @@ export class WorldSceneChatViewModel implements WorldRuntimeObserver {
     this.loadSnapshot(this.expectedSceneId);
   }
 
+  onSpeakerStarted(
+    sessionId: string,
+    characterInstanceId: string,
+    messageId: string,
+    speakerIndex: number,
+    totalSpeakers: number,
+    operationId: number
+  ): void {
+    if (sessionId !== this.expectedSessionId) {
+      return;
+    }
+    if (operationId !== this.currentOperationId) {
+      return;
+    }
+    this.streamingMessageId = messageId;
+    this.streamingContent = '';
+    this.isGenerating = true;
+  }
+
   async reload(): Promise<void> {
     await this.loadSnapshot(this.expectedSceneId);
   }

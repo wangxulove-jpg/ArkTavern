@@ -20,7 +20,13 @@ export enum WorldRuntimeErrorKind {
   ModelRequestFailed,
   ModelCancelled,
   StaleOperation,
-  MessagePersistenceFailed
+  MessagePersistenceFailed,
+  ParticipantSnapshotEmpty,
+  ParticipantInactive,
+  SpeakerCharacterNotFound,
+  SpeakerEmptyResponse,
+  RoundInterrupted,
+  InvalidBatchState
 }
 
 export class WorldRuntimeError extends Error {
@@ -113,6 +119,35 @@ export class WorldRuntimeError extends Error {
 
   static messagePersistenceFailed(detail: string): WorldRuntimeError {
     return new WorldRuntimeError(WorldRuntimeErrorKind.MessagePersistenceFailed, '消息持久化失败: ' + detail);
+  }
+
+  static participantSnapshotEmpty(): WorldRuntimeError {
+    return new WorldRuntimeError(WorldRuntimeErrorKind.ParticipantSnapshotEmpty, '会话参与者快照为空');
+  }
+
+  static participantInactive(displayName: string): WorldRuntimeError {
+    return new WorldRuntimeError(WorldRuntimeErrorKind.ParticipantInactive,
+      '参与者已停用: ' + displayName);
+  }
+
+  static speakerCharacterNotFound(instanceId: string): WorldRuntimeError {
+    return new WorldRuntimeError(WorldRuntimeErrorKind.SpeakerCharacterNotFound,
+      '发言角色卡缺失: ' + instanceId);
+  }
+
+  static speakerEmptyResponse(speakerName: string): WorldRuntimeError {
+    return new WorldRuntimeError(WorldRuntimeErrorKind.SpeakerEmptyResponse,
+      '角色回复为空: ' + speakerName);
+  }
+
+  static roundInterrupted(reason: string): WorldRuntimeError {
+    return new WorldRuntimeError(WorldRuntimeErrorKind.RoundInterrupted,
+      '轮次中断: ' + reason);
+  }
+
+  static invalidBatchState(detail: string): WorldRuntimeError {
+    return new WorldRuntimeError(WorldRuntimeErrorKind.InvalidBatchState,
+      '批次状态无效: ' + detail);
   }
 }
 

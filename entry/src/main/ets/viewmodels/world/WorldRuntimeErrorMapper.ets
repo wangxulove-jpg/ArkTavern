@@ -52,6 +52,18 @@ export function mapWorldRuntimeErrorToMessage(e: Object): string {
         return '操作已过期';
       case WorldRuntimeErrorKind.MessagePersistenceFailed:
         return '消息保存失败,请重试';
+      case WorldRuntimeErrorKind.ParticipantSnapshotEmpty:
+        return '会话无参与者';
+      case WorldRuntimeErrorKind.ParticipantInactive:
+        return '参与者已停用,无法生成';
+      case WorldRuntimeErrorKind.SpeakerCharacterNotFound:
+        return '发言角色卡缺失';
+      case WorldRuntimeErrorKind.SpeakerEmptyResponse:
+        return '角色回复为空';
+      case WorldRuntimeErrorKind.RoundInterrupted:
+        return '本轮生成已中断';
+      case WorldRuntimeErrorKind.InvalidBatchState:
+        return '生成状态异常,请重试';
       default:
         return '操作失败,请重试';
     }

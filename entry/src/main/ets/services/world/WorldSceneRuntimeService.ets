@@ -6,6 +6,7 @@ import { WorldScene, WorldSceneStatus } from '../../models/world/WorldScene';
 import {
   WorldConversationSession,
   WorldConversationSessionStatus,
+  WorldSessionParticipantSnapshot,
   deserializeParticipantSnapshots
 } from '../../models/world/WorldConversationSession';
 import { WorldCharacterInstance } from '../../models/world/WorldCharacterInstance';
@@ -30,8 +31,9 @@ import { WorldPlayerProfileRepository } from '../../repositories/world/WorldPlay
 import { WorldSceneMessageRepository } from '../../repositories/world/WorldSceneMessageRepository';
 import { CharacterService } from '../../services/CharacterService';
 import { ModelService } from '../ModelService';
-import { ChatStreamCallbacks, ChatDelta, ChatStreamResult } from '../../models/ChatStreamTypes';
+import { ChatStreamCallbacks, ChatDelta, ChatStreamResult, ChatStreamHandle } from '../../models/ChatStreamTypes';
 import { ChatRequestOptions } from '../../models/ChatRequest';
+import { ProviderConfig } from '../../models/ProviderConfig';
 import { generateUuid } from '../../utils/Uuid';
 import { Logger } from '../../utils/Logger';
 
@@ -44,6 +46,14 @@ export interface WorldRuntimeObserver {
   onStreamingCompleted(sessionId: string, messageId: string, content: string, operationId: number): void;
   onStreamingFailed(sessionId: string, messageId: string, operationId: number): void;
   onStreamingCancelled(sessionId: string, messageId: string, operationId: number): void;
+  onSpeakerStarted(
+    sessionId: string,
+    characterInstanceId: string,
+    messageId: string,
+    speakerIndex: number,
+    totalSpeakers: number,
+    operationId: number
+  ): void;
 }
 
 export interface WorldRuntimeTurnOptions {
@@ -56,6 +66,7 @@ export interface WorldRuntimeTurnOptions {
 export interface WorldRuntimeTurnResult {
   userMessage: WorldSceneMessage;
   characterMessage: WorldSceneMessage;
+  characterMessages: WorldSceneMessage[];
   generationBatchId: string;
 }
 
@@ -129,17 +140,21 @@ export class WorldSceneRuntimeService {
     const world: World = await this.validateWorld(options);
 
     const participants = deserializeParticipantSnapshots(session.participantSnapshotJson);
-    if (participants.length !== 1) {
-      throw WorldRuntimeError.unsupportedParticipantCount(participants.length);
+    if (participants.length === 0) {
+      throw WorldRuntimeError.participantSnapshotEmpty();
     }
 
-    const speakerSnapshot = participants[0];
-    const speakerInstance: WorldCharacterInstance = await this.validateSpeakerInstance(
-      speakerSnapshot.characterInstanceId,
-      options.worldId,
-      session
-    );
-    const speakerCharacter: Character = await this.validateSpeakerCharacter(speakerInstance.characterId);
+    for (let i = 0; i < participants.length; i++) {
+      const ps: WorldSessionParticipantSnapshot = participants[i];
+      const instance: WorldCharacterInstance = await this.validateSpeakerInstance(
+        ps.characterInstanceId,
+        options.worldId,
+        session
+      );
+      if (!instance.isActive) {
+        throw WorldRuntimeError.participantInactive(ps.displayNameSnapshot);
+      }
+    }
 
     const playerProfile: WorldPlayerProfile = await this.validatePlayerProfile(options.worldId);
     const location: WorldLocation = await this.validateLocation(session.sceneId.length > 0 ? scene.locationId : '');
@@ -153,8 +168,18 @@ export class WorldSceneRuntimeService {
 
     const operationId: number = entry.operationId;
 
+    const providerConfig: ProviderConfig | null = await this.modelService.getCurrentConfig();
+    if (providerConfig === null) {
+      this.registry.release(options.sessionId, operationId);
+      throw WorldRuntimeError.modelRequestFailed('未配置 Provider');
+    }
+
     try {
-      const replyTargets: string[] = [speakerSnapshot.characterInstanceId];
+      const replyTargets: string[] = [];
+      for (let i = 0; i < participants.length; i++) {
+        replyTargets.push(participants[i].characterInstanceId);
+      }
+
       const userMessage: WorldSceneMessage = await this.messageService.addUserMessage({
         worldId: options.worldId,
         sceneId: options.sceneId,
@@ -163,116 +188,84 @@ export class WorldSceneRuntimeService {
         replyTargetCharacterInstanceIds: replyTargets
       });
 
-      const characterPlaceholder: WorldSceneMessage = await this.messageService.addCharacterPlaceholder({
-        worldId: options.worldId,
-        sceneId: options.sceneId,
-        sessionId: options.sessionId,
-        senderCharacterInstanceId: speakerSnapshot.characterInstanceId,
-        generationBatchId: generationBatchId
-      });
+      const characterMessages: WorldSceneMessage[] = [];
 
-      const sessionMessages: WorldSceneMessage[] = await this.messageRepo.listBySessionId(options.sessionId);
-      const promptInput: WorldPromptAssemblyInput = {
-        world: world,
-        scene: scene,
-        session: session,
-        location: location,
-        speakerInstance: speakerInstance,
-        speakerCharacter: speakerCharacter,
-        playerProfile: playerProfile,
-        sessionMessages: sessionMessages,
-        generationBatchId: generationBatchId
-      };
-
-      const promptResult: WorldPromptAssemblyResult = await this.promptAssembler.assemble(promptInput);
-
-      this.streamingContent = '';
-      this.lastPersistedLength = 0;
-
-      const self: WorldSceneRuntimeService = this;
-      const callbacks: ChatStreamCallbacks = {
-        onStart: () => {
-          Logger.info(LOG_TAG, 'streaming started: op=' + operationId.toString());
-        },
-
-        onDelta: (delta: ChatDelta) => {
-          if (!self.registry.isCurrent(options.sessionId, operationId)) {
-            return;
-          }
-          self.streamingContent += delta.content;
-          self.scheduleStreamingFlush(characterPlaceholder.id, options.sessionId, operationId);
-          self.notifyDelta(options.sessionId, characterPlaceholder.id, self.streamingContent, operationId);
-        },
-
-        onComplete: (result: ChatStreamResult) => {
-          if (!self.registry.isCurrent(options.sessionId, operationId)) {
-            Logger.info(LOG_TAG, 'late onComplete discarded: op=' + operationId.toString());
-            return;
-          }
-          self.clearPersistenceTimer();
-          const finalContent: string = result.content.length > 0 ? result.content : self.streamingContent;
-          self.streamingContent = finalContent;
-          self.messageService.finalizeCharacterMessage({
-            messageId: characterPlaceholder.id,
-            content: finalContent,
-            status: WorldSceneMessageStatus.Completed
-          }).then((success: boolean) => {
-            if (!success) {
-              Logger.warn(LOG_TAG, 'finalize Completed failed for msg=' + self.shortId(characterPlaceholder.id));
-            }
-            self.notifyCompleted(options.sessionId, characterPlaceholder.id, finalContent, operationId);
-            self.registry.release(options.sessionId, operationId);
-            Logger.info(LOG_TAG, 'turn completed: batch=' + self.shortId(generationBatchId));
-          }).catch((e: Error) => {
-            Logger.error(LOG_TAG, 'finalize error: ' + e.message);
-            self.registry.release(options.sessionId, operationId);
-          });
-        },
-
-        onError: (error: Error) => {
-          if (!self.registry.isCurrent(options.sessionId, operationId)) {
-            Logger.info(LOG_TAG, 'late onError discarded: op=' + operationId.toString());
-            return;
-          }
-          self.clearPersistenceTimer();
-          const currentContent: string = self.streamingContent;
-          self.messageService.finalizeCharacterMessage({
-            messageId: characterPlaceholder.id,
-            content: currentContent,
-            status: WorldSceneMessageStatus.Failed
-          }).then((success: boolean) => {
-            if (!success) {
-              Logger.warn(LOG_TAG, 'finalize Failed failed for msg=' + self.shortId(characterPlaceholder.id));
-            }
-            self.notifyFailed(options.sessionId, characterPlaceholder.id, operationId);
-            self.registry.release(options.sessionId, operationId);
-            Logger.info(LOG_TAG, 'turn failed: batch=' + self.shortId(generationBatchId)
-              + ' err=' + error.message);
-          }).catch((e: Error) => {
-            Logger.error(LOG_TAG, 'finalize-on-error failed: ' + e.message);
-            self.registry.release(options.sessionId, operationId);
-          });
+      for (let speakerIdx = 0; speakerIdx < participants.length; speakerIdx++) {
+        if (!this.registry.isCurrent(options.sessionId, operationId)) {
+          Logger.info(LOG_TAG, 'round interrupted before speaker ' + speakerIdx.toString());
+          break;
         }
-      };
 
-      const requestOptions: ChatRequestOptions = {
-        temperature: promptResult.temperature ?? promptResult.providerConfig.temperature,
-        topP: promptResult.topP ?? promptResult.providerConfig.topP,
-        maxTokens: promptResult.maxTokens ?? promptResult.providerConfig.maxTokens,
-        stream: true
-      };
+        const speakerSnapshot: WorldSessionParticipantSnapshot = participants[speakerIdx];
+        const speakerInstance: WorldCharacterInstance = await this.validateSpeakerInstance(
+          speakerSnapshot.characterInstanceId,
+          options.worldId,
+          session
+        );
+        const speakerCharacter: Character = await this.validateSpeakerCharacter(speakerInstance.characterId);
 
-      const handle = this.modelService.streamCurrentChat(
-        promptResult.messages,
-        requestOptions,
-        callbacks
-      );
+        const otherNames: Map<string, string> = this.buildOtherParticipantNames(participants, speakerIdx);
 
-      this.registry.attachHandle(options.sessionId, operationId, handle);
+        const characterPlaceholder: WorldSceneMessage = await this.messageService.addCharacterPlaceholder({
+          worldId: options.worldId,
+          sceneId: options.sceneId,
+          sessionId: options.sessionId,
+          senderCharacterInstanceId: speakerSnapshot.characterInstanceId,
+          generationBatchId: generationBatchId
+        });
+
+        this.notifySpeakerStarted(
+          options.sessionId,
+          speakerSnapshot.characterInstanceId,
+          characterPlaceholder.id,
+          speakerIdx,
+          participants.length,
+          operationId
+        );
+
+        const sessionMessages: WorldSceneMessage[] = await this.messageRepo.listBySessionId(options.sessionId);
+        const promptInput: WorldPromptAssemblyInput = {
+          world: world,
+          scene: scene,
+          session: session,
+          location: location,
+          speakerInstance: speakerInstance,
+          speakerCharacter: speakerCharacter,
+          playerProfile: playerProfile,
+          sessionMessages: sessionMessages,
+          generationBatchId: generationBatchId,
+          allParticipantSnapshots: participants,
+          otherParticipantDisplayNames: otherNames
+        };
+
+        const promptResult: WorldPromptAssemblyResult = await this.promptAssembler.assemble(promptInput);
+
+        this.streamingContent = '';
+        this.lastPersistedLength = 0;
+
+        const speakerCompleted: boolean = await this.generateForSpeaker(
+          options.sessionId,
+          operationId,
+          generationBatchId,
+          characterPlaceholder,
+          speakerSnapshot,
+          promptResult,
+          providerConfig
+        );
+
+        if (speakerCompleted) {
+          characterMessages.push(characterPlaceholder);
+        } else {
+          Logger.info(LOG_TAG, 'speaker failed/stopped: idx=' + speakerIdx.toString()
+            + ' round aborted');
+          break;
+        }
+      }
 
       return {
         userMessage: userMessage,
-        characterMessage: characterPlaceholder,
+        characterMessage: characterMessages.length > 0 ? characterMessages[0] : userMessage,
+        characterMessages: characterMessages,
         generationBatchId: generationBatchId
       };
     } catch (e) {
@@ -282,6 +275,126 @@ export class WorldSceneRuntimeService {
       }
       throw WorldRuntimeError.modelRequestFailed((e as Error).message);
     }
+  }
+
+  private async generateForSpeaker(
+    sessionId: string,
+    operationId: number,
+    generationBatchId: string,
+    placeholder: WorldSceneMessage,
+    speakerSnapshot: WorldSessionParticipantSnapshot,
+    promptResult: WorldPromptAssemblyResult,
+    providerConfig: ProviderConfig
+  ): Promise<boolean> {
+    return new Promise<boolean>((resolve: (value: boolean) => void) => {
+      const self: WorldSceneRuntimeService = this;
+      let resolved: boolean = false;
+
+      const finish = (success: boolean): void => {
+        if (resolved) {
+          return;
+        }
+        resolved = true;
+        resolve(success);
+      };
+
+      const callbacks: ChatStreamCallbacks = {
+        onStart: () => {
+          Logger.info(LOG_TAG, 'speaker streaming started: op=' + operationId.toString()
+            + ' speaker=' + self.shortId(speakerSnapshot.characterInstanceId));
+        },
+
+        onDelta: (delta: ChatDelta) => {
+          if (!self.registry.isCurrent(sessionId, operationId)) {
+            return;
+          }
+          self.streamingContent += delta.content;
+          self.scheduleStreamingFlush(placeholder.id, sessionId, operationId);
+          self.notifyDelta(sessionId, placeholder.id, self.streamingContent, operationId);
+        },
+
+        onComplete: (result: ChatStreamResult) => {
+          if (!self.registry.isCurrent(sessionId, operationId)) {
+            Logger.info(LOG_TAG, 'late onComplete discarded: op=' + operationId.toString());
+            finish(false);
+            return;
+          }
+          self.clearPersistenceTimer();
+          const finalContent: string = result.content.length > 0 ? result.content : self.streamingContent;
+          self.streamingContent = finalContent;
+
+          if (finalContent.trim().length === 0) {
+            self.messageService.finalizeCharacterMessage({
+              messageId: placeholder.id,
+              content: finalContent,
+              status: WorldSceneMessageStatus.Failed
+            }).then((_success: boolean) => {
+              self.notifyFailed(sessionId, placeholder.id, operationId);
+              self.registry.release(sessionId, operationId);
+              finish(false);
+            }).catch((_e: Error) => {
+              self.registry.release(sessionId, operationId);
+              finish(false);
+            });
+            return;
+          }
+
+          self.messageService.finalizeCharacterMessage({
+            messageId: placeholder.id,
+            content: finalContent,
+            status: WorldSceneMessageStatus.Completed
+          }).then((success: boolean) => {
+            if (!success) {
+              Logger.warn(LOG_TAG, 'finalize Completed failed for msg=' + self.shortId(placeholder.id));
+            }
+            self.notifyCompleted(sessionId, placeholder.id, finalContent, operationId);
+            finish(true);
+          }).catch((_e: Error) => {
+            Logger.error(LOG_TAG, 'finalize error: ' + _e.message);
+            finish(false);
+          });
+        },
+
+        onError: (error: Error) => {
+          if (!self.registry.isCurrent(sessionId, operationId)) {
+            Logger.info(LOG_TAG, 'late onError discarded: op=' + operationId.toString());
+            finish(false);
+            return;
+          }
+          self.clearPersistenceTimer();
+          const currentContent: string = self.streamingContent;
+          self.messageService.finalizeCharacterMessage({
+            messageId: placeholder.id,
+            content: currentContent,
+            status: WorldSceneMessageStatus.Failed
+          }).then((_success: boolean) => {
+            self.notifyFailed(sessionId, placeholder.id, operationId);
+            self.registry.release(sessionId, operationId);
+            finish(false);
+          }).catch((_e: Error) => {
+            Logger.error(LOG_TAG, 'finalize-on-error failed: ' + _e.message);
+            self.registry.release(sessionId, operationId);
+            finish(false);
+          });
+        }
+      };
+
+      const requestOptions: ChatRequestOptions = {
+        temperature: promptResult.temperature ?? providerConfig.temperature,
+        topP: promptResult.topP ?? providerConfig.topP,
+        maxTokens: promptResult.maxTokens ?? providerConfig.maxTokens,
+        stream: true
+      };
+
+      const handle: ChatStreamHandle = self.modelService.streamChatWithConfig(
+        providerConfig,
+        promptResult.messages,
+        requestOptions,
+        callbacks
+      );
+
+      self.registry.attachHandle(sessionId, operationId, handle);
+    });
   }
 
   stop(sessionId: string): boolean {
@@ -333,11 +446,20 @@ export class WorldSceneRuntimeService {
     const world: World = await this.validateWorldForRetry(options);
 
     const participants = deserializeParticipantSnapshots(session.participantSnapshotJson);
-    if (participants.length !== 1) {
-      throw WorldRuntimeError.unsupportedParticipantCount(participants.length);
+    if (participants.length === 0) {
+      throw WorldRuntimeError.participantSnapshotEmpty();
     }
 
-    const speakerSnapshot = participants[0];
+    const speakerInstanceId: string = failedMessage.senderCharacterInstanceId ?? '';
+    if (speakerInstanceId.length === 0) {
+      throw WorldRuntimeError.messagePersistenceFailed('Failed message has no sender');
+    }
+
+    const speakerSnapshot: WorldSessionParticipantSnapshot | null = this.findParticipantSnapshot(participants, speakerInstanceId);
+    if (speakerSnapshot === null) {
+      throw WorldRuntimeError.participantNotFound();
+    }
+
     const speakerInstance: WorldCharacterInstance = await this.validateSpeakerInstance(
       speakerSnapshot.characterInstanceId,
       options.worldId,
@@ -356,6 +478,12 @@ export class WorldSceneRuntimeService {
 
     const operationId: number = entry.operationId;
 
+    const providerConfig: ProviderConfig | null = await this.modelService.getCurrentConfig();
+    if (providerConfig === null) {
+      this.registry.release(options.sessionId, operationId);
+      throw WorldRuntimeError.modelRequestFailed('未配置 Provider');
+    }
+
     try {
       const characterPlaceholder: WorldSceneMessage = await this.messageService.addCharacterPlaceholder({
         worldId: options.worldId,
@@ -364,6 +492,11 @@ export class WorldSceneRuntimeService {
         senderCharacterInstanceId: speakerSnapshot.characterInstanceId,
         generationBatchId: generationBatchId
       });
+
+      const otherNames: Map<string, string> = this.buildOtherParticipantNames(
+        participants,
+        participants.indexOf(speakerSnapshot)
+      );
 
       const sessionMessages: WorldSceneMessage[] = await this.messageRepo.listBySessionId(options.sessionId);
       const promptInput: WorldPromptAssemblyInput = {
@@ -375,7 +508,9 @@ export class WorldSceneRuntimeService {
         speakerCharacter: speakerCharacter,
         playerProfile: playerProfile,
         sessionMessages: sessionMessages,
-        generationBatchId: generationBatchId
+        generationBatchId: generationBatchId,
+        allParticipantSnapshots: participants,
+        otherParticipantDisplayNames: otherNames
       };
 
       const promptResult: WorldPromptAssemblyResult = await this.promptAssembler.assemble(promptInput);
@@ -383,93 +518,37 @@ export class WorldSceneRuntimeService {
       this.streamingContent = '';
       this.lastPersistedLength = 0;
 
-      const self: WorldSceneRuntimeService = this;
-      const callbacks: ChatStreamCallbacks = {
-        onStart: () => {
-          Logger.info(LOG_TAG, 'retry streaming started: op=' + operationId.toString());
-        },
-
-        onDelta: (delta: ChatDelta) => {
-          if (!self.registry.isCurrent(options.sessionId, operationId)) {
-            return;
-          }
-          self.streamingContent += delta.content;
-          self.scheduleStreamingFlush(characterPlaceholder.id, options.sessionId, operationId);
-          self.notifyDelta(options.sessionId, characterPlaceholder.id, self.streamingContent, operationId);
-        },
-
-        onComplete: (result: ChatStreamResult) => {
-          if (!self.registry.isCurrent(options.sessionId, operationId)) {
-            Logger.info(LOG_TAG, 'late retry onComplete discarded: op=' + operationId.toString());
-            return;
-          }
-          self.clearPersistenceTimer();
-          const finalContent: string = result.content.length > 0 ? result.content : self.streamingContent;
-          self.streamingContent = finalContent;
-          self.messageService.finalizeCharacterMessage({
-            messageId: characterPlaceholder.id,
-            content: finalContent,
-            status: WorldSceneMessageStatus.Completed
-          }).then((success: boolean) => {
-            if (!success) {
-              Logger.warn(LOG_TAG, 'retry finalize Completed failed for msg=' + self.shortId(characterPlaceholder.id));
-            }
-            self.notifyCompleted(options.sessionId, characterPlaceholder.id, finalContent, operationId);
-            self.registry.release(options.sessionId, operationId);
-            Logger.info(LOG_TAG, 'retry completed: batch=' + self.shortId(generationBatchId));
-          }).catch((e: Error) => {
-            Logger.error(LOG_TAG, 'retry finalize error: ' + e.message);
-            self.registry.release(options.sessionId, operationId);
-          });
-        },
-
-        onError: (error: Error) => {
-          if (!self.registry.isCurrent(options.sessionId, operationId)) {
-            Logger.info(LOG_TAG, 'late retry onError discarded: op=' + operationId.toString());
-            return;
-          }
-          self.clearPersistenceTimer();
-          const currentContent: string = self.streamingContent;
-          self.messageService.finalizeCharacterMessage({
-            messageId: characterPlaceholder.id,
-            content: currentContent,
-            status: WorldSceneMessageStatus.Failed
-          }).then((success: boolean) => {
-            if (!success) {
-              Logger.warn(LOG_TAG, 'retry finalize Failed failed for msg=' + self.shortId(characterPlaceholder.id));
-            }
-            self.notifyFailed(options.sessionId, characterPlaceholder.id, operationId);
-            self.registry.release(options.sessionId, operationId);
-            Logger.info(LOG_TAG, 'retry failed: batch=' + self.shortId(generationBatchId)
-              + ' err=' + error.message);
-          }).catch((e: Error) => {
-            Logger.error(LOG_TAG, 'retry finalize-on-error failed: ' + e.message);
-            self.registry.release(options.sessionId, operationId);
-          });
-        }
-      };
-
-      const requestOptions: ChatRequestOptions = {
-        temperature: promptResult.temperature ?? promptResult.providerConfig.temperature,
-        topP: promptResult.topP ?? promptResult.providerConfig.topP,
-        maxTokens: promptResult.maxTokens ?? promptResult.providerConfig.maxTokens,
-        stream: true
-      };
-
-      const handle = this.modelService.streamCurrentChat(
-        promptResult.messages,
-        requestOptions,
-        callbacks
+      this.notifySpeakerStarted(
+        options.sessionId,
+        speakerSnapshot.characterInstanceId,
+        characterPlaceholder.id,
+        0,
+        1,
+        operationId
       );
 
-      this.registry.attachHandle(options.sessionId, operationId, handle);
+      const retryCompleted: boolean = await this.generateForSpeaker(
+        options.sessionId,
+        operationId,
+        generationBatchId,
+        characterPlaceholder,
+        speakerSnapshot,
+        promptResult,
+        providerConfig
+      );
 
-      return {
-        characterMessage: characterPlaceholder,
-        generationBatchId: generationBatchId
-      };
+      if (retryCompleted) {
+        return {
+          characterMessage: characterPlaceholder,
+          generationBatchId: generationBatchId
+        };
+      } else {
+        throw WorldRuntimeError.modelRequestFailed('重试生成失败');
+      }
     } catch (e) {
-      this.registry.release(options.sessionId, operationId);
+      if (this.registry.isCurrent(options.sessionId, operationId)) {
+        this.registry.release(options.sessionId, operationId);
+      }
       if (e instanceof WorldRuntimeError) {
         throw e;
       }
@@ -498,6 +577,31 @@ export class WorldSceneRuntimeService {
       }
     }
     return recoveredCount;
+  }
+
+  private findParticipantSnapshot(
+    participants: WorldSessionParticipantSnapshot[],
+    instanceId: string
+  ): WorldSessionParticipantSnapshot | null {
+    for (let i = 0; i < participants.length; i++) {
+      if (participants[i].characterInstanceId === instanceId) {
+        return participants[i];
+      }
+    }
+    return null;
+  }
+
+  private buildOtherParticipantNames(
+    participants: WorldSessionParticipantSnapshot[],
+    currentSpeakerIndex: number
+  ): Map<string, string> {
+    const result: Map<string, string> = new Map<string, string>();
+    for (let i = 0; i < participants.length; i++) {
+      if (i !== currentSpeakerIndex) {
+        result.set(participants[i].characterInstanceId, participants[i].displayNameSnapshot);
+      }
+    }
+    return result;
   }
 
   private async validateSession(options: WorldRuntimeTurnOptions): Promise<WorldConversationSession> {
@@ -596,6 +700,19 @@ export class WorldSceneRuntimeService {
   private notifyCancelled(sessionId: string, messageId: string, operationId: number): void {
     for (let i = 0; i < this.observers.length; i++) {
       this.observers[i].onStreamingCancelled(sessionId, messageId, operationId);
+    }
+  }
+
+  private notifySpeakerStarted(
+    sessionId: string,
+    characterInstanceId: string,
+    messageId: string,
+    speakerIndex: number,
+    totalSpeakers: number,
+    operationId: number
+  ): void {
+    for (let i = 0; i < this.observers.length; i++) {
+      this.observers[i].onSpeakerStarted(sessionId, characterInstanceId, messageId, speakerIndex, totalSpeakers, operationId);
     }
   }
 
