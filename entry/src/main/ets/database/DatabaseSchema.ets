@@ -299,7 +299,15 @@ import {
   COLUMN_LOCATION_ID_WS,
   INDEX_WORLD_SCENE_MESSAGES_SESSION_ID,
   INDEX_WORLD_SCENE_MESSAGES_SESSION_SEQUENCE,
-  INDEX_WORLD_SCENE_MESSAGES_LOCATION_ID
+  INDEX_WORLD_SCENE_MESSAGES_LOCATION_ID,
+  TABLE_WORLD_LOCATION_MAP_PLACEMENTS,
+  COLUMN_POSITION_X,
+  COLUMN_POSITION_Y,
+  COLUMN_POSITION_Z,
+  COLUMN_ROTATION_X,
+  COLUMN_ROTATION_Y,
+  COLUMN_ROTATION_Z,
+  COLUMN_PLACEMENT_SCALE
 } from './DatabaseConstants';
 
 const CREATE_CHARACTERS_TABLE: string =
@@ -1593,6 +1601,44 @@ export const V21_SCHEMA_STATEMENTS: string[] = [
   ...V20_TO_V21_DDL_STATEMENTS
 ];
 
+// ===== v22: 世界地点地图放置(W1C-WORLD-MAP-CONTRACT) =====
+// 仅创建 1 张新表,不修改任何现有表。
+
+const CREATE_WORLD_LOCATION_MAP_PLACEMENTS_TABLE: string =
+  `CREATE TABLE IF NOT EXISTS ${TABLE_WORLD_LOCATION_MAP_PLACEMENTS} (` +
+  `${COLUMN_ID} TEXT PRIMARY KEY NOT NULL, ` +
+  `${COLUMN_WORLD_ID} TEXT NOT NULL, ` +
+  `${COLUMN_LOCATION_ID} TEXT NOT NULL, ` +
+  `${COLUMN_POSITION_X} REAL NOT NULL, ` +
+  `${COLUMN_POSITION_Y} REAL NOT NULL, ` +
+  `${COLUMN_POSITION_Z} REAL NOT NULL, ` +
+  `${COLUMN_ROTATION_X} REAL NOT NULL DEFAULT 0, ` +
+  `${COLUMN_ROTATION_Y} REAL NOT NULL DEFAULT 0, ` +
+  `${COLUMN_ROTATION_Z} REAL NOT NULL DEFAULT 0, ` +
+  `${COLUMN_PLACEMENT_SCALE} REAL NOT NULL DEFAULT 1, ` +
+  `${COLUMN_CREATED_AT} INTEGER NOT NULL, ` +
+  `${COLUMN_UPDATED_AT} INTEGER NOT NULL, ` +
+  `UNIQUE(${COLUMN_WORLD_ID}, ${COLUMN_LOCATION_ID})` +
+  `)`;
+
+/**
+ * v21→v22 迁移 DDL(W1C-WORLD-MAP-CONTRACT 世界地点地图放置)。
+ *
+ * 仅创建 1 张新表,不修改任何现有表。
+ * 不迁移 characters / chats / messages / chat_participants / chat_memories /
+ * conversation_branches / world_* / group_character_* 数据。
+ * 任一语句失败由 DbHelper 事务回滚,数据库版本保持 21。
+ */
+export const V21_TO_V22_DDL_STATEMENTS: string[] = [
+  CREATE_WORLD_LOCATION_MAP_PLACEMENTS_TABLE
+];
+
+/** v22 完整 Schema(新安装使用) */
+export const V22_SCHEMA_STATEMENTS: string[] = [
+  ...V21_SCHEMA_STATEMENTS,
+  ...V21_TO_V22_DDL_STATEMENTS
+];
+
 export function getSchemaStatements(version: number): string[] {
   if (version === 1) {
     return [...VERSION_1_STATEMENTS];
@@ -1657,6 +1703,9 @@ export function getSchemaStatements(version: number): string[] {
   if (version === 21) {
     return [...V21_SCHEMA_STATEMENTS];
   }
+  if (version === 22) {
+    return [...V22_SCHEMA_STATEMENTS];
+  }
   return [];
 }
 
@@ -1687,7 +1736,8 @@ export function getCreateTableStatements(): string[] {
     CREATE_GROUP_CHARACTER_MEMORIES_TABLE,
     CREATE_GROUP_CHARACTER_RELATIONSHIP_MEMORIES_TABLE,
     CREATE_WORLD_PLAYER_PROFILES_TABLE,
-    CREATE_WORLD_CONVERSATION_SESSIONS_TABLE
+    CREATE_WORLD_CONVERSATION_SESSIONS_TABLE,
+    CREATE_WORLD_LOCATION_MAP_PLACEMENTS_TABLE
   ];
 }
 

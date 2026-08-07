@@ -9,6 +9,9 @@ import sessionLifeStartContractTest from './SessionLifeStartContract.test';
 import sessionLifeEndContractTest from './SessionLifeEndContract.test';
 import sessionLifePreviousContractTest from './SessionLifePreviousContract.test';
 import sessionLifeCascadeContractTest from './SessionLifeCascadeContract.test';
+import mapPlacementModelContractTest from './MapPlacementModelContract.test';
+import mapPlacementRepoContractTest from './MapPlacementRepoContract.test';
+import mapPlacementCascadeContractTest from './MapPlacementCascadeContract.test';
  
 export default function testsuite() {
   groupRuntimeDeviceTest();
@@ -22,4 +25,7 @@ export default function testsuite() {
   sessionLifeEndContractTest();
   sessionLifePreviousContractTest();
   sessionLifeCascadeContractTest();
+  mapPlacementModelContractTest();
+  mapPlacementRepoContractTest();
+  mapPlacementCascadeContractTest();
 }

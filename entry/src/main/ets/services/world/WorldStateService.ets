@@ -42,6 +42,7 @@ import { WorldSceneMessageRepository } from '../../repositories/world/WorldScene
 import { WorldCharacterMemoryService } from './WorldCharacterMemoryService';
 import { WorldConversationSessionRepository } from '../../repositories/world/WorldConversationSessionRepository';
 import { WorldPlayerProfileRepository } from '../../repositories/world/WorldPlayerProfileRepository';
+import { WorldLocationMapPlacementRepository } from '../../repositories/world/WorldLocationMapPlacementRepository';
 import {
   World,
   WorldStatus,
@@ -120,6 +121,7 @@ export class WorldStateService {
   private readonly sceneMessageRepo: WorldSceneMessageRepository;
   private readonly sessionRepo: WorldConversationSessionRepository;
   private readonly profileRepo: WorldPlayerProfileRepository;
+  private readonly placementRepo: WorldLocationMapPlacementRepository;
   private readonly memoryService: WorldCharacterMemoryService;
   private readonly characterService: CharacterService;
   private readonly dbHelper: DbHelper;
@@ -134,6 +136,7 @@ export class WorldStateService {
     sceneMessageRepo: WorldSceneMessageRepository,
     sessionRepo: WorldConversationSessionRepository,
     profileRepo: WorldPlayerProfileRepository,
+    placementRepo: WorldLocationMapPlacementRepository,
     memoryService: WorldCharacterMemoryService,
     characterService: CharacterService,
     dbHelper: DbHelper
@@ -147,6 +150,7 @@ export class WorldStateService {
     this.sceneMessageRepo = sceneMessageRepo;
     this.sessionRepo = sessionRepo;
     this.profileRepo = profileRepo;
+    this.placementRepo = placementRepo;
     this.memoryService = memoryService;
     this.characterService = characterService;
     this.dbHelper = dbHelper;
@@ -319,6 +323,8 @@ export class WorldStateService {
         await this.eventRepo.deleteByWorldWithStore(store, worldId);
         await this.edgeRepo.deleteByWorldWithStore(store, worldId);
         await this.instanceRepo.deleteByWorldWithStore(store, worldId);
+        // W1C: 删除地点地图放置,在地点删除之前(放置依赖地点)
+        await this.placementRepo.deleteByWorldWithStore(store, worldId);
         await this.locationRepo.deleteByWorldWithStore(store, worldId);
         await this.worldRepo.deleteByIdWithStore(store, worldId);
       },
@@ -536,6 +542,8 @@ export class WorldStateService {
         }
         // 删除关联 Edge(作为起点或终点)
         await this.edgeRepo.deleteByLocationWithStore(store, locationId);
+        // W1C: 删除该地点的地图放置(在删除地点之前)
+        await this.placementRepo.deleteByLocationWithStore(store, locationId);
         // 插入 LocationDeleted 事件(保留 sourceLocationId 软引用)
         await this.eventRepo.insertWithStore(store, buildEvent({
           worldId: existing.worldId,

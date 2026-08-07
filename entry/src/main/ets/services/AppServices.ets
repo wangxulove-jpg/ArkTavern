@@ -100,6 +100,7 @@ import { WorldSceneMessageRepository } from '../repositories/world/WorldSceneMes
 import { WorldCharacterMemoryRepository } from '../repositories/world/WorldCharacterMemoryRepository';
 import { WorldPlayerProfileRepository } from '../repositories/world/WorldPlayerProfileRepository';
 import { WorldConversationSessionRepository } from '../repositories/world/WorldConversationSessionRepository';
+import { WorldLocationMapPlacementRepository } from '../repositories/world/WorldLocationMapPlacementRepository';
 import { WorldStateService } from './world/WorldStateService';
 import { WorldSceneService } from './world/WorldSceneService';
 import { WorldCharacterMemoryService } from './world/WorldCharacterMemoryService';
@@ -249,6 +250,8 @@ export class AppServices {
   private readonly worldPlayerProfileRepository: WorldPlayerProfileRepository;
   /** WorldConversationSessionRepository 世界会话仓储(W1A-WORLD-CORE-STORE) */
   private readonly worldConversationSessionRepository: WorldConversationSessionRepository;
+  /** WorldLocationMapPlacementRepository 世界地点地图放置仓储(W1C-WORLD-MAP-CONTRACT) */
+  private readonly worldLocationMapPlacementRepository: WorldLocationMapPlacementRepository;
   /** WorldStateService 世界模式状态业务服务(W-DATA-1B,世界基础数据唯一正式写入口) */
   private readonly worldStateService: WorldStateService;
   /** WorldSceneService 世界场景业务服务(W-SCENE-1B,场景和场景消息唯一正式写入口) */
@@ -294,6 +297,8 @@ export class AppServices {
     // W1A-WORLD-CORE-STORE: 世界玩家档案与会话仓储,仅依赖 DbHelper,不依赖任何 Service,不会形成循环。
     this.worldPlayerProfileRepository = new WorldPlayerProfileRepository(this.dbHelper);
     this.worldConversationSessionRepository = new WorldConversationSessionRepository(this.dbHelper);
+    // W1C-WORLD-MAP-CONTRACT: 世界地点地图放置仓储,仅依赖 DbHelper,不依赖任何 Service。
+    this.worldLocationMapPlacementRepository = new WorldLocationMapPlacementRepository(this.dbHelper);
     this.characterService = new CharacterService(
       this.characterRepository,
       this.characterSelectionStore,
@@ -328,6 +333,7 @@ export class AppServices {
       this.worldSceneMessageRepository,
       this.worldConversationSessionRepository,
       this.worldPlayerProfileRepository,
+      this.worldLocationMapPlacementRepository,
       this.worldCharacterMemoryService,
       this.characterService,
       this.dbHelper
@@ -1148,5 +1154,13 @@ export class AppServices {
    */
   static getWorldConversationSessionService(): WorldConversationSessionService {
     return AppServices.getInstance().worldConversationSessionService;
+  }
+
+  /**
+   * 获取 WorldLocationMapPlacementRepository 实例(W1C-WORLD-MAP-CONTRACT)。
+   * 仅供 WorldStateService / WorldConversationSessionService 等内部服务使用,不对页面公开。
+   */
+  static getWorldLocationMapPlacementRepository(): WorldLocationMapPlacementRepository {
+    return AppServices.getInstance().worldLocationMapPlacementRepository;
   }
 }

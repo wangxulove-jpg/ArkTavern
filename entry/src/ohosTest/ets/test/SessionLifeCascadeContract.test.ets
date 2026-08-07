@@ -21,6 +21,7 @@ import { CharacterSelectionStore } from '../../../main/ets/storage/CharacterSele
 import { CharacterAssetStore } from '../../../main/ets/storage/CharacterAssetStore';
 import { LorebookRepository } from '../../../main/ets/repositories/LorebookRepository';
 import { WorldCharacterMemoryRepository } from '../../../main/ets/repositories/world/WorldCharacterMemoryRepository';
+import { WorldLocationMapPlacementRepository } from '../../../main/ets/repositories/world/WorldLocationMapPlacementRepository';
 import {
   WorldStatus,
   createWorldRecord
@@ -105,6 +106,7 @@ export default function sessionLifeCascadeContractTest(): void {
         sessionRepo,
         dbHelper
       );
+      const placementRepo: WorldLocationMapPlacementRepository = new WorldLocationMapPlacementRepository(dbHelper);
       stateService = new WorldStateService(
         worldRepo,
         locationRepo,
@@ -115,6 +117,7 @@ export default function sessionLifeCascadeContractTest(): void {
         sceneMessageRepo,
         sessionRepo,
         profileRepo,
+        placementRepo,
         memoryService,
         characterService,
         dbHelper

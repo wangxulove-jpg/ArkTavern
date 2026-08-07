@@ -6,7 +6,7 @@
  */
 
 export const DATABASE_NAME: string = 'arktavern.db';
-export const DATABASE_VERSION: number = 21;
+export const DATABASE_VERSION: number = 22;
 
 export const TABLE_CHARACTERS: string = 'characters';
 export const TABLE_CHATS: string = 'chats';
@@ -519,3 +519,24 @@ export const COLUMN_LOCATION_ID_WS: string = 'location_id';
 export const INDEX_WORLD_SCENE_MESSAGES_SESSION_ID: string = 'idx_world_scene_messages_session_id';
 export const INDEX_WORLD_SCENE_MESSAGES_SESSION_SEQUENCE: string = 'idx_world_scene_messages_session_sequence';
 export const INDEX_WORLD_SCENE_MESSAGES_LOCATION_ID: string = 'idx_world_scene_messages_location_id';
+
+// ===== v22: 世界地点地图放置(W1C-WORLD-MAP-CONTRACT) =====
+// 独立数据域,不复用 world_locations / world_scenes / world_scene_messages。
+// 1 张新表: world_location_map_placements。
+// 表名 / 列名 / 索引名集中定义,Repository / Schema / Migration 只读取此处。
+export const TABLE_WORLD_LOCATION_MAP_PLACEMENTS: string = 'world_location_map_placements';
+
+/** world_location_map_placements.position_x 列名 */
+export const COLUMN_POSITION_X: string = 'position_x';
+/** world_location_map_placements.position_y 列名 */
+export const COLUMN_POSITION_Y: string = 'position_y';
+/** world_location_map_placements.position_z 列名 */
+export const COLUMN_POSITION_Z: string = 'position_z';
+/** world_location_map_placements.rotation_x 列名 */
+export const COLUMN_ROTATION_X: string = 'rotation_x';
+/** world_location_map_placements.rotation_y 列名 */
+export const COLUMN_ROTATION_Y: string = 'rotation_y';
+/** world_location_map_placements.rotation_z 列名 */
+export const COLUMN_ROTATION_Z: string = 'rotation_z';
+/** world_location_map_placements.scale 列名 */
+export const COLUMN_PLACEMENT_SCALE: string = 'scale';
