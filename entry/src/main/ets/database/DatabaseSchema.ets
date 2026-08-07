@@ -1600,10 +1600,21 @@ export const V20_TO_V21_DDL_STATEMENTS: string[] = [
   CREATE_INDEX_WORLD_SCENE_MESSAGES_LOCATION_ID
 ];
 
-/** v21 完整 Schema(新安装使用) */
+/** v21 新增索引(新安装和迁移共用) */
+const V21_NEW_INDEX_STATEMENTS: string[] = [
+  CREATE_INDEX_WORLD_SCENE_MESSAGES_SESSION_ID,
+  CREATE_INDEX_WORLD_SCENE_MESSAGES_SESSION_SEQUENCE,
+  CREATE_INDEX_WORLD_SCENE_MESSAGES_LOCATION_ID
+];
+
+/** v21 完整 Schema(新安装使用)。
+ *  注意:CREATE_WORLD_SCENES_TABLE 已包含 title,
+ *  CREATE_WORLD_SCENE_MESSAGES_TABLE 已包含 session_id / location_id,
+ *  新安装不需要执行 ALTER(否则 code=14800021 duplicate column),
+ *  仅追加新增索引。 */
 export const V21_SCHEMA_STATEMENTS: string[] = [
   ...V20_SCHEMA_STATEMENTS,
-  ...V20_TO_V21_DDL_STATEMENTS
+  ...V21_NEW_INDEX_STATEMENTS
 ];
 
 // ===== v22: 世界地点地图放置(W1C-WORLD-MAP-CONTRACT) =====

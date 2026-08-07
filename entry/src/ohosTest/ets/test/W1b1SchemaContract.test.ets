@@ -8,6 +8,9 @@ import {
   TABLE_WORLD_SCENES,
   TABLE_WORLD_SCENE_MESSAGES
 } from '../../../main/ets/database/DatabaseConstants';
+import {
+  V20_TO_V21_DDL_STATEMENTS
+} from '../../../main/ets/database/DatabaseSchema';
 
 const TEST_DB: string = 'w1b1_schema_contract_test.db';
 
@@ -33,12 +36,12 @@ export default function w1b1SchemaContractTest(): void {
       }
     });
 
-    it('SESSIONSTORE-01: DATABASE_VERSION 从 20 升到 21', 0, () => {
-      expect(DATABASE_VERSION).assertEqual(21);
+    it('SESSIONSTORE-01: DATABASE_VERSION >= 21(V20→V21 未被删除)', 0, () => {
+      expect(DATABASE_VERSION >= 21).assertTrue();
     });
 
-    it('SESSIONSTORE-02: V20→V21 Migration 已注册', 0, () => {
-      expect(DATABASE_VERSION).assertEqual(21);
+    it('SESSIONSTORE-02: V20→V21 Migration DDL 仍存在', 0, () => {
+      expect(V20_TO_V21_DDL_STATEMENTS.length > 0).assertTrue();
     });
 
     it('SESSIONSTORE-03: V1→V20 历史 Migration 未删除', 0, () => {

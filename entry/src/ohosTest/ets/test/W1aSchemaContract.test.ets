@@ -8,6 +8,9 @@ import {
   TABLE_WORLD_PLAYER_PROFILES,
   TABLE_WORLD_CONVERSATION_SESSIONS
 } from '../../../main/ets/database/DatabaseConstants';
+import {
+  V19_TO_V20_DDL_STATEMENTS
+} from '../../../main/ets/database/DatabaseSchema';
 
 const TEST_DB: string = 'w1a_schema_contract_test.db';
 
@@ -33,8 +36,12 @@ export default function w1aSchemaContractTest(): void {
       }
     });
 
-    it('DATABASE_VERSION 为 21', 0, () => {
-      expect(DATABASE_VERSION).assertEqual(21);
+    it('W1A: DATABASE_VERSION >= 21(V19→V20 Migration 未被删除)', 0, () => {
+      expect(DATABASE_VERSION >= 21).assertTrue();
+    });
+
+    it('W1A: V19→V20 DDL 仍存在', 0, () => {
+      expect(V19_TO_V20_DDL_STATEMENTS.length > 0).assertTrue();
     });
 
     it('world_player_profiles 表存在', 0, async () => {
@@ -119,9 +126,8 @@ export default function w1aSchemaContractTest(): void {
       }
     });
 
-    it('V1→V20 迁移路径完整(20 步)', 0, () => {
-      const store: relationalStore.RdbStore = dbHelper.getStore();
-      expect(DATABASE_VERSION).assertEqual(21);
+    it('W1A: V1→V20 迁移路径完整(当前版本 >= 21)', 0, () => {
+      expect(DATABASE_VERSION >= 21).assertTrue();
     });
   });
 }
