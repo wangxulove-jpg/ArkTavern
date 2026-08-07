@@ -33,11 +33,11 @@ export default function w1aSchemaContractTest(): void {
       }
     });
 
-    it('DATABASE_VERSION 为 20', () => {
-      expect(DATABASE_VERSION).assertEqual(20);
+    it('DATABASE_VERSION 为 21', 0, () => {
+      expect(DATABASE_VERSION).assertEqual(21);
     });
 
-    it('world_player_profiles 表存在', async () => {
+    it('world_player_profiles 表存在', 0, async () => {
       const store: relationalStore.RdbStore = dbHelper.getStore();
       const rs: relationalStore.ResultSet = await store.querySql(
         `SELECT name FROM sqlite_master WHERE type='table' AND name='${TABLE_WORLD_PLAYER_PROFILES}'`
@@ -49,7 +49,7 @@ export default function w1aSchemaContractTest(): void {
       }
     });
 
-    it('world_conversation_sessions 表存在', async () => {
+    it('world_conversation_sessions 表存在', 0, async () => {
       const store: relationalStore.RdbStore = dbHelper.getStore();
       const rs: relationalStore.ResultSet = await store.querySql(
         `SELECT name FROM sqlite_master WHERE type='table' AND name='${TABLE_WORLD_CONVERSATION_SESSIONS}'`
@@ -61,7 +61,7 @@ export default function w1aSchemaContractTest(): void {
       }
     });
 
-    it('world_player_profiles UNIQUE(worldId) 约束生效', async () => {
+    it('world_player_profiles UNIQUE(worldId) 约束生效', 0, async () => {
       const store: relationalStore.RdbStore = dbHelper.getStore();
       const bucket1: relationalStore.ValuesBucket = {
         'id': 'pp-uni-1',
@@ -86,7 +86,7 @@ export default function w1aSchemaContractTest(): void {
       }
     });
 
-    it('world_conversation_sessions UNIQUE(sceneId, sequenceNumber) 约束生效', async () => {
+    it('world_conversation_sessions UNIQUE(sceneId, sequenceNumber) 约束生效', 0, async () => {
       const store: relationalStore.RdbStore = dbHelper.getStore();
       const bucket1: relationalStore.ValuesBucket = {
         'id': 'cs-uni-1',
@@ -119,9 +119,9 @@ export default function w1aSchemaContractTest(): void {
       }
     });
 
-    it('V1→V19 迁移路径完整(19 步)', () => {
+    it('V1→V20 迁移路径完整(20 步)', 0, () => {
       const store: relationalStore.RdbStore = dbHelper.getStore();
-      expect(DATABASE_VERSION).assertEqual(20);
+      expect(DATABASE_VERSION).assertEqual(21);
     });
   });
 }

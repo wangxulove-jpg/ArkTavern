@@ -103,6 +103,7 @@ import { WorldConversationSessionRepository } from '../repositories/world/WorldC
 import { WorldStateService } from './world/WorldStateService';
 import { WorldSceneService } from './world/WorldSceneService';
 import { WorldCharacterMemoryService } from './world/WorldCharacterMemoryService';
+import { WorldConversationSessionService } from './world/WorldConversationSessionService';
 import { Logger } from '../utils/Logger';
 
 const LOG_TAG: string = 'AppServices';
@@ -254,6 +255,8 @@ export class AppServices {
   private readonly worldSceneService: WorldSceneService;
   /** WorldCharacterMemoryService 世界角色记忆业务服务(W-MEMORY-1A,记忆唯一正式写入口) */
   private readonly worldCharacterMemoryService: WorldCharacterMemoryService;
+  /** WorldConversationSessionService 世界会话生命周期服务(W1B2,会话唯一正式写入口) */
+  private readonly worldConversationSessionService: WorldConversationSessionService;
 
   /**
    * 私有构造,组装全部依赖。
@@ -323,6 +326,8 @@ export class AppServices {
       this.worldEventRepository,
       this.worldSceneRepository,
       this.worldSceneMessageRepository,
+      this.worldConversationSessionRepository,
+      this.worldPlayerProfileRepository,
       this.worldCharacterMemoryService,
       this.characterService,
       this.dbHelper
@@ -337,6 +342,17 @@ export class AppServices {
       this.worldSceneRepository,
       this.worldSceneMessageRepository,
       this.worldEventRepository,
+      this.dbHelper
+    );
+    // W1B2: 世界会话生命周期业务服务(会话唯一正式写入口)。
+    // 依赖 5 个世界 Repository + DbHelper,不依赖 CharacterService / Page / ViewModel。
+    // 在 WorldStateService 之后创建,无构造循环。
+    this.worldConversationSessionService = new WorldConversationSessionService(
+      this.worldRepository,
+      this.worldPlayerProfileRepository,
+      this.worldSceneRepository,
+      this.worldCharacterInstanceRepository,
+      this.worldConversationSessionRepository,
       this.dbHelper
     );
     this.lorebookSelectionStore = new LorebookSelectionStore(this.appPreferences);
@@ -1123,5 +1139,14 @@ export class AppServices {
    */
   static getWorldConversationSessionRepository(): WorldConversationSessionRepository {
     return AppServices.getInstance().worldConversationSessionRepository;
+  }
+
+  /**
+   * 获取 WorldConversationSessionService 实例(W1B2 世界会话生命周期服务)。
+   * 是当前世界会话(startSession / endSession)的唯一正式写入口。
+   * 所有页面与 ViewModel 必须通过此方法获取同一个 WorldConversationSessionService。
+   */
+  static getWorldConversationSessionService(): WorldConversationSessionService {
+    return AppServices.getInstance().worldConversationSessionService;
   }
 }

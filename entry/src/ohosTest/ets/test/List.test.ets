@@ -5,6 +5,10 @@ import w1aSchemaContractTest from './W1aSchemaContract.test';
 import participantSnapshotContractTest from './ParticipantSnapshotContract.test';
 import w1b1SchemaContractTest from './W1b1SchemaContract.test';
 import sessionStorageContractTest from './SessionStorageContract.test';
+import sessionLifeStartContractTest from './SessionLifeStartContract.test';
+import sessionLifeEndContractTest from './SessionLifeEndContract.test';
+import sessionLifePreviousContractTest from './SessionLifePreviousContract.test';
+import sessionLifeCascadeContractTest from './SessionLifeCascadeContract.test';
  
 export default function testsuite() {
   groupRuntimeDeviceTest();
@@ -14,4 +18,8 @@ export default function testsuite() {
   participantSnapshotContractTest();
   w1b1SchemaContractTest();
   sessionStorageContractTest();
+  sessionLifeStartContractTest();
+  sessionLifeEndContractTest();
+  sessionLifePreviousContractTest();
+  sessionLifeCascadeContractTest();
 }

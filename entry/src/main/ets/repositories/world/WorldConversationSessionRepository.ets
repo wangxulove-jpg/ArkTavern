@@ -225,6 +225,66 @@ export class WorldConversationSessionRepository {
     }
   }
 
+  async deleteBySceneIdWithStore(store: relationalStore.RdbStore, sceneId: string): Promise<void> {
+    if (sceneId === '') {
+      throw DatabaseError.invalidData('WorldConversationSession.deleteBySceneIdWithStore: sceneId empty');
+    }
+    const predicates: relationalStore.RdbPredicates =
+      new relationalStore.RdbPredicates(TABLE_WORLD_CONVERSATION_SESSIONS);
+    predicates.equalTo(COLUMN_SCENE_ID, sceneId);
+    try {
+      await store.delete(predicates);
+    } catch (err) {
+      throw DatabaseError.queryFailed(`WorldConversationSession.deleteBySceneIdWithStore: ${extractCauseMessage(err)}`);
+    }
+  }
+
+  async nextSequenceNumberForSceneWithStore(
+    store: relationalStore.RdbStore,
+    sceneId: string
+  ): Promise<number> {
+    if (sceneId === '') {
+      throw DatabaseError.invalidData('WorldConversationSession.nextSequenceNumberForSceneWithStore: sceneId empty');
+    }
+    const predicates: relationalStore.RdbPredicates =
+      new relationalStore.RdbPredicates(TABLE_WORLD_CONVERSATION_SESSIONS);
+    predicates.equalTo(COLUMN_SCENE_ID, sceneId);
+    predicates.orderByDesc(COLUMN_SEQUENCE_NUMBER);
+    predicates.limitAs(1);
+    const rs: relationalStore.ResultSet = await store.query(predicates);
+    try {
+      if (!rs.goToFirstRow()) {
+        return 1;
+      }
+      return rs.getLong(rs.getColumnIndex(COLUMN_SEQUENCE_NUMBER)) + 1;
+    } finally {
+      rs.close();
+    }
+  }
+
+  async getLatestBySceneIdWithStore(
+    store: relationalStore.RdbStore,
+    sceneId: string
+  ): Promise<WorldConversationSession | null> {
+    if (sceneId === '') {
+      throw DatabaseError.invalidData('WorldConversationSession.getLatestBySceneIdWithStore: sceneId empty');
+    }
+    const predicates: relationalStore.RdbPredicates =
+      new relationalStore.RdbPredicates(TABLE_WORLD_CONVERSATION_SESSIONS);
+    predicates.equalTo(COLUMN_SCENE_ID, sceneId);
+    predicates.orderByDesc(COLUMN_SEQUENCE_NUMBER);
+    predicates.limitAs(1);
+    const rs: relationalStore.ResultSet = await store.query(predicates);
+    try {
+      if (!rs.goToFirstRow()) {
+        return null;
+      }
+      return sessionFromRow(rs);
+    } finally {
+      rs.close();
+    }
+  }
+
   private validateSession(session: WorldConversationSession): void {
     if (session.id === '') {
       throw DatabaseError.invalidData('WorldConversationSession.id empty');

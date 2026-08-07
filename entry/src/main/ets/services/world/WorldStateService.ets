@@ -40,6 +40,8 @@ import { WorldEventRepository } from '../../repositories/world/WorldEventReposit
 import { WorldSceneRepository } from '../../repositories/world/WorldSceneRepository';
 import { WorldSceneMessageRepository } from '../../repositories/world/WorldSceneMessageRepository';
 import { WorldCharacterMemoryService } from './WorldCharacterMemoryService';
+import { WorldConversationSessionRepository } from '../../repositories/world/WorldConversationSessionRepository';
+import { WorldPlayerProfileRepository } from '../../repositories/world/WorldPlayerProfileRepository';
 import {
   World,
   WorldStatus,
@@ -116,6 +118,8 @@ export class WorldStateService {
   private readonly eventRepo: WorldEventRepository;
   private readonly sceneRepo: WorldSceneRepository;
   private readonly sceneMessageRepo: WorldSceneMessageRepository;
+  private readonly sessionRepo: WorldConversationSessionRepository;
+  private readonly profileRepo: WorldPlayerProfileRepository;
   private readonly memoryService: WorldCharacterMemoryService;
   private readonly characterService: CharacterService;
   private readonly dbHelper: DbHelper;
@@ -128,6 +132,8 @@ export class WorldStateService {
     eventRepo: WorldEventRepository,
     sceneRepo: WorldSceneRepository,
     sceneMessageRepo: WorldSceneMessageRepository,
+    sessionRepo: WorldConversationSessionRepository,
+    profileRepo: WorldPlayerProfileRepository,
     memoryService: WorldCharacterMemoryService,
     characterService: CharacterService,
     dbHelper: DbHelper
@@ -139,6 +145,8 @@ export class WorldStateService {
     this.eventRepo = eventRepo;
     this.sceneRepo = sceneRepo;
     this.sceneMessageRepo = sceneMessageRepo;
+    this.sessionRepo = sessionRepo;
+    this.profileRepo = profileRepo;
     this.memoryService = memoryService;
     this.characterService = characterService;
     this.dbHelper = dbHelper;
@@ -304,6 +312,9 @@ export class WorldStateService {
         // V17: 先删除该 World 的全部世界角色记忆,避免留下孤立记忆。
         await this.memoryService.deleteByWorldWithStore(store, worldId);
         await this.sceneMessageRepo.deleteByWorldWithStore(store, worldId);
+        // W1B2: 删除会话与玩家档案,在场景删除之前(会话依赖场景,需先删)
+        await this.sessionRepo.deleteByWorldIdWithStore(store, worldId);
+        await this.profileRepo.deleteByWorldIdWithStore(store, worldId);
         await this.sceneRepo.deleteByWorldWithStore(store, worldId);
         await this.eventRepo.deleteByWorldWithStore(store, worldId);
         await this.edgeRepo.deleteByWorldWithStore(store, worldId);

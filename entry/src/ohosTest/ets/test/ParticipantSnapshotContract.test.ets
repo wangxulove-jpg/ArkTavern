@@ -275,8 +275,8 @@ export default function participantSnapshotContractTest(): void {
       expect(ended.status).assertEqual(WorldConversationSessionStatus.Ended);
     });
 
-    it('PARTSNAP-24 DATABASE_VERSION 仍为 20', 0, () => {
-      expect(DATABASE_VERSION).assertEqual(20);
+    it('PARTSNAP-24 DATABASE_VERSION 仍为 21', 0, () => {
+      expect(DATABASE_VERSION).assertEqual(21);
     });
 
     it('PARTSNAP-25 locationIdAtStart 省略时 JSON 不包含该字段', 0, () => {

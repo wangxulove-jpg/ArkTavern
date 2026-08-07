@@ -36,7 +36,7 @@ export default function worldPlayerProfileContractTest(): void {
       }
     });
 
-    it('createWorldPlayerProfileRecord 正常创建', () => {
+    it('createWorldPlayerProfileRecord 正常创建', 0, () => {
       const profile: WorldPlayerProfile = createWorldPlayerProfileRecord({
         id: 'test-id-1',
         worldId: 'world-1',
@@ -49,7 +49,7 @@ export default function worldPlayerProfileContractTest(): void {
       expect(profile.updatedAt > 0).assertTrue();
     });
 
-    it('createWorldPlayerProfileRecord 空 displayName 抛错', () => {
+    it('createWorldPlayerProfileRecord 空 displayName 抛错', 0, () => {
       try {
         createWorldPlayerProfileRecord({
           id: 'test-id-2',
@@ -62,7 +62,7 @@ export default function worldPlayerProfileContractTest(): void {
       }
     });
 
-    it('createWorldPlayerProfileRecord 空 id 抛错', () => {
+    it('createWorldPlayerProfileRecord 空 id 抛错', 0, () => {
       try {
         createWorldPlayerProfileRecord({
           id: '',
@@ -75,7 +75,7 @@ export default function worldPlayerProfileContractTest(): void {
       }
     });
 
-    it('createWorldPlayerProfileRecord 空 worldId 抛错', () => {
+    it('createWorldPlayerProfileRecord 空 worldId 抛错', 0, () => {
       try {
         createWorldPlayerProfileRecord({
           id: 'test-id-3',
@@ -88,7 +88,7 @@ export default function worldPlayerProfileContractTest(): void {
       }
     });
 
-    it('insert + getByWorldId 成功', async () => {
+    it('insert + getByWorldId 成功', 0, async () => {
       const profile: WorldPlayerProfile = createWorldPlayerProfileRecord({
         id: 'profile-insert-1',
         worldId: 'world-insert-1',
@@ -101,7 +101,7 @@ export default function worldPlayerProfileContractTest(): void {
       expect(found!.displayName).assertEqual('Player One');
     });
 
-    it('UNIQUE(worldId) 重复插入抛 alreadyExists', async () => {
+    it('UNIQUE(worldId) 重复插入抛 alreadyExists', 0, async () => {
       const p1: WorldPlayerProfile = createWorldPlayerProfileRecord({
         id: 'profile-uniq-1',
         worldId: 'world-uniq-1',
@@ -121,7 +121,7 @@ export default function worldPlayerProfileContractTest(): void {
       }
     });
 
-    it('update 修改 displayName 成功', async () => {
+    it('update 修改 displayName 成功', 0, async () => {
       const profile: WorldPlayerProfile = createWorldPlayerProfileRecord({
         id: 'profile-update-1',
         worldId: 'world-update-1',
@@ -141,7 +141,7 @@ export default function worldPlayerProfileContractTest(): void {
       expect(found!.displayName).assertEqual('New Name');
     });
 
-    it('deleteByWorldId 成功删除', async () => {
+    it('deleteByWorldId 成功删除', 0, async () => {
       const profile: WorldPlayerProfile = createWorldPlayerProfileRecord({
         id: 'profile-del-1',
         worldId: 'world-del-1',
@@ -153,7 +153,7 @@ export default function worldPlayerProfileContractTest(): void {
       expect(found).assertNull();
     });
 
-    it('ID_PREFIX 格式正确', () => {
+    it('ID_PREFIX 格式正确', 0, () => {
       expect(WORLD_PLAYER_PROFILE_ID_PREFIX).assertEqual('world-player-profile-');
     });
   });
