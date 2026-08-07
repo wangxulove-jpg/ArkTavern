@@ -106,6 +106,7 @@ import { WorldSceneService } from './world/WorldSceneService';
 import { WorldCharacterMemoryService } from './world/WorldCharacterMemoryService';
 import { WorldConversationSessionService } from './world/WorldConversationSessionService';
 import { WorldMapInteractionService } from './world/WorldMapInteractionService';
+import { WorldSceneLaunchService } from './world/WorldSceneLaunchService';
 import { Logger } from '../utils/Logger';
 
 const LOG_TAG: string = 'AppServices';
@@ -263,6 +264,8 @@ export class AppServices {
   private readonly worldConversationSessionService: WorldConversationSessionService;
   /** WorldMapInteractionService 地图交互业务服务(W1D,地图快照加载+放置保存) */
   private readonly worldMapInteractionService: WorldMapInteractionService;
+  /** WorldSceneLaunchService 场景启动业务服务(W2B1,Scene+Session 原子创建) */
+  private readonly worldSceneLaunchService: WorldSceneLaunchService;
 
   /**
    * 私有构造,组装全部依赖。
@@ -371,6 +374,17 @@ export class AppServices {
       this.worldCharacterInstanceRepository,
       this.worldLocationMapPlacementRepository,
       this.characterService,
+      this.dbHelper
+    );
+    this.worldSceneLaunchService = new WorldSceneLaunchService(
+      this.worldRepository,
+      this.worldLocationRepository,
+      this.worldCharacterInstanceRepository,
+      this.worldPlayerProfileRepository,
+      this.worldSceneRepository,
+      this.worldConversationSessionRepository,
+      this.worldSceneService,
+      this.worldConversationSessionService,
       this.dbHelper
     );
     this.lorebookSelectionStore = new LorebookSelectionStore(this.appPreferences);
@@ -1170,6 +1184,10 @@ export class AppServices {
 
   static getWorldMapInteractionService(): WorldMapInteractionService {
     return AppServices.getInstance().worldMapInteractionService;
+  }
+
+  static getWorldSceneLaunchService(): WorldSceneLaunchService {
+    return AppServices.getInstance().worldSceneLaunchService;
   }
 
   /**

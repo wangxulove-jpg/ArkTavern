@@ -69,133 +69,11 @@ export class WorldConversationSessionService {
   }
 
   async startSession(options: StartSessionOptions): Promise<WorldConversationSession> {
-    if (options.worldId === '') {
-      throw WorldConversationSessionError.worldNotFound();
-    }
-    if (options.sceneId === '') {
-      throw WorldConversationSessionError.sceneNotFound();
-    }
-    if (options.participantCharacterInstanceIds.length === 0) {
-      throw WorldConversationSessionError.noParticipants();
-    }
-    const trimmedIds: string[] = [];
-    for (let i = 0; i < options.participantCharacterInstanceIds.length; i++) {
-      const trimmed: string = options.participantCharacterInstanceIds[i].trim();
-      if (trimmed === '') {
-        throw WorldConversationSessionError.noParticipants();
-      }
-      if (trimmed === 'user') {
-        throw WorldConversationSessionError.participantNotFound();
-      }
-      trimmedIds.push(trimmed);
-    }
-    const seenIds: Set<string> = new Set<string>();
-    for (let i = 0; i < trimmedIds.length; i++) {
-      if (seenIds.has(trimmedIds[i])) {
-        throw WorldConversationSessionError.duplicateParticipant(trimmedIds[i]);
-      }
-      seenIds.add(trimmedIds[i]);
-    }
-
+    const trimmedIds: string[] = validateAndTrimParticipantIds(options);
     let result: WorldConversationSession | null = null;
     await this.dbHelper.runInTransaction(
       async (store: relationalStore.RdbStore): Promise<void> => {
-        const world: World | null = await this.worldRepo.getByIdWithStore(store, options.worldId);
-        if (world === null) {
-          throw WorldConversationSessionError.worldNotFound();
-        }
-        if (world.status !== WorldStatus.Active) {
-          throw WorldConversationSessionError.worldNotActive();
-        }
-
-        const scene: WorldScene | null = await this.sceneRepo.getByIdWithStore(store, options.sceneId);
-        if (scene === null) {
-          throw WorldConversationSessionError.sceneNotFound();
-        }
-        if (scene.worldId !== options.worldId) {
-          throw WorldConversationSessionError.sceneWorldMismatch();
-        }
-        if (scene.status !== WorldSceneStatus.Active) {
-          throw WorldConversationSessionError.sceneNotActive();
-        }
-
-        const profile = await this.profileRepo.getByWorldIdWithStore(store, options.worldId);
-        if (profile === null) {
-          throw WorldConversationSessionError.playerProfileNotFound();
-        }
-        const playerDisplayNameSnapshot: string = profile.displayName;
-
-        const activeSession: WorldConversationSession | null =
-          await this.sessionRepo.getActiveBySceneIdWithStore(store, options.sceneId);
-        if (activeSession !== null) {
-          throw WorldConversationSessionError.activeSessionAlreadyExists(activeSession.id);
-        }
-
-        const snapshots: WorldSessionParticipantSnapshot[] = [];
-        for (let i = 0; i < trimmedIds.length; i++) {
-          const instanceId: string = trimmedIds[i];
-          const instance: WorldCharacterInstance | null =
-            await this.instanceRepo.getByIdWithStore(store, instanceId);
-          if (instance === null) {
-            throw WorldConversationSessionError.participantNotFound();
-          }
-          if (instance.worldId !== options.worldId) {
-            throw WorldConversationSessionError.participantWorldMismatch();
-          }
-          if (!instance.isActive) {
-            throw WorldConversationSessionError.participantInactive();
-          }
-          if (instance.currentLocationId !== scene.locationId) {
-            throw WorldConversationSessionError.participantLocationMismatch();
-          }
-          const snapshot: WorldSessionParticipantSnapshot = {
-            characterInstanceId: instance.id,
-            displayNameSnapshot: instance.displayNameSnapshot,
-            locationIdAtStart: instance.currentLocationId,
-            isActiveAtStart: instance.isActive,
-            joinedAt: options.startedAt !== undefined ? options.startedAt : nowMillis()
-          };
-          snapshots.push(snapshot);
-        }
-
-        if (options.previousSessionId !== undefined) {
-          const prevId: string = options.previousSessionId.trim();
-          if (prevId !== '') {
-            const prevSession: WorldConversationSession | null =
-              await this.sessionRepo.getByIdWithStore(store, prevId);
-            if (prevSession === null) {
-              throw WorldConversationSessionError.previousSessionNotFound();
-            }
-            if (prevSession.worldId !== options.worldId) {
-              throw WorldConversationSessionError.previousSessionWorldMismatch();
-            }
-            if (prevSession.sceneId !== options.sceneId) {
-              throw WorldConversationSessionError.previousSessionSceneMismatch();
-            }
-            if (prevSession.status !== WorldConversationSessionStatus.Ended) {
-              throw WorldConversationSessionError.previousSessionNotEnded();
-            }
-          }
-        }
-
-        const sequenceNumber: number =
-          await this.sessionRepo.nextSequenceNumberForSceneWithStore(store, options.sceneId);
-        const startedAt: number = options.startedAt !== undefined ? options.startedAt : nowMillis();
-        const participantJson: string = serializeParticipantSnapshots(snapshots);
-
-        const session: WorldConversationSession = createWorldConversationSessionRecord({
-          id: WORLD_CONVERSATION_SESSION_ID_PREFIX + generateUuid(),
-          worldId: options.worldId,
-          sceneId: options.sceneId,
-          sequenceNumber: sequenceNumber,
-          status: WorldConversationSessionStatus.Active,
-          participantSnapshotJson: participantJson,
-          playerDisplayNameSnapshot: playerDisplayNameSnapshot,
-          createdAt: startedAt,
-          updatedAt: startedAt
-        });
-        await this.sessionRepo.insertWithStore(store, session);
-        result = session;
+        result = await this.startSessionWithStore(store, options, trimmedIds);
       },
       'world_session_start'
     );
@@ -203,6 +81,142 @@ export class WorldConversationSessionService {
       throw WorldConversationSessionError.internal('事务未产生结果');
     }
     return result;
+  }
+
+  async startSessionWithStore(
+    store: relationalStore.RdbStore,
+    options: StartSessionOptions,
+    trimmedIds: string[]
+  ): Promise<WorldConversationSession> {
+    if (options.worldId === '') {
+      throw WorldConversationSessionError.worldNotFound();
+    }
+    if (options.sceneId === '') {
+      throw WorldConversationSessionError.sceneNotFound();
+    }
+    if (trimmedIds.length === 0) {
+      throw WorldConversationSessionError.noParticipants();
+    }
+
+    const world: World | null = await this.worldRepo.getByIdWithStore(store, options.worldId);
+    if (world === null) {
+      throw WorldConversationSessionError.worldNotFound();
+    }
+    if (world.status !== WorldStatus.Active) {
+      throw WorldConversationSessionError.worldNotActive();
+    }
+
+    const scene: WorldScene | null = await this.sceneRepo.getByIdWithStore(store, options.sceneId);
+    if (scene === null) {
+      throw WorldConversationSessionError.sceneNotFound();
+    }
+    if (scene.worldId !== options.worldId) {
+      throw WorldConversationSessionError.sceneWorldMismatch();
+    }
+    if (scene.status !== WorldSceneStatus.Active) {
+      throw WorldConversationSessionError.sceneNotActive();
+    }
+
+    const profile = await this.profileRepo.getByWorldIdWithStore(store, options.worldId);
+    if (profile === null) {
+      throw WorldConversationSessionError.playerProfileNotFound();
+    }
+    const playerDisplayNameSnapshot: string = profile.displayName;
+
+    const activeSession: WorldConversationSession | null =
+      await this.sessionRepo.getActiveBySceneIdWithStore(store, options.sceneId);
+    if (activeSession !== null) {
+      throw WorldConversationSessionError.activeSessionAlreadyExists(activeSession.id);
+    }
+
+    const snapshots: WorldSessionParticipantSnapshot[] = [];
+    for (let i = 0; i < trimmedIds.length; i++) {
+      const instanceId: string = trimmedIds[i];
+      const instance: WorldCharacterInstance | null =
+        await this.instanceRepo.getByIdWithStore(store, instanceId);
+      if (instance === null) {
+        throw WorldConversationSessionError.participantNotFound();
+      }
+      if (instance.worldId !== options.worldId) {
+        throw WorldConversationSessionError.participantWorldMismatch();
+      }
+      if (!instance.isActive) {
+        throw WorldConversationSessionError.participantInactive();
+      }
+      if (instance.currentLocationId !== scene.locationId) {
+        throw WorldConversationSessionError.participantLocationMismatch();
+      }
+      const snapshot: WorldSessionParticipantSnapshot = {
+        characterInstanceId: instance.id,
+        displayNameSnapshot: instance.displayNameSnapshot,
+        locationIdAtStart: instance.currentLocationId,
+        isActiveAtStart: instance.isActive,
+        joinedAt: options.startedAt !== undefined ? options.startedAt : nowMillis()
+      };
+      snapshots.push(snapshot);
+    }
+
+    if (options.previousSessionId !== undefined) {
+      const prevId: string = options.previousSessionId.trim();
+      if (prevId !== '') {
+        const prevSession: WorldConversationSession | null =
+          await this.sessionRepo.getByIdWithStore(store, prevId);
+        if (prevSession === null) {
+          throw WorldConversationSessionError.previousSessionNotFound();
+        }
+        if (prevSession.worldId !== options.worldId) {
+          throw WorldConversationSessionError.previousSessionWorldMismatch();
+        }
+        if (prevSession.sceneId !== options.sceneId) {
+          throw WorldConversationSessionError.previousSessionSceneMismatch();
+        }
+        if (prevSession.status !== WorldConversationSessionStatus.Ended) {
+          throw WorldConversationSessionError.previousSessionNotEnded();
+        }
+      }
+    }
+
+    const sequenceNumber: number =
+      await this.sessionRepo.nextSequenceNumberForSceneWithStore(store, options.sceneId);
+    const startedAt: number = options.startedAt !== undefined ? options.startedAt : nowMillis();
+    const participantJson: string = serializeParticipantSnapshots(snapshots);
+
+    const session: WorldConversationSession = createWorldConversationSessionRecord({
+      id: WORLD_CONVERSATION_SESSION_ID_PREFIX + generateUuid(),
+      worldId: options.worldId,
+      sceneId: options.sceneId,
+      sequenceNumber: sequenceNumber,
+      status: WorldConversationSessionStatus.Active,
+      participantSnapshotJson: participantJson,
+      playerDisplayNameSnapshot: playerDisplayNameSnapshot,
+      createdAt: startedAt,
+      updatedAt: startedAt
+    });
+    await this.sessionRepo.insertWithStore(store, session);
+    return session;
+  }
+
+  async getActiveSessionWithStore(
+    store: relationalStore.RdbStore,
+    worldId: string,
+    sceneId: string
+  ): Promise<WorldConversationSession | null> {
+    if (worldId === '') {
+      throw WorldConversationSessionError.worldNotFound();
+    }
+    if (sceneId === '') {
+      throw WorldConversationSessionError.sceneNotFound();
+    }
+    const scene: WorldScene | null = await this.sceneRepo.getByIdWithStore(store, sceneId);
+    if (scene === null) {
+      throw WorldConversationSessionError.sceneNotFound();
+    }
+    if (scene.worldId !== worldId) {
+      throw WorldConversationSessionError.sceneWorldMismatch();
+    }
+    const active: WorldConversationSession | null =
+      await this.sessionRepo.getActiveBySceneIdWithStore(store, sceneId);
+    return active;
   }
 
   async getActiveSessionForScene(worldId: string, sceneId: string): Promise<WorldConversationSession | null> {
@@ -283,4 +297,29 @@ export class WorldConversationSessionService {
     }
     return result;
   }
+}
+
+export function validateAndTrimParticipantIds(options: StartSessionOptions): string[] {
+  if (options.participantCharacterInstanceIds.length === 0) {
+    throw WorldConversationSessionError.noParticipants();
+  }
+  const trimmedIds: string[] = [];
+  for (let i = 0; i < options.participantCharacterInstanceIds.length; i++) {
+    const trimmed: string = options.participantCharacterInstanceIds[i].trim();
+    if (trimmed === '') {
+      throw WorldConversationSessionError.noParticipants();
+    }
+    if (trimmed === 'user') {
+      throw WorldConversationSessionError.participantNotFound();
+    }
+    trimmedIds.push(trimmed);
+  }
+  const seenIds: Set<string> = new Set<string>();
+  for (let i = 0; i < trimmedIds.length; i++) {
+    if (seenIds.has(trimmedIds[i])) {
+      throw WorldConversationSessionError.duplicateParticipant(trimmedIds[i]);
+    }
+    seenIds.add(trimmedIds[i]);
+  }
+  return trimmedIds;
 }

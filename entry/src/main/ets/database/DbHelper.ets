@@ -116,6 +116,7 @@ export type TransactionOperation =
   | 'world_session_start'
   | 'world_session_continue'
   | 'world_session_end'
+  | 'world_scene_launch'
   | 'world_map_placement_upsert'
   | 'world_map_placement_delete'
   | 'group_character_memory_create'

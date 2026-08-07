@@ -155,58 +155,7 @@ export class WorldSceneService {
     let result: WorldScene | null = null;
     await this.dbHelper.runInTransaction(
       async (store: relationalStore.RdbStore): Promise<void> => {
-        // 校验 World Active
-        const world: World | null = await this.worldRepo.getByIdWithStore(store, worldId);
-        if (world === null) {
-          throw WorldSceneError.worldNotFound();
-        }
-        if (world.status !== WorldStatus.Active) {
-          throw WorldSceneError.worldArchived();
-        }
-
-        // 校验 Location 存在且属于该 World 且 Active
-        const location: WorldLocation | null =
-          await this.locationRepo.getByIdWithStore(store, locationId);
-        if (location === null) {
-          throw WorldSceneError.locationNotFound();
-        }
-        if (location.worldId !== worldId) {
-          throw WorldSceneError.locationNotInWorld();
-        }
-        if (location.status !== WorldLocationStatus.Active) {
-          throw WorldSceneError.locationArchived();
-        }
-
-        // 业务锁:同 World+Location 最多一个 Active Scene
-        const existingActive: WorldScene | null =
-          await this.sceneRepo.findActiveByWorldAndLocationWithStore(store, worldId, locationId);
-        if (existingActive !== null) {
-          throw WorldSceneError.sceneAlreadyActive();
-        }
-
-        // 创建 Active Scene
-        const now: number = nowMillis();
-        const scene: WorldScene = createWorldSceneRecord({
-          id: WORLD_SCENE_ID_PREFIX + generateUuid(),
-          worldId: worldId,
-          locationId: locationId,
-          status: WorldSceneStatus.Active,
-          startedAt: now,
-          createdAt: now,
-          updatedAt: now
-        });
-        await this.sceneRepo.insertWithStore(store, scene);
-
-        // 插入 SceneStarted 事件
-        await this.eventRepo.insertWithStore(store, buildSceneEvent({
-          worldId: worldId,
-          eventType: WorldEventType.SceneStarted,
-          sourceSceneId: scene.id,
-          sourceLocationId: locationId,
-          summary: '场景已开始'
-        }));
-
-        result = scene;
+        result = await this.startSceneWithStore(store, worldId, locationId);
       },
       'world_scene_start'
     );
@@ -216,6 +165,68 @@ export class WorldSceneService {
     const startedScene: WorldScene = result;
     Logger.info(LOG_TAG, `startScene ok shortSceneId=${shortId(startedScene.id)}`);
     return startedScene;
+  }
+
+  async startSceneWithStore(
+    store: relationalStore.RdbStore,
+    worldId: string,
+    locationId: string
+  ): Promise<WorldScene> {
+    if (worldId === '') {
+      throw WorldSceneError.worldNotFound();
+    }
+    if (locationId === '') {
+      throw WorldSceneError.locationNotFound();
+    }
+
+    const world: World | null = await this.worldRepo.getByIdWithStore(store, worldId);
+    if (world === null) {
+      throw WorldSceneError.worldNotFound();
+    }
+    if (world.status !== WorldStatus.Active) {
+      throw WorldSceneError.worldArchived();
+    }
+
+    const location: WorldLocation | null =
+      await this.locationRepo.getByIdWithStore(store, locationId);
+    if (location === null) {
+      throw WorldSceneError.locationNotFound();
+    }
+    if (location.worldId !== worldId) {
+      throw WorldSceneError.locationNotInWorld();
+    }
+    if (location.status !== WorldLocationStatus.Active) {
+      throw WorldSceneError.locationArchived();
+    }
+
+    const existingActive: WorldScene | null =
+      await this.sceneRepo.findActiveByWorldAndLocationWithStore(store, worldId, locationId);
+    if (existingActive !== null) {
+      throw WorldSceneError.sceneAlreadyActive();
+    }
+
+    const now: number = nowMillis();
+    const scene: WorldScene = createWorldSceneRecord({
+      id: WORLD_SCENE_ID_PREFIX + generateUuid(),
+      worldId: worldId,
+      locationId: locationId,
+      status: WorldSceneStatus.Active,
+      startedAt: now,
+      createdAt: now,
+      updatedAt: now
+    });
+    await this.sceneRepo.insertWithStore(store, scene);
+
+    await this.eventRepo.insertWithStore(store, buildSceneEvent({
+      worldId: worldId,
+      eventType: WorldEventType.SceneStarted,
+      sourceSceneId: scene.id,
+      sourceLocationId: locationId,
+      summary: '场景已开始'
+    }));
+
+    Logger.info(LOG_TAG, `startSceneWithStore ok shortSceneId=${shortId(scene.id)}`);
+    return scene;
   }
 
   /**

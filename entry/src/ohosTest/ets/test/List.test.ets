@@ -19,6 +19,7 @@ import worldPlayerCharacterDomainContractTest from './WorldPlayerCharacterDomain
 import w2a1fixSchemaContractTest from './W2a1fixSchemaContract.test';
 import w2a1fixMigrationContractTest from './W2a1fixMigrationContract.test';
 import characterPlacementContractTest from './CharacterPlacementContract.test';
+import sceneLaunchContractTest from './SceneLaunchContract.test';
  
 export default function testsuite() {
   groupRuntimeDeviceTest();
@@ -42,4 +43,5 @@ export default function testsuite() {
   w2a1fixSchemaContractTest();
   w2a1fixMigrationContractTest();
   characterPlacementContractTest();
+  sceneLaunchContractTest();
 }
