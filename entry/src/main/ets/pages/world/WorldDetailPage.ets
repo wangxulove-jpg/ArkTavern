@@ -1,18 +1,15 @@
 /**
- * WorldDetailPage 世界详情页(W-UI-1A 重构)
+ * WorldDetailPage 世界详情页(W1D 沉浸式地图重构)
  *
- * 重构:深色奇幻酒馆质感视觉,map-centric 工作台布局,
- * 浮动地图工具栏,FAB,管理菜单(bottom sheet),底部摘要栏。
+ * 重构为 map-centric 沉浸式布局:
+ * - 顶部导航栏:返回 / 世界名 / 更多菜单(含"编辑地图"入口)
+ * - 沉浸式地图视口(2.5D):地点节点 + 角色布告板 + 连接线 + 浮动工具栏 + FAB
+ * - 底部摘要栏:地点 / 连接 / 角色 / 事件 数量
+ * - 选中地点 → bindSheet 弹窗(保留原有地点弹窗逻辑)
+ *
+ * 浏览模式=默认,无编辑工具栏;编辑模式=⠇菜单切换,允许拖动节点
  *
  * 保留全部路由逻辑、弹窗逻辑、数据加载逻辑、刷新令牌机制。
- *
- * 只读展示一个世界的完整信息,包含:
- * - 顶部导航栏:返回 / 世界名 / 更多菜单
- * - 地图视口(2.5D):地点节点关系图 + 浮动工具栏 + FAB
- * - 可滚动的信息区:世界描述 / 异常连接 / 选中地点 / 角色 / 事件
- * - 底部摘要栏:地点 / 连接 / 角色 / 事件 数量
- *
- * 生命周期保护 / 路由 / 不依赖:同 W-UI-1 原始约束。
  */
 
 import { router } from '@kit.ArkUI';
@@ -42,24 +39,21 @@ import {
   SheetCharacterUiModel
 } from '../../viewmodels/world/WorldLocationSceneSheetViewModel';
 import {
-  WorldLocationGraphLayout,
-  WorldLocationNodeLayout,
-  WorldLocationEdgeLayout,
-  computeWorldLocationGraphLayout
-} from '../../viewmodels/world/WorldLocationGraphLayout';
+  WorldImmersiveMapViewModel,
+  MapEditMode,
+  MapLoadState
+} from '../../viewmodels/world/WorldImmersiveMapViewModel';
+import { ImmersiveMapLayout, ImmersiveMapViewport, BILLBOARD_MAX_VISIBLE } from '../../viewmodels/world/WorldImmersiveMapLayout';
 import { WorldStatus } from '../../models/world/World';
 import { WorldLocationStatus } from '../../models/world/WorldLocation';
-import { WorldLocationNode } from '../../components/world/WorldLocationNode';
-import { WorldMapToolbar } from '../../components/world/WorldMapToolbar';
-import { WorldSurfaceCard } from '../../components/world/WorldSurfaceCard';
-import { WorldSectionHeader } from '../../components/world/WorldSectionHeader';
+import { WorldImmersiveMap, NodeBillboardData } from '../../components/world/WorldImmersiveMap';
+import { BillboardCharacterSlotData } from '../../components/world/WorldMapCharacterBillboard';
 import { WorldStatusChip } from '../../components/world/WorldStatusChip';
 import { WorldEmptyState } from '../../components/world/WorldEmptyState';
 import { WorldPrimaryButton } from '../../components/world/WorldPrimaryButton';
 import { WorldSecondaryButton } from '../../components/world/WorldSecondaryButton';
 import { CharacterImageView } from '../../components/CharacterImageView';
 import { Logger } from '../../utils/Logger';
-import { WorldMetrics } from '../../components/world/WorldDesignTokens';
 
 const LOG_TAG: string = 'WorldDetailPage';
 
@@ -73,20 +67,22 @@ function generateShortId(): string {
 @Component
 struct WorldDetailPage {
   @State private viewModel: WorldDetailViewModel | null = null;
+  @State private mapViewModel: WorldImmersiveMapViewModel | null = null;
   @State private currentWorldId: string = '';
   @State private isInitializing: boolean = true;
   @State private initError: string = '';
   @State private state: WorldDetailLoadState = WorldDetailLoadState.Loading;
   @State private errorMessage: string = '';
   @State private detail: WorldDetailUiModel | null = null;
-  @State private graphLayout: WorldLocationGraphLayout | null = null;
   @State private selectedLocationId: string = '';
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navigationBarHeight') navBarHeight: number = 0;
   @StorageProp(WORLD_DETAIL_REFRESH_TOKEN_KEY) @Watch('onRefreshTokenChange')
   refreshToken: number = 0;
 
-  // ===== 地点人物弹窗(W-UX-1) =====
+  @State private isEditMode: boolean = false;
+  @State private billboardData: NodeBillboardData[] = [];
+
   @State private sheetViewModel: WorldLocationSceneSheetViewModel | null = null;
   @State private locationSheetVisible: boolean = false;
   @State private sheetLoadState: LocationSheetLoadState = LocationSheetLoadState.Loading;
@@ -97,8 +93,8 @@ struct WorldDetailPage {
   @State private sheetActionError: string = '';
   @State private sheetStartConfirmVisible: boolean = false;
 
-  // ===== 管理菜单 =====
   @State private moreMenuVisible: boolean = false;
+  @State private dragError: string = '';
 
   private readonly pageInstanceShortId: string = generateShortId();
 
@@ -123,8 +119,12 @@ struct WorldDetailPage {
         AppServices.getWorldEventRepository(),
         AppServices.getCharacterService()
       );
+
+      this.mapViewModel = new WorldImmersiveMapViewModel(
+        AppServices.getWorldMapInteractionService()
+      );
+
       Logger.info(LOG_TAG, 'aboutToAppear: pageInstance=' + this.pageInstanceShortId
-        + ', vmInstance=' + this.viewModel.instanceShortId
         + ', worldShortId=' + worldId.substring(worldId.length - 8));
       this.isInitializing = false;
       await this.loadDetail(worldId);
@@ -141,6 +141,9 @@ struct WorldDetailPage {
       return;
     }
     this.viewModel.activate();
+    if (this.mapViewModel !== null) {
+      this.mapViewModel.activate();
+    }
     if (this.currentWorldId.length === 0) {
       return;
     }
@@ -148,11 +151,6 @@ struct WorldDetailPage {
   }
 
   onRefreshTokenChange(): void {
-    Logger.info(LOG_TAG, 'onRefreshTokenChange: token=' + this.refreshToken
-      + ', isInitializing=' + String(this.isInitializing)
-      + ', currentWorldId=' + this.currentWorldId.substring(this.currentWorldId.length - 8)
-      + ', pageInstance=' + this.pageInstanceShortId
-      + (this.viewModel !== null ? ', vmInstance=' + this.viewModel.instanceShortId : ', vmInstance=null'));
     if (this.isInitializing || this.viewModel === null) {
       return;
     }
@@ -160,12 +158,18 @@ struct WorldDetailPage {
       return;
     }
     this.viewModel.activate();
+    if (this.mapViewModel !== null) {
+      this.mapViewModel.activate();
+    }
     this.loadDetail(this.currentWorldId);
   }
 
   aboutToDisappear(): void {
     if (this.viewModel !== null) {
       this.viewModel.dispose();
+    }
+    if (this.mapViewModel !== null) {
+      this.mapViewModel.dispose();
     }
   }
 
@@ -181,28 +185,18 @@ struct WorldDetailPage {
     this.state = this.viewModel.state;
     this.errorMessage = this.viewModel.errorMessage;
     this.detail = this.viewModel.detail;
-    const selectedShort: string = this.selectedLocationId.length > 0
-      ? this.selectedLocationId.substring(this.selectedLocationId.length - 8) : '(none)';
-    Logger.info(LOG_TAG, 'apply snapshot: pageInstance=' + this.pageInstanceShortId
-      + (this.viewModel !== null ? ', vmInstance=' + this.viewModel.instanceShortId : '')
-      + ', state=' + this.state
-      + ', detailNull=' + String(this.detail === null)
-      + ', locationCount=' + (this.detail !== null ? this.detail.locations.length : 0)
-      + ', charCount=' + (this.detail !== null ? this.detail.characters.length : 0)
-      + ', selectedLocation=' + selectedShort);
     if (this.state === WorldDetailLoadState.Ready && this.detail !== null) {
-      this.graphLayout = computeWorldLocationGraphLayout(
-        this.detail.locations,
-        this.detail.edges
-      );
       if (this.selectedLocationId.length > 0
         && !this.containsLocation(this.detail.locations, this.selectedLocationId)) {
         this.selectedLocationId = '';
       }
     } else {
-      this.graphLayout = null;
       this.selectedLocationId = '';
     }
+    if (this.mapViewModel !== null) {
+      await this.mapViewModel.loadSnapshot(worldId);
+    }
+    this.recomputeBillboardData();
   }
 
   private containsLocation(locations: WorldLocationUiModel[], id: string): boolean {
@@ -219,6 +213,7 @@ struct WorldDetailPage {
       Column() {
         this.topNavArea();
         this.contentArea();
+        this.bottomSummaryBar();
       }
       .width('100%')
       .height('100%')
@@ -248,12 +243,9 @@ struct WorldDetailPage {
     })
   }
 
-  // ===== 管理菜单叠层 =====
-
   @Builder
   moreMenuOverlay(): void {
     Column() {
-      // scrim
       Column()
         .width('100%')
         .layoutWeight(1)
@@ -262,7 +254,6 @@ struct WorldDetailPage {
           this.moreMenuVisible = false;
         })
 
-      // menu panel
       Column() {
         Text($r('app.string.world_ui_more_menu_title'))
           .fontSize($r('app.float.world_font_section'))
@@ -274,6 +265,13 @@ struct WorldDetailPage {
         this.moreMenuItem($r('app.string.world_ui_more_edit_world'), false, (): void => {
           this.moreMenuVisible = false;
           this.openWorldEdit();
+        })
+        this.moreMenuItem(this.isEditMode ? '退出编辑地图' : '编辑地图', false, (): void => {
+          this.moreMenuVisible = false;
+          this.isEditMode = !this.isEditMode;
+          if (this.mapViewModel !== null) {
+            this.mapViewModel.setEditMode(this.isEditMode ? MapEditMode.Edit : MapEditMode.Browse);
+          }
         })
         this.moreMenuItem($r('app.string.world_ui_more_location_manage'), false, (): void => {
           this.moreMenuVisible = false;
@@ -331,8 +329,6 @@ struct WorldDetailPage {
       .onClick(action)
   }
 
-  // ===== 顶部导航栏 =====
-
   @Builder
   topNavArea(): void {
     Row() {
@@ -367,6 +363,16 @@ struct WorldDetailPage {
       .alignItems(HorizontalAlign.Start)
       .margin({ left: 4 })
 
+      if (this.isEditMode) {
+        Text('编辑中')
+          .fontSize($r('app.float.world_font_caption'))
+          .fontColor($r('app.color.world_gold'))
+          .backgroundColor($r('app.color.world_surface_2'))
+          .borderRadius($r('app.float.world_radius_chip'))
+          .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+          .margin({ right: 4 })
+      }
+
       Button('⋮')
         .fontSize(22)
         .fontColor($r('app.color.world_text_secondary'))
@@ -389,8 +395,6 @@ struct WorldDetailPage {
     .alignItems(VerticalAlign.Center)
   }
 
-  // ===== 内容区 =====
-
   @Builder
   contentArea(): void {
     if (this.isInitializing) {
@@ -404,7 +408,7 @@ struct WorldDetailPage {
     } else if (this.state === WorldDetailLoadState.Error) {
       this.errorView(this.errorMessage.length > 0 ? this.errorMessage : '世界数据加载失败,请重试');
     } else if (this.state === WorldDetailLoadState.Ready && this.detail !== null) {
-      this.detailView(this.detail, this.selectedLocationId)
+      this.immersiveMapView()
     }
   }
 
@@ -463,801 +467,119 @@ struct WorldDetailPage {
     .alignItems(HorizontalAlign.Center)
   }
 
-  /** 详情主体:map-centric 布局 */
   @Builder
-  detailView(detail: WorldDetailUiModel, selectedLocationId: string): void {
-    Column() {
-      Scroll() {
-        Column() {
-          this.mapViewportSection(detail, selectedLocationId)
-
-          if (detail.anomalousEdgeCount > 0) {
-            this.anomalousEdgeBanner(detail.anomalousEdgeCount)
-          }
-
-          if (selectedLocationId.length > 0) {
-            this.selectedLocationDetailSection(selectedLocationId, detail)
-          }
-
-          if (detail.world.description.length > 0) {
-            this.worldDescriptionSection(detail.world)
-          }
-
-          this.characterSection(detail)
-          this.eventSection(detail)
-
-          Column().width('100%').height(120)
-        }
-        .width('100%')
-        .alignItems(HorizontalAlign.Start)
-      }
-      .width('100%')
-      .layoutWeight(1)
-      .scrollBar(BarState.Off)
-      .edgeEffect(EdgeEffect.Spring)
-      .padding({
-        left: $r('app.float.world_page_padding'),
-        right: $r('app.float.world_page_padding')
-      })
-
-      this.bottomSummaryBar(detail)
-    }
-    .width('100%')
-    .height('100%')
-  }
-
-  // ===== 地图视口 =====
-
-  @Builder
-  mapViewportSection(detail: WorldDetailUiModel, selectedLocationId: string): void {
-    Stack({ alignContent: Alignment.TopStart }) {
-      Column() {
-        if (detail.locations.length === 0) {
-          this.mapEmptyState(detail)
-        } else if (this.graphLayout !== null) {
-          Scroll() {
-            this.graphCanvas(this.graphLayout!, detail, selectedLocationId)
-          }
-          .scrollable(ScrollDirection.Horizontal)
-          .scrollBar(BarState.Auto)
-          .width('100%')
-          .layoutWeight(1)
-          .clip(true)
-        }
-      }
-      .width('100%')
-      .height('100%')
-      .backgroundColor($r('app.color.world_map_bg'))
-      .borderRadius($r('app.float.world_radius_card'))
-      .borderWidth(1)
-      .borderColor($r('app.color.world_border'))
-
-      // 浮动地图工具栏
-      Row() {
-        WorldMapToolbar({
-          onLayers: (): void => {},
-          onFilter: (): void => {},
-          onLocate: (): void => {
-            this.selectedLocationId = '';
-          },
-          onCompass: (): void => {},
-          onZoomIn: (): void => {},
-          onZoomOut: (): void => {},
-          onReset: (): void => {
-            this.selectedLocationId = '';
-          }
-        })
-          .width('100%')
-      }
-      .width('100%')
-      .padding({ left: 8, right: 8, top: 8 })
-
-      // FAB(添加角色,仅活跃世界)
-      if (detail.world.status === WorldStatus.Active) {
-        Stack({ alignContent: Alignment.Center }) {
-          Button('+')
-            .fontSize(28)
-            .fontColor($r('app.color.world_on_gold'))
-            .backgroundColor($r('app.color.world_gold'))
-            .width($r('app.float.world_fab_size'))
-            .height($r('app.float.world_fab_size'))
-            .borderRadius(WorldMetrics.FAB_SIZE / 2)
-            .shadow({ radius: 8, color: '#4DD4A843', offsetX: 0, offsetY: 4 })
-            .accessibilityText($r('app.string.world_ui_fab_add_character_a11y'))
-            .onClick(() => {
-              this.openCharacterManage();
-            })
-        }
-        .width($r('app.float.world_fab_size'))
-        .height($r('app.float.world_fab_size'))
-        .position({ x: '100%', y: '100%' })
-        .markAnchor({
-          x: WorldMetrics.FAB_SIZE + 16,
-          y: WorldMetrics.FAB_SIZE + 16
-        })
-      }
-    }
-    .width('100%')
-    .height(360)
-    .clip(true)
-    .borderRadius($r('app.float.world_radius_card'))
-    .margin({ top: 4, bottom: 12 })
-  }
-
-  @Builder
-  mapEmptyState(detail: WorldDetailUiModel): void {
-    Column() {
-      WorldEmptyState({
-        title: $r('app.string.world_ui_map_empty_title'),
-        description: $r('app.string.world_ui_map_empty_desc'),
-        primaryLabel: detail.world.status === WorldStatus.Archived
-          ? '' : $r('app.string.world_ui_map_empty_add_character'),
-        secondaryLabel: detail.world.status === WorldStatus.Archived
-          ? '' : $r('app.string.world_ui_map_empty_create_location'),
-        onPrimary: (): void => {
-          if (detail.world.status !== WorldStatus.Archived) {
-            this.openCharacterManage();
+  immersiveMapView(): void {
+    Stack({ alignContent: Alignment.BottomStart }) {
+      WorldImmersiveMap({
+        mapLayout: this.mapViewModel !== null ? this.mapViewModel.mapLayout : null,
+        locations: this.mapViewModel !== null ? this.mapViewModel.locations : [],
+        edges: this.mapViewModel !== null ? this.mapViewModel.edges : [],
+        characters: this.mapViewModel !== null ? this.mapViewModel.characters : [],
+        placements: this.mapViewModel !== null ? this.mapViewModel.placements : [],
+        selectedLocationId: this.selectedLocationId,
+        isEditMode: this.isEditMode,
+        worldStatus: this.detail !== null ? this.detail.world.status : WorldStatus.Archived,
+        viewport: this.mapViewModel !== null ? this.mapViewModel.viewport : { offsetX: 0, offsetY: 0, zoom: 1.0 },
+        billboardData: this.billboardData,
+        onLocationTap: (locationId: string): void => {
+          this.onLocationTapped(locationId);
+        },
+        onLocationDragEnd: (locationId: string, worldX: number, worldY: number): void => {
+          this.onLocationDragEnd(locationId, worldX, worldY);
+        },
+        onZoomIn: (): void => {
+          if (this.mapViewModel !== null) {
+            this.mapViewModel.zoomIn();
           }
         },
-        onSecondary: (): void => {
-          if (detail.world.status !== WorldStatus.Archived) {
-            this.openLocationCreate();
+        onZoomOut: (): void => {
+          if (this.mapViewModel !== null) {
+            this.mapViewModel.zoomOut();
           }
-        }
-      })
-    }
-    .width('100%')
-    .height('100%')
-    .justifyContent(FlexAlign.Center)
-    .alignItems(HorizontalAlign.Center)
-  }
-
-  @Builder
-  graphCanvas(
-    layout: WorldLocationGraphLayout,
-    detail: WorldDetailUiModel,
-    selectedLocationId: string
-  ): void {
-    Stack({ alignContent: Alignment.TopStart }) {
-      Stack({ alignContent: Alignment.TopStart }) {
-        ForEach(layout.edges, (edge: WorldLocationEdgeLayout) => {
-          this.edgeView(edge)
-        }, (edge: WorldLocationEdgeLayout) => edge.edgeId)
-      }
-      .width(layout.canvasWidth)
-      .height(layout.canvasHeight)
-      .hitTestBehavior(HitTestMode.Transparent)
-
-      Stack({ alignContent: Alignment.TopStart }) {
-        ForEach(layout.nodes, (node: WorldLocationNodeLayout) => {
-          this.nodeView(node, detail, selectedLocationId)
-        }, (node: WorldLocationNodeLayout) => this.nodeKey(node, detail, selectedLocationId))
-      }
-      .width(layout.canvasWidth)
-      .height(layout.canvasHeight)
-    }
-    .width(layout.canvasWidth)
-    .height(layout.canvasHeight)
-    .clip(true)
-  }
-
-  private nodeKey(
-    node: WorldLocationNodeLayout,
-    detail: WorldDetailUiModel,
-    selectedLocationId: string
-  ): string {
-    const chars: WorldCharacterInstanceUiModel[] = this.filterCharactersAt(node.locationId, detail.characters);
-    let charSig: string = '';
-    for (let i: number = 0; i < chars.length; i++) {
-      charSig = charSig + chars[i].id.substring(chars[i].id.length - 6) + ',';
-    }
-    const selected: boolean = selectedLocationId === node.locationId;
-    return node.locationId + '|' + charSig + '|' + (selected ? '1' : '0');
-  }
-
-  @Builder
-  edgeView(edge: WorldLocationEdgeLayout): void {
-    Polyline()
-      .width(Math.abs(edge.toX - edge.fromX) + 4)
-      .height(Math.abs(edge.toY - edge.fromY) + 4)
-      .position({
-        x: Math.min(edge.fromX, edge.toX) - 2,
-        y: Math.min(edge.fromY, edge.toY) - 2
-      })
-      .points(this.computeEdgePoints(edge))
-      .fillOpacity(0)
-      .stroke(this.resolveEdgeColor(edge))
-      .strokeWidth(1.5)
-      .strokeLineJoin(LineJoinStyle.Round)
-      .strokeLineCap(LineCapStyle.Round)
-      .strokeDashArray(this.resolveEdgeDash(edge))
-      .opacity(this.resolveEdgeOpacity(edge))
-
-    Text(this.resolveEdgeDirectionLabel(edge))
-      .fontSize(9)
-      .fontColor($r('app.color.world_text_tertiary'))
-      .backgroundColor($r('app.color.world_map_bg'))
-      .borderRadius(3)
-      .padding({ left: 3, right: 3, top: 1, bottom: 1 })
-      .position({
-        x: (edge.fromX + edge.toX) / 2 - 8,
-        y: (edge.fromY + edge.toY) / 2 - 8
-      })
-  }
-
-  @Builder
-  nodeView(node: WorldLocationNodeLayout, detail: WorldDetailUiModel, selectedLocationId: string): void {
-    Column() {
-      WorldLocationNode({
-        locationId: node.locationId,
-        name: this.resolveLocationName(node.locationId, detail.locations),
-        status: this.resolveLocationStatus(node.locationId, detail.locations),
-        characterCount: this.countCharactersAt(node.locationId, detail.characters),
-        outgoingEdgeCount: this.countOutgoingEdges(node.locationId, detail.edges),
-        isSelected: selectedLocationId === node.locationId,
-        onTap: (locationId: string): void => {
-          this.onLocationTapped(locationId);
+        },
+        onReset: (): void => {
+          if (this.mapViewModel !== null) {
+            this.mapViewModel.resetViewport();
+          }
+          this.selectedLocationId = '';
+        },
+        onLocate: (): void => {
+          this.selectedLocationId = '';
+        },
+        onPan: (dx: number, dy: number): void => {
+          if (this.mapViewModel !== null) {
+            this.mapViewModel.panBy(dx, dy);
+          }
+        },
+        onAddCharacter: (): void => {
+          this.openCharacterManage();
+        },
+        onCharacterTap: (instanceId: string): void => {
+          this.openInstanceDetail(instanceId);
+        },
+        onOverflowTap: (): void => {
+          this.openCharacterManage();
+        },
+        onCreateLocation: (): void => {
+          this.openLocationCreate();
         }
       })
 
-      this.characterBillboardRow(node.locationId, detail.characters)
-    }
-    .width(node.width)
-    .height(node.height)
-    .position({ x: node.x, y: node.y })
-    .onClick(() => {
-      this.onLocationTapped(node.locationId);
-    })
-  }
-
-  /** 地图节点下方的角色头像广告牌(最多 3 个 + N) */
-  @Builder
-  characterBillboardRow(locationId: string, characters: WorldCharacterInstanceUiModel[]): void {
-    Row() {
-      ForEach(this.takeCharactersAt(locationId, characters, 3), (c: WorldCharacterInstanceUiModel, index: number) => {
-        Stack({ alignContent: Alignment.Bottom }) {
-          CharacterImageView({
-            imageUri: c.avatarUri,
-            fallbackName: c.fallbackName,
-            imgWidth: 22,
-            imgHeight: 22,
-            imgBorderRadius: 11,
-            displayMode: 'thumbnail',
-            objectFit: ImageFit.Cover
-          })
-        }
-        .width(22)
-        .height(22)
-        .margin({ left: index === 0 ? 0 : -6 })
-        .borderWidth(1.5)
-        .borderColor($r('app.color.world_map_bg'))
-        .borderRadius(11)
-        .onClick(() => {
-          this.openInstanceDetail(c.id);
-        })
-      }, (c: WorldCharacterInstanceUiModel) => c.id)
-
-      if (this.overflowCharacterCount(locationId, characters, 3) > 0) {
-        Text('+' + this.overflowCharacterCount(locationId, characters, 3).toString())
-          .fontSize(9)
-          .fontColor($r('app.color.world_text_secondary'))
-          .backgroundColor($r('app.color.world_surface_2'))
-          .borderRadius(8)
-          .width(16)
-          .height(16)
-          .textAlign(TextAlign.Center)
-          .margin({ left: 2 })
-          .onClick(() => {
-            this.openCharacterManage();
-          })
+      if (this.dragError.length > 0) {
+        Text(this.dragError)
+          .fontSize($r('app.float.world_font_caption'))
+          .fontColor($r('app.color.world_error'))
+          .backgroundColor($r('app.color.world_surface_1'))
+          .borderRadius($r('app.float.world_radius_chip'))
+          .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+          .margin({ left: 12, bottom: 8 })
+          .borderWidth(1)
+          .borderColor($r('app.color.world_error'))
       }
-    }
-    .margin({ top: 4 })
-    .alignItems(VerticalAlign.Center)
-  }
 
-  // ===== 选中地点详情 =====
-
-  @Builder
-  selectedLocationDetailSection(locationId: string, detail: WorldDetailUiModel): void {
-    WorldSurfaceCard({
-      elevated: true,
-      onPress: (): void => {}
-    }) {
-      Column() {
+      if (this.detail !== null && this.detail.anomalousEdgeCount > 0) {
         Row() {
-          Text(this.resolveLocationName(locationId, detail.locations))
-            .fontSize($r('app.float.world_font_title'))
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.world_text_primary'))
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .layoutWeight(1)
-
-          WorldStatusChip({
-            label: this.resolveLocationStatusLabel(locationId, detail.locations),
-            isActive: this.resolveLocationStatus(locationId, detail.locations) === WorldLocationStatus.Active
-          })
-
-          if (detail.world.status !== WorldStatus.Archived) {
-            Button($r('app.string.world_location_edit'))
-              .fontSize($r('app.float.world_font_caption'))
-              .fontColor($r('app.color.world_gold'))
-              .backgroundColor($r('app.color.world_surface_2'))
-              .borderRadius($r('app.float.world_radius_chip'))
-              .height(30)
-              .padding({ left: 10, right: 10 })
-              .margin({ left: 8 })
-              .accessibilityText($r('app.string.world_edit_location'))
-              .onClick(() => {
-                this.openLocationEdit(locationId);
-              })
-          }
+          Text($r('app.string.world_detail_anomalous_edges') + ': ' + this.detail.anomalousEdgeCount.toString())
+            .fontSize($r('app.float.world_font_caption'))
+            .fontColor($r('app.color.world_error'))
+            .margin({ left: 4 })
         }
         .width('100%')
+        .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+        .backgroundColor($r('app.color.world_surface_1'))
+        .borderRadius($r('app.float.world_radius_chip'))
+        .borderWidth(1)
+        .borderColor($r('app.color.world_error'))
+        .margin({ left: 12, bottom: 4 })
         .alignItems(VerticalAlign.Center)
+      }
+    }
+    .width('100%')
+    .layoutWeight(1)
+  }
 
-        if (this.resolveLocationDescription(locationId, detail.locations).length > 0) {
-          Text(this.resolveLocationDescription(locationId, detail.locations))
-            .fontSize($r('app.float.world_font_body'))
-            .fontColor($r('app.color.world_text_secondary'))
-            .maxLines(6)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .margin({ top: 8 })
-            .width('100%')
-            .textAlign(TextAlign.Start)
-        }
-
-        Divider().color($r('app.color.world_border')).margin({ top: 12, bottom: 8 })
-
-        Text($r('app.string.world_location_current_characters'))
-          .fontSize($r('app.float.world_font_section'))
-          .fontColor($r('app.color.world_text_secondary'))
-          .margin({ bottom: 6 })
-
-        this.currentCharactersList(locationId, detail.characters)
-
-        Divider().color($r('app.color.world_border')).margin({ top: 12, bottom: 8 })
-
-        Text($r('app.string.world_location_outgoing_edges'))
-          .fontSize($r('app.float.world_font_section'))
-          .fontColor($r('app.color.world_text_secondary'))
-          .margin({ bottom: 6 })
-
-        this.edgeList(locationId, detail.edges, true)
-
-        Divider().color($r('app.color.world_border')).margin({ top: 12, bottom: 8 })
-
-        Text($r('app.string.world_location_incoming_edges'))
-          .fontSize($r('app.float.world_font_section'))
-          .fontColor($r('app.color.world_text_secondary'))
-          .margin({ bottom: 6 })
-
-        this.edgeList(locationId, detail.edges, false)
+  @Builder
+  bottomSummaryBar(): void {
+    if (this.detail !== null) {
+      Row() {
+        this.summaryItem($r('app.string.world_ui_locations_label'), this.detail.world.locationCount)
+        this.summaryItem($r('app.string.world_ui_characters_label'), this.detail.characters.length)
+        this.summaryItem($r('app.string.world_edge_count_label'), this.detail.edgeCount)
+        this.summaryItem($r('app.string.world_event_count_label'), this.detail.eventCount)
       }
       .width('100%')
+      .height($r('app.float.world_bottom_bar_height'))
+      .backgroundColor($r('app.color.world_bg'))
+      .borderWidth({ top: 1 })
+      .borderColor($r('app.color.world_border'))
       .padding({
-        left: 14,
-        right: 14,
-        top: 14,
-        bottom: 14
+        left: $r('app.float.world_page_padding'),
+        right: $r('app.float.world_page_padding'),
+        bottom: this.navBarHeight
       })
-      .alignItems(HorizontalAlign.Start)
-    }
-  }
-
-  @Builder
-  currentCharactersList(locationId: string, characters: WorldCharacterInstanceUiModel[]): void {
-    if (this.filterCharactersAt(locationId, characters).length === 0) {
-      Text($r('app.string.world_location_no_characters'))
-        .fontSize($r('app.float.world_font_caption'))
-        .fontColor($r('app.color.world_text_tertiary'))
-        .width('100%')
-    } else {
-      Column() {
-        ForEach(this.filterCharactersAt(locationId, characters), (c: WorldCharacterInstanceUiModel) => {
-          Row() {
-            CharacterImageView({
-              imageUri: c.avatarUri,
-              fallbackName: c.fallbackName,
-              imgWidth: 32,
-              imgHeight: 32,
-              imgBorderRadius: 16,
-              displayMode: 'thumbnail',
-              objectFit: ImageFit.Cover
-            })
-
-            Column() {
-              Text(c.displayName)
-                .fontSize($r('app.float.world_font_body'))
-                .fontColor($r('app.color.world_text_primary'))
-                .maxLines(1)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-                .width('100%')
-
-              Row() {
-                Text(c.isActive ? '活跃' : '已停用')
-                  .fontSize($r('app.float.world_font_micro'))
-                  .fontColor(c.isActive
-                    ? $r('app.color.world_gold')
-                    : $r('app.color.world_text_tertiary'))
-                  .backgroundColor($r('app.color.world_surface_2'))
-                  .borderRadius(3)
-                  .padding({ left: 4, right: 4, top: 1, bottom: 1 })
-
-                if (c.characterCardMissing) {
-                  Text($r('app.string.world_character_card_missing'))
-                    .fontSize($r('app.float.world_font_micro'))
-                    .fontColor($r('app.color.world_error'))
-                    .backgroundColor($r('app.color.world_surface_2'))
-                    .borderRadius(3)
-                    .padding({ left: 4, right: 4, top: 1, bottom: 1 })
-                    .margin({ left: 4 })
-                }
-              }
-              .margin({ top: 4 })
-              .alignItems(VerticalAlign.Center)
-            }
-            .layoutWeight(1)
-            .alignItems(HorizontalAlign.Start)
-            .margin({ left: 8 })
-          }
-          .width('100%')
-          .alignItems(VerticalAlign.Center)
-          .margin({ bottom: 8 })
-        }, (c: WorldCharacterInstanceUiModel) => c.id)
-      }
-      .width('100%')
-      .alignItems(HorizontalAlign.Start)
-    }
-  }
-
-  @Builder
-  edgeList(locationId: string, edges: WorldEdgeUiModel[], outgoing: boolean): void {
-    if (this.filterEdgesForLocation(locationId, edges, outgoing).length === 0) {
-      Text('无')
-        .fontSize($r('app.float.world_font_caption'))
-        .fontColor($r('app.color.world_text_tertiary'))
-        .width('100%')
-    } else {
-      Column() {
-        ForEach(this.filterEdgesForLocation(locationId, edges, outgoing), (edge: WorldEdgeUiModel) => {
-          this.edgeItemRow(edge, outgoing)
-        }, (edge: WorldEdgeUiModel) => edge.id + '|' + (outgoing ? 'out' : 'in'))
-      }
-      .width('100%')
-      .alignItems(HorizontalAlign.Start)
-    }
-  }
-
-  @Builder
-  edgeItemRow(edge: WorldEdgeUiModel, outgoing: boolean): void {
-    Column() {
-      Row() {
-        Text(this.resolveEdgeTargetName(edge, outgoing))
-          .fontSize($r('app.float.world_font_body'))
-          .fontColor(edge.toLocationMissing || edge.fromLocationMissing
-            ? $r('app.color.world_error')
-            : $r('app.color.world_text_primary'))
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .layoutWeight(1)
-
-        Text(edge.isBidirectional
-          ? $r('app.string.world_edge_bidirectional')
-          : $r('app.string.world_edge_unidirectional'))
-          .fontSize($r('app.float.world_font_micro'))
-          .fontColor($r('app.color.world_gold'))
-          .backgroundColor($r('app.color.world_surface_2'))
-          .borderRadius(3)
-          .padding({ left: 4, right: 4, top: 1, bottom: 1 })
-          .margin({ left: 8 })
-
-        if (!edge.isEnabled) {
-          Text($r('app.string.world_edge_disabled'))
-            .fontSize($r('app.float.world_font_micro'))
-            .fontColor($r('app.color.world_text_tertiary'))
-            .backgroundColor($r('app.color.world_surface_2'))
-            .borderRadius(3)
-            .padding({ left: 4, right: 4, top: 1, bottom: 1 })
-            .margin({ left: 4 })
-        }
-      }
-      .width('100%')
+      .justifyContent(FlexAlign.SpaceAround)
       .alignItems(VerticalAlign.Center)
-
-      if (edge.directionLabel.length > 0 || edge.travelDescription.length > 0) {
-        Text(this.composeEdgeDescription(edge))
-          .fontSize($r('app.float.world_font_caption'))
-          .fontColor($r('app.color.world_text_tertiary'))
-          .maxLines(2)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .margin({ top: 2 })
-          .width('100%')
-      }
     }
-    .width('100%')
-    .margin({ bottom: 8 })
-    .alignItems(HorizontalAlign.Start)
-  }
-
-  // ===== 世界描述 =====
-
-  @Builder
-  worldDescriptionSection(world: WorldSummaryUiModel): void {
-    WorldSurfaceCard({}) {
-      Column() {
-        WorldSectionHeader({ title: $r('app.string.world_detail_overview_section') })
-
-        Text(world.description)
-          .fontSize($r('app.float.world_font_body'))
-          .fontColor($r('app.color.world_text_secondary'))
-          .maxLines(8)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .margin({ top: 8 })
-          .width('100%')
-          .textAlign(TextAlign.Start)
-
-        Text('更新于 ' + formatWorldTimestamp(world.updatedAt))
-          .fontSize($r('app.float.world_font_caption'))
-          .fontColor($r('app.color.world_text_tertiary'))
-          .margin({ top: 8 })
-      }
-      .width('100%')
-      .padding(14)
-      .alignItems(HorizontalAlign.Start)
-    }
-  }
-
-  // ===== 异常连接横幅 =====
-
-  @Builder
-  anomalousEdgeBanner(count: number): void {
-    Row() {
-      SymbolGlyph($r('sys.symbol.exclamationmark_triangle'))
-        .fontSize(16)
-        .fontColor([$r('app.color.world_error')])
-      Text($r('app.string.world_detail_anomalous_edges') + ': ' + count.toString())
-        .fontSize($r('app.float.world_font_caption'))
-        .fontColor($r('app.color.world_error'))
-        .margin({ left: 8 })
-        .layoutWeight(1)
-    }
-    .width('100%')
-    .padding({
-      left: 14,
-      right: 14,
-      top: 10,
-      bottom: 10
-    })
-    .backgroundColor($r('app.color.world_surface_1'))
-    .borderRadius($r('app.float.world_radius_card'))
-    .borderWidth(1)
-    .borderColor($r('app.color.world_error'))
-    .margin({ bottom: 12 })
-    .alignItems(VerticalAlign.Center)
-  }
-
-  // ===== 角色实例摘要 =====
-
-  @Builder
-  characterSection(detail: WorldDetailUiModel): void {
-    WorldSurfaceCard({}) {
-      Column() {
-        WorldSectionHeader({ title: $r('app.string.world_detail_character_section') })
-
-        if (detail.characters.length === 0) {
-          Text($r('app.string.world_detail_no_characters'))
-            .fontSize($r('app.float.world_font_caption'))
-            .fontColor($r('app.color.world_text_tertiary'))
-            .width('100%')
-            .textAlign(TextAlign.Center)
-            .padding({ top: 16, bottom: 16 })
-        } else {
-          this.characterSubSection(
-            $r('app.string.world_detail_unplaced_characters'),
-            this.filterUnplacedCharacters(detail.characters)
-          )
-
-          ForEach(this.collectPlacedLocationSummaries(detail), (summary: PlacedLocationSummary) => {
-            this.placedLocationSummaryRow(summary)
-          }, (summary: PlacedLocationSummary) => summary.locationId + '|' + String(summary.characterCount))
-        }
-      }
-      .width('100%')
-      .padding(14)
-      .alignItems(HorizontalAlign.Start)
-    }
-  }
-
-  @Builder
-  characterSubSection(title: ResourceStr, characters: WorldCharacterInstanceUiModel[]): void {
-    if (characters.length > 0) {
-      Column() {
-        Text(title)
-          .fontSize($r('app.float.world_font_micro'))
-          .fontColor($r('app.color.world_text_tertiary'))
-          .margin({ top: 8, bottom: 4 })
-
-        ForEach(characters, (c: WorldCharacterInstanceUiModel) => {
-          this.characterRow(c)
-        }, (c: WorldCharacterInstanceUiModel) => c.id)
-      }
-      .width('100%')
-      .alignItems(HorizontalAlign.Start)
-    }
-  }
-
-  @Builder
-  placedLocationSummaryRow(summary: PlacedLocationSummary): void {
-    Row() {
-      SymbolGlyph($r('sys.symbol.circle'))
-        .fontSize(14)
-        .fontColor([$r('app.color.world_gold')])
-      Text(summary.locationName + ' · ' + summary.characterCount.toString() + ' 角色')
-        .fontSize($r('app.float.world_font_caption'))
-        .fontColor($r('app.color.world_text_secondary'))
-        .margin({ left: 6 })
-        .layoutWeight(1)
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-    }
-    .width('100%')
-    .margin({ top: 6 })
-    .alignItems(VerticalAlign.Center)
-  }
-
-  @Builder
-  characterRow(c: WorldCharacterInstanceUiModel): void {
-    Row() {
-      CharacterImageView({
-        imageUri: c.avatarUri,
-        fallbackName: c.fallbackName,
-        imgWidth: 32,
-        imgHeight: 32,
-        imgBorderRadius: 16,
-        displayMode: 'thumbnail',
-        objectFit: ImageFit.Cover
-      })
-
-      Column() {
-        Text(c.displayName)
-          .fontSize($r('app.float.world_font_body'))
-          .fontColor($r('app.color.world_text_primary'))
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
-
-        Row() {
-          Text(c.isActive ? '活跃' : '已停用')
-            .fontSize($r('app.float.world_font_micro'))
-            .fontColor(c.isActive
-              ? $r('app.color.world_gold')
-              : $r('app.color.world_text_tertiary'))
-            .backgroundColor($r('app.color.world_surface_2'))
-            .borderRadius(3)
-            .padding({ left: 4, right: 4, top: 1, bottom: 1 })
-
-          if (c.characterCardMissing) {
-            Text($r('app.string.world_character_card_missing'))
-              .fontSize($r('app.float.world_font_micro'))
-              .fontColor($r('app.color.world_error'))
-              .backgroundColor($r('app.color.world_surface_2'))
-              .borderRadius(3)
-              .padding({ left: 4, right: 4, top: 1, bottom: 1 })
-              .margin({ left: 4 })
-          }
-
-          Text(this.resolveCharacterLocationLabel(c))
-            .fontSize($r('app.float.world_font_micro'))
-            .fontColor(c.locationMissing
-              ? $r('app.color.world_error')
-              : $r('app.color.world_text_tertiary'))
-            .backgroundColor($r('app.color.world_surface_2'))
-            .borderRadius(3)
-            .padding({ left: 4, right: 4, top: 1, bottom: 1 })
-            .margin({ left: 4 })
-        }
-        .margin({ top: 4 })
-        .alignItems(VerticalAlign.Center)
-      }
-      .layoutWeight(1)
-      .alignItems(HorizontalAlign.Start)
-      .margin({ left: 8 })
-    }
-    .width('100%')
-    .alignItems(VerticalAlign.Center)
-    .margin({ top: 6 })
-  }
-
-  // ===== 最近事件 =====
-
-  @Builder
-  eventSection(detail: WorldDetailUiModel): void {
-    WorldSurfaceCard({}) {
-      Column() {
-        WorldSectionHeader({
-          title: $r('app.string.world_detail_event_section'),
-          subtitle: formatWorldTimestamp(detail.world.updatedAt)
-        })
-
-        if (detail.recentEvents.length === 0) {
-          Text($r('app.string.world_detail_no_events'))
-            .fontSize($r('app.float.world_font_caption'))
-            .fontColor($r('app.color.world_text_tertiary'))
-            .width('100%')
-            .textAlign(TextAlign.Center)
-            .padding({ top: 16, bottom: 16 })
-        } else {
-          ForEach(detail.recentEvents, (ev: WorldEventUiModel) => {
-            this.eventRow(ev)
-          }, (ev: WorldEventUiModel) => ev.id)
-        }
-      }
-      .width('100%')
-      .padding(14)
-      .alignItems(HorizontalAlign.Start)
-    }
-  }
-
-  @Builder
-  eventRow(ev: WorldEventUiModel): void {
-    Column() {
-      Row() {
-        Text(ev.localizedType)
-          .fontSize($r('app.float.world_font_caption'))
-          .fontColor($r('app.color.world_gold'))
-          .backgroundColor($r('app.color.world_surface_2'))
-          .borderRadius(3)
-          .padding({ left: 4, right: 4, top: 1, bottom: 1 })
-
-        Text(formatWorldTimestamp(ev.occurredAt))
-          .fontSize($r('app.float.world_font_caption'))
-          .fontColor($r('app.color.world_text_tertiary'))
-          .margin({ left: 8 })
-          .layoutWeight(1)
-          .textAlign(TextAlign.End)
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Center)
-
-      if (ev.summary.length > 0) {
-        Text(ev.summary)
-          .fontSize($r('app.float.world_font_caption'))
-          .fontColor($r('app.color.world_text_secondary'))
-          .maxLines(2)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .margin({ top: 4 })
-          .width('100%')
-      }
-    }
-    .width('100%')
-    .margin({ top: 8 })
-    .alignItems(HorizontalAlign.Start)
-  }
-
-  // ===== 底部摘要栏 =====
-
-  @Builder
-  bottomSummaryBar(detail: WorldDetailUiModel): void {
-    Row() {
-      this.summaryItem($r('app.string.world_ui_locations_label'), detail.world.locationCount)
-      this.summaryItem($r('app.string.world_ui_characters_label'), detail.characters.length)
-      this.summaryItem($r('app.string.world_edge_count_label'), detail.edgeCount)
-      this.summaryItem($r('app.string.world_event_count_label'), detail.eventCount)
-    }
-    .width('100%')
-    .height($r('app.float.world_bottom_bar_height'))
-    .backgroundColor($r('app.color.world_bg'))
-    .borderWidth({ top: 1 })
-    .borderColor($r('app.color.world_border'))
-    .padding({
-      left: $r('app.float.world_page_padding'),
-      right: $r('app.float.world_page_padding'),
-      bottom: this.navBarHeight
-    })
-    .justifyContent(FlexAlign.SpaceAround)
-    .alignItems(VerticalAlign.Center)
   }
 
   @Builder
@@ -1275,8 +597,6 @@ struct WorldDetailPage {
     .alignItems(HorizontalAlign.Center)
     .layoutWeight(1)
   }
-
-  // ===== 地点人物弹窗(W-UX-1) =====
 
   @Builder
   locationSceneSheet(): void {
@@ -1537,13 +857,28 @@ struct WorldDetailPage {
     }
   }
 
-  // ===== 事件处理 =====
+  // ===== Event handlers =====
 
   private onLocationTapped(locationId: string): void {
     if (this.currentWorldId.length === 0 || locationId.length === 0) {
       return;
     }
+    this.selectedLocationId = locationId;
     this.openLocationSheet(this.currentWorldId, locationId);
+  }
+
+  private async onLocationDragEnd(locationId: string, worldX: number, worldY: number): Promise<void> {
+    if (this.mapViewModel === null) {
+      return;
+    }
+    this.dragError = '';
+    const error: string = await this.mapViewModel.endDrag(locationId, worldX, worldY);
+    if (error.length > 0) {
+      this.dragError = error;
+      setTimeout((): void => {
+        this.dragError = '';
+      }, 3000);
+    }
   }
 
   private openLocationSheet(worldId: string, locationId: string): void {
@@ -1712,127 +1047,6 @@ struct WorldDetailPage {
     router.pushUrl({ url: 'pages/world/WorldCuratorPage' });
   }
 
-  // ===== 辅助方法 =====
-
-  private resolveWorldName(): string {
-    if (this.detail !== null) {
-      return this.detail.world.name.length > 0 ? this.detail.world.name : '(未命名世界)';
-    }
-    return '世界详情';
-  }
-
-  private computeEdgePoints(edge: WorldLocationEdgeLayout): number[][] {
-    const polyLeft: number = Math.min(edge.fromX, edge.toX) - 2;
-    const polyTop: number = Math.min(edge.fromY, edge.toY) - 2;
-    const midY: number = (edge.fromY + edge.toY) / 2;
-    return [
-      [edge.fromX - polyLeft, edge.fromY - polyTop],
-      [edge.fromX - polyLeft, midY - polyTop],
-      [edge.toX - polyLeft, midY - polyTop],
-      [edge.toX - polyLeft, edge.toY - polyTop]
-    ];
-  }
-
-  private resolveEdgeColor(edge: WorldLocationEdgeLayout): ResourceColor {
-    return $r('app.color.world_edge');
-  }
-
-  private resolveEdgeDash(edge: WorldLocationEdgeLayout): number[] {
-    if (!edge.isEnabled) {
-      return [4, 4];
-    }
-    return [];
-  }
-
-  private resolveEdgeOpacity(edge: WorldLocationEdgeLayout): number {
-    if (!edge.isEnabled) {
-      return 0.45;
-    }
-    return 0.85;
-  }
-
-  private resolveEdgeDirectionLabel(edge: WorldLocationEdgeLayout): string {
-    return edge.isBidirectional ? '双向' : '单向';
-  }
-
-  private resolveLocationName(locationId: string, locations: WorldLocationUiModel[]): string {
-    for (let i: number = 0; i < locations.length; i++) {
-      if (locations[i].id === locationId) {
-        return locations[i].name;
-      }
-    }
-    return '(未知地点)';
-  }
-
-  private resolveLocationStatus(locationId: string, locations: WorldLocationUiModel[]): WorldLocationStatus {
-    for (let i: number = 0; i < locations.length; i++) {
-      if (locations[i].id === locationId) {
-        return locations[i].status;
-      }
-    }
-    return WorldLocationStatus.Active;
-  }
-
-  private resolveLocationDescription(locationId: string, locations: WorldLocationUiModel[]): string {
-    for (let i: number = 0; i < locations.length; i++) {
-      if (locations[i].id === locationId) {
-        return locations[i].description;
-      }
-    }
-    return '';
-  }
-
-  private resolveLocationStatusLabel(locationId: string, locations: WorldLocationUiModel[]): string {
-    const status: WorldLocationStatus = this.resolveLocationStatus(locationId, locations);
-    return status === WorldLocationStatus.Archived ? '已归档' : '活跃';
-  }
-
-  private countCharactersAt(locationId: string, characters: WorldCharacterInstanceUiModel[]): number {
-    let count: number = 0;
-    for (let i: number = 0; i < characters.length; i++) {
-      if (characters[i].currentLocationId === locationId) {
-        count = count + 1;
-      }
-    }
-    return count;
-  }
-
-  private filterCharactersAt(locationId: string, characters: WorldCharacterInstanceUiModel[]): WorldCharacterInstanceUiModel[] {
-    const result: WorldCharacterInstanceUiModel[] = [];
-    for (let i: number = 0; i < characters.length; i++) {
-      if (characters[i].currentLocationId === locationId) {
-        result.push(characters[i]);
-      }
-    }
-    return result;
-  }
-
-  /** 取某地点下最多 max 个角色(用于广告牌头像) */
-  private takeCharactersAt(
-    locationId: string,
-    characters: WorldCharacterInstanceUiModel[],
-    max: number
-  ): WorldCharacterInstanceUiModel[] {
-    const result: WorldCharacterInstanceUiModel[] = [];
-    for (let i: number = 0; i < characters.length && result.length < max; i++) {
-      if (characters[i].currentLocationId === locationId) {
-        result.push(characters[i]);
-      }
-    }
-    return result;
-  }
-
-  /** 超出 max 数量的角色数 */
-  private overflowCharacterCount(
-    locationId: string,
-    characters: WorldCharacterInstanceUiModel[],
-    max: number
-  ): number {
-    const total: number = this.countCharactersAt(locationId, characters);
-    return total > max ? total - max : 0;
-  }
-
-  /** 跳转角色实例详情页 */
   private openInstanceDetail(instanceId: string): void {
     if (instanceId.length === 0) {
       return;
@@ -1841,112 +1055,52 @@ struct WorldDetailPage {
     router.pushUrl({ url: 'pages/world/WorldCharacterInstanceDetailPage' });
   }
 
-  private countOutgoingEdges(locationId: string, edges: WorldEdgeUiModel[]): number {
-    let count: number = 0;
-    for (let i: number = 0; i < edges.length; i++) {
-      if (edges[i].isAnomalous) {
-        continue;
-      }
-      if (edges[i].fromLocationId === locationId) {
-        count = count + 1;
-      }
+  private resolveWorldName(): string {
+    if (this.detail !== null) {
+      return this.detail.world.name.length > 0 ? this.detail.world.name : '(未命名世界)';
     }
-    return count;
-  }
-
-  private filterEdgesForLocation(locationId: string, edges: WorldEdgeUiModel[], outgoing: boolean): WorldEdgeUiModel[] {
-    const result: WorldEdgeUiModel[] = [];
-    for (let i: number = 0; i < edges.length; i++) {
-      const e: WorldEdgeUiModel = edges[i];
-      if (e.isAnomalous) {
-        continue;
-      }
-      if (outgoing && e.fromLocationId === locationId) {
-        result.push(e);
-      } else if (!outgoing && e.toLocationId === locationId) {
-        result.push(e);
-      }
-    }
-    return result;
-  }
-
-  private resolveEdgeTargetName(edge: WorldEdgeUiModel, outgoing: boolean): string {
-    if (outgoing) {
-      if (edge.toLocationMissing) {
-        return '连接目标缺失';
-      }
-      return edge.toLocationName.length > 0 ? edge.toLocationName : '(未知地点)';
-    } else {
-      if (edge.fromLocationMissing) {
-        return '连接来源缺失';
-      }
-      return edge.fromLocationName.length > 0 ? edge.fromLocationName : '(未知地点)';
-    }
-  }
-
-  private composeEdgeDescription(edge: WorldEdgeUiModel): string {
-    const parts: string[] = [];
-    if (edge.directionLabel.length > 0) {
-      parts.push(edge.directionLabel);
-    }
-    if (edge.travelDescription.length > 0) {
-      parts.push(edge.travelDescription);
-    }
-    return parts.join(' · ');
+    return '世界详情';
   }
 
   private resolveWorldStatusLabel(status: WorldStatus): string {
     return status === WorldStatus.Archived ? '已归档' : '活跃';
   }
 
-  private resolveCharacterLocationLabel(c: WorldCharacterInstanceUiModel): string {
-    if (c.currentLocationId.length === 0) {
-      return '未放置';
+  private recomputeBillboardData(): void {
+    if (this.mapViewModel === null) {
+      this.billboardData = [];
+      return;
     }
-    if (c.locationMissing) {
-      return '地点数据缺失';
-    }
-    return c.currentLocationName.length > 0 ? c.currentLocationName : '未知地点';
-  }
-
-  private filterUnplacedCharacters(characters: WorldCharacterInstanceUiModel[]): WorldCharacterInstanceUiModel[] {
-    const result: WorldCharacterInstanceUiModel[] = [];
-    for (let i: number = 0; i < characters.length; i++) {
-      if (characters[i].currentLocationId.length === 0) {
-        result.push(characters[i]);
+    const chars: WorldCharacterInstanceUiModel[] = this.mapViewModel.characters;
+    const locs: WorldLocationUiModel[] = this.mapViewModel.locations;
+    const result: NodeBillboardData[] = [];
+    for (let li: number = 0; li < locs.length; li++) {
+      const locId: string = locs[li].id;
+      const atLocation: WorldCharacterInstanceUiModel[] = [];
+      for (let ci: number = 0; ci < chars.length; ci++) {
+        if (chars[ci].currentLocationId === locId) {
+          atLocation.push(chars[ci]);
+        }
       }
-    }
-    return result;
-  }
-
-  private collectPlacedLocationSummaries(detail: WorldDetailUiModel): PlacedLocationSummary[] {
-    const map: Map<string, PlacedLocationSummary> = new Map<string, PlacedLocationSummary>();
-    for (let i: number = 0; i < detail.characters.length; i++) {
-      const c: WorldCharacterInstanceUiModel = detail.characters[i];
-      if (c.currentLocationId.length === 0) {
-        continue;
+      const visibleCount: number = Math.min(atLocation.length, BILLBOARD_MAX_VISIBLE);
+      const overflowCount: number = atLocation.length > BILLBOARD_MAX_VISIBLE
+        ? atLocation.length - BILLBOARD_MAX_VISIBLE : 0;
+      const slots: BillboardCharacterSlotData[] = [];
+      for (let si: number = 0; si < visibleCount; si++) {
+        const c: WorldCharacterInstanceUiModel = atLocation[si];
+        const dx: number = si * 24 - (visibleCount - 1) * 12;
+        slots.push({
+          instanceId: c.id,
+          displayName: c.displayName,
+          avatarUri: c.avatarUri,
+          fallbackName: c.fallbackName,
+          isActive: c.isActive,
+          dx: dx,
+          dy: 0
+        });
       }
-      const locName: string = c.locationMissing
-        ? '地点数据缺失'
-        : (c.currentLocationName.length > 0 ? c.currentLocationName : '未知地点');
-      const existing: PlacedLocationSummary | undefined = map.get(c.currentLocationId);
-      if (existing !== undefined) {
-        existing.characterCount = existing.characterCount + 1;
-      } else {
-        const summary: PlacedLocationSummary = {
-          locationId: c.currentLocationId,
-          locationName: locName,
-          characterCount: 1
-        };
-        map.set(c.currentLocationId, summary);
-      }
+      result.push({ locationId: locId, slots: slots, overflowCount: overflowCount });
     }
-    return Array.from(map.values());
+    this.billboardData = result;
   }
-}
-
-interface PlacedLocationSummary {
-  locationId: string;
-  locationName: string;
-  characterCount: number;
 }

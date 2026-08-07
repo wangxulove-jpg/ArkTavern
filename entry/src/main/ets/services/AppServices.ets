@@ -105,6 +105,7 @@ import { WorldStateService } from './world/WorldStateService';
 import { WorldSceneService } from './world/WorldSceneService';
 import { WorldCharacterMemoryService } from './world/WorldCharacterMemoryService';
 import { WorldConversationSessionService } from './world/WorldConversationSessionService';
+import { WorldMapInteractionService } from './world/WorldMapInteractionService';
 import { Logger } from '../utils/Logger';
 
 const LOG_TAG: string = 'AppServices';
@@ -260,6 +261,8 @@ export class AppServices {
   private readonly worldCharacterMemoryService: WorldCharacterMemoryService;
   /** WorldConversationSessionService 世界会话生命周期服务(W1B2,会话唯一正式写入口) */
   private readonly worldConversationSessionService: WorldConversationSessionService;
+  /** WorldMapInteractionService 地图交互业务服务(W1D,地图快照加载+放置保存) */
+  private readonly worldMapInteractionService: WorldMapInteractionService;
 
   /**
    * 私有构造,组装全部依赖。
@@ -359,6 +362,15 @@ export class AppServices {
       this.worldSceneRepository,
       this.worldCharacterInstanceRepository,
       this.worldConversationSessionRepository,
+      this.dbHelper
+    );
+    this.worldMapInteractionService = new WorldMapInteractionService(
+      this.worldRepository,
+      this.worldLocationRepository,
+      this.worldLocationEdgeRepository,
+      this.worldCharacterInstanceRepository,
+      this.worldLocationMapPlacementRepository,
+      this.characterService,
       this.dbHelper
     );
     this.lorebookSelectionStore = new LorebookSelectionStore(this.appPreferences);
@@ -1154,6 +1166,10 @@ export class AppServices {
    */
   static getWorldConversationSessionService(): WorldConversationSessionService {
     return AppServices.getInstance().worldConversationSessionService;
+  }
+
+  static getWorldMapInteractionService(): WorldMapInteractionService {
+    return AppServices.getInstance().worldMapInteractionService;
   }
 
   /**

@@ -12,6 +12,10 @@ import groupAutoSummaryTest from './GroupAutoSummary.test';
 import autoSummaryExecutorTest from './AutoSummaryExecutor.test';
 import autoSummaryHardTest from './AutoSummaryHard.test';
 import groupUserIdentityTest from './GroupUserIdentity.test';
+import mapImmersiveLayoutTest from './MapImmersiveLayout.test';
+import mapBillboardLayoutTest from './MapBillboardLayout.test';
+import mapViewportAndFocusTest from './MapViewportAndFocus.test';
+import mapInteractionServiceTest from './MapInteractionService.test';
 
 export default function testsuite() {
   localUnitSmokeTest();
@@ -28,4 +32,8 @@ export default function testsuite() {
   autoSummaryExecutorTest();
   autoSummaryHardTest();
   groupUserIdentityTest();
+  mapImmersiveLayoutTest();
+  mapBillboardLayoutTest();
+  mapViewportAndFocusTest();
+  mapInteractionServiceTest();
 }
