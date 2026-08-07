@@ -107,6 +107,10 @@ import { WorldCharacterMemoryService } from './world/WorldCharacterMemoryService
 import { WorldConversationSessionService } from './world/WorldConversationSessionService';
 import { WorldMapInteractionService } from './world/WorldMapInteractionService';
 import { WorldSceneLaunchService } from './world/WorldSceneLaunchService';
+import { WorldSceneMessageService } from './world/WorldSceneMessageService';
+import { WorldRuntimeRegistry } from './world/WorldRuntimeRegistry';
+import { WorldScenePromptAssembler } from './world/WorldScenePromptAssembler';
+import { WorldSceneRuntimeService } from './world/WorldSceneRuntimeService';
 import { Logger } from '../utils/Logger';
 
 const LOG_TAG: string = 'AppServices';
@@ -266,6 +270,14 @@ export class AppServices {
   private readonly worldMapInteractionService: WorldMapInteractionService;
   /** WorldSceneLaunchService 场景启动业务服务(W2B1,Scene+Session 原子创建) */
   private readonly worldSceneLaunchService: WorldSceneLaunchService;
+  /** WorldSceneMessageService 世界场景消息业务服务(W3A1,Runtime唯一正式消息写入入口) */
+  private readonly worldSceneMessageService: WorldSceneMessageService;
+  /** WorldRuntimeRegistry 世界运行时操作注册表(W3A1,单例,运行中操作管理) */
+  private readonly worldRuntimeRegistry: WorldRuntimeRegistry;
+  /** WorldScenePromptAssembler 世界场景Prompt构建器(W3A1,单角色Prompt装配) */
+  private readonly worldScenePromptAssembler: WorldScenePromptAssembler;
+  /** WorldSceneRuntimeService 世界场景运行时服务(W3A1,单角色AI生成核心) */
+  private readonly worldSceneRuntimeService: WorldSceneRuntimeService;
 
   /**
    * 私有构造,组装全部依赖。
@@ -387,6 +399,15 @@ export class AppServices {
       this.worldConversationSessionService,
       this.dbHelper
     );
+    // W3A1: 世界场景消息服务(Runtime唯一正式消息写入入口)
+    this.worldSceneMessageService = new WorldSceneMessageService(
+      this.worldSceneRepository,
+      this.worldConversationSessionRepository,
+      this.worldSceneMessageRepository,
+      this.dbHelper
+    );
+    // W3A1: 运行时操作注册表(单例)
+    this.worldRuntimeRegistry = new WorldRuntimeRegistry();
     this.lorebookSelectionStore = new LorebookSelectionStore(this.appPreferences);
     this.characterMigrationService = new CharacterMigrationService(
       this.characterStore,
@@ -418,6 +439,30 @@ export class AppServices {
     this.promptBuilder = new PromptBuilder(this.lorebookService, macroReplacer);
     this.tokenCounter = new TokenCounter();
     this.historyTrimmer = new HistoryTrimmer(this.tokenCounter);
+    // W3A1: Prompt构建器(依赖通用PromptBuilder/Lorebook/Preset/ModelService/TokenCounter/HistoryTrimmer)
+    this.worldScenePromptAssembler = new WorldScenePromptAssembler(
+      this.promptBuilder,
+      this.lorebookService,
+      this.promptPresetService,
+      this.modelService,
+      this.tokenCounter,
+      this.historyTrimmer
+    );
+    // W3A1: 运行时核心服务(依赖所有世界Repository + CharacterService + ModelService + MessageService + Registry + PromptAssembler)
+    this.worldSceneRuntimeService = new WorldSceneRuntimeService(
+      this.worldRepository,
+      this.worldLocationRepository,
+      this.worldSceneRepository,
+      this.worldConversationSessionRepository,
+      this.worldCharacterInstanceRepository,
+      this.worldPlayerProfileRepository,
+      this.worldSceneMessageRepository,
+      this.characterService,
+      this.modelService,
+      this.worldSceneMessageService,
+      this.worldRuntimeRegistry,
+      this.worldScenePromptAssembler
+    );
     // v8.3 Phase 2: 最近原始消息窗口选择器(去重 + 窗口 + 完整轮次)
     this.recentMessageSelector = new RecentMessageSelector(this.tokenCounter);
     // 持久化层组合:全部 Repository 共享同一 DbHelper 实例
@@ -1188,6 +1233,22 @@ export class AppServices {
 
   static getWorldSceneLaunchService(): WorldSceneLaunchService {
     return AppServices.getInstance().worldSceneLaunchService;
+  }
+
+  static getWorldSceneMessageService(): WorldSceneMessageService {
+    return AppServices.getInstance().worldSceneMessageService;
+  }
+
+  static getWorldRuntimeRegistry(): WorldRuntimeRegistry {
+    return AppServices.getInstance().worldRuntimeRegistry;
+  }
+
+  static getWorldScenePromptAssembler(): WorldScenePromptAssembler {
+    return AppServices.getInstance().worldScenePromptAssembler;
+  }
+
+  static getWorldSceneRuntimeService(): WorldSceneRuntimeService {
+    return AppServices.getInstance().worldSceneRuntimeService;
   }
 
   /**
