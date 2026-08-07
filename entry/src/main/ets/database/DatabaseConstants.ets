@@ -6,7 +6,7 @@
  */
 
 export const DATABASE_NAME: string = 'arktavern.db';
-export const DATABASE_VERSION: number = 22;
+export const DATABASE_VERSION: number = 23;
 
 export const TABLE_CHARACTERS: string = 'characters';
 export const TABLE_CHATS: string = 'chats';
@@ -540,3 +540,18 @@ export const COLUMN_ROTATION_Y: string = 'rotation_y';
 export const COLUMN_ROTATION_Z: string = 'rotation_z';
 /** world_location_map_placements.scale 列名 */
 export const COLUMN_PLACEMENT_SCALE: string = 'scale';
+
+// ===== v23: 世界角色实例领域增强(W2A1-WORLD-PLAYER-CHARACTER-DOMAIN) =====
+// world_character_instances 新增 current_goal / map_icon_style 列。
+// world_player_profiles 新增 persona / public_identity / private_identity / current_location_id 列。
+
+/** world_character_instances.current_goal 列名(角色在该世界中的当前目标) */
+export const COLUMN_CURRENT_GOAL: string = 'current_goal';
+/** world_character_instances.map_icon_style 列名(地图图标样式,预留) */
+export const COLUMN_MAP_ICON_STYLE: string = 'map_icon_style';
+/** world_player_profiles.persona 列名(玩家人设) */
+export const COLUMN_PERSONA: string = 'persona';
+/** world_player_profiles.public_identity 列名(公开身份) */
+export const COLUMN_PUBLIC_IDENTITY: string = 'public_identity';
+/** world_player_profiles.private_identity 列名(私密身份) */
+export const COLUMN_PRIVATE_IDENTITY: string = 'private_identity';

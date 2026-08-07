@@ -67,6 +67,11 @@ import {
   WORLD_CHARACTER_ID_PREFIX
 } from '../../models/world/WorldCharacterInstance';
 import {
+  WorldPlayerProfile,
+  createWorldPlayerProfileRecord,
+  WORLD_PLAYER_PROFILE_ID_PREFIX
+} from '../../models/world/WorldPlayerProfile';
+import {
   WorldEvent,
   WorldEventType,
   createWorldEventRecord,
@@ -160,10 +165,11 @@ export class WorldStateService {
 
   /**
    * 创建世界。
-   * 事务内:校验名称 → 插入 World → 插入 WorldCreated 事件。
+   * 事务内:校验名称 → 插入 World → 插入 WorldPlayerProfile → 插入 WorldCreated 事件。
    * 不自动创建默认地点,不自动添加角色。
+   * World 与 PlayerProfile 原子创建,保证每个 World 必有唯一 PlayerProfile。
    */
-  async createWorld(name: string, description: string): Promise<World> {
+  async createWorld(name: string, description: string, playerDisplayName: string): Promise<World> {
     const normalName: string = normalizeText(name);
     if (normalName === '') {
       throw WorldStateError.worldNameEmpty();
@@ -180,9 +186,21 @@ export class WorldStateService {
       createdAt: now,
       updatedAt: now
     });
+    const trimmedPlayerName: string = normalizeText(playerDisplayName);
+    if (trimmedPlayerName === '') {
+      throw WorldStateError.invalidOperation('playerDisplayName 不能为空');
+    }
+    const profile: WorldPlayerProfile = createWorldPlayerProfileRecord({
+      id: WORLD_PLAYER_PROFILE_ID_PREFIX + generateUuid(),
+      worldId: worldId,
+      displayName: trimmedPlayerName,
+      createdAt: now,
+      updatedAt: now
+    });
     await this.dbHelper.runInTransaction(
       async (store: relationalStore.RdbStore): Promise<void> => {
         await this.worldRepo.insertWithStore(store, world);
+        await this.profileRepo.insertWithStore(store, profile);
         await this.eventRepo.insertWithStore(store, buildEvent({
           worldId: worldId,
           eventType: WorldEventType.WorldCreated,
@@ -731,16 +749,14 @@ export class WorldStateService {
 
   /**
    * 添加角色到世界。
-   * 校验:World Active → Character 存在 → 同世界无该 Character 实例 →
-   * (可选)初始地点存在、属于同 World、Active。
+   * 校验:World Active → Character 存在 → 同世界无该 Character 实例。
    * 创建:displayNameSnapshot = 当前 Character.name,isActive = true,
-   * currentLocationId = initialLocationId 或 undefined。
+   * currentLocationId = undefined(未放置),currentGoal = '',mapIconStyle = undefined。
    * 事务内同时插入 CharacterJoined 事件。
    */
   async addCharacterToWorld(
     worldId: string,
-    characterId: string,
-    initialLocationId?: string
+    characterId: string
   ): Promise<WorldCharacterInstance> {
     const character: Character | null = await this.characterService.getById(characterId);
     if (character === null) {
@@ -749,14 +765,14 @@ export class WorldStateService {
     const displayNameSnapshot: string = character.name;
     const instanceId: string = WORLD_CHARACTER_ID_PREFIX + generateUuid();
     const now: number = nowMillis();
-    const initialLoc: string | undefined = normalizeOptionalId(initialLocationId);
     const instance: WorldCharacterInstance = createWorldCharacterInstanceRecord({
       id: instanceId,
       worldId: worldId,
       characterId: characterId,
       displayNameSnapshot: displayNameSnapshot,
-      currentLocationId: initialLoc,
+      currentLocationId: undefined,
       isActive: true,
+      currentGoal: '',
       createdAt: now,
       updatedAt: now
     });
@@ -768,24 +784,11 @@ export class WorldStateService {
         if (existing !== null) {
           throw WorldStateError.characterAlreadyInWorld();
         }
-        if (initialLoc !== undefined) {
-          const loc: WorldLocation | null = await this.locationRepo.getByIdWithStore(store, initialLoc);
-          if (loc === null) {
-            throw WorldStateError.locationNotFound();
-          }
-          if (loc.worldId !== worldId) {
-            throw WorldStateError.locationNotInWorld();
-          }
-          if (loc.status !== WorldLocationStatus.Active) {
-            throw WorldStateError.locationNotFound();
-          }
-        }
         await this.instanceRepo.insertWithStore(store, instance);
         await this.eventRepo.insertWithStore(store, buildEvent({
           worldId: worldId,
           eventType: WorldEventType.CharacterJoined,
           sourceCharacterInstanceId: instanceId,
-          sourceLocationId: initialLoc,
           summary: '角色已加入世界'
         }));
       },
@@ -849,6 +852,8 @@ export class WorldStateService {
           displayNameSnapshot: existing.displayNameSnapshot,
           currentLocationId: existing.currentLocationId,
           isActive: active,
+          currentGoal: existing.currentGoal,
+          mapIconStyle: existing.mapIconStyle,
           createdAt: existing.createdAt,
           updatedAt: nowMillis()
         });
@@ -895,6 +900,8 @@ export class WorldStateService {
       displayNameSnapshot: character.name,
       currentLocationId: existing.currentLocationId,
       isActive: existing.isActive,
+      currentGoal: existing.currentGoal,
+      mapIconStyle: existing.mapIconStyle,
       createdAt: existing.createdAt,
       updatedAt: nowMillis()
     });
@@ -943,6 +950,8 @@ export class WorldStateService {
           displayNameSnapshot: existing.displayNameSnapshot,
           currentLocationId: locationId,
           isActive: existing.isActive,
+          currentGoal: existing.currentGoal,
+          mapIconStyle: existing.mapIconStyle,
           createdAt: existing.createdAt,
           updatedAt: nowMillis()
         });
@@ -956,7 +965,7 @@ export class WorldStateService {
         }));
         result = updated;
       },
-      'world_character_move'
+      'world_character_place'
     );
     if (result === null) {
       throw WorldStateError.internal('事务未产生结果');
@@ -1011,6 +1020,8 @@ export class WorldStateService {
           displayNameSnapshot: existing.displayNameSnapshot,
           currentLocationId: targetLocationId,
           isActive: existing.isActive,
+          currentGoal: existing.currentGoal,
+          mapIconStyle: existing.mapIconStyle,
           createdAt: existing.createdAt,
           updatedAt: nowMillis()
         });
@@ -1066,6 +1077,8 @@ export class WorldStateService {
           displayNameSnapshot: existing.displayNameSnapshot,
           currentLocationId: targetLocationId,
           isActive: existing.isActive,
+          currentGoal: existing.currentGoal,
+          mapIconStyle: existing.mapIconStyle,
           createdAt: existing.createdAt,
           updatedAt: nowMillis()
         });
@@ -1082,6 +1095,202 @@ export class WorldStateService {
         result = updated;
       },
       'world_character_move'
+    );
+    if (result === null) {
+      throw WorldStateError.internal('事务未产生结果');
+    }
+    return result;
+  }
+
+  // ===== W2A1: 角色放置与玩家档案 =====
+
+  /**
+   * 放置角色到指定地点(W2A1)。
+   * 语义:将 currentLocationId 为空的角色放置到指定地点。
+   * 校验:实例存在且 Active → World Active → 目标地点存在、属于同 World、Active。
+   * 放置不需要连接边(区别于 moveCharacter)。
+   * 事务内:更新 currentLocationId → 插入 CharacterMoved 事件。
+   * 若角色已放置(currentLocationId 非空),拒绝操作。
+   */
+  async placeCharacterAtLocation(instanceId: string, locationId: string): Promise<WorldCharacterInstance> {
+    let result: WorldCharacterInstance | null = null;
+    await this.dbHelper.runInTransaction(
+      async (store: relationalStore.RdbStore): Promise<void> => {
+        const existing: WorldCharacterInstance | null =
+          await this.instanceRepo.getByIdWithStore(store, instanceId);
+        if (existing === null) {
+          throw WorldStateError.characterInstanceNotFound();
+        }
+        if (!existing.isActive) {
+          throw WorldStateError.characterInstanceInactive();
+        }
+        await this.assertWorldActiveInTx(store, existing.worldId);
+        if (existing.currentLocationId !== undefined) {
+          throw WorldStateError.invalidOperation('角色已放置,请使用移动');
+        }
+        const target: WorldLocation | null = await this.locationRepo.getByIdWithStore(store, locationId);
+        if (target === null) {
+          throw WorldStateError.locationNotFound();
+        }
+        if (target.worldId !== existing.worldId) {
+          throw WorldStateError.locationNotInWorld();
+        }
+        if (target.status !== WorldLocationStatus.Active) {
+          throw WorldStateError.locationNotFound();
+        }
+        const updated: WorldCharacterInstance = createWorldCharacterInstanceRecord({
+          id: existing.id,
+          worldId: existing.worldId,
+          characterId: existing.characterId,
+          displayNameSnapshot: existing.displayNameSnapshot,
+          currentLocationId: locationId,
+          isActive: existing.isActive,
+          currentGoal: existing.currentGoal,
+          mapIconStyle: existing.mapIconStyle,
+          createdAt: existing.createdAt,
+          updatedAt: nowMillis()
+        });
+        await this.instanceRepo.updateWithStore(store, updated);
+        await this.eventRepo.insertWithStore(store, buildEvent({
+          worldId: existing.worldId,
+          eventType: WorldEventType.CharacterMoved,
+          sourceCharacterInstanceId: instanceId,
+          targetLocationId: locationId,
+          summary: '角色已放置'
+        }));
+        result = updated;
+      },
+      'world_character_place_at'
+    );
+    if (result === null) {
+      throw WorldStateError.internal('事务未产生结果');
+    }
+    return result;
+  }
+
+  /**
+   * 取消放置角色(W2A1)。
+   * 语义:将角色的 currentLocationId 清空,使其变为未放置状态。
+   * 校验:实例存在 → World Active → 角色已放置(currentLocationId 非空)。
+   * 不删除实例,不影响 isActive。
+   * 事务内:更新 currentLocationId 为 undefined → 插入 CharacterMoved 事件(sourceLocationId 为原位置)。
+   */
+  async unplaceCharacter(instanceId: string): Promise<WorldCharacterInstance> {
+    let result: WorldCharacterInstance | null = null;
+    await this.dbHelper.runInTransaction(
+      async (store: relationalStore.RdbStore): Promise<void> => {
+        const existing: WorldCharacterInstance | null =
+          await this.instanceRepo.getByIdWithStore(store, instanceId);
+        if (existing === null) {
+          throw WorldStateError.characterInstanceNotFound();
+        }
+        await this.assertWorldActiveInTx(store, existing.worldId);
+        if (existing.currentLocationId === undefined) {
+          throw WorldStateError.characterNotPlaced();
+        }
+        const previousLocationId: string = existing.currentLocationId;
+        const updated: WorldCharacterInstance = createWorldCharacterInstanceRecord({
+          id: existing.id,
+          worldId: existing.worldId,
+          characterId: existing.characterId,
+          displayNameSnapshot: existing.displayNameSnapshot,
+          currentLocationId: undefined,
+          isActive: existing.isActive,
+          currentGoal: existing.currentGoal,
+          mapIconStyle: existing.mapIconStyle,
+          createdAt: existing.createdAt,
+          updatedAt: nowMillis()
+        });
+        await this.instanceRepo.updateWithStore(store, updated);
+        await this.eventRepo.insertWithStore(store, buildEvent({
+          worldId: existing.worldId,
+          eventType: WorldEventType.CharacterMoved,
+          sourceCharacterInstanceId: instanceId,
+          sourceLocationId: previousLocationId,
+          summary: '角色已取消放置'
+        }));
+        result = updated;
+      },
+      'world_character_unplace'
+    );
+    if (result === null) {
+      throw WorldStateError.internal('事务未产生结果');
+    }
+    return result;
+  }
+
+  /**
+   * 获取指定世界的玩家档案(W2A1)。
+   * 不存在时返回 null(由 createWorld 原子创建,正常情况应存在)。
+   */
+  async getPlayerProfile(worldId: string): Promise<WorldPlayerProfile | null> {
+    return await this.profileRepo.getByWorldId(worldId);
+  }
+
+  /**
+   * 更新玩家档案(W2A1)。
+   * 支持更新:displayName / persona / publicIdentity / privateIdentity / currentLocationId。
+   * 校验:World 存在 → Profile 存在 → displayName 非空。
+   * currentLocationId 变更时校验:目标地点存在、属于同 World、Active。
+   * currentLocationId 传空字符串或 undefined 表示清空(玩家未放置)。
+   */
+  async updatePlayerProfile(
+    worldId: string,
+    displayName?: string,
+    persona?: string,
+    publicIdentity?: string,
+    privateIdentity?: string,
+    currentLocationId?: string
+  ): Promise<WorldPlayerProfile> {
+    let result: WorldPlayerProfile | null = null;
+    await this.dbHelper.runInTransaction(
+      async (store: relationalStore.RdbStore): Promise<void> => {
+        const world: World | null = await this.worldRepo.getByIdWithStore(store, worldId);
+        if (world === null) {
+          throw WorldStateError.worldNotFound();
+        }
+        const existing: WorldPlayerProfile | null =
+          await this.profileRepo.getByWorldIdWithStore(store, worldId);
+        if (existing === null) {
+          throw WorldStateError.invalidOperation('玩家档案不存在');
+        }
+        const newName: string = displayName !== undefined
+          ? normalizeText(displayName) : existing.displayName;
+        if (newName === '') {
+          throw WorldStateError.invalidOperation('playerDisplayName 不能为空');
+        }
+        const newPersona: string = persona !== undefined ? persona : existing.persona;
+        const newPublic: string = publicIdentity !== undefined ? publicIdentity : existing.publicIdentity;
+        const newPrivate: string = privateIdentity !== undefined ? privateIdentity : existing.privateIdentity;
+        const newLocationId: string | undefined = currentLocationId !== undefined
+          ? normalizeOptionalId(currentLocationId) : existing.currentLocationId;
+        if (newLocationId !== undefined) {
+          const loc: WorldLocation | null = await this.locationRepo.getByIdWithStore(store, newLocationId);
+          if (loc === null) {
+            throw WorldStateError.locationNotFound();
+          }
+          if (loc.worldId !== worldId) {
+            throw WorldStateError.locationNotInWorld();
+          }
+          if (loc.status !== WorldLocationStatus.Active) {
+            throw WorldStateError.locationNotFound();
+          }
+        }
+        const updated: WorldPlayerProfile = createWorldPlayerProfileRecord({
+          id: existing.id,
+          worldId: existing.worldId,
+          displayName: newName,
+          persona: newPersona,
+          publicIdentity: newPublic,
+          privateIdentity: newPrivate,
+          currentLocationId: newLocationId,
+          createdAt: existing.createdAt,
+          updatedAt: nowMillis()
+        });
+        await this.profileRepo.updateWithStore(store, updated);
+        result = updated;
+      },
+      'world_player_profile_update'
     );
     if (result === null) {
       throw WorldStateError.internal('事务未产生结果');

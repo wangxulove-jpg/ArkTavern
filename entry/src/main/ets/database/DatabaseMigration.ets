@@ -14,7 +14,7 @@
  */
 
 import { relationalStore } from '@kit.ArkData';
-import { V1_TO_V2_STATEMENTS, V2_TO_V3_STATEMENTS, V3_TO_V4_STATEMENTS, V4_TO_V5_DDL_STATEMENTS, V5_TO_V6_STATEMENTS, V6_TO_V7_STATEMENTS, V7_TO_V8_DDL_STATEMENTS, V8_TO_V9_STATEMENTS, V9_TO_V10_DDL_STATEMENTS, V10_TO_V11_DDL_STATEMENTS, V11_TO_V12_DDL_STATEMENTS, V11_TO_V12_DATA_MIGRATION_STATEMENTS, V12_TO_V13_DDL_STATEMENTS, V13_TO_V14_DDL_STATEMENTS, V13_TO_V14_DATA_MIGRATION_STATEMENTS, V14_TO_V15_DDL_STATEMENTS, V15_TO_V16_DDL_STATEMENTS, V16_TO_V17_DDL_STATEMENTS, V17_TO_V18_DDL_STATEMENTS, V18_TO_V19_DDL_STATEMENTS, V19_TO_V20_DDL_STATEMENTS, V20_TO_V21_DDL_STATEMENTS, V21_TO_V22_DDL_STATEMENTS } from './DatabaseSchema';
+import { V1_TO_V2_STATEMENTS, V2_TO_V3_STATEMENTS, V3_TO_V4_STATEMENTS, V4_TO_V5_DDL_STATEMENTS, V5_TO_V6_STATEMENTS, V6_TO_V7_STATEMENTS, V7_TO_V8_DDL_STATEMENTS, V8_TO_V9_STATEMENTS, V9_TO_V10_DDL_STATEMENTS, V10_TO_V11_DDL_STATEMENTS, V11_TO_V12_DDL_STATEMENTS, V11_TO_V12_DATA_MIGRATION_STATEMENTS, V12_TO_V13_DDL_STATEMENTS, V13_TO_V14_DDL_STATEMENTS, V13_TO_V14_DATA_MIGRATION_STATEMENTS, V14_TO_V15_DDL_STATEMENTS, V15_TO_V16_DDL_STATEMENTS, V16_TO_V17_DDL_STATEMENTS, V17_TO_V18_DDL_STATEMENTS, V18_TO_V19_DDL_STATEMENTS, V19_TO_V20_DDL_STATEMENTS, V20_TO_V21_DDL_STATEMENTS, V21_TO_V22_DDL_STATEMENTS, V22_TO_V23_DDL_STATEMENTS } from './DatabaseSchema';
 import {
   TABLE_CHATS,
   TABLE_MESSAGES,
@@ -932,6 +932,36 @@ class V21ToV22Migration implements DatabaseMigration {
   async migrate(store: relationalStore.RdbStore): Promise<void> {
     for (let i = 0; i < V21_TO_V22_DDL_STATEMENTS.length; i++) {
       await store.executeSql(V21_TO_V22_DDL_STATEMENTS[i]);
+    }
+  }
+}
+
+/**
+ * v22→v23 迁移(W2A1-WORLD-PLAYER-CHARACTER-DOMAIN 世界角色实例领域增强):
+ * 1. ALTER world_character_instances 添加 current_goal TEXT NOT NULL DEFAULT ''
+ * 2. ALTER world_character_instances 添加 map_icon_style TEXT
+ * 3. ALTER world_player_profiles 添加 persona TEXT NOT NULL DEFAULT ''
+ * 4. ALTER world_player_profiles 添加 public_identity TEXT NOT NULL DEFAULT ''
+ * 5. ALTER world_player_profiles 添加 private_identity TEXT NOT NULL DEFAULT ''
+ * 6. ALTER world_player_profiles 添加 current_location_id TEXT
+ *
+ * 安全性:
+ * - ALTER TABLE ADD COLUMN 不重建表,不删除任何数据
+ * - 旧行新字段均有 DEFAULT 值,不影响现有数据
+ * - 不回填任何旧数据
+ * - 任一语句失败由 DbHelper 事务回滚,数据库版本保持 22
+ */
+export function createV22ToV23Migration(): DatabaseMigration {
+  return new V22ToV23Migration();
+}
+
+class V22ToV23Migration implements DatabaseMigration {
+  readonly fromVersion: number = 22;
+  readonly toVersion: number = 23;
+
+  async migrate(store: relationalStore.RdbStore): Promise<void> {
+    for (let i = 0; i < V22_TO_V23_DDL_STATEMENTS.length; i++) {
+      await store.executeSql(V22_TO_V23_DDL_STATEMENTS[i]);
     }
   }
 }

@@ -7,6 +7,10 @@ import {
   COLUMN_ID,
   COLUMN_WORLD_ID,
   COLUMN_DISPLAY_NAME,
+  COLUMN_PERSONA,
+  COLUMN_PUBLIC_IDENTITY,
+  COLUMN_PRIVATE_IDENTITY,
+  COLUMN_CURRENT_LOCATION_ID,
   COLUMN_CREATED_AT,
   COLUMN_UPDATED_AT
 } from '../../database/DatabaseConstants';
@@ -214,6 +218,12 @@ function profileToBucket(profile: WorldPlayerProfile): relationalStore.ValuesBuc
   bucket[COLUMN_ID] = profile.id;
   bucket[COLUMN_WORLD_ID] = profile.worldId;
   bucket[COLUMN_DISPLAY_NAME] = profile.displayName;
+  bucket[COLUMN_PERSONA] = profile.persona;
+  bucket[COLUMN_PUBLIC_IDENTITY] = profile.publicIdentity;
+  bucket[COLUMN_PRIVATE_IDENTITY] = profile.privateIdentity;
+  bucket[COLUMN_CURRENT_LOCATION_ID] = profile.currentLocationId !== undefined
+    ? profile.currentLocationId
+    : null;
   bucket[COLUMN_CREATED_AT] = profile.createdAt;
   bucket[COLUMN_UPDATED_AT] = profile.updatedAt;
   return bucket;
@@ -232,6 +242,23 @@ function profileFromRow(rs: relationalStore.ResultSet): WorldPlayerProfile {
   if (displayName.trim() === '') {
     throw DatabaseError.invalidData('WorldPlayerProfile.displayName empty in row');
   }
+  const personaCol: number = rs.getColumnIndex(COLUMN_PERSONA);
+  const persona: string = personaCol >= 0 && !rs.isColumnNull(personaCol)
+    ? rs.getString(personaCol) : '';
+  const publicCol: number = rs.getColumnIndex(COLUMN_PUBLIC_IDENTITY);
+  const publicIdentity: string = publicCol >= 0 && !rs.isColumnNull(publicCol)
+    ? rs.getString(publicCol) : '';
+  const privateCol: number = rs.getColumnIndex(COLUMN_PRIVATE_IDENTITY);
+  const privateIdentity: string = privateCol >= 0 && !rs.isColumnNull(privateCol)
+    ? rs.getString(privateCol) : '';
+  const locCol: number = rs.getColumnIndex(COLUMN_CURRENT_LOCATION_ID);
+  let currentLocationId: string | undefined;
+  if (locCol >= 0 && !rs.isColumnNull(locCol)) {
+    const locValue: string = rs.getString(locCol);
+    if (locValue !== '') {
+      currentLocationId = locValue;
+    }
+  }
   const createdAt: number = rs.getLong(rs.getColumnIndex(COLUMN_CREATED_AT));
   if (!isValidTimestamp(createdAt)) {
     throw DatabaseError.invalidData('WorldPlayerProfile.createdAt invalid in row');
@@ -244,6 +271,10 @@ function profileFromRow(rs: relationalStore.ResultSet): WorldPlayerProfile {
     id: id,
     worldId: worldId,
     displayName: displayName,
+    persona: persona,
+    publicIdentity: publicIdentity,
+    privateIdentity: privateIdentity,
+    currentLocationId: currentLocationId,
     createdAt: createdAt,
     updatedAt: updatedAt
   };

@@ -32,6 +32,8 @@ import {
   COLUMN_DISPLAY_NAME_SNAPSHOT,
   COLUMN_CURRENT_LOCATION_ID,
   COLUMN_IS_ACTIVE,
+  COLUMN_CURRENT_GOAL,
+  COLUMN_MAP_ICON_STYLE,
   COLUMN_CREATED_AT,
   COLUMN_UPDATED_AT
 } from '../../database/DatabaseConstants';
@@ -437,11 +439,14 @@ function instanceToBucket(instance: WorldCharacterInstance): relationalStore.Val
   bucket[COLUMN_WORLD_ID] = instance.worldId;
   bucket[COLUMN_CHARACTER_ID] = instance.characterId;
   bucket[COLUMN_DISPLAY_NAME_SNAPSHOT] = instance.displayNameSnapshot;
-  // currentLocationId 可空:undefined → null
   bucket[COLUMN_CURRENT_LOCATION_ID] = instance.currentLocationId !== undefined
     ? instance.currentLocationId
     : null;
   bucket[COLUMN_IS_ACTIVE] = booleanToInt(instance.isActive);
+  bucket[COLUMN_CURRENT_GOAL] = instance.currentGoal;
+  bucket[COLUMN_MAP_ICON_STYLE] = instance.mapIconStyle !== undefined
+    ? instance.mapIconStyle
+    : null;
   bucket[COLUMN_CREATED_AT] = instance.createdAt;
   bucket[COLUMN_UPDATED_AT] = instance.updatedAt;
   return bucket;
@@ -474,6 +479,17 @@ function instanceFromRow(rs: relationalStore.ResultSet): WorldCharacterInstance 
     }
   }
   const isActive: boolean = intToBoolean(rs.getLong(rs.getColumnIndex(COLUMN_IS_ACTIVE)));
+  const goalCol: number = rs.getColumnIndex(COLUMN_CURRENT_GOAL);
+  const currentGoal: string = goalCol >= 0 && !rs.isColumnNull(goalCol)
+    ? rs.getString(goalCol) : '';
+  const iconCol: number = rs.getColumnIndex(COLUMN_MAP_ICON_STYLE);
+  let mapIconStyle: string | undefined;
+  if (iconCol >= 0 && !rs.isColumnNull(iconCol)) {
+    const iconValue: string = rs.getString(iconCol);
+    if (iconValue !== '') {
+      mapIconStyle = iconValue;
+    }
+  }
   const createdAt: number = rs.getLong(rs.getColumnIndex(COLUMN_CREATED_AT));
   const updatedAt: number = rs.getLong(rs.getColumnIndex(COLUMN_UPDATED_AT));
   if (!isValidTimestamp(createdAt)) {
@@ -489,6 +505,8 @@ function instanceFromRow(rs: relationalStore.ResultSet): WorldCharacterInstance 
     displayNameSnapshot: displayNameSnapshot,
     currentLocationId: currentLocationId,
     isActive: isActive,
+    currentGoal: currentGoal,
+    mapIconStyle: mapIconStyle,
     createdAt: createdAt,
     updatedAt: updatedAt
   };

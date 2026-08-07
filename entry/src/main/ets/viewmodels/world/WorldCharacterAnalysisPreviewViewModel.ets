@@ -168,10 +168,8 @@ export class WorldCharacterAnalysisPreviewViewModel {
     this.isJoining = true;
     this.errorMessage = '';
     try {
-      const locationId: string | undefined = this.selectedLocationId.length > 0
-        ? this.selectedLocationId : undefined;
       await this.stateService.addCharacterToWorld(
-        this.boundWorldId, this.boundCharacterId, locationId
+        this.boundWorldId, this.boundCharacterId
       );
       if (this.disposed) {
         return false;

@@ -6,6 +6,14 @@ export interface WorldPlayerProfile {
   readonly id: string;
   readonly worldId: string;
   readonly displayName: string;
+  /** 玩家人设(W2A1) */
+  readonly persona: string;
+  /** 公开身份(W2A1) */
+  readonly publicIdentity: string;
+  /** 私密身份(W2A1) */
+  readonly privateIdentity: string;
+  /** 当前位置 ID,可空表示未放置(W2A1) */
+  readonly currentLocationId?: string;
   readonly createdAt: number;
   readonly updatedAt: number;
 }
@@ -14,6 +22,10 @@ export interface CreateWorldPlayerProfileOptions {
   readonly id: string;
   readonly worldId: string;
   readonly displayName: string;
+  readonly persona?: string;
+  readonly publicIdentity?: string;
+  readonly privateIdentity?: string;
+  readonly currentLocationId?: string;
   readonly createdAt?: number;
   readonly updatedAt?: number;
 }
@@ -40,10 +52,18 @@ export function createWorldPlayerProfileRecord(
   if (!isValidTimestamp(updatedAt)) {
     throw new Error('WorldPlayerProfile: updatedAt invalid');
   }
+  const locationId: string | undefined =
+    options.currentLocationId !== undefined && options.currentLocationId !== ''
+      ? options.currentLocationId
+      : undefined;
   return {
     id: options.id,
     worldId: options.worldId,
     displayName: trimmed,
+    persona: options.persona !== undefined ? options.persona : '',
+    publicIdentity: options.publicIdentity !== undefined ? options.publicIdentity : '',
+    privateIdentity: options.privateIdentity !== undefined ? options.privateIdentity : '',
+    currentLocationId: locationId,
     createdAt: createdAt,
     updatedAt: updatedAt
   };

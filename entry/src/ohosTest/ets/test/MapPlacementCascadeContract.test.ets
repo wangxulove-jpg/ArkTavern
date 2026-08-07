@@ -89,7 +89,7 @@ export default function mapPlacementCascadeContractTest(): void {
     });
 
     it('MAPCONTRACT-27 deleteWorld 级联删除该 World 全部 Placement', 0, async () => {
-      const world: World = await worldStateService.createWorld('CascadeWorld27', '');
+      const world: World = await worldStateService.createWorld('CascadeWorld27', '', 'Player');
       const loc1: WorldLocation = await worldStateService.createLocation(world.id, 'Loc1', '');
       const loc2: WorldLocation = await worldStateService.createLocation(world.id, 'Loc2', '');
       const p1: WorldLocationMapPlacement = createWorldLocationMapPlacementRecord({
@@ -122,8 +122,8 @@ export default function mapPlacementCascadeContractTest(): void {
     });
 
     it('MAPCONTRACT-28 deleteWorld 不影响其他 World 的 Placement', 0, async () => {
-      const worldA: World = await worldStateService.createWorld('CascadeWorld28A', '');
-      const worldB: World = await worldStateService.createWorld('CascadeWorld28B', '');
+      const worldA: World = await worldStateService.createWorld('CascadeWorld28A', '', 'Player');
+      const worldB: World = await worldStateService.createWorld('CascadeWorld28B', '', 'Player');
       const locA: WorldLocation = await worldStateService.createLocation(worldA.id, 'LocA28', '');
       const locB: WorldLocation = await worldStateService.createLocation(worldB.id, 'LocB28', '');
       const pA: WorldLocationMapPlacement = createWorldLocationMapPlacementRecord({
@@ -159,7 +159,7 @@ export default function mapPlacementCascadeContractTest(): void {
     });
 
     it('MAPCONTRACT-29 deleteLocation 级联删除该地点的 Placement', 0, async () => {
-      const world: World = await worldStateService.createWorld('CascadeWorld29', '');
+      const world: World = await worldStateService.createWorld('CascadeWorld29', '', 'Player');
       const loc1: WorldLocation = await worldStateService.createLocation(world.id, 'LocDel29', '');
       const loc2: WorldLocation = await worldStateService.createLocation(world.id, 'LocKeep29', '');
       const p1: WorldLocationMapPlacement = createWorldLocationMapPlacementRecord({
@@ -194,7 +194,7 @@ export default function mapPlacementCascadeContractTest(): void {
     });
 
     it('MAPCONTRACT-30 deleteLocation 不影响其他地点的 Placement', 0, async () => {
-      const world: World = await worldStateService.createWorld('CascadeWorld30', '');
+      const world: World = await worldStateService.createWorld('CascadeWorld30', '', 'Player');
       const locDel: WorldLocation = await worldStateService.createLocation(world.id, 'LocDel30', '');
       const locKeep: WorldLocation = await worldStateService.createLocation(world.id, 'LocKeep30', '');
       const pDel: WorldLocationMapPlacement = createWorldLocationMapPlacementRecord({
@@ -230,20 +230,20 @@ export default function mapPlacementCascadeContractTest(): void {
     });
 
     it('MAPCONTRACT-31 空 World 可有 0 个 Placement', 0, async () => {
-      const world: World = await worldStateService.createWorld('CascadeWorld31', '');
+      const world: World = await worldStateService.createWorld('CascadeWorld31', '', 'Player');
       const list: WorldLocationMapPlacement[] = await placementRepo.listByWorldId(world.id);
       expect(list.length).assertEqual(0);
     });
 
     it('MAPCONTRACT-32 Location 存在但无 Placement 是合法状态', 0, async () => {
-      const world: World = await worldStateService.createWorld('CascadeWorld32', '');
+      const world: World = await worldStateService.createWorld('CascadeWorld32', '', 'Player');
       const loc: WorldLocation = await worldStateService.createLocation(world.id, 'LocNoPlacement32', '');
       const found: WorldLocationMapPlacement | null = await placementRepo.getByWorldAndLocation(world.id, loc.id);
       expect(found).assertNull();
     });
 
     it('MAPCONTRACT-33 Placement 读取保留小数精度', 0, async () => {
-      const world: World = await worldStateService.createWorld('CascadeWorld33', '');
+      const world: World = await worldStateService.createWorld('CascadeWorld33', '', 'Player');
       const loc: WorldLocation = await worldStateService.createLocation(world.id, 'LocPrec33', '');
       const p: WorldLocationMapPlacement = createWorldLocationMapPlacementRecord({
         id: WORLD_MAP_PLACEMENT_ID_PREFIX + 'c33-prec',

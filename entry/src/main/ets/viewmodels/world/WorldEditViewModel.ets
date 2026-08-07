@@ -46,6 +46,8 @@ export class WorldEditViewModel {
   nameInput: string = '';
   /** 描述输入 */
   descriptionInput: string = '';
+  /** 玩家显示名称输入(仅创建模式) */
+  playerDisplayNameInput: string = '';
   /** 当前世界状态(编辑模式) */
   currentStatus: WorldStatus = WorldStatus.Active;
   /** 是否正在保存 */
@@ -121,7 +123,13 @@ export class WorldEditViewModel {
     this.errorMessage = '';
     try {
       if (this.isCreateMode) {
-        await this.stateService.createWorld(trimmedName, this.descriptionInput.trim());
+        const playerName: string = this.playerDisplayNameInput.trim();
+        if (playerName.length === 0) {
+          this.errorMessage = '玩家名称不能为空';
+          this.isSaving = false;
+          return;
+        }
+        await this.stateService.createWorld(trimmedName, this.descriptionInput.trim(), playerName);
       } else {
         await this.stateService.updateWorld(
           this.boundWorldId,

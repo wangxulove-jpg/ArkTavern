@@ -32,10 +32,14 @@ export interface WorldCharacterInstance {
   readonly characterId: string;
   /** 显示名称快照(仅用于列表显示 / 失效诊断) */
   readonly displayNameSnapshot: string;
-  /** 当前位置 ID(可空) */
+  /** 当前位置 ID(可空,未放置) */
   readonly currentLocationId?: string;
   /** 是否活跃 */
   readonly isActive: boolean;
+  /** 角色在该世界中的当前目标(W2A1) */
+  readonly currentGoal: string;
+  /** 地图图标样式,预留(W2A1) */
+  readonly mapIconStyle?: string;
   /** 创建时间(毫秒) */
   readonly createdAt: number;
   /** 更新时间(毫秒) */
@@ -49,6 +53,8 @@ export interface CreateWorldCharacterInstanceOptions {
   readonly displayNameSnapshot: string;
   readonly currentLocationId?: string;
   readonly isActive?: boolean;
+  readonly currentGoal?: string;
+  readonly mapIconStyle?: string;
   readonly createdAt?: number;
   readonly updatedAt?: number;
 }
@@ -87,6 +93,8 @@ export function createWorldCharacterInstanceRecord(
     displayNameSnapshot: options.displayNameSnapshot,
     currentLocationId: locationId,
     isActive: options.isActive !== undefined ? options.isActive : true,
+    currentGoal: options.currentGoal !== undefined ? options.currentGoal : '',
+    mapIconStyle: options.mapIconStyle,
     createdAt: options.createdAt !== undefined ? options.createdAt : now,
     updatedAt: options.updatedAt !== undefined ? options.updatedAt : now
   };

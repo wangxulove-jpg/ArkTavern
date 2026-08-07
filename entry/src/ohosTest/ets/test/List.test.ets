@@ -12,6 +12,10 @@ import sessionLifeCascadeContractTest from './SessionLifeCascadeContract.test';
 import mapPlacementModelContractTest from './MapPlacementModelContract.test';
 import mapPlacementRepoContractTest from './MapPlacementRepoContract.test';
 import mapPlacementCascadeContractTest from './MapPlacementCascadeContract.test';
+import playerProfileModelContractTest from './PlayerProfileModelContract.test';
+import characterInstanceModelContractTest from './CharacterInstanceModelContract.test';
+import playerProfileRepositoryContractTest from './PlayerProfileRepositoryContract.test';
+import worldPlayerCharacterDomainContractTest from './WorldPlayerCharacterDomainContract.test';
  
 export default function testsuite() {
   groupRuntimeDeviceTest();
@@ -28,4 +32,8 @@ export default function testsuite() {
   mapPlacementModelContractTest();
   mapPlacementRepoContractTest();
   mapPlacementCascadeContractTest();
+  playerProfileModelContractTest();
+  characterInstanceModelContractTest();
+  playerProfileRepositoryContractTest();
+  worldPlayerCharacterDomainContractTest();
 }

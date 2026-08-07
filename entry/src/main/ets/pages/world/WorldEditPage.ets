@@ -29,6 +29,7 @@ struct WorldEditPage {
   @State private loadState: WorldEditLoadState = WorldEditLoadState.Loading;
   @State private nameInput: string = '';
   @State private descriptionInput: string = '';
+  @State private playerDisplayNameInput: string = '';
   @State private currentStatus: WorldStatus = WorldStatus.Active;
   @State private isSaving: boolean = false;
   @State private isDeleting: boolean = false;
@@ -71,6 +72,7 @@ struct WorldEditPage {
     this.loadState = this.viewModel.loadState;
     this.nameInput = this.viewModel.nameInput;
     this.descriptionInput = this.viewModel.descriptionInput;
+    this.playerDisplayNameInput = this.viewModel.playerDisplayNameInput;
     this.currentStatus = this.viewModel.currentStatus;
     this.isSaving = this.viewModel.isSaving;
     this.isDeleting = this.viewModel.isDeleting;
@@ -242,6 +244,31 @@ struct WorldEditPage {
               this.errorMessage = '';
             }
           })
+
+        // 玩家名称(仅创建模式)
+        if (this.viewModel !== null && this.viewModel.isCreateMode) {
+          Text('玩家名称')
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor($r('app.color.app_text_tertiary'))
+            .width('100%')
+            .margin({ top: 16, bottom: 6 })
+
+          TextInput({ text: this.playerDisplayNameInput, placeholder: '输入玩家名称' })
+            .fontSize($r('app.float.app_font_body'))
+            .fontColor($r('app.color.app_text_primary'))
+            .backgroundColor($r('app.color.app_surface_1'))
+            .borderRadius($r('app.float.app_radius_sm'))
+            .height(48)
+            .maxLength(100)
+            .onChange((value: string) => {
+              this.playerDisplayNameInput = value;
+              if (this.viewModel !== null) {
+                this.viewModel.playerDisplayNameInput = value;
+                this.viewModel.clearError();
+                this.errorMessage = '';
+              }
+            })
+        }
 
         // 状态标签(编辑模式)
         if (this.viewModel !== null && !this.viewModel.isCreateMode) {

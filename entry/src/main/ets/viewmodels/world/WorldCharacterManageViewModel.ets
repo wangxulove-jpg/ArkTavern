@@ -268,13 +268,11 @@ export class WorldCharacterManageViewModel {
   }
 
   /**
-   * 添加角色到世界。
+   * 添加角色到世界(W2A1:不再强制初始地点,角色创建后为未放置状态)。
    * @param characterId 角色 ID
-   * @param initialLocationId 初始地点 ID(空字符串表示暂不放置)
    */
   async addCharacterToWorld(
-    characterId: string,
-    initialLocationId: string
+    characterId: string
   ): Promise<boolean> {
     if (this.disposed || this.isSaving || this.isDeleting) {
       return false;
@@ -282,10 +280,8 @@ export class WorldCharacterManageViewModel {
     this.isSaving = true;
     this.errorMessage = '';
     try {
-      const locationId: string | undefined = initialLocationId.length > 0
-        ? initialLocationId : undefined;
       await this.stateService.addCharacterToWorld(
-        this.boundWorldId, characterId, locationId
+        this.boundWorldId, characterId
       );
       if (this.disposed) {
         return false;
