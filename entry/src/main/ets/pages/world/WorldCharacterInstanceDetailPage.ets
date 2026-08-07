@@ -1,10 +1,11 @@
 /**
- * WorldCharacterInstanceDetailPage 角色实例详情页(W-UI-1B)
+ * WorldCharacterInstanceDetailPage 角色实例详情页(W-UI-1B → W2A2)
  *
  * 展示世界角色实例信息(非角色卡编辑页)。包含:
  * - 世界内身份、当前状态、当前目标
  * - 近期活动、记忆摘要、关系摘要、参与场景
- * - 底部操作:开始对话(场景启动器)、查看记忆、移动角色
+ * - 底部操作:开始对话(场景启动器)、查看记忆、调整位置、从地图撤下、放置到地点
+ * - 危险操作:从世界移除
  *
  * 未实现的数据明确标记"尚未建立",不伪造。
  *
@@ -15,11 +16,13 @@ import { router } from '@kit.ArkUI';
 import { AppServices } from '../../services/AppServices';
 import { WorldCharacterInstanceDetailViewModel } from '../../viewmodels/world/WorldCharacterInstanceDetailViewModel';
 import {
+  ActiveLocationOptionUiModel
+} from '../../viewmodels/world/WorldCharacterManageViewModel';
+import {
   WorldCharacterInstanceDetailUiModel,
   WorldInstanceDetailLoadState,
   PENDING_WORLD_INSTANCE_DETAIL_ID_KEY,
   PENDING_WORLD_ID_KEY,
-  PENDING_WORLD_CHARACTER_INSTANCE_ID_KEY,
   PENDING_WORLD_MEMORY_WORLD_ID_KEY,
   PENDING_WORLD_MEMORY_CHARACTER_INSTANCE_ID_KEY,
   WORLD_DETAIL_REFRESH_TOKEN_KEY,
@@ -45,11 +48,23 @@ struct WorldCharacterInstanceDetailPage {
   @State private loadState: WorldInstanceDetailLoadState = WorldInstanceDetailLoadState.Loading;
   @State private errorMessage: string = '';
   @State private detail: WorldCharacterInstanceDetailUiModel | null = null;
+  @State private activeLocations: ActiveLocationOptionUiModel[] = [];
+  @State private isOperating: boolean = false;
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navigationBarHeight') navBarHeight: number = 0;
 
   /** 场景启动器 Sheet */
   @State private sceneLauncherVisible: boolean = false;
+  /** 位置选择 dialog */
+  @State private locationSelectVisible: boolean = false;
+  /** 位置选择用途: 'place' | 'adjust' */
+  @State private locationSelectMode: string = '';
+  /** 从地图撤下确认 */
+  @State private unplaceConfirmVisible: boolean = false;
+  /** 从世界移除确认 */
+  @State private removeFromWorldConfirmVisible: boolean = false;
+  /** 实例已被移除(导航回退标记) */
+  @State private instanceRemoved: boolean = false;
 
   async aboutToAppear(): Promise<void> {
     try {
@@ -66,6 +81,7 @@ struct WorldCharacterInstanceDetailPage {
         AppServices.getWorldCharacterInstanceRepository(),
         AppServices.getWorldRepository(),
         AppServices.getWorldLocationRepository(),
+        AppServices.getWorldStateService(),
         AppServices.getCharacterService()
       );
       this.isInitializing = false;
@@ -101,6 +117,8 @@ struct WorldCharacterInstanceDetailPage {
     this.loadState = this.viewModel.loadState;
     this.errorMessage = this.viewModel.errorMessage;
     this.detail = this.viewModel.detail;
+    this.activeLocations = this.viewModel.activeLocations;
+    this.isOperating = this.viewModel.isOperating;
   }
 
   build(): void {
@@ -118,6 +136,30 @@ struct WorldCharacterInstanceDetailPage {
       backgroundColor: $r('app.color.world_surface_1'),
       onDisappear: () => {
         this.sceneLauncherVisible = false;
+      }
+    })
+    .bindSheet(this.locationSelectVisible, this.locationSelectSheet, {
+      height: SheetSize.FIT_CONTENT,
+      dragBar: true,
+      backgroundColor: $r('app.color.world_surface_1'),
+      onDisappear: () => {
+        this.locationSelectVisible = false;
+      }
+    })
+    .bindSheet(this.unplaceConfirmVisible, this.unplaceConfirmSheet, {
+      height: SheetSize.FIT_CONTENT,
+      dragBar: true,
+      backgroundColor: $r('app.color.world_surface_1'),
+      onDisappear: () => {
+        this.unplaceConfirmVisible = false;
+      }
+    })
+    .bindSheet(this.removeFromWorldConfirmVisible, this.removeFromWorldConfirmSheet, {
+      height: SheetSize.FIT_CONTENT,
+      dragBar: true,
+      backgroundColor: $r('app.color.world_surface_1'),
+      onDisappear: () => {
+        this.removeFromWorldConfirmVisible = false;
       }
     })
   }
@@ -427,36 +469,79 @@ struct WorldCharacterInstanceDetailPage {
   @Builder
   bottomActionBar(d: WorldCharacterInstanceDetailUiModel): void {
     WorldBottomActionBar({}) {
-      Row() {
-        WorldSecondaryButton({
-          label: $r('app.string.world_char_detail_view_memory'),
-          onButtonClick: (): void => {
-            this.openCharacterMemory(d.instanceId, d.worldId);
-          }
-        })
-          .layoutWeight(1)
-          .margin({ right: 8 })
+      Column() {
+        Row() {
+          WorldSecondaryButton({
+            label: $r('app.string.world_char_detail_view_memory'),
+            onButtonClick: (): void => {
+              this.openCharacterMemory(d.instanceId, d.worldId);
+            }
+          })
+            .layoutWeight(1)
+            .margin({ right: 6 })
 
-        WorldSecondaryButton({
-          label: $r('app.string.world_char_detail_move_character'),
-          isEnabled: d.currentLocationId.length > 0,
-          onButtonClick: (): void => {
-            this.openCharacterMove(d.instanceId, d.worldId);
+          if (d.currentLocationId.length > 0) {
+            WorldSecondaryButton({
+              label: '调整位置',
+              isEnabled: !this.isOperating,
+              onButtonClick: (): void => {
+                this.locationSelectMode = 'adjust';
+                this.locationSelectVisible = true;
+              }
+            })
+              .layoutWeight(1)
+              .margin({ right: 6 })
+          } else {
+            WorldSecondaryButton({
+              label: '放置到地点',
+              isEnabled: !this.isOperating && this.activeLocations.length > 0,
+              onButtonClick: (): void => {
+                this.locationSelectMode = 'place';
+                this.locationSelectVisible = true;
+              }
+            })
+              .layoutWeight(1)
+              .margin({ right: 6 })
           }
-        })
-          .layoutWeight(1)
-          .margin({ right: 8 })
 
-        WorldPrimaryButton({
-          label: $r('app.string.world_char_detail_start_conversation'),
-          onButtonClick: (): void => {
-            this.sceneLauncherVisible = true;
+          WorldPrimaryButton({
+            label: $r('app.string.world_char_detail_start_conversation'),
+            onButtonClick: (): void => {
+              this.sceneLauncherVisible = true;
+            }
+          })
+            .layoutWeight(1)
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
+
+        Row() {
+          if (d.currentLocationId.length > 0) {
+            WorldSecondaryButton({
+              label: '从地图撤下',
+              isEnabled: !this.isOperating,
+              onButtonClick: (): void => {
+                this.unplaceConfirmVisible = true;
+              }
+            })
+              .layoutWeight(1)
+              .margin({ right: 6 })
           }
-        })
-          .layoutWeight(1)
+
+          WorldSecondaryButton({
+            label: '从世界移除',
+            isEnabled: !this.isOperating,
+            onButtonClick: (): void => {
+              this.removeFromWorldConfirmVisible = true;
+            }
+          })
+            .layoutWeight(1)
+        }
+        .width('100%')
+        .margin({ top: 8 })
+        .alignItems(VerticalAlign.Center)
       }
       .width('100%')
-      .alignItems(VerticalAlign.Center)
     }
   }
 
@@ -551,20 +636,162 @@ struct WorldCharacterInstanceDetailPage {
     .width('100%')
     .height(48)
     .alignItems(VerticalAlign.Center)
-    .enabled(!disabled)
-    .onClick(action)
+      .enabled(!disabled)
+      .onClick(action)
+  }
+
+  @Builder
+  locationSelectSheet(): void {
+    Scroll() {
+      Column() {
+        Text(this.locationSelectMode === 'adjust' ? '调整位置' : '放置到地点')
+          .fontSize($r('app.float.world_font_title'))
+          .fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.world_text_primary'))
+          .width('100%')
+          .padding({ top: 12, bottom: 8 })
+
+        if (this.activeLocations.length === 0) {
+          Text('没有可用地点')
+            .fontSize($r('app.float.world_font_body'))
+            .fontColor($r('app.color.world_text_tertiary'))
+            .margin({ top: 8, bottom: 16 })
+        } else {
+          ForEach(this.activeLocations, (loc: ActiveLocationOptionUiModel) => {
+            Button(loc.name)
+              .fontSize(14)
+              .backgroundColor($r('app.color.world_surface_2'))
+              .fontColor($r('app.color.world_text_primary'))
+              .borderRadius(8)
+              .height(40)
+              .width('100%')
+              .margin({ bottom: 8 })
+              .enabled(!this.isOperating)
+              .onClick(() => {
+                if (this.locationSelectMode === 'adjust') {
+                  this.handleAdjustLocation(loc.id);
+                } else {
+                  this.handlePlaceAtLocation(loc.id);
+                }
+              })
+          }, (loc: ActiveLocationOptionUiModel) => loc.id)
+        }
+
+        Button($r('app.string.world_cancel'))
+          .fontSize(14)
+          .backgroundColor(Color.Transparent)
+          .fontColor($r('app.color.world_text_secondary'))
+          .borderRadius(8)
+          .height(40)
+          .width('100%')
+          .margin({ top: 8 })
+          .onClick(() => {
+            this.locationSelectVisible = false;
+          })
+
+        Column().width('100%').height(this.navBarHeight + 8)
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16 })
+      .alignItems(HorizontalAlign.Start)
+    }
+    .width('100%')
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.Spring)
+  }
+
+  @Builder
+  unplaceConfirmSheet(): void {
+    Column() {
+      Text('从地图撤下')
+        .fontSize($r('app.float.world_font_title'))
+        .fontWeight(FontWeight.Bold)
+        .fontColor($r('app.color.world_text_primary'))
+        .width('100%')
+        .padding({ top: 12, bottom: 8 })
+
+      Text('角色将从当前地点撤下,但仍保留在世界中。可随时重新放置。')
+        .fontSize($r('app.float.world_font_body'))
+        .fontColor($r('app.color.world_text_secondary'))
+        .margin({ bottom: 16 })
+
+      Row() {
+        WorldSecondaryButton({
+          label: $r('app.string.world_cancel'),
+          fullWidth: true,
+          onButtonClick: (): void => {
+            this.unplaceConfirmVisible = false;
+          }
+        })
+          .layoutWeight(1)
+          .margin({ right: 8 })
+        WorldPrimaryButton({
+          label: '撤下',
+          isEnabled: !this.isOperating,
+          onButtonClick: (): void => {
+            this.handleUnplaceCharacter();
+          }
+        })
+          .layoutWeight(1)
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      Column().width('100%').height(this.navBarHeight + 8)
+    }
+    .width('100%')
+    .padding({ left: 16, right: 16 })
+    .alignItems(HorizontalAlign.Start)
+  }
+
+  @Builder
+  removeFromWorldConfirmSheet(): void {
+    Column() {
+      Text('从世界移除')
+        .fontSize($r('app.float.world_font_title'))
+        .fontWeight(FontWeight.Bold)
+        .fontColor($r('app.color.world_error'))
+        .width('100%')
+        .padding({ top: 12, bottom: 8 })
+
+      Text('此操作将永久移除角色实例及其全部世界记忆。角色卡本身不会被删除。')
+        .fontSize($r('app.float.world_font_body'))
+        .fontColor($r('app.color.world_text_secondary'))
+        .margin({ bottom: 16 })
+
+      Row() {
+        WorldSecondaryButton({
+          label: $r('app.string.world_cancel'),
+          fullWidth: true,
+          onButtonClick: (): void => {
+            this.removeFromWorldConfirmVisible = false;
+          }
+        })
+          .layoutWeight(1)
+          .margin({ right: 8 })
+        WorldPrimaryButton({
+          label: '移除',
+          isEnabled: !this.isOperating,
+          onButtonClick: (): void => {
+            this.handleRemoveFromWorld();
+          }
+        })
+          .layoutWeight(1)
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      Column().width('100%').height(this.navBarHeight + 8)
+    }
+    .width('100%')
+    .padding({ left: 16, right: 16 })
+    .alignItems(HorizontalAlign.Start)
   }
 
   private openCharacterMemory(instanceId: string, worldId: string): void {
     AppStorage.setOrCreate<string>(PENDING_WORLD_MEMORY_WORLD_ID_KEY, worldId);
     AppStorage.setOrCreate<string>(PENDING_WORLD_MEMORY_CHARACTER_INSTANCE_ID_KEY, instanceId);
     router.pushUrl({ url: 'pages/world/WorldCharacterMemoryPage' });
-  }
-
-  private openCharacterMove(instanceId: string, worldId: string): void {
-    AppStorage.setOrCreate<string>(PENDING_WORLD_ID_KEY, worldId);
-    AppStorage.setOrCreate<string>(PENDING_WORLD_CHARACTER_INSTANCE_ID_KEY, instanceId);
-    router.pushUrl({ url: 'pages/world/WorldCharacterMovePage' });
   }
 
   private openSceneManage(): void {
@@ -579,5 +806,65 @@ struct WorldCharacterInstanceDetailPage {
   private openOriginalCharacterCard(characterId: string): void {
     AppStorage.setOrCreate<string>('characterEditId', characterId);
     router.pushUrl({ url: 'pages/CharacterEditPage' });
+  }
+
+  private async handleUnplaceCharacter(): Promise<void> {
+    if (this.viewModel === null) {
+      return;
+    }
+    this.unplaceConfirmVisible = false;
+    this.viewModel.clearError();
+    const ok: boolean = await this.viewModel.unplaceCharacter();
+    this.syncFromViewModel();
+    if (ok) {
+      this.triggerWorldDetailRefresh();
+    }
+  }
+
+  private async handleAdjustLocation(targetLocationId: string): Promise<void> {
+    if (this.viewModel === null) {
+      return;
+    }
+    this.locationSelectVisible = false;
+    this.viewModel.clearError();
+    const ok: boolean = await this.viewModel.adjustLocation(targetLocationId);
+    this.syncFromViewModel();
+    if (ok) {
+      this.triggerWorldDetailRefresh();
+    }
+  }
+
+  private async handlePlaceAtLocation(locationId: string): Promise<void> {
+    if (this.viewModel === null) {
+      return;
+    }
+    this.locationSelectVisible = false;
+    this.viewModel.clearError();
+    const ok: boolean = await this.viewModel.placeAtLocation(locationId);
+    this.syncFromViewModel();
+    if (ok) {
+      this.triggerWorldDetailRefresh();
+    }
+  }
+
+  private async handleRemoveFromWorld(): Promise<void> {
+    if (this.viewModel === null) {
+      return;
+    }
+    this.removeFromWorldConfirmVisible = false;
+    this.viewModel.clearError();
+    const ok: boolean = await this.viewModel.removeFromWorld();
+    if (ok) {
+      this.instanceRemoved = true;
+      this.triggerWorldDetailRefresh();
+      router.back();
+    } else {
+      this.syncFromViewModel();
+    }
+  }
+
+  private triggerWorldDetailRefresh(): void {
+    const current: number = AppStorage.get<number>(WORLD_DETAIL_REFRESH_TOKEN_KEY) ?? 0;
+    AppStorage.setOrCreate<number>(WORLD_DETAIL_REFRESH_TOKEN_KEY, current + 1);
   }
 }

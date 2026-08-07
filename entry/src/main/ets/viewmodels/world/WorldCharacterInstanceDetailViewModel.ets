@@ -1,5 +1,5 @@
 /**
- * WorldCharacterInstanceDetailViewModel 角色实例详情 ViewModel(W-UI-1B)
+ * WorldCharacterInstanceDetailViewModel 角色实例详情 ViewModel(W-UI-1B → W2A2)
  *
  * 职责:
  * - 加载角色实例(WorldCharacterInstanceRepository.getById)
@@ -7,20 +7,28 @@
  * - 解析世界名称(WorldRepository.getById)
  * - 解析地点名称(WorldLocationRepository.getById)
  * - 映射 UI 模型
+ * - 从地图撤下角色(WorldStateService.unplaceCharacter)
+ * - 调整位置(WorldStateService.forceMoveCharacter,管理员位置调整,不检查 Edge)
+ * - 从世界移除(WorldStateService.removeCharacterFromWorld)
+ * - 放置到地点(WorldStateService.placeCharacter)
+ * - 加载世界 Active 地点列表(用于位置调整/放置选择)
  *
- * 依赖方向:Page → ViewModel → Repository(只读) + CharacterService(只读)
+ * 依赖方向:Page → ViewModel → Repository(只读) + CharacterService(只读) + WorldStateService(写)
  */
 
 import { WorldCharacterInstanceRepository } from '../../repositories/world/WorldCharacterInstanceRepository';
 import { WorldRepository } from '../../repositories/world/WorldRepository';
 import { WorldLocationRepository } from '../../repositories/world/WorldLocationRepository';
+import { WorldStateService } from '../../services/world/WorldStateService';
 import { CharacterService } from '../../services/CharacterService';
 import { WorldCharacterInstance } from '../../models/world/WorldCharacterInstance';
 import { World, WorldStatus } from '../../models/world/World';
-import { WorldLocation } from '../../models/world/WorldLocation';
+import { WorldLocation, WorldLocationStatus } from '../../models/world/WorldLocation';
 import { Character } from '../../models/Character';
 import { Logger } from '../../utils/Logger';
 import { WorldInstanceDetailLoadState, WorldCharacterInstanceDetailUiModel } from './WorldUiModels';
+import { ActiveLocationOptionUiModel } from './WorldCharacterManageViewModel';
+import { mapWorldStateErrorToMessage } from './WorldStateErrorMapper';
 
 const LOG_TAG: string = 'WorldCharInstanceDetailVM';
 
@@ -28,24 +36,32 @@ export class WorldCharacterInstanceDetailViewModel {
   private readonly instanceRepository: WorldCharacterInstanceRepository;
   private readonly worldRepository: WorldRepository;
   private readonly locationRepository: WorldLocationRepository;
+  private readonly stateService: WorldStateService;
   private readonly characterService: CharacterService;
 
   loadState: WorldInstanceDetailLoadState = WorldInstanceDetailLoadState.Loading;
   errorMessage: string = '';
   detail: WorldCharacterInstanceDetailUiModel | null = null;
+  /** 世界 Active 地点选项(用于位置调整/放置选择) */
+  activeLocations: ActiveLocationOptionUiModel[] = [];
+
+  isOperating: boolean = false;
 
   private disposed: boolean = false;
+  private boundInstanceId: string = '';
   readonly instanceShortId: string;
 
   constructor(
     instanceRepository: WorldCharacterInstanceRepository,
     worldRepository: WorldRepository,
     locationRepository: WorldLocationRepository,
+    stateService: WorldStateService,
     characterService: CharacterService
   ) {
     this.instanceRepository = instanceRepository;
     this.worldRepository = worldRepository;
     this.locationRepository = locationRepository;
+    this.stateService = stateService;
     this.characterService = characterService;
     this.instanceShortId = WorldCharacterInstanceDetailViewModel.generateShortId();
   }
@@ -71,6 +87,7 @@ export class WorldCharacterInstanceDetailViewModel {
     if (this.disposed) {
       return;
     }
+    this.boundInstanceId = instanceId;
     this.loadState = WorldInstanceDetailLoadState.Loading;
     this.errorMessage = '';
     try {
@@ -133,6 +150,9 @@ export class WorldCharacterInstanceDetailViewModel {
         updatedAt: instance.updatedAt
       };
       this.loadState = WorldInstanceDetailLoadState.Ready;
+
+      // 加载世界 Active 地点选项(用于位置调整/放置)
+      await this.loadActiveLocations(instance.worldId);
     } catch (e) {
       if (this.disposed) {
         return;
@@ -140,6 +160,136 @@ export class WorldCharacterInstanceDetailViewModel {
       Logger.error(LOG_TAG, 'loadSnapshot failed: ' + this.safeErrorCategory(e));
       this.loadState = WorldInstanceDetailLoadState.Error;
       this.errorMessage = '角色实例详情加载失败,请重试';
+    }
+  }
+
+  private async loadActiveLocations(worldId: string): Promise<void> {
+    try {
+      const locations: WorldLocation[] = await this.locationRepository.listByWorld(worldId);
+      const options: ActiveLocationOptionUiModel[] = [];
+      for (let i: number = 0; i < locations.length; i++) {
+        if (locations[i].status === WorldLocationStatus.Active) {
+          options.push({
+            id: locations[i].id,
+            name: locations[i].name
+          });
+        }
+      }
+      this.activeLocations = options;
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'loadActiveLocations failed: ' + this.safeErrorCategory(e));
+      this.activeLocations = [];
+    }
+  }
+
+  /** 从地图撤下角色(清空 currentLocationId,保留实例) */
+  async unplaceCharacter(): Promise<boolean> {
+    if (this.disposed || this.isOperating || this.boundInstanceId.length === 0) {
+      return false;
+    }
+    this.isOperating = true;
+    this.errorMessage = '';
+    try {
+      await this.stateService.unplaceCharacter(this.boundInstanceId);
+      if (this.disposed) {
+        return false;
+      }
+      await this.loadSnapshot(this.boundInstanceId);
+      return true;
+    } catch (e) {
+      if (this.disposed) {
+        return false;
+      }
+      Logger.error(LOG_TAG, 'unplaceCharacter failed: ' + this.safeErrorCategory(e));
+      this.errorMessage = mapWorldStateErrorToMessage(e);
+      return false;
+    } finally {
+      if (!this.disposed) {
+        this.isOperating = false;
+      }
+    }
+  }
+
+  /** 调整位置(管理员位置调整,不检查 Edge,文案用"调整位置"非"移动") */
+  async adjustLocation(targetLocationId: string): Promise<boolean> {
+    if (this.disposed || this.isOperating || this.boundInstanceId.length === 0) {
+      return false;
+    }
+    this.isOperating = true;
+    this.errorMessage = '';
+    try {
+      await this.stateService.forceMoveCharacter(this.boundInstanceId, targetLocationId);
+      if (this.disposed) {
+        return false;
+      }
+      await this.loadSnapshot(this.boundInstanceId);
+      return true;
+    } catch (e) {
+      if (this.disposed) {
+        return false;
+      }
+      Logger.error(LOG_TAG, 'adjustLocation failed: ' + this.safeErrorCategory(e));
+      this.errorMessage = mapWorldStateErrorToMessage(e);
+      return false;
+    } finally {
+      if (!this.disposed) {
+        this.isOperating = false;
+      }
+    }
+  }
+
+  /** 放置到地点(仅未放置时) */
+  async placeAtLocation(locationId: string): Promise<boolean> {
+    if (this.disposed || this.isOperating || this.boundInstanceId.length === 0) {
+      return false;
+    }
+    this.isOperating = true;
+    this.errorMessage = '';
+    try {
+      await this.stateService.placeCharacter(this.boundInstanceId, locationId);
+      if (this.disposed) {
+        return false;
+      }
+      await this.loadSnapshot(this.boundInstanceId);
+      return true;
+    } catch (e) {
+      if (this.disposed) {
+        return false;
+      }
+      Logger.error(LOG_TAG, 'placeAtLocation failed: ' + this.safeErrorCategory(e));
+      this.errorMessage = mapWorldStateErrorToMessage(e);
+      return false;
+    } finally {
+      if (!this.disposed) {
+        this.isOperating = false;
+      }
+    }
+  }
+
+  /** 从世界移除角色实例 */
+  async removeFromWorld(): Promise<boolean> {
+    if (this.disposed || this.isOperating || this.boundInstanceId.length === 0) {
+      return false;
+    }
+    this.isOperating = true;
+    this.errorMessage = '';
+    try {
+      await this.stateService.removeCharacterFromWorld(this.boundInstanceId);
+      if (this.disposed) {
+        return false;
+      }
+      return true;
+    } catch (e) {
+      if (this.disposed) {
+        return false;
+      }
+      Logger.error(LOG_TAG, 'removeFromWorld failed: ' + this.safeErrorCategory(e));
+      this.errorMessage = mapWorldStateErrorToMessage(e);
+      return false;
+    } finally {
+      if (!this.disposed) {
+        this.isOperating = false;
+      }
     }
   }
 

@@ -1,14 +1,16 @@
 /**
- * WorldCharacterManageViewModel 世界角色管理 ViewModel(W-CONTROL-1A)
+ * WorldCharacterManageViewModel 世界角色管理 ViewModel(W-CONTROL-1A → W2A2)
  *
  * 职责:
  * - 加载已加入世界的角色实例列表(WorldCharacterInstanceRepository.listByWorld)
  * - 加载可加入的候选角色(CharacterService.list,过滤已加入的)
  * - 加载世界下的 Active 地点列表(用于初始放置选择)
  * - 添加角色到世界(WorldStateService.addCharacterToWorld)
+ * - 添加角色并立即放置(addCharacterToWorld + placeCharacter)
  * - 设置初始地点(WorldStateService.placeCharacter)
  * - 启用/停用实例(WorldStateService.setCharacterInstanceActive)
  * - 从世界移除实例(WorldStateService.removeCharacterFromWorld)
+ * - 从地图撤下角色(WorldStateService.unplaceCharacter)
  *
  * 依赖方向:Page → ViewModel → WorldStateService(写) + Repository(只读)
  */
@@ -76,6 +78,10 @@ export class WorldCharacterManageViewModel {
   candidates: CandidateCharacterUiModel[] = [];
   /** Active 地点选项 */
   activeLocations: ActiveLocationOptionUiModel[] = [];
+  /** 世界是否有 Active 地点(决定"暂不放置/放置到地点"选择) */
+  hasLocations: boolean = false;
+  /** 未放置角色数量(已加入但 currentLocationId 为空) */
+  unplacedCount: number = 0;
   /** 用户可见错误 */
   errorMessage: string = '';
 
@@ -234,8 +240,18 @@ export class WorldCharacterManageViewModel {
         }
       }
       this.activeLocations = activeLocationOptions;
+      this.hasLocations = activeLocationOptions.length > 0;
 
-      // 7. 加载全部角色并过滤已加入的,得到候选列表
+      // 7. 统计未放置角色
+      let unplaced: number = 0;
+      for (let i: number = 0; i < instanceUiModels.length; i++) {
+        if (instanceUiModels[i].currentLocationId.length === 0) {
+          unplaced = unplaced + 1;
+        }
+      }
+      this.unplacedCount = unplaced;
+
+      // 8. 加载全部角色并过滤已加入的,得到候选列表
       const allCharacters: Character[] = await this.characterService.list();
       if (opId !== this.loadOperationId || this.disposed) {
         return;
@@ -293,6 +309,75 @@ export class WorldCharacterManageViewModel {
         return false;
       }
       Logger.error(LOG_TAG, 'addCharacterToWorld failed: ' + this.safeErrorCategory(e));
+      this.errorMessage = mapWorldStateErrorToMessage(e);
+      return false;
+    } finally {
+      if (!this.disposed) {
+        this.isSaving = false;
+      }
+    }
+  }
+
+  /**
+   * 添加角色到世界并立即放置到指定地点(W2A2)。
+   * 先 addCharacterToWorld,成功后 placeCharacter。
+   * @param characterId 角色 ID
+   * @param locationId 目标地点 ID
+   */
+  async addAndPlaceCharacter(
+    characterId: string,
+    locationId: string
+  ): Promise<boolean> {
+    if (this.disposed || this.isSaving || this.isDeleting) {
+      return false;
+    }
+    this.isSaving = true;
+    this.errorMessage = '';
+    try {
+      const instance: WorldCharacterInstance =
+        await this.stateService.addCharacterToWorld(this.boundWorldId, characterId);
+      if (this.disposed) {
+        return false;
+      }
+      await this.stateService.placeCharacter(instance.id, locationId);
+      if (this.disposed) {
+        return false;
+      }
+      await this.loadSnapshot();
+      return true;
+    } catch (e) {
+      if (this.disposed) {
+        return false;
+      }
+      Logger.error(LOG_TAG, 'addAndPlaceCharacter failed: ' + this.safeErrorCategory(e));
+      this.errorMessage = mapWorldStateErrorToMessage(e);
+      return false;
+    } finally {
+      if (!this.disposed) {
+        this.isSaving = false;
+      }
+    }
+  }
+
+  /** 从地图撤下角色(仅清空 currentLocationId,保留实例) */
+  async unplaceCharacter(instanceId: string): Promise<boolean> {
+    if (this.disposed || this.isSaving || this.isDeleting) {
+      return false;
+    }
+    this.isSaving = true;
+    this.errorMessage = '';
+    try {
+      await this.stateService.unplaceCharacter(instanceId);
+      if (this.disposed) {
+        return false;
+      }
+      await this.loadSnapshot();
+      return true;
+    } catch (e) {
+      if (this.disposed) {
+        return false;
+      }
+      Logger.error(LOG_TAG, 'unplaceCharacter failed: ' + this.safeErrorCategory(e));
       this.errorMessage = mapWorldStateErrorToMessage(e);
       return false;
     } finally {

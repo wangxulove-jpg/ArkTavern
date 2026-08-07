@@ -1,11 +1,13 @@
 /**
- * WorldDetailPage 世界详情页(W1D 沉浸式地图重构)
+ * WorldDetailPage 世界详情页(W1D 沉浸式地图重构 → W2A2)
  *
  * 重构为 map-centric 沉浸式布局:
  * - 顶部导航栏:返回 / 世界名 / 更多菜单(含"编辑地图"入口)
  * - 沉浸式地图视口(2.5D):地点节点 + 角色布告板 + 连接线 + 浮动工具栏 + FAB
- * - 底部摘要栏:地点 / 连接 / 角色 / 事件 数量
+ * - 底部摘要栏:地点 / 连接 / 角色 / 事件 数量 + 未放置角色入口
  * - 选中地点 → bindSheet 弹窗(保留原有地点弹窗逻辑)
+ * - "+"FAB → 轻量菜单(添加角色 / 创建地点)
+ * - 未放置角色 HUD → bindSheet 列表 + 放置操作
  *
  * 浏览模式=默认,无编辑工具栏;编辑模式=⠇菜单切换,允许拖动节点
  *
@@ -15,6 +17,7 @@
 import { router } from '@kit.ArkUI';
 import { AppServices } from '../../services/AppServices';
 import { WorldDetailViewModel } from '../../viewmodels/world/WorldDetailViewModel';
+import { WorldStateService } from '../../services/world/WorldStateService';
 import {
   WorldDetailUiModel,
   WorldSummaryUiModel,
@@ -48,6 +51,7 @@ import { WorldStatus } from '../../models/world/World';
 import { WorldLocationStatus } from '../../models/world/WorldLocation';
 import { WorldImmersiveMap, NodeBillboardData } from '../../components/world/WorldImmersiveMap';
 import { BillboardCharacterSlotData } from '../../components/world/WorldMapCharacterBillboard';
+import { ActiveLocationOptionUiModel } from '../../viewmodels/world/WorldCharacterManageViewModel';
 import { WorldStatusChip } from '../../components/world/WorldStatusChip';
 import { WorldEmptyState } from '../../components/world/WorldEmptyState';
 import { WorldPrimaryButton } from '../../components/world/WorldPrimaryButton';
@@ -95,6 +99,18 @@ struct WorldDetailPage {
 
   @State private moreMenuVisible: boolean = false;
   @State private dragError: string = '';
+  @State private unplacedCharacters: WorldCharacterInstanceUiModel[] = [];
+  @State private unplacedCount: number = 0;
+  @State private addMenuVisible: boolean = false;
+  @State private unplacedSheetVisible: boolean = false;
+  @State private placeForInstanceId: string = '';
+  @State private placeForInstanceName: string = '';
+  @State private placeLocationSheetVisible: boolean = false;
+  @State private placeActiveLocations: ActiveLocationOptionUiModel[] = [];
+  @State private placeOperating: boolean = false;
+  @State private placeError: string = '';
+
+  private stateService: WorldStateService | null = null;
 
   private readonly pageInstanceShortId: string = generateShortId();
 
@@ -123,6 +139,8 @@ struct WorldDetailPage {
       this.mapViewModel = new WorldImmersiveMapViewModel(
         AppServices.getWorldMapInteractionService()
       );
+
+      this.stateService = AppServices.getWorldStateService();
 
       Logger.info(LOG_TAG, 'aboutToAppear: pageInstance=' + this.pageInstanceShortId
         + ', worldShortId=' + worldId.substring(worldId.length - 8));
@@ -185,6 +203,8 @@ struct WorldDetailPage {
     this.state = this.viewModel.state;
     this.errorMessage = this.viewModel.errorMessage;
     this.detail = this.viewModel.detail;
+    this.unplacedCharacters = this.viewModel.unplacedCharacters;
+    this.unplacedCount = this.viewModel.unplacedCount;
     if (this.state === WorldDetailLoadState.Ready && this.detail !== null) {
       if (this.selectedLocationId.length > 0
         && !this.containsLocation(this.detail.locations, this.selectedLocationId)) {
@@ -223,6 +243,9 @@ struct WorldDetailPage {
       if (this.moreMenuVisible) {
         this.moreMenuOverlay()
       }
+      if (this.addMenuVisible) {
+        this.addMenuOverlay()
+      }
     }
     .width('100%')
     .height('100%')
@@ -239,6 +262,23 @@ struct WorldDetailPage {
         this.sheetDetail = null;
         this.sheetActionError = '';
         this.sheetStartConfirmVisible = false;
+      }
+    })
+    .bindSheet(this.unplacedSheetVisible, this.unplacedCharactersSheet, {
+      height: SheetSize.FIT_CONTENT,
+      dragBar: true,
+      backgroundColor: $r('app.color.world_surface_1'),
+      onDisappear: () => {
+        this.unplacedSheetVisible = false;
+      }
+    })
+    .bindSheet(this.placeLocationSheetVisible, this.placeLocationSelectSheet, {
+      height: SheetSize.FIT_CONTENT,
+      dragBar: true,
+      backgroundColor: $r('app.color.world_surface_1'),
+      onDisappear: () => {
+        this.placeLocationSheetVisible = false;
+        this.placeForInstanceId = '';
       }
     })
   }
@@ -512,7 +552,7 @@ struct WorldDetailPage {
           }
         },
         onAddCharacter: (): void => {
-          this.openCharacterManage();
+          this.addMenuVisible = true;
         },
         onCharacterTap: (instanceId: string): void => {
           this.openInstanceDetail(instanceId);
@@ -561,24 +601,47 @@ struct WorldDetailPage {
   @Builder
   bottomSummaryBar(): void {
     if (this.detail !== null) {
-      Row() {
-        this.summaryItem($r('app.string.world_ui_locations_label'), this.detail.world.locationCount)
-        this.summaryItem($r('app.string.world_ui_characters_label'), this.detail.characters.length)
-        this.summaryItem($r('app.string.world_edge_count_label'), this.detail.edgeCount)
-        this.summaryItem($r('app.string.world_event_count_label'), this.detail.eventCount)
+      Column() {
+        if (this.unplacedCount > 0) {
+          Row() {
+            Text('未放置角色 · ' + this.unplacedCount.toString())
+              .fontSize($r('app.float.world_font_caption'))
+              .fontColor($r('app.color.world_gold'))
+              .layoutWeight(1)
+            Text('查看')
+              .fontSize($r('app.float.world_font_caption'))
+              .fontColor($r('app.color.world_gold'))
+              .onClick(() => {
+                this.unplacedSheetVisible = true;
+              })
+          }
+          .width('100%')
+          .padding({ left: $r('app.float.world_page_padding'), right: $r('app.float.world_page_padding'), top: 6, bottom: 6 })
+          .backgroundColor($r('app.color.world_surface_1'))
+          .borderRadius($r('app.float.world_radius_chip'))
+          .margin({ left: $r('app.float.world_page_padding'), right: $r('app.float.world_page_padding'), bottom: 4 })
+          .alignItems(VerticalAlign.Center)
+        }
+        Row() {
+          this.summaryItem($r('app.string.world_ui_locations_label'), this.detail.world.locationCount)
+          this.summaryItem($r('app.string.world_ui_characters_label'), this.detail.characters.length)
+          this.summaryItem($r('app.string.world_edge_count_label'), this.detail.edgeCount)
+          this.summaryItem($r('app.string.world_event_count_label'), this.detail.eventCount)
+        }
+        .width('100%')
+        .height($r('app.float.world_bottom_bar_height'))
+        .backgroundColor($r('app.color.world_bg'))
+        .borderWidth({ top: 1 })
+        .borderColor($r('app.color.world_border'))
+        .padding({
+          left: $r('app.float.world_page_padding'),
+          right: $r('app.float.world_page_padding'),
+          bottom: this.navBarHeight
+        })
+        .justifyContent(FlexAlign.SpaceAround)
+        .alignItems(VerticalAlign.Center)
       }
       .width('100%')
-      .height($r('app.float.world_bottom_bar_height'))
-      .backgroundColor($r('app.color.world_bg'))
-      .borderWidth({ top: 1 })
-      .borderColor($r('app.color.world_border'))
-      .padding({
-        left: $r('app.float.world_page_padding'),
-        right: $r('app.float.world_page_padding'),
-        bottom: this.navBarHeight
-      })
-      .justifyContent(FlexAlign.SpaceAround)
-      .alignItems(VerticalAlign.Center)
     }
   }
 
@@ -596,6 +659,185 @@ struct WorldDetailPage {
     }
     .alignItems(HorizontalAlign.Center)
     .layoutWeight(1)
+  }
+
+  @Builder
+  addMenuOverlay(): void {
+    Stack() {
+      Column()
+        .width('100%')
+        .layoutWeight(1)
+        .backgroundColor($r('app.color.world_scrim'))
+        .onClick(() => {
+          this.addMenuVisible = false;
+        })
+
+      Column() {
+        this.addMenuItem('添加角色', (): void => {
+          this.addMenuVisible = false;
+          this.openCharacterManage();
+        })
+        this.addMenuItem('创建地点', (): void => {
+          this.addMenuVisible = false;
+          this.openLocationCreate();
+        })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, bottom: this.navBarHeight + 80 })
+      .backgroundColor(Color.Transparent)
+    }
+    .width('100%')
+    .height('100%')
+    .alignContent(Alignment.BottomStart)
+  }
+
+  @Builder
+  addMenuItem(label: string, action: () => void): void {
+    Button(label)
+      .fontSize($r('app.float.world_font_body'))
+      .fontColor($r('app.color.world_text_primary'))
+      .backgroundColor($r('app.color.world_surface_elevated'))
+      .borderRadius(8)
+      .height(48)
+      .width('100%')
+      .margin({ bottom: 8 })
+      .onClick(action)
+  }
+
+  @Builder
+  unplacedCharactersSheet(): void {
+    Column() {
+      Text('未放置角色')
+        .fontSize($r('app.float.world_font_title'))
+        .fontWeight(FontWeight.Bold)
+        .fontColor($r('app.color.world_text_primary'))
+        .width('100%')
+        .padding({ top: 12, bottom: 8 })
+
+      if (this.unplacedCharacters.length === 0) {
+        Text('没有未放置的角色')
+          .fontSize($r('app.float.world_font_body'))
+          .fontColor($r('app.color.world_text_tertiary'))
+          .margin({ top: 8, bottom: 16 })
+      } else {
+        Column() {
+          ForEach(this.unplacedCharacters, (c: WorldCharacterInstanceUiModel) => {
+            Row() {
+              CharacterImageView({
+                imageUri: c.avatarUri,
+                fallbackName: c.fallbackName,
+                imgWidth: 36,
+                imgHeight: 36,
+                imgBorderRadius: 18,
+                displayMode: 'thumbnail',
+                objectFit: ImageFit.Cover
+              })
+              Column() {
+                Text(c.displayName)
+                  .fontSize($r('app.float.world_font_body'))
+                  .fontColor($r('app.color.world_text_primary'))
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .width('100%')
+                Text('未放置')
+                  .fontSize($r('app.float.world_font_micro'))
+                  .fontColor($r('app.color.world_text_tertiary'))
+                  .margin({ top: 2 })
+              }
+              .layoutWeight(1)
+              .margin({ left: 10 })
+              .alignItems(HorizontalAlign.Start)
+
+              WorldSecondaryButton({
+                label: '放置',
+                onButtonClick: (): void => {
+                  this.openPlaceLocationSelect(c.id, c.displayName);
+                }
+              })
+                .margin({ left: 8 })
+
+              WorldSecondaryButton({
+                label: '查看',
+                onButtonClick: (): void => {
+                  this.unplacedSheetVisible = false;
+                  this.openInstanceDetail(c.id);
+                }
+              })
+                .margin({ left: 4 })
+            }
+            .width('100%')
+            .padding({ top: 8, bottom: 8 })
+            .alignItems(VerticalAlign.Center)
+          }, (c: WorldCharacterInstanceUiModel) => c.id)
+        }
+        .width('100%')
+      }
+
+      Column().width('100%').height(this.navBarHeight + 16)
+    }
+    .width('100%')
+    .padding({ left: 16, right: 16 })
+    .alignItems(HorizontalAlign.Start)
+  }
+
+  @Builder
+  placeLocationSelectSheet(): void {
+    Column() {
+      Text('放置角色: ' + this.placeForInstanceName)
+        .fontSize($r('app.float.world_font_title'))
+        .fontWeight(FontWeight.Bold)
+        .fontColor($r('app.color.world_text_primary'))
+        .width('100%')
+        .padding({ top: 12, bottom: 8 })
+
+      if (this.placeError.length > 0) {
+        Text(this.placeError)
+          .fontSize($r('app.float.world_font_caption'))
+          .fontColor($r('app.color.world_error'))
+          .width('100%')
+          .margin({ bottom: 8 })
+      }
+
+      if (this.placeActiveLocations.length === 0) {
+        Text('没有可用地点,请先创建地点')
+          .fontSize($r('app.float.world_font_body'))
+          .fontColor($r('app.color.world_text_tertiary'))
+          .margin({ top: 8, bottom: 16 })
+      } else {
+        ForEach(this.placeActiveLocations, (loc: ActiveLocationOptionUiModel) => {
+          Button(loc.name)
+            .fontSize(14)
+            .backgroundColor($r('app.color.world_surface_2'))
+            .fontColor($r('app.color.world_text_primary'))
+            .borderRadius(8)
+            .height(40)
+            .width('100%')
+            .margin({ bottom: 8 })
+            .enabled(!this.placeOperating)
+            .onClick(() => {
+              this.handlePlaceCharacter(this.placeForInstanceId, loc.id);
+            })
+        }, (loc: ActiveLocationOptionUiModel) => loc.id)
+      }
+
+      Button($r('app.string.world_cancel'))
+        .fontSize(14)
+        .backgroundColor(Color.Transparent)
+        .fontColor($r('app.color.world_text_secondary'))
+        .borderRadius(8)
+        .height(40)
+        .width('100%')
+        .margin({ top: 8 })
+        .onClick(() => {
+          this.placeLocationSheetVisible = false;
+          this.placeForInstanceId = '';
+        })
+
+      Column().width('100%').height(this.navBarHeight + 16)
+    }
+    .width('100%')
+    .padding({ left: 16, right: 16 })
+    .alignItems(HorizontalAlign.Start)
   }
 
   @Builder
@@ -1021,6 +1263,49 @@ struct WorldDetailPage {
     }
     AppStorage.setOrCreate<string>(PENDING_WORLD_ID_KEY, this.currentWorldId);
     router.pushUrl({ url: 'pages/world/WorldCharacterManagePage' });
+  }
+
+  private openPlaceLocationSelect(instanceId: string, displayName: string): void {
+    this.placeForInstanceId = instanceId;
+    this.placeForInstanceName = displayName;
+    this.placeError = '';
+    this.placeOperating = false;
+    this.placeActiveLocations = this.resolveActiveLocations();
+    this.unplacedSheetVisible = false;
+    this.placeLocationSheetVisible = true;
+  }
+
+  private resolveActiveLocations(): ActiveLocationOptionUiModel[] {
+    if (this.detail === null) {
+      return [];
+    }
+    const result: ActiveLocationOptionUiModel[] = [];
+    for (let i: number = 0; i < this.detail.locations.length; i++) {
+      const loc: WorldLocationUiModel = this.detail.locations[i];
+      if (loc.status === WorldLocationStatus.Active) {
+        result.push({ id: loc.id, name: loc.name });
+      }
+    }
+    return result;
+  }
+
+  private async handlePlaceCharacter(instanceId: string, locationId: string): Promise<void> {
+    if (this.stateService === null) {
+      return;
+    }
+    this.placeOperating = true;
+    this.placeError = '';
+    try {
+      await this.stateService.placeCharacter(instanceId, locationId);
+      this.placeLocationSheetVisible = false;
+      this.placeForInstanceId = '';
+      this.bumpSceneTokens();
+      await this.loadDetail(this.currentWorldId);
+    } catch (e) {
+      this.placeError = '放置失败,请重试';
+    } finally {
+      this.placeOperating = false;
+    }
   }
 
   private openEdgeManage(): void {

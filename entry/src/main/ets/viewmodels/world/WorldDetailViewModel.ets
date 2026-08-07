@@ -67,6 +67,10 @@ export class WorldDetailViewModel {
   errorMessage: string = '';
   /** 世界详情 UI 模型(Ready 时非空,加载失败时保留上一份成功快照) */
   detail: WorldDetailUiModel | null = null;
+  /** 未放置角色实例(currentLocationId 为空) */
+  unplacedCharacters: WorldCharacterInstanceUiModel[] = [];
+  /** 未放置角色数量 */
+  unplacedCount: number = 0;
 
   /** 当前页面绑定的 worldId(由 setWorldId 写入,防止快速切换时旧请求覆盖) */
   private expectedWorldId: string = '';
@@ -364,6 +368,16 @@ export class WorldDetailViewModel {
         return;
       }
       this.detail = detailModel;
+
+      const unplacedChars: WorldCharacterInstanceUiModel[] = [];
+      for (let i: number = 0; i < characterUiModels.length; i++) {
+        if (characterUiModels[i].currentLocationId.length === 0) {
+          unplacedChars.push(characterUiModels[i]);
+        }
+      }
+      this.unplacedCharacters = unplacedChars;
+      this.unplacedCount = unplacedChars.length;
+
       this.state = WorldDetailLoadState.Ready;
       Logger.info(LOG_TAG, 'loadSnapshot done: vmInstance=' + this.instanceShortId
         + ', operation=' + operationId.toString()

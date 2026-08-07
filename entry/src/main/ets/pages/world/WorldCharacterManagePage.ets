@@ -1,10 +1,10 @@
 /**
- * WorldCharacterManagePage 世界角色管理页(W-UI-1B 重构)
+ * WorldCharacterManagePage 世界角色管理页(W-UI-1B → W2A2)
  *
- * 重构:深色酒馆质感 + 搜索 + 筛选 + 分析预览入口 + 实例详情入口。
- * 候选角色点击"分析并加入"→ WorldCharacterAnalysisPreviewPage
+ * 重构:深色酒馆质感 + 搜索 + 筛选 + 添加角色放置选择。
+ * 候选角色点击"加入世界"→ 选择"暂不放置"或"放置到地点"
  * 已加入角色点击"查看角色"→ WorldCharacterInstanceDetailPage
- * 保留所有管理操作(启用/停用/移除/移动/记忆/设置地点)
+ * 保留所有管理操作(启用/停用/移除/撤下/设置地点)
  *
  * 路由:通过 AppStorage PENDING_WORLD_ID_KEY 传 worldId
  * 所有写入调用 WorldStateService。
@@ -21,8 +21,6 @@ import {
 } from '../../viewmodels/world/WorldCharacterManageViewModel';
 import {
   PENDING_WORLD_ID_KEY,
-  PENDING_WORLD_CHARACTER_INSTANCE_ID_KEY,
-  PENDING_WORLD_ANALYSIS_CHARACTER_ID_KEY,
   PENDING_WORLD_INSTANCE_DETAIL_ID_KEY,
   WORLD_DETAIL_REFRESH_TOKEN_KEY,
   WORLD_CHARACTER_MANAGE_REFRESH_TOKEN_KEY
@@ -53,16 +51,24 @@ struct WorldCharacterManagePage {
   @State private isSaving: boolean = false;
   @State private isDeleting: boolean = false;
   @State private currentWorldId: string = '';
+  @State private hasLocations: boolean = false;
+  @State private unplacedCount: number = 0;
 
   @State private searchText: string = '';
   @State private currentFilter: ManageFilter = 'all';
   @State private filteredInstances: WorldCharacterInstanceManageUiModel[] = [];
   @State private filteredCandidates: CandidateCharacterUiModel[] = [];
 
+  /** 添加角色放置选择 overlay:正在为哪个候选角色选择放置方式 */
+  @State private addingCharacterId: string = '';
+  /** 添加角色放置选择:选择的放置方式 */
+  @State private addPlacementMode: string = '';
   /** Set location dialog */
   @State private selectingLocationForInstance: string = '';
   /** Remove confirm */
   @State private removingInstanceId: string = '';
+  /** Unplace confirm */
+  @State private unplacingInstanceId: string = '';
 
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navigationBarHeight') navBarHeight: number = 0;
@@ -140,6 +146,8 @@ struct WorldCharacterManagePage {
     this.activeLocations = this.viewModel.activeLocations;
     this.isSaving = this.viewModel.isSaving;
     this.isDeleting = this.viewModel.isDeleting;
+    this.hasLocations = this.viewModel.hasLocations;
+    this.unplacedCount = this.viewModel.unplacedCount;
     this.updateFilteredLists();
   }
 
@@ -371,6 +379,12 @@ struct WorldCharacterManagePage {
     if (this.removingInstanceId.length > 0) {
       this.removeConfirmDialog();
     }
+    if (this.unplacingInstanceId.length > 0) {
+      this.unplaceConfirmDialog();
+    }
+    if (this.addingCharacterId.length > 0) {
+      this.addPlacementOverlay();
+    }
   }
 
   @Builder
@@ -470,11 +484,10 @@ struct WorldCharacterManagePage {
 
           Blank().layoutWeight(1)
 
-          // 设置初始地点(仅未放置时)
           if (inst.currentLocationId.length === 0 && !inst.characterCardMissing) {
             WorldSecondaryButton({
-              label: $r('app.string.world_character_set_location'),
-              isEnabled: !this.isSaving && !this.isDeleting,
+              label: '放置到地点',
+              isEnabled: !this.isSaving && !this.isDeleting && this.hasLocations,
               onButtonClick: (): void => {
                 this.selectingLocationForInstance = inst.id;
               }
@@ -482,13 +495,12 @@ struct WorldCharacterManagePage {
               .margin({ left: 8 })
           }
 
-          // 移动角色(仅已放置时)
           if (inst.currentLocationId.length > 0) {
             WorldSecondaryButton({
-              label: $r('app.string.world_character_move'),
+              label: '从地图撤下',
               isEnabled: !this.isSaving && !this.isDeleting,
               onButtonClick: (): void => {
-                this.openCharacterMove(inst.id);
+                this.unplacingInstanceId = inst.id;
               }
             })
               .margin({ left: 8 })
@@ -599,10 +611,11 @@ struct WorldCharacterManagePage {
         .margin({ left: 12 })
 
         WorldPrimaryButton({
-          label: $r('app.string.world_char_manage_analyze_and_join'),
+          label: '加入世界',
           isEnabled: !this.isSaving && !this.isDeleting,
           onButtonClick: (): void => {
-            this.openAnalysisPreview(c.id);
+            this.addingCharacterId = c.id;
+            this.addPlacementMode = '';
           }
         })
       }
@@ -719,17 +732,172 @@ struct WorldCharacterManagePage {
     })
   }
 
+  @Builder
+  addPlacementOverlay(): void {
+    Column() {
+      Column() {
+        Text('加入世界')
+          .fontSize(17)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.world_text_primary'))
+          .margin({ bottom: 16 })
+
+        if (!this.hasLocations) {
+          Text('当前世界没有可用地点,角色将以未放置状态加入。')
+            .fontSize(14)
+            .fontColor($r('app.color.world_text_secondary'))
+            .margin({ bottom: 16 })
+          Row() {
+            WorldSecondaryButton({
+              label: '取消',
+              fullWidth: true,
+              onButtonClick: (): void => {
+                this.addingCharacterId = '';
+                this.addPlacementMode = '';
+              }
+            })
+              .layoutWeight(1)
+            WorldPrimaryButton({
+              label: '暂不放置',
+              isEnabled: !this.isSaving,
+              onButtonClick: (): void => {
+                const cid: string = this.addingCharacterId;
+                this.addingCharacterId = '';
+                this.addPlacementMode = '';
+                this.handleAddCharacter(cid);
+              }
+            })
+              .layoutWeight(1)
+              .margin({ left: 12 })
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Center)
+        } else {
+          Text('选择角色的初始位置:')
+            .fontSize(14)
+            .fontColor($r('app.color.world_text_secondary'))
+            .margin({ bottom: 12 })
+
+          WorldSecondaryButton({
+            label: '暂不放置',
+            fullWidth: true,
+            isEnabled: !this.isSaving,
+            onButtonClick: (): void => {
+              const cid: string = this.addingCharacterId;
+              this.addingCharacterId = '';
+              this.addPlacementMode = '';
+              this.handleAddCharacter(cid);
+            }
+          })
+            .margin({ bottom: 8 })
+
+          ForEach(this.activeLocations, (loc: ActiveLocationOptionUiModel) => {
+            Button(loc.name)
+              .fontSize(14)
+              .backgroundColor($r('app.color.world_surface_2'))
+              .fontColor($r('app.color.world_text_primary'))
+              .borderRadius(8)
+              .height(40)
+              .width('100%')
+              .margin({ bottom: 8 })
+              .enabled(!this.isSaving)
+              .onClick(() => {
+                const cid: string = this.addingCharacterId;
+                this.addingCharacterId = '';
+                this.addPlacementMode = '';
+                this.handleAddAndPlaceCharacter(cid, loc.id);
+              })
+          }, (loc: ActiveLocationOptionUiModel) => loc.id)
+
+          Button($r('app.string.world_cancel'))
+            .fontSize(14)
+            .backgroundColor(Color.Transparent)
+            .fontColor($r('app.color.world_text_secondary'))
+            .borderRadius(8)
+            .height(40)
+            .width('100%')
+            .margin({ top: 8 })
+            .onClick(() => {
+              this.addingCharacterId = '';
+              this.addPlacementMode = '';
+            })
+        }
+      }
+      .width('80%')
+      .padding(20)
+      .backgroundColor($r('app.color.world_surface_elevated'))
+      .borderRadius(16)
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+    .backgroundColor($r('app.color.world_scrim'))
+    .onClick(() => {
+      this.addingCharacterId = '';
+      this.addPlacementMode = '';
+    })
+  }
+
+  @Builder
+  unplaceConfirmDialog(): void {
+    Column() {
+      Column() {
+        Text('从地图撤下')
+          .fontSize(17)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.world_text_primary'))
+          .margin({ bottom: 12 })
+
+        Text('角色将从当前地点撤下,但仍保留在世界中。可随时重新放置。')
+          .fontSize(14)
+          .fontColor($r('app.color.world_text_secondary'))
+          .margin({ bottom: 20 })
+
+        Row() {
+          WorldSecondaryButton({
+            label: $r('app.string.world_cancel'),
+            fullWidth: true,
+            onButtonClick: (): void => {
+              this.unplacingInstanceId = '';
+            }
+          })
+            .layoutWeight(1)
+
+          WorldPrimaryButton({
+            label: '撤下',
+            isEnabled: !this.isSaving,
+            onButtonClick: (): void => {
+              const instanceId: string = this.unplacingInstanceId;
+              this.unplacingInstanceId = '';
+              this.handleUnplaceCharacter(instanceId);
+            }
+          })
+            .layoutWeight(1)
+            .margin({ left: 12 })
+        }
+        .width('100%')
+      }
+      .width('80%')
+      .padding(20)
+      .backgroundColor($r('app.color.world_surface_elevated'))
+      .borderRadius(16)
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+    .backgroundColor($r('app.color.world_scrim'))
+    .onClick(() => {
+      this.unplacingInstanceId = '';
+    })
+  }
+
   private resolveLocationLabel(inst: WorldCharacterInstanceManageUiModel): string {
     if (inst.currentLocationId.length === 0) {
       return '未放置';
     }
     return inst.currentLocationName.length > 0 ? inst.currentLocationName : '未知地点';
-  }
-
-  private openAnalysisPreview(characterId: string): void {
-    AppStorage.setOrCreate<string>(PENDING_WORLD_ID_KEY, this.currentWorldId);
-    AppStorage.setOrCreate<string>(PENDING_WORLD_ANALYSIS_CHARACTER_ID_KEY, characterId);
-    router.pushUrl({ url: 'pages/world/WorldCharacterAnalysisPreviewPage' });
   }
 
   private openInstanceDetail(instanceId: string): void {
@@ -773,10 +941,40 @@ struct WorldCharacterManagePage {
     }
   }
 
-  private openCharacterMove(instanceId: string): void {
-    AppStorage.setOrCreate<string>(PENDING_WORLD_ID_KEY, this.currentWorldId);
-    AppStorage.setOrCreate<string>(PENDING_WORLD_CHARACTER_INSTANCE_ID_KEY, instanceId);
-    router.pushUrl({ url: 'pages/world/WorldCharacterMovePage' });
+  private async handleAddCharacter(characterId: string): Promise<void> {
+    if (this.viewModel === null) {
+      return;
+    }
+    this.viewModel.clearError();
+    await this.viewModel.addCharacterToWorld(characterId);
+    this.syncFromViewModel();
+    if (this.errorMessage.length === 0) {
+      this.triggerWorldDetailRefresh();
+    }
+  }
+
+  private async handleAddAndPlaceCharacter(characterId: string, locationId: string): Promise<void> {
+    if (this.viewModel === null) {
+      return;
+    }
+    this.viewModel.clearError();
+    await this.viewModel.addAndPlaceCharacter(characterId, locationId);
+    this.syncFromViewModel();
+    if (this.errorMessage.length === 0) {
+      this.triggerWorldDetailRefresh();
+    }
+  }
+
+  private async handleUnplaceCharacter(instanceId: string): Promise<void> {
+    if (this.viewModel === null) {
+      return;
+    }
+    this.viewModel.clearError();
+    await this.viewModel.unplaceCharacter(instanceId);
+    this.syncFromViewModel();
+    if (this.errorMessage.length === 0) {
+      this.triggerWorldDetailRefresh();
+    }
   }
 
   private triggerWorldDetailRefresh(): void {
