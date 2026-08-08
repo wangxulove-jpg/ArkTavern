@@ -19,6 +19,8 @@ import { WorldCharacterMovementService } from '../../../main/ets/services/world/
 import { WorldCharacterMemoryRepository } from '../../../main/ets/repositories/world/WorldCharacterMemoryRepository';
 import { WorldCharacterMemoryEntryRepository } from '../../../main/ets/repositories/world/WorldCharacterMemoryEntryRepository';
 import { WorldEventExtractionRunRepository, WorldEventEntryRepository } from '../../../main/ets/repositories/world/WorldEventExtractionRepository';
+import { WorldKnownEventEntryRepository } from '../../../main/ets/repositories/world/WorldKnownEventEntryRepository';
+import { WorldDirectionalRelationshipEntryRepository } from '../../../main/ets/repositories/world/WorldDirectionalRelationshipEntryRepository';
 import { WorldStateService } from '../../../main/ets/services/world/WorldStateService';
 import { CharacterService } from '../../../main/ets/services/CharacterService';
 import { CharacterRepository } from '../../../main/ets/repositories/CharacterRepository';
@@ -78,7 +80,8 @@ export default function worldPlayerCharacterDomainContractTest(): void {
         sceneRepo, sceneMessageRepo, sessionRepo, summaryRepo, profileRepository, placementRepo,
         memoryService, new WorldCharacterMemoryEntryRepository(dbHelper),
         movementService, new WorldEventExtractionRunRepository(dbHelper),
-        new WorldEventEntryRepository(dbHelper), characterService, dbHelper
+        new WorldEventEntryRepository(dbHelper), new WorldKnownEventEntryRepository(dbHelper),
+        new WorldDirectionalRelationshipEntryRepository(dbHelper), characterService, dbHelper
       );
       profileRepo = profileRepository;
     });

@@ -113,8 +113,10 @@ import { WorldCharacterMemoryGenerationService } from './world/WorldCharacterMem
 import { WorldCharacterMovementService } from './world/WorldCharacterMovementService';
 import { WorldEventExtractionRunRepository, WorldEventEntryRepository } from '../repositories/world/WorldEventExtractionRepository';
 import { WorldKnownEventEntryRepository } from '../repositories/world/WorldKnownEventEntryRepository';
+import { WorldDirectionalRelationshipEntryRepository } from '../repositories/world/WorldDirectionalRelationshipEntryRepository';
 import { WorldEventStoreService } from './world/WorldEventStoreService';
 import { WorldKnownEventStoreService } from './world/WorldKnownEventStoreService';
+import { WorldDirectionalRelationshipStoreService } from './world/WorldDirectionalRelationshipStoreService';
 import { WorldEventExtractionPromptAssembler } from './world/WorldEventExtractionPromptAssembler';
 import { WorldEventExtractionGenerationService } from './world/WorldEventExtractionGenerationService';
 import { WorldPerceptionService } from './world/WorldPerceptionService';
@@ -326,6 +328,8 @@ export class AppServices {
   private readonly worldEventEntryRepository: WorldEventEntryRepository;
   /** WorldKnownEventEntryRepository 世界已知事件条目仓储(W6B1) */
   private readonly worldKnownEventEntryRepository: WorldKnownEventEntryRepository;
+  /** WorldDirectionalRelationshipEntryRepository 世界方向性关系条目仓储(W6C1) */
+  private readonly worldDirectionalRelationshipEntryRepository: WorldDirectionalRelationshipEntryRepository;
   /** WorldEventStoreService 世界事件提取存储服务(W6A1) */
   private readonly worldEventStoreService: WorldEventStoreService;
   /** WorldEventExtractionPromptAssembler 世界事件提取Prompt构建器(W6A2) */
@@ -334,6 +338,8 @@ export class AppServices {
   private readonly worldEventExtractionGenerationService: WorldEventExtractionGenerationService;
   /** WorldKnownEventStoreService 世界已知事件存储服务(W6B1) */
   private readonly worldKnownEventStoreService: WorldKnownEventStoreService;
+  /** WorldDirectionalRelationshipStoreService 世界方向性关系存储服务(W6C1) */
+  private readonly worldDirectionalRelationshipStoreService: WorldDirectionalRelationshipStoreService;
 
   /**
    * 私有构造,组装全部依赖。
@@ -384,6 +390,8 @@ export class AppServices {
     this.worldEventEntryRepository = new WorldEventEntryRepository(this.dbHelper);
     // W6B1: 世界已知事件条目仓储,仅依赖 DbHelper,不依赖任何 Service。
     this.worldKnownEventEntryRepository = new WorldKnownEventEntryRepository(this.dbHelper);
+    // W6C1: 世界方向性关系条目仓储,仅依赖 DbHelper,不依赖任何 Service。
+    this.worldDirectionalRelationshipEntryRepository = new WorldDirectionalRelationshipEntryRepository(this.dbHelper);
     this.characterService = new CharacterService(
       this.characterRepository,
       this.characterSelectionStore,
@@ -443,6 +451,7 @@ export class AppServices {
       this.worldEventExtractionRunRepository,
       this.worldEventEntryRepository,
       this.worldKnownEventEntryRepository,
+      this.worldDirectionalRelationshipEntryRepository,
       this.characterService,
       this.dbHelper
     );
@@ -644,6 +653,14 @@ export class AppServices {
       this.worldKnownEventEntryRepository,
       this.worldEventExtractionRunRepository,
       this.worldEventEntryRepository,
+      this.dbHelper
+    );
+    // W6C1: 世界方向性关系存储服务(关系条目唯一正式写入口)。
+    // 依赖 RelationshipEntryRepo + MemoryStoreService(owner-visible evidence authority) + DbHelper。
+    // 不调用 ModelService,不复制第二套 visibility filter。
+    this.worldDirectionalRelationshipStoreService = new WorldDirectionalRelationshipStoreService(
+      this.worldDirectionalRelationshipEntryRepository,
+      this.worldCharacterMemoryStoreService,
       this.dbHelper
     );
     // v8.3 Phase 2: 最近原始消息窗口选择器(去重 + 窗口 + 完整轮次)

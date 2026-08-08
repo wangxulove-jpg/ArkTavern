@@ -6,7 +6,7 @@
  */
 
 export const DATABASE_NAME: string = 'arktavern.db';
-export const DATABASE_VERSION: number = 29;
+export const DATABASE_VERSION: number = 30;
 
 export const TABLE_CHARACTERS: string = 'characters';
 export const TABLE_CHATS: string = 'chats';
@@ -673,6 +673,30 @@ export const COLUMN_WITNESS_INSTANCE_IDS_JSON: string = 'witness_instance_ids_js
 export const COLUMN_CONFIDENCE: string = 'confidence';
 export const COLUMN_STATUS_WEE: string = 'status';
 export const COLUMN_STATUS_UPDATED_AT_WEE: string = 'status_updated_at';
+
+// ===== v30: 世界角色方向性关系存储(W6C1-WORLD-DIRECTIONAL-RELATIONSHIP-STORE) =====
+export const TABLE_WORLD_DIRECTIONAL_RELATIONSHIP_ENTRIES: string = 'world_directional_relationship_entries';
+
+export const COLUMN_OWNER_CHARACTER_INSTANCE_ID_WDRE: string = 'owner_character_instance_id';
+export const COLUMN_TARGET_CHARACTER_INSTANCE_ID_WDRE: string = 'target_character_instance_id';
+export const COLUMN_VERSION_WDRE: string = 'version';
+export const COLUMN_RELATIONSHIP_TEXT: string = 'relationship_text';
+export const COLUMN_SOURCE_SCENE_ID_WDRE: string = 'source_scene_id';
+export const COLUMN_SOURCE_SESSION_ID_WDRE: string = 'source_session_id';
+export const COLUMN_SOURCE_LOCATION_ID_WDRE: string = 'source_location_id';
+export const COLUMN_EVIDENCE_MESSAGE_IDS_JSON_WDRE: string = 'evidence_message_ids_json';
+export const COLUMN_OWNER_DISPLAY_NAME_SNAPSHOT_WDRE: string = 'owner_display_name_snapshot';
+export const COLUMN_TARGET_DISPLAY_NAME_SNAPSHOT_WDRE: string = 'target_display_name_snapshot';
+export const COLUMN_SUPERSEDES_RELATIONSHIP_ID: string = 'supersedes_relationship_id';
+export const COLUMN_PROVIDER_ID_WDRE: string = 'provider_id';
+export const COLUMN_MODEL_ID_WDRE: string = 'model_id';
+export const COLUMN_STATUS_WDRE: string = 'status';
+export const COLUMN_STATUS_UPDATED_AT_WDRE: string = 'status_updated_at';
+
+// ===== v30: 世界角色方向性关系索引名 =====
+export const INDEX_WORLD_DIR_REL_OWNER_STATUS_CREATED: string = 'idx_wdre_owner_status_created';
+export const INDEX_WORLD_DIR_REL_OWNER_TARGET_STATUS: string = 'idx_wdre_owner_target_status';
+export const INDEX_WORLD_DIR_REL_TARGET_STATUS: string = 'idx_wdre_target_status';
 
 // ===== v29: 世界已知事件存储(W6B1-WORLD-KNOWN-EVENT-STORE) =====
 export const TABLE_WORLD_KNOWN_EVENT_ENTRIES: string = 'world_known_event_entries';

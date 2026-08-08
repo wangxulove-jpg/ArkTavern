@@ -25,6 +25,8 @@ import { LorebookRepository } from '../../../main/ets/repositories/LorebookRepos
 import { WorldCharacterMemoryRepository } from '../../../main/ets/repositories/world/WorldCharacterMemoryRepository';
 import { WorldCharacterMemoryEntryRepository } from '../../../main/ets/repositories/world/WorldCharacterMemoryEntryRepository';
 import { WorldEventExtractionRunRepository, WorldEventEntryRepository } from '../../../main/ets/repositories/world/WorldEventExtractionRepository';
+import { WorldKnownEventEntryRepository } from '../../../main/ets/repositories/world/WorldKnownEventEntryRepository';
+import { WorldDirectionalRelationshipEntryRepository } from '../../../main/ets/repositories/world/WorldDirectionalRelationshipEntryRepository';
 import { WorldLocationMapPlacementRepository } from '../../../main/ets/repositories/world/WorldLocationMapPlacementRepository';
 import { WorldCharacterLocationHistoryRepository } from '../../../main/ets/repositories/world/WorldCharacterLocationHistoryRepository';
 import {
@@ -134,6 +136,8 @@ export default function sessionLifeCascadeContractTest(): void {
         movementService,
         new WorldEventExtractionRunRepository(dbHelper),
         new WorldEventEntryRepository(dbHelper),
+        new WorldKnownEventEntryRepository(dbHelper),
+        new WorldDirectionalRelationshipEntryRepository(dbHelper),
         characterService,
         dbHelper
       );
