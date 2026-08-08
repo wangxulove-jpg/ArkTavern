@@ -116,6 +116,7 @@ import { WorldConversationSessionService } from './world/WorldConversationSessio
 import { WorldSessionSummaryStoreService } from './world/WorldSessionSummaryStoreService';
 import { WorldSessionSummaryPromptAssembler } from './world/WorldSessionSummaryPromptAssembler';
 import { WorldSessionSummaryGenerationService } from './world/WorldSessionSummaryGenerationService';
+import { WorldCrossSessionContextService } from './world/WorldCrossSessionContextService';
 import { WorldMapInteractionService } from './world/WorldMapInteractionService';
 import { WorldSceneLaunchService } from './world/WorldSceneLaunchService';
 import { WorldSceneMessageService } from './world/WorldSceneMessageService';
@@ -311,6 +312,8 @@ export class AppServices {
   private readonly worldSessionSummaryPromptAssembler: WorldSessionSummaryPromptAssembler;
   /** WorldSessionSummaryGenerationService 世界会话摘要生成服务(W5A2) */
   private readonly worldSessionSummaryGenerationService: WorldSessionSummaryGenerationService;
+  /** WorldCrossSessionContextService 世界跨Session上下文选择器(W5C1) */
+  private readonly worldCrossSessionContextService: WorldCrossSessionContextService;
 
   /**
    * 私有构造,组装全部依赖。
@@ -572,6 +575,16 @@ export class AppServices {
       this.worldSessionSummaryStoreService,
       this.worldSessionSummaryPromptAssembler,
       this.modelService
+    );
+    // W5C1: 世界跨Session上下文选择器。
+    // 依赖 SummaryRepo + MemoryEntryRepo + SessionRepo + SceneRepo + DbHelper。
+    // 不调用 ModelService,不写数据库,只做 selection/filtering/ordering/budget/dedup。
+    this.worldCrossSessionContextService = new WorldCrossSessionContextService(
+      this.worldSessionSummaryRepository,
+      this.worldCharacterMemoryEntryRepository,
+      this.worldConversationSessionRepository,
+      this.worldSceneRepository,
+      this.dbHelper
     );
     // v8.3 Phase 2: 最近原始消息窗口选择器(去重 + 窗口 + 完整轮次)
     this.recentMessageSelector = new RecentMessageSelector(this.tokenCounter);
@@ -1414,6 +1427,10 @@ export class AppServices {
 
   static getWorldSessionSummaryGenerationService(): WorldSessionSummaryGenerationService {
     return AppServices.getInstance().worldSessionSummaryGenerationService;
+  }
+
+  static getWorldCrossSessionContextService(): WorldCrossSessionContextService {
+    return AppServices.getInstance().worldCrossSessionContextService;
   }
 
   /**
