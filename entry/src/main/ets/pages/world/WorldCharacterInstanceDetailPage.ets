@@ -28,6 +28,7 @@ import {
   WORLD_DETAIL_REFRESH_TOKEN_KEY,
   formatWorldTimestamp
 } from '../../viewmodels/world/WorldUiModels';
+import { TravelOption } from '../../services/world/WorldCharacterMovementService';
 import { WorldSurfaceCard } from '../../components/world/WorldSurfaceCard';
 import { WorldSectionHeader } from '../../components/world/WorldSectionHeader';
 import { WorldPrimaryButton } from '../../components/world/WorldPrimaryButton';
@@ -50,6 +51,9 @@ struct WorldCharacterInstanceDetailPage {
   @State private detail: WorldCharacterInstanceDetailUiModel | null = null;
   @State private activeLocations: ActiveLocationOptionUiModel[] = [];
   @State private isOperating: boolean = false;
+  @State private isTravelling: boolean = false;
+  @State private travelOptions: TravelOption[] = [];
+  @State private coPresentDisplayNames: string[] = [];
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navigationBarHeight') navBarHeight: number = 0;
 
@@ -61,6 +65,8 @@ struct WorldCharacterInstanceDetailPage {
   @State private locationSelectMode: string = '';
   /** 从地图撤下确认 */
   @State private unplaceConfirmVisible: boolean = false;
+  /** 前往目的地 Sheet */
+  @State private travelDestinationVisible: boolean = false;
   /** 从世界移除确认 */
   @State private removeFromWorldConfirmVisible: boolean = false;
   /** 实例已被移除(导航回退标记) */
@@ -82,6 +88,8 @@ struct WorldCharacterInstanceDetailPage {
         AppServices.getWorldRepository(),
         AppServices.getWorldLocationRepository(),
         AppServices.getWorldStateService(),
+        AppServices.getWorldCharacterMovementService(),
+        AppServices.getWorldPerceptionService(),
         AppServices.getCharacterService()
       );
       this.isInitializing = false;
@@ -119,6 +127,9 @@ struct WorldCharacterInstanceDetailPage {
     this.detail = this.viewModel.detail;
     this.activeLocations = this.viewModel.activeLocations;
     this.isOperating = this.viewModel.isOperating;
+    this.isTravelling = this.viewModel.isTravelling;
+    this.travelOptions = this.viewModel.travelOptions;
+    this.coPresentDisplayNames = this.viewModel.coPresentDisplayNames;
   }
 
   build(): void {
@@ -152,6 +163,14 @@ struct WorldCharacterInstanceDetailPage {
       backgroundColor: $r('app.color.world_surface_1'),
       onDisappear: () => {
         this.unplaceConfirmVisible = false;
+      }
+    })
+    .bindSheet(this.travelDestinationVisible, this.travelDestinationSheet, {
+      height: SheetSize.FIT_CONTENT,
+      dragBar: true,
+      backgroundColor: $r('app.color.world_surface_1'),
+      onDisappear: () => {
+        this.travelDestinationVisible = false;
       }
     })
     .bindSheet(this.removeFromWorldConfirmVisible, this.removeFromWorldConfirmSheet, {
@@ -273,6 +292,9 @@ struct WorldCharacterInstanceDetailPage {
               this.infoField($r('app.string.world_char_detail_current_status'),
                 d.isActive ? '活跃 · 位于 ' + (d.currentLocationName.length > 0 ? d.currentLocationName : '未放置') : '已停用')
               this.infoField($r('app.string.world_char_detail_current_goal'), '尚未建立')
+              if (this.coPresentDisplayNames.length > 0) {
+                this.infoField('同地点角色', this.coPresentDisplayNames.join('、'))
+              }
             }
             .padding(14)
             .alignItems(HorizontalAlign.Start)
@@ -481,6 +503,15 @@ struct WorldCharacterInstanceDetailPage {
             .margin({ right: 6 })
 
           if (d.currentLocationId.length > 0) {
+            WorldSecondaryButton({
+              label: '前往',
+              isEnabled: !this.isOperating && !this.isTravelling && this.travelOptions.length > 0,
+              onButtonClick: (): void => {
+                this.travelDestinationVisible = true;
+              }
+            })
+              .layoutWeight(1)
+              .margin({ right: 6 })
             WorldSecondaryButton({
               label: '调整位置',
               isEnabled: !this.isOperating,
@@ -745,6 +776,76 @@ struct WorldCharacterInstanceDetailPage {
   }
 
   @Builder
+  travelDestinationSheet(): void {
+    Scroll() {
+      Column() {
+        Text('前往')
+          .fontSize($r('app.float.world_font_title'))
+          .fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.world_text_primary'))
+          .width('100%')
+          .padding({ top: 12, bottom: 8 })
+
+        if (this.travelOptions.length === 0) {
+          Text('当前地点没有可通行的连接')
+            .fontSize($r('app.float.world_font_body'))
+            .fontColor($r('app.color.world_text_tertiary'))
+            .margin({ top: 8, bottom: 16 })
+        } else {
+          ForEach(this.travelOptions, (option: TravelOption) => {
+            Row() {
+              Column() {
+                Text(option.targetLocationName)
+                  .fontSize($r('app.float.world_font_body'))
+                  .fontColor($r('app.color.world_text_primary'))
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                Text(option.directionLabel + (option.isBidirectional ? ' · 双向' : ' · 单向'))
+                  .fontSize($r('app.float.world_font_micro'))
+                  .fontColor($r('app.color.world_text_tertiary'))
+                  .margin({ top: 2 })
+              }
+              .layoutWeight(1)
+              .alignItems(HorizontalAlign.Start)
+
+              WorldPrimaryButton({
+                label: '前往',
+                isEnabled: !this.isTravelling,
+                onButtonClick: (): void => {
+                  this.handleTravelCharacter(option.targetLocationId);
+                }
+              })
+            }
+            .width('100%')
+            .padding({ top: 8, bottom: 8 })
+            .alignItems(VerticalAlign.Center)
+          }, (option: TravelOption) => option.edgeId)
+        }
+
+        Button($r('app.string.world_cancel'))
+          .fontSize(14)
+          .backgroundColor(Color.Transparent)
+          .fontColor($r('app.color.world_text_secondary'))
+          .borderRadius(8)
+          .height(40)
+          .width('100%')
+          .margin({ top: 8 })
+          .onClick(() => {
+            this.travelDestinationVisible = false;
+          })
+
+        Column().width('100%').height(this.navBarHeight + 8)
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16 })
+      .alignItems(HorizontalAlign.Start)
+    }
+    .width('100%')
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.Spring)
+  }
+
+  @Builder
   removeFromWorldConfirmSheet(): void {
     Column() {
       Text('从世界移除')
@@ -815,6 +916,19 @@ struct WorldCharacterInstanceDetailPage {
     this.unplaceConfirmVisible = false;
     this.viewModel.clearError();
     const ok: boolean = await this.viewModel.unplaceCharacter();
+    this.syncFromViewModel();
+    if (ok) {
+      this.triggerWorldDetailRefresh();
+    }
+  }
+
+  private async handleTravelCharacter(targetLocationId: string): Promise<void> {
+    if (this.viewModel === null) {
+      return;
+    }
+    this.travelDestinationVisible = false;
+    this.viewModel.clearError();
+    const ok: boolean = await this.viewModel.travelCharacter(targetLocationId);
     this.syncFromViewModel();
     if (ok) {
       this.triggerWorldDetailRefresh();

@@ -42,10 +42,12 @@ import {
   LauncherUiModel,
   LauncherParticipantUiModel
 } from '../../viewmodels/world/WorldSceneLauncherViewModel';
+import { WorldCharacterMovementService, TravelOption } from '../../services/world/WorldCharacterMovementService';
 import {
   WorldImmersiveMapViewModel,
   MapEditMode,
-  MapLoadState
+  MapLoadState,
+  MapMovementPort
 } from '../../viewmodels/world/WorldImmersiveMapViewModel';
 import { ImmersiveMapLayout, ImmersiveMapViewport, BILLBOARD_MAX_VISIBLE } from '../../viewmodels/world/WorldImmersiveMapLayout';
 import { WorldStatus } from '../../models/world/World';
@@ -111,8 +113,15 @@ struct WorldDetailPage {
   @State private placeActiveLocations: ActiveLocationOptionUiModel[] = [];
   @State private placeOperating: boolean = false;
   @State private placeError: string = '';
+  @State private travelSheetVisible: boolean = false;
+  @State private travelInstanceId: string = '';
+  @State private travelInstanceName: string = '';
+  @State private travelOptions: TravelOption[] = [];
+  @State private travelOperating: boolean = false;
+  @State private travelError: string = '';
 
   private stateService: WorldStateService | null = null;
+  private movementService: WorldCharacterMovementService | null = null;
 
   private readonly pageInstanceShortId: string = generateShortId();
 
@@ -139,10 +148,12 @@ struct WorldDetailPage {
       );
 
       this.mapViewModel = new WorldImmersiveMapViewModel(
-        AppServices.getWorldMapInteractionService()
+        AppServices.getWorldMapInteractionService(),
+        new MapMovementPortAdapter(AppServices.getWorldCharacterMovementService())
       );
 
       this.stateService = AppServices.getWorldStateService();
+      this.movementService = AppServices.getWorldCharacterMovementService();
 
       Logger.info(LOG_TAG, 'aboutToAppear: pageInstance=' + this.pageInstanceShortId
         + ', worldShortId=' + worldId.substring(worldId.length - 8));
@@ -280,6 +291,15 @@ struct WorldDetailPage {
       onDisappear: () => {
         this.placeLocationSheetVisible = false;
         this.placeForInstanceId = '';
+      }
+    })
+    .bindSheet(this.travelSheetVisible, this.travelDestinationSheet, {
+      height: SheetSize.FIT_CONTENT,
+      dragBar: true,
+      backgroundColor: $r('app.color.world_surface_1'),
+      onDisappear: () => {
+        this.travelSheetVisible = false;
+        this.travelInstanceId = '';
       }
     })
   }
@@ -557,6 +577,9 @@ struct WorldDetailPage {
         },
         onCharacterTap: (instanceId: string): void => {
           this.onCharacterTapped(instanceId);
+        },
+        onTravelTo: (instanceId: string, targetLocationId: string): void => {
+          this.handleTravelFromMap(instanceId, targetLocationId);
         },
         onOverflowTap: (): void => {
           this.openCharacterManage();
@@ -1111,13 +1134,7 @@ struct WorldDetailPage {
     if (this.currentWorldId.length === 0 || instanceId.length === 0) {
       return;
     }
-    const locationId: string = this.resolveCharacterLocationId(instanceId);
-    if (locationId.length === 0) {
-      this.openInstanceDetail(instanceId);
-      return;
-    }
-    this.selectedLocationId = locationId;
-    this.openLauncherSheet(this.currentWorldId, locationId, instanceId);
+    this.openTravelSheetForCharacter(instanceId);
   }
 
   private resolveCharacterLocationId(instanceId: string): string {
@@ -1345,6 +1362,156 @@ struct WorldDetailPage {
     router.pushUrl({ url: 'pages/world/WorldCharacterInstanceDetailPage' });
   }
 
+  @Builder
+  travelDestinationSheet(): void {
+    Scroll() {
+      Column() {
+        Text('前往 - ' + this.travelInstanceName)
+          .fontSize($r('app.float.world_font_title'))
+          .fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.world_text_primary'))
+          .width('100%')
+          .padding({ top: 12, bottom: 8 })
+
+        if (this.travelError.length > 0) {
+          Text(this.travelError)
+            .fontSize($r('app.float.world_font_caption'))
+            .fontColor($r('app.color.world_error'))
+            .width('100%')
+            .margin({ bottom: 8 })
+        }
+
+        if (this.travelOptions.length === 0) {
+          Text('当前地点没有可通行的连接')
+            .fontSize($r('app.float.world_font_body'))
+            .fontColor($r('app.color.world_text_tertiary'))
+            .margin({ top: 8, bottom: 16 })
+        } else {
+          ForEach(this.travelOptions, (option: TravelOption) => {
+            Row() {
+              Column() {
+                Text(option.targetLocationName)
+                  .fontSize($r('app.float.world_font_body'))
+                  .fontColor($r('app.color.world_text_primary'))
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                Text(option.directionLabel + (option.isBidirectional ? ' · 双向' : ' · 单向'))
+                  .fontSize($r('app.float.world_font_micro'))
+                  .fontColor($r('app.color.world_text_tertiary'))
+                  .margin({ top: 2 })
+              }
+              .layoutWeight(1)
+              .alignItems(HorizontalAlign.Start)
+
+              WorldPrimaryButton({
+                label: '前往',
+                isEnabled: !this.travelOperating,
+                onButtonClick: (): void => {
+                  this.handleTravelCharacter(option.targetLocationId);
+                }
+              })
+            }
+            .width('100%')
+            .padding({ top: 8, bottom: 8 })
+            .alignItems(VerticalAlign.Center)
+          }, (option: TravelOption) => option.edgeId)
+        }
+
+        Row() {
+          WorldSecondaryButton({
+            label: '查看详情',
+            fullWidth: true,
+            onButtonClick: (): void => {
+              this.travelSheetVisible = false;
+              this.openInstanceDetail(this.travelInstanceId);
+            }
+          })
+            .layoutWeight(1)
+            .margin({ right: 8 })
+          Button($r('app.string.world_cancel'))
+            .fontSize(14)
+            .backgroundColor(Color.Transparent)
+            .fontColor($r('app.color.world_text_secondary'))
+            .borderRadius(8)
+            .height(40)
+            .layoutWeight(1)
+            .onClick(() => {
+              this.travelSheetVisible = false;
+            })
+        }
+        .width('100%')
+        .margin({ top: 8 })
+        .alignItems(VerticalAlign.Center)
+
+        Column().width('100%').height(this.navBarHeight + 16)
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16 })
+      .alignItems(HorizontalAlign.Start)
+    }
+    .width('100%')
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.Spring)
+  }
+
+  private async openTravelSheetForCharacter(instanceId: string): Promise<void> {
+    if (this.movementService === null) {
+      this.openInstanceDetail(instanceId);
+      return;
+    }
+    const displayName: string = this.resolveCharacterDisplayName(instanceId);
+    this.travelInstanceId = instanceId;
+    this.travelInstanceName = displayName;
+    this.travelError = '';
+    this.travelOperating = false;
+    try {
+      this.travelOptions = await this.movementService.listTravelOptions(instanceId);
+    } catch (e) {
+      this.travelOptions = [];
+    }
+    if (this.travelOptions.length === 0) {
+      this.openInstanceDetail(instanceId);
+      return;
+    }
+    this.travelSheetVisible = true;
+  }
+
+  private resolveCharacterDisplayName(instanceId: string): string {
+    if (this.detail === null) {
+      return '';
+    }
+    for (let i = 0; i < this.detail.characters.length; i++) {
+      if (this.detail.characters[i].id === instanceId) {
+        return this.detail.characters[i].displayName;
+      }
+    }
+    return '';
+  }
+
+  private async handleTravelCharacter(targetLocationId: string): Promise<void> {
+    if (this.movementService === null || this.travelInstanceId.length === 0) {
+      return;
+    }
+    this.travelOperating = true;
+    this.travelError = '';
+    try {
+      await this.movementService.travelCharacter(this.travelInstanceId, targetLocationId);
+      this.travelSheetVisible = false;
+      this.travelInstanceId = '';
+      this.bumpSceneTokens();
+      await this.loadDetail(this.currentWorldId);
+    } catch (e) {
+      this.travelError = '移动失败,请重试';
+    } finally {
+      this.travelOperating = false;
+    }
+  }
+
+  private handleTravelFromMap(instanceId: string, targetLocationId: string): void {
+    this.travelInstanceId = instanceId;
+    this.handleTravelCharacter(targetLocationId);
+  }
+
   private resolveWorldName(): string {
     if (this.detail !== null) {
       return this.detail.world.name.length > 0 ? this.detail.world.name : '(未命名世界)';
@@ -1392,5 +1559,21 @@ struct WorldDetailPage {
       result.push({ locationId: locId, slots: slots, overflowCount: overflowCount });
     }
     this.billboardData = result;
+  }
+}
+
+class MapMovementPortAdapter implements MapMovementPort {
+  private readonly service: WorldCharacterMovementService;
+
+  constructor(service: WorldCharacterMovementService) {
+    this.service = service;
+  }
+
+  async travelCharacter(instanceId: string, targetLocationId: string): Promise<void> {
+    await this.service.travelCharacter(instanceId, targetLocationId);
+  }
+
+  async listTravelOptions(instanceId: string): Promise<TravelOption[]> {
+    return await this.service.listTravelOptions(instanceId);
   }
 }

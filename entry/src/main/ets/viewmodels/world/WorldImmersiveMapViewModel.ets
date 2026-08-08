@@ -16,6 +16,7 @@
  */
 
 import { WorldMapInteractionService, MapSnapshotResult, SavePlacementResult } from '../../services/world/WorldMapInteractionService';
+import { WorldCharacterMovementService, TravelOption } from '../../services/world/WorldCharacterMovementService';
 import { WorldLocationMapPlacement } from '../../models/world/WorldLocationMapPlacement';
 import { World, WorldStatus } from '../../models/world/World';
 import { WorldLocation, WorldLocationStatus } from '../../models/world/WorldLocation';
@@ -68,8 +69,16 @@ export interface MapInteractionPort {
   saveLocationPlacement(worldId: string, locationId: string, positionX: number, positionY: number, positionZ: number): Promise<SavePlacementResult>;
 }
 
+export interface MapMovementPort {
+  travelCharacter(instanceId: string, targetLocationId: string): Promise<void>;
+  listTravelOptions(instanceId: string): Promise<TravelOption[]>;
+}
+
+export const TRAVEL_ANIMATION_DURATION_MS: number = 800;
+
 export class WorldImmersiveMapViewModel {
   private readonly interactionService: MapInteractionPort;
+  private readonly movementService: MapMovementPort | null;
 
   state: MapLoadState = MapLoadState.Loading;
   errorMessage: string = '';
@@ -82,6 +91,11 @@ export class WorldImmersiveMapViewModel {
   selectedLocationId: string = '';
   editMode: MapEditMode = MapEditMode.Browse;
   mapLayout: ImmersiveMapLayout | null = null;
+  isTravelling: boolean = false;
+  travellingInstanceId: string = '';
+  travellingFromLocationId: string = '';
+  travellingToLocationId: string = '';
+  travelAnimationProgress: number = 0;
 
   private expectedWorldId: string = '';
   private loadOperationId: number = 0;
@@ -89,8 +103,9 @@ export class WorldImmersiveMapViewModel {
   private dragOriginalPlacement: WorldLocationMapPlacement | null = null;
   readonly instanceShortId: string;
 
-  constructor(interactionService: MapInteractionPort) {
+  constructor(interactionService: MapInteractionPort, movementService?: MapMovementPort) {
     this.interactionService = interactionService;
+    this.movementService = movementService ?? null;
     this.instanceShortId = WorldImmersiveMapViewModel.generateShortId();
   }
 
@@ -277,6 +292,60 @@ export class WorldImmersiveMapViewModel {
 
   getBillboardLayout(locationId: string): BillboardLayout {
     return computeBillboardLayout(locationId, this.characters);
+  }
+
+  async listTravelOptionsForCharacter(instanceId: string): Promise<TravelOption[]> {
+    if (this.movementService === null) {
+      return [];
+    }
+    try {
+      return await this.movementService.listTravelOptions(instanceId);
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'listTravelOptions failed: ' + this.safeErrorCategory(e));
+      return [];
+    }
+  }
+
+  async travelCharacterOnMap(instanceId: string, targetLocationId: string): Promise<boolean> {
+    if (this.movementService === null || this.isTravelling) {
+      return false;
+    }
+    const fromLocationId: string = this.resolveInstanceLocationId(instanceId);
+    if (fromLocationId.length === 0) {
+      return false;
+    }
+    this.isTravelling = true;
+    this.travellingInstanceId = instanceId;
+    this.travellingFromLocationId = fromLocationId;
+    this.travellingToLocationId = targetLocationId;
+    this.travelAnimationProgress = 0;
+    try {
+      await this.movementService.travelCharacter(instanceId, targetLocationId);
+      this.travelAnimationProgress = 1;
+      if (this.world !== null) {
+        await this.loadSnapshot(this.world.id);
+      }
+      return true;
+    } catch (e) {
+      Logger.error(LOG_TAG, 'travelCharacterOnMap failed: ' + this.safeErrorCategory(e));
+      this.errorMessage = '移动失败,请重试';
+      return false;
+    } finally {
+      this.isTravelling = false;
+      this.travellingInstanceId = '';
+      this.travellingFromLocationId = '';
+      this.travellingToLocationId = '';
+      this.travelAnimationProgress = 0;
+    }
+  }
+
+  private resolveInstanceLocationId(instanceId: string): string {
+    for (let i: number = 0; i < this.characters.length; i++) {
+      if (this.characters[i].id === instanceId) {
+        return this.characters[i].currentLocationId;
+      }
+    }
+    return '';
   }
 
   private recomputeLayout(): void {

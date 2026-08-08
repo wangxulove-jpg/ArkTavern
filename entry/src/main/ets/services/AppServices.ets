@@ -106,6 +106,7 @@ import { WorldStateService } from './world/WorldStateService';
 import { WorldSceneService } from './world/WorldSceneService';
 import { WorldCharacterMemoryService } from './world/WorldCharacterMemoryService';
 import { WorldCharacterMovementService } from './world/WorldCharacterMovementService';
+import { WorldPerceptionService } from './world/WorldPerceptionService';
 import { WorldConversationSessionService } from './world/WorldConversationSessionService';
 import { WorldMapInteractionService } from './world/WorldMapInteractionService';
 import { WorldSceneLaunchService } from './world/WorldSceneLaunchService';
@@ -270,6 +271,8 @@ export class AppServices {
   private readonly worldCharacterMemoryService: WorldCharacterMemoryService;
   /** WorldCharacterMovementService 世界角色移动业务服务(W4A,位置变更唯一正式写入口) */
   private readonly worldCharacterMovementService: WorldCharacterMovementService;
+  /** WorldPerceptionService 世界感知服务(W4B,当前客观共处状态查询) */
+  private readonly worldPerceptionService: WorldPerceptionService;
   /** WorldConversationSessionService 世界会话生命周期服务(W1B2,会话唯一正式写入口) */
   private readonly worldConversationSessionService: WorldConversationSessionService;
   /** WorldMapInteractionService 地图交互业务服务(W1D,地图快照加载+放置保存) */
@@ -357,6 +360,9 @@ export class AppServices {
       this.worldConversationSessionRepository,
       this.worldCharacterLocationHistoryRepository,
       this.dbHelper
+    );
+    this.worldPerceptionService = new WorldPerceptionService(
+      this.worldCharacterInstanceRepository
     );
     // W-DATA-1B / W-SCENE-1A: 世界模式状态业务服务(世界基础数据唯一正式写入口)。
     // 依赖 7 个世界 Repository + MemoryService(级联删除) + MovementService(History委托)
@@ -1281,6 +1287,10 @@ export class AppServices {
    */
   static getWorldCharacterMovementService(): WorldCharacterMovementService {
     return AppServices.getInstance().worldCharacterMovementService;
+  }
+
+  static getWorldPerceptionService(): WorldPerceptionService {
+    return AppServices.getInstance().worldPerceptionService;
   }
 
   /**

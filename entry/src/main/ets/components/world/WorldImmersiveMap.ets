@@ -59,6 +59,7 @@ export struct WorldImmersiveMap {
   onPan: (dx: number, dy: number) => void = (_dx: number, _dy: number): void => {};
   onAddCharacter: () => void = (): void => {};
   onCharacterTap: (instanceId: string) => void = (_instanceId: string): void => {};
+  onTravelTo: (instanceId: string, targetLocationId: string) => void = (_instanceId: string, _targetId: string): void => {};
   onOverflowTap: () => void = (): void => {};
   onCreateLocation: () => void = (): void => {};
 

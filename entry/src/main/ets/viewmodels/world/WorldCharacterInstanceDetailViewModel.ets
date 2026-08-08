@@ -20,6 +20,8 @@ import { WorldCharacterInstanceRepository } from '../../repositories/world/World
 import { WorldRepository } from '../../repositories/world/WorldRepository';
 import { WorldLocationRepository } from '../../repositories/world/WorldLocationRepository';
 import { WorldStateService } from '../../services/world/WorldStateService';
+import { WorldCharacterMovementService, TravelOption } from '../../services/world/WorldCharacterMovementService';
+import { WorldPerceptionService } from '../../services/world/WorldPerceptionService';
 import { CharacterService } from '../../services/CharacterService';
 import { WorldCharacterInstance } from '../../models/world/WorldCharacterInstance';
 import { World, WorldStatus } from '../../models/world/World';
@@ -29,6 +31,7 @@ import { Logger } from '../../utils/Logger';
 import { WorldInstanceDetailLoadState, WorldCharacterInstanceDetailUiModel } from './WorldUiModels';
 import { ActiveLocationOptionUiModel } from './WorldCharacterManageViewModel';
 import { mapWorldStateErrorToMessage } from './WorldStateErrorMapper';
+import { mapWorldMovementErrorToMessage } from './WorldMovementErrorMapper';
 
 const LOG_TAG: string = 'WorldCharInstanceDetailVM';
 
@@ -37,13 +40,17 @@ export class WorldCharacterInstanceDetailViewModel {
   private readonly worldRepository: WorldRepository;
   private readonly locationRepository: WorldLocationRepository;
   private readonly stateService: WorldStateService;
+  private readonly movementService: WorldCharacterMovementService;
+  private readonly perceptionService: WorldPerceptionService;
   private readonly characterService: CharacterService;
 
   loadState: WorldInstanceDetailLoadState = WorldInstanceDetailLoadState.Loading;
   errorMessage: string = '';
   detail: WorldCharacterInstanceDetailUiModel | null = null;
-  /** 世界 Active 地点选项(用于位置调整/放置选择) */
   activeLocations: ActiveLocationOptionUiModel[] = [];
+  travelOptions: TravelOption[] = [];
+  coPresentDisplayNames: string[] = [];
+  isTravelling: boolean = false;
 
   isOperating: boolean = false;
 
@@ -56,12 +63,16 @@ export class WorldCharacterInstanceDetailViewModel {
     worldRepository: WorldRepository,
     locationRepository: WorldLocationRepository,
     stateService: WorldStateService,
+    movementService: WorldCharacterMovementService,
+    perceptionService: WorldPerceptionService,
     characterService: CharacterService
   ) {
     this.instanceRepository = instanceRepository;
     this.worldRepository = worldRepository;
     this.locationRepository = locationRepository;
     this.stateService = stateService;
+    this.movementService = movementService;
+    this.perceptionService = perceptionService;
     this.characterService = characterService;
     this.instanceShortId = WorldCharacterInstanceDetailViewModel.generateShortId();
   }
@@ -151,8 +162,9 @@ export class WorldCharacterInstanceDetailViewModel {
       };
       this.loadState = WorldInstanceDetailLoadState.Ready;
 
-      // 加载世界 Active 地点选项(用于位置调整/放置)
       await this.loadActiveLocations(instance.worldId);
+      await this.loadTravelOptions();
+      await this.loadCoPresentInfo(instance);
     } catch (e) {
       if (this.disposed) {
         return;
@@ -179,6 +191,76 @@ export class WorldCharacterInstanceDetailViewModel {
     } catch (e) {
       Logger.warn(LOG_TAG, 'loadActiveLocations failed: ' + this.safeErrorCategory(e));
       this.activeLocations = [];
+    }
+  }
+
+  /** 前往目标地点(通过连接移动,需 Edge 可通行) */
+  async travelCharacter(targetLocationId: string): Promise<boolean> {
+    if (this.disposed || this.isTravelling || this.boundInstanceId.length === 0) {
+      return false;
+    }
+    this.isTravelling = true;
+    this.errorMessage = '';
+    try {
+      await this.movementService.travelCharacter(this.boundInstanceId, targetLocationId);
+      if (this.disposed) {
+        return false;
+      }
+      await this.loadSnapshot(this.boundInstanceId);
+      return true;
+    } catch (e) {
+      if (this.disposed) {
+        return false;
+      }
+      Logger.error(LOG_TAG, 'travelCharacter failed: ' + this.safeErrorCategory(e));
+      this.errorMessage = mapWorldMovementErrorToMessage(e);
+      return false;
+    } finally {
+      if (!this.disposed) {
+        this.isTravelling = false;
+      }
+    }
+  }
+
+  /** 加载前往选项(来自 listTravelOptions) */
+  async loadTravelOptions(): Promise<void> {
+    if (this.disposed || this.boundInstanceId.length === 0) {
+      this.travelOptions = [];
+      return;
+    }
+    try {
+      this.travelOptions = await this.movementService.listTravelOptions(this.boundInstanceId);
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'loadTravelOptions failed: ' + this.safeErrorCategory(e));
+      this.travelOptions = [];
+    }
+  }
+
+  /** 加载当前地点共处角色信息(Perception) */
+  private async loadCoPresentInfo(instance: WorldCharacterInstance): Promise<void> {
+    if (instance.currentLocationId === undefined || instance.currentLocationId.length === 0) {
+      this.coPresentDisplayNames = [];
+      return;
+    }
+    try {
+      const snapshot = await this.perceptionService.getCharacterPerception(
+        instance.worldId, instance.id, instance.currentLocationId
+      );
+      const names: string[] = [];
+      for (let i = 0; i < snapshot.coPresentCharacterInstanceIds.length; i++) {
+        const coInstanceId: string = snapshot.coPresentCharacterInstanceIds[i];
+        const coInstance: WorldCharacterInstance | null =
+          await this.instanceRepository.getById(coInstanceId);
+        if (coInstance !== null) {
+          names.push(coInstance.displayNameSnapshot);
+        } else {
+          names.push('(未知)');
+        }
+      }
+      this.coPresentDisplayNames = names;
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'loadCoPresentInfo failed: ' + this.safeErrorCategory(e));
+      this.coPresentDisplayNames = [];
     }
   }
 
