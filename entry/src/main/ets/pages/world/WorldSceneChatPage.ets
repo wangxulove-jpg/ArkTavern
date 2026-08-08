@@ -6,6 +6,8 @@ import {
   WorldSceneChatUiModel,
   ChatMessageUiModel,
   ChatCharacterUiModel,
+  RoundProgressUiModel,
+  WorldRoundUiStatus,
   formatChatTimestamp
 } from '../../viewmodels/world/WorldSceneChatViewModel';
 import {
@@ -50,6 +52,8 @@ struct WorldSceneChatPage {
   @State private runtimeError: string = '';
   @State private streamingMessageId: string = '';
   @State private streamingContent: string = '';
+  @State private roundProgress: RoundProgressUiModel | null = null;
+  @State private roundStatus: WorldRoundUiStatus = WorldRoundUiStatus.Idle;
 
   @State private characterSheetInstanceId: string = '';
 
@@ -139,6 +143,8 @@ struct WorldSceneChatPage {
     this.runtimeError = this.viewModel.runtimeError;
     this.streamingMessageId = this.viewModel.streamingMessageId;
     this.streamingContent = this.viewModel.streamingContent;
+    this.roundProgress = this.viewModel.roundProgress;
+    this.roundStatus = this.viewModel.roundStatus;
   }
 
   private isSessionActive(): boolean {
@@ -177,7 +183,7 @@ struct WorldSceneChatPage {
     if (!this.isSceneWritable()) {
       return false;
     }
-    if (!this.viewModel.isSingleParticipant()) {
+    if (this.viewModel.isZeroParticipant()) {
       return false;
     }
     return true;
@@ -245,10 +251,17 @@ struct WorldSceneChatPage {
                 .fontColor($r('app.color.world_text_tertiary'))
                 .margin({ left: 6 })
               if (this.detail.characters.length > 0) {
-                Text(this.detail.characters[0].displayName)
-                  .fontSize($r('app.float.world_font_micro'))
-                  .fontColor($r('app.color.world_text_secondary'))
-                  .margin({ left: 6 })
+                if (this.detail.characters.length === 1) {
+                  Text(this.detail.characters[0].displayName)
+                    .fontSize($r('app.float.world_font_micro'))
+                    .fontColor($r('app.color.world_text_secondary'))
+                    .margin({ left: 6 })
+                } else {
+                  Text(this.detail.participantCount.toString() + '名角色')
+                    .fontSize($r('app.float.world_font_micro'))
+                    .fontColor($r('app.color.world_text_secondary'))
+                    .margin({ left: 6 })
+                }
               }
             }
             .margin({ top: 2 })
@@ -357,9 +370,10 @@ struct WorldSceneChatPage {
     Column() {
       if (this.viewModel !== null && this.viewModel.isZeroParticipant()) {
         this.participantErrorView('会话参与者数据异常')
-      } else if (this.viewModel !== null && this.viewModel.isMultiParticipant()) {
-        this.multiParticipantView()
       } else {
+        if (this.roundProgress !== null && this.roundProgress.totalSpeakers > 1) {
+          this.roundProgressArea(this.roundProgress)
+        }
         if (detail.messages.length === 0) {
           this.emptyMessageView()
         } else {
@@ -397,10 +411,10 @@ struct WorldSceneChatPage {
         this.endedSessionBar()
       } else if (!this.isSceneWritable()) {
         this.endedSceneBar()
-      } else if (this.viewModel !== null && this.viewModel.isMultiParticipant()) {
-        this.multiParticipantBar()
       } else if (this.viewModel !== null && this.viewModel.isZeroParticipant()) {
         this.participantErrorBar()
+      } else if (this.roundStatus === WorldRoundUiStatus.Resumable) {
+        this.resumableRoundBar()
       } else if (this.isSessionActive()) {
         this.runtimeInputArea()
       }
@@ -437,26 +451,75 @@ struct WorldSceneChatPage {
   }
 
   @Builder
-  multiParticipantView(): void {
-    Column() {
-      if (this.detail !== null && this.detail.messages.length > 0) {
-        List({ scroller: this.scroller }) {
-          ForEach(this.detail.messages, (m: ChatMessageUiModel) => {
-            ListItem() {
-              this.messageBubble(m)
-            }
-          }, (m: ChatMessageUiModel) => m.id + '|' + m.messageStatus)
-        }
-        .layoutWeight(1)
-        .width('100%')
-        .padding({ left: 12, right: 12, top: 8, bottom: 8 })
-        .scrollBar(BarState.Auto)
-      } else {
-        this.emptyMessageView()
+  roundProgressArea(rp: RoundProgressUiModel): void {
+    Row() {
+      Progress({
+        value: rp.currentSpeakerIndex,
+        total: rp.totalSpeakers,
+        type: ProgressType.Linear
+      })
+        .width(80)
+        .height(6)
+        .color($r('app.color.world_gold'))
+        .backgroundColor($r('app.color.world_surface_2'))
+
+      Text(rp.currentSpeakerIndex.toString() + '/' + rp.totalSpeakers.toString())
+        .fontSize($r('app.float.world_font_micro'))
+        .fontColor($r('app.color.world_text_secondary'))
+        .margin({ left: 8 })
+
+      if (rp.roundStatus === 'running' && rp.currentSpeakerDisplayName.length > 0) {
+        LoadingProgress().width(12).height(12).color($r('app.color.world_gold'))
+          .margin({ left: 6 })
+        Text(rp.currentSpeakerDisplayName + ' 回复中')
+          .fontSize($r('app.float.world_font_micro'))
+          .fontColor($r('app.color.world_gold'))
+      } else if (rp.roundStatus === 'failed') {
+        Text('轮次中断')
+          .fontSize($r('app.float.world_font_micro'))
+          .fontColor($r('app.color.world_error'))
+      } else if (rp.roundStatus === 'cancelled') {
+        Text('已停止')
+          .fontSize($r('app.float.world_font_micro'))
+          .fontColor($r('app.color.world_text_tertiary'))
+      } else if (rp.roundStatus === 'completed') {
+        Text('本轮完成')
+          .fontSize($r('app.float.world_font_micro'))
+          .fontColor($r('app.color.world_text_secondary'))
+      } else if (rp.roundStatus === 'resumable') {
+        Text('可续跑')
+          .fontSize($r('app.float.world_font_micro'))
+          .fontColor($r('app.color.world_gold'))
       }
     }
     .width('100%')
-    .layoutWeight(1)
+    .padding({ left: 16, right: 16, top: 8, bottom: 4 })
+    .alignItems(VerticalAlign.Center)
+  }
+
+  @Builder
+  resumableRoundBar(): void {
+    Column() {
+      Row() {
+        Text('上一轮未完成')
+          .fontSize($r('app.float.world_font_caption'))
+          .fontColor($r('app.color.world_text_secondary'))
+          .layoutWeight(1)
+        Text('续跑')
+          .fontSize($r('app.float.world_font_caption'))
+          .fontColor($r('app.color.world_on_gold'))
+          .backgroundColor($r('app.color.world_gold'))
+          .borderRadius($r('app.float.world_radius_button'))
+          .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+          .enabled(!this.isSending)
+          .onClick(() => { this.resumeRound(); })
+      }
+      .width('100%')
+      .padding({ left: 12, right: 12, top: 8, bottom: 8 + this.navBarHeight })
+      .alignItems(VerticalAlign.Center)
+    }
+    .width('100%')
+    .backgroundColor($r('app.color.world_surface_1'))
   }
 
   @Builder
@@ -632,20 +695,6 @@ struct WorldSceneChatPage {
       Text('该会话已结束')
         .fontSize($r('app.float.world_font_body'))
         .fontColor($r('app.color.world_text_tertiary'))
-        .width('100%')
-        .textAlign(TextAlign.Center)
-        .padding({ top: 12, bottom: 12 + this.navBarHeight })
-    }
-    .width('100%')
-    .backgroundColor($r('app.color.world_surface_1'))
-  }
-
-  @Builder
-  multiParticipantBar(): void {
-    Column() {
-      Text('当前会话包含多名角色,多人世界聊天将在下一阶段接入')
-        .fontSize($r('app.float.world_font_caption'))
-        .fontColor($r('app.color.world_text_secondary'))
         .width('100%')
         .textAlign(TextAlign.Center)
         .padding({ top: 12, bottom: 12 + this.navBarHeight })
@@ -872,6 +921,19 @@ struct WorldSceneChatPage {
     this.actionError = '';
     this.runtimeError = '';
     const errorMsg: string = await this.viewModel.retryFailedMessage(messageId);
+    if (errorMsg.length > 0) {
+      this.actionError = errorMsg;
+    }
+    this.syncFromViewModel();
+  }
+
+  private async resumeRound(): Promise<void> {
+    if (this.viewModel === null) {
+      return;
+    }
+    this.actionError = '';
+    this.runtimeError = '';
+    const errorMsg: string = await this.viewModel.resumeRound();
     if (errorMsg.length > 0) {
       this.actionError = errorMsg;
     }

@@ -69,7 +69,7 @@ export function isMessageVisibleToSpeaker(
     if (witnesses !== undefined && witnesses.length > 0) {
       return witnesses.indexOf(speakerCharacterInstanceId) >= 0;
     }
-    return true;
+    return false;
   }
 
   if (message.visibility === WorldSceneMessageVisibility.Private) {

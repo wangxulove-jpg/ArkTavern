@@ -1,6 +1,7 @@
 import {
   WorldSceneMessage,
-  WorldSceneMessageStatus
+  WorldSceneMessageStatus,
+  WorldSceneMessageSenderType
 } from '../../models/world/WorldSceneMessage';
 import { WorldScene, WorldSceneStatus } from '../../models/world/WorldScene';
 import {
@@ -16,7 +17,7 @@ import { WorldPlayerProfile } from '../../models/world/WorldPlayerProfile';
 import { Character } from '../../models/Character';
 import { WorldRuntimeError, WorldRuntimeErrorKind } from '../../models/world/WorldRuntimeError';
 import { WorldSceneMessageService, AddWorldUserMessageOptions } from './WorldSceneMessageService';
-import { WorldRuntimeRegistry, RegistryEntry } from './WorldRuntimeRegistry';
+import { WorldRuntimeRegistry, RegistryEntry, RegistrySnapshot } from './WorldRuntimeRegistry';
 import {
   WorldScenePromptAssembler,
   WorldPromptAssemblyInput,
@@ -54,6 +55,31 @@ export interface WorldRuntimeObserver {
     totalSpeakers: number,
     operationId: number
   ): void;
+  onRoundStarted(
+    sessionId: string,
+    generationBatchId: string,
+    operationId: number,
+    totalSpeakers: number
+  ): void;
+  onRoundCompleted(
+    sessionId: string,
+    generationBatchId: string,
+    operationId: number
+  ): void;
+  onRoundFailed(
+    sessionId: string,
+    generationBatchId: string,
+    failedCharacterInstanceId: string,
+    failedMessageId: string,
+    operationId: number
+  ): void;
+  onRoundCancelled(
+    sessionId: string,
+    generationBatchId: string,
+    cancelledCharacterInstanceId: string,
+    cancelledMessageId: string,
+    operationId: number
+  ): void;
 }
 
 export interface WorldRuntimeTurnOptions {
@@ -80,6 +106,43 @@ export interface WorldRuntimeRetryOptions {
 export interface WorldRuntimeRetryResult {
   characterMessage: WorldSceneMessage;
   generationBatchId: string;
+}
+
+export interface WorldRuntimeResumeOptions {
+  worldId: string;
+  sceneId: string;
+  sessionId: string;
+  generationBatchId: string;
+}
+
+export interface WorldRuntimeResumeResult {
+  characterMessages: WorldSceneMessage[];
+  generationBatchId: string;
+}
+
+export enum WorldRoundInspectionStatus {
+  Unknown,
+  AllCompleted,
+  PartiallyCompleted,
+  HasFailed,
+  HasCancelled,
+  Mixed
+}
+
+export interface WorldRoundInspection {
+  generationBatchId: string;
+  totalSpeakers: number;
+  completedCount: number;
+  failedCount: number;
+  cancelledCount: number;
+  streamingCount: number;
+  nextSpeakerIndex: number;
+  nextSpeakerInstanceId: string;
+  status: WorldRoundInspectionStatus;
+  failedCharacterInstanceId: string;
+  failedMessageId: string;
+  cancelledCharacterInstanceId: string;
+  cancelledMessageId: string;
 }
 
 export class WorldSceneRuntimeService {
@@ -188,11 +251,24 @@ export class WorldSceneRuntimeService {
         replyTargetCharacterInstanceIds: replyTargets
       });
 
+      this.registry.updateSpeakerProgress(
+        options.sessionId, operationId, '', '', 0, participants.length
+      );
+
+      this.notifyRoundStarted(options.sessionId, generationBatchId, operationId, participants.length);
+
       const characterMessages: WorldSceneMessage[] = [];
+      let roundTerminalFired: boolean = false;
 
       for (let speakerIdx = 0; speakerIdx < participants.length; speakerIdx++) {
         if (!this.registry.isCurrent(options.sessionId, operationId)) {
           Logger.info(LOG_TAG, 'round interrupted before speaker ' + speakerIdx.toString());
+          if (!roundTerminalFired) {
+            const cancelledInstId: string = this.registry.getSnapshot(options.sessionId)?.currentSpeakerCharacterInstanceId ?? '';
+            const cancelledMsgId: string = this.registry.getSnapshot(options.sessionId)?.currentSpeakerMessageId ?? '';
+            this.notifyRoundCancelled(options.sessionId, generationBatchId, cancelledInstId, cancelledMsgId, operationId);
+            roundTerminalFired = true;
+          }
           break;
         }
 
@@ -213,6 +289,12 @@ export class WorldSceneRuntimeService {
           senderCharacterInstanceId: speakerSnapshot.characterInstanceId,
           generationBatchId: generationBatchId
         });
+
+        this.registry.updateSpeakerProgress(
+          options.sessionId, operationId,
+          speakerSnapshot.characterInstanceId, characterPlaceholder.id,
+          speakerIdx, participants.length
+        );
 
         this.notifySpeakerStarted(
           options.sessionId,
@@ -258,8 +340,33 @@ export class WorldSceneRuntimeService {
         } else {
           Logger.info(LOG_TAG, 'speaker failed/stopped: idx=' + speakerIdx.toString()
             + ' round aborted');
+          if (!roundTerminalFired) {
+            const lastEntry: RegistryEntry | null = this.registry.getEntry(options.sessionId);
+            if (lastEntry !== null && lastEntry.operationId === operationId) {
+              this.notifyRoundFailed(
+                options.sessionId, generationBatchId,
+                speakerSnapshot.characterInstanceId, characterPlaceholder.id,
+                operationId
+              );
+            } else {
+              this.notifyRoundCancelled(
+                options.sessionId, generationBatchId,
+                speakerSnapshot.characterInstanceId, characterPlaceholder.id,
+                operationId
+              );
+            }
+            roundTerminalFired = true;
+          }
           break;
         }
+      }
+
+      if (!roundTerminalFired && this.registry.isCurrent(options.sessionId, operationId)) {
+        this.notifyRoundCompleted(options.sessionId, generationBatchId, operationId);
+      }
+
+      if (this.registry.isCurrent(options.sessionId, operationId)) {
+        this.registry.release(options.sessionId, operationId);
       }
 
       return {
@@ -269,7 +376,9 @@ export class WorldSceneRuntimeService {
         generationBatchId: generationBatchId
       };
     } catch (e) {
-      this.registry.release(options.sessionId, operationId);
+      if (this.registry.isCurrent(options.sessionId, operationId)) {
+        this.registry.release(options.sessionId, operationId);
+      }
       if (e instanceof WorldRuntimeError) {
         throw e;
       }
@@ -403,10 +512,16 @@ export class WorldSceneRuntimeService {
       return false;
     }
     const operationId: number = entry.operationId;
+    const generationBatchId: string = entry.generationBatchId;
+    const cancelledInstId: string = entry.currentSpeakerCharacterInstanceId;
+    const cancelledMsgId: string = entry.currentSpeakerMessageId;
     const result: boolean = this.registry.stop(sessionId);
     if (result) {
       this.clearPersistenceTimer();
-      this.notifyCancelled(sessionId, '', operationId);
+      if (cancelledMsgId.length > 0) {
+        this.notifyCancelled(sessionId, cancelledMsgId, operationId);
+      }
+      this.notifyRoundCancelled(sessionId, generationBatchId, cancelledInstId, cancelledMsgId, operationId);
     }
     return result;
   }
@@ -579,6 +694,303 @@ export class WorldSceneRuntimeService {
     return recoveredCount;
   }
 
+  async inspectLatestRound(sessionId: string): Promise<WorldRoundInspection | null> {
+    const messages: WorldSceneMessage[] = await this.messageRepo.listBySessionId(sessionId);
+    if (messages.length === 0) {
+      return null;
+    }
+
+    let latestBatchId: string = '';
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m: WorldSceneMessage = messages[i];
+      if (m.generationBatchId !== undefined && m.generationBatchId.length > 0) {
+        latestBatchId = m.generationBatchId;
+        break;
+      }
+    }
+    if (latestBatchId.length === 0) {
+      return null;
+    }
+
+    const batchMessages: WorldSceneMessage[] = await this.messageRepo.listBySessionAndGenerationBatch(
+      sessionId, latestBatchId
+    );
+
+    const session: WorldConversationSession | null = await this.sessionRepo.getById(sessionId);
+    if (session === null) {
+      return null;
+    }
+    const participants: WorldSessionParticipantSnapshot[] = deserializeParticipantSnapshots(session.participantSnapshotJson);
+    const totalSpeakers: number = participants.length;
+
+    let completedCount: number = 0;
+    let failedCount: number = 0;
+    let cancelledCount: number = 0;
+    let streamingCount: number = 0;
+    let failedInstId: string = '';
+    let failedMsgId: string = '';
+    let cancelledInstId: string = '';
+    let cancelledMsgId: string = '';
+
+    for (let i = 0; i < batchMessages.length; i++) {
+      const m: WorldSceneMessage = batchMessages[i];
+      if (m.senderType !== WorldSceneMessageSenderType.Character) {
+        continue;
+      }
+      if (m.status === WorldSceneMessageStatus.Completed) {
+        completedCount++;
+      } else if (m.status === WorldSceneMessageStatus.Failed) {
+        failedCount++;
+        if (failedInstId.length === 0 && m.senderCharacterInstanceId !== undefined) {
+          failedInstId = m.senderCharacterInstanceId;
+          failedMsgId = m.id;
+        }
+      } else if (m.status === WorldSceneMessageStatus.Cancelled) {
+        cancelledCount++;
+        if (cancelledInstId.length === 0 && m.senderCharacterInstanceId !== undefined) {
+          cancelledInstId = m.senderCharacterInstanceId;
+          cancelledMsgId = m.id;
+        }
+      } else if (m.status === WorldSceneMessageStatus.Streaming) {
+        streamingCount++;
+      }
+    }
+
+    const nextSpeakerIndex: number = completedCount;
+    let nextSpeakerInstId: string = '';
+    if (nextSpeakerIndex < participants.length) {
+      nextSpeakerInstId = participants[nextSpeakerIndex].characterInstanceId;
+    }
+
+    let status: WorldRoundInspectionStatus = WorldRoundInspectionStatus.Unknown;
+    if (streamingCount > 0) {
+      status = WorldRoundInspectionStatus.Unknown;
+    } else if (failedCount > 0 && cancelledCount > 0) {
+      status = WorldRoundInspectionStatus.Mixed;
+    } else if (failedCount > 0) {
+      status = WorldRoundInspectionStatus.HasFailed;
+    } else if (cancelledCount > 0) {
+      status = WorldRoundInspectionStatus.HasCancelled;
+    } else if (completedCount >= totalSpeakers) {
+      status = WorldRoundInspectionStatus.AllCompleted;
+    } else {
+      status = WorldRoundInspectionStatus.PartiallyCompleted;
+    }
+
+    return {
+      generationBatchId: latestBatchId,
+      totalSpeakers: totalSpeakers,
+      completedCount: completedCount,
+      failedCount: failedCount,
+      cancelledCount: cancelledCount,
+      streamingCount: streamingCount,
+      nextSpeakerIndex: nextSpeakerIndex,
+      nextSpeakerInstanceId: nextSpeakerInstId,
+      status: status,
+      failedCharacterInstanceId: failedInstId,
+      failedMessageId: failedMsgId,
+      cancelledCharacterInstanceId: cancelledInstId,
+      cancelledMessageId: cancelledMsgId
+    };
+  }
+
+  getActiveRoundSnapshot(sessionId: string): RegistrySnapshot | null {
+    return this.registry.getSnapshot(sessionId);
+  }
+
+  async resumeInterruptedRound(options: WorldRuntimeResumeOptions): Promise<WorldRuntimeResumeResult> {
+    if (this.registry.isBusy(options.sessionId)) {
+      throw WorldRuntimeError.runtimeBusy();
+    }
+
+    const inspection: WorldRoundInspection | null = await this.inspectLatestRound(options.sessionId);
+    if (inspection === null) {
+      throw WorldRuntimeError.invalidBatchState('无可恢复的轮次');
+    }
+
+    if (inspection.generationBatchId !== options.generationBatchId) {
+      throw WorldRuntimeError.invalidBatchState('批次ID不匹配');
+    }
+
+    if (inspection.status !== WorldRoundInspectionStatus.HasFailed
+      && inspection.status !== WorldRoundInspectionStatus.HasCancelled
+      && inspection.status !== WorldRoundInspectionStatus.PartiallyCompleted) {
+      throw WorldRuntimeError.invalidBatchState('当前轮次状态不可恢复: ' + inspection.status.toString());
+    }
+
+    const session: WorldConversationSession = await this.validateSessionForResume(options);
+    const scene: WorldScene = await this.validateSceneForResume(options, session);
+    const world: World = await this.validateWorldForResume(options);
+
+    const participants: WorldSessionParticipantSnapshot[] = deserializeParticipantSnapshots(session.participantSnapshotJson);
+    if (participants.length === 0) {
+      throw WorldRuntimeError.participantSnapshotEmpty();
+    }
+
+    const playerProfile: WorldPlayerProfile = await this.validatePlayerProfile(options.worldId);
+    const location: WorldLocation = await this.validateLocation(scene.locationId);
+
+    const resumeFromIndex: number = inspection.nextSpeakerIndex;
+    if (resumeFromIndex >= participants.length) {
+      throw WorldRuntimeError.invalidBatchState('所有角色已完成');
+    }
+
+    const entry: RegistryEntry | null = this.registry.tryAcquire(options.sessionId, options.generationBatchId);
+    if (entry === null) {
+      throw WorldRuntimeError.runtimeBusy();
+    }
+
+    const operationId: number = entry.operationId;
+
+    const providerConfig: ProviderConfig | null = await this.modelService.getCurrentConfig();
+    if (providerConfig === null) {
+      this.registry.release(options.sessionId, operationId);
+      throw WorldRuntimeError.modelRequestFailed('未配置 Provider');
+    }
+
+    try {
+      this.registry.updateSpeakerProgress(
+        options.sessionId, operationId, '', '', resumeFromIndex, participants.length
+      );
+
+      this.notifyRoundStarted(options.sessionId, options.generationBatchId, operationId, participants.length);
+
+      const characterMessages: WorldSceneMessage[] = [];
+      let roundTerminalFired: boolean = false;
+
+      const existingBatchMessages: WorldSceneMessage[] = await this.messageRepo.listBySessionAndGenerationBatch(
+        options.sessionId, options.generationBatchId
+      );
+      for (let i = 0; i < existingBatchMessages.length; i++) {
+        const m: WorldSceneMessage = existingBatchMessages[i];
+        if (m.senderType === WorldSceneMessageSenderType.Character
+          && m.status === WorldSceneMessageStatus.Completed) {
+          characterMessages.push(m);
+        }
+      }
+
+      for (let speakerIdx = resumeFromIndex; speakerIdx < participants.length; speakerIdx++) {
+        if (!this.registry.isCurrent(options.sessionId, operationId)) {
+          Logger.info(LOG_TAG, 'resume round interrupted before speaker ' + speakerIdx.toString());
+          if (!roundTerminalFired) {
+            const cancelledInstId: string = this.registry.getSnapshot(options.sessionId)?.currentSpeakerCharacterInstanceId ?? '';
+            const cancelledMsgId: string = this.registry.getSnapshot(options.sessionId)?.currentSpeakerMessageId ?? '';
+            this.notifyRoundCancelled(options.sessionId, options.generationBatchId, cancelledInstId, cancelledMsgId, operationId);
+            roundTerminalFired = true;
+          }
+          break;
+        }
+
+        const speakerSnapshot: WorldSessionParticipantSnapshot = participants[speakerIdx];
+        const speakerInstance: WorldCharacterInstance = await this.validateSpeakerInstance(
+          speakerSnapshot.characterInstanceId,
+          options.worldId,
+          session
+        );
+        const speakerCharacter: Character = await this.validateSpeakerCharacter(speakerInstance.characterId);
+        const otherNames: Map<string, string> = this.buildOtherParticipantNames(participants, speakerIdx);
+
+        const characterPlaceholder: WorldSceneMessage = await this.messageService.addCharacterPlaceholder({
+          worldId: options.worldId,
+          sceneId: options.sceneId,
+          sessionId: options.sessionId,
+          senderCharacterInstanceId: speakerSnapshot.characterInstanceId,
+          generationBatchId: options.generationBatchId
+        });
+
+        this.registry.updateSpeakerProgress(
+          options.sessionId, operationId,
+          speakerSnapshot.characterInstanceId, characterPlaceholder.id,
+          speakerIdx, participants.length
+        );
+
+        this.notifySpeakerStarted(
+          options.sessionId,
+          speakerSnapshot.characterInstanceId,
+          characterPlaceholder.id,
+          speakerIdx,
+          participants.length,
+          operationId
+        );
+
+        const sessionMessages: WorldSceneMessage[] = await this.messageRepo.listBySessionId(options.sessionId);
+        const promptInput: WorldPromptAssemblyInput = {
+          world: world,
+          scene: scene,
+          session: session,
+          location: location,
+          speakerInstance: speakerInstance,
+          speakerCharacter: speakerCharacter,
+          playerProfile: playerProfile,
+          sessionMessages: sessionMessages,
+          generationBatchId: options.generationBatchId,
+          allParticipantSnapshots: participants,
+          otherParticipantDisplayNames: otherNames
+        };
+
+        const promptResult: WorldPromptAssemblyResult = await this.promptAssembler.assemble(promptInput);
+
+        this.streamingContent = '';
+        this.lastPersistedLength = 0;
+
+        const speakerCompleted: boolean = await this.generateForSpeaker(
+          options.sessionId,
+          operationId,
+          options.generationBatchId,
+          characterPlaceholder,
+          speakerSnapshot,
+          promptResult,
+          providerConfig
+        );
+
+        if (speakerCompleted) {
+          characterMessages.push(characterPlaceholder);
+        } else {
+          Logger.info(LOG_TAG, 'resume speaker failed/stopped: idx=' + speakerIdx.toString());
+          if (!roundTerminalFired) {
+            const lastEntry: RegistryEntry | null = this.registry.getEntry(options.sessionId);
+            if (lastEntry !== null && lastEntry.operationId === operationId) {
+              this.notifyRoundFailed(
+                options.sessionId, options.generationBatchId,
+                speakerSnapshot.characterInstanceId, characterPlaceholder.id,
+                operationId
+              );
+            } else {
+              this.notifyRoundCancelled(
+                options.sessionId, options.generationBatchId,
+                speakerSnapshot.characterInstanceId, characterPlaceholder.id,
+                operationId
+              );
+            }
+            roundTerminalFired = true;
+          }
+          break;
+        }
+      }
+
+      if (!roundTerminalFired && this.registry.isCurrent(options.sessionId, operationId)) {
+        this.notifyRoundCompleted(options.sessionId, options.generationBatchId, operationId);
+      }
+
+      if (this.registry.isCurrent(options.sessionId, operationId)) {
+        this.registry.release(options.sessionId, operationId);
+      }
+
+      return {
+        characterMessages: characterMessages,
+        generationBatchId: options.generationBatchId
+      };
+    } catch (e) {
+      if (this.registry.isCurrent(options.sessionId, operationId)) {
+        this.registry.release(options.sessionId, operationId);
+      }
+      if (e instanceof WorldRuntimeError) {
+        throw e;
+      }
+      throw WorldRuntimeError.modelRequestFailed((e as Error).message);
+    }
+  }
+
   private findParticipantSnapshot(
     participants: WorldSessionParticipantSnapshot[],
     instanceId: string
@@ -716,6 +1128,51 @@ export class WorldSceneRuntimeService {
     }
   }
 
+  private notifyRoundStarted(
+    sessionId: string,
+    generationBatchId: string,
+    operationId: number,
+    totalSpeakers: number
+  ): void {
+    for (let i = 0; i < this.observers.length; i++) {
+      this.observers[i].onRoundStarted(sessionId, generationBatchId, operationId, totalSpeakers);
+    }
+  }
+
+  private notifyRoundCompleted(
+    sessionId: string,
+    generationBatchId: string,
+    operationId: number
+  ): void {
+    for (let i = 0; i < this.observers.length; i++) {
+      this.observers[i].onRoundCompleted(sessionId, generationBatchId, operationId);
+    }
+  }
+
+  private notifyRoundFailed(
+    sessionId: string,
+    generationBatchId: string,
+    failedCharacterInstanceId: string,
+    failedMessageId: string,
+    operationId: number
+  ): void {
+    for (let i = 0; i < this.observers.length; i++) {
+      this.observers[i].onRoundFailed(sessionId, generationBatchId, failedCharacterInstanceId, failedMessageId, operationId);
+    }
+  }
+
+  private notifyRoundCancelled(
+    sessionId: string,
+    generationBatchId: string,
+    cancelledCharacterInstanceId: string,
+    cancelledMessageId: string,
+    operationId: number
+  ): void {
+    for (let i = 0; i < this.observers.length; i++) {
+      this.observers[i].onRoundCancelled(sessionId, generationBatchId, cancelledCharacterInstanceId, cancelledMessageId, operationId);
+    }
+  }
+
   private async validateSessionForRetry(options: WorldRuntimeRetryOptions): Promise<WorldConversationSession> {
     const session: WorldConversationSession | null = await this.sessionRepo.getById(options.sessionId);
     if (session === null) {
@@ -745,6 +1202,42 @@ export class WorldSceneRuntimeService {
   }
 
   private async validateWorldForRetry(options: WorldRuntimeRetryOptions): Promise<World> {
+    const world: World | null = await this.worldRepo.getById(options.worldId);
+    if (world === null) {
+      throw WorldRuntimeError.worldNotFound();
+    }
+    return world;
+  }
+
+  private async validateSessionForResume(options: WorldRuntimeResumeOptions): Promise<WorldConversationSession> {
+    const session: WorldConversationSession | null = await this.sessionRepo.getById(options.sessionId);
+    if (session === null) {
+      throw WorldRuntimeError.sessionNotFound();
+    }
+    if (session.status !== WorldConversationSessionStatus.Active) {
+      throw WorldRuntimeError.sessionEnded();
+    }
+    if (session.worldId !== options.worldId) {
+      throw WorldRuntimeError.sessionWorldMismatch();
+    }
+    if (session.sceneId !== options.sceneId) {
+      throw WorldRuntimeError.sessionSceneMismatch();
+    }
+    return session;
+  }
+
+  private async validateSceneForResume(options: WorldRuntimeResumeOptions, session: WorldConversationSession): Promise<WorldScene> {
+    const scene: WorldScene | null = await this.sceneRepo.getById(options.sceneId);
+    if (scene === null) {
+      throw WorldRuntimeError.sceneNotFound();
+    }
+    if (scene.status === WorldSceneStatus.Ended) {
+      throw WorldRuntimeError.sceneEnded();
+    }
+    return scene;
+  }
+
+  private async validateWorldForResume(options: WorldRuntimeResumeOptions): Promise<World> {
     const world: World | null = await this.worldRepo.getById(options.worldId);
     if (world === null) {
       throw WorldRuntimeError.worldNotFound();

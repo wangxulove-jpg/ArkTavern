@@ -264,6 +264,34 @@ export class WorldSceneMessageRepository {
     }
   }
 
+  async listBySessionAndGenerationBatch(
+    sessionId: string,
+    generationBatchId: string
+  ): Promise<WorldSceneMessage[]> {
+    if (sessionId === '') {
+      throw DatabaseError.invalidData('WorldSceneMessage.listBySessionAndGenerationBatch: sessionId empty');
+    }
+    if (generationBatchId === '') {
+      throw DatabaseError.invalidData('WorldSceneMessage.listBySessionAndGenerationBatch: generationBatchId empty');
+    }
+    const store: relationalStore.RdbStore = this.dbHelper.getStore();
+    const predicates: relationalStore.RdbPredicates =
+      new relationalStore.RdbPredicates(TABLE_WORLD_SCENE_MESSAGES);
+    predicates.equalTo(COLUMN_SESSION_ID, sessionId);
+    predicates.equalTo(COLUMN_GENERATION_BATCH_ID_WS, generationBatchId);
+    predicates.orderByAsc(COLUMN_SEQUENCE_NUMBER);
+    const rs: relationalStore.ResultSet = await store.query(predicates);
+    try {
+      const list: WorldSceneMessage[] = [];
+      while (rs.goToNextRow()) {
+        list.push(messageFromRow(rs));
+      }
+      return list;
+    } finally {
+      rs.close();
+    }
+  }
+
   /**
    * 列出指定 Scene 中 status=Streaming 的消息,按 sequenceNumber ASC 排序。
    */

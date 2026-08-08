@@ -10,8 +10,12 @@ import {
   WorldSceneRuntimeService,
   WorldRuntimeObserver,
   WorldRuntimeTurnOptions,
-  WorldRuntimeRetryOptions
+  WorldRuntimeRetryOptions,
+  WorldRuntimeResumeOptions,
+  WorldRoundInspection,
+  WorldRoundInspectionStatus
 } from '../../services/world/WorldSceneRuntimeService';
+import { RegistrySnapshot } from '../../services/world/WorldRuntimeRegistry';
 import { Logger } from '../../utils/Logger';
 import { World, WorldStatus } from '../../models/world/World';
 import { WorldLocation, WorldLocationStatus } from '../../models/world/WorldLocation';
@@ -77,6 +81,24 @@ export interface ChatMessageUiModel {
   readonly senderRemoved: boolean;
 }
 
+export interface RoundProgressUiModel {
+  readonly currentSpeakerIndex: number;
+  readonly totalSpeakers: number;
+  readonly currentSpeakerInstanceId: string;
+  readonly currentSpeakerDisplayName: string;
+  readonly generationBatchId: string;
+  readonly roundStatus: string;
+}
+
+export enum WorldRoundUiStatus {
+  Idle,
+  Running,
+  Completed,
+  Failed,
+  Cancelled,
+  Resumable
+}
+
 export interface WorldSceneChatUiModel {
   readonly sceneId: string;
   readonly sceneName: string;
@@ -122,6 +144,10 @@ export class WorldSceneChatViewModel implements WorldRuntimeObserver {
   streamingMessageId: string = '';
   streamingContent: string = '';
   private currentOperationId: number = -1;
+
+  roundProgress: RoundProgressUiModel | null = null;
+  roundStatus: WorldRoundUiStatus = WorldRoundUiStatus.Idle;
+  lastInspection: WorldRoundInspection | null = null;
 
   private expectedSceneId: string = '';
   private expectedSessionId: string = '';
@@ -309,6 +335,15 @@ export class WorldSceneChatViewModel implements WorldRuntimeObserver {
         if (opId >= 0) {
           this.currentOperationId = opId;
         }
+        const snapshot: RegistrySnapshot | null = this.runtimeService.getActiveRoundSnapshot(sessionId);
+        if (snapshot !== null) {
+          this.roundProgress = this.buildRoundProgress(
+            snapshot.currentSpeakerIndex, snapshot.totalSpeakers,
+            snapshot.currentSpeakerCharacterInstanceId,
+            snapshot.generationBatchId, 'running'
+          );
+          this.roundStatus = WorldRoundUiStatus.Running;
+        }
       } else {
         this.isGenerating = false;
         this.currentOperationId = -1;
@@ -460,6 +495,13 @@ export class WorldSceneChatViewModel implements WorldRuntimeObserver {
       }
       this.detail = uiModel;
       this.state = WorldSceneChatLoadState.Ready;
+
+      if (!this.runtimeService.isBusy(sessionId) && this.isMultiParticipant()) {
+        this.checkResumableRound().catch((e: Error) => {
+          Logger.warn(LOG_TAG, 'checkResumableRound error: ' + e.message);
+        });
+      }
+
       Logger.info(LOG_TAG, 'loadSnapshot done: vmInstance=' + this.instanceShortId
         + ', operation=' + operationId.toString()
         + ', state=ready, messageCount=' + messageUiModels.length.toString()
@@ -485,9 +527,6 @@ export class WorldSceneChatViewModel implements WorldRuntimeObserver {
     if (this.detail === null) {
       return '页面未加载完成';
     }
-    if (!this.isSingleParticipant()) {
-      return '多人世界聊天将在下一阶段接入';
-    }
     const trimmed: string = content.trim();
     if (trimmed.length === 0) {
       return '消息不能为空';
@@ -495,6 +534,7 @@ export class WorldSceneChatViewModel implements WorldRuntimeObserver {
 
     this.isSending = true;
     this.runtimeError = '';
+    this.roundStatus = WorldRoundUiStatus.Running;
     this.operationId = this.operationId + 1;
 
     try {
@@ -512,12 +552,15 @@ export class WorldSceneChatViewModel implements WorldRuntimeObserver {
       this.streamingMessageId = result.characterMessage.id;
       this.streamingContent = '';
 
+      this.updateRoundProgressFromResult(result.characterMessages, result.generationBatchId);
+
       this.bumpRefreshTokens();
       await this.loadSnapshot(this.expectedSceneId);
       return '';
     } catch (e) {
       const msg: string = this.resolveRuntimeError(e);
       this.runtimeError = msg;
+      this.roundStatus = WorldRoundUiStatus.Idle;
       Logger.warn(LOG_TAG, 'sendMessage failed: ' + this.safeErrorCategory(e));
       return msg;
     } finally {
@@ -540,12 +583,10 @@ export class WorldSceneChatViewModel implements WorldRuntimeObserver {
     if (this.detail === null) {
       return '页面未加载完成';
     }
-    if (!this.isSingleParticipant()) {
-      return '多人世界聊天将在下一阶段接入';
-    }
 
     this.isSending = true;
     this.runtimeError = '';
+    this.roundStatus = WorldRoundUiStatus.Running;
     this.operationId = this.operationId + 1;
 
     try {
@@ -569,6 +610,7 @@ export class WorldSceneChatViewModel implements WorldRuntimeObserver {
     } catch (e) {
       const msg: string = this.resolveRuntimeError(e);
       this.runtimeError = msg;
+      this.roundStatus = WorldRoundUiStatus.Idle;
       Logger.warn(LOG_TAG, 'retryFailedMessage failed: ' + this.safeErrorCategory(e));
       return msg;
     } finally {
@@ -610,11 +652,13 @@ export class WorldSceneChatViewModel implements WorldRuntimeObserver {
     if (operationId !== this.currentOperationId) {
       return;
     }
-    this.isGenerating = false;
-    this.isStopping = false;
-    this.streamingMessageId = '';
-    this.streamingContent = '';
-    this.currentOperationId = -1;
+    if (this.isSingleParticipant()) {
+      this.isGenerating = false;
+      this.isStopping = false;
+      this.streamingMessageId = '';
+      this.streamingContent = '';
+      this.currentOperationId = -1;
+    }
     this.loadSnapshot(this.expectedSceneId);
   }
 
@@ -625,11 +669,13 @@ export class WorldSceneChatViewModel implements WorldRuntimeObserver {
     if (operationId !== this.currentOperationId) {
       return;
     }
-    this.isGenerating = false;
-    this.isStopping = false;
-    this.streamingMessageId = '';
-    this.streamingContent = '';
-    this.currentOperationId = -1;
+    if (this.isSingleParticipant()) {
+      this.isGenerating = false;
+      this.isStopping = false;
+      this.streamingMessageId = '';
+      this.streamingContent = '';
+      this.currentOperationId = -1;
+    }
     this.loadSnapshot(this.expectedSceneId);
   }
 
@@ -640,11 +686,13 @@ export class WorldSceneChatViewModel implements WorldRuntimeObserver {
     if (operationId !== this.currentOperationId) {
       return;
     }
-    this.isGenerating = false;
-    this.isStopping = false;
-    this.streamingMessageId = '';
-    this.streamingContent = '';
-    this.currentOperationId = -1;
+    if (this.isSingleParticipant()) {
+      this.isGenerating = false;
+      this.isStopping = false;
+      this.streamingMessageId = '';
+      this.streamingContent = '';
+      this.currentOperationId = -1;
+    }
     this.loadSnapshot(this.expectedSceneId);
   }
 
@@ -665,10 +713,191 @@ export class WorldSceneChatViewModel implements WorldRuntimeObserver {
     this.streamingMessageId = messageId;
     this.streamingContent = '';
     this.isGenerating = true;
+
+    if (this.detail !== null) {
+      this.roundProgress = this.buildRoundProgress(
+        speakerIndex, totalSpeakers, characterInstanceId,
+        this.roundProgress !== null ? this.roundProgress.generationBatchId : '',
+        'running'
+      );
+    }
+  }
+
+  onRoundStarted(
+    sessionId: string,
+    generationBatchId: string,
+    operationId: number,
+    totalSpeakers: number
+  ): void {
+    if (sessionId !== this.expectedSessionId) {
+      return;
+    }
+    if (operationId !== this.currentOperationId) {
+      return;
+    }
+    this.roundStatus = WorldRoundUiStatus.Running;
+    if (this.detail !== null) {
+      this.roundProgress = this.buildRoundProgress(
+        0, totalSpeakers, '', generationBatchId, 'running'
+      );
+    }
+  }
+
+  onRoundCompleted(
+    sessionId: string,
+    generationBatchId: string,
+    operationId: number
+  ): void {
+    if (sessionId !== this.expectedSessionId) {
+      return;
+    }
+    if (operationId !== this.currentOperationId) {
+      return;
+    }
+    this.isGenerating = false;
+    this.isStopping = false;
+    this.streamingMessageId = '';
+    this.streamingContent = '';
+    this.currentOperationId = -1;
+    this.roundStatus = WorldRoundUiStatus.Completed;
+    if (this.roundProgress !== null) {
+      this.roundProgress = this.buildRoundProgress(
+        this.roundProgress.totalSpeakers, this.roundProgress.totalSpeakers,
+        '', generationBatchId, 'completed'
+      );
+    }
+    this.loadSnapshot(this.expectedSceneId);
+  }
+
+  onRoundFailed(
+    sessionId: string,
+    generationBatchId: string,
+    failedCharacterInstanceId: string,
+    failedMessageId: string,
+    operationId: number
+  ): void {
+    if (sessionId !== this.expectedSessionId) {
+      return;
+    }
+    if (operationId !== this.currentOperationId) {
+      return;
+    }
+    this.isGenerating = false;
+    this.isStopping = false;
+    this.streamingMessageId = '';
+    this.streamingContent = '';
+    this.currentOperationId = -1;
+    this.roundStatus = WorldRoundUiStatus.Failed;
+    if (this.roundProgress !== null) {
+      this.roundProgress = this.buildRoundProgress(
+        this.roundProgress.currentSpeakerIndex, this.roundProgress.totalSpeakers,
+        failedCharacterInstanceId, generationBatchId, 'failed'
+      );
+    }
+    this.loadSnapshot(this.expectedSceneId);
+  }
+
+  onRoundCancelled(
+    sessionId: string,
+    generationBatchId: string,
+    cancelledCharacterInstanceId: string,
+    cancelledMessageId: string,
+    operationId: number
+  ): void {
+    if (sessionId !== this.expectedSessionId) {
+      return;
+    }
+    if (operationId !== this.currentOperationId) {
+      return;
+    }
+    this.isGenerating = false;
+    this.isStopping = false;
+    this.streamingMessageId = '';
+    this.streamingContent = '';
+    this.currentOperationId = -1;
+    this.roundStatus = WorldRoundUiStatus.Cancelled;
+    if (this.roundProgress !== null) {
+      this.roundProgress = this.buildRoundProgress(
+        this.roundProgress.currentSpeakerIndex, this.roundProgress.totalSpeakers,
+        cancelledCharacterInstanceId, generationBatchId, 'cancelled'
+      );
+    }
+    this.loadSnapshot(this.expectedSceneId);
   }
 
   async reload(): Promise<void> {
     await this.loadSnapshot(this.expectedSceneId);
+  }
+
+  async checkResumableRound(): Promise<void> {
+    if (this.expectedSessionId.length === 0 || this.isGenerating) {
+      return;
+    }
+    try {
+      const inspection: WorldRoundInspection | null = await this.runtimeService.inspectLatestRound(this.expectedSessionId);
+      this.lastInspection = inspection;
+      if (inspection === null) {
+        this.roundStatus = WorldRoundUiStatus.Idle;
+        return;
+      }
+      if (inspection.status === WorldRoundInspectionStatus.HasFailed
+        || inspection.status === WorldRoundInspectionStatus.HasCancelled
+        || inspection.status === WorldRoundInspectionStatus.PartiallyCompleted) {
+        this.roundStatus = WorldRoundUiStatus.Resumable;
+        this.roundProgress = this.buildRoundProgressFromInspection(inspection);
+      } else if (inspection.status === WorldRoundInspectionStatus.AllCompleted) {
+        this.roundStatus = WorldRoundUiStatus.Completed;
+      }
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'checkResumableRound failed: ' + this.safeErrorCategory(e));
+    }
+  }
+
+  async resumeRound(): Promise<string> {
+    if (this.isGenerating || this.isSending) {
+      return '当前角色正在回复中';
+    }
+    if (this.detail === null) {
+      return '页面未加载完成';
+    }
+    if (this.lastInspection === null) {
+      return '无可恢复的轮次';
+    }
+
+    this.isSending = true;
+    this.runtimeError = '';
+    this.roundStatus = WorldRoundUiStatus.Running;
+    this.operationId = this.operationId + 1;
+
+    try {
+      const options: WorldRuntimeResumeOptions = {
+        worldId: this.expectedWorldId,
+        sceneId: this.expectedSceneId,
+        sessionId: this.expectedSessionId,
+        generationBatchId: this.lastInspection.generationBatchId
+      };
+
+      const result = await this.runtimeService.resumeInterruptedRound(options);
+
+      this.isGenerating = true;
+      this.currentOperationId = this.runtimeService.getOperationId(this.expectedSessionId);
+      this.streamingMessageId = '';
+      this.streamingContent = '';
+
+      this.updateRoundProgressFromResult(result.characterMessages, result.generationBatchId);
+
+      this.bumpRefreshTokens();
+      await this.loadSnapshot(this.expectedSceneId);
+      return '';
+    } catch (e) {
+      const msg: string = this.resolveRuntimeError(e);
+      this.runtimeError = msg;
+      this.roundStatus = WorldRoundUiStatus.Idle;
+      Logger.warn(LOG_TAG, 'resumeRound failed: ' + this.safeErrorCategory(e));
+      return msg;
+    } finally {
+      this.isSending = false;
+    }
   }
 
   private async safeListMessagesBySession(sessionId: string): Promise<WorldSceneMessage[]> {
@@ -705,6 +934,70 @@ export class WorldSceneChatViewModel implements WorldRuntimeObserver {
       Logger.warn(LOG_TAG, 'getById(instance) failed: ' + this.safeErrorCategory(e));
       return null;
     }
+  }
+
+  private updateRoundProgressFromResult(
+    characterMessages: WorldSceneMessage[],
+    generationBatchId: string
+  ): void {
+    if (this.detail === null) {
+      return;
+    }
+    const totalSpeakers: number = this.detail.sessionParticipantSnapshot.length;
+    const currentIdx: number = Math.min(characterMessages.length, totalSpeakers);
+    let currentInstId: string = '';
+    if (characterMessages.length > 0) {
+      currentInstId = characterMessages[characterMessages.length - 1].senderCharacterInstanceId ?? '';
+    }
+    this.roundProgress = this.buildRoundProgress(
+      currentIdx, totalSpeakers, currentInstId, generationBatchId, 'running'
+    );
+  }
+
+  private buildRoundProgress(
+    currentSpeakerIndex: number,
+    totalSpeakers: number,
+    currentSpeakerInstanceId: string,
+    generationBatchId: string,
+    roundStatus: string
+  ): RoundProgressUiModel {
+    let displayName: string = '';
+    if (this.detail !== null) {
+      for (let i = 0; i < this.detail.characters.length; i++) {
+        if (this.detail.characters[i].instanceId === currentSpeakerInstanceId) {
+          displayName = this.detail.characters[i].displayName;
+          break;
+        }
+      }
+    }
+    return {
+      currentSpeakerIndex: currentSpeakerIndex,
+      totalSpeakers: totalSpeakers,
+      currentSpeakerInstanceId: currentSpeakerInstanceId,
+      currentSpeakerDisplayName: displayName,
+      generationBatchId: generationBatchId,
+      roundStatus: roundStatus
+    };
+  }
+
+  private buildRoundProgressFromInspection(inspection: WorldRoundInspection): RoundProgressUiModel {
+    let displayName: string = '';
+    if (this.detail !== null) {
+      for (let i = 0; i < this.detail.characters.length; i++) {
+        if (this.detail.characters[i].instanceId === inspection.nextSpeakerInstanceId) {
+          displayName = this.detail.characters[i].displayName;
+          break;
+        }
+      }
+    }
+    return {
+      currentSpeakerIndex: inspection.nextSpeakerIndex,
+      totalSpeakers: inspection.totalSpeakers,
+      currentSpeakerInstanceId: inspection.nextSpeakerInstanceId,
+      currentSpeakerDisplayName: displayName,
+      generationBatchId: inspection.generationBatchId,
+      roundStatus: 'resumable'
+    };
   }
 
   private bumpRefreshTokens(): void {

@@ -9,6 +9,20 @@ export interface RegistryEntry {
   generationBatchId: string;
   startedAt: number;
   handle: ChatStreamHandle | null;
+  currentSpeakerCharacterInstanceId: string;
+  currentSpeakerMessageId: string;
+  currentSpeakerIndex: number;
+  totalSpeakers: number;
+}
+
+export interface RegistrySnapshot {
+  sessionId: string;
+  operationId: number;
+  generationBatchId: string;
+  currentSpeakerCharacterInstanceId: string;
+  currentSpeakerMessageId: string;
+  currentSpeakerIndex: number;
+  totalSpeakers: number;
 }
 
 export class WorldRuntimeRegistry {
@@ -29,7 +43,11 @@ export class WorldRuntimeRegistry {
       operationId: operationId,
       generationBatchId: generationBatchId,
       startedAt: Date.now(),
-      handle: null
+      handle: null,
+      currentSpeakerCharacterInstanceId: '',
+      currentSpeakerMessageId: '',
+      currentSpeakerIndex: 0,
+      totalSpeakers: 0
     };
     this.entries.set(sessionId, entry);
 
@@ -100,6 +118,41 @@ export class WorldRuntimeRegistry {
   getEntry(sessionId: string): RegistryEntry | null {
     const entry: RegistryEntry | undefined = this.entries.get(sessionId);
     return entry !== undefined ? entry : null;
+  }
+
+  updateSpeakerProgress(
+    sessionId: string,
+    operationId: number,
+    characterInstanceId: string,
+    messageId: string,
+    speakerIndex: number,
+    totalSpeakers: number
+  ): boolean {
+    const entry: RegistryEntry | undefined = this.entries.get(sessionId);
+    if (entry === undefined || entry.operationId !== operationId) {
+      return false;
+    }
+    entry.currentSpeakerCharacterInstanceId = characterInstanceId;
+    entry.currentSpeakerMessageId = messageId;
+    entry.currentSpeakerIndex = speakerIndex;
+    entry.totalSpeakers = totalSpeakers;
+    return true;
+  }
+
+  getSnapshot(sessionId: string): RegistrySnapshot | null {
+    const entry: RegistryEntry | undefined = this.entries.get(sessionId);
+    if (entry === undefined) {
+      return null;
+    }
+    return {
+      sessionId: entry.sessionId,
+      operationId: entry.operationId,
+      generationBatchId: entry.generationBatchId,
+      currentSpeakerCharacterInstanceId: entry.currentSpeakerCharacterInstanceId,
+      currentSpeakerMessageId: entry.currentSpeakerMessageId,
+      currentSpeakerIndex: entry.currentSpeakerIndex,
+      totalSpeakers: entry.totalSpeakers
+    };
   }
 
   isBusy(sessionId: string): boolean {

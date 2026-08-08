@@ -29,7 +29,7 @@ export function mapWorldRuntimeErrorToMessage(e: Object): string {
       case WorldRuntimeErrorKind.SessionLocationMismatch:
         return '会话地点数据不一致';
       case WorldRuntimeErrorKind.UnsupportedParticipantCount:
-        return '多人世界聊天将在下一阶段接入';
+        return '不支持的参与者数量';
       case WorldRuntimeErrorKind.ParticipantNotFound:
         return '角色实例不存在或已被移除';
       case WorldRuntimeErrorKind.ParticipantWorldMismatch:
