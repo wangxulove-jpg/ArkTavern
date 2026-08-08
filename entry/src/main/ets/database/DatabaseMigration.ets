@@ -14,7 +14,7 @@
  */
 
 import { relationalStore } from '@kit.ArkData';
-import { V1_TO_V2_STATEMENTS, V2_TO_V3_STATEMENTS, V3_TO_V4_STATEMENTS, V4_TO_V5_DDL_STATEMENTS, V5_TO_V6_STATEMENTS, V6_TO_V7_STATEMENTS, V7_TO_V8_DDL_STATEMENTS, V8_TO_V9_STATEMENTS, V9_TO_V10_DDL_STATEMENTS, V10_TO_V11_DDL_STATEMENTS, V11_TO_V12_DDL_STATEMENTS, V11_TO_V12_DATA_MIGRATION_STATEMENTS, V12_TO_V13_DDL_STATEMENTS, V13_TO_V14_DDL_STATEMENTS, V13_TO_V14_DATA_MIGRATION_STATEMENTS, V14_TO_V15_DDL_STATEMENTS, V15_TO_V16_DDL_STATEMENTS, V16_TO_V17_DDL_STATEMENTS, V17_TO_V18_DDL_STATEMENTS, V18_TO_V19_DDL_STATEMENTS, V19_TO_V20_DDL_STATEMENTS, V20_TO_V21_DDL_STATEMENTS, V21_TO_V22_DDL_STATEMENTS, V22_TO_V23_DDL_STATEMENTS, V23_TO_V24_DDL_STATEMENTS } from './DatabaseSchema';
+import { V1_TO_V2_STATEMENTS, V2_TO_V3_STATEMENTS, V3_TO_V4_STATEMENTS, V4_TO_V5_DDL_STATEMENTS, V5_TO_V6_STATEMENTS, V6_TO_V7_STATEMENTS, V7_TO_V8_DDL_STATEMENTS, V8_TO_V9_STATEMENTS, V9_TO_V10_DDL_STATEMENTS, V10_TO_V11_DDL_STATEMENTS, V11_TO_V12_DDL_STATEMENTS, V11_TO_V12_DATA_MIGRATION_STATEMENTS, V12_TO_V13_DDL_STATEMENTS, V13_TO_V14_DDL_STATEMENTS, V13_TO_V14_DATA_MIGRATION_STATEMENTS, V14_TO_V15_DDL_STATEMENTS, V15_TO_V16_DDL_STATEMENTS, V16_TO_V17_DDL_STATEMENTS, V17_TO_V18_DDL_STATEMENTS, V18_TO_V19_DDL_STATEMENTS, V19_TO_V20_DDL_STATEMENTS, V20_TO_V21_DDL_STATEMENTS, V21_TO_V22_DDL_STATEMENTS, V22_TO_V23_DDL_STATEMENTS, V23_TO_V24_DDL_STATEMENTS, V24_TO_V25_DDL_STATEMENTS } from './DatabaseSchema';
 import {
   TABLE_CHATS,
   TABLE_MESSAGES,
@@ -988,6 +988,33 @@ class V23ToV24Migration implements DatabaseMigration {
   async migrate(store: relationalStore.RdbStore): Promise<void> {
     for (let i = 0; i < V23_TO_V24_DDL_STATEMENTS.length; i++) {
       await store.executeSql(V23_TO_V24_DDL_STATEMENTS[i]);
+    }
+  }
+}
+
+/**
+ * v24→v25 迁移(W5A1-WORLD-SESSION-SUMMARY-STORE 世界会话摘要存储):
+ * 1. 创建 world_session_summaries 表
+ * 2. 创建相关索引(world_id / scene_id / session_id / session_id+version / created_at)
+ * 3. UNIQUE(session_id, version) 约束保证版本号唯一
+ *
+ * 安全性:
+ * - 所有 DDL 用 CREATE TABLE IF NOT EXISTS / CREATE INDEX IF NOT EXISTS
+ * - 不修改任何现有表
+ * - 不迁移任何现有数据
+ * - 任一语句失败由 DbHelper 事务回滚,数据库版本保持 24
+ */
+export function createV24ToV25Migration(): DatabaseMigration {
+  return new V24ToV25Migration();
+}
+
+class V24ToV25Migration implements DatabaseMigration {
+  readonly fromVersion: number = 24;
+  readonly toVersion: number = 25;
+
+  async migrate(store: relationalStore.RdbStore): Promise<void> {
+    for (let i = 0; i < V24_TO_V25_DDL_STATEMENTS.length; i++) {
+      await store.executeSql(V24_TO_V25_DDL_STATEMENTS[i]);
     }
   }
 }

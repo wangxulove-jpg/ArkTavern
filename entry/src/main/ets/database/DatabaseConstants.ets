@@ -6,7 +6,7 @@
  */
 
 export const DATABASE_NAME: string = 'arktavern.db';
-export const DATABASE_VERSION: number = 24;
+export const DATABASE_VERSION: number = 25;
 
 export const TABLE_CHARACTERS: string = 'characters';
 export const TABLE_CHATS: string = 'chats';
@@ -575,3 +575,35 @@ export const INDEX_WORLD_CHARACTER_LOCATION_HISTORY_INSTANCE: string = 'idx_worl
 export const INDEX_WORLD_CHARACTER_LOCATION_HISTORY_INSTANCE_CREATED: string = 'idx_world_character_location_history_instance_created';
 export const INDEX_WORLD_CHARACTER_LOCATION_HISTORY_TRANSITION: string = 'idx_world_character_location_history_transition';
 export const INDEX_WORLD_CHARACTER_LOCATION_HISTORY_OCCURRED_AT: string = 'idx_world_character_location_history_occurred_at';
+
+// ===== v25: 世界会话摘要存储(W5A1-WORLD-SESSION-SUMMARY-STORE) =====
+// 独立数据域,不可变会话摘要。
+// 1 张新表: world_session_summaries + 相关索引,
+// 表名 / 列名 / 索引名集中定义,Repository / Schema / Migration 只读取此处。
+export const TABLE_WORLD_SESSION_SUMMARIES: string = 'world_session_summaries';
+
+/** world_session_summaries.session_id 列名 */
+export const COLUMN_SESSION_ID_WSS: string = 'session_id';
+/** world_session_summaries.version 列名(session-scoped, starting at 1) */
+export const COLUMN_VERSION: string = 'version';
+/** world_session_summaries.visibility_scope 列名 */
+export const COLUMN_VISIBILITY_SCOPE: string = 'visibility_scope';
+/** world_session_summaries.source_message_ids_json 列名(full provenance) */
+export const COLUMN_SOURCE_MESSAGE_IDS_JSON_WSS: string = 'source_message_ids_json';
+/** world_session_summaries.source_message_count 列名(auto-derived from sourceMessageIds.length) */
+export const COLUMN_SOURCE_MESSAGE_COUNT: string = 'source_message_count';
+/** world_session_summaries.participant_snapshot_json 列名 */
+export const COLUMN_PARTICIPANT_SNAPSHOT_JSON_WSS: string = 'participant_snapshot_json';
+/** world_session_summaries.player_display_name_snapshot 列名 */
+export const COLUMN_PLAYER_DISPLAY_NAME_SNAPSHOT_WSS: string = 'player_display_name_snapshot';
+/** world_session_summaries.location_id 列名 */
+export const COLUMN_LOCATION_ID_WSS: string = 'location_id';
+/** world_session_summaries.prompt_version 列名 */
+export const COLUMN_PROMPT_VERSION: string = 'prompt_version';
+
+// ===== v25: 世界会话摘要索引名 =====
+export const INDEX_WORLD_SESSION_SUMMARIES_WORLD_ID: string = 'idx_world_session_summaries_world_id';
+export const INDEX_WORLD_SESSION_SUMMARIES_SCENE_ID: string = 'idx_world_session_summaries_scene_id';
+export const INDEX_WORLD_SESSION_SUMMARIES_SESSION_ID: string = 'idx_world_session_summaries_session_id';
+export const INDEX_WORLD_SESSION_SUMMARIES_SESSION_VERSION: string = 'idx_world_session_summaries_session_version';
+export const INDEX_WORLD_SESSION_SUMMARIES_CREATED_AT: string = 'idx_world_session_summaries_created_at';

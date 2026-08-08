@@ -10,6 +10,7 @@ import { WorldEventRepository } from '../../../main/ets/repositories/world/World
 import { WorldSceneRepository } from '../../../main/ets/repositories/world/WorldSceneRepository';
 import { WorldSceneMessageRepository } from '../../../main/ets/repositories/world/WorldSceneMessageRepository';
 import { WorldConversationSessionRepository } from '../../../main/ets/repositories/world/WorldConversationSessionRepository';
+import { WorldSessionSummaryRepository } from '../../../main/ets/repositories/world/WorldSessionSummaryRepository';
 import { WorldPlayerProfileRepository } from '../../../main/ets/repositories/world/WorldPlayerProfileRepository';
 import { WorldLocationMapPlacementRepository } from '../../../main/ets/repositories/world/WorldLocationMapPlacementRepository';
 import { WorldCharacterLocationHistoryRepository } from '../../../main/ets/repositories/world/WorldCharacterLocationHistoryRepository';
@@ -69,9 +70,10 @@ export default function worldPlayerCharacterDomainContractTest(): void {
       const movementService: WorldCharacterMovementService = new WorldCharacterMovementService(
         worldRepo, locationRepo, edgeRepo, instanceRepo, sessionRepo, historyRepo, dbHelper
       );
+      const summaryRepo: WorldSessionSummaryRepository = new WorldSessionSummaryRepository(dbHelper);
       stateService = new WorldStateService(
         worldRepo, locationRepo, edgeRepo, instanceRepo, eventRepo,
-        sceneRepo, sceneMessageRepo, sessionRepo, profileRepository, placementRepo,
+        sceneRepo, sceneMessageRepo, sessionRepo, summaryRepo, profileRepository, placementRepo,
         memoryService, movementService, characterService, dbHelper
       );
       profileRepo = profileRepository;

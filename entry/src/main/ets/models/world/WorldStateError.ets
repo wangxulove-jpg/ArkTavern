@@ -34,6 +34,10 @@ export enum WorldStateErrorKind {
   CharacterAlreadyAtLocation,
   NoEnabledPath,
   InvalidOperation,
+  SessionNotFound,
+  SessionNotEnded,
+  SceneNotFound,
+  SummarySourceChanged,
   Internal
 }
 
@@ -136,6 +140,22 @@ export class WorldStateError extends Error {
 
   static invalidOperation(message: string): WorldStateError {
     return new WorldStateError(WorldStateErrorKind.InvalidOperation, message);
+  }
+
+  static sessionNotFound(): WorldStateError {
+    return new WorldStateError(WorldStateErrorKind.SessionNotFound, '会话不存在');
+  }
+
+  static sessionNotEnded(): WorldStateError {
+    return new WorldStateError(WorldStateErrorKind.SessionNotEnded, '会话尚未结束');
+  }
+
+  static sceneNotFound(): WorldStateError {
+    return new WorldStateError(WorldStateErrorKind.SceneNotFound, '场景不存在');
+  }
+
+  static summarySourceChanged(): WorldStateError {
+    return new WorldStateError(WorldStateErrorKind.SummarySourceChanged, '摘要源数据已变更');
   }
 
   static internal(message: string): WorldStateError {

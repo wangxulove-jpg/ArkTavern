@@ -100,6 +100,7 @@ import { WorldSceneMessageRepository } from '../repositories/world/WorldSceneMes
 import { WorldCharacterMemoryRepository } from '../repositories/world/WorldCharacterMemoryRepository';
 import { WorldPlayerProfileRepository } from '../repositories/world/WorldPlayerProfileRepository';
 import { WorldConversationSessionRepository } from '../repositories/world/WorldConversationSessionRepository';
+import { WorldSessionSummaryRepository } from '../repositories/world/WorldSessionSummaryRepository';
 import { WorldLocationMapPlacementRepository } from '../repositories/world/WorldLocationMapPlacementRepository';
 import { WorldCharacterLocationHistoryRepository } from '../repositories/world/WorldCharacterLocationHistoryRepository';
 import { WorldStateService } from './world/WorldStateService';
@@ -108,6 +109,7 @@ import { WorldCharacterMemoryService } from './world/WorldCharacterMemoryService
 import { WorldCharacterMovementService } from './world/WorldCharacterMovementService';
 import { WorldPerceptionService } from './world/WorldPerceptionService';
 import { WorldConversationSessionService } from './world/WorldConversationSessionService';
+import { WorldSessionSummaryStoreService } from './world/WorldSessionSummaryStoreService';
 import { WorldMapInteractionService } from './world/WorldMapInteractionService';
 import { WorldSceneLaunchService } from './world/WorldSceneLaunchService';
 import { WorldSceneMessageService } from './world/WorldSceneMessageService';
@@ -259,6 +261,8 @@ export class AppServices {
   private readonly worldPlayerProfileRepository: WorldPlayerProfileRepository;
   /** WorldConversationSessionRepository 世界会话仓储(W1A-WORLD-CORE-STORE) */
   private readonly worldConversationSessionRepository: WorldConversationSessionRepository;
+  /** WorldSessionSummaryRepository 世界会话摘要仓储(W5A1-WORLD-SESSION-SUMMARY-STORE) */
+  private readonly worldSessionSummaryRepository: WorldSessionSummaryRepository;
   /** WorldLocationMapPlacementRepository 世界地点地图放置仓储(W1C-WORLD-MAP-CONTRACT) */
   private readonly worldLocationMapPlacementRepository: WorldLocationMapPlacementRepository;
   /** WorldCharacterLocationHistoryRepository 世界角色地点历史仓储(W4A,地点变更历史 CRUD) */
@@ -287,6 +291,8 @@ export class AppServices {
   private readonly worldScenePromptAssembler: WorldScenePromptAssembler;
   /** WorldSceneRuntimeService 世界场景运行时服务(W3A1,单角色AI生成核心) */
   private readonly worldSceneRuntimeService: WorldSceneRuntimeService;
+  /** WorldSessionSummaryStoreService 世界会话摘要存储服务(W5A1,摘要唯一正式写入口) */
+  private readonly worldSessionSummaryStoreService: WorldSessionSummaryStoreService;
 
   /**
    * 私有构造,组装全部依赖。
@@ -324,6 +330,8 @@ export class AppServices {
     // W1A-WORLD-CORE-STORE: 世界玩家档案与会话仓储,仅依赖 DbHelper,不依赖任何 Service,不会形成循环。
     this.worldPlayerProfileRepository = new WorldPlayerProfileRepository(this.dbHelper);
     this.worldConversationSessionRepository = new WorldConversationSessionRepository(this.dbHelper);
+    // W5A1: 世界会话摘要仓储,仅依赖 DbHelper,不依赖任何 Service。
+    this.worldSessionSummaryRepository = new WorldSessionSummaryRepository(this.dbHelper);
     // W1C-WORLD-MAP-CONTRACT: 世界地点地图放置仓储,仅依赖 DbHelper,不依赖任何 Service。
     this.worldLocationMapPlacementRepository = new WorldLocationMapPlacementRepository(this.dbHelper);
     // W4A: 世界角色地点历史仓储,仅依赖 DbHelper,不依赖任何 Service。
@@ -378,6 +386,7 @@ export class AppServices {
       this.worldSceneRepository,
       this.worldSceneMessageRepository,
       this.worldConversationSessionRepository,
+      this.worldSessionSummaryRepository,
       this.worldPlayerProfileRepository,
       this.worldLocationMapPlacementRepository,
       this.worldCharacterMemoryService,
@@ -491,6 +500,16 @@ export class AppServices {
       this.worldSceneMessageService,
       this.worldRuntimeRegistry,
       this.worldScenePromptAssembler
+    );
+    // W5A1: 世界会话摘要存储服务(摘要唯一正式写入口)。
+    // 依赖 SummaryRepo + SessionRepo + SceneMessageRepo + SceneRepo + DbHelper。
+    // 不依赖 ModelService,不调用 AI 模型。仅负责准备源数据与持久化已完成的摘要。
+    this.worldSessionSummaryStoreService = new WorldSessionSummaryStoreService(
+      this.worldSessionSummaryRepository,
+      this.worldConversationSessionRepository,
+      this.worldSceneMessageRepository,
+      this.worldSceneRepository,
+      this.dbHelper
     );
     // v8.3 Phase 2: 最近原始消息窗口选择器(去重 + 窗口 + 完整轮次)
     this.recentMessageSelector = new RecentMessageSelector(this.tokenCounter);

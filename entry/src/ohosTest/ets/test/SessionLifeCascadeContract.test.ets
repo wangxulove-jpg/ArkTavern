@@ -12,6 +12,7 @@ import { WorldSceneRepository } from '../../../main/ets/repositories/world/World
 import { WorldSceneMessageRepository } from '../../../main/ets/repositories/world/WorldSceneMessageRepository';
 import { WorldPlayerProfileRepository } from '../../../main/ets/repositories/world/WorldPlayerProfileRepository';
 import { WorldConversationSessionRepository } from '../../../main/ets/repositories/world/WorldConversationSessionRepository';
+import { WorldSessionSummaryRepository } from '../../../main/ets/repositories/world/WorldSessionSummaryRepository';
 import { WorldConversationSessionService } from '../../../main/ets/services/world/WorldConversationSessionService';
 import { WorldStateService } from '../../../main/ets/services/world/WorldStateService';
 import { WorldCharacterMemoryService } from '../../../main/ets/services/world/WorldCharacterMemoryService';
@@ -113,6 +114,7 @@ export default function sessionLifeCascadeContractTest(): void {
       const movementService: WorldCharacterMovementService = new WorldCharacterMovementService(
         worldRepo, locationRepo, edgeRepo, instanceRepo, sessionRepo, historyRepo, dbHelper
       );
+      const summaryRepo: WorldSessionSummaryRepository = new WorldSessionSummaryRepository(dbHelper);
       stateService = new WorldStateService(
         worldRepo,
         locationRepo,
@@ -122,6 +124,7 @@ export default function sessionLifeCascadeContractTest(): void {
         sceneRepo,
         sceneMessageRepo,
         sessionRepo,
+        summaryRepo,
         profileRepo,
         placementRepo,
         memoryService,
