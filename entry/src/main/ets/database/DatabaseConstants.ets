@@ -6,7 +6,7 @@
  */
 
 export const DATABASE_NAME: string = 'arktavern.db';
-export const DATABASE_VERSION: number = 28;
+export const DATABASE_VERSION: number = 29;
 
 export const TABLE_CHARACTERS: string = 'characters';
 export const TABLE_CHATS: string = 'chats';
@@ -673,6 +673,23 @@ export const COLUMN_WITNESS_INSTANCE_IDS_JSON: string = 'witness_instance_ids_js
 export const COLUMN_CONFIDENCE: string = 'confidence';
 export const COLUMN_STATUS_WEE: string = 'status';
 export const COLUMN_STATUS_UPDATED_AT_WEE: string = 'status_updated_at';
+
+// ===== v29: 世界已知事件存储(W6B1-WORLD-KNOWN-EVENT-STORE) =====
+export const TABLE_WORLD_KNOWN_EVENT_ENTRIES: string = 'world_known_event_entries';
+
+export const COLUMN_OWNER_CHARACTER_INSTANCE_ID_WKEE: string = 'owner_character_instance_id';
+export const COLUMN_EVENT_ID_WKEE: string = 'event_id';
+export const COLUMN_EXTRACTION_RUN_ID_WKEE: string = 'extraction_run_id';
+export const COLUMN_KNOWLEDGE_SOURCE_KIND: string = 'knowledge_source_kind';
+export const COLUMN_SOURCE_SESSION_ID_WKEE: string = 'source_session_id';
+export const COLUMN_KNOWLEDGE_SOURCE_MESSAGE_IDS_JSON: string = 'knowledge_source_message_ids_json';
+export const COLUMN_STATUS_WKEE: string = 'status';
+export const COLUMN_STATUS_UPDATED_AT_WKEE: string = 'status_updated_at';
+
+// ===== v29: 世界已知事件索引名 =====
+export const INDEX_WORLD_KNOWN_EVENT_ENTRIES_OWNER_CREATED: string = 'idx_wkee_owner_created';
+export const INDEX_WORLD_KNOWN_EVENT_ENTRIES_OWNER_STATUS_CREATED: string = 'idx_wkee_owner_status_created';
+export const INDEX_WORLD_KNOWN_EVENT_ENTRIES_OWNER_SESSION_SOURCE_KIND: string = 'idx_wkee_owner_session_source_kind';
 
 // ===== v28: 世界事件提取索引名 =====
 export const INDEX_WORLD_EVENT_EXTRACTION_RUNS_WORLD_SESSION_VERSION: string = 'idx_weer_world_session_version';

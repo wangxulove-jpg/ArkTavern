@@ -112,7 +112,9 @@ import { WorldCharacterMemoryPromptAssembler } from './world/WorldCharacterMemor
 import { WorldCharacterMemoryGenerationService } from './world/WorldCharacterMemoryGenerationService';
 import { WorldCharacterMovementService } from './world/WorldCharacterMovementService';
 import { WorldEventExtractionRunRepository, WorldEventEntryRepository } from '../repositories/world/WorldEventExtractionRepository';
+import { WorldKnownEventEntryRepository } from '../repositories/world/WorldKnownEventEntryRepository';
 import { WorldEventStoreService } from './world/WorldEventStoreService';
+import { WorldKnownEventStoreService } from './world/WorldKnownEventStoreService';
 import { WorldEventExtractionPromptAssembler } from './world/WorldEventExtractionPromptAssembler';
 import { WorldEventExtractionGenerationService } from './world/WorldEventExtractionGenerationService';
 import { WorldPerceptionService } from './world/WorldPerceptionService';
@@ -322,12 +324,16 @@ export class AppServices {
   private readonly worldEventExtractionRunRepository: WorldEventExtractionRunRepository;
   /** WorldEventEntryRepository 世界事件条目仓储(W6A1) */
   private readonly worldEventEntryRepository: WorldEventEntryRepository;
+  /** WorldKnownEventEntryRepository 世界已知事件条目仓储(W6B1) */
+  private readonly worldKnownEventEntryRepository: WorldKnownEventEntryRepository;
   /** WorldEventStoreService 世界事件提取存储服务(W6A1) */
   private readonly worldEventStoreService: WorldEventStoreService;
   /** WorldEventExtractionPromptAssembler 世界事件提取Prompt构建器(W6A2) */
   private readonly worldEventExtractionPromptAssembler: WorldEventExtractionPromptAssembler;
   /** WorldEventExtractionGenerationService 世界事件提取AI生成服务(W6A2) */
   private readonly worldEventExtractionGenerationService: WorldEventExtractionGenerationService;
+  /** WorldKnownEventStoreService 世界已知事件存储服务(W6B1) */
+  private readonly worldKnownEventStoreService: WorldKnownEventStoreService;
 
   /**
    * 私有构造,组装全部依赖。
@@ -376,6 +382,8 @@ export class AppServices {
     // W6A1: 世界事件提取运行与条目仓储,仅依赖 DbHelper,不依赖任何 Service。
     this.worldEventExtractionRunRepository = new WorldEventExtractionRunRepository(this.dbHelper);
     this.worldEventEntryRepository = new WorldEventEntryRepository(this.dbHelper);
+    // W6B1: 世界已知事件条目仓储,仅依赖 DbHelper,不依赖任何 Service。
+    this.worldKnownEventEntryRepository = new WorldKnownEventEntryRepository(this.dbHelper);
     this.characterService = new CharacterService(
       this.characterRepository,
       this.characterSelectionStore,
@@ -434,6 +442,7 @@ export class AppServices {
       this.worldCharacterMovementService,
       this.worldEventExtractionRunRepository,
       this.worldEventEntryRepository,
+      this.worldKnownEventEntryRepository,
       this.characterService,
       this.dbHelper
     );
@@ -628,6 +637,14 @@ export class AppServices {
       this.worldEventStoreService,
       this.worldEventExtractionPromptAssembler,
       this.modelService
+    );
+    // W6B1: 世界已知事件存储服务(已知事件条目唯一正式写入口)。
+    // 依赖 KnownEventEntryRepo + ExtractionRunRepo + EventEntryRepo + DbHelper。
+    this.worldKnownEventStoreService = new WorldKnownEventStoreService(
+      this.worldKnownEventEntryRepository,
+      this.worldEventExtractionRunRepository,
+      this.worldEventEntryRepository,
+      this.dbHelper
     );
     // v8.3 Phase 2: 最近原始消息窗口选择器(去重 + 窗口 + 完整轮次)
     this.recentMessageSelector = new RecentMessageSelector(this.tokenCounter);
