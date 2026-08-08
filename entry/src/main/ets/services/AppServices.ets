@@ -108,6 +108,8 @@ import { WorldStateService } from './world/WorldStateService';
 import { WorldSceneService } from './world/WorldSceneService';
 import { WorldCharacterMemoryService } from './world/WorldCharacterMemoryService';
 import { WorldCharacterMemoryStoreService } from './world/WorldCharacterMemoryStoreService';
+import { WorldCharacterMemoryPromptAssembler } from './world/WorldCharacterMemoryPromptAssembler';
+import { WorldCharacterMemoryGenerationService } from './world/WorldCharacterMemoryGenerationService';
 import { WorldCharacterMovementService } from './world/WorldCharacterMovementService';
 import { WorldPerceptionService } from './world/WorldPerceptionService';
 import { WorldConversationSessionService } from './world/WorldConversationSessionService';
@@ -281,6 +283,10 @@ export class AppServices {
   private readonly worldCharacterMemoryService: WorldCharacterMemoryService;
   /** WorldCharacterMemoryStoreService 世界角色主观记忆存储服务(W5B1,记忆条目唯一正式写入口) */
   private readonly worldCharacterMemoryStoreService: WorldCharacterMemoryStoreService;
+  /** WorldCharacterMemoryPromptAssembler 世界角色主观记忆Prompt构建器(W5B2) */
+  private readonly worldCharacterMemoryPromptAssembler: WorldCharacterMemoryPromptAssembler;
+  /** WorldCharacterMemoryGenerationService 世界角色主观记忆AI生成服务(W5B2) */
+  private readonly worldCharacterMemoryGenerationService: WorldCharacterMemoryGenerationService;
   /** WorldCharacterMovementService 世界角色移动业务服务(W4A,位置变更唯一正式写入口) */
   private readonly worldCharacterMovementService: WorldCharacterMovementService;
   /** WorldPerceptionService 世界感知服务(W4B,当前客观共处状态查询) */
@@ -535,6 +541,23 @@ export class AppServices {
       this.worldSceneMessageRepository,
       this.worldCharacterInstanceRepository,
       this.dbHelper
+    );
+    // W5B2: 世界角色主观记忆Prompt构建器。
+    // 依赖 WorldRepo + LocationRepo + SceneRepo(只读公共元数据)。
+    // 不调用 ModelService / Repository 写入 / 保存 Memory。
+    this.worldCharacterMemoryPromptAssembler = new WorldCharacterMemoryPromptAssembler(
+      this.worldRepository,
+      this.worldLocationRepository,
+      this.worldSceneRepository
+    );
+    // W5B2: 世界角色主观记忆AI生成服务。
+    // 依赖 StoreService + PromptAssembler + ModelService + SessionRepo。
+    // 对每个 owner 独立 Model request，顺序执行。
+    this.worldCharacterMemoryGenerationService = new WorldCharacterMemoryGenerationService(
+      this.worldCharacterMemoryStoreService,
+      this.worldCharacterMemoryPromptAssembler,
+      this.modelService,
+      this.worldConversationSessionRepository
     );
     // W5A2: 世界会话摘要Prompt构建器。
     // 依赖 WorldRepo + LocationRepo + SceneRepo(只读公共元数据)。
@@ -1303,6 +1326,22 @@ export class AppServices {
    */
   static getWorldCharacterMemoryStoreService(): WorldCharacterMemoryStoreService {
     return AppServices.getInstance().worldCharacterMemoryStoreService;
+  }
+
+  /**
+   * 获取 WorldCharacterMemoryPromptAssembler 实例(W5B2 世界角色主观记忆Prompt构建器)。
+   * 所有页面与 ViewModel 必须通过此方法获取同一个实例。
+   */
+  static getWorldCharacterMemoryPromptAssembler(): WorldCharacterMemoryPromptAssembler {
+    return AppServices.getInstance().worldCharacterMemoryPromptAssembler;
+  }
+
+  /**
+   * 获取 WorldCharacterMemoryGenerationService 实例(W5B2 世界角色主观记忆AI生成服务)。
+   * 对每个 owner 独立 Model request，owner isolation 永久保持。
+   */
+  static getWorldCharacterMemoryGenerationService(): WorldCharacterMemoryGenerationService {
+    return AppServices.getInstance().worldCharacterMemoryGenerationService;
   }
 
   /**
