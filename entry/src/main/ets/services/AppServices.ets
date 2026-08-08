@@ -117,6 +117,8 @@ import { WorldDirectionalRelationshipEntryRepository } from '../repositories/wor
 import { WorldEventStoreService } from './world/WorldEventStoreService';
 import { WorldKnownEventStoreService } from './world/WorldKnownEventStoreService';
 import { WorldDirectionalRelationshipStoreService } from './world/WorldDirectionalRelationshipStoreService';
+import { WorldDirectionalRelationshipPromptAssembler } from './world/WorldDirectionalRelationshipPromptAssembler';
+import { WorldDirectionalRelationshipGenerationService } from './world/WorldDirectionalRelationshipGenerationService';
 import { WorldEventExtractionPromptAssembler } from './world/WorldEventExtractionPromptAssembler';
 import { WorldEventExtractionGenerationService } from './world/WorldEventExtractionGenerationService';
 import { WorldPerceptionService } from './world/WorldPerceptionService';
@@ -340,6 +342,10 @@ export class AppServices {
   private readonly worldKnownEventStoreService: WorldKnownEventStoreService;
   /** WorldDirectionalRelationshipStoreService 世界方向性关系存储服务(W6C1) */
   private readonly worldDirectionalRelationshipStoreService: WorldDirectionalRelationshipStoreService;
+  /** WorldDirectionalRelationshipPromptAssembler 世界方向性关系Prompt构建器(W6C2) */
+  private readonly worldDirectionalRelationshipPromptAssembler: WorldDirectionalRelationshipPromptAssembler;
+  /** WorldDirectionalRelationshipGenerationService 世界方向性关系AI生成服务(W6C2) */
+  private readonly worldDirectionalRelationshipGenerationService: WorldDirectionalRelationshipGenerationService;
 
   /**
    * 私有构造,组装全部依赖。
@@ -663,6 +669,21 @@ export class AppServices {
       this.worldConversationSessionRepository,
       this.worldCharacterMemoryStoreService,
       this.dbHelper
+    );
+    // W6C2: 世界方向性关系Prompt构建器。
+    // 依赖 WorldRepo + LocationRepo + SceneRepo(只读公共元数据)。
+    this.worldDirectionalRelationshipPromptAssembler = new WorldDirectionalRelationshipPromptAssembler(
+      this.worldRepository,
+      this.worldLocationRepository,
+      this.worldSceneRepository
+    );
+    // W6C2: 世界方向性关系AI生成服务(逐 Owner→Target 独立请求)。
+    // 依赖 StoreService + PromptAssembler + ModelService + SessionRepo。
+    this.worldDirectionalRelationshipGenerationService = new WorldDirectionalRelationshipGenerationService(
+      this.worldDirectionalRelationshipStoreService,
+      this.worldDirectionalRelationshipPromptAssembler,
+      this.modelService,
+      this.worldConversationSessionRepository
     );
     // v8.3 Phase 2: 最近原始消息窗口选择器(去重 + 窗口 + 完整轮次)
     this.recentMessageSelector = new RecentMessageSelector(this.tokenCounter);
