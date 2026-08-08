@@ -25,6 +25,13 @@ import { ProviderConfig } from '../../models/ProviderConfig';
 import { TokenCounter } from '../../services/TokenCounter';
 import { HistoryTrimmer } from '../../services/HistoryTrimmer';
 import { Logger } from '../../utils/Logger';
+import { WorldCrossSessionContextService } from './WorldCrossSessionContextService';
+import {
+  WorldCrossSessionContextRequest,
+  WorldCrossSessionContextSnapshot,
+  WorldCrossSessionSummaryContextItem,
+  WorldCrossSessionMemoryContextItem
+} from '../../models/world/WorldCrossSessionContext';
 
 const LOG_TAG: string = 'WorldPromptAsm';
 
@@ -109,6 +116,7 @@ export class WorldScenePromptAssembler {
   private readonly modelService: ModelService;
   private readonly tokenCounter: TokenCounter;
   private readonly historyTrimmer: HistoryTrimmer;
+  private readonly crossSessionContextService: WorldCrossSessionContextService;
 
   constructor(
     promptBuilder: PromptBuilder,
@@ -116,7 +124,8 @@ export class WorldScenePromptAssembler {
     presetService: PromptPresetService,
     modelService: ModelService,
     tokenCounter: TokenCounter,
-    historyTrimmer: HistoryTrimmer
+    historyTrimmer: HistoryTrimmer,
+    crossSessionContextService: WorldCrossSessionContextService
   ) {
     this.promptBuilder = promptBuilder;
     this.lorebookService = lorebookService;
@@ -124,6 +133,7 @@ export class WorldScenePromptAssembler {
     this.modelService = modelService;
     this.tokenCounter = tokenCounter;
     this.historyTrimmer = historyTrimmer;
+    this.crossSessionContextService = crossSessionContextService;
   }
 
   async assemble(input: WorldPromptAssemblyInput): Promise<WorldPromptAssemblyResult> {
@@ -206,11 +216,29 @@ export class WorldScenePromptAssembler {
 
     const buildResult = this.promptBuilder.build(buildContext);
 
+    let crossSessionSnapshot: WorldCrossSessionContextSnapshot | null = null;
+    try {
+      const contextRequest: WorldCrossSessionContextRequest = {
+        worldId: input.world.id,
+        sceneId: input.scene.id,
+        sessionId: input.session.id,
+        speakerCharacterInstanceId: input.speakerInstance.id
+      };
+      crossSessionSnapshot = await this.crossSessionContextService.prepareContext(contextRequest);
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'crossSessionContext failed: ' + (e as Error).message);
+    }
+
+    const crossSessionText: string | null = crossSessionSnapshot !== null
+      ? this.formatCrossSessionContext(crossSessionSnapshot)
+      : null;
+
     const finalMessages: ChatMessage[] = this.injectWorldSegments(
       buildResult.messages,
       worldContext,
       playerSegment,
       worldConstraints,
+      crossSessionText,
       input.speakerCharacter.postHistoryInstructions
     );
 
@@ -361,6 +389,7 @@ export class WorldScenePromptAssembler {
     worldContext: string,
     playerSegment: string,
     worldConstraints: string,
+    crossSessionText: string | null,
     postHistoryInstructions: string
   ): ChatMessage[] {
     const result: ChatMessage[] = [];
@@ -383,11 +412,42 @@ export class WorldScenePromptAssembler {
     };
     result.push(playerMsg);
 
-    let lastSystemIdx: number = -1;
-    for (let i = 0; i < baseMessages.length; i++) {
-      result.push(baseMessages[i]);
+    let lastSystemBeforeConvIdx: number = -1;
+    let conversationStartIdx: number = -1;
+    for (let i: number = 0; i < baseMessages.length; i++) {
+      if (baseMessages[i].source === ChatMessageSource.Conversation ||
+        baseMessages[i].source === ChatMessageSource.CharacterFirstMessage) {
+        conversationStartIdx = i;
+        break;
+      }
       if (baseMessages[i].role === ChatRole.System) {
-        lastSystemIdx = result.length - 1;
+        lastSystemBeforeConvIdx = result.length;
+      }
+      result.push(baseMessages[i]);
+    }
+
+    if (crossSessionText !== null && crossSessionText.length > 0) {
+      const crossSessionMsg: ChatMessage = {
+        id: 'cross-session-context-' + Date.now().toString(),
+        role: ChatRole.System,
+        content: crossSessionText,
+        createdAt: Date.now(),
+        source: ChatMessageSource.CrossSessionContext
+      };
+      result.push(crossSessionMsg);
+      lastSystemBeforeConvIdx = result.length;
+    }
+
+    if (conversationStartIdx >= 0) {
+      for (let i: number = conversationStartIdx; i < baseMessages.length; i++) {
+        result.push(baseMessages[i]);
+      }
+    }
+
+    let lastSystemIdx: number = -1;
+    for (let i: number = 0; i < result.length; i++) {
+      if (result[i].role === ChatRole.System) {
+        lastSystemIdx = i;
       }
     }
 
@@ -406,6 +466,47 @@ export class WorldScenePromptAssembler {
     }
 
     return result;
+  }
+
+  private formatCrossSessionContext(snapshot: WorldCrossSessionContextSnapshot): string {
+    const parts: string[] = [];
+
+    if (snapshot.summaries.length > 0) {
+      parts.push('---跨会话共享摘要(历史叙事摘要,非当前会话内容)---');
+      for (let i: number = 0; i < snapshot.summaries.length; i++) {
+        const s: WorldCrossSessionSummaryContextItem = snapshot.summaries[i];
+        parts.push('[跨会话摘要·会话 #' + s.sourceSessionSequenceNumber.toString() + ']');
+        parts.push(s.summaryText);
+      }
+      parts.push('---跨会话共享摘要结束---');
+    }
+
+    if (snapshot.memories.length > 0) {
+      parts.push('---角色记忆(跨会话个人记忆,非当前会话内容)---');
+      for (let i: number = 0; i < snapshot.memories.length; i++) {
+        const m: WorldCrossSessionMemoryContextItem = snapshot.memories[i];
+        parts.push('[角色记忆·会话 #' + m.sourceSessionId.substring(0, 8) + ']');
+        parts.push(m.memoryText);
+      }
+      parts.push('---角色记忆结束---');
+    }
+
+    if (parts.length === 0) {
+      return '';
+    }
+
+    const omitted: string[] = [];
+    if (snapshot.omittedSummaryCount > 0) {
+      omitted.push(snapshot.omittedSummaryCount.toString() + '条摘要因预算限制省略');
+    }
+    if (snapshot.omittedMemoryCount > 0) {
+      omitted.push(snapshot.omittedMemoryCount.toString() + '条记忆因预算限制省略');
+    }
+    if (omitted.length > 0) {
+      parts.push('(' + omitted.join(', ') + ')');
+    }
+
+    return parts.join('\n');
   }
 
   private shortId(id: string): string {

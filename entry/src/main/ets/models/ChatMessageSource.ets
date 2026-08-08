@@ -38,5 +38,7 @@ export enum ChatMessageSource {
   /** v12: 旧数据迁移摘要(受保护,不进入聊天历史) */
   MemoryLegacy = 'memoryLegacy',
   /** Character Post-History Instructions(受保护,不进入聊天历史) */
-  CharacterPostHistory = 'characterPostHistory'
+  CharacterPostHistory = 'characterPostHistory',
+  /** W5C2: 跨会话上下文(摘要+记忆,受保护,不进入聊天历史) */
+  CrossSessionContext = 'crossSessionContext'
 }

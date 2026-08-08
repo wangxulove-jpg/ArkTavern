@@ -501,14 +501,25 @@ export class AppServices {
     this.promptBuilder = new PromptBuilder(this.lorebookService, macroReplacer);
     this.tokenCounter = new TokenCounter();
     this.historyTrimmer = new HistoryTrimmer(this.tokenCounter);
-    // W3A1: Prompt构建器(依赖通用PromptBuilder/Lorebook/Preset/ModelService/TokenCounter/HistoryTrimmer)
+    // W5C1: 世界跨Session上下文选择器。
+    // 依赖 SummaryRepo + MemoryEntryRepo + SessionRepo + SceneRepo + DbHelper。
+    // 必须在 worldScenePromptAssembler 之前构造(W5C2 注入依赖)。
+    this.worldCrossSessionContextService = new WorldCrossSessionContextService(
+      this.worldSessionSummaryRepository,
+      this.worldCharacterMemoryEntryRepository,
+      this.worldConversationSessionRepository,
+      this.worldSceneRepository,
+      this.dbHelper
+    );
+    // W3A1: Prompt构建器(依赖通用PromptBuilder/Lorebook/Preset/ModelService/TokenCounter/HistoryTrimmer/W5C1 ContextService)
     this.worldScenePromptAssembler = new WorldScenePromptAssembler(
       this.promptBuilder,
       this.lorebookService,
       this.promptPresetService,
       this.modelService,
       this.tokenCounter,
-      this.historyTrimmer
+      this.historyTrimmer,
+      this.worldCrossSessionContextService
     );
     // W3A1: 运行时核心服务(依赖所有世界Repository + CharacterService + ModelService + MessageService + Registry + PromptAssembler)
     this.worldSceneRuntimeService = new WorldSceneRuntimeService(
@@ -575,16 +586,6 @@ export class AppServices {
       this.worldSessionSummaryStoreService,
       this.worldSessionSummaryPromptAssembler,
       this.modelService
-    );
-    // W5C1: 世界跨Session上下文选择器。
-    // 依赖 SummaryRepo + MemoryEntryRepo + SessionRepo + SceneRepo + DbHelper。
-    // 不调用 ModelService,不写数据库,只做 selection/filtering/ordering/budget/dedup。
-    this.worldCrossSessionContextService = new WorldCrossSessionContextService(
-      this.worldSessionSummaryRepository,
-      this.worldCharacterMemoryEntryRepository,
-      this.worldConversationSessionRepository,
-      this.worldSceneRepository,
-      this.dbHelper
     );
     // v8.3 Phase 2: 最近原始消息窗口选择器(去重 + 窗口 + 完整轮次)
     this.recentMessageSelector = new RecentMessageSelector(this.tokenCounter);
