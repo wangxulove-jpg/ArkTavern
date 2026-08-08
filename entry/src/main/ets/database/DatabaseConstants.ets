@@ -6,7 +6,7 @@
  */
 
 export const DATABASE_NAME: string = 'arktavern.db';
-export const DATABASE_VERSION: number = 26;
+export const DATABASE_VERSION: number = 27;
 
 export const TABLE_CHARACTERS: string = 'characters';
 export const TABLE_CHATS: string = 'chats';
@@ -613,3 +613,31 @@ export const INDEX_WORLD_SESSION_SUMMARIES_CREATED_AT: string = 'idx_world_sessi
 export const COLUMN_PROVIDER_ID_WSS: string = 'provider_id';
 /** world_session_summaries.model_id 列名(生成时使用的 ProviderConfig.modelName) */
 export const COLUMN_MODEL_ID_WSS: string = 'model_id';
+
+// ===== v27: 世界角色私有主观记忆存储(W5B1-WORLD-CHARACTER-MEMORY-STORE) =====
+export const TABLE_WORLD_CHARACTER_MEMORY_ENTRIES: string = 'world_character_memory_entries';
+
+export const COLUMN_OWNER_CHARACTER_INSTANCE_ID_WCME: string = 'owner_character_instance_id';
+export const COLUMN_MEMORY_KIND_WCME: string = 'memory_kind';
+export const COLUMN_SOURCE_SCENE_ID_WCME: string = 'source_scene_id';
+export const COLUMN_SOURCE_SESSION_ID_WCME: string = 'source_session_id';
+export const COLUMN_SOURCE_LOCATION_ID_WCME: string = 'source_location_id';
+export const COLUMN_MEMORY_TEXT_WCME: string = 'memory_text';
+export const COLUMN_SOURCE_MESSAGE_IDS_JSON_WCME: string = 'source_message_ids_json';
+export const COLUMN_SOURCE_MESSAGE_COUNT_WCME: string = 'source_message_count';
+export const COLUMN_SOURCE_PARTICIPANT_INSTANCE_IDS_JSON_WCME: string = 'source_participant_instance_ids_json';
+export const COLUMN_SOURCE_WITNESS_INSTANCE_IDS_JSON_WCME: string = 'source_witness_instance_ids_json';
+export const COLUMN_OWNER_DISPLAY_NAME_SNAPSHOT_WCME: string = 'owner_display_name_snapshot';
+export const COLUMN_PLAYER_DISPLAY_NAME_SNAPSHOT_WCME: string = 'player_display_name_snapshot';
+export const COLUMN_CONFIDENCE_WCME: string = 'confidence';
+export const COLUMN_STATUS_WCME: string = 'status';
+export const COLUMN_PROMPT_VERSION_WCME: string = 'prompt_version';
+export const COLUMN_PROVIDER_ID_WCME: string = 'provider_id';
+export const COLUMN_MODEL_ID_WCME: string = 'model_id';
+export const COLUMN_SUPERSEDES_MEMORY_ID_WCME: string = 'supersedes_memory_id';
+export const COLUMN_STATUS_UPDATED_AT_WCME: string = 'status_updated_at';
+
+// ===== v27: 世界角色私有主观记忆索引名 =====
+export const INDEX_WORLD_CHARACTER_MEMORY_ENTRIES_OWNER_CREATED: string = 'idx_wcme_owner_created';
+export const INDEX_WORLD_CHARACTER_MEMORY_ENTRIES_OWNER_STATUS_CREATED: string = 'idx_wcme_owner_status_created';
+export const INDEX_WORLD_CHARACTER_MEMORY_ENTRIES_OWNER_SESSION_KIND_VERSION: string = 'idx_wcme_owner_session_kind_version';

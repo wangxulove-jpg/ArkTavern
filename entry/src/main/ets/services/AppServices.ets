@@ -98,6 +98,7 @@ import { WorldEventRepository } from '../repositories/world/WorldEventRepository
 import { WorldSceneRepository } from '../repositories/world/WorldSceneRepository';
 import { WorldSceneMessageRepository } from '../repositories/world/WorldSceneMessageRepository';
 import { WorldCharacterMemoryRepository } from '../repositories/world/WorldCharacterMemoryRepository';
+import { WorldCharacterMemoryEntryRepository } from '../repositories/world/WorldCharacterMemoryEntryRepository';
 import { WorldPlayerProfileRepository } from '../repositories/world/WorldPlayerProfileRepository';
 import { WorldConversationSessionRepository } from '../repositories/world/WorldConversationSessionRepository';
 import { WorldSessionSummaryRepository } from '../repositories/world/WorldSessionSummaryRepository';
@@ -106,6 +107,7 @@ import { WorldCharacterLocationHistoryRepository } from '../repositories/world/W
 import { WorldStateService } from './world/WorldStateService';
 import { WorldSceneService } from './world/WorldSceneService';
 import { WorldCharacterMemoryService } from './world/WorldCharacterMemoryService';
+import { WorldCharacterMemoryStoreService } from './world/WorldCharacterMemoryStoreService';
 import { WorldCharacterMovementService } from './world/WorldCharacterMovementService';
 import { WorldPerceptionService } from './world/WorldPerceptionService';
 import { WorldConversationSessionService } from './world/WorldConversationSessionService';
@@ -259,6 +261,8 @@ export class AppServices {
   private readonly worldSceneMessageRepository: WorldSceneMessageRepository;
   /** WorldCharacterMemoryRepository 世界角色记忆仓储(W-MEMORY-1A,记忆 CRUD) */
   private readonly worldCharacterMemoryRepository: WorldCharacterMemoryRepository;
+  /** WorldCharacterMemoryEntryRepository 世界角色主观记忆条目仓储(W5B1,记忆条目 CRUD) */
+  private readonly worldCharacterMemoryEntryRepository: WorldCharacterMemoryEntryRepository;
   /** WorldPlayerProfileRepository 世界玩家档案仓储(W1A-WORLD-CORE-STORE) */
   private readonly worldPlayerProfileRepository: WorldPlayerProfileRepository;
   /** WorldConversationSessionRepository 世界会话仓储(W1A-WORLD-CORE-STORE) */
@@ -275,6 +279,8 @@ export class AppServices {
   private readonly worldSceneService: WorldSceneService;
   /** WorldCharacterMemoryService 世界角色记忆业务服务(W-MEMORY-1A,记忆唯一正式写入口) */
   private readonly worldCharacterMemoryService: WorldCharacterMemoryService;
+  /** WorldCharacterMemoryStoreService 世界角色主观记忆存储服务(W5B1,记忆条目唯一正式写入口) */
+  private readonly worldCharacterMemoryStoreService: WorldCharacterMemoryStoreService;
   /** WorldCharacterMovementService 世界角色移动业务服务(W4A,位置变更唯一正式写入口) */
   private readonly worldCharacterMovementService: WorldCharacterMovementService;
   /** WorldPerceptionService 世界感知服务(W4B,当前客观共处状态查询) */
@@ -333,6 +339,8 @@ export class AppServices {
     this.worldSceneMessageRepository = new WorldSceneMessageRepository(this.dbHelper);
     // W-MEMORY-1A: 世界角色记忆仓储,仅依赖 DbHelper,不依赖任何 Service,不会形成循环。
     this.worldCharacterMemoryRepository = new WorldCharacterMemoryRepository(this.dbHelper);
+    // W5B1: 世界角色主观记忆条目仓储,仅依赖 DbHelper,不依赖任何 Service。
+    this.worldCharacterMemoryEntryRepository = new WorldCharacterMemoryEntryRepository(this.dbHelper);
     // W1A-WORLD-CORE-STORE: 世界玩家档案与会话仓储,仅依赖 DbHelper,不依赖任何 Service,不会形成循环。
     this.worldPlayerProfileRepository = new WorldPlayerProfileRepository(this.dbHelper);
     this.worldConversationSessionRepository = new WorldConversationSessionRepository(this.dbHelper);
@@ -396,6 +404,7 @@ export class AppServices {
       this.worldPlayerProfileRepository,
       this.worldLocationMapPlacementRepository,
       this.worldCharacterMemoryService,
+      this.worldCharacterMemoryEntryRepository,
       this.worldCharacterMovementService,
       this.characterService,
       this.dbHelper
@@ -515,6 +524,16 @@ export class AppServices {
       this.worldConversationSessionRepository,
       this.worldSceneMessageRepository,
       this.worldSceneRepository,
+      this.dbHelper
+    );
+    // W5B1: 世界角色主观记忆存储服务(记忆条目唯一正式写入口)。
+    // 依赖 MemoryEntryRepo + SessionRepo + SceneMessageRepo + CharacterInstanceRepo + DbHelper。
+    // 不调用 AI 模型。仅负责准备源数据与持久化已完成的记忆。
+    this.worldCharacterMemoryStoreService = new WorldCharacterMemoryStoreService(
+      this.worldCharacterMemoryEntryRepository,
+      this.worldConversationSessionRepository,
+      this.worldSceneMessageRepository,
+      this.worldCharacterInstanceRepository,
       this.dbHelper
     );
     // W5A2: 世界会话摘要Prompt构建器。
@@ -1266,6 +1285,24 @@ export class AppServices {
    */
   static getWorldCharacterMemoryRepository(): WorldCharacterMemoryRepository {
     return AppServices.getInstance().worldCharacterMemoryRepository;
+  }
+
+  /**
+   * 获取 WorldCharacterMemoryEntryRepository 实例(W5B1 世界角色主观记忆条目仓储)。
+   * 用于 world_character_memory_entries 表的 CRUD 操作。
+   * 页面与 ViewModel 不直接调用,留待 WorldCharacterMemoryStoreService 使用。
+   */
+  static getWorldCharacterMemoryEntryRepository(): WorldCharacterMemoryEntryRepository {
+    return AppServices.getInstance().worldCharacterMemoryEntryRepository;
+  }
+
+  /**
+   * 获取 WorldCharacterMemoryStoreService 实例(W5B1 世界角色主观记忆存储服务)。
+   * 是世界角色主观记忆条目的唯一正式写入口。
+   * 所有页面与 ViewModel 必须通过此方法获取同一个 WorldCharacterMemoryStoreService。
+   */
+  static getWorldCharacterMemoryStoreService(): WorldCharacterMemoryStoreService {
+    return AppServices.getInstance().worldCharacterMemoryStoreService;
   }
 
   /**

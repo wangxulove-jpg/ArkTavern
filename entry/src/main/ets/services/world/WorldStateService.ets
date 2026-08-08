@@ -40,6 +40,7 @@ import { WorldEventRepository } from '../../repositories/world/WorldEventReposit
 import { WorldSceneRepository } from '../../repositories/world/WorldSceneRepository';
 import { WorldSceneMessageRepository } from '../../repositories/world/WorldSceneMessageRepository';
 import { WorldCharacterMemoryService } from './WorldCharacterMemoryService';
+import { WorldCharacterMemoryEntryRepository } from '../../repositories/world/WorldCharacterMemoryEntryRepository';
 import { WorldConversationSessionRepository } from '../../repositories/world/WorldConversationSessionRepository';
 import { WorldSessionSummaryRepository } from '../../repositories/world/WorldSessionSummaryRepository';
 import { WorldPlayerProfileRepository } from '../../repositories/world/WorldPlayerProfileRepository';
@@ -132,6 +133,7 @@ export class WorldStateService {
   private readonly profileRepo: WorldPlayerProfileRepository;
   private readonly placementRepo: WorldLocationMapPlacementRepository;
   private readonly memoryService: WorldCharacterMemoryService;
+  private readonly memoryEntryRepo: WorldCharacterMemoryEntryRepository;
   private readonly movementService: WorldCharacterMovementService;
   private readonly characterService: CharacterService;
   private readonly dbHelper: DbHelper;
@@ -149,6 +151,7 @@ export class WorldStateService {
     profileRepo: WorldPlayerProfileRepository,
     placementRepo: WorldLocationMapPlacementRepository,
     memoryService: WorldCharacterMemoryService,
+    memoryEntryRepo: WorldCharacterMemoryEntryRepository,
     movementService: WorldCharacterMovementService,
     characterService: CharacterService,
     dbHelper: DbHelper
@@ -165,6 +168,7 @@ export class WorldStateService {
     this.profileRepo = profileRepo;
     this.placementRepo = placementRepo;
     this.memoryService = memoryService;
+    this.memoryEntryRepo = memoryEntryRepo;
     this.movementService = movementService;
     this.characterService = characterService;
     this.dbHelper = dbHelper;
@@ -342,6 +346,8 @@ export class WorldStateService {
         }
         // V17: 先删除该 World 的全部世界角色记忆,避免留下孤立记忆。
         await this.memoryService.deleteByWorldWithStore(store, worldId);
+        // V27: 删除该 World 的全部世界角色主观记忆条目(W5B1)。
+        await this.memoryEntryRepo.deleteByWorldIdWithStore(store, worldId);
         // W4A: 删除该 World 的全部地点历史记录。
         await this.movementService.deleteByWorldWithStore(store, worldId);
         await this.sceneMessageRepo.deleteByWorldWithStore(store, worldId);
