@@ -112,7 +112,9 @@ export class WorldSessionSummaryStoreService {
     sessionId: string,
     content: string,
     promptVersion: string,
-    forceNewVersion: boolean
+    forceNewVersion: boolean,
+    providerId?: string,
+    modelId?: string
   ): Promise<WorldSessionSummary> {
     if (sessionId === '') {
       throw WorldStateError.sessionNotFound();
@@ -180,7 +182,9 @@ export class WorldSessionSummaryStoreService {
           participantSnapshotJson: snapshot.participantSnapshotJson,
           playerDisplayNameSnapshot: snapshot.playerDisplayNameSnapshot,
           locationId: snapshot.locationId,
-          promptVersion: promptVersion
+          promptVersion: promptVersion,
+          providerId: providerId,
+          modelId: modelId
         });
         await this.summaryRepo.insertWithStore(store, summary);
         result = summary;

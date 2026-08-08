@@ -20,6 +20,8 @@ export interface WorldSessionSummary {
   readonly playerDisplayNameSnapshot: string;
   readonly locationId: string;
   readonly promptVersion: string;
+  readonly providerId: string | undefined;
+  readonly modelId: string | undefined;
   readonly createdAt: number;
   readonly updatedAt: number;
 }
@@ -38,6 +40,8 @@ export interface CreateWorldSessionSummaryOptions {
   readonly playerDisplayNameSnapshot: string;
   readonly locationId: string;
   readonly promptVersion: string;
+  readonly providerId?: string;
+  readonly modelId?: string;
   readonly createdAt?: number;
   readonly updatedAt?: number;
 }
@@ -127,6 +131,8 @@ export function createWorldSessionSummaryRecord(
     playerDisplayNameSnapshot: options.playerDisplayNameSnapshot,
     locationId: options.locationId,
     promptVersion: options.promptVersion,
+    providerId: options.providerId,
+    modelId: options.modelId,
     createdAt: createdAt,
     updatedAt: updatedAt
   };

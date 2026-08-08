@@ -21,6 +21,8 @@ import {
   COLUMN_PLAYER_DISPLAY_NAME_SNAPSHOT_WSS,
   COLUMN_LOCATION_ID_WSS,
   COLUMN_PROMPT_VERSION,
+  COLUMN_PROVIDER_ID_WSS,
+  COLUMN_MODEL_ID_WSS,
   COLUMN_CREATED_AT,
   COLUMN_UPDATED_AT
 } from '../../database/DatabaseConstants';
@@ -290,6 +292,12 @@ function summaryToBucket(summary: WorldSessionSummary): relationalStore.ValuesBu
   bucket[COLUMN_PLAYER_DISPLAY_NAME_SNAPSHOT_WSS] = summary.playerDisplayNameSnapshot;
   bucket[COLUMN_LOCATION_ID_WSS] = summary.locationId;
   bucket[COLUMN_PROMPT_VERSION] = summary.promptVersion;
+  if (summary.providerId !== undefined) {
+    bucket[COLUMN_PROVIDER_ID_WSS] = summary.providerId;
+  }
+  if (summary.modelId !== undefined) {
+    bucket[COLUMN_MODEL_ID_WSS] = summary.modelId;
+  }
   bucket[COLUMN_CREATED_AT] = summary.createdAt;
   bucket[COLUMN_UPDATED_AT] = summary.updatedAt;
   return bucket;
@@ -312,6 +320,10 @@ function summaryFromRow(rs: relationalStore.ResultSet): WorldSessionSummary {
   const playerDisplayNameSnapshot: string = rs.getString(rs.getColumnIndex(COLUMN_PLAYER_DISPLAY_NAME_SNAPSHOT_WSS));
   const locationId: string = rs.getString(rs.getColumnIndex(COLUMN_LOCATION_ID_WSS));
   const promptVersion: string = rs.getString(rs.getColumnIndex(COLUMN_PROMPT_VERSION));
+  const providerIdRaw: string = rs.getString(rs.getColumnIndex(COLUMN_PROVIDER_ID_WSS));
+  const modelIdRaw: string = rs.getString(rs.getColumnIndex(COLUMN_MODEL_ID_WSS));
+  const providerId: string | undefined = providerIdRaw !== '' ? providerIdRaw : undefined;
+  const modelId: string | undefined = modelIdRaw !== '' ? modelIdRaw : undefined;
   const createdAt: number = rs.getLong(rs.getColumnIndex(COLUMN_CREATED_AT));
   const updatedAt: number = rs.getLong(rs.getColumnIndex(COLUMN_UPDATED_AT));
   return {
@@ -328,6 +340,8 @@ function summaryFromRow(rs: relationalStore.ResultSet): WorldSessionSummary {
     playerDisplayNameSnapshot: playerDisplayNameSnapshot,
     locationId: locationId,
     promptVersion: promptVersion,
+    providerId: providerId,
+    modelId: modelId,
     createdAt: createdAt,
     updatedAt: updatedAt
   };

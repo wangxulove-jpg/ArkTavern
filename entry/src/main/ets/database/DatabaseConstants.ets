@@ -6,7 +6,7 @@
  */
 
 export const DATABASE_NAME: string = 'arktavern.db';
-export const DATABASE_VERSION: number = 25;
+export const DATABASE_VERSION: number = 26;
 
 export const TABLE_CHARACTERS: string = 'characters';
 export const TABLE_CHATS: string = 'chats';
@@ -607,3 +607,9 @@ export const INDEX_WORLD_SESSION_SUMMARIES_SCENE_ID: string = 'idx_world_session
 export const INDEX_WORLD_SESSION_SUMMARIES_SESSION_ID: string = 'idx_world_session_summaries_session_id';
 export const INDEX_WORLD_SESSION_SUMMARIES_SESSION_VERSION: string = 'idx_world_session_summaries_session_version';
 export const INDEX_WORLD_SESSION_SUMMARIES_CREATED_AT: string = 'idx_world_session_summaries_created_at';
+
+// ===== v26: 世界会话摘要来源追溯(W5A2-PROVENANCE) =====
+/** world_session_summaries.provider_id 列名(生成时使用的 ProviderConfig.id) */
+export const COLUMN_PROVIDER_ID_WSS: string = 'provider_id';
+/** world_session_summaries.model_id 列名(生成时使用的 ProviderConfig.modelName) */
+export const COLUMN_MODEL_ID_WSS: string = 'model_id';

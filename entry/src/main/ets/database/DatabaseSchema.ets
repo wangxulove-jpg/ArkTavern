@@ -336,7 +336,9 @@ import {
   INDEX_WORLD_SESSION_SUMMARIES_SCENE_ID,
   INDEX_WORLD_SESSION_SUMMARIES_SESSION_ID,
   INDEX_WORLD_SESSION_SUMMARIES_SESSION_VERSION,
-  INDEX_WORLD_SESSION_SUMMARIES_CREATED_AT
+  INDEX_WORLD_SESSION_SUMMARIES_CREATED_AT,
+  COLUMN_PROVIDER_ID_WSS,
+  COLUMN_MODEL_ID_WSS
 } from './DatabaseConstants';
 
 const CREATE_CHARACTERS_TABLE: string =
@@ -1792,6 +1794,8 @@ const CREATE_WORLD_SESSION_SUMMARIES_TABLE: string =
   `${COLUMN_PLAYER_DISPLAY_NAME_SNAPSHOT_WSS} TEXT NOT NULL DEFAULT '', ` +
   `${COLUMN_LOCATION_ID_WSS} TEXT NOT NULL, ` +
   `${COLUMN_PROMPT_VERSION} TEXT NOT NULL, ` +
+  `${COLUMN_PROVIDER_ID_WSS} TEXT, ` +
+  `${COLUMN_MODEL_ID_WSS} TEXT, ` +
   `${COLUMN_CREATED_AT} INTEGER NOT NULL, ` +
   `${COLUMN_UPDATED_AT} INTEGER NOT NULL, ` +
   `UNIQUE(${COLUMN_SESSION_ID_WSS}, ${COLUMN_VERSION})` +
@@ -1834,6 +1838,27 @@ export const V24_TO_V25_DDL_STATEMENTS: string[] = [
 export const V25_SCHEMA_STATEMENTS: string[] = [
   ...V24_SCHEMA_STATEMENTS,
   ...V24_TO_V25_DDL_STATEMENTS
+];
+
+/**
+ * v25→v26 迁移 DDL(W5A2-PROVENANCE 世界会话摘要来源追溯):
+ * - ALTER TABLE world_session_summaries ADD COLUMN provider_id TEXT
+ * - ALTER TABLE world_session_summaries ADD COLUMN model_id TEXT
+ *
+ * 安全性:
+ * - 仅 ADD COLUMN,不修改现有列定义
+ * - 不迁移任何现有数据(V25 历史行保持 NULL)
+ * - 新列为 nullable,不影响现有查询
+ */
+export const V25_TO_V26_DDL_STATEMENTS: string[] = [
+  `ALTER TABLE ${TABLE_WORLD_SESSION_SUMMARIES} ADD COLUMN ${COLUMN_PROVIDER_ID_WSS} TEXT`,
+  `ALTER TABLE ${TABLE_WORLD_SESSION_SUMMARIES} ADD COLUMN ${COLUMN_MODEL_ID_WSS} TEXT`
+];
+
+/** v26 完整 Schema(新安装使用) */
+export const V26_SCHEMA_STATEMENTS: string[] = [
+  ...V25_SCHEMA_STATEMENTS,
+  ...V25_TO_V26_DDL_STATEMENTS
 ];
 
 export function getSchemaStatements(version: number): string[] {
@@ -1911,6 +1936,9 @@ export function getSchemaStatements(version: number): string[] {
   }
   if (version === 25) {
     return [...V25_SCHEMA_STATEMENTS];
+  }
+  if (version === 26) {
+    return [...V26_SCHEMA_STATEMENTS];
   }
   return [];
 }

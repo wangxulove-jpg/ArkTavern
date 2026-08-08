@@ -166,7 +166,9 @@ export class WorldSessionSummaryGenerationService {
           sessionId,
           validatedText,
           WORLD_SESSION_SUMMARY_PROMPT_VERSION,
-          forceNewVersion
+          forceNewVersion,
+          providerId,
+          modelId
         );
       const duration: number = Date.now() - startTime;
       Logger.info(LOG_TAG, 'Summary generated version=' + String(persisted.version)
