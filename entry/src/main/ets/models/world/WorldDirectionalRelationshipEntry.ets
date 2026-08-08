@@ -206,7 +206,7 @@ export function parseJsonIdArray(json: string): string[] {
   return result;
 }
 
-export function stableDedupAndSort(ids: string[]): string[] {
+export function stableDedupInSourceOrder(ids: string[]): string[] {
   const seen: Set<string> = new Set<string>();
   const result: string[] = [];
   for (let i = 0; i < ids.length; i++) {
@@ -216,6 +216,26 @@ export function stableDedupAndSort(ids: string[]): string[] {
       result.push(id);
     }
   }
-  result.sort();
+  return result;
+}
+
+export function filterBySourceOrder(
+  sourceMessageIds: ReadonlyArray<string>,
+  requestedIds: ReadonlyArray<string>
+): string[] {
+  const requestedSet: Set<string> = new Set<string>();
+  for (let i = 0; i < requestedIds.length; i++) {
+    const id: string = requestedIds[i];
+    if (id !== '') {
+      requestedSet.add(id);
+    }
+  }
+  const result: string[] = [];
+  for (let i = 0; i < sourceMessageIds.length; i++) {
+    const id: string = sourceMessageIds[i];
+    if (requestedSet.has(id)) {
+      result.push(id);
+    }
+  }
   return result;
 }

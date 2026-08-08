@@ -1,6 +1,7 @@
 import { relationalStore } from '@kit.ArkData';
 import { DbHelper } from '../../database/DbHelper';
 import { WorldDirectionalRelationshipEntryRepository } from '../../repositories/world/WorldDirectionalRelationshipEntryRepository';
+import { WorldConversationSessionRepository } from '../../repositories/world/WorldConversationSessionRepository';
 import { WorldCharacterMemoryStoreService } from './WorldCharacterMemoryStoreService';
 import {
   WorldDirectionalRelationshipEntry,
@@ -9,12 +10,17 @@ import {
   WorldDirectionalRelationshipPersistResult,
   createWorldDirectionalRelationshipEntryRecord,
   parseJsonIdArray,
-  stableDedupAndSort,
+  stableDedupInSourceOrder,
+  filterBySourceOrder,
   WORLD_DIRECTIONAL_RELATIONSHIP_ENTRY_ID_PREFIX
 } from '../../models/world/WorldDirectionalRelationshipEntry';
 import {
   WorldCharacterMemorySourceSnapshot
 } from '../../models/world/WorldCharacterMemoryEntry';
+import {
+  WorldSessionParticipantSnapshot,
+  deserializeParticipantSnapshots
+} from '../../models/world/WorldConversationSession';
 import { WorldStateError } from '../../models/world/WorldStateError';
 import { DatabaseError } from '../../models/DatabaseError';
 import { generateUuid } from '../../utils/Uuid';
@@ -25,15 +31,18 @@ const LOG_TAG: string = 'WorldDirectionalRelationshipStoreService';
 
 export class WorldDirectionalRelationshipStoreService {
   private readonly relationshipRepo: WorldDirectionalRelationshipEntryRepository;
+  private readonly sessionRepo: WorldConversationSessionRepository;
   private readonly memoryStoreService: WorldCharacterMemoryStoreService;
   private readonly dbHelper: DbHelper;
 
   constructor(
     relationshipRepo: WorldDirectionalRelationshipEntryRepository,
+    sessionRepo: WorldConversationSessionRepository,
     memoryStoreService: WorldCharacterMemoryStoreService,
     dbHelper: DbHelper
   ) {
     this.relationshipRepo = relationshipRepo;
+    this.sessionRepo = sessionRepo;
     this.memoryStoreService = memoryStoreService;
     this.dbHelper = dbHelper;
   }
@@ -128,19 +137,24 @@ export class WorldDirectionalRelationshipStoreService {
     if (sourceSnapshot.ownerCharacterInstanceId === targetCharacterInstanceId) {
       throw WorldStateError.invalidOperation('owner equals target');
     }
-    const dedupedEvidenceIds: string[] = stableDedupAndSort(evidenceMessageIds);
-    if (dedupedEvidenceIds.length === 0) {
-      throw WorldStateError.invalidOperation('evidenceMessageIds empty');
-    }
-    this.validateEvidenceSubset(dedupedEvidenceIds, sourceSnapshot.sourceMessageIds);
     this.validateTargetInParticipants(targetCharacterInstanceId, sourceSnapshot);
-    const targetDisplayNameSnapshot: string = this.findDisplayNameInSnapshot(
-      targetCharacterInstanceId, sourceSnapshot
+    const participants: WorldSessionParticipantSnapshot[] =
+      await this.loadParticipantSnapshot(sourceSnapshot.sessionId);
+    const targetDisplayNameSnapshot: string = this.resolveDisplayNameFromParticipants(
+      targetCharacterInstanceId, participants
     );
     if (targetDisplayNameSnapshot === '') {
       throw WorldStateError.invalidOperation('target not found in participant snapshot');
     }
-    const evidenceIdsJson: string = JSON.stringify(dedupedEvidenceIds);
+    const canonicalEvidenceIds: string[] = filterBySourceOrder(
+      sourceSnapshot.sourceMessageIds,
+      evidenceMessageIds
+    );
+    if (canonicalEvidenceIds.length === 0) {
+      throw WorldStateError.invalidOperation('evidenceMessageIds empty');
+    }
+    this.validateEvidenceSubset(canonicalEvidenceIds, sourceSnapshot.sourceMessageIds);
+    const evidenceIdsJson: string = JSON.stringify(canonicalEvidenceIds);
     let result: WorldDirectionalRelationshipPersistResult | null = null;
     await this.dbHelper.runInTransaction(
       async (store: relationalStore.RdbStore): Promise<void> => {
@@ -150,8 +164,8 @@ export class WorldDirectionalRelationshipStoreService {
           );
         const freshSourceIds: string[] = Array.from(freshSnapshot.sourceMessageIds);
         const originalSourceIds: string[] = Array.from(sourceSnapshot.sourceMessageIds);
-        const freshIdsJson: string = JSON.stringify(stableDedupAndSort(freshSourceIds));
-        const originalIdsJson: string = JSON.stringify(stableDedupAndSort(originalSourceIds));
+        const freshIdsJson: string = JSON.stringify(stableDedupInSourceOrder(freshSourceIds));
+        const originalIdsJson: string = JSON.stringify(stableDedupInSourceOrder(originalSourceIds));
         if (freshIdsJson !== originalIdsJson) {
           throw WorldStateError.invalidOperation('SourceChanged');
         }
@@ -170,7 +184,7 @@ export class WorldDirectionalRelationshipStoreService {
           );
         if (activeEntry !== null && !forceNewVersion) {
           const activeEvidenceIds: string[] = parseJsonIdArray(activeEntry.evidenceMessageIdsJson);
-          const activeEvidenceJson: string = JSON.stringify(stableDedupAndSort(activeEvidenceIds));
+          const activeEvidenceJson: string = JSON.stringify(stableDedupInSourceOrder(activeEvidenceIds));
           if (activeEntry.sourceSessionId === sourceSnapshot.sessionId &&
             activeEntry.promptVersion === promptVersion &&
             activeEvidenceJson === evidenceIdsJson &&
@@ -263,6 +277,31 @@ export class WorldDirectionalRelationshipStoreService {
     await this.relationshipRepo.deleteByWorldIdWithStore(store, worldId);
   }
 
+  private async loadParticipantSnapshot(
+    sessionId: string
+  ): Promise<WorldSessionParticipantSnapshot[]> {
+    const session = await this.sessionRepo.getById(sessionId);
+    if (session === null) {
+      return [];
+    }
+    if (session.participantSnapshotJson === '') {
+      return [];
+    }
+    return deserializeParticipantSnapshots(session.participantSnapshotJson);
+  }
+
+  private resolveDisplayNameFromParticipants(
+    characterInstanceId: string,
+    participants: WorldSessionParticipantSnapshot[]
+  ): string {
+    for (let i = 0; i < participants.length; i++) {
+      if (participants[i].characterInstanceId === characterInstanceId) {
+        return participants[i].displayNameSnapshot;
+      }
+    }
+    return '';
+  }
+
   private validateEvidenceSubset(
     evidenceIds: string[],
     sourceMessageIds: ReadonlyArray<string>
@@ -289,43 +328,4 @@ export class WorldDirectionalRelationshipStoreService {
     }
     throw WorldStateError.invalidOperation('TargetNotParticipant');
   }
-
-  private findDisplayNameInSnapshot(
-    characterInstanceId: string,
-    sourceSnapshot: WorldCharacterMemorySourceSnapshot
-  ): string {
-    const messages: ReadonlyArray<WorldCharacterMemorySourceMessage> = sourceSnapshot.messages;
-    for (let i = 0; i < messages.length; i++) {
-      const msg: WorldCharacterMemorySourceMessage = messages[i];
-      if (msg.senderCharacterInstanceId === characterInstanceId && msg.senderDisplayNameSnapshot !== '') {
-        return msg.senderDisplayNameSnapshot;
-      }
-    }
-    for (let i = 0; i < messages.length; i++) {
-      const msg: WorldCharacterMemorySourceMessage = messages[i];
-      const participantIds: string[] | undefined = msg.participantCharacterInstanceIds;
-      if (participantIds !== undefined) {
-        for (let j = 0; j < participantIds.length; j++) {
-          if (participantIds[j] === characterInstanceId) {
-            return msg.senderDisplayNameSnapshot;
-          }
-        }
-      }
-    }
-    return '';
-  }
-}
-
-interface WorldCharacterMemorySourceMessage {
-  readonly messageId: string;
-  readonly sequenceNumber: number;
-  readonly senderKind: string;
-  readonly senderCharacterInstanceId: string | undefined;
-  readonly senderDisplayNameSnapshot: string;
-  readonly visibility: string;
-  readonly recipientCharacterInstanceIds: string[] | undefined;
-  readonly participantCharacterInstanceIds: string[] | undefined;
-  readonly witnessCharacterInstanceIds: string[] | undefined;
-  readonly content: string;
-  readonly createdAt: number;
 }

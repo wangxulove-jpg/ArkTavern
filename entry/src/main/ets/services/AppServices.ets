@@ -656,10 +656,11 @@ export class AppServices {
       this.dbHelper
     );
     // W6C1: 世界方向性关系存储服务(关系条目唯一正式写入口)。
-    // 依赖 RelationshipEntryRepo + MemoryStoreService(owner-visible evidence authority) + DbHelper。
+    // 依赖 RelationshipEntryRepo + SessionRepo(participant display-name authority) + MemoryStoreService(owner-visible evidence authority) + DbHelper。
     // 不调用 ModelService,不复制第二套 visibility filter。
     this.worldDirectionalRelationshipStoreService = new WorldDirectionalRelationshipStoreService(
       this.worldDirectionalRelationshipEntryRepository,
+      this.worldConversationSessionRepository,
       this.worldCharacterMemoryStoreService,
       this.dbHelper
     );
