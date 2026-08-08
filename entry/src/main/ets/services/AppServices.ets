@@ -113,6 +113,8 @@ import { WorldCharacterMemoryGenerationService } from './world/WorldCharacterMem
 import { WorldCharacterMovementService } from './world/WorldCharacterMovementService';
 import { WorldEventExtractionRunRepository, WorldEventEntryRepository } from '../repositories/world/WorldEventExtractionRepository';
 import { WorldEventStoreService } from './world/WorldEventStoreService';
+import { WorldEventExtractionPromptAssembler } from './world/WorldEventExtractionPromptAssembler';
+import { WorldEventExtractionGenerationService } from './world/WorldEventExtractionGenerationService';
 import { WorldPerceptionService } from './world/WorldPerceptionService';
 import { WorldConversationSessionService } from './world/WorldConversationSessionService';
 import { WorldSessionSummaryStoreService } from './world/WorldSessionSummaryStoreService';
@@ -322,6 +324,10 @@ export class AppServices {
   private readonly worldEventEntryRepository: WorldEventEntryRepository;
   /** WorldEventStoreService 世界事件提取存储服务(W6A1) */
   private readonly worldEventStoreService: WorldEventStoreService;
+  /** WorldEventExtractionPromptAssembler 世界事件提取Prompt构建器(W6A2) */
+  private readonly worldEventExtractionPromptAssembler: WorldEventExtractionPromptAssembler;
+  /** WorldEventExtractionGenerationService 世界事件提取AI生成服务(W6A2) */
+  private readonly worldEventExtractionGenerationService: WorldEventExtractionGenerationService;
 
   /**
    * 私有构造,组装全部依赖。
@@ -610,6 +616,18 @@ export class AppServices {
       this.worldSceneMessageRepository,
       this.worldSceneRepository,
       this.dbHelper
+    );
+    // W6A2: 世界事件提取Prompt构建器(依赖 WorldRepo + LocationRepo + SceneRepo 只读公共元数据)。
+    this.worldEventExtractionPromptAssembler = new WorldEventExtractionPromptAssembler(
+      this.worldRepository,
+      this.worldLocationRepository,
+      this.worldSceneRepository
+    );
+    // W6A2: 世界事件提取AI生成服务(依赖 StoreService + PromptAssembler + ModelService)。
+    this.worldEventExtractionGenerationService = new WorldEventExtractionGenerationService(
+      this.worldEventStoreService,
+      this.worldEventExtractionPromptAssembler,
+      this.modelService
     );
     // v8.3 Phase 2: 最近原始消息窗口选择器(去重 + 窗口 + 完整轮次)
     this.recentMessageSelector = new RecentMessageSelector(this.tokenCounter);
@@ -1476,5 +1494,13 @@ export class AppServices {
 
   static getWorldEventStoreService(): WorldEventStoreService {
     return AppServices.getInstance().worldEventStoreService;
+  }
+
+  static getWorldEventExtractionPromptAssembler(): WorldEventExtractionPromptAssembler {
+    return AppServices.getInstance().worldEventExtractionPromptAssembler;
+  }
+
+  static getWorldEventExtractionGenerationService(): WorldEventExtractionGenerationService {
+    return AppServices.getInstance().worldEventExtractionGenerationService;
   }
 }

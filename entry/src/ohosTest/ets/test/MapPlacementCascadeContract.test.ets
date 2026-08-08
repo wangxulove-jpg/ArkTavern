@@ -24,6 +24,7 @@ import { WorldCharacterMemoryService } from '../../../main/ets/services/world/Wo
 import { WorldCharacterMovementService } from '../../../main/ets/services/world/WorldCharacterMovementService';
 import { WorldCharacterMemoryRepository } from '../../../main/ets/repositories/world/WorldCharacterMemoryRepository';
 import { WorldCharacterMemoryEntryRepository } from '../../../main/ets/repositories/world/WorldCharacterMemoryEntryRepository';
+import { WorldEventExtractionRunRepository, WorldEventEntryRepository } from '../../../main/ets/repositories/world/WorldEventExtractionRepository';
 import { WorldStateService } from '../../../main/ets/services/world/WorldStateService';
 import { CharacterService } from '../../../main/ets/services/CharacterService';
 import { CharacterRepository } from '../../../main/ets/repositories/CharacterRepository';
@@ -88,7 +89,8 @@ export default function mapPlacementCascadeContractTest(): void {
         worldRepo, locationRepo, edgeRepo, instanceRepo, eventRepo,
         sceneRepo, sceneMessageRepo, sessionRepo, summaryRepo, profileRepo,
         placementRepo, memoryService, new WorldCharacterMemoryEntryRepository(dbHelper),
-        movementService, characterService, dbHelper
+        movementService, new WorldEventExtractionRunRepository(dbHelper),
+        new WorldEventEntryRepository(dbHelper), characterService, dbHelper
       );
     });
 
