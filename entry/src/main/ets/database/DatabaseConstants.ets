@@ -6,7 +6,7 @@
  */
 
 export const DATABASE_NAME: string = 'arktavern.db';
-export const DATABASE_VERSION: number = 27;
+export const DATABASE_VERSION: number = 28;
 
 export const TABLE_CHARACTERS: string = 'characters';
 export const TABLE_CHATS: string = 'chats';
@@ -641,3 +641,42 @@ export const COLUMN_STATUS_UPDATED_AT_WCME: string = 'status_updated_at';
 export const INDEX_WORLD_CHARACTER_MEMORY_ENTRIES_OWNER_CREATED: string = 'idx_wcme_owner_created';
 export const INDEX_WORLD_CHARACTER_MEMORY_ENTRIES_OWNER_STATUS_CREATED: string = 'idx_wcme_owner_status_created';
 export const INDEX_WORLD_CHARACTER_MEMORY_ENTRIES_OWNER_SESSION_KIND_VERSION: string = 'idx_wcme_owner_session_kind_version';
+
+// ===== v28: 世界事件提取存储(W6A1-WORLD-EVENT-STORE-EXTRACTION-SOURCE) =====
+export const TABLE_WORLD_EVENT_EXTRACTION_RUNS: string = 'world_event_extraction_runs';
+export const TABLE_WORLD_EVENT_ENTRIES: string = 'world_event_entries';
+
+export const COLUMN_SOURCE_SCENE_ID_WEER: string = 'source_scene_id';
+export const COLUMN_SOURCE_SESSION_ID_WEER: string = 'source_session_id';
+export const COLUMN_SOURCE_LOCATION_ID_WEER: string = 'source_location_id';
+export const COLUMN_VERSION_WEER: string = 'version';
+export const COLUMN_SOURCE_SUMMARY_ID_WEER: string = 'source_summary_id';
+export const COLUMN_SOURCE_SUMMARY_VERSION_WEER: string = 'source_summary_version';
+export const COLUMN_SOURCE_MESSAGE_IDS_JSON_WEER: string = 'source_message_ids_json';
+export const COLUMN_SOURCE_MESSAGE_COUNT_WEER: string = 'source_message_count';
+export const COLUMN_PARTICIPANT_INSTANCE_IDS_JSON_WEER: string = 'participant_instance_ids_json';
+export const COLUMN_PLAYER_DISPLAY_NAME_SNAPSHOT_WEER: string = 'player_display_name_snapshot';
+export const COLUMN_STATUS_WEER: string = 'status';
+export const COLUMN_PROMPT_VERSION_WEER: string = 'prompt_version';
+export const COLUMN_PROVIDER_ID_WEER: string = 'provider_id';
+export const COLUMN_MODEL_ID_WEER: string = 'model_id';
+export const COLUMN_STATUS_UPDATED_AT_WEER: string = 'status_updated_at';
+
+export const COLUMN_EXTRACTION_RUN_ID: string = 'extraction_run_id';
+export const COLUMN_EVENT_ORDINAL: string = 'event_ordinal';
+export const COLUMN_EVENT_KIND: string = 'event_kind';
+export const COLUMN_EVENT_TEXT: string = 'event_text';
+export const COLUMN_ACTOR_INSTANCE_IDS_JSON: string = 'actor_instance_ids_json';
+export const COLUMN_PLAYER_INVOLVED: string = 'player_involved';
+export const COLUMN_EVIDENCE_MESSAGE_IDS_JSON: string = 'evidence_message_ids_json';
+export const COLUMN_WITNESS_INSTANCE_IDS_JSON: string = 'witness_instance_ids_json';
+export const COLUMN_CONFIDENCE: string = 'confidence';
+export const COLUMN_STATUS_WEE: string = 'status';
+export const COLUMN_STATUS_UPDATED_AT_WEE: string = 'status_updated_at';
+
+// ===== v28: 世界事件提取索引名 =====
+export const INDEX_WORLD_EVENT_EXTRACTION_RUNS_WORLD_SESSION_VERSION: string = 'idx_weer_world_session_version';
+export const INDEX_WORLD_EVENT_EXTRACTION_RUNS_WORLD_SCENE_CREATED: string = 'idx_weer_world_scene_created';
+export const INDEX_WORLD_EVENT_EXTRACTION_RUNS_WORLD_STATUS_CREATED: string = 'idx_weer_world_status_created';
+export const INDEX_WORLD_EVENT_ENTRIES_WORLD_SESSION_ORDINAL: string = 'idx_wee_world_session_ordinal';
+export const INDEX_WORLD_EVENT_ENTRIES_WORLD_RUN_STATUS: string = 'idx_wee_world_run_status';

@@ -111,6 +111,8 @@ import { WorldCharacterMemoryStoreService } from './world/WorldCharacterMemorySt
 import { WorldCharacterMemoryPromptAssembler } from './world/WorldCharacterMemoryPromptAssembler';
 import { WorldCharacterMemoryGenerationService } from './world/WorldCharacterMemoryGenerationService';
 import { WorldCharacterMovementService } from './world/WorldCharacterMovementService';
+import { WorldEventExtractionRunRepository, WorldEventEntryRepository } from '../repositories/world/WorldEventExtractionRepository';
+import { WorldEventStoreService } from './world/WorldEventStoreService';
 import { WorldPerceptionService } from './world/WorldPerceptionService';
 import { WorldConversationSessionService } from './world/WorldConversationSessionService';
 import { WorldSessionSummaryStoreService } from './world/WorldSessionSummaryStoreService';
@@ -314,6 +316,12 @@ export class AppServices {
   private readonly worldSessionSummaryGenerationService: WorldSessionSummaryGenerationService;
   /** WorldCrossSessionContextService 世界跨Session上下文选择器(W5C1) */
   private readonly worldCrossSessionContextService: WorldCrossSessionContextService;
+  /** WorldEventExtractionRunRepository 世界事件提取运行仓储(W6A1) */
+  private readonly worldEventExtractionRunRepository: WorldEventExtractionRunRepository;
+  /** WorldEventEntryRepository 世界事件条目仓储(W6A1) */
+  private readonly worldEventEntryRepository: WorldEventEntryRepository;
+  /** WorldEventStoreService 世界事件提取存储服务(W6A1) */
+  private readonly worldEventStoreService: WorldEventStoreService;
 
   /**
    * 私有构造,组装全部依赖。
@@ -359,6 +367,9 @@ export class AppServices {
     this.worldLocationMapPlacementRepository = new WorldLocationMapPlacementRepository(this.dbHelper);
     // W4A: 世界角色地点历史仓储,仅依赖 DbHelper,不依赖任何 Service。
     this.worldCharacterLocationHistoryRepository = new WorldCharacterLocationHistoryRepository(this.dbHelper);
+    // W6A1: 世界事件提取运行与条目仓储,仅依赖 DbHelper,不依赖任何 Service。
+    this.worldEventExtractionRunRepository = new WorldEventExtractionRunRepository(this.dbHelper);
+    this.worldEventEntryRepository = new WorldEventEntryRepository(this.dbHelper);
     this.characterService = new CharacterService(
       this.characterRepository,
       this.characterSelectionStore,
@@ -415,6 +426,8 @@ export class AppServices {
       this.worldCharacterMemoryService,
       this.worldCharacterMemoryEntryRepository,
       this.worldCharacterMovementService,
+      this.worldEventExtractionRunRepository,
+      this.worldEventEntryRepository,
       this.characterService,
       this.dbHelper
     );
@@ -586,6 +599,17 @@ export class AppServices {
       this.worldSessionSummaryStoreService,
       this.worldSessionSummaryPromptAssembler,
       this.modelService
+    );
+    // W6A1: 世界事件提取存储服务(事件提取运行+条目唯一正式写入口)。
+    // 依赖 ExtractionRunRepo + EventEntryRepo + SessionSummaryRepo + SceneMessageRepo + SessionRepo + DbHelper。
+    this.worldEventStoreService = new WorldEventStoreService(
+      this.worldEventExtractionRunRepository,
+      this.worldEventEntryRepository,
+      this.worldSessionSummaryRepository,
+      this.worldConversationSessionRepository,
+      this.worldSceneMessageRepository,
+      this.worldSceneRepository,
+      this.dbHelper
     );
     // v8.3 Phase 2: 最近原始消息窗口选择器(去重 + 窗口 + 完整轮次)
     this.recentMessageSelector = new RecentMessageSelector(this.tokenCounter);
@@ -1440,5 +1464,17 @@ export class AppServices {
    */
   static getWorldLocationMapPlacementRepository(): WorldLocationMapPlacementRepository {
     return AppServices.getInstance().worldLocationMapPlacementRepository;
+  }
+
+  static getWorldEventExtractionRunRepository(): WorldEventExtractionRunRepository {
+    return AppServices.getInstance().worldEventExtractionRunRepository;
+  }
+
+  static getWorldEventEntryRepository(): WorldEventEntryRepository {
+    return AppServices.getInstance().worldEventEntryRepository;
+  }
+
+  static getWorldEventStoreService(): WorldEventStoreService {
+    return AppServices.getInstance().worldEventStoreService;
   }
 }

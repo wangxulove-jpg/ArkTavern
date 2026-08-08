@@ -85,6 +85,8 @@ import {
 } from '../../models/world/WorldScene';
 import { WorldStateError } from '../../models/world/WorldStateError';
 import { WorldCharacterMovementService } from './WorldCharacterMovementService';
+import { WorldEventExtractionRunRepository } from '../../repositories/world/WorldEventExtractionRepository';
+import { WorldEventEntryRepository } from '../../repositories/world/WorldEventExtractionRepository';
 import { InitiatorType } from '../../models/world/WorldCharacterLocationHistory';
 import { CharacterService } from '../CharacterService';
 import { Character } from '../../models/Character';
@@ -135,6 +137,8 @@ export class WorldStateService {
   private readonly memoryService: WorldCharacterMemoryService;
   private readonly memoryEntryRepo: WorldCharacterMemoryEntryRepository;
   private readonly movementService: WorldCharacterMovementService;
+  private readonly extractionRunRepo: WorldEventExtractionRunRepository;
+  private readonly eventEntryRepo: WorldEventEntryRepository;
   private readonly characterService: CharacterService;
   private readonly dbHelper: DbHelper;
 
@@ -153,6 +157,8 @@ export class WorldStateService {
     memoryService: WorldCharacterMemoryService,
     memoryEntryRepo: WorldCharacterMemoryEntryRepository,
     movementService: WorldCharacterMovementService,
+    extractionRunRepo: WorldEventExtractionRunRepository,
+    eventEntryRepo: WorldEventEntryRepository,
     characterService: CharacterService,
     dbHelper: DbHelper
   ) {
@@ -170,6 +176,8 @@ export class WorldStateService {
     this.memoryService = memoryService;
     this.memoryEntryRepo = memoryEntryRepo;
     this.movementService = movementService;
+    this.extractionRunRepo = extractionRunRepo;
+    this.eventEntryRepo = eventEntryRepo;
     this.characterService = characterService;
     this.dbHelper = dbHelper;
   }
@@ -348,6 +356,10 @@ export class WorldStateService {
         await this.memoryService.deleteByWorldWithStore(store, worldId);
         // V27: 删除该 World 的全部世界角色主观记忆条目(W5B1)。
         await this.memoryEntryRepo.deleteByWorldIdWithStore(store, worldId);
+        // V28: 删除该 World 的全部事件条目(W6A1),条目在提取运行之前(条目引用运行)。
+        await this.eventEntryRepo.deleteByWorldIdWithStore(store, worldId);
+        // V28: 删除该 World 的全部事件提取运行(W6A1)。
+        await this.extractionRunRepo.deleteByWorldIdWithStore(store, worldId);
         // W4A: 删除该 World 的全部地点历史记录。
         await this.movementService.deleteByWorldWithStore(store, worldId);
         await this.sceneMessageRepo.deleteByWorldWithStore(store, worldId);
