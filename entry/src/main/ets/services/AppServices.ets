@@ -101,9 +101,11 @@ import { WorldCharacterMemoryRepository } from '../repositories/world/WorldChara
 import { WorldPlayerProfileRepository } from '../repositories/world/WorldPlayerProfileRepository';
 import { WorldConversationSessionRepository } from '../repositories/world/WorldConversationSessionRepository';
 import { WorldLocationMapPlacementRepository } from '../repositories/world/WorldLocationMapPlacementRepository';
+import { WorldCharacterLocationHistoryRepository } from '../repositories/world/WorldCharacterLocationHistoryRepository';
 import { WorldStateService } from './world/WorldStateService';
 import { WorldSceneService } from './world/WorldSceneService';
 import { WorldCharacterMemoryService } from './world/WorldCharacterMemoryService';
+import { WorldCharacterMovementService } from './world/WorldCharacterMovementService';
 import { WorldConversationSessionService } from './world/WorldConversationSessionService';
 import { WorldMapInteractionService } from './world/WorldMapInteractionService';
 import { WorldSceneLaunchService } from './world/WorldSceneLaunchService';
@@ -258,12 +260,16 @@ export class AppServices {
   private readonly worldConversationSessionRepository: WorldConversationSessionRepository;
   /** WorldLocationMapPlacementRepository 世界地点地图放置仓储(W1C-WORLD-MAP-CONTRACT) */
   private readonly worldLocationMapPlacementRepository: WorldLocationMapPlacementRepository;
+  /** WorldCharacterLocationHistoryRepository 世界角色地点历史仓储(W4A,地点变更历史 CRUD) */
+  private readonly worldCharacterLocationHistoryRepository: WorldCharacterLocationHistoryRepository;
   /** WorldStateService 世界模式状态业务服务(W-DATA-1B,世界基础数据唯一正式写入口) */
   private readonly worldStateService: WorldStateService;
   /** WorldSceneService 世界场景业务服务(W-SCENE-1B,场景和场景消息唯一正式写入口) */
   private readonly worldSceneService: WorldSceneService;
   /** WorldCharacterMemoryService 世界角色记忆业务服务(W-MEMORY-1A,记忆唯一正式写入口) */
   private readonly worldCharacterMemoryService: WorldCharacterMemoryService;
+  /** WorldCharacterMovementService 世界角色移动业务服务(W4A,位置变更唯一正式写入口) */
+  private readonly worldCharacterMovementService: WorldCharacterMovementService;
   /** WorldConversationSessionService 世界会话生命周期服务(W1B2,会话唯一正式写入口) */
   private readonly worldConversationSessionService: WorldConversationSessionService;
   /** WorldMapInteractionService 地图交互业务服务(W1D,地图快照加载+放置保存) */
@@ -317,6 +323,8 @@ export class AppServices {
     this.worldConversationSessionRepository = new WorldConversationSessionRepository(this.dbHelper);
     // W1C-WORLD-MAP-CONTRACT: 世界地点地图放置仓储,仅依赖 DbHelper,不依赖任何 Service。
     this.worldLocationMapPlacementRepository = new WorldLocationMapPlacementRepository(this.dbHelper);
+    // W4A: 世界角色地点历史仓储,仅依赖 DbHelper,不依赖任何 Service。
+    this.worldCharacterLocationHistoryRepository = new WorldCharacterLocationHistoryRepository(this.dbHelper);
     this.characterService = new CharacterService(
       this.characterRepository,
       this.characterSelectionStore,
@@ -337,8 +345,22 @@ export class AppServices {
       this.worldCharacterMemoryRepository,
       this.dbHelper
     );
+    // W4A: 世界角色移动业务服务(位置变更唯一正式写入口)。
+    // 依赖 6 个世界 Repository(只读/写入) + HistoryRepository(写入) + DbHelper。
+    // 不依赖 WorldStateService,无构造循环。
+    // 在 WorldStateService 之前创建,以便注入 WorldStateService 实现 History 委托。
+    this.worldCharacterMovementService = new WorldCharacterMovementService(
+      this.worldRepository,
+      this.worldLocationRepository,
+      this.worldLocationEdgeRepository,
+      this.worldCharacterInstanceRepository,
+      this.worldConversationSessionRepository,
+      this.worldCharacterLocationHistoryRepository,
+      this.dbHelper
+    );
     // W-DATA-1B / W-SCENE-1A: 世界模式状态业务服务(世界基础数据唯一正式写入口)。
-    // 依赖 7 个世界 Repository + MemoryService(级联删除) + CharacterService(只读 getById) + DbHelper。
+    // 依赖 7 个世界 Repository + MemoryService(级联删除) + MovementService(History委托)
+    //   + CharacterService(只读 getById) + DbHelper。
     // CharacterService 已注入 worldCharacterInstanceRepository,但 WorldStateService
     // 不调用 CharacterService.remove 等写方法,无构造循环。
     this.worldStateService = new WorldStateService(
@@ -353,6 +375,7 @@ export class AppServices {
       this.worldPlayerProfileRepository,
       this.worldLocationMapPlacementRepository,
       this.worldCharacterMemoryService,
+      this.worldCharacterMovementService,
       this.characterService,
       this.dbHelper
     );
@@ -1249,6 +1272,15 @@ export class AppServices {
 
   static getWorldSceneRuntimeService(): WorldSceneRuntimeService {
     return AppServices.getInstance().worldSceneRuntimeService;
+  }
+
+  /**
+   * 获取 WorldCharacterMovementService 实例(W4A 世界角色移动业务服务)。
+   * 是当前世界角色位置变更(Travel/Placement/Unplacement/Relocation)的唯一正式写入口。
+   * 所有页面与 ViewModel 必须通过此方法获取同一个 WorldCharacterMovementService。
+   */
+  static getWorldCharacterMovementService(): WorldCharacterMovementService {
+    return AppServices.getInstance().worldCharacterMovementService;
   }
 
   /**

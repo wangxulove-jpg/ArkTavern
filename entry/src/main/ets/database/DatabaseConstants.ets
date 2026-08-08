@@ -6,7 +6,7 @@
  */
 
 export const DATABASE_NAME: string = 'arktavern.db';
-export const DATABASE_VERSION: number = 23;
+export const DATABASE_VERSION: number = 24;
 
 export const TABLE_CHARACTERS: string = 'characters';
 export const TABLE_CHATS: string = 'chats';
@@ -555,3 +555,23 @@ export const COLUMN_PERSONA: string = 'persona';
 export const COLUMN_PUBLIC_IDENTITY: string = 'public_identity';
 /** world_player_profiles.private_identity 列名(私密身份) */
 export const COLUMN_PRIVATE_IDENTITY: string = 'private_identity';
+
+// ===== v24: 世界角色地点历史(W4A-WORLD-MOVEMENT-CORE-LOCATION-HISTORY) =====
+// 独立数据域,不可变地点变更历史。
+// 1 张新表: world_character_location_history。
+// 表名 / 列名 / 索引名集中定义,Repository / Schema / Migration 只读取此处。
+export const TABLE_WORLD_CHARACTER_LOCATION_HISTORY: string = 'world_character_location_history';
+
+/** world_character_location_history.transition_kind 列名(transition 类型) */
+export const COLUMN_TRANSITION_KIND: string = 'transition_kind';
+/** world_character_location_history.initiator_type 列名(发起者类型) */
+export const COLUMN_INITIATOR_TYPE: string = 'initiator_type';
+/** world_character_location_history.edge_id 列名(旅行经过的边 ID,可空) */
+export const COLUMN_EDGE_ID: string = 'edge_id';
+
+// ===== v24: 世界角色地点历史索引名 =====
+export const INDEX_WORLD_CHARACTER_LOCATION_HISTORY_WORLD_ID: string = 'idx_world_character_location_history_world_id';
+export const INDEX_WORLD_CHARACTER_LOCATION_HISTORY_INSTANCE: string = 'idx_world_character_location_history_instance';
+export const INDEX_WORLD_CHARACTER_LOCATION_HISTORY_INSTANCE_CREATED: string = 'idx_world_character_location_history_instance_created';
+export const INDEX_WORLD_CHARACTER_LOCATION_HISTORY_TRANSITION: string = 'idx_world_character_location_history_transition';
+export const INDEX_WORLD_CHARACTER_LOCATION_HISTORY_OCCURRED_AT: string = 'idx_world_character_location_history_occurred_at';

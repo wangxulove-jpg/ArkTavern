@@ -9,6 +9,7 @@ import {
   WORLD_MAP_PLACEMENT_ID_PREFIX
 } from '../../../main/ets/models/world/WorldLocationMapPlacement';
 import { WorldLocationMapPlacementRepository } from '../../../main/ets/repositories/world/WorldLocationMapPlacementRepository';
+import { WorldCharacterLocationHistoryRepository } from '../../../main/ets/repositories/world/WorldCharacterLocationHistoryRepository';
 import { WorldRepository } from '../../../main/ets/repositories/world/WorldRepository';
 import { WorldLocationRepository } from '../../../main/ets/repositories/world/WorldLocationRepository';
 import { WorldLocationEdgeRepository } from '../../../main/ets/repositories/world/WorldLocationEdgeRepository';
@@ -19,6 +20,7 @@ import { WorldSceneMessageRepository } from '../../../main/ets/repositories/worl
 import { WorldConversationSessionRepository } from '../../../main/ets/repositories/world/WorldConversationSessionRepository';
 import { WorldPlayerProfileRepository } from '../../../main/ets/repositories/world/WorldPlayerProfileRepository';
 import { WorldCharacterMemoryService } from '../../../main/ets/services/world/WorldCharacterMemoryService';
+import { WorldCharacterMovementService } from '../../../main/ets/services/world/WorldCharacterMovementService';
 import { WorldCharacterMemoryRepository } from '../../../main/ets/repositories/world/WorldCharacterMemoryRepository';
 import { WorldStateService } from '../../../main/ets/services/world/WorldStateService';
 import { CharacterService } from '../../../main/ets/services/CharacterService';
@@ -75,10 +77,14 @@ export default function mapPlacementCascadeContractTest(): void {
       const characterService: CharacterService = new CharacterService(
         characterRepo, new CharacterSelectionStore(), new CharacterAssetStore(), lorebookRepo, instanceRepo
       );
+      const historyRepo: WorldCharacterLocationHistoryRepository = new WorldCharacterLocationHistoryRepository(dbHelper);
+      const movementService: WorldCharacterMovementService = new WorldCharacterMovementService(
+        worldRepo, locationRepo, edgeRepo, instanceRepo, sessionRepo, historyRepo, dbHelper
+      );
       worldStateService = new WorldStateService(
         worldRepo, locationRepo, edgeRepo, instanceRepo, eventRepo,
         sceneRepo, sceneMessageRepo, sessionRepo, profileRepo,
-        placementRepo, memoryService, characterService, dbHelper
+        placementRepo, memoryService, movementService, characterService, dbHelper
       );
     });
 

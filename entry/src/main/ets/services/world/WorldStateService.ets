@@ -82,6 +82,8 @@ import {
   WorldSceneStatus
 } from '../../models/world/WorldScene';
 import { WorldStateError } from '../../models/world/WorldStateError';
+import { WorldCharacterMovementService } from './WorldCharacterMovementService';
+import { InitiatorType } from '../../models/world/WorldCharacterLocationHistory';
 import { CharacterService } from '../CharacterService';
 import { Character } from '../../models/Character';
 import { generateUuid } from '../../utils/Uuid';
@@ -128,6 +130,7 @@ export class WorldStateService {
   private readonly profileRepo: WorldPlayerProfileRepository;
   private readonly placementRepo: WorldLocationMapPlacementRepository;
   private readonly memoryService: WorldCharacterMemoryService;
+  private readonly movementService: WorldCharacterMovementService;
   private readonly characterService: CharacterService;
   private readonly dbHelper: DbHelper;
 
@@ -143,6 +146,7 @@ export class WorldStateService {
     profileRepo: WorldPlayerProfileRepository,
     placementRepo: WorldLocationMapPlacementRepository,
     memoryService: WorldCharacterMemoryService,
+    movementService: WorldCharacterMovementService,
     characterService: CharacterService,
     dbHelper: DbHelper
   ) {
@@ -157,6 +161,7 @@ export class WorldStateService {
     this.profileRepo = profileRepo;
     this.placementRepo = placementRepo;
     this.memoryService = memoryService;
+    this.movementService = movementService;
     this.characterService = characterService;
     this.dbHelper = dbHelper;
   }
@@ -333,6 +338,8 @@ export class WorldStateService {
         }
         // V17: 先删除该 World 的全部世界角色记忆,避免留下孤立记忆。
         await this.memoryService.deleteByWorldWithStore(store, worldId);
+        // W4A: 删除该 World 的全部地点历史记录。
+        await this.movementService.deleteByWorldWithStore(store, worldId);
         await this.sceneMessageRepo.deleteByWorldWithStore(store, worldId);
         // W1B2: 删除会话与玩家档案,在场景删除之前(会话依赖场景,需先删)
         await this.sessionRepo.deleteByWorldIdWithStore(store, worldId);
@@ -756,7 +763,8 @@ export class WorldStateService {
    */
   async addCharacterToWorld(
     worldId: string,
-    characterId: string
+    characterId: string,
+    initialLocationId?: string
   ): Promise<WorldCharacterInstance> {
     const character: Character | null = await this.characterService.getById(characterId);
     if (character === null) {
@@ -770,7 +778,7 @@ export class WorldStateService {
       worldId: worldId,
       characterId: characterId,
       displayNameSnapshot: displayNameSnapshot,
-      currentLocationId: undefined,
+      currentLocationId: initialLocationId,
       isActive: true,
       currentGoal: '',
       createdAt: now,
@@ -784,13 +792,32 @@ export class WorldStateService {
         if (existing !== null) {
           throw WorldStateError.characterAlreadyInWorld();
         }
+        if (initialLocationId !== undefined && initialLocationId !== '') {
+          const target: WorldLocation | null =
+            await this.locationRepo.getByIdWithStore(store, initialLocationId);
+          if (target === null) {
+            throw WorldStateError.locationNotFound();
+          }
+          if (target.worldId !== worldId) {
+            throw WorldStateError.locationNotInWorld();
+          }
+          if (target.status !== WorldLocationStatus.Active) {
+            throw WorldStateError.locationNotFound();
+          }
+        }
         await this.instanceRepo.insertWithStore(store, instance);
         await this.eventRepo.insertWithStore(store, buildEvent({
           worldId: worldId,
           eventType: WorldEventType.CharacterJoined,
           sourceCharacterInstanceId: instanceId,
+          targetLocationId: initialLocationId,
           summary: '角色已加入世界'
         }));
+        if (initialLocationId !== undefined && initialLocationId !== '') {
+          await this.movementService.insertPlacementHistoryWithStore(
+            store, worldId, instanceId, initialLocationId, InitiatorType.User
+          );
+        }
       },
       'world_character_add'
     );
@@ -819,6 +846,10 @@ export class WorldStateService {
           sourceLocationId: existing.currentLocationId,
           summary: '角色已从世界移除'
         }));
+        // W4A: 若角色已放置,同事务写 Removal History。
+        await this.movementService.insertRemovalHistoryWithStore(
+          store, existing.worldId, instanceId, existing.currentLocationId, InitiatorType.User
+        );
         await this.memoryService.deleteByCharacterInstanceWithStore(store, instanceId);
         await this.instanceRepo.deleteByIdWithStore(store, instanceId);
       },
@@ -963,6 +994,10 @@ export class WorldStateService {
           targetLocationId: locationId,
           summary: '角色已放置'
         }));
+        // W4A: 同事务写 Placement History。
+        await this.movementService.insertPlacementHistoryWithStore(
+          store, existing.worldId, instanceId, locationId, InitiatorType.User
+        );
         result = updated;
       },
       'world_character_place'
@@ -1034,6 +1069,11 @@ export class WorldStateService {
           targetLocationId: targetLocationId,
           summary: '角色已移动'
         }));
+        // W4A: 同事务写 Relocation History(管理员移动绕过边校验)。
+        await this.movementService.insertRelocationHistoryWithStore(
+          store, existing.worldId, instanceId, existing.currentLocationId,
+          targetLocationId, InitiatorType.User
+        );
         result = updated;
       },
       'world_character_move'
@@ -1092,6 +1132,11 @@ export class WorldStateService {
           summary: '角色已强制移动',
           payloadJson: '{"forced":true}'
         }));
+        // W4A: 同事务写 Relocation History(强制移动绕过边校验)。
+        await this.movementService.insertRelocationHistoryWithStore(
+          store, existing.worldId, instanceId, previousLocationId,
+          targetLocationId, InitiatorType.User
+        );
         result = updated;
       },
       'world_character_move'
@@ -1158,6 +1203,10 @@ export class WorldStateService {
           targetLocationId: locationId,
           summary: '角色已放置'
         }));
+        // W4A: 同事务写 Placement History。
+        await this.movementService.insertPlacementHistoryWithStore(
+          store, existing.worldId, instanceId, locationId, InitiatorType.User
+        );
         result = updated;
       },
       'world_character_place_at'
@@ -1209,6 +1258,10 @@ export class WorldStateService {
           sourceLocationId: previousLocationId,
           summary: '角色已取消放置'
         }));
+        // W4A: 同事务写 Unplacement History。
+        await this.movementService.insertUnplacementHistoryWithStore(
+          store, existing.worldId, instanceId, previousLocationId, InitiatorType.User
+        );
         result = updated;
       },
       'world_character_unplace'

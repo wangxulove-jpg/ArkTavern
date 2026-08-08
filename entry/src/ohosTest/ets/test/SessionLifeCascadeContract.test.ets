@@ -15,6 +15,7 @@ import { WorldConversationSessionRepository } from '../../../main/ets/repositori
 import { WorldConversationSessionService } from '../../../main/ets/services/world/WorldConversationSessionService';
 import { WorldStateService } from '../../../main/ets/services/world/WorldStateService';
 import { WorldCharacterMemoryService } from '../../../main/ets/services/world/WorldCharacterMemoryService';
+import { WorldCharacterMovementService } from '../../../main/ets/services/world/WorldCharacterMovementService';
 import { CharacterService } from '../../../main/ets/services/CharacterService';
 import { CharacterRepository } from '../../../main/ets/repositories/CharacterRepository';
 import { CharacterSelectionStore } from '../../../main/ets/storage/CharacterSelectionStore';
@@ -22,6 +23,7 @@ import { CharacterAssetStore } from '../../../main/ets/storage/CharacterAssetSto
 import { LorebookRepository } from '../../../main/ets/repositories/LorebookRepository';
 import { WorldCharacterMemoryRepository } from '../../../main/ets/repositories/world/WorldCharacterMemoryRepository';
 import { WorldLocationMapPlacementRepository } from '../../../main/ets/repositories/world/WorldLocationMapPlacementRepository';
+import { WorldCharacterLocationHistoryRepository } from '../../../main/ets/repositories/world/WorldCharacterLocationHistoryRepository';
 import {
   WorldStatus,
   createWorldRecord
@@ -107,6 +109,10 @@ export default function sessionLifeCascadeContractTest(): void {
         dbHelper
       );
       const placementRepo: WorldLocationMapPlacementRepository = new WorldLocationMapPlacementRepository(dbHelper);
+      const historyRepo: WorldCharacterLocationHistoryRepository = new WorldCharacterLocationHistoryRepository(dbHelper);
+      const movementService: WorldCharacterMovementService = new WorldCharacterMovementService(
+        worldRepo, locationRepo, edgeRepo, instanceRepo, sessionRepo, historyRepo, dbHelper
+      );
       stateService = new WorldStateService(
         worldRepo,
         locationRepo,
@@ -119,6 +125,7 @@ export default function sessionLifeCascadeContractTest(): void {
         profileRepo,
         placementRepo,
         memoryService,
+        movementService,
         characterService,
         dbHelper
       );

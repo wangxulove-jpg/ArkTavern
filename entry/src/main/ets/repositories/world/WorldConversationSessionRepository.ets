@@ -225,6 +225,31 @@ export class WorldConversationSessionRepository {
     }
   }
 
+  async listActiveByWorldIdWithStore(
+    store: relationalStore.RdbStore,
+    worldId: string
+  ): Promise<WorldConversationSession[]> {
+    if (worldId === '') {
+      throw DatabaseError.invalidData(
+        'WorldConversationSession.listActiveByWorldIdWithStore: worldId empty'
+      );
+    }
+    const predicates: relationalStore.RdbPredicates =
+      new relationalStore.RdbPredicates(TABLE_WORLD_CONVERSATION_SESSIONS);
+    predicates.equalTo(COLUMN_WORLD_ID, worldId);
+    predicates.equalTo(COLUMN_STATUS, WorldConversationSessionStatus.Active);
+    const rs: relationalStore.ResultSet = await store.query(predicates);
+    try {
+      const list: WorldConversationSession[] = [];
+      while (rs.goToNextRow()) {
+        list.push(sessionFromRow(rs));
+      }
+      return list;
+    } finally {
+      rs.close();
+    }
+  }
+
   async deleteBySceneIdWithStore(store: relationalStore.RdbStore, sceneId: string): Promise<void> {
     if (sceneId === '') {
       throw DatabaseError.invalidData('WorldConversationSession.deleteBySceneIdWithStore: sceneId empty');

@@ -12,7 +12,9 @@ import { WorldSceneMessageRepository } from '../../../main/ets/repositories/worl
 import { WorldConversationSessionRepository } from '../../../main/ets/repositories/world/WorldConversationSessionRepository';
 import { WorldPlayerProfileRepository } from '../../../main/ets/repositories/world/WorldPlayerProfileRepository';
 import { WorldLocationMapPlacementRepository } from '../../../main/ets/repositories/world/WorldLocationMapPlacementRepository';
+import { WorldCharacterLocationHistoryRepository } from '../../../main/ets/repositories/world/WorldCharacterLocationHistoryRepository';
 import { WorldCharacterMemoryService } from '../../../main/ets/services/world/WorldCharacterMemoryService';
+import { WorldCharacterMovementService } from '../../../main/ets/services/world/WorldCharacterMovementService';
 import { WorldCharacterMemoryRepository } from '../../../main/ets/repositories/world/WorldCharacterMemoryRepository';
 import { WorldStateService } from '../../../main/ets/services/world/WorldStateService';
 import { CharacterService } from '../../../main/ets/services/CharacterService';
@@ -63,10 +65,14 @@ export default function worldPlayerCharacterDomainContractTest(): void {
       const characterService: CharacterService = new CharacterService(
         characterRepo, new CharacterSelectionStore(), new CharacterAssetStore(), lorebookRepo, instanceRepo
       );
+      const historyRepo: WorldCharacterLocationHistoryRepository = new WorldCharacterLocationHistoryRepository(dbHelper);
+      const movementService: WorldCharacterMovementService = new WorldCharacterMovementService(
+        worldRepo, locationRepo, edgeRepo, instanceRepo, sessionRepo, historyRepo, dbHelper
+      );
       stateService = new WorldStateService(
         worldRepo, locationRepo, edgeRepo, instanceRepo, eventRepo,
         sceneRepo, sceneMessageRepo, sessionRepo, profileRepository, placementRepo,
-        memoryService, characterService, dbHelper
+        memoryService, movementService, characterService, dbHelper
       );
       profileRepo = profileRepository;
     });
