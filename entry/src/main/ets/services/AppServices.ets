@@ -110,6 +110,8 @@ import { WorldCharacterMovementService } from './world/WorldCharacterMovementSer
 import { WorldPerceptionService } from './world/WorldPerceptionService';
 import { WorldConversationSessionService } from './world/WorldConversationSessionService';
 import { WorldSessionSummaryStoreService } from './world/WorldSessionSummaryStoreService';
+import { WorldSessionSummaryPromptAssembler } from './world/WorldSessionSummaryPromptAssembler';
+import { WorldSessionSummaryGenerationService } from './world/WorldSessionSummaryGenerationService';
 import { WorldMapInteractionService } from './world/WorldMapInteractionService';
 import { WorldSceneLaunchService } from './world/WorldSceneLaunchService';
 import { WorldSceneMessageService } from './world/WorldSceneMessageService';
@@ -293,6 +295,10 @@ export class AppServices {
   private readonly worldSceneRuntimeService: WorldSceneRuntimeService;
   /** WorldSessionSummaryStoreService 世界会话摘要存储服务(W5A1,摘要唯一正式写入口) */
   private readonly worldSessionSummaryStoreService: WorldSessionSummaryStoreService;
+  /** WorldSessionSummaryPromptAssembler 世界会话摘要Prompt构建器(W5A2) */
+  private readonly worldSessionSummaryPromptAssembler: WorldSessionSummaryPromptAssembler;
+  /** WorldSessionSummaryGenerationService 世界会话摘要生成服务(W5A2) */
+  private readonly worldSessionSummaryGenerationService: WorldSessionSummaryGenerationService;
 
   /**
    * 私有构造,组装全部依赖。
@@ -510,6 +516,20 @@ export class AppServices {
       this.worldSceneMessageRepository,
       this.worldSceneRepository,
       this.dbHelper
+    );
+    // W5A2: 世界会话摘要Prompt构建器。
+    // 依赖 WorldRepo + LocationRepo + SceneRepo(只读公共元数据)。
+    this.worldSessionSummaryPromptAssembler = new WorldSessionSummaryPromptAssembler(
+      this.worldRepository,
+      this.worldLocationRepository,
+      this.worldSceneRepository
+    );
+    // W5A2: 世界会话摘要生成服务(AI摘要生成+幂等+regenerate)。
+    // 依赖 StoreService + PromptAssembler + ModelService。
+    this.worldSessionSummaryGenerationService = new WorldSessionSummaryGenerationService(
+      this.worldSessionSummaryStoreService,
+      this.worldSessionSummaryPromptAssembler,
+      this.modelService
     );
     // v8.3 Phase 2: 最近原始消息窗口选择器(去重 + 窗口 + 完整轮次)
     this.recentMessageSelector = new RecentMessageSelector(this.tokenCounter);
@@ -1310,6 +1330,14 @@ export class AppServices {
 
   static getWorldPerceptionService(): WorldPerceptionService {
     return AppServices.getInstance().worldPerceptionService;
+  }
+
+  static getWorldSessionSummaryStoreService(): WorldSessionSummaryStoreService {
+    return AppServices.getInstance().worldSessionSummaryStoreService;
+  }
+
+  static getWorldSessionSummaryGenerationService(): WorldSessionSummaryGenerationService {
+    return AppServices.getInstance().worldSessionSummaryGenerationService;
   }
 
   /**

@@ -14,13 +14,14 @@ import {
 } from '../../models/world/WorldSessionSummary';
 import {
   WorldConversationSession,
-  WorldConversationSessionStatus
+  WorldConversationSessionStatus,
+  WorldSessionParticipantSnapshot,
+  deserializeParticipantSnapshots
 } from '../../models/world/WorldConversationSession';
 import { WorldSceneMessage } from '../../models/world/WorldSceneMessage';
 import {
   WorldSceneMessageVisibility,
-  WorldSceneMessageStatus,
-  WorldSceneMessageSenderType
+  WorldSceneMessageStatus
 } from '../../models/world/WorldSceneMessage';
 import { WorldScene } from '../../models/world/WorldScene';
 import { WorldStateError } from '../../models/world/WorldStateError';
@@ -66,13 +67,21 @@ export class WorldSessionSummaryStoreService {
       throw WorldStateError.sceneNotFound();
     }
     const locationId: string = scene.locationId;
+    const participants: WorldSessionParticipantSnapshot[] =
+      session.participantSnapshotJson !== ''
+        ? deserializeParticipantSnapshots(session.participantSnapshotJson)
+        : [];
+    const allParticipantInstanceIds: Set<string> = new Set<string>();
+    for (let i = 0; i < participants.length; i++) {
+      allParticipantInstanceIds.add(participants[i].characterInstanceId);
+    }
     const allMessages: WorldSceneMessage[] =
       await this.sceneMessageRepo.listBySessionId(sessionId);
     const sourceMessages: WorldSessionSummarySourceMessage[] = [];
     const sourceMessageIds: string[] = [];
     for (let i = 0; i < allMessages.length; i++) {
       const msg: WorldSceneMessage = allMessages[i];
-      if (!this.isEligibleForSharedSummary(msg)) {
+      if (!this.isEligibleForSharedSummary(msg, allParticipantInstanceIds)) {
         continue;
       }
       sourceMessages.push({
@@ -137,9 +146,17 @@ export class WorldSessionSummaryStoreService {
         }
         const freshMessages: WorldSceneMessage[] =
           await this.sceneMessageRepo.listBySessionIdWithStore(store, sessionId);
+        const freshParticipants: WorldSessionParticipantSnapshot[] =
+          session.participantSnapshotJson !== ''
+            ? deserializeParticipantSnapshots(session.participantSnapshotJson)
+            : [];
+        const freshParticipantIds: Set<string> = new Set<string>();
+        for (let i = 0; i < freshParticipants.length; i++) {
+          freshParticipantIds.add(freshParticipants[i].characterInstanceId);
+        }
         const freshSourceIds: string[] = [];
         for (let i = 0; i < freshMessages.length; i++) {
-          if (this.isEligibleForSharedSummary(freshMessages[i])) {
+          if (this.isEligibleForSharedSummary(freshMessages[i], freshParticipantIds)) {
             freshSourceIds.push(freshMessages[i].id);
           }
         }
@@ -183,7 +200,10 @@ export class WorldSessionSummaryStoreService {
     return await this.summaryRepo.getLatestBySessionId(sessionId);
   }
 
-  private isEligibleForSharedSummary(msg: WorldSceneMessage): boolean {
+  private isEligibleForSharedSummary(
+    msg: WorldSceneMessage,
+    allParticipantInstanceIds: Set<string>
+  ): boolean {
     if (msg.status !== WorldSceneMessageStatus.Completed) {
       return false;
     }
@@ -193,14 +213,31 @@ export class WorldSessionSummaryStoreService {
     if (msg.content.trim() === '') {
       return false;
     }
-    if (msg.senderType === WorldSceneMessageSenderType.Narrator) {
-      const hasParticipant: boolean =
-        msg.participantCharacterInstanceIds !== undefined &&
-        msg.participantCharacterInstanceIds.length > 0;
-      const hasWitness: boolean =
-        msg.witnessCharacterInstanceIds !== undefined &&
-        msg.witnessCharacterInstanceIds.length > 0;
-      if (!hasParticipant && !hasWitness) {
+    if (allParticipantInstanceIds.size === 0) {
+      return false;
+    }
+    const msgParticipantIds: string[] | undefined = msg.participantCharacterInstanceIds;
+    const msgWitnessIds: string[] | undefined = msg.witnessCharacterInstanceIds;
+    const hasAnyProvenance: boolean =
+      (msgParticipantIds !== undefined && msgParticipantIds.length > 0) ||
+      (msgWitnessIds !== undefined && msgWitnessIds.length > 0);
+    if (!hasAnyProvenance) {
+      return false;
+    }
+    const visibleIds: Set<string> = new Set<string>();
+    if (msgParticipantIds !== undefined) {
+      for (let i = 0; i < msgParticipantIds.length; i++) {
+        visibleIds.add(msgParticipantIds[i]);
+      }
+    }
+    if (msgWitnessIds !== undefined) {
+      for (let i = 0; i < msgWitnessIds.length; i++) {
+        visibleIds.add(msgWitnessIds[i]);
+      }
+    }
+    const allParticipantKeys: string[] = Array.from(allParticipantInstanceIds);
+    for (let i = 0; i < allParticipantKeys.length; i++) {
+      if (!visibleIds.has(allParticipantKeys[i])) {
         return false;
       }
     }
