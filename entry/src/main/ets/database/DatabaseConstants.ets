@@ -6,7 +6,7 @@
  */
 
 export const DATABASE_NAME: string = 'arktavern.db';
-export const DATABASE_VERSION: number = 30;
+export const DATABASE_VERSION: number = 31;
 
 export const TABLE_CHARACTERS: string = 'characters';
 export const TABLE_CHATS: string = 'chats';
@@ -714,6 +714,21 @@ export const COLUMN_STATUS_UPDATED_AT_WKEE: string = 'status_updated_at';
 export const INDEX_WORLD_KNOWN_EVENT_ENTRIES_OWNER_CREATED: string = 'idx_wkee_owner_created';
 export const INDEX_WORLD_KNOWN_EVENT_ENTRIES_OWNER_STATUS_CREATED: string = 'idx_wkee_owner_status_created';
 export const INDEX_WORLD_KNOWN_EVENT_ENTRIES_OWNER_SESSION_SOURCE_KIND: string = 'idx_wkee_owner_session_source_kind';
+
+// ===== v31: 世界会话后处理运行存储(W7A-WORLD-SESSION-POST-PROCESS-RUN-STORE) =====
+export const TABLE_WORLD_SESSION_POST_PROCESS_RUNS: string = 'world_session_post_process_runs';
+
+export const COLUMN_SESSION_ID_WPPR: string = 'session_id';
+export const COLUMN_PIPELINE_VERSION_WPPR: string = 'pipeline_version';
+export const COLUMN_STATE_JSON_WPPR: string = 'state_json';
+export const COLUMN_ATTEMPT_COUNT_WPPR: string = 'attempt_count';
+export const COLUMN_REVISION_WPPR: string = 'revision';
+export const COLUMN_COMPLETED_AT_WPPR: string = 'completed_at';
+
+// ===== v31: 世界会话后处理运行索引名 =====
+export const INDEX_WORLD_SESSION_POST_PROCESS_RUNS_WORLD_ID: string = 'idx_wppr_world_id';
+export const INDEX_WORLD_SESSION_POST_PROCESS_RUNS_SESSION_ID: string = 'idx_wppr_session_id';
+export const INDEX_WORLD_SESSION_POST_PROCESS_RUNS_WORLD_STATUS: string = 'idx_wppr_world_status';
 
 // ===== v28: 世界事件提取索引名 =====
 export const INDEX_WORLD_EVENT_EXTRACTION_RUNS_WORLD_SESSION_VERSION: string = 'idx_weer_world_session_version';

@@ -89,6 +89,7 @@ import { WorldEventExtractionRunRepository } from '../../repositories/world/Worl
 import { WorldEventEntryRepository } from '../../repositories/world/WorldEventExtractionRepository';
 import { WorldKnownEventEntryRepository } from '../../repositories/world/WorldKnownEventEntryRepository';
 import { WorldDirectionalRelationshipEntryRepository } from '../../repositories/world/WorldDirectionalRelationshipEntryRepository';
+import { WorldSessionPostProcessRunRepository } from '../../repositories/world/WorldSessionPostProcessRunRepository';
 import { InitiatorType } from '../../models/world/WorldCharacterLocationHistory';
 import { CharacterService } from '../CharacterService';
 import { Character } from '../../models/Character';
@@ -143,6 +144,7 @@ export class WorldStateService {
   private readonly eventEntryRepo: WorldEventEntryRepository;
   private readonly knownEventEntryRepo: WorldKnownEventEntryRepository;
   private readonly relationshipEntryRepo: WorldDirectionalRelationshipEntryRepository;
+  private readonly postProcessRunRepo: WorldSessionPostProcessRunRepository;
   private readonly characterService: CharacterService;
   private readonly dbHelper: DbHelper;
 
@@ -165,6 +167,7 @@ export class WorldStateService {
     eventEntryRepo: WorldEventEntryRepository,
     knownEventEntryRepo: WorldKnownEventEntryRepository,
     relationshipEntryRepo: WorldDirectionalRelationshipEntryRepository,
+    postProcessRunRepo: WorldSessionPostProcessRunRepository,
     characterService: CharacterService,
     dbHelper: DbHelper
   ) {
@@ -186,6 +189,7 @@ export class WorldStateService {
     this.eventEntryRepo = eventEntryRepo;
     this.knownEventEntryRepo = knownEventEntryRepo;
     this.relationshipEntryRepo = relationshipEntryRepo;
+    this.postProcessRunRepo = postProcessRunRepo;
     this.characterService = characterService;
     this.dbHelper = dbHelper;
   }
@@ -372,6 +376,8 @@ export class WorldStateService {
         await this.eventEntryRepo.deleteByWorldIdWithStore(store, worldId);
         // V28: 删除该 World 的全部事件提取运行(W6A1)。
         await this.extractionRunRepo.deleteByWorldIdWithStore(store, worldId);
+        // V31: 删除该 World 的全部后处理运行(W7A),在会话删除之前(运行引用会话)。
+        await this.postProcessRunRepo.deleteByWorldIdWithStore(store, worldId);
         // W4A: 删除该 World 的全部地点历史记录。
         await this.movementService.deleteByWorldWithStore(store, worldId);
         await this.sceneMessageRepo.deleteByWorldWithStore(store, worldId);

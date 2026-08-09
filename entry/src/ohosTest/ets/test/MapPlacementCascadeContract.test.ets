@@ -27,6 +27,7 @@ import { WorldCharacterMemoryEntryRepository } from '../../../main/ets/repositor
 import { WorldEventExtractionRunRepository, WorldEventEntryRepository } from '../../../main/ets/repositories/world/WorldEventExtractionRepository';
 import { WorldKnownEventEntryRepository } from '../../../main/ets/repositories/world/WorldKnownEventEntryRepository';
 import { WorldDirectionalRelationshipEntryRepository } from '../../../main/ets/repositories/world/WorldDirectionalRelationshipEntryRepository';
+import { WorldSessionPostProcessRunRepository } from '../../../main/ets/repositories/world/WorldSessionPostProcessRunRepository';
 import { WorldStateService } from '../../../main/ets/services/world/WorldStateService';
 import { CharacterService } from '../../../main/ets/services/CharacterService';
 import { CharacterRepository } from '../../../main/ets/repositories/CharacterRepository';
@@ -93,7 +94,7 @@ export default function mapPlacementCascadeContractTest(): void {
         placementRepo, memoryService, new WorldCharacterMemoryEntryRepository(dbHelper),
         movementService, new WorldEventExtractionRunRepository(dbHelper),
         new WorldEventEntryRepository(dbHelper), new WorldKnownEventEntryRepository(dbHelper),
-        new WorldDirectionalRelationshipEntryRepository(dbHelper), characterService, dbHelper
+        new WorldDirectionalRelationshipEntryRepository(dbHelper), new WorldSessionPostProcessRunRepository(dbHelper), characterService, dbHelper
       );
     });
 

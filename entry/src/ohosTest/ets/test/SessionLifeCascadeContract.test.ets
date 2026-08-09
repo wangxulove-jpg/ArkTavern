@@ -27,6 +27,7 @@ import { WorldCharacterMemoryEntryRepository } from '../../../main/ets/repositor
 import { WorldEventExtractionRunRepository, WorldEventEntryRepository } from '../../../main/ets/repositories/world/WorldEventExtractionRepository';
 import { WorldKnownEventEntryRepository } from '../../../main/ets/repositories/world/WorldKnownEventEntryRepository';
 import { WorldDirectionalRelationshipEntryRepository } from '../../../main/ets/repositories/world/WorldDirectionalRelationshipEntryRepository';
+import { WorldSessionPostProcessRunRepository } from '../../../main/ets/repositories/world/WorldSessionPostProcessRunRepository';
 import { WorldLocationMapPlacementRepository } from '../../../main/ets/repositories/world/WorldLocationMapPlacementRepository';
 import { WorldCharacterLocationHistoryRepository } from '../../../main/ets/repositories/world/WorldCharacterLocationHistoryRepository';
 import {
@@ -138,6 +139,7 @@ export default function sessionLifeCascadeContractTest(): void {
         new WorldEventEntryRepository(dbHelper),
         new WorldKnownEventEntryRepository(dbHelper),
         new WorldDirectionalRelationshipEntryRepository(dbHelper),
+        new WorldSessionPostProcessRunRepository(dbHelper),
         characterService,
         dbHelper
       );

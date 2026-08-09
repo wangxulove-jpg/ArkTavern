@@ -114,9 +114,11 @@ import { WorldCharacterMovementService } from './world/WorldCharacterMovementSer
 import { WorldEventExtractionRunRepository, WorldEventEntryRepository } from '../repositories/world/WorldEventExtractionRepository';
 import { WorldKnownEventEntryRepository } from '../repositories/world/WorldKnownEventEntryRepository';
 import { WorldDirectionalRelationshipEntryRepository } from '../repositories/world/WorldDirectionalRelationshipEntryRepository';
+import { WorldSessionPostProcessRunRepository } from '../repositories/world/WorldSessionPostProcessRunRepository';
 import { WorldEventStoreService } from './world/WorldEventStoreService';
 import { WorldKnownEventStoreService } from './world/WorldKnownEventStoreService';
 import { WorldDirectionalRelationshipStoreService } from './world/WorldDirectionalRelationshipStoreService';
+import { WorldSessionPostProcessRunStoreService } from './world/WorldSessionPostProcessRunStoreService';
 import { WorldDirectionalRelationshipPromptAssembler } from './world/WorldDirectionalRelationshipPromptAssembler';
 import { WorldDirectionalRelationshipGenerationService } from './world/WorldDirectionalRelationshipGenerationService';
 import { WorldEventExtractionPromptAssembler } from './world/WorldEventExtractionPromptAssembler';
@@ -332,6 +334,8 @@ export class AppServices {
   private readonly worldKnownEventEntryRepository: WorldKnownEventEntryRepository;
   /** WorldDirectionalRelationshipEntryRepository 世界方向性关系条目仓储(W6C1) */
   private readonly worldDirectionalRelationshipEntryRepository: WorldDirectionalRelationshipEntryRepository;
+  /** WorldSessionPostProcessRunRepository 世界会话后处理运行仓储(W7A) */
+  private readonly worldSessionPostProcessRunRepository: WorldSessionPostProcessRunRepository;
   /** WorldEventStoreService 世界事件提取存储服务(W6A1) */
   private readonly worldEventStoreService: WorldEventStoreService;
   /** WorldEventExtractionPromptAssembler 世界事件提取Prompt构建器(W6A2) */
@@ -346,6 +350,8 @@ export class AppServices {
   private readonly worldDirectionalRelationshipPromptAssembler: WorldDirectionalRelationshipPromptAssembler;
   /** WorldDirectionalRelationshipGenerationService 世界方向性关系AI生成服务(W6C2) */
   private readonly worldDirectionalRelationshipGenerationService: WorldDirectionalRelationshipGenerationService;
+  /** WorldSessionPostProcessRunStoreService 世界会话后处理运行存储服务(W7A) */
+  private readonly worldSessionPostProcessRunStoreService: WorldSessionPostProcessRunStoreService;
 
   /**
    * 私有构造,组装全部依赖。
@@ -398,6 +404,8 @@ export class AppServices {
     this.worldKnownEventEntryRepository = new WorldKnownEventEntryRepository(this.dbHelper);
     // W6C1: 世界方向性关系条目仓储,仅依赖 DbHelper,不依赖任何 Service。
     this.worldDirectionalRelationshipEntryRepository = new WorldDirectionalRelationshipEntryRepository(this.dbHelper);
+    // W7A: 世界会话后处理运行仓储,仅依赖 DbHelper,不依赖任何 Service。
+    this.worldSessionPostProcessRunRepository = new WorldSessionPostProcessRunRepository(this.dbHelper);
     this.characterService = new CharacterService(
       this.characterRepository,
       this.characterSelectionStore,
@@ -458,6 +466,7 @@ export class AppServices {
       this.worldEventEntryRepository,
       this.worldKnownEventEntryRepository,
       this.worldDirectionalRelationshipEntryRepository,
+      this.worldSessionPostProcessRunRepository,
       this.characterService,
       this.dbHelper
     );
@@ -684,6 +693,13 @@ export class AppServices {
       this.worldDirectionalRelationshipPromptAssembler,
       this.modelService,
       this.worldConversationSessionRepository
+    );
+    // W7A: 世界会话后处理运行存储服务(运行唯一正式写入口)。
+    // 依赖 RunRepo + SessionRepo + DbHelper。不调用 AI 模型。
+    this.worldSessionPostProcessRunStoreService = new WorldSessionPostProcessRunStoreService(
+      this.worldSessionPostProcessRunRepository,
+      this.worldConversationSessionRepository,
+      this.dbHelper
     );
     // v8.3 Phase 2: 最近原始消息窗口选择器(去重 + 窗口 + 完整轮次)
     this.recentMessageSelector = new RecentMessageSelector(this.tokenCounter);
