@@ -43,9 +43,6 @@ import { Logger } from '../../utils/Logger';
 import { WorldSurfaceCard } from '../../components/world/WorldSurfaceCard';
 import { WorldStatusChip } from '../../components/world/WorldStatusChip';
 import { WorldEmptyState } from '../../components/world/WorldEmptyState';
-import { WorldPrimaryButton } from '../../components/world/WorldPrimaryButton';
-import { WorldSecondaryButton } from '../../components/world/WorldSecondaryButton';
-import { WorldBottomActionBar } from '../../components/world/WorldBottomActionBar';
 import { ThemePalette } from '../../theme/ThemePalette';
 
 const LOG_TAG: string = 'WorldHomePage';
@@ -129,7 +126,6 @@ struct WorldHomePage {
     Column() {
       this.headerArea();
       this.contentArea();
-      this.bottomBarArea();
     }
     .width('100%')
     .height('100%')
@@ -141,26 +137,36 @@ struct WorldHomePage {
   headerArea(): void {
     Column() {
       Row() {
-        Button('←')
-          .fontSize(22)
-          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
-          .backgroundColor(Color.Transparent)
-          .width(40)
-          .height(40)
-          .padding(0)
-          .accessibilityText($r('app.string.world_back_to_list'))
+        // 返回按钮
+        SymbolGlyph($r('sys.symbol.chevron_left'))
+          .fontSize(24)
+          .fontColor([ThemePalette.textPrimaryColor(this.effectiveTheme)])
+          .padding(4)
           .onClick(() => {
             router.back();
           })
 
         Text($r('app.string.world_home_title'))
-          .fontSize($r('app.float.world_font_display'))
+          .fontSize($r('app.float.nav_title_font_size'))
           .fontWeight(FontWeight.Bold)
           .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .layoutWeight(1)
           .margin({ left: 4 })
+
+        // 创建世界(右上角)
+        Button($r('app.string.world_create'))
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_on_accent'))
+          .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(32)
+          .padding({ left: 16, right: 16 })
+          .accessibilityText($r('app.string.world_create'))
+          .onClick(() => {
+            this.openWorldCreate();
+          })
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
@@ -401,17 +407,6 @@ struct WorldHomePage {
       })
       .alignItems(HorizontalAlign.Start)
     }
-  }
-
-  @Builder
-  bottomBarArea(): void {
-    WorldBottomActionBar({
-      primaryLabel: $r('app.string.world_create'),
-      isPrimaryEnabled: true,
-      onPrimary: (): void => {
-        this.openWorldCreate();
-      }
-    })
   }
 
   private openWorldDetail(worldId: string): void {

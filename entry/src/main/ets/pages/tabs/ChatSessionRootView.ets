@@ -29,6 +29,7 @@ import { CharacterImageView } from '../../components/CharacterImageView';
 import { promptAction, router } from '@kit.ArkUI';
 import { Chat } from '../../models/Chat';
 import { Character } from '../../models/Character';
+import { World } from '../../models/world/World';
 import { ChatArchiveViewModel } from '../../viewmodels/ChatArchiveViewModel';
 import { ChatArchiveImportConversationResult } from '../../parser/ChatArchiveSchema';
 import { Logger } from '../../utils/Logger';
@@ -50,6 +51,29 @@ interface SwipeIconButtonParams {
   action: () => void;
 }
 
+/** 最近会话聚合项类型 */
+enum RecentItemType {
+  /** 单人聊天 */
+  Single = 'single',
+  /** 多人聊天 */
+  Group = 'group',
+  /** 世界 */
+  World = 'world'
+}
+
+/** 最近打开的对话聚合项(单聊 / 群聊 / 世界统一渲染) */
+interface RecentItem {
+  readonly type: RecentItemType;
+  readonly id: string;
+  readonly title: string;
+  readonly preview: string;
+  readonly timestamp: number;
+  /** 单聊关联角色 avatar(群聊/世界为空) */
+  readonly avatarUri: string;
+  /** 头像占位文字 */
+  readonly avatarFallback: string;
+}
+
 @Component
 export struct ChatSessionRootView {
   @State viewModel: ChatSessionListViewModel | null = null;
@@ -61,6 +85,8 @@ export struct ChatSessionRootView {
    * 因此显式维护本地 sessions 数组,在每次 reload / renameSession 后同步。
    */
   @State sessions: ChatSessionListItem[] = [];
+  /** 最近打开的对话聚合项(单聊 + 群聊 + 世界,按时间 DESC 取前 10) */
+  @State recentItems: RecentItem[] = [];
   /** 重命名弹窗目标 chatId(空时不显示) */
   @State renameTargetId: string = '';
   /** 重命名弹窗输入值 */
@@ -101,6 +127,7 @@ export struct ChatSessionRootView {
       this.viewModel = vm;
       await vm.reload();
       this.sessions = vm.sessions;
+      await this.loadRecentItems();
       this.isInitializing = false;
     } catch (e) {
       this.isInitializing = false;
@@ -119,6 +146,7 @@ export struct ChatSessionRootView {
     this.viewModel!.reload()
       .then((): void => {
         this.sessions = this.viewModel!.sessions;
+        this.loadRecentItems().catch((): void => {});
       })
       .catch((): void => {});
   }
@@ -128,6 +156,112 @@ export struct ChatSessionRootView {
     if (this.viewModel !== null) {
       this.sessions = this.viewModel!.sessions;
     }
+  }
+
+  /**
+   * 聚合最近打开的对话:单聊 + 群聊 + 世界,按更新时间 DESC 取前 10。
+   * 仅做 UI 层只读聚合,不修改任何业务数据。
+   */
+  private async loadRecentItems(): Promise<void> {
+    const items: RecentItem[] = [];
+    try {
+      // 1. 单聊(来自 ChatSessionListViewModel,含角色头像)
+      const singles: ChatSessionListItem[] = this.sessions;
+      for (let i = 0; i < singles.length; i++) {
+        const s: ChatSessionListItem = singles[i];
+        items.push({
+          type: RecentItemType.Single,
+          id: s.chat.id,
+          title: this.getSessionTitle(s),
+          preview: s.lastMessagePreview,
+          timestamp: s.displayTimestamp,
+          avatarUri: s.character !== null ? s.character.avatarUri : '',
+          avatarFallback: this.getCharacterFallbackName(s)
+        });
+      }
+
+      // 2. 群聊(通过 GroupConversationPersistenceService 读取,取 title 与成员摘要)
+      try {
+        const groupList: Chat[] = await AppServices.getGroupConversationPersistenceService().listGroupConversations();
+        for (let i = 0; i < groupList.length; i++) {
+          const g: Chat = groupList[i];
+          items.push({
+            type: RecentItemType.Group,
+            id: g.id,
+            title: g.title.length > 0 ? g.title : '多人聊天',
+            preview: '多人聊天',
+            timestamp: g.updatedAt,
+            avatarUri: '',
+            avatarFallback: '群'
+          });
+        }
+      } catch (e) {
+        Logger.warn(LOG_TAG_SESSION, 'load group chats failed: ' + String(e));
+      }
+
+      // 3. 世界(WorldRepository.listAll 已按 updatedAt DESC)
+      try {
+        const worldList: World[] = await AppServices.getWorldRepository().listAll();
+        for (let i = 0; i < worldList.length; i++) {
+          const w: World = worldList[i];
+          items.push({
+            type: RecentItemType.World,
+            id: w.id,
+            title: w.name.length > 0 ? w.name : '世界',
+            preview: '世界模式',
+            timestamp: w.updatedAt,
+            avatarUri: '',
+            avatarFallback: '世'
+          });
+        }
+      } catch (e) {
+        Logger.warn(LOG_TAG_SESSION, 'load worlds failed: ' + String(e));
+      }
+    } catch (e) {
+      Logger.warn(LOG_TAG_SESSION, 'load recent items failed: ' + String(e));
+    }
+
+    // 按时间 DESC 排序,取前 10
+    items.sort((a: RecentItem, b: RecentItem): number => b.timestamp - a.timestamp);
+    this.recentItems = items.slice(0, 10);
+  }
+
+  /** 点击最近会话项:按类型跳转 */
+  private openRecentItem(item: RecentItem): void {
+    if (item.type === RecentItemType.Single) {
+      AppStorage.setOrCreate<string>(PENDING_CHAT_ID_KEY, item.id);
+      // 单人会话若有角色,同步写入 characterId,让 ChatPage 加载正确角色上下文
+      let charId: string = '';
+      const all: ChatSessionListItem[] = this.sessions;
+      for (let i = 0; i < all.length; i++) {
+        if (all[i].chat.id === item.id) {
+          const cid: string | undefined = all[i].chat.characterId;
+          if (cid !== undefined && cid.length > 0) {
+            charId = cid;
+          }
+          break;
+        }
+      }
+      AppStorage.setOrCreate<string>(PENDING_CHARACTER_ID_KEY, charId);
+      router.pushUrl({ url: 'pages/ChatPage' });
+    } else if (item.type === RecentItemType.Group) {
+      AppStorage.setOrCreate<string>('pendingGroupChatId', item.id);
+      router.pushUrl({ url: 'pages/groupchat/GroupChatPage' });
+    } else {
+      AppStorage.setOrCreate<string>('pendingWorldId', item.id);
+      router.pushUrl({ url: 'pages/world/WorldDetailPage' });
+    }
+  }
+
+  /** 类型标记文案 */
+  private recentTypeLabel(type: RecentItemType): string {
+    if (type === RecentItemType.Group) {
+      return '多人';
+    }
+    if (type === RecentItemType.World) {
+      return '世界';
+    }
+    return '单聊';
   }
 
   /** 点击会话项:写入 pendingChatId 和 pendingCharacterId(如有),push 到 ChatPage */
@@ -268,38 +402,8 @@ export struct ChatSessionRootView {
   build() {
     Stack() {
       Column() {
-        // 顶栏:标题"聊天"(与其他 Tab 统一样式:Bold + 左对齐) + T-CHAT.1 导入入口
-        Row() {
-          Text($r('app.string.tab_sessions'))
-            .fontSize($r('app.float.app_font_title'))
-            .fontWeight(FontWeight.Bold)
-            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .layoutWeight(1)
-
-          // T-CHAT.1: 导入聊天按钮(顶栏右侧)
-          Button('导入聊天')
-            .fontSize($r('app.float.app_font_caption'))
-            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
-            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
-            .borderRadius($r('app.float.app_radius_sm'))
-            .height(32)
-            .padding({ left: 12, right: 12 })
-            .enabled(!this.archiveBusy)
-            .onClick(() => {
-              this.startImportFlow();
-            })
-        }
-        .width('100%')
-        .padding({
-          left: $r('app.float.app_spacing_20'),
-          right: $r('app.float.app_spacing_20'),
-          // 顶部 padding = 状态栏高度 + 间距 8(避开状态栏,与其他 Tab 统一起点)
-          top: this.statusBarHeight + 8,
-          bottom: $r('app.float.app_spacing_8')
-        })
-        .alignItems(VerticalAlign.Center)
+        // 顶栏:标题"对话记录" + T-CHAT.1 导入入口
+        this.headerBar()
 
         // 错误提示
         if (this.viewModel !== null && this.viewModel!.errorMessage.length > 0) {
@@ -359,275 +463,228 @@ export struct ChatSessionRootView {
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP])
   }
 
-  /** 会话列表区:加载/空/列表 */
+  /** 顶部标题栏:对话记录 + 紧凑导入按钮 */
+  @Builder
+  headerBar() {
+    Row() {
+      Text($r('app.string.tab_sessions'))
+        .fontSize($r('app.float.app_font_title'))
+        .fontWeight(FontWeight.Bold)
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .layoutWeight(1)
+
+      // T-CHAT.1: 导入聊天按钮(顶栏右侧,紧凑)
+      Button($r('app.string.character_import'))
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor(ThemePalette.accentColor(this.effectiveTheme))
+        .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
+        .borderRadius($r('app.float.app_radius_sm'))
+        .height(28)
+        .padding({ left: 10, right: 10 })
+        .enabled(!this.archiveBusy)
+        .onClick(() => {
+          this.startImportFlow();
+        })
+    }
+    .width('100%')
+    .padding({
+      left: $r('app.float.app_spacing_20'),
+      right: $r('app.float.app_spacing_20'),
+      // 顶部 padding = 状态栏高度 + 间距 8(避开状态栏,与其他 Tab 统一起点)
+      top: this.statusBarHeight + 8,
+      bottom: $r('app.float.app_spacing_8')
+    })
+    .alignItems(VerticalAlign.Center)
+  }
+
+  /** 会话列表区:Quick Start + 最近 10 条聚合(单聊+群聊+世界) */
   @Builder
   sessionListArea() {
-    if (this.sessions.length === 0) {
-      Column() {
-        EmptyStateView({
-          title: $r('app.string.tab_sessions_empty'),
-          description: $r('app.string.tab_sessions_empty_desc')
-        })
-
-        // T-CHAT.1: 空状态页面也提供导入入口
-        Button('导入聊天记录')
-          .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_on_accent'))
-          .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(40)
-          .padding({ left: 24, right: 24 })
-          .margin({ top: $r('app.float.app_spacing_16') })
-          .enabled(!this.archiveBusy)
-          .onClick(() => {
-            this.startImportFlow();
-          })
-
-        // G-UI-1: 空状态也提供多人聊天入口
-        Button($r('app.string.group_entry_title'))
-          .fontSize($r('app.float.app_font_body'))
-          .fontColor(ThemePalette.accentColor(this.effectiveTheme))
-          .backgroundColor($r('app.color.app_accent_surface'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(40)
-          .padding({ left: 24, right: 24 })
-          .margin({ top: $r('app.float.app_spacing_8') })
-          .onClick(() => {
-            router.pushUrl({ url: 'pages/groupchat/GroupChatHomePage' });
-          })
-
-        // W-UI-1: 空状态也提供世界模式入口
-        Button($r('app.string.world_entry_title'))
-          .fontSize($r('app.float.app_font_body'))
-          .fontColor(ThemePalette.accentColor(this.effectiveTheme))
-          .backgroundColor($r('app.color.app_accent_surface'))
-          .borderRadius($r('app.float.app_radius_sm'))
-          .height(40)
-          .padding({ left: 24, right: 24 })
-          .margin({ top: $r('app.float.app_spacing_8') })
-          .accessibilityText($r('app.string.world_open_detail'))
-          .onClick(() => {
-            router.pushUrl({ url: 'pages/world/WorldHomePage' });
-          })
+    List() {
+      // ===== 快速开始 =====
+      ListItem() {
+        this.quickStartSection()
       }
-      .width('100%')
-      .layoutWeight(1)
-      .justifyContent(FlexAlign.Center)
-    } else {
-      List() {
-        // G-UI-1: 多人聊天入口(独立卡片,不混入单聊会话列表)
-        ListItem() {
-          this.groupChatEntryCard()
-        }
-        .margin({ bottom: $r('app.float.app_spacing_12') })
+      .margin({ bottom: $r('app.float.app_spacing_8') })
 
-        // W-UI-1: 世界模式入口(独立卡片,与单聊/多人并列)
+      if (this.recentItems.length === 0) {
         ListItem() {
-          this.worldEntryCard()
+          this.sessionsEmptyState()
         }
-        .margin({ bottom: $r('app.float.app_spacing_12') })
-
-        ForEach(this.sessions, (item: ChatSessionListItem) => {
+      } else {
+        ForEach(this.recentItems, (item: RecentItem) => {
           ListItem() {
-            this.sessionCard(item)
+            this.recentItemCard(item)
           }
-          .margin({ bottom: $r('app.float.app_spacing_12') })
-          // T-CHAT.1: 长按弹出导出菜单
-          .gesture(
-            LongPressGesture()
-              .onAction(() => {
-                if (!this.archiveBusy) {
-                  this.exportTarget = item;
-                }
-              })
-          )
-          .swipeAction({
-            end: {
-              builder: (): void => {
-                this.swipeActionButtons(item)
-              }
-            }
-          })
-        }, (item: ChatSessionListItem) => item.chat.id + '|' + item.chat.title)
+          .width('100%')
+          .margin({ bottom: 2 })
+        }, (item: RecentItem) => item.type + '|' + item.id)
 
-        // 末尾空白 ListItem:让内容总高度始终超出视口,确保即使内容少也能上下滚动(spring 回弹)。
-        // 高度覆盖 HdsTabs 浮层(barBottomMargin 24 + maskHeight 64 + tabBar ≈ 56 ≈ 144vp),
-        // 让最后一项内容下方有足够空白,可滚动到 tab bar 上方查看。
+        // 末尾空白:让最后一项可滚动到 tab bar 上方
         ListItem() {
           Column().width('100%').height(160)
         }
       }
-      .width('100%')
-      .layoutWeight(1)
-      .scrollBar(BarState.Off)
-      .edgeEffect(EdgeEffect.Spring)
-      // padding 0:padding 直接在 List 上会缩小视口,padding 区域不显示内容。
-      .padding({
-        left: $r('app.float.app_spacing_16'),
-        right: $r('app.float.app_spacing_16'),
-        top: 0,
-        bottom: 0
-      })
     }
+    .width('100%')
+    .layoutWeight(1)
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.Spring)
+    .align(Alignment.Top)
+    .padding({
+      left: $r('app.float.app_spacing_8'),
+      right: $r('app.float.app_spacing_8'),
+      top: 0,
+      bottom: 0
+    })
   }
 
-  /**
-   * G-UI-1: 多人聊天入口卡片。
-   *
-   * 独立于单聊会话列表,明确标注"多人聊天"和"预览"。
-   * 点击跳转到 GroupChatHomePage。
-   * 不修改单聊会话卡片行为。
-   */
+  /** 快速开始:一行三卡(单人聊天 / 多人聊天 / 世界模式) */
   @Builder
-  groupChatEntryCard() {
-    PressableCard({
-      onPress: (): void => {
-        router.pushUrl({ url: 'pages/groupchat/GroupChatHomePage' });
-      },
-      surfaceColor: $r('app.color.app_accent_surface')
-    }) {
+  quickStartSection() {
+    Column() {
       Row() {
-        // 左侧:多人图标
-        Stack() {
-          SymbolGlyph($r('sys.symbol.person'))
-            .fontSize(22)
-            .fontColor([ThemePalette.accentColor(this.effectiveTheme)])
-        }
-        .width(44)
-        .height(44)
-        .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
-        .borderRadius(22)
-        .alignContent(Alignment.Center)
-
-        // 右侧:标题 + 描述
-        Column() {
-          Row() {
-            Text($r('app.string.group_entry_title'))
-              .fontSize($r('app.float.app_font_body'))
-              .fontWeight(FontWeight.Medium)
-              .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-            // 预览徽标
-            Text($r('app.string.group_preview_badge'))
-              .fontSize(10)
-              .fontColor(ThemePalette.accentColor(this.effectiveTheme))
-              .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
-              .borderRadius(4)
-              .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-              .margin({ left: 8 })
+        // 单人聊天:进入单人聊天记录列表页(独立页面,展示全部单聊)
+        this.quickCard(
+          $r('sys.symbol.message'),
+          $r('app.string.sessions_quick_new_chat'),
+          () => {
+            router.pushUrl({ url: 'pages/SingleChatHistoryPage' });
           }
-          .width('100%')
-          .alignItems(VerticalAlign.Center)
+        )
 
-          Text($r('app.string.group_entry_desc'))
-            .fontSize($r('app.float.app_font_caption'))
-            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .margin({ top: 4 })
-            .width('100%')
-        }
-        .layoutWeight(1)
-        .alignItems(HorizontalAlign.Start)
-        .margin({ left: 12 })
+        // 多人聊天
+        this.quickCard(
+          $r('sys.symbol.person_2'),
+          $r('app.string.sessions_quick_group'),
+          () => {
+            router.pushUrl({ url: 'pages/groupchat/GroupChatHomePage' });
+          }
+        )
 
-        // 右侧箭头
-        SymbolGlyph($r('sys.symbol.chevron_right'))
-          .fontSize(16)
-          .fontColor([ThemePalette.textTertiaryColor(this.effectiveTheme)])
+        // 世界模式
+        this.quickCard(
+          $r('sys.symbol.star'),
+          $r('app.string.sessions_quick_world'),
+          () => {
+            router.pushUrl({ url: 'pages/world/WorldHomePage' });
+          }
+        )
       }
       .width('100%')
       .padding({
         left: $r('app.float.app_spacing_12'),
-        right: $r('app.float.app_spacing_12'),
-        top: $r('app.float.app_spacing_12'),
-        bottom: $r('app.float.app_spacing_12')
+        right: $r('app.float.app_spacing_12')
       })
-      .alignItems(VerticalAlign.Center)
+      .justifyContent(FlexAlign.SpaceBetween)
     }
+    .width('100%')
   }
 
-  /**
-   * W-UI-1: 世界模式入口卡片。
-   *
-   * 独立于单聊会话列表和多人聊天入口,与单聊/多人并列。
-   * 点击跳转到 WorldHomePage。
-   * 不修改单聊/多人聊天卡片行为。
-   */
+  /** 单个 Quick Start 紧凑卡(等宽,图标 + 标题) */
   @Builder
-  worldEntryCard() {
-    PressableCard({
-      onPress: (): void => {
-        router.pushUrl({ url: 'pages/world/WorldHomePage' });
-      },
-      surfaceColor: $r('app.color.app_accent_surface')
-    }) {
-      Row() {
-        // 左侧:世界图标(globe)
-        Stack() {
-          SymbolGlyph($r('sys.symbol.star'))
-            .fontSize(22)
-            .fontColor([ThemePalette.accentColor(this.effectiveTheme)])
-        }
-        .width(44)
-        .height(44)
-        .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
-        .borderRadius(22)
-        .alignContent(Alignment.Center)
+  quickCard(icon: Resource, title: Resource, onPress: () => void) {
+    Column() {
+      Stack() {
+        SymbolGlyph(icon)
+          .fontSize(20)
+          .fontColor([ThemePalette.accentColor(this.effectiveTheme)])
+      }
+      .width(36)
+      .height(36)
+      .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
+      .borderRadius(18)
+      .alignContent(Alignment.Center)
+      .margin({ bottom: 6 })
 
-        // 右侧:标题 + 描述
-        Column() {
-          Row() {
-            Text($r('app.string.world_entry_title'))
-              .fontSize($r('app.float.app_font_body'))
-              .fontWeight(FontWeight.Medium)
-              .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
+      Text(title)
+        .fontSize(13)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .width('100%')
+        .textAlign(TextAlign.Center)
+    }
+    .layoutWeight(1)
+    .padding({ left: 4, right: 4, top: 10, bottom: 10 })
+    .margin({ left: 4, right: 4 })
+    .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
+    .borderRadius($r('app.float.app_radius_md'))
+    .border({ width: 1, color: ThemePalette.dividerColor(this.effectiveTheme) })
+    .onClick(() => {
+      onPress();
+    })
+  }
 
-            // 只读徽标
-            Text($r('app.string.world_home_subtitle'))
-              .fontSize(10)
-              .fontColor(ThemePalette.accentColor(this.effectiveTheme))
-              .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
-              .borderRadius(4)
-              .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-              .margin({ left: 8 })
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-          }
-          .width('100%')
-          .alignItems(VerticalAlign.Center)
-
-          Text($r('app.string.world_entry_desc'))
-            .fontSize($r('app.float.app_font_caption'))
-            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .margin({ top: 4 })
-            .width('100%')
-        }
-        .layoutWeight(1)
-        .alignItems(HorizontalAlign.Start)
-        .margin({ left: 12 })
-
-        // 右侧箭头
-        SymbolGlyph($r('sys.symbol.chevron_right'))
-          .fontSize(16)
+  /** 无单聊记录的空状态(只提供开始单聊 + 导入聊天记录) */
+  @Builder
+  sessionsEmptyState() {
+    Column() {
+      // 简单装饰形状(不引入新图片资产)
+      Stack() {
+        SymbolGlyph($r('sys.symbol.bell'))
+          .fontSize(32)
           .fontColor([ThemePalette.textTertiaryColor(this.effectiveTheme)])
       }
-      .width('100%')
-      .padding({
-        left: $r('app.float.app_spacing_12'),
-        right: $r('app.float.app_spacing_12'),
-        top: $r('app.float.app_spacing_12'),
-        bottom: $r('app.float.app_spacing_12')
-      })
-      .alignItems(VerticalAlign.Center)
+      .width(72)
+      .height(72)
+      .borderRadius(36)
+      .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
+      .alignContent(Alignment.Center)
+      .margin({ bottom: 16 })
+
+      Text($r('app.string.tab_sessions_empty'))
+        .fontSize($r('app.float.app_font_subtitle'))
+        .fontWeight(FontWeight.Medium)
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+        .textAlign(TextAlign.Center)
+        .width('100%')
+
+      Text($r('app.string.tab_sessions_empty_desc'))
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+        .textAlign(TextAlign.Center)
+        .width('100%')
+        .margin({ top: 8 })
+        .padding({ left: $r('app.float.app_spacing_24'), right: $r('app.float.app_spacing_24') })
+
+      // 主按钮:开始单聊(使用当前角色进入 ChatPage)
+      Button($r('app.string.sessions_empty_start_chat'))
+        .fontSize($r('app.float.app_font_body'))
+        .fontColor($r('app.color.app_on_accent'))
+        .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
+        .borderRadius($r('app.float.app_radius_sm'))
+        .height(40)
+        .padding({ left: 24, right: 24 })
+        .margin({ top: $r('app.float.app_spacing_20') })
+        .onClick(() => {
+          AppStorage.set<string>(PENDING_CHAT_ID_KEY, '');
+          AppStorage.set<string>(PENDING_CHARACTER_ID_KEY, '');
+          router.pushUrl({ url: 'pages/ChatPage' });
+        })
+
+      // 次按钮:导入聊天记录
+      Button($r('app.string.sessions_empty_import'))
+        .fontSize($r('app.float.app_font_body'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+        .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
+        .borderRadius($r('app.float.app_radius_sm'))
+        .height(40)
+        .padding({ left: 24, right: 24 })
+        .margin({ top: $r('app.float.app_spacing_8') })
+        .enabled(!this.archiveBusy)
+        .onClick(() => {
+          this.startImportFlow();
+        })
     }
+    .width('100%')
+    .alignItems(HorizontalAlign.Center)
+    .padding({ top: $r('app.float.app_spacing_24'), bottom: 160 })
   }
+
 
   /** 左滑操作按钮(图标 + 文字,垂直布局) */
   @Builder
@@ -703,7 +760,114 @@ export struct ChatSessionRootView {
     })
   }
 
-  /** 单个会话卡片 */
+  /** 最近会话聚合卡片(紧凑布局:头像 + 两行文本 + 类型标记 + 时间/Chevron,带外边框) */
+  @Builder
+  recentItemCard(item: RecentItem) {
+    Column() {
+      PressableCard({
+        onPress: () => {
+          this.openRecentItem(item);
+        },
+        surfaceColor: Color.Transparent
+      }) {
+        Row() {
+          // 左侧头像(单聊用角色头像,群聊/世界用类型图标)
+          if (item.type === RecentItemType.Single) {
+            CharacterImageView({
+              imageUri: item.avatarUri,
+              fallbackName: item.avatarFallback,
+              imgWidth: 52,
+              imgHeight: 52,
+              imgBorderRadius: 26,
+              displayMode: 'thumbnail',
+              objectFit: ImageFit.Cover
+            })
+          } else {
+            Stack() {
+              SymbolGlyph(item.type === RecentItemType.Group
+                ? $r('sys.symbol.person')
+                : $r('sys.symbol.star'))
+                .fontSize(22)
+                .fontColor([ThemePalette.accentColor(this.effectiveTheme)])
+            }
+            .width(52)
+            .height(52)
+            .borderRadius(26)
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
+            .alignContent(Alignment.Center)
+          }
+
+          // 中间文本区(两行:名称 / 预览)
+          Column() {
+            Row() {
+              Text(item.title)
+                .fontSize(15)
+                .fontWeight(FontWeight.Medium)
+                .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .layoutWeight(1)
+                .textAlign(TextAlign.Start)
+
+              // 类型标记
+              Text(this.recentTypeLabel(item.type))
+                .fontSize(10)
+                .fontColor(ThemePalette.accentColor(this.effectiveTheme))
+                .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
+                .borderRadius(4)
+                .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+                .margin({ left: 6 })
+            }
+            .width('100%')
+            .alignItems(VerticalAlign.Center)
+
+            // 第二行:预览(空时显示类型默认文案)
+            Text(item.preview.length > 0 ? item.preview : this.recentTypeLabel(item.type))
+              .fontSize(13)
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .margin({ top: 3 })
+              .width('100%')
+              .textAlign(TextAlign.Start)
+          }
+          .layoutWeight(1)
+          .alignItems(HorizontalAlign.Start)
+          .margin({ left: 12 })
+
+          // 右侧:更新时间 + Chevron
+          Column() {
+            Text(formatSessionTimestamp(item.timestamp))
+              .fontSize(11)
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+            SymbolGlyph($r('sys.symbol.chevron_right'))
+              .fontSize(14)
+              .fontColor([ThemePalette.textTertiaryColor(this.effectiveTheme)])
+              .margin({ top: 6 })
+          }
+          .alignItems(HorizontalAlign.End)
+          .margin({ left: 8 })
+        }
+        .width('100%')
+        .padding({
+          left: $r('app.float.app_spacing_12'),
+          right: $r('app.float.app_spacing_12'),
+          top: 10,
+          bottom: 10
+        })
+        .alignItems(VerticalAlign.Center)
+      }
+    }
+    .width('100%')
+    .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
+    .borderRadius($r('app.float.app_radius_md'))
+    .border({ width: 1, color: ThemePalette.dividerColor(this.effectiveTheme) })
+  }
+
+  /** 单个会话卡片(紧凑布局:头像 52 + 两行文本 + 时间/Chevron) */
   @Builder
   sessionCard(item: ChatSessionListItem) {
     PressableCard({
@@ -713,45 +877,37 @@ export struct ChatSessionRootView {
       surfaceColor: ThemePalette.surface1Color(this.effectiveTheme)
     }) {
       Row() {
-        // 左侧角色头像(48x48 圆形缩略图)
+        // 左侧角色头像(52x52 圆形缩略图)
         CharacterImageView({
           imageUri: item.character !== null ? item.character.avatarUri : '',
           fallbackName: this.getCharacterFallbackName(item),
-          imgWidth: 48,
-          imgHeight: 48,
-          imgBorderRadius: 24,
+          imgWidth: 52,
+          imgHeight: 52,
+          imgBorderRadius: 26,
           displayMode: 'thumbnail',
           objectFit: ImageFit.Cover
         })
 
-        // 中间文本区(两行结构:名称+时间 / 预览)
+        // 中间文本区(两行:名称 / 预览)
         Column() {
-          // 第一行:对话名称 + 时间
-          Row() {
-            Text(this.getSessionTitle(item))
-              .fontSize($r('app.float.app_font_body'))
-              .fontWeight(FontWeight.Medium)
-              .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-              .layoutWeight(1)
-
-            Text(formatSessionTimestamp(item.displayTimestamp))
-              .fontSize($r('app.float.app_font_caption'))
-              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
-              .margin({ left: 8 })
-          }
-          .width('100%')
-          .alignItems(VerticalAlign.Center)
+          // 第一行:对话名称
+          Text(this.getSessionTitle(item))
+            .fontSize(15)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+            .textAlign(TextAlign.Start)
 
           // 第二行:最后消息摘要(单行截断,空时不占高度)
           if (item.lastMessagePreview.length > 0) {
             Text(item.lastMessagePreview)
-              .fontSize($r('app.float.app_font_caption'))
+              .fontSize(13)
               .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
-              .margin({ top: 4 })
+              .margin({ top: 3 })
               .width('100%')
               .textAlign(TextAlign.Start)
           }
@@ -759,13 +915,29 @@ export struct ChatSessionRootView {
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Start)
         .margin({ left: 12 })
+
+        // 右侧:更新时间 + Chevron
+        Column() {
+          Text(formatSessionTimestamp(item.displayTimestamp))
+            .fontSize(11)
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+          SymbolGlyph($r('sys.symbol.chevron_right'))
+            .fontSize(14)
+            .fontColor([ThemePalette.textTertiaryColor(this.effectiveTheme)])
+            .margin({ top: 6 })
+        }
+        .alignItems(HorizontalAlign.End)
+        .margin({ left: 8 })
       }
       .width('100%')
       .padding({
         left: $r('app.float.app_spacing_12'),
         right: $r('app.float.app_spacing_12'),
-        top: $r('app.float.app_spacing_12'),
-        bottom: $r('app.float.app_spacing_12')
+        top: 10,
+        bottom: 10
       })
       .alignItems(VerticalAlign.Center)
     }

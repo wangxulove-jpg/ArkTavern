@@ -58,6 +58,8 @@ export struct CharacterRootView {
   @State isExporting: boolean = false;
   /** 当前展开左滑菜单的角色 ID(null 表示全部收起) */
   @State expandedCharId: string | null = null;
+  /** 搜索关键词(本地过滤,不修改 domain 数据) */
+  @State searchText: string = '';
   /** List 滚动控制器,用于点击操作后收起 swipeAction */
   private listScroller: ListScroller = new ListScroller();
   /**
@@ -97,6 +99,54 @@ export struct CharacterRootView {
       return;
     }
     this.viewModel!.load().catch((): void => {});
+  }
+
+  /** 本地搜索过滤(匹配 name/description/personality/tags,大小写不敏感) */
+  private filteredCharacters(): Character[] {
+    if (this.viewModel === null) {
+      return [];
+    }
+    const keyword: string = this.searchText.trim().toLowerCase();
+    if (keyword.length === 0) {
+      return this.viewModel!.characters;
+    }
+    const result: Character[] = [];
+    const all: Character[] = this.viewModel!.characters;
+    for (let i = 0; i < all.length; i++) {
+      const c: Character = all[i];
+      if (c.name.toLowerCase().indexOf(keyword) >= 0
+        || c.description.toLowerCase().indexOf(keyword) >= 0
+        || c.personality.toLowerCase().indexOf(keyword) >= 0
+        || c.scenario.toLowerCase().indexOf(keyword) >= 0) {
+        result.push(c);
+        continue;
+      }
+      // 标签匹配
+      const tags: string[] = c.tags;
+      let tagMatch: boolean = false;
+      for (let t = 0; t < tags.length; t++) {
+        if (tags[t].toLowerCase().indexOf(keyword) >= 0) {
+          tagMatch = true;
+          break;
+        }
+      }
+      if (tagMatch) {
+        result.push(c);
+      }
+    }
+    return result;
+  }
+
+  /** 格式化角色更新时间(YYYY-MM-DD) */
+  private formatCharacterDate(ts: number): string {
+    if (ts <= 0) {
+      return '';
+    }
+    const d: Date = new Date(ts);
+    const year: number = d.getFullYear();
+    const month: string = (d.getMonth() + 1).toString().padStart(2, '0');
+    const day: string = d.getDate().toString().padStart(2, '0');
+    return year + '-' + month + '-' + day;
   }
 
   // ===== 跳转 / 操作 =====
@@ -323,37 +373,78 @@ export struct CharacterRootView {
 
   @Builder
   headerBar() {
-    Row() {
-      Text($r('app.string.tab_characters'))
-        .fontSize($r('app.float.app_font_title'))
-        .fontWeight(FontWeight.Bold)
-        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
+    Column() {
+      Row() {
+        Text($r('app.string.tab_characters'))
+          .fontSize($r('app.float.app_font_title'))
+          .fontWeight(FontWeight.Bold)
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-      Blank()
+        Blank()
 
-      Button($r('app.string.character_import'))
-        .fontSize($r('app.float.app_font_body'))
-        .fontColor(ThemePalette.accentColor(this.effectiveTheme))
-        .backgroundColor(Color.Transparent)
-        .height(48)
-        .padding({ left: 16, right: 16 })
-        .onClick(() => {
-          // 导航到 AddCharacterPage(新建角色 / 文件导入二选一)
-          router.pushUrl({ url: 'pages/AddCharacterPage' });
+        Button($r('app.string.character_import'))
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor(ThemePalette.accentColor(this.effectiveTheme))
+          .backgroundColor(Color.Transparent)
+          .height(48)
+          .padding({ left: 16, right: 16 })
+          .onClick(() => {
+            // 导航到 AddCharacterPage(新建角色 / 文件导入二选一)
+            router.pushUrl({ url: 'pages/AddCharacterPage' });
+          })
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      // 搜索角色卡(本地过滤,不修改数据库)
+      Row() {
+        SymbolGlyph($r('sys.symbol.magnifyingglass'))
+          .fontSize(16)
+          .fontColor([ThemePalette.textTertiaryColor(this.effectiveTheme)])
+          .margin({ right: 8 })
+
+        TextInput({
+          placeholder: $r('app.string.character_search_placeholder'),
+          text: this.searchText
         })
+          .fontSize(14)
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+          .placeholderColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+          .backgroundColor(Color.Transparent)
+          .height(36)
+          .padding({ left: 0, right: 0 })
+          .layoutWeight(1)
+          .onChange((value: string) => {
+            this.searchText = value;
+          })
+
+        if (this.searchText.length > 0) {
+          SymbolGlyph($r('sys.symbol.xmark_circle_fill'))
+            .fontSize(16)
+            .fontColor([ThemePalette.textTertiaryColor(this.effectiveTheme)])
+            .onClick(() => {
+              this.searchText = '';
+            })
+        }
+      }
+      .width('100%')
+      .height(40)
+      .padding({ left: 12, right: 12 })
+      .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
+      .borderRadius($r('app.float.app_radius_md'))
+      .alignItems(VerticalAlign.Center)
+      .margin({ top: $r('app.float.app_spacing_8') })
     }
     .width('100%')
     // 顶部 padding = 状态栏高度 + 间距 8(避开状态栏,与其他 Tab 统一起点)
-    // 不设 height,让 padding + 内容自适应撑开
     .padding({
       left: $r('app.float.app_spacing_20'),
       right: $r('app.float.app_spacing_20'),
       top: this.statusBarHeight + 8,
       bottom: $r('app.float.app_spacing_8')
     })
-    .alignItems(VerticalAlign.Center)
     // 背景层分离:顶栏不设 backgroundColor,透出 Index 根背景,避免色块拼接感。
   }
 
@@ -362,32 +453,44 @@ export struct CharacterRootView {
   @Builder
   characterList() {
     List({ scroller: this.listScroller }) {
-      ForEach(this.viewModel!.characters, (char: Character, index: number) => {
+      if (this.filteredCharacters().length === 0) {
+        // 搜索无结果
         ListItem() {
-          this.characterCard(char)
+          Column() {
+            EmptyStateView({
+              title: $r('app.string.character_search_no_result'),
+              description: ''
+            })
+          }
+          .width('100%')
+          .padding({ top: $r('app.float.app_spacing_48'), bottom: 160 })
         }
-        .margin({ bottom: $r('app.float.app_spacing_12') })
-        .swipeAction({
-          end: {
-            builder: (): void => {
-              this.swipeActionGrid(char, index)
-            },
-            onStateChange: (state: SwipeActionState): void => {
-              if (state === SwipeActionState.EXPANDED) {
-                this.expandedCharId = char.id;
-              } else if (state === SwipeActionState.COLLAPSED && this.expandedCharId === char.id) {
-                this.expandedCharId = null;
+      } else {
+        ForEach(this.filteredCharacters(), (char: Character, index: number) => {
+          ListItem() {
+            this.characterCard(char)
+          }
+          .margin({ bottom: $r('app.float.app_spacing_8') })
+          .swipeAction({
+            end: {
+              builder: (): void => {
+                this.swipeActionGrid(char, index)
+              },
+              onStateChange: (state: SwipeActionState): void => {
+                if (state === SwipeActionState.EXPANDED) {
+                  this.expandedCharId = char.id;
+                } else if (state === SwipeActionState.COLLAPSED && this.expandedCharId === char.id) {
+                  this.expandedCharId = null;
+                }
               }
             }
-          }
-        })
-      }, (char: Character) => char.id)
+          })
+        }, (char: Character) => char.id)
 
-      // 末尾空白 ListItem:让内容总高度始终超出视口,确保即使内容少也能上下滚动(spring 回弹)。
-      // 高度覆盖 HdsTabs 浮层(barBottomMargin 24 + maskHeight 64 + tabBar ≈ 56 ≈ 144vp),
-      // 让最后一项内容下方有足够空白,可滚动到 tab bar 上方查看。
-      ListItem() {
-        Column().width('100%').height(160)
+        // 末尾空白 ListItem:让内容总高度始终超出视口,确保即使内容少也能上下滚动(spring 回弹)。
+        ListItem() {
+          Column().width('100%').height(160)
+        }
       }
     }
     .width('100%')
@@ -523,7 +626,7 @@ export struct CharacterRootView {
     })
   }
 
-  // ===== 展开式角色卡 =====
+  // ===== 紧凑角色卡 =====
 
   @Builder
   characterCard(char: Character) {
@@ -535,63 +638,116 @@ export struct CharacterRootView {
       surfaceColor: ThemePalette.surface1Color(this.effectiveTheme)
     }) {
       Row() {
-        // 左侧角色图片
+        // 左侧角色头像(76x76 圆角矩形)
         CharacterImageView({
           imageUri: char.avatarUri,
           fallbackName: char.name,
-          imgWidth: 100,
-          imgHeight: 130,
+          imgWidth: 76,
+          imgHeight: 76,
           imgBorderRadius: 12,
           displayMode: 'portrait',
           objectFit: ImageFit.Cover
         })
 
-        // 右侧角色信息
+        // 右侧主体(三层结构)
         Column() {
-          Text(char.name)
-            .fontSize($r('app.float.app_font_subtitle'))
-            .fontWeight(FontWeight.Medium)
-            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
-            .maxLines(1)
+          // 第一层:角色名 + Chevron
+          Row() {
+            Text(char.name)
+              .fontSize(16)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .layoutWeight(1)
+              .textAlign(TextAlign.Start)
+
+            SymbolGlyph($r('sys.symbol.chevron_right'))
+              .fontSize(14)
+              .fontColor([ThemePalette.textTertiaryColor(this.effectiveTheme)])
+              .margin({ left: 6 })
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Center)
+
+          // 第二层:角色摘要(description → personality → scenario,最多 2 行)
+          Text(this.getCharacterSummary(char))
+            .fontSize(13)
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+            .maxLines(2)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .margin({ top: 4 })
             .width('100%')
             .textAlign(TextAlign.Start)
 
-          if (char.description.length > 0) {
-            Text(char.description)
-              .fontSize($r('app.float.app_font_caption'))
-              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
-              .maxLines(3)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-              .margin({ top: 6 })
-              .width('100%')
-              .textAlign(TextAlign.Start)
-          }
+          // 第三层:Metadata(标签 / 创作者 / 更新时间,最多 3 项)
+          if (this.hasCharacterMetadata(char)) {
+            Row() {
+              if (char.tags.length > 0) {
+                Text(char.tags[0])
+                  .fontSize(11)
+                  .fontColor(ThemePalette.accentColor(this.effectiveTheme))
+                  .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
+                  .borderRadius(4)
+                  .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+              }
 
-          if (char.personality.length > 0) {
-            Text(char.personality)
-              .fontSize($r('app.float.app_font_caption'))
-              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-              .margin({ top: 4 })
-              .width('100%')
-              .textAlign(TextAlign.Start)
+              if (char.creator.length > 0) {
+                Text(char.creator)
+                  .fontSize(11)
+                  .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .margin({ left: char.tags.length > 0 ? 8 : 0 })
+              }
+
+              if (char.updatedAt > 0) {
+                Text(this.formatCharacterDate(char.updatedAt))
+                  .fontSize(11)
+                  .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+                  .maxLines(1)
+                  .margin({ left: 8 })
+              }
+            }
+            .width('100%')
+            .alignItems(VerticalAlign.Center)
+            .margin({ top: 6 })
           }
         }
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Start)
-        .padding({ left: $r('app.float.app_spacing_16') })
-
-        Text('›')
-          .fontSize(20)
-          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
-          .margin({ left: 8 })
+        .padding({ left: $r('app.float.app_spacing_12') })
       }
       .width('100%')
-      .padding($r('app.float.app_spacing_16'))
+      .padding({
+        left: $r('app.float.app_spacing_12'),
+        right: $r('app.float.app_spacing_12'),
+        top: 10,
+        bottom: 10
+      })
       .alignItems(VerticalAlign.Center)
     }
+  }
+
+  /** 角色摘要:description → personality → scenario(优先非空字段) */
+  private getCharacterSummary(char: Character): string {
+    if (char.description.trim().length > 0) {
+      return char.description;
+    }
+    if (char.personality.trim().length > 0) {
+      return char.personality;
+    }
+    if (char.scenario.trim().length > 0) {
+      return char.scenario;
+    }
+    return '';
+  }
+
+  /** 是否有关键元数据(标签/创作者/更新时间任一) */
+  private hasCharacterMetadata(char: Character): boolean {
+    return char.tags.length > 0 || char.creator.trim().length > 0 || char.updatedAt > 0;
   }
 
   // ===== 空状态 =====

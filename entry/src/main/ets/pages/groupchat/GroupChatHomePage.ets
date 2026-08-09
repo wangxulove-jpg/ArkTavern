@@ -99,23 +99,23 @@ struct GroupChatHomePage {
   @Builder
   headerArea(): void {
     Row() {
-      Column() {
-        Text($r('app.string.group_home_title'))
-          .fontSize($r('app.float.app_font_title'))
-          .fontWeight(FontWeight.Bold)
-          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      // 返回按钮(从对话记录 Quick Start 进入时返回)
+      SymbolGlyph($r('sys.symbol.chevron_left'))
+        .fontSize(24)
+        .fontColor([ThemePalette.textPrimaryColor(this.effectiveTheme)])
+        .padding(4)
+        .onClick(() => {
+          router.back();
+        })
 
-        Text($r('app.string.group_home_subtitle'))
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .margin({ top: 2 })
-      }
-      .alignItems(HorizontalAlign.Start)
-      .layoutWeight(1)
+      Text($r('app.string.group_home_title'))
+        .fontSize($r('app.float.nav_title_font_size'))
+        .fontWeight(FontWeight.Bold)
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .layoutWeight(1)
+        .margin({ left: 4 })
 
       Button($r('app.string.group_create'))
         .fontSize($r('app.float.app_font_caption'))
@@ -131,7 +131,7 @@ struct GroupChatHomePage {
     }
     .width('100%')
     .padding({
-      left: $r('app.float.app_spacing_20'),
+      left: $r('app.float.app_spacing_12'),
       right: $r('app.float.app_spacing_20'),
       top: this.statusBarHeight + 8,
       bottom: $r('app.float.app_spacing_12')

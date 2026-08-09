@@ -721,6 +721,18 @@
       "value": "导入一张角色卡，开始你的第一段对话"
     },
     {
+      "name": "character_search_placeholder",
+      "value": "搜索角色卡"
+    },
+    {
+      "name": "character_search_no_result",
+      "value": "没有找到匹配的角色"
+    },
+    {
+      "name": "character_meta_updated",
+      "value": "更新"
+    },
+    {
       "name": "character_action_new_chat",
       "value": "新建对话"
     },
@@ -989,12 +1001,60 @@
       "value": "对话记录"
     },
     {
+      "name": "single_chat_history_title",
+      "value": "单人聊天"
+    },
+    {
       "name": "tab_sessions_empty",
       "value": "暂无会话"
     },
     {
       "name": "tab_sessions_empty_desc",
-      "value": "点击下方按钮开始新对话"
+      "value": "还没有单人聊天记录，可以开始新的对话，或导入已有聊天记录。"
+    },
+    {
+      "name": "sessions_quick_start",
+      "value": "快速开始"
+    },
+    {
+      "name": "sessions_recent",
+      "value": "最近会话"
+    },
+    {
+      "name": "sessions_quick_new_chat",
+      "value": "单人聊天"
+    },
+    {
+      "name": "sessions_quick_new_chat_desc",
+      "value": "与角色开始新的对话"
+    },
+    {
+      "name": "sessions_quick_group",
+      "value": "多人聊天"
+    },
+    {
+      "name": "sessions_quick_group_desc",
+      "value": "多个角色依次回复"
+    },
+    {
+      "name": "sessions_quick_world",
+      "value": "世界模式"
+    },
+    {
+      "name": "sessions_quick_world_desc",
+      "value": "在世界中管理地点、角色与场景"
+    },
+    {
+      "name": "sessions_empty_start_chat",
+      "value": "开始单聊"
+    },
+    {
+      "name": "sessions_show_all",
+      "value": "全部"
+    },
+    {
+      "name": "sessions_empty_import",
+      "value": "导入聊天记录"
     },
     {
       "name": "tab_sessions_load_failed",

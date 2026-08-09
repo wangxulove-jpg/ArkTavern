@@ -16,6 +16,7 @@
     "pages/MemoryManagementPage",
     "pages/ContextBudgetPage",
     "pages/MarketDetailPage",
+    "pages/SingleChatHistoryPage",
     "pages/AiCharacterMakerPage",
     "pages/AiCharacterPreviewPage",
     "pages/VrmViewerPage",
