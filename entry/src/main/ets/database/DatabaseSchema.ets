@@ -1952,10 +1952,9 @@ export const V25_TO_V26_DDL_STATEMENTS: string[] = [
   `ALTER TABLE ${TABLE_WORLD_SESSION_SUMMARIES} ADD COLUMN ${COLUMN_MODEL_ID_WSS} TEXT`
 ];
 
-/** v26 完整 Schema(新安装使用) */
+/** v26 完整 Schema(新安装使用,不含 migration-only ALTER) */
 export const V26_SCHEMA_STATEMENTS: string[] = [
-  ...V25_SCHEMA_STATEMENTS,
-  ...V25_TO_V26_DDL_STATEMENTS
+  ...V25_SCHEMA_STATEMENTS
 ];
 
 const CREATE_WORLD_CHARACTER_MEMORY_ENTRIES_TABLE: string =
