@@ -25,6 +25,7 @@ import {
   GroupAutoSummaryDetailLevel,
   getGroupAutoSummaryLevelSpec
 } from '../../models/groupchat/GroupAutoSummaryModels';
+import { ThemePalette } from '../../theme/ThemePalette';
 
 @Entry
 @Component
@@ -75,6 +76,7 @@ struct GroupChatSettingsPage {
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   /** 底部导航栏避让高度 */
   @StorageProp('navBarHeight') navBarHeight: number = 0;
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
 
   private viewModel: GroupChatSettingsViewModel | null = null;
 
@@ -145,7 +147,7 @@ struct GroupChatSettingsPage {
       }
       .width('100%')
       .height('100%')
-      .backgroundColor($r('app.color.app_bg'))
+      .backgroundColor(ThemePalette.pageBgColor(this.effectiveTheme))
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
       if (this.renameVisible) {
@@ -175,7 +177,7 @@ struct GroupChatSettingsPage {
     Column() {
       Text('加载中…')
         .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
     }
     .width('100%')
     .height('100%')
@@ -188,11 +190,11 @@ struct GroupChatSettingsPage {
     Column() {
       Text('加载失败')
         .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
       Button('重新加载')
         .fontSize($r('app.float.app_font_body'))
         .fontColor($r('app.color.app_on_accent'))
-        .backgroundColor($r('app.color.app_accent'))
+        .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_sm'))
         .height(40)
         .padding({ left: 20, right: 20 })
@@ -212,13 +214,13 @@ struct GroupChatSettingsPage {
     Column() {
       Text('多人聊天不存在或已被删除')
         .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .textAlign(TextAlign.Center)
         .width('80%')
       Button('返回多人聊天首页')
         .fontSize($r('app.float.app_font_body'))
         .fontColor($r('app.color.app_on_accent'))
-        .backgroundColor($r('app.color.app_accent'))
+        .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_sm'))
         .height(40)
         .padding({ left: 20, right: 20 })
@@ -248,7 +250,7 @@ struct GroupChatSettingsPage {
       Button() {
         SymbolGlyph($r('sys.symbol.chevron_left'))
           .fontSize(22)
-          .fontColor([$r('app.color.app_text_primary')])
+          .fontColor([ThemePalette.textPrimaryColor(this.effectiveTheme)])
       }
       .type(ButtonType.Circle)
       .backgroundColor(Color.Transparent)
@@ -262,7 +264,7 @@ struct GroupChatSettingsPage {
       Text($r('app.string.group_settings_title'))
         .fontSize($r('app.float.app_font_subtitle'))
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .layoutWeight(1)
@@ -323,22 +325,22 @@ struct GroupChatSettingsPage {
     Column() {
       Text($r('app.string.group_settings_name'))
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .width('100%')
         .margin({ bottom: 8 })
 
       Row() {
         Text(this.title)
           .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .layoutWeight(1)
 
         Button($r('app.string.group_rename'))
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_accent'))
-          .backgroundColor($r('app.color.app_surface_2'))
+          .fontColor(ThemePalette.accentColor(this.effectiveTheme))
+          .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
           .borderRadius($r('app.float.app_radius_sm'))
           .height(32)
           .padding({ left: 12, right: 12 })
@@ -355,7 +357,7 @@ struct GroupChatSettingsPage {
         top: $r('app.float.app_spacing_12'),
         bottom: $r('app.float.app_spacing_12')
       })
-      .backgroundColor($r('app.color.app_surface_1'))
+      .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
       .borderRadius($r('app.float.app_radius_md'))
       .alignItems(VerticalAlign.Center)
     }
@@ -369,19 +371,19 @@ struct GroupChatSettingsPage {
     Column() {
       Text('用户身份')
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .width('100%')
         .margin({ bottom: 8 })
 
       Row() {
         Text('我的名称')
           .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .layoutWeight(1)
 
         TextInput({ text: this.userNameInput, placeholder: '使用全局设置' })
           .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .textAlign(TextAlign.End)
           .width(140)
           .backgroundColor(Color.Transparent)
@@ -405,7 +407,7 @@ struct GroupChatSettingsPage {
         top: $r('app.float.app_spacing_12'),
         bottom: $r('app.float.app_spacing_12')
       })
-      .backgroundColor($r('app.color.app_surface_1'))
+      .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
       .borderRadius($r('app.float.app_radius_md'))
       .alignItems(VerticalAlign.Center)
     }
@@ -419,7 +421,7 @@ struct GroupChatSettingsPage {
     Column() {
       Text('回复设置')
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .width('100%')
         .margin({ bottom: 8 })
 
@@ -427,17 +429,17 @@ struct GroupChatSettingsPage {
       Row() {
         Text('@角色回复模式')
           .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .layoutWeight(1)
 
         Text(this.replyTargetMode === 'persistent' ? '持续对话' : '仅回复一次')
           .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_accent'))
+          .fontColor(ThemePalette.accentColor(this.effectiveTheme))
           .margin({ right: 4 })
 
         SymbolGlyph($r('sys.symbol.chevron_right'))
           .fontSize(16)
-          .fontColor([$r('app.color.app_text_tertiary')])
+          .fontColor([ThemePalette.textTertiaryColor(this.effectiveTheme)])
       }
       .width('100%')
       .padding({
@@ -446,7 +448,7 @@ struct GroupChatSettingsPage {
         top: $r('app.float.app_spacing_12'),
         bottom: $r('app.float.app_spacing_12')
       })
-      .backgroundColor($r('app.color.app_surface_1'))
+      .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
       .borderRadius($r('app.float.app_radius_md'))
       .alignItems(VerticalAlign.Center)
       .onClick(() => {
@@ -458,17 +460,17 @@ struct GroupChatSettingsPage {
         Column() {
           Text('旁白')
             .fontSize($r('app.float.app_font_body'))
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           Text('描述其他在场角色的动作')
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
             .margin({ top: 2 })
         }
         .alignItems(HorizontalAlign.Start)
         .layoutWeight(1)
 
         Toggle({ type: ToggleType.Switch, isOn: this.narrationEnabled })
-          .selectedColor($r('app.color.app_accent'))
+          .selectedColor(ThemePalette.accentColor(this.effectiveTheme))
           .onChange((isOn: boolean) => {
             if (this.viewModel !== null) {
               this.viewModel.setAndPersistNarrationEnabled(isOn);
@@ -483,7 +485,7 @@ struct GroupChatSettingsPage {
         top: $r('app.float.app_spacing_12'),
         bottom: $r('app.float.app_spacing_12')
       })
-      .backgroundColor($r('app.color.app_surface_1'))
+      .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
       .borderRadius($r('app.float.app_radius_md'))
       .alignItems(VerticalAlign.Center)
       .margin({ top: $r('app.float.app_spacing_8') })
@@ -492,13 +494,13 @@ struct GroupChatSettingsPage {
       Row() {
         Text('旁白回复 token 数')
           .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
 
         Blank()
 
         TextInput({ text: this.narrationTokensInput })
           .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .backgroundColor(Color.Transparent)
           .textAlign(TextAlign.End)
           .type(InputType.Normal)
@@ -521,7 +523,7 @@ struct GroupChatSettingsPage {
         top: $r('app.float.app_spacing_12'),
         bottom: $r('app.float.app_spacing_12')
       })
-      .backgroundColor($r('app.color.app_surface_1'))
+      .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
       .borderRadius($r('app.float.app_radius_md'))
       .alignItems(VerticalAlign.Center)
       .margin({ top: $r('app.float.app_spacing_8') })
@@ -536,7 +538,7 @@ struct GroupChatSettingsPage {
     Column() {
       Text('记忆总结')
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .width('100%')
         .margin({ bottom: 8 })
 
@@ -545,17 +547,17 @@ struct GroupChatSettingsPage {
         Column() {
           Text('自动记忆总结')
             .fontSize($r('app.float.app_font_body'))
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           Text('聊天积累到一定程度后自动更新角色记忆')
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
             .margin({ top: 2 })
         }
         .alignItems(HorizontalAlign.Start)
         .layoutWeight(1)
 
         Toggle({ type: ToggleType.Switch, isOn: this.autoSummaryEnabled })
-          .selectedColor($r('app.color.app_accent'))
+          .selectedColor(ThemePalette.accentColor(this.effectiveTheme))
           .onChange((isOn: boolean) => {
             if (this.viewModel !== null) {
               this.viewModel.setAndPersistAutoSummaryEnabled(isOn);
@@ -570,7 +572,7 @@ struct GroupChatSettingsPage {
         top: $r('app.float.app_spacing_12'),
         bottom: $r('app.float.app_spacing_12')
       })
-      .backgroundColor($r('app.color.app_surface_1'))
+      .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
       .borderRadius($r('app.float.app_radius_md'))
       .alignItems(VerticalAlign.Center)
 
@@ -579,18 +581,18 @@ struct GroupChatSettingsPage {
         Text('总结详细程度')
           .fontSize($r('app.float.app_font_body'))
           .fontColor(this.autoSummaryEnabled
-            ? $r('app.color.app_text_primary') : $r('app.color.app_text_tertiary'))
+            ? ThemePalette.textPrimaryColor(this.effectiveTheme) : ThemePalette.textTertiaryColor(this.effectiveTheme))
           .layoutWeight(1)
 
         Text(this.autoSummaryLevelLabel(this.autoSummaryDetailLevel))
           .fontSize($r('app.float.app_font_body'))
           .fontColor(this.autoSummaryEnabled
-            ? $r('app.color.app_accent') : $r('app.color.app_text_tertiary'))
+            ? ThemePalette.accentColor(this.effectiveTheme) : ThemePalette.textTertiaryColor(this.effectiveTheme))
           .margin({ right: 4 })
 
         SymbolGlyph($r('sys.symbol.chevron_right'))
           .fontSize(16)
-          .fontColor([$r('app.color.app_text_tertiary')])
+          .fontColor([ThemePalette.textTertiaryColor(this.effectiveTheme)])
       }
       .width('100%')
       .padding({
@@ -599,7 +601,7 @@ struct GroupChatSettingsPage {
         top: $r('app.float.app_spacing_12'),
         bottom: $r('app.float.app_spacing_12')
       })
-      .backgroundColor($r('app.color.app_surface_1'))
+      .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
       .borderRadius($r('app.float.app_radius_md'))
       .alignItems(VerticalAlign.Center)
       .margin({ top: $r('app.float.app_spacing_8') })
@@ -623,19 +625,19 @@ struct GroupChatSettingsPage {
             .width(36)
             .height(4)
             .borderRadius(2)
-            .backgroundColor($r('app.color.app_divider'))
+            .backgroundColor(ThemePalette.dividerColor(this.effectiveTheme))
             .margin({ top: 8, bottom: 12 })
 
           Text('总结详细程度')
             .fontSize($r('app.float.app_font_subtitle'))
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .margin({ bottom: 4, left: 16, right: 16 })
             .width('100%')
 
           Text('档位只影响总结深度和输出长度,不改变角色可见性规则')
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
             .margin({ bottom: 12, left: 16, right: 16 })
             .width('100%')
 
@@ -648,8 +650,8 @@ struct GroupChatSettingsPage {
 
           Button($r('app.string.group_cancel'))
             .fontSize($r('app.float.app_font_body'))
-            .fontColor($r('app.color.app_text_secondary'))
-            .backgroundColor($r('app.color.app_surface_2'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_md'))
             .width('100%')
             .height(44)
@@ -660,7 +662,7 @@ struct GroupChatSettingsPage {
             })
         }
         .width('100%')
-        .backgroundColor($r('app.color.app_surface_1'))
+        .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
         .borderRadius({ topLeft: 16, topRight: 16, bottomLeft: 0, bottomRight: 0 })
         .padding({ top: 0, bottom: this.navBarHeight + 16 })
       }
@@ -684,11 +686,11 @@ struct GroupChatSettingsPage {
         Text(getGroupAutoSummaryLevelSpec(level).label)
           .fontSize($r('app.float.app_font_body'))
           .fontColor(this.autoSummaryDetailLevel === level
-            ? $r('app.color.app_accent') : $r('app.color.app_text_primary'))
+            ? ThemePalette.accentColor(this.effectiveTheme) : ThemePalette.textPrimaryColor(this.effectiveTheme))
           .width('100%')
         Text(this.autoSummaryLevelDescription(level))
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .margin({ top: 2 })
           .width('100%')
       }
@@ -698,7 +700,7 @@ struct GroupChatSettingsPage {
       if (this.autoSummaryDetailLevel === level) {
         SymbolGlyph($r('sys.symbol.checkmark'))
           .fontSize(16)
-          .fontColor([$r('app.color.app_accent')])
+          .fontColor([ThemePalette.accentColor(this.effectiveTheme)])
       }
     }
     .width('100%')
@@ -739,14 +741,14 @@ struct GroupChatSettingsPage {
   failurePolicySection(): void {    Column() {
       Text($r('app.string.group_settings_failure_policy'))
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .width('100%')
         .margin({ bottom: 8 })
 
       Row() {
         Text('尚未开放')
           .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .layoutWeight(1)
       }
       .width('100%')
@@ -756,7 +758,7 @@ struct GroupChatSettingsPage {
         top: $r('app.float.app_spacing_12'),
         bottom: $r('app.float.app_spacing_12')
       })
-      .backgroundColor($r('app.color.app_surface_1'))
+      .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
       .borderRadius($r('app.float.app_radius_md'))
       .alignItems(VerticalAlign.Center)
     }
@@ -770,12 +772,12 @@ struct GroupChatSettingsPage {
     Row() {
       Text($r('app.string.group_settings_manage_members'))
         .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .layoutWeight(1)
 
       SymbolGlyph($r('sys.symbol.chevron_right'))
         .fontSize(16)
-        .fontColor([$r('app.color.app_text_tertiary')])
+        .fontColor([ThemePalette.textTertiaryColor(this.effectiveTheme)])
     }
     .width('100%')
     .padding({
@@ -784,7 +786,7 @@ struct GroupChatSettingsPage {
       top: $r('app.float.app_spacing_12'),
       bottom: $r('app.float.app_spacing_12')
     })
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
     .borderRadius($r('app.float.app_radius_md'))
     .alignItems(VerticalAlign.Center)
     .margin({ top: $r('app.float.app_spacing_16') })
@@ -806,7 +808,7 @@ struct GroupChatSettingsPage {
       if (this.isGenerating) {
         Text('生成中')
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
       }
     }
     .width('100%')
@@ -816,7 +818,7 @@ struct GroupChatSettingsPage {
       top: $r('app.float.app_spacing_12'),
       bottom: $r('app.float.app_spacing_12')
     })
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
     .borderRadius($r('app.float.app_radius_md'))
     .alignItems(VerticalAlign.Center)
     .margin({ top: $r('app.float.app_spacing_16') })
@@ -838,7 +840,7 @@ struct GroupChatSettingsPage {
       if (this.isGenerating) {
         Text('生成中')
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
       }
     }
     .width('100%')
@@ -848,7 +850,7 @@ struct GroupChatSettingsPage {
       top: $r('app.float.app_spacing_12'),
       bottom: $r('app.float.app_spacing_12')
     })
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
     .borderRadius($r('app.float.app_radius_md'))
     .alignItems(VerticalAlign.Center)
     .margin({ top: $r('app.float.app_spacing_16') })
@@ -867,14 +869,14 @@ struct GroupChatSettingsPage {
           Text($r('app.string.group_rename'))
             .fontSize(17)
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .margin({ bottom: 12 })
             .width('100%')
 
           TextInput({ placeholder: $r('app.string.group_rename_placeholder'), text: this.renameInput })
             .fontSize(15)
-            .fontColor($r('app.color.app_text_primary'))
-            .backgroundColor($r('app.color.app_surface_2'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_sm'))
             .height(44)
             .padding({ left: 12, right: 12 })
@@ -886,7 +888,7 @@ struct GroupChatSettingsPage {
             Button($r('app.string.group_cancel'))
               .fontSize(15)
               .backgroundColor(Color.Transparent)
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .layoutWeight(1)
               .height(40)
               .onClick(() => {
@@ -895,7 +897,7 @@ struct GroupChatSettingsPage {
               })
             Button($r('app.string.group_save'))
               .fontSize(15)
-              .backgroundColor($r('app.color.app_accent'))
+              .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
               .fontColor($r('app.color.app_on_accent'))
               .borderRadius($r('app.float.app_radius_sm'))
               .layoutWeight(1)
@@ -911,7 +913,7 @@ struct GroupChatSettingsPage {
         }
         .width('80%')
         .padding(20)
-        .backgroundColor($r('app.color.app_surface_1'))
+        .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_lg'))
       }
       .width('100%')
@@ -939,14 +941,14 @@ struct GroupChatSettingsPage {
 
           Text($r('app.string.group_settings_delete_confirm'))
             .fontSize(14)
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .width('100%')
 
           Row() {
             Button($r('app.string.group_cancel'))
               .fontSize(15)
               .backgroundColor(Color.Transparent)
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .layoutWeight(1)
               .height(40)
               .enabled(!this.isDeleting)
@@ -971,7 +973,7 @@ struct GroupChatSettingsPage {
         }
         .width('80%')
         .padding(20)
-        .backgroundColor($r('app.color.app_surface_1'))
+        .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_lg'))
       }
       .width('100%')
@@ -999,14 +1001,14 @@ struct GroupChatSettingsPage {
 
           Text($r('app.string.group_settings_clear_confirm'))
             .fontSize(14)
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .width('100%')
 
           Row() {
             Button($r('app.string.group_cancel'))
               .fontSize(15)
               .backgroundColor(Color.Transparent)
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .layoutWeight(1)
               .height(40)
               .enabled(!this.isClearing)
@@ -1031,7 +1033,7 @@ struct GroupChatSettingsPage {
         }
         .width('80%')
         .padding(20)
-        .backgroundColor($r('app.color.app_surface_1'))
+        .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_lg'))
       }
       .width('100%')
@@ -1117,13 +1119,13 @@ struct GroupChatSettingsPage {
             .width(36)
             .height(4)
             .borderRadius(2)
-            .backgroundColor($r('app.color.app_divider'))
+            .backgroundColor(ThemePalette.dividerColor(this.effectiveTheme))
             .margin({ top: 8, bottom: 12 })
 
           Text('@角色回复模式')
             .fontSize($r('app.float.app_font_subtitle'))
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .margin({ bottom: 12, left: 16, right: 16 })
             .width('100%')
 
@@ -1132,13 +1134,13 @@ struct GroupChatSettingsPage {
             Text('仅回复一次')
               .fontSize($r('app.float.app_font_body'))
               .fontColor(this.replyTargetMode === 'one_shot'
-                ? $r('app.color.app_accent')
-                : $r('app.color.app_text_primary'))
+                ? ThemePalette.accentColor(this.effectiveTheme)
+                : ThemePalette.textPrimaryColor(this.effectiveTheme))
               .layoutWeight(1)
             if (this.replyTargetMode === 'one_shot') {
               SymbolGlyph($r('sys.symbol.checkmark'))
                 .fontSize(16)
-                .fontColor([$r('app.color.app_accent')])
+                .fontColor([ThemePalette.accentColor(this.effectiveTheme)])
             }
           }
           .width('100%')
@@ -1156,13 +1158,13 @@ struct GroupChatSettingsPage {
             Text('持续与该角色对话')
               .fontSize($r('app.float.app_font_body'))
               .fontColor(this.replyTargetMode === 'persistent'
-                ? $r('app.color.app_accent')
-                : $r('app.color.app_text_primary'))
+                ? ThemePalette.accentColor(this.effectiveTheme)
+                : ThemePalette.textPrimaryColor(this.effectiveTheme))
               .layoutWeight(1)
             if (this.replyTargetMode === 'persistent') {
               SymbolGlyph($r('sys.symbol.checkmark'))
                 .fontSize(16)
-                .fontColor([$r('app.color.app_accent')])
+                .fontColor([ThemePalette.accentColor(this.effectiveTheme)])
             }
           }
           .width('100%')
@@ -1177,8 +1179,8 @@ struct GroupChatSettingsPage {
 
           Button($r('app.string.group_cancel'))
             .fontSize($r('app.float.app_font_body'))
-            .fontColor($r('app.color.app_text_secondary'))
-            .backgroundColor($r('app.color.app_surface_2'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_md'))
             .width('100%')
             .height(44)
@@ -1189,7 +1191,7 @@ struct GroupChatSettingsPage {
             })
         }
         .width('100%')
-        .backgroundColor($r('app.color.app_surface_1'))
+        .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
         .borderRadius({ topLeft: 16, topRight: 16, bottomLeft: 0, bottomRight: 0 })
         .padding({ top: 0, bottom: this.navBarHeight + 16 })
       }

@@ -21,6 +21,7 @@ import { AppServices } from '../services/AppServices';
 import { CharacterImageView } from '../components/CharacterImageView';
 import { promptAction, router } from '@kit.ArkUI';
 import { picker } from '@kit.CoreFileKit';
+import { ThemePalette } from '../theme/ThemePalette';
 
 const TAB_CHARACTER: number = 0;
 const TAB_CONVERSATION: number = 1;
@@ -44,6 +45,8 @@ struct CharacterEditPage {
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   /** 底部导航栏/手势条避让高度 */
   @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
+  /** 当前有效主题 */
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
 
   private viewModel: CharacterEditViewModel = new CharacterEditViewModel(
     AppServices.getCharacterService()
@@ -99,7 +102,7 @@ struct CharacterEditPage {
       }
       .width('100%')
       .height('100%')
-      .backgroundColor($r('app.color.app_bg'))
+      .backgroundColor(ThemePalette.pageBgColor(this.effectiveTheme))
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 
@@ -145,7 +148,7 @@ struct CharacterEditPage {
       Button($r('app.string.character_edit_back'))
         .fontSize($r('app.float.app_font_body'))
         .backgroundColor(Color.Transparent)
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .height(40)
         .padding({ left: 8, right: 8 })
         .onClick(() => {
@@ -159,8 +162,8 @@ struct CharacterEditPage {
       Button($r('app.string.character_edit_save'))
         .fontSize($r('app.float.app_font_body'))
         .fontWeight(FontWeight.Medium)
-        .backgroundColor(this.canSave() ? $r('app.color.app_accent') : $r('app.color.app_surface_2'))
-        .fontColor(this.canSave() ? $r('app.color.app_on_accent') : $r('app.color.app_text_tertiary'))
+        .backgroundColor(this.canSave() ? ThemePalette.accentColor(this.effectiveTheme) : ThemePalette.surface2Color(this.effectiveTheme))
+        .fontColor(this.canSave() ? $r('app.color.app_on_accent') : ThemePalette.textTertiaryColor(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_sm'))
         .height(36)
         .padding({ left: 16, right: 16 })
@@ -172,7 +175,7 @@ struct CharacterEditPage {
     .width('100%')
     .padding({ left: 8, right: 12, top: this.statusBarHeight + 4, bottom: 4 })
     .alignItems(VerticalAlign.Center)
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
   }
 
   @Builder
@@ -181,21 +184,21 @@ struct CharacterEditPage {
       Text($r('app.string.character_edit_tab_character'))
         .fontSize($r('app.float.app_font_body'))
         .fontWeight(this.activeTab === TAB_CHARACTER ? FontWeight.Medium : FontWeight.Normal)
-        .fontColor(this.activeTab === TAB_CHARACTER ? $r('app.color.app_on_accent') : $r('app.color.app_text_secondary'))
-        .backgroundColor(this.activeTab === TAB_CHARACTER ? $r('app.color.app_accent') : Color.Transparent)
+        .fontColor(this.activeTab === TAB_CHARACTER ? $r('app.color.app_on_accent') : ThemePalette.textSecondaryColor(this.effectiveTheme))
+        .backgroundColor(this.activeTab === TAB_CHARACTER ? ThemePalette.accentColor(this.effectiveTheme) : Color.Transparent)
         .borderRadius($r('app.float.app_radius_sm'))
         .height(32).padding({ left: 16, right: 16 }).textAlign(TextAlign.Center)
         .onClick(() => { this.activeTab = TAB_CHARACTER; })
       Text($r('app.string.character_edit_tab_conversation'))
         .fontSize($r('app.float.app_font_body'))
         .fontWeight(this.activeTab === TAB_CONVERSATION ? FontWeight.Medium : FontWeight.Normal)
-        .fontColor(this.activeTab === TAB_CONVERSATION ? $r('app.color.app_on_accent') : $r('app.color.app_text_secondary'))
-        .backgroundColor(this.activeTab === TAB_CONVERSATION ? $r('app.color.app_accent') : Color.Transparent)
+        .fontColor(this.activeTab === TAB_CONVERSATION ? $r('app.color.app_on_accent') : ThemePalette.textSecondaryColor(this.effectiveTheme))
+        .backgroundColor(this.activeTab === TAB_CONVERSATION ? ThemePalette.accentColor(this.effectiveTheme) : Color.Transparent)
         .borderRadius($r('app.float.app_radius_sm'))
         .height(32).padding({ left: 16, right: 16 }).margin({ left: 4 }).textAlign(TextAlign.Center)
         .onClick(() => { this.activeTab = TAB_CONVERSATION; })
     }
-    .backgroundColor($r('app.color.app_surface_2'))
+    .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
     .borderRadius($r('app.float.app_radius_md'))
     .padding({ left: 4, right: 4, top: 4, bottom: 4 })
     .alignItems(VerticalAlign.Center)
@@ -339,13 +342,13 @@ struct CharacterEditPage {
         Column() {
           Text($r('app.string.character_edit_image_placeholder'))
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
             .textAlign(TextAlign.Center)
         }
         .width(160)
         .height(220)
         .borderRadius($r('app.float.app_radius_lg'))
-        .backgroundColor($r('app.color.app_surface_2'))
+        .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
         .justifyContent(FlexAlign.Center)
         .alignItems(HorizontalAlign.Center)
       }
@@ -357,7 +360,7 @@ struct CharacterEditPage {
       }
       .width(36)
       .height(36)
-      .backgroundColor($r('app.color.app_accent'))
+      .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
       .borderRadius(18)
       .margin({ right: 8, bottom: 8 })
       .enabled(!this.isSaving && !this.isLoading && this.viewModel.isEditing)
@@ -379,7 +382,7 @@ struct CharacterEditPage {
         Text($r('app.string.character_edit_field_tags'))
           .fontSize($r('app.float.app_font_subtitle'))
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
@@ -388,8 +391,8 @@ struct CharacterEditPage {
       Row() {
         TextInput({ placeholder: $r('app.string.character_edit_field_tags_placeholder'), text: this.tagInputDraft })
           .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_primary'))
-          .backgroundColor($r('app.color.app_surface_2'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+          .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
           .borderRadius($r('app.float.app_radius_sm'))
           .height(40)
           .layoutWeight(1)
@@ -401,7 +404,7 @@ struct CharacterEditPage {
         Button($r('app.string.character_edit_tag_add'))
           .fontSize($r('app.float.app_font_body'))
           .fontColor($r('app.color.app_on_accent'))
-          .backgroundColor($r('app.color.app_accent'))
+          .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
           .borderRadius($r('app.float.app_radius_sm'))
           .height(40)
           .margin({ left: 8 })
@@ -416,7 +419,7 @@ struct CharacterEditPage {
 
       Text($r('app.string.character_edit_field_tags_hint'))
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .width('100%')
         .margin({ top: 6 })
         .textAlign(TextAlign.Start)
@@ -427,21 +430,21 @@ struct CharacterEditPage {
             Row() {
               Text(tag)
                 .fontSize($r('app.float.app_font_caption'))
-                .fontColor($r('app.color.app_text_primary'))
+                .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
                 .maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
                 .margin({ right: 6 })
 
               Text('×')
                 .fontSize(16)
-                .fontColor($r('app.color.app_text_secondary'))
+                .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
                 .onClick(() => {
                   this.removeTagAtIndex(index);
                 })
             }
             .padding({ left: 10, right: 10, top: 4, bottom: 4 })
             .margin({ right: 8, top: 6 })
-            .backgroundColor($r('app.color.app_surface_2'))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_sm'))
             .alignItems(VerticalAlign.Center)
           }, (tag: string, index: number) => tag + '|' + String(index))
@@ -463,7 +466,7 @@ struct CharacterEditPage {
         Text($r('app.string.character_edit_alternate_greetings'))
           .fontSize($r('app.float.app_font_subtitle'))
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
@@ -471,7 +474,7 @@ struct CharacterEditPage {
 
       Text($r('app.string.character_edit_alternate_greetings_hint'))
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .width('100%')
         .margin({ bottom: 8 })
         .textAlign(TextAlign.Start)
@@ -479,11 +482,11 @@ struct CharacterEditPage {
       if (this.formState.alternateGreetingsInput.length === 0) {
         Text($r('app.string.character_edit_alternate_greetings_empty'))
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .width('100%')
           .padding({ top: 12, bottom: 12 })
           .textAlign(TextAlign.Center)
-          .backgroundColor($r('app.color.app_surface_2'))
+          .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
           .borderRadius($r('app.float.app_radius_md'))
       } else {
         ForEach(this.formState.alternateGreetingsInput, (greeting: string, index: number) => {
@@ -493,10 +496,10 @@ struct CharacterEditPage {
 
       Button($r('app.string.character_edit_alternate_greetings_add'))
         .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_accent'))
+        .fontColor(ThemePalette.accentColor(this.effectiveTheme))
         .backgroundColor(Color.Transparent)
         .borderWidth(1)
-        .borderColor($r('app.color.app_accent'))
+        .borderColor(ThemePalette.accentColor(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_md'))
         .height(40)
         .width('100%')
@@ -518,8 +521,8 @@ struct CharacterEditPage {
       if (this.editingGreetingIndex === index) {
         TextArea({ placeholder: $r('app.string.character_edit_alternate_greetings_placeholder'), text: this.editingGreetingDraft })
           .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_primary'))
-          .backgroundColor($r('app.color.app_surface_2'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+          .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
           .borderRadius($r('app.float.app_radius_sm'))
           .height(100)
           .barState(BarState.Auto)
@@ -532,8 +535,8 @@ struct CharacterEditPage {
         Row() {
           Button('取消')
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_secondary'))
-            .backgroundColor($r('app.color.app_surface_2'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_sm'))
             .height(32)
             .layoutWeight(1)
@@ -544,7 +547,7 @@ struct CharacterEditPage {
           Button('保存')
             .fontSize($r('app.float.app_font_caption'))
             .fontColor($r('app.color.app_on_accent'))
-            .backgroundColor($r('app.color.app_accent'))
+            .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_sm'))
             .height(32)
             .layoutWeight(1)
@@ -559,7 +562,7 @@ struct CharacterEditPage {
       } else {
         Text(greeting)
           .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .width('100%')
           .maxLines(4)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -574,13 +577,13 @@ struct CharacterEditPage {
         Row() {
           Text('#' + String(index + 1))
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
             .layoutWeight(1)
 
           Button() {
             Text('↑')
               .fontSize(14)
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           }
           .width(32)
           .height(32)
@@ -594,7 +597,7 @@ struct CharacterEditPage {
           Button() {
             Text('↓')
               .fontSize(14)
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           }
           .width(32)
           .height(32)
@@ -608,8 +611,8 @@ struct CharacterEditPage {
 
           Button('编辑')
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_primary'))
-            .backgroundColor($r('app.color.app_surface_2'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_sm'))
             .height(32)
             .margin({ left: 4 })
@@ -621,7 +624,7 @@ struct CharacterEditPage {
           Button('删除')
             .fontSize($r('app.float.app_font_caption'))
             .fontColor($r('app.color.app_danger'))
-            .backgroundColor($r('app.color.app_surface_2'))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_sm'))
             .height(32)
             .margin({ left: 4 })
@@ -636,7 +639,7 @@ struct CharacterEditPage {
       }
     }
     .width('100%')
-    .backgroundColor($r('app.color.app_surface_2'))
+    .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
     .borderRadius($r('app.float.app_radius_md'))
     .margin({ top: 8 })
   }
@@ -649,7 +652,7 @@ struct CharacterEditPage {
         Text($r('app.string.character_edit_character_book'))
           .fontSize($r('app.float.app_font_subtitle'))
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
@@ -658,27 +661,27 @@ struct CharacterEditPage {
       if (this.formState.characterBookIdInput.length > 0) {
         Text(this.formState.characterBookIdInput)
           .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .width('100%')
           .padding({ left: 12, right: 12, top: 12, bottom: 12 })
-          .backgroundColor($r('app.color.app_surface_2'))
+          .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
           .borderRadius($r('app.float.app_radius_md'))
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
       } else {
         Text($r('app.string.character_edit_character_book_empty'))
           .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .width('100%')
           .padding({ left: 12, right: 12, top: 12, bottom: 12 })
-          .backgroundColor($r('app.color.app_surface_2'))
+          .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
           .borderRadius($r('app.float.app_radius_md'))
           .textAlign(TextAlign.Center)
       }
 
       Text($r('app.string.character_edit_character_book_hint'))
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .width('100%')
         .margin({ top: 6 })
         .textAlign(TextAlign.Start)
@@ -789,7 +792,7 @@ struct CharacterEditPage {
         Text(labelResource)
           .fontSize($r('app.float.app_font_subtitle'))
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         if (required) {
           Text($r('app.string.character_edit_field_required_hint'))
             .fontSize($r('app.float.app_font_subtitle'))
@@ -803,8 +806,8 @@ struct CharacterEditPage {
 
       TextInput({ placeholder: placeholderResource, text: value })
         .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_primary'))
-        .backgroundColor($r('app.color.app_surface_2'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+        .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_md'))
         .height(48)
         .padding({ left: 16, right: 16 })
@@ -829,7 +832,7 @@ struct CharacterEditPage {
         Text(labelResource)
           .fontSize($r('app.float.app_font_subtitle'))
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
@@ -837,8 +840,8 @@ struct CharacterEditPage {
 
       TextArea({ placeholder: placeholderResource, text: value })
         .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_primary'))
-        .backgroundColor($r('app.color.app_surface_2'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+        .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_md'))
         .height(120)
         .barState(BarState.Auto)
@@ -848,7 +851,7 @@ struct CharacterEditPage {
       if (hintResource !== undefined) {
         Text(hintResource)
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .width('100%')
           .margin({ top: 6 })
           .textAlign(TextAlign.Start)
@@ -866,7 +869,7 @@ struct CharacterEditPage {
       LoadingProgress()
         .width(40)
         .height(40)
-        .color($r('app.color.app_accent'))
+        .color(ThemePalette.accentColor(this.effectiveTheme))
     }
     .width('100%')
     .layoutWeight(1)
@@ -881,15 +884,15 @@ struct CharacterEditPage {
       Column() {
         Column() {
           Text($r('app.string.character_edit_unsaved_title'))
-            .fontSize(17).fontWeight(FontWeight.Medium).fontColor($r('app.color.app_text_primary'))
+            .fontSize(17).fontWeight(FontWeight.Medium).fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .margin({ bottom: 12 })
           Text($r('app.string.character_edit_unsaved_message'))
-            .fontSize(14).fontColor($r('app.color.app_text_secondary'))
+            .fontSize(14).fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .margin({ bottom: 20 })
           Row() {
             Button($r('app.string.character_edit_unsaved_stay'))
               .fontSize(14).backgroundColor(Color.Transparent)
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .layoutWeight(1).height(40)
               .onClick(() => { this.showDiscardDialog = false; })
             Button($r('app.string.character_edit_unsaved_discard'))
@@ -899,7 +902,7 @@ struct CharacterEditPage {
               .onClick(() => { this.showDiscardDialog = false; this.popBack(); })
           }.width('100%')
         }
-        .width('80%').padding(20).backgroundColor($r('app.color.app_surface_1')).borderRadius(16)
+        .width('80%').padding(20).backgroundColor(ThemePalette.surface1Color(this.effectiveTheme)).borderRadius(16)
       }
       .width('100%').height('100%')
       .justifyContent(FlexAlign.Center).alignItems(HorizontalAlign.Center)

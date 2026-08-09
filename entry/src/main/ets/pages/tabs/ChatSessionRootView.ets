@@ -32,6 +32,7 @@ import { Character } from '../../models/Character';
 import { ChatArchiveViewModel } from '../../viewmodels/ChatArchiveViewModel';
 import { ChatArchiveImportConversationResult } from '../../parser/ChatArchiveSchema';
 import { Logger } from '../../utils/Logger';
+import { ThemePalette } from '../../theme/ThemePalette';
 
 const LOG_TAG_SESSION: string = 'ChatSessionRootView';
 
@@ -44,8 +45,8 @@ export const PENDING_CHARACTER_ID_KEY: string = 'pendingCharacterId';
 interface SwipeIconButtonParams {
   icon: Resource;
   label: Resource;
-  bgColor: Resource;
-  fgColor: Resource;
+  bgColor: ResourceColor;
+  fgColor: ResourceColor;
   action: () => void;
 }
 
@@ -90,6 +91,8 @@ export struct ChatSessionRootView {
   @StorageProp('chatListVersion') @Watch('onListVersionChange') chatListVersion: number = 0;
   /** 顶部状态栏避让高度(由 EntryAbility 写入 AppStorage) */
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
+  /** 当前有效主题 */
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
 
   async aboutToAppear(): Promise<void> {
     try {
@@ -270,7 +273,7 @@ export struct ChatSessionRootView {
           Text($r('app.string.tab_sessions'))
             .fontSize($r('app.float.app_font_title'))
             .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .layoutWeight(1)
@@ -278,8 +281,8 @@ export struct ChatSessionRootView {
           // T-CHAT.1: 导入聊天按钮(顶栏右侧)
           Button('导入聊天')
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_secondary'))
-            .backgroundColor($r('app.color.app_surface_2'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_sm'))
             .height(32)
             .padding({ left: 12, right: 12 })
@@ -370,7 +373,7 @@ export struct ChatSessionRootView {
         Button('导入聊天记录')
           .fontSize($r('app.float.app_font_body'))
           .fontColor($r('app.color.app_on_accent'))
-          .backgroundColor($r('app.color.app_accent'))
+          .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
           .borderRadius($r('app.float.app_radius_sm'))
           .height(40)
           .padding({ left: 24, right: 24 })
@@ -383,7 +386,7 @@ export struct ChatSessionRootView {
         // G-UI-1: 空状态也提供多人聊天入口
         Button($r('app.string.group_entry_title'))
           .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_accent'))
+          .fontColor(ThemePalette.accentColor(this.effectiveTheme))
           .backgroundColor($r('app.color.app_accent_surface'))
           .borderRadius($r('app.float.app_radius_sm'))
           .height(40)
@@ -396,7 +399,7 @@ export struct ChatSessionRootView {
         // W-UI-1: 空状态也提供世界模式入口
         Button($r('app.string.world_entry_title'))
           .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_accent'))
+          .fontColor(ThemePalette.accentColor(this.effectiveTheme))
           .backgroundColor($r('app.color.app_accent_surface'))
           .borderRadius($r('app.float.app_radius_sm'))
           .height(40)
@@ -488,11 +491,11 @@ export struct ChatSessionRootView {
         Stack() {
           SymbolGlyph($r('sys.symbol.person'))
             .fontSize(22)
-            .fontColor([$r('app.color.app_accent')])
+            .fontColor([ThemePalette.accentColor(this.effectiveTheme)])
         }
         .width(44)
         .height(44)
-        .backgroundColor($r('app.color.app_surface_2'))
+        .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
         .borderRadius(22)
         .alignContent(Alignment.Center)
 
@@ -502,15 +505,15 @@ export struct ChatSessionRootView {
             Text($r('app.string.group_entry_title'))
               .fontSize($r('app.float.app_font_body'))
               .fontWeight(FontWeight.Medium)
-              .fontColor($r('app.color.app_text_primary'))
+              .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
 
             // 预览徽标
             Text($r('app.string.group_preview_badge'))
               .fontSize(10)
-              .fontColor($r('app.color.app_accent'))
-              .backgroundColor($r('app.color.app_surface_2'))
+              .fontColor(ThemePalette.accentColor(this.effectiveTheme))
+              .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
               .borderRadius(4)
               .padding({ left: 6, right: 6, top: 2, bottom: 2 })
               .margin({ left: 8 })
@@ -520,7 +523,7 @@ export struct ChatSessionRootView {
 
           Text($r('app.string.group_entry_desc'))
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .margin({ top: 4 })
@@ -533,7 +536,7 @@ export struct ChatSessionRootView {
         // 右侧箭头
         SymbolGlyph($r('sys.symbol.chevron_right'))
           .fontSize(16)
-          .fontColor([$r('app.color.app_text_tertiary')])
+          .fontColor([ThemePalette.textTertiaryColor(this.effectiveTheme)])
       }
       .width('100%')
       .padding({
@@ -566,11 +569,11 @@ export struct ChatSessionRootView {
         Stack() {
           SymbolGlyph($r('sys.symbol.star'))
             .fontSize(22)
-            .fontColor([$r('app.color.app_accent')])
+            .fontColor([ThemePalette.accentColor(this.effectiveTheme)])
         }
         .width(44)
         .height(44)
-        .backgroundColor($r('app.color.app_surface_2'))
+        .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
         .borderRadius(22)
         .alignContent(Alignment.Center)
 
@@ -580,15 +583,15 @@ export struct ChatSessionRootView {
             Text($r('app.string.world_entry_title'))
               .fontSize($r('app.float.app_font_body'))
               .fontWeight(FontWeight.Medium)
-              .fontColor($r('app.color.app_text_primary'))
+              .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
 
             // 只读徽标
             Text($r('app.string.world_home_subtitle'))
               .fontSize(10)
-              .fontColor($r('app.color.app_accent'))
-              .backgroundColor($r('app.color.app_surface_2'))
+              .fontColor(ThemePalette.accentColor(this.effectiveTheme))
+              .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
               .borderRadius(4)
               .padding({ left: 6, right: 6, top: 2, bottom: 2 })
               .margin({ left: 8 })
@@ -600,7 +603,7 @@ export struct ChatSessionRootView {
 
           Text($r('app.string.world_entry_desc'))
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .margin({ top: 4 })
@@ -613,7 +616,7 @@ export struct ChatSessionRootView {
         // 右侧箭头
         SymbolGlyph($r('sys.symbol.chevron_right'))
           .fontSize(16)
-          .fontColor([$r('app.color.app_text_tertiary')])
+          .fontColor([ThemePalette.textTertiaryColor(this.effectiveTheme)])
       }
       .width('100%')
       .padding({
@@ -634,8 +637,8 @@ export struct ChatSessionRootView {
       this.swipeIconButton({
         icon: $r('sys.symbol.arrow_up'),
         label: $r('app.string.card_action_move_up'),
-        bgColor: $r('app.color.app_surface_2'),
-        fgColor: $r('app.color.app_text_primary'),
+        bgColor: ThemePalette.surface2Color(this.effectiveTheme),
+        fgColor: ThemePalette.textPrimaryColor(this.effectiveTheme),
         action: (): void => { this.handleMoveUp(item.chat.id); }
       })
 
@@ -643,8 +646,8 @@ export struct ChatSessionRootView {
       this.swipeIconButton({
         icon: $r('sys.symbol.arrow_down'),
         label: $r('app.string.card_action_move_down'),
-        bgColor: $r('app.color.app_surface_2'),
-        fgColor: $r('app.color.app_text_primary'),
+        bgColor: ThemePalette.surface2Color(this.effectiveTheme),
+        fgColor: ThemePalette.textPrimaryColor(this.effectiveTheme),
         action: (): void => { this.handleMoveDown(item.chat.id); }
       })
 
@@ -652,7 +655,7 @@ export struct ChatSessionRootView {
       this.swipeIconButton({
         icon: $r('sys.symbol.square_and_pencil'),
         label: $r('app.string.session_action_rename'),
-        bgColor: $r('app.color.app_accent'),
+        bgColor: ThemePalette.accentColor(this.effectiveTheme),
         fgColor: $r('app.color.app_on_accent'),
         action: (): void => { this.openRenameDialog(item); }
       })
@@ -707,7 +710,7 @@ export struct ChatSessionRootView {
       onPress: () => {
         this.openSession(item);
       },
-      surfaceColor: $r('app.color.app_surface_1')
+      surfaceColor: ThemePalette.surface1Color(this.effectiveTheme)
     }) {
       Row() {
         // 左侧角色头像(48x48 圆形缩略图)
@@ -728,14 +731,14 @@ export struct ChatSessionRootView {
             Text(this.getSessionTitle(item))
               .fontSize($r('app.float.app_font_body'))
               .fontWeight(FontWeight.Medium)
-              .fontColor($r('app.color.app_text_primary'))
+              .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .layoutWeight(1)
 
             Text(formatSessionTimestamp(item.displayTimestamp))
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_text_tertiary'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
               .margin({ left: 8 })
           }
           .width('100%')
@@ -745,7 +748,7 @@ export struct ChatSessionRootView {
           if (item.lastMessagePreview.length > 0) {
             Text(item.lastMessagePreview)
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_text_tertiary'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .margin({ top: 4 })
@@ -807,13 +810,13 @@ export struct ChatSessionRootView {
           Text($r('app.string.session_rename_title'))
             .fontSize(17)
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .margin({ bottom: 12 })
 
           TextInput({ placeholder: $r('app.string.session_rename_placeholder'), text: this.renameInput })
             .fontSize(15)
-            .fontColor($r('app.color.app_text_primary'))
-            .backgroundColor($r('app.color.app_surface_2'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_sm'))
             .height(44)
             .padding({ left: 12, right: 12 })
@@ -825,7 +828,7 @@ export struct ChatSessionRootView {
             Button($r('app.string.session_rename_cancel'))
               .fontSize(15)
               .backgroundColor(Color.Transparent)
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .layoutWeight(1)
               .height(40)
               .enabled(!this.isRenaming)
@@ -834,7 +837,7 @@ export struct ChatSessionRootView {
               })
             Button($r('app.string.session_rename_confirm'))
               .fontSize(15)
-              .backgroundColor($r('app.color.app_accent'))
+              .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
               .fontColor($r('app.color.app_on_accent'))
               .borderRadius($r('app.float.app_radius_sm'))
               .layoutWeight(1)
@@ -850,7 +853,7 @@ export struct ChatSessionRootView {
         }
         .width('80%')
         .padding(20)
-        .backgroundColor($r('app.color.app_surface_1'))
+        .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_lg'))
       }
       .width('100%')
@@ -872,19 +875,19 @@ export struct ChatSessionRootView {
           Text($r('app.string.session_delete_confirm_title'))
             .fontSize(17)
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .margin({ bottom: 12 })
 
           Text($r('app.string.session_delete_confirm_message'))
             .fontSize(14)
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .margin({ bottom: 20 })
 
           Row() {
             Button($r('app.string.session_delete_confirm_cancel'))
               .fontSize(14)
               .backgroundColor(Color.Transparent)
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .layoutWeight(1)
               .height(40)
               .enabled(!this.isDeleting)
@@ -909,7 +912,7 @@ export struct ChatSessionRootView {
         }
         .width('80%')
         .padding(20)
-        .backgroundColor($r('app.color.app_surface_1'))
+        .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_lg'))
       }
       .width('100%')
@@ -928,7 +931,7 @@ export struct ChatSessionRootView {
       LoadingProgress()
         .width(40)
         .height(40)
-        .color($r('app.color.app_accent'))
+        .color(ThemePalette.accentColor(this.effectiveTheme))
     }
     .width('100%')
     .layoutWeight(1)
@@ -1200,7 +1203,7 @@ export struct ChatSessionRootView {
           Text('导出聊天')
             .fontSize(17)
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .margin({ bottom: 16 })
 
           if (this.exportTarget !== null) {
@@ -1208,7 +1211,7 @@ export struct ChatSessionRootView {
               ? this.exportTarget!.chat.title
               : (this.exportTarget!.character !== null ? this.exportTarget!.character!.name : '新对话'))
               .fontSize(14)
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .maxLines(2)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .width('100%')
@@ -1219,7 +1222,7 @@ export struct ChatSessionRootView {
           Button('导出当前对话')
             .fontSize(15)
             .fontColor($r('app.color.app_on_accent'))
-            .backgroundColor($r('app.color.app_accent'))
+            .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_sm'))
             .width('100%')
             .height(44)
@@ -1234,8 +1237,8 @@ export struct ChatSessionRootView {
             && this.exportTarget!.character!.id.length > 0) {
             Button('导出该角色全部对话')
               .fontSize(15)
-              .fontColor($r('app.color.app_text_primary'))
-              .backgroundColor($r('app.color.app_surface_2'))
+              .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+              .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
               .borderRadius($r('app.float.app_radius_sm'))
               .width('100%')
               .height(44)
@@ -1249,7 +1252,7 @@ export struct ChatSessionRootView {
           // 取消
           Button('取消')
             .fontSize(15)
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .backgroundColor(Color.Transparent)
             .borderRadius($r('app.float.app_radius_sm'))
             .width('100%')
@@ -1262,7 +1265,7 @@ export struct ChatSessionRootView {
         }
         .width('80%')
         .padding(20)
-        .backgroundColor($r('app.color.app_surface_1'))
+        .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_lg'))
       }
       .width('100%')
@@ -1292,7 +1295,7 @@ export struct ChatSessionRootView {
           Text('导入聊天预览')
             .fontSize(17)
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .margin({ bottom: 12 })
 
           // 预览内容(archiveViewModel 已就绪)
@@ -1302,14 +1305,14 @@ export struct ChatSessionRootView {
           } else {
             Text('正在读取文件...')
               .fontSize(14)
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .margin({ bottom: 16 })
           }
         }
         .width('88%')
         .constraintSize({ maxHeight: '80%' })
         .padding(20)
-        .backgroundColor($r('app.color.app_surface_1'))
+        .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_lg'))
       }
       .width('100%')
@@ -1338,7 +1341,7 @@ export struct ChatSessionRootView {
           ? this.archiveViewModel!.previewPayload!.stats.sourceCharacterName
           : '无');
 
-        Divider().color($r('app.color.app_divider')).margin({ top: 8, bottom: 8 })
+        Divider().color(ThemePalette.dividerColor(this.effectiveTheme)).margin({ top: 8, bottom: 8 })
 
         // 统计信息
         this.previewRow('对话数量', String(this.archiveViewModel!.previewPayload!.stats.conversationCount));
@@ -1353,7 +1356,7 @@ export struct ChatSessionRootView {
           this.previewRow('未知字段', '是(将忽略)');
         }
 
-        Divider().color($r('app.color.app_divider')).margin({ top: 8, bottom: 8 })
+        Divider().color(ThemePalette.dividerColor(this.effectiveTheme)).margin({ top: 8, bottom: 8 })
 
         // 重复提示
         if (this.hasDuplicateWarning()) {
@@ -1367,7 +1370,7 @@ export struct ChatSessionRootView {
         // 角色选择
         Text('选择目标角色:')
           .fontSize(14)
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .width('100%')
           .margin({ bottom: 8 })
 
@@ -1388,7 +1391,7 @@ export struct ChatSessionRootView {
         if (this.archiveViewModel!.allCharacters.length === 0) {
           Text('未找到现有角色,将以无角色方式导入。')
             .fontSize(13)
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
             .width('100%')
             .margin({ bottom: 8 })
         }
@@ -1404,7 +1407,7 @@ export struct ChatSessionRootView {
             })
           Text('不绑定角色')
             .fontSize(14)
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .margin({ left: 8 })
         }
         .width('100%')
@@ -1416,14 +1419,14 @@ export struct ChatSessionRootView {
           }
         })
 
-        Divider().color($r('app.color.app_divider')).margin({ top: 12, bottom: 12 })
+        Divider().color(ThemePalette.dividerColor(this.effectiveTheme)).margin({ top: 12, bottom: 12 })
 
         // 操作按钮
         Row() {
           Button('取消')
             .fontSize(15)
             .backgroundColor(Color.Transparent)
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .layoutWeight(1)
             .height(40)
             .enabled(!this.archiveBusy)
@@ -1432,7 +1435,7 @@ export struct ChatSessionRootView {
             })
           Button('导入为新对话')
             .fontSize(15)
-            .backgroundColor($r('app.color.app_accent'))
+            .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
             .fontColor($r('app.color.app_on_accent'))
             .borderRadius($r('app.float.app_radius_sm'))
             .layoutWeight(1)
@@ -1461,11 +1464,11 @@ export struct ChatSessionRootView {
     Row() {
       Text(label)
         .fontSize(13)
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .width(96)
       Text(value)
         .fontSize(13)
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .maxLines(2)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .layoutWeight(1)
@@ -1491,7 +1494,7 @@ export struct ChatSessionRootView {
         })
       Text(c.name)
         .fontSize(14)
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .margin({ left: 8 })
         .layoutWeight(1)
         .maxLines(1)
@@ -1499,8 +1502,8 @@ export struct ChatSessionRootView {
       if (tag.length > 0) {
         Text(tag)
           .fontSize(11)
-          .fontColor($r('app.color.app_accent'))
-          .backgroundColor($r('app.color.app_surface_2'))
+          .fontColor(ThemePalette.accentColor(this.effectiveTheme))
+          .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
           .borderRadius(4)
           .padding({ left: 6, right: 6, top: 2, bottom: 2 })
       }
@@ -1527,14 +1530,14 @@ export struct ChatSessionRootView {
             Text('导入完成')
               .fontSize(17)
               .fontWeight(FontWeight.Medium)
-              .fontColor($r('app.color.app_text_primary'))
+              .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
               .margin({ bottom: 12 })
 
             // 总览
             Text('已导入 ' + String(this.archiveViewModel!.importResult!.successCount) + ' 个对话,共 '
               + String(this.archiveViewModel!.importResult!.totalMessageCount) + ' 条消息。')
               .fontSize(14)
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .width('100%')
               .margin({ bottom: 12 })
 
@@ -1552,7 +1555,7 @@ export struct ChatSessionRootView {
                   Row() {
                     Text(r.sourceTitle.length > 0 ? r.sourceTitle : '(无标题)')
                       .fontSize(12)
-                      .fontColor($r('app.color.app_text_tertiary'))
+                      .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
                       .maxLines(1)
                       .textOverflow({ overflow: TextOverflow.Ellipsis })
                       .layoutWeight(1)
@@ -1569,14 +1572,14 @@ export struct ChatSessionRootView {
               }, (r: ChatArchiveImportConversationResult, index: number) => 'fail_' + String(index))
             }
 
-            Divider().color($r('app.color.app_divider')).margin({ top: 12, bottom: 12 })
+            Divider().color(ThemePalette.dividerColor(this.effectiveTheme)).margin({ top: 12, bottom: 12 })
 
             // 操作按钮
             Row() {
               Button('关闭')
                 .fontSize(15)
                 .backgroundColor(Color.Transparent)
-                .fontColor($r('app.color.app_text_secondary'))
+                .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
                 .layoutWeight(1)
                 .height(40)
                 .onClick(() => {
@@ -1585,7 +1588,7 @@ export struct ChatSessionRootView {
               if (this.archiveViewModel!.importResult!.importedConversationIds.length > 0) {
                 Button('查看导入的聊天')
                   .fontSize(15)
-                  .backgroundColor($r('app.color.app_accent'))
+                  .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
                   .fontColor($r('app.color.app_on_accent'))
                   .borderRadius($r('app.float.app_radius_sm'))
                   .layoutWeight(1)
@@ -1600,12 +1603,12 @@ export struct ChatSessionRootView {
           } else {
             Text('无导入结果')
               .fontSize(14)
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .margin({ bottom: 16 })
             Button('关闭')
               .fontSize(15)
-              .backgroundColor($r('app.color.app_surface_2'))
-              .fontColor($r('app.color.app_text_primary'))
+              .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
+              .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
               .borderRadius($r('app.float.app_radius_sm'))
               .width('100%')
               .height(40)
@@ -1617,7 +1620,7 @@ export struct ChatSessionRootView {
         .width('85%')
         .constraintSize({ maxHeight: '80%' })
         .padding(20)
-        .backgroundColor($r('app.color.app_surface_1'))
+        .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_lg'))
       }
       .width('100%')

@@ -33,6 +33,7 @@ import { WorldStatus } from '../../models/world/World';
 import { CharacterImageView } from '../../components/CharacterImageView';
 import { EmptyStateView } from '../../components/EmptyStateView';
 import { Logger } from '../../utils/Logger';
+import { ThemePalette } from '../../theme/ThemePalette';
 
 const LOG_TAG: string = 'WorldCharacterMovePage';
 
@@ -59,6 +60,7 @@ struct WorldCharacterMovePage {
   /** 当前正在确认的目标地点名称 */
   @State private pendingTargetLocationName: string = '';
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
 
   async aboutToAppear(): Promise<void> {
     try {
@@ -131,7 +133,7 @@ struct WorldCharacterMovePage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.app_bg'))
+    .backgroundColor(ThemePalette.pageBgColor(this.effectiveTheme))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 
@@ -140,7 +142,7 @@ struct WorldCharacterMovePage {
     Row() {
       Button($r('app.string.world_cancel'))
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_accent'))
+        .fontColor(ThemePalette.accentColor(this.effectiveTheme))
         .backgroundColor(Color.Transparent)
         .height(36)
         .padding({ left: 0, right: 8 })
@@ -152,7 +154,7 @@ struct WorldCharacterMovePage {
       Text($r('app.string.world_character_move_title'))
         .fontSize($r('app.float.app_font_title'))
         .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .layoutWeight(1)
@@ -183,7 +185,7 @@ struct WorldCharacterMovePage {
   @Builder
   loadingView(): void {
     Column() {
-      LoadingProgress().width(40).height(40).color($r('app.color.app_accent'))
+      LoadingProgress().width(40).height(40).color(ThemePalette.accentColor(this.effectiveTheme))
     }
     .width('100%')
     .layoutWeight(1)
@@ -198,7 +200,7 @@ struct WorldCharacterMovePage {
       Button($r('app.string.world_back_to_list'))
         .fontSize($r('app.float.app_font_body'))
         .fontColor($r('app.color.app_on_accent'))
-        .backgroundColor($r('app.color.app_accent'))
+        .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_sm'))
         .height(40)
         .padding({ left: 24, right: 24 })
@@ -221,7 +223,7 @@ struct WorldCharacterMovePage {
       Button($r('app.string.world_home_reload'))
         .fontSize($r('app.float.app_font_body'))
         .fontColor($r('app.color.app_on_accent'))
-        .backgroundColor($r('app.color.app_accent'))
+        .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_sm'))
         .height(40)
         .padding({ left: 24, right: 24 })
@@ -250,7 +252,7 @@ struct WorldCharacterMovePage {
               top: $r('app.float.app_spacing_8'),
               bottom: $r('app.float.app_spacing_8')
             })
-            .backgroundColor($r('app.color.app_surface_1'))
+            .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_sm'))
             .margin({ bottom: $r('app.float.app_spacing_12') })
         }
@@ -302,7 +304,7 @@ struct WorldCharacterMovePage {
           Text(snap.displayName)
             .fontSize($r('app.float.app_font_body'))
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .width('100%')
@@ -312,9 +314,9 @@ struct WorldCharacterMovePage {
             Text(snap.isActive ? '活跃' : '已停用')
               .fontSize(10)
               .fontColor(snap.isActive
-                ? $r('app.color.app_accent')
-                : $r('app.color.app_text_tertiary'))
-              .backgroundColor($r('app.color.app_surface_2'))
+                ? ThemePalette.accentColor(this.effectiveTheme)
+                : ThemePalette.textTertiaryColor(this.effectiveTheme))
+              .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
               .borderRadius(3)
               .padding({ left: 4, right: 4, top: 1, bottom: 1 })
 
@@ -322,8 +324,8 @@ struct WorldCharacterMovePage {
             if (snap.worldStatus === WorldStatus.Archived) {
               Text('世界已归档')
                 .fontSize(10)
-                .fontColor($r('app.color.app_text_tertiary'))
-                .backgroundColor($r('app.color.app_surface_2'))
+                .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+                .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
                 .borderRadius(3)
                 .padding({ left: 4, right: 4, top: 1, bottom: 1 })
                 .margin({ left: 4 })
@@ -340,18 +342,18 @@ struct WorldCharacterMovePage {
       .alignItems(VerticalAlign.Center)
 
       // 当前位置
-      Divider().color($r('app.color.app_divider')).margin({ top: 12, bottom: 8 })
+      Divider().color(ThemePalette.dividerColor(this.effectiveTheme)).margin({ top: 12, bottom: 8 })
 
       Row() {
         Text($r('app.string.world_character_current_location'))
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
 
         Text(this.resolveCurrentLocationLabel(snap))
           .fontSize($r('app.float.app_font_body'))
           .fontColor(snap.locationMissing
             ? $r('app.color.app_danger')
-            : $r('app.color.app_text_primary'))
+            : ThemePalette.textPrimaryColor(this.effectiveTheme))
           .margin({ left: 8 })
           .layoutWeight(1)
           .maxLines(1)
@@ -364,7 +366,7 @@ struct WorldCharacterMovePage {
       if (!snap.isActive) {
         Text($r('app.string.world_character_move_inactive_hint'))
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .margin({ top: 8 })
           .width('100%')
       }
@@ -376,7 +378,7 @@ struct WorldCharacterMovePage {
       top: $r('app.float.app_spacing_12'),
       bottom: $r('app.float.app_spacing_12')
     })
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
     .borderRadius($r('app.float.app_radius_md'))
     .margin({ top: $r('app.float.app_spacing_8') })
     .alignItems(HorizontalAlign.Start)
@@ -388,7 +390,7 @@ struct WorldCharacterMovePage {
     Column() {
       Text($r('app.string.world_character_normal_move'))
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .width('100%')
         .margin({ bottom: 8 })
 
@@ -396,7 +398,7 @@ struct WorldCharacterMovePage {
       if (!this.canNormalMove(snap)) {
         Text($r('app.string.world_character_move_no_path'))
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .width('100%')
           .textAlign(TextAlign.Center)
           .padding({
@@ -406,7 +408,7 @@ struct WorldCharacterMovePage {
       } else if (snap.normalMoveOptions.length === 0) {
         Text($r('app.string.world_character_move_no_path'))
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .width('100%')
           .textAlign(TextAlign.Center)
           .padding({
@@ -426,7 +428,7 @@ struct WorldCharacterMovePage {
       top: $r('app.float.app_spacing_12'),
       bottom: $r('app.float.app_spacing_12')
     })
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
     .borderRadius($r('app.float.app_radius_md'))
     .margin({ top: $r('app.float.app_spacing_12') })
     .alignItems(HorizontalAlign.Start)
@@ -440,7 +442,7 @@ struct WorldCharacterMovePage {
         Column() {
           Text(opt.targetLocationName)
             .fontSize($r('app.float.app_font_body'))
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .width('100%')
@@ -451,16 +453,16 @@ struct WorldCharacterMovePage {
               ? $r('app.string.world_edge_bidirectional')
               : $r('app.string.world_edge_unidirectional'))
               .fontSize(10)
-              .fontColor($r('app.color.app_accent'))
-              .backgroundColor($r('app.color.app_surface_2'))
+              .fontColor(ThemePalette.accentColor(this.effectiveTheme))
+              .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
               .borderRadius(3)
               .padding({ left: 4, right: 4, top: 1, bottom: 1 })
 
             if (opt.directionLabel.length > 0) {
               Text(opt.directionLabel)
                 .fontSize(10)
-                .fontColor($r('app.color.app_text_tertiary'))
-                .backgroundColor($r('app.color.app_surface_2'))
+                .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+                .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
                 .borderRadius(3)
                 .padding({ left: 4, right: 4, top: 1, bottom: 1 })
                 .margin({ left: 4 })
@@ -475,7 +477,7 @@ struct WorldCharacterMovePage {
         // 移动按钮
         Button($r('app.string.world_character_move'))
           .fontSize(12)
-          .backgroundColor($r('app.color.app_accent'))
+          .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
           .fontColor($r('app.color.app_on_accent'))
           .borderRadius(6)
           .height(32)
@@ -493,7 +495,7 @@ struct WorldCharacterMovePage {
       if (opt.travelDescription.length > 0) {
         Text($r('app.string.world_character_move_via_edge') + ' · ' + opt.travelDescription)
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .margin({ top: 4 })
@@ -507,7 +509,7 @@ struct WorldCharacterMovePage {
       top: $r('app.float.app_spacing_12'),
       bottom: $r('app.float.app_spacing_12')
     })
-    .backgroundColor($r('app.color.app_surface_2'))
+    .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
     .borderRadius($r('app.float.app_radius_sm'))
     .margin({ top: $r('app.float.app_spacing_8') })
     .alignItems(HorizontalAlign.Start)
@@ -519,20 +521,20 @@ struct WorldCharacterMovePage {
     Column() {
       Text($r('app.string.world_character_force_move'))
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .width('100%')
         .margin({ bottom: 4 })
 
       Text($r('app.string.world_character_move_force_hint'))
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .width('100%')
         .margin({ bottom: 8 })
 
       if (snap.forceMoveOptions.length === 0) {
         Text('当前世界没有其他可用地点')
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .width('100%')
           .textAlign(TextAlign.Center)
           .padding({
@@ -552,7 +554,7 @@ struct WorldCharacterMovePage {
       top: $r('app.float.app_spacing_12'),
       bottom: $r('app.float.app_spacing_12')
     })
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
     .borderRadius($r('app.float.app_radius_md'))
     .margin({ top: $r('app.float.app_spacing_12') })
     .alignItems(HorizontalAlign.Start)
@@ -564,17 +566,17 @@ struct WorldCharacterMovePage {
     Row() {
       Text(opt.targetLocationName)
         .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .layoutWeight(1)
 
       Button($r('app.string.world_force_move_character'))
         .fontSize(12)
-        .backgroundColor($r('app.color.app_surface_2'))
+        .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
         .fontColor(this.canForceMoveNow(snap)
           ? $r('app.color.app_danger')
-          : $r('app.color.app_text_tertiary'))
+          : ThemePalette.textTertiaryColor(this.effectiveTheme))
         .borderRadius(6)
         .height(32)
         .padding({ left: 12, right: 12 })
@@ -592,7 +594,7 @@ struct WorldCharacterMovePage {
       top: $r('app.float.app_spacing_12'),
       bottom: $r('app.float.app_spacing_12')
     })
-    .backgroundColor($r('app.color.app_surface_2'))
+    .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
     .borderRadius($r('app.float.app_radius_sm'))
     .margin({ top: $r('app.float.app_spacing_8') })
   }
@@ -607,12 +609,12 @@ struct WorldCharacterMovePage {
           : $r('app.string.world_character_normal_move'))
           .fontSize(17)
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .margin({ bottom: 12 })
 
         Text(this.composeConfirmMessage())
           .fontSize(14)
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .margin({ bottom: 20 })
           .width('100%')
 
@@ -620,7 +622,7 @@ struct WorldCharacterMovePage {
           Button($r('app.string.world_cancel'))
             .fontSize(14)
             .backgroundColor(Color.Transparent)
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .layoutWeight(1)
             .height(40)
             .onClick(() => {
@@ -632,7 +634,7 @@ struct WorldCharacterMovePage {
             : $r('app.string.world_confirm_normal_move'))
             .fontSize(14)
             .backgroundColor(this.moveDialogKind === MoveDialogKind.Force
-              ? $r('app.color.app_danger') : $r('app.color.app_accent'))
+              ? $r('app.color.app_danger') : ThemePalette.accentColor(this.effectiveTheme))
             .fontColor(Color.White)
             .borderRadius(20)
             .layoutWeight(1)
@@ -647,7 +649,7 @@ struct WorldCharacterMovePage {
       }
       .width('80%')
       .padding(20)
-      .backgroundColor($r('app.color.app_surface_1'))
+      .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
       .borderRadius(16)
     }
     .width('100%')

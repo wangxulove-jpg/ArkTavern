@@ -16,6 +16,7 @@ import { WorldSectionHeader } from '../../components/world/WorldSectionHeader';
 import { WorldEmptyState } from '../../components/world/WorldEmptyState';
 import { WorldColors } from '../../components/world/WorldDesignTokens';
 import { Logger } from '../../utils/Logger';
+import { ThemePalette } from '../../theme/ThemePalette';
 
 const LOG_TAG: string = 'WorldCuratorPage';
 
@@ -36,6 +37,7 @@ struct WorldCuratorPage {
 
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navigationBarHeight') navBarHeight: number = 0;
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
 
   async aboutToAppear(): Promise<void> {
     try {
@@ -175,12 +177,12 @@ struct WorldCuratorPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.world_bg'))
+    .backgroundColor(ThemePalette.pageBgColor(this.effectiveTheme))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .bindSheet(this.detailSheetVisible, this.issueDetailSheet, {
       height: SheetSize.FIT_CONTENT,
       dragBar: true,
-      backgroundColor: $r('app.color.world_surface_1'),
+      backgroundColor: ThemePalette.worldSurfaceColor(this.effectiveTheme),
       onDisappear: () => {
         this.detailSheetVisible = false;
         this.detailSheetIssueId = '';
@@ -194,7 +196,7 @@ struct WorldCuratorPage {
     Row() {
       Button('←')
         .fontSize(22)
-        .fontColor($r('app.color.world_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .backgroundColor(Color.Transparent)
         .width(40)
         .height(40)
@@ -207,12 +209,12 @@ struct WorldCuratorPage {
         Text('世界档案管理员')
           .fontSize($r('app.float.world_font_title'))
           .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.world_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
         Text(this.resolveWorldName())
           .fontSize($r('app.float.world_font_caption'))
-          .fontColor($r('app.color.world_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .margin({ top: 2 })
@@ -248,13 +250,13 @@ struct WorldCuratorPage {
 
       Text('AI 档案管理员尚未接入')
         .fontSize($r('app.float.world_font_micro'))
-        .fontColor($r('app.color.world_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .margin({ top: 4 })
         .width('100%')
     }
     .width('100%')
     .padding({ left: 14, right: 14, top: 10, bottom: 10 })
-    .backgroundColor($r('app.color.world_surface_1'))
+    .backgroundColor(ThemePalette.worldSurfaceColor(this.effectiveTheme))
     .borderRadius($r('app.float.world_radius_card'))
     .borderWidth(1)
     .borderColor($r('app.color.world_warning'))
@@ -288,7 +290,7 @@ struct WorldCuratorPage {
       LoadingProgress()
         .width(40)
         .height(40)
-        .color($r('app.color.world_gold'))
+        .color(ThemePalette.accentColor(this.effectiveTheme))
     }
     .width('100%')
     .layoutWeight(1)
@@ -369,9 +371,9 @@ struct WorldCuratorPage {
       top: 8,
       bottom: 8
     })
-    .backgroundColor($r('app.color.world_surface_1'))
+    .backgroundColor(ThemePalette.worldSurfaceColor(this.effectiveTheme))
     .borderWidth({ bottom: 1 })
-    .borderColor($r('app.color.world_border'))
+    .borderColor(ThemePalette.worldBorderColor(this.effectiveTheme))
   }
 
   @Builder
@@ -382,10 +384,10 @@ struct WorldCuratorPage {
         .fontWeight(FontWeight.Medium)
         .fontColor(label === '待检' && count > 0
           ? $r('app.color.world_error')
-          : $r('app.color.world_text_primary'))
+          : ThemePalette.textPrimaryColor(this.effectiveTheme))
       Text(label)
         .fontSize($r('app.float.world_font_micro'))
-        .fontColor($r('app.color.world_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .margin({ top: 2 })
     }
     .alignItems(HorizontalAlign.Center)
@@ -405,7 +407,7 @@ struct WorldCuratorPage {
       left: $r('app.float.world_page_padding'),
       right: $r('app.float.world_page_padding')
     })
-    .backgroundColor($r('app.color.world_bg'))
+    .backgroundColor(ThemePalette.pageBgColor(this.effectiveTheme))
     .justifyContent(FlexAlign.Start)
     .alignItems(VerticalAlign.Center)
   }
@@ -416,15 +418,15 @@ struct WorldCuratorPage {
       Text(label)
         .fontSize($r('app.float.world_font_body'))
         .fontColor(this.selectedTab === tab
-          ? $r('app.color.world_gold')
-          : $r('app.color.world_text_secondary'))
+          ? ThemePalette.accentColor(this.effectiveTheme)
+          : ThemePalette.textSecondaryColor(this.effectiveTheme))
         .fontWeight(this.selectedTab === tab ? FontWeight.Medium : FontWeight.Normal)
         .padding({ top: 10, bottom: 8 })
 
       Divider()
         .width(this.selectedTab === tab ? 24 : 0)
         .height(2)
-        .color($r('app.color.world_gold'))
+        .color(ThemePalette.accentColor(this.effectiveTheme))
         .borderRadius(1)
     }
     .margin({ right: 16 })
@@ -478,13 +480,13 @@ struct WorldCuratorPage {
         Text(item.category)
           .fontSize($r('app.float.world_font_body'))
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.world_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .width('100%')
 
-        Divider().color($r('app.color.world_border')).margin({ top: 8, bottom: 8 })
+        Divider().color(ThemePalette.worldBorderColor(this.effectiveTheme)).margin({ top: 8, bottom: 8 })
 
         Row() {
-          this.overviewMetric('总数', item.total, $r('app.color.world_text_primary'))
+          this.overviewMetric('总数', item.total, ThemePalette.textPrimaryColor(this.effectiveTheme))
           this.overviewMetric('有效', item.valid, $r('app.color.world_success'))
           this.overviewMetric('缺失引用', item.missingRef, $r('app.color.world_error'))
           this.overviewMetric('待检', item.pendingCheck, $r('app.color.world_warning'))
@@ -508,7 +510,7 @@ struct WorldCuratorPage {
         .fontColor(color)
       Text(label)
         .fontSize($r('app.float.world_font_micro'))
-        .fontColor($r('app.color.world_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .margin({ top: 2 })
     }
     .alignItems(HorizontalAlign.Center)
@@ -526,11 +528,11 @@ struct WorldCuratorPage {
       Column() {
         Text('未发现一致性问题')
           .fontSize($r('app.float.world_font_body'))
-          .fontColor($r('app.color.world_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .margin({ top: 24 })
         Text('所有数据引用完整,世界数据结构健康')
           .fontSize($r('app.float.world_font_caption'))
-          .fontColor($r('app.color.world_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .margin({ top: 6 })
       }
       .width('100%')
@@ -552,7 +554,7 @@ struct WorldCuratorPage {
           Text(issue.issueTypeLabel)
             .fontSize($r('app.float.world_font_body'))
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.world_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .layoutWeight(1)
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -571,7 +573,7 @@ struct WorldCuratorPage {
 
         Text(issue.description)
           .fontSize($r('app.float.world_font_caption'))
-          .fontColor($r('app.color.world_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .margin({ top: 8 })
           .width('100%')
           .maxLines(3)
@@ -581,8 +583,8 @@ struct WorldCuratorPage {
           if (issue.affectedCharacterName.length > 0) {
             Text('角色: ' + issue.affectedCharacterName)
               .fontSize($r('app.float.world_font_micro'))
-              .fontColor($r('app.color.world_text_tertiary'))
-              .backgroundColor($r('app.color.world_surface_2'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+              .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
               .borderRadius(3)
               .padding({ left: 4, right: 4, top: 1, bottom: 1 })
               .margin({ right: 4 })
@@ -590,8 +592,8 @@ struct WorldCuratorPage {
           if (issue.affectedLocationName.length > 0) {
             Text('地点: ' + issue.affectedLocationName)
               .fontSize($r('app.float.world_font_micro'))
-              .fontColor($r('app.color.world_text_tertiary'))
-              .backgroundColor($r('app.color.world_surface_2'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+              .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
               .borderRadius(3)
               .padding({ left: 4, right: 4, top: 1, bottom: 1 })
               .margin({ right: 4 })
@@ -599,8 +601,8 @@ struct WorldCuratorPage {
           if (issue.affectedSceneId.length > 0) {
             Text('场景: ' + this.truncateId(issue.affectedSceneId))
               .fontSize($r('app.float.world_font_micro'))
-              .fontColor($r('app.color.world_text_tertiary'))
-              .backgroundColor($r('app.color.world_surface_2'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+              .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
               .borderRadius(3)
               .padding({ left: 4, right: 4, top: 1, bottom: 1 })
           }
@@ -609,17 +611,17 @@ struct WorldCuratorPage {
         .margin({ top: 8 })
         .alignItems(VerticalAlign.Center)
 
-        Divider().color($r('app.color.world_border')).margin({ top: 8, bottom: 6 })
+        Divider().color(ThemePalette.worldBorderColor(this.effectiveTheme)).margin({ top: 8, bottom: 6 })
 
         Row() {
           Text('记录: ' + this.truncateId(issue.affectedRecordId))
             .fontSize($r('app.float.world_font_micro'))
-            .fontColor($r('app.color.world_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
             .layoutWeight(1)
 
           Text(issue.checkMethod)
             .fontSize($r('app.float.world_font_micro'))
-            .fontColor($r('app.color.world_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
         }
@@ -629,8 +631,8 @@ struct WorldCuratorPage {
         Row() {
           Button('查看详情')
             .fontSize($r('app.float.world_font_caption'))
-            .fontColor($r('app.color.world_gold'))
-            .backgroundColor($r('app.color.world_surface_2'))
+            .fontColor(ThemePalette.accentColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius($r('app.float.world_radius_chip'))
             .height(30)
             .padding({ left: 10, right: 10 })
@@ -642,8 +644,8 @@ struct WorldCuratorPage {
 
           Button('忽略')
             .fontSize($r('app.float.world_font_caption'))
-            .fontColor($r('app.color.world_text_tertiary'))
-            .backgroundColor($r('app.color.world_surface_2'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius($r('app.float.world_radius_chip'))
             .height(30)
             .padding({ left: 10, right: 10 })
@@ -671,12 +673,12 @@ struct WorldCuratorPage {
         Text('问题详情')
           .fontSize($r('app.float.world_font_title'))
           .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.world_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .layoutWeight(1)
 
         Button('×')
           .fontSize(18)
-          .fontColor($r('app.color.world_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .backgroundColor(Color.Transparent)
           .width(32)
           .height(32)
@@ -697,12 +699,12 @@ struct WorldCuratorPage {
       } else {
         Text('问题不存在')
           .fontSize($r('app.float.world_font_body'))
-          .fontColor($r('app.color.world_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .padding(24)
       }
     }
     .width('100%')
-    .backgroundColor($r('app.color.world_surface_1'))
+    .backgroundColor(ThemePalette.worldSurfaceColor(this.effectiveTheme))
   }
 
   @Builder
@@ -741,12 +743,12 @@ struct WorldCuratorPage {
     Row() {
       Text(label)
         .fontSize($r('app.float.world_font_caption'))
-        .fontColor($r('app.color.world_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .width(72)
         .flexShrink(0)
       Text(value)
         .fontSize($r('app.float.world_font_caption'))
-        .fontColor($r('app.color.world_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .layoutWeight(1)
         .maxLines(4)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -764,12 +766,12 @@ struct WorldCuratorPage {
       Text('尚无 AI 修正建议')
         .fontSize($r('app.float.world_font_title'))
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.world_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .textAlign(TextAlign.Center)
 
       Text('未来接入 Curator AI 后,将基于一致性问题自动生成修正建议。当前仅提供规则检查与问题展示。')
         .fontSize($r('app.float.world_font_body'))
-        .fontColor($r('app.color.world_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .margin({ top: 8 })
         .textAlign(TextAlign.Center)
         .maxLines(4)
@@ -792,12 +794,12 @@ struct WorldCuratorPage {
           .width(120)
           .height(14)
           .borderRadius(4)
-          .backgroundColor($r('app.color.world_surface_2'))
+          .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
         Column()
           .width(48)
           .height(18)
           .borderRadius(8)
-          .backgroundColor($r('app.color.world_surface_2'))
+          .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
           .margin({ left: 8 })
       }
       .width('100%')
@@ -807,21 +809,21 @@ struct WorldCuratorPage {
         .width('100%')
         .height(12)
         .borderRadius(4)
-        .backgroundColor($r('app.color.world_surface_2'))
+        .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
         .margin({ top: 8 })
       Column()
         .width('70%')
         .height(12)
         .borderRadius(4)
-        .backgroundColor($r('app.color.world_surface_2'))
+        .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
         .margin({ top: 4 })
     }
     .width('100%')
     .padding(14)
-    .backgroundColor($r('app.color.world_surface_1'))
+    .backgroundColor(ThemePalette.worldSurfaceColor(this.effectiveTheme))
     .borderRadius($r('app.float.world_radius_card'))
     .borderWidth(1)
-    .borderColor($r('app.color.world_border'))
+    .borderColor(ThemePalette.worldBorderColor(this.effectiveTheme))
     .margin({ top: 8 })
     .opacity(0.5)
   }
@@ -834,12 +836,12 @@ struct WorldCuratorPage {
       Text('尚未接入审计记录')
         .fontSize($r('app.float.world_font_title'))
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.world_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .textAlign(TextAlign.Center)
 
       Text('未来审计记录将包含以下结构:')
         .fontSize($r('app.float.world_font_body'))
-        .fontColor($r('app.color.world_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .margin({ top: 8 })
         .textAlign(TextAlign.Center)
 
@@ -853,7 +855,7 @@ struct WorldCuratorPage {
       .width('100%')
       .margin({ top: 12 })
       .padding(14)
-      .backgroundColor($r('app.color.world_surface_2'))
+      .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
       .borderRadius($r('app.float.world_radius_card'))
       .alignItems(HorizontalAlign.Start)
     }
@@ -868,10 +870,10 @@ struct WorldCuratorPage {
     Row() {
       SymbolGlyph($r('sys.symbol.circle'))
         .fontSize(8)
-        .fontColor([$r('app.color.world_text_tertiary')])
+        .fontColor([ThemePalette.textTertiaryColor(this.effectiveTheme)])
       Text(field)
         .fontSize($r('app.float.world_font_caption'))
-        .fontColor($r('app.color.world_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .margin({ left: 6 })
     }
     .margin({ top: 4 })

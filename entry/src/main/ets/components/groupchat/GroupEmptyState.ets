@@ -7,6 +7,8 @@
  * 纯 UI,不依赖 Service / Repository / 数据库。
  */
 
+import { ThemePalette } from '../../theme/ThemePalette';
+
 @Component
 export struct GroupEmptyState {
   /** 空状态标题 */
@@ -17,19 +19,20 @@ export struct GroupEmptyState {
   actionText: ResourceStr = '';
   /** CTA 点击回调 */
   onAction: () => void = () => {};
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
 
   build(): void {
     Column() {
       Text(this.title)
         .fontSize($r('app.float.app_font_subtitle'))
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .textAlign(TextAlign.Center)
         .width('100%')
 
       Text(this.description)
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .margin({ top: 6 })
         .textAlign(TextAlign.Center)
         .width('100%')
@@ -37,7 +40,7 @@ export struct GroupEmptyState {
       Button(this.actionText)
         .fontSize($r('app.float.app_font_body'))
         .fontColor($r('app.color.app_on_accent'))
-        .backgroundColor($r('app.color.app_accent'))
+        .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_sm'))
         .height(40)
         .padding({ left: 24, right: 24 })

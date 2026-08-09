@@ -17,6 +17,8 @@
  * - 点击逻辑(由调用方通过 onPress 回调处理)
  */
 
+import { ThemePalette } from '../theme/ThemePalette';
+
 @Component
 export struct PressableCard {
   /** 是否处于按压状态(内部状态,不暴露) */
@@ -25,15 +27,25 @@ export struct PressableCard {
   onPress: () => void = () => {};
   /** 卡片背景色,默认一级表面色,可传入强调色表面营造主卡片 */
   surfaceColor: ResourceColor = $r('app.color.app_surface_1');
+  /** 当前有效主题(ARK-UI-THEME-1) */
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
   /** 内容构建器 */
   @BuilderParam content: () => void;
+
+  /** 卡片背景:Tavern 使用酒馆棕一级表面,其余走资源限定符 */
+  private cardBg(): ResourceColor {
+    if (this.effectiveTheme === 'tavern') {
+      return ThemePalette.forTheme('tavern').surface1;
+    }
+    return this.surfaceColor;
+  }
 
   build(): void {
     Column() {
       this.content()
     }
     .width('100%')
-    .backgroundColor(this.surfaceColor)
+    .backgroundColor(this.cardBg())
     .borderRadius($r('app.float.app_radius_md'))
     .scale({
       x: this.isPressed ? 0.98 : 1.0,

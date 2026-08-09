@@ -21,6 +21,7 @@ import { ModelSettingsViewModel } from '../viewmodels/ModelSettingsViewModel';
 import { ProviderType } from '../models/ProviderType';
 import { ModelOption } from '../models/ProviderPreset';
 import { router } from '@kit.ArkUI';
+import { ThemePalette } from '../theme/ThemePalette';
 
 interface ProviderOption {
   readonly type: ProviderType;
@@ -42,6 +43,7 @@ struct ModelConfigEditPage {
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   /** 底部导航栏/手势条避让高度(由 EntryAbility 写入 AppStorage) */
   @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
 
   aboutToAppear(): void {
     this.viewModel = AppStorage.get<ModelSettingsViewModel>('ModelSettingsViewModel') ?? null;
@@ -70,7 +72,7 @@ struct ModelConfigEditPage {
     .width('100%')
     .height('100%')
     .justifyContent(FlexAlign.Center)
-    .backgroundColor($r('app.color.page_background'))
+    .backgroundColor(ThemePalette.pageBackgroundColor(this.effectiveTheme))
   }
 
   @Builder
@@ -83,7 +85,7 @@ struct ModelConfigEditPage {
         Row() {
         SymbolGlyph($r('sys.symbol.chevron_left'))
           .fontSize(24)
-          .fontColor([$r('app.color.page_primary_text')])
+          .fontColor([ThemePalette.textPrimaryColor(this.effectiveTheme)])
           .padding(8)
           .onClick(() => {
             router.back();
@@ -91,7 +93,7 @@ struct ModelConfigEditPage {
 
         Text(this.pageTitle())
           .fontSize($r('app.float.nav_title_font_size'))
-          .fontColor($r('app.color.page_primary_text'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .fontWeight(FontWeight.Medium)
           .layoutWeight(1)
           .maxLines(1)
@@ -105,7 +107,7 @@ struct ModelConfigEditPage {
         }
         .height(32)
         .padding({ left: 12, right: 12 })
-        .backgroundColor($r('app.color.app_accent'))
+        .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
         .enabled(this.isFormReady() && !this.viewModel!.isSaving && !this.viewModel!.isTesting)
         .onClick(async () => {
           if (!this.viewModel!.checkFormValid()) {
@@ -137,7 +139,7 @@ struct ModelConfigEditPage {
       .barHeight(48)
       .width('100%')
       .layoutWeight(1)
-      .backgroundColor($r('app.color.page_background'))
+      .backgroundColor(ThemePalette.pageBackgroundColor(this.effectiveTheme))
       .onChange((index: number) => {
         this.viewModel!.setActiveEditTab(index);
       })
@@ -146,13 +148,13 @@ struct ModelConfigEditPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.page_background'))
+    .backgroundColor(ThemePalette.pageBackgroundColor(this.effectiveTheme))
     .bindSheet(this.viewModel!.modelSheetOpen, this.modelSheetBuilder, {
       height: SheetSize.MEDIUM,
       mode: SheetMode.EMBEDDED,
       dragBar: false,
       showClose: false,
-      backgroundColor: $r('app.color.app_surface_1'),
+      backgroundColor: ThemePalette.surface1Color(this.effectiveTheme),
       onDisappear: () => {
         this.viewModel!.closeModelSheet();
       }
@@ -165,7 +167,7 @@ struct ModelConfigEditPage {
       mode: SheetMode.EMBEDDED,
       dragBar: false,
       showClose: false,
-      backgroundColor: $r('app.color.app_surface_1'),
+      backgroundColor: ThemePalette.surface1Color(this.effectiveTheme),
       onDisappear: () => {
         this.viewModel!.closeProviderSheet();
       }
@@ -188,8 +190,8 @@ struct ModelConfigEditPage {
             .width('100%')
             .height(48)
             .fontSize($r('app.float.app_font_body'))
-            .fontColor($r('app.color.app_text_primary'))
-            .backgroundColor($r('app.color.app_surface_2'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_sm'))
             .padding({ left: 12, right: 12 })
             .maxLength(MAX_NAME_LENGTH)
@@ -219,7 +221,7 @@ struct ModelConfigEditPage {
           if (this.viewModel!.selectedConfigId !== null && this.viewModel!.apiKeyConfigured) {
             Text($r('app.string.model_settings_api_key_status_configured'))
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .margin({ bottom: 4 })
           }
           Row() {
@@ -233,8 +235,8 @@ struct ModelConfigEditPage {
               .width('100%')
               .height(48)
               .fontSize($r('app.float.app_font_body'))
-              .fontColor($r('app.color.app_text_primary'))
-              .backgroundColor($r('app.color.app_surface_2'))
+              .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+              .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
               .borderRadius($r('app.float.app_radius_sm'))
               .padding({ left: 12, right: 12 })
               .copyOption(CopyOptions.None)
@@ -251,8 +253,8 @@ struct ModelConfigEditPage {
               .width(72)
               .height(48)
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_text_secondary'))
-              .backgroundColor($r('app.color.app_surface_2'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+              .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
               .borderRadius($r('app.float.app_radius_sm'))
               .margin({ left: 8 })
               .onClick(() => {
@@ -280,8 +282,8 @@ struct ModelConfigEditPage {
               .width('100%')
               .height(48)
               .fontSize($r('app.float.app_font_body'))
-              .fontColor($r('app.color.app_text_primary'))
-              .backgroundColor($r('app.color.app_surface_2'))
+              .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+              .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
               .borderRadius($r('app.float.app_radius_sm'))
               .padding({ left: 12, right: 12 })
               .onChange((v: string) => {
@@ -297,16 +299,16 @@ struct ModelConfigEditPage {
             Row() {
               Text($r('app.string.model_settings_base_url_auto'))
                 .fontSize($r('app.float.app_font_body'))
-                .fontColor($r('app.color.app_text_secondary'))
+                .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               Blank()
               SymbolGlyph($r('sys.symbol.checkmark_circle'))
                 .fontSize(18)
-                .fontColor([$r('app.color.app_accent')])
+                .fontColor([ThemePalette.accentColor(this.effectiveTheme)])
             }
             .width('100%')
             .height(48)
             .padding({ left: 16, right: 16 })
-            .backgroundColor($r('app.color.app_surface_2'))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_sm'))
           } else {
             TextInput({
@@ -316,8 +318,8 @@ struct ModelConfigEditPage {
               .width('100%')
               .height(48)
               .fontSize($r('app.float.app_font_body'))
-              .fontColor($r('app.color.app_text_primary'))
-              .backgroundColor($r('app.color.app_surface_2'))
+              .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+              .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
               .borderRadius($r('app.float.app_radius_sm'))
               .padding({ left: 12, right: 12 })
               .onChange((v: string) => {
@@ -332,7 +334,7 @@ struct ModelConfigEditPage {
           .height(48)
           .fontSize($r('app.float.app_font_body'))
           .fontColor($r('app.color.app_on_accent'))
-          .backgroundColor($r('app.color.app_accent'))
+          .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
           .borderRadius($r('app.float.app_radius_sm'))
           .enabled(this.isFormReady() && !this.viewModel!.isSaving && !this.viewModel!.isTesting)
           .margin({ top: 8 })
@@ -349,7 +351,7 @@ struct ModelConfigEditPage {
             .width('100%')
             .height(48)
             .fontSize($r('app.float.app_font_body'))
-            .fontColor($r('app.color.app_accent'))
+            .fontColor(ThemePalette.accentColor(this.effectiveTheme))
             .backgroundColor($r('app.color.app_accent_surface'))
             .borderRadius($r('app.float.app_radius_sm'))
             .enabled(!this.viewModel!.isSaving && !this.viewModel!.isTesting)
@@ -378,7 +380,7 @@ struct ModelConfigEditPage {
 
         Text($r('app.string.model_settings_param_hint'))
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .width('100%')
           .padding({ top: 4, bottom: 4 })
 
@@ -390,8 +392,8 @@ struct ModelConfigEditPage {
             .width('100%')
             .height(48)
             .fontSize($r('app.float.app_font_body'))
-            .fontColor($r('app.color.app_text_primary'))
-            .backgroundColor($r('app.color.app_surface_2'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_sm'))
             .padding({ left: 12, right: 12 })
             .onChange((v: string) => {
@@ -410,8 +412,8 @@ struct ModelConfigEditPage {
             .width('100%')
             .height(48)
             .fontSize($r('app.float.app_font_body'))
-            .fontColor($r('app.color.app_text_primary'))
-            .backgroundColor($r('app.color.app_surface_2'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_sm'))
             .padding({ left: 12, right: 12 })
             .onChange((v: string) => {
@@ -430,8 +432,8 @@ struct ModelConfigEditPage {
             .width('100%')
             .height(48)
             .fontSize($r('app.float.app_font_body'))
-            .fontColor($r('app.color.app_text_primary'))
-            .backgroundColor($r('app.color.app_surface_2'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_sm'))
             .padding({ left: 12, right: 12 })
             .onChange((v: string) => {
@@ -482,7 +484,7 @@ struct ModelConfigEditPage {
           .height(48)
           .fontSize($r('app.float.app_font_body'))
           .fontColor($r('app.color.app_danger'))
-          .backgroundColor($r('app.color.app_surface_2'))
+          .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
           .borderRadius($r('app.float.app_radius_sm'))
           .enabled(!this.viewModel!.isSaving && !this.viewModel!.isTesting)
           .onClick(() => {
@@ -508,7 +510,7 @@ struct ModelConfigEditPage {
       }
       .width('100%')
       .padding({ left: 16, right: 16, top: 12, bottom: this.navigationBarHeight + 24 })
-      .backgroundColor($r('app.color.page_background'))
+      .backgroundColor(ThemePalette.pageBackgroundColor(this.effectiveTheme))
     }
   }
 
@@ -519,11 +521,11 @@ struct ModelConfigEditPage {
         Text($r('app.string.model_settings_provider_sheet_title'))
           .fontSize($r('app.float.app_font_subtitle'))
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         Blank()
         SymbolGlyph($r('sys.symbol.xmark'))
           .fontSize(22)
-          .fontColor([$r('app.color.app_text_secondary')])
+          .fontColor([ThemePalette.textSecondaryColor(this.effectiveTheme)])
           .onClick(() => {
             this.viewModel!.closeProviderSheet();
           })
@@ -541,7 +543,7 @@ struct ModelConfigEditPage {
                 Text(option.displayName)
                   .fontSize($r('app.float.app_font_body'))
                   .fontColor(this.viewModel!.providerType === option.type
-                    ? $r('app.color.app_accent') : $r('app.color.app_text_primary'))
+                    ? ThemePalette.accentColor(this.effectiveTheme) : ThemePalette.textPrimaryColor(this.effectiveTheme))
                   .fontWeight(this.viewModel!.providerType === option.type
                     ? FontWeight.Medium : FontWeight.Normal)
               }
@@ -551,14 +553,14 @@ struct ModelConfigEditPage {
               if (this.viewModel!.providerType === option.type) {
                 SymbolGlyph($r('sys.symbol.checkmark'))
                   .fontSize(20)
-                  .fontColor([$r('app.color.app_accent')])
+                  .fontColor([ThemePalette.accentColor(this.effectiveTheme)])
               }
             }
             .width('100%')
             .height(56)
             .padding({ left: 16, right: 16 })
             .backgroundColor(this.viewModel!.providerType === option.type
-              ? $r('app.color.app_accent_surface') : $r('app.color.app_surface_1'))
+              ? $r('app.color.app_accent_surface') : ThemePalette.surface1Color(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_sm'))
             .onClick(() => {
               this.viewModel!.selectProviderFromSheet(option.type);
@@ -573,7 +575,7 @@ struct ModelConfigEditPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
     .padding({ bottom: 24 })
   }
 
@@ -584,11 +586,11 @@ struct ModelConfigEditPage {
         Text($r('app.string.model_settings_model_sheet_title'))
           .fontSize($r('app.float.app_font_subtitle'))
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         Blank()
         SymbolGlyph($r('sys.symbol.xmark'))
           .fontSize(22)
-          .fontColor([$r('app.color.app_text_secondary')])
+          .fontColor([ThemePalette.textSecondaryColor(this.effectiveTheme)])
           .onClick(() => {
             this.viewModel!.closeModelSheet();
           })
@@ -607,13 +609,13 @@ struct ModelConfigEditPage {
                   Text(model.displayName)
                     .fontSize($r('app.float.app_font_body'))
                     .fontColor(index === this.viewModel!.selectedModelIndex
-                      ? $r('app.color.app_accent') : $r('app.color.app_text_primary'))
+                      ? ThemePalette.accentColor(this.effectiveTheme) : ThemePalette.textPrimaryColor(this.effectiveTheme))
                     .fontWeight(index === this.viewModel!.selectedModelIndex
                       ? FontWeight.Medium : FontWeight.Normal)
                   if (model.description !== undefined) {
                     Text(model.description)
                       .fontSize($r('app.float.app_font_caption'))
-                      .fontColor($r('app.color.app_text_secondary'))
+                      .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
                       .margin({ top: 2 })
                   }
                 }
@@ -623,13 +625,13 @@ struct ModelConfigEditPage {
                 if (index === this.viewModel!.selectedModelIndex) {
                   SymbolGlyph($r('sys.symbol.checkmark'))
                     .fontSize(20)
-                    .fontColor([$r('app.color.app_accent')])
+                    .fontColor([ThemePalette.accentColor(this.effectiveTheme)])
                 }
               }
               .width('100%')
               .padding(16)
               .backgroundColor(index === this.viewModel!.selectedModelIndex
-                ? $r('app.color.app_accent_surface') : $r('app.color.app_surface_1'))
+                ? $r('app.color.app_accent_surface') : ThemePalette.surface1Color(this.effectiveTheme))
               .borderRadius($r('app.float.app_radius_sm'))
               .onClick(() => {
                 this.viewModel!.selectModelFromSheet(index);
@@ -645,7 +647,7 @@ struct ModelConfigEditPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
     .padding({ bottom: 24 })
   }
 
@@ -653,7 +655,7 @@ struct ModelConfigEditPage {
   fieldLabel(label: Resource) {
     Text(label)
       .fontSize($r('app.float.app_font_caption'))
-      .fontColor($r('app.color.app_text_secondary'))
+      .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
       .margin({ bottom: 6 })
   }
 
@@ -662,13 +664,13 @@ struct ModelConfigEditPage {
     Row() {
       Text(label)
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
       Text(' · ')
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
       Text(hint)
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
     }
     .margin({ bottom: 6 })
   }
@@ -679,22 +681,22 @@ struct ModelConfigEditPage {
       if (valueProvider().length > 0) {
         Text(valueProvider())
           .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .layoutWeight(1)
       } else {
         Text($r('app.string.model_settings_select_provider_hint'))
           .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .layoutWeight(1)
       }
       SymbolGlyph($r('sys.symbol.chevron_right'))
         .fontSize(18)
-        .fontColor([$r('app.color.app_text_tertiary')])
+        .fontColor([ThemePalette.textTertiaryColor(this.effectiveTheme)])
     }
     .width('100%')
     .height(48)
     .padding({ left: 16, right: 16 })
-    .backgroundColor($r('app.color.app_surface_2'))
+    .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
     .borderRadius($r('app.float.app_radius_sm'))
     .onClick(onClick)
   }
@@ -705,10 +707,10 @@ struct ModelConfigEditPage {
       Column() {
         Text(title)
           .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         Text(desc)
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .margin({ top: 2 })
       }
       .alignItems(HorizontalAlign.Start)
@@ -719,7 +721,7 @@ struct ModelConfigEditPage {
     }
     .width('100%')
     .padding(16)
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
     .borderRadius($r('app.float.app_radius_md'))
     .onClick(() => {
       onChange(!isOn);
@@ -734,7 +736,7 @@ struct ModelConfigEditPage {
         .fontColor($r('app.color.app_danger'))
         .padding(12)
         .width('100%')
-        .backgroundColor($r('app.color.app_surface_2'))
+        .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_sm'))
     }
     if (this.viewModel!.statusMessage.length > 0) {
@@ -743,7 +745,7 @@ struct ModelConfigEditPage {
         .fontColor($r('app.color.model_settings_success'))
         .padding(12)
         .width('100%')
-        .backgroundColor($r('app.color.app_surface_2'))
+        .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_sm'))
     }
   }
@@ -801,6 +803,7 @@ struct ModelConfigEditPage {
 @Component
 struct FormSection {
   @BuilderParam content: () => void;
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
 
   build() {
     Column() {
@@ -808,7 +811,7 @@ struct FormSection {
     }
     .width('100%')
     .padding(16)
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
     .borderRadius($r('app.float.app_radius_md'))
     .alignItems(HorizontalAlign.Start)
   }

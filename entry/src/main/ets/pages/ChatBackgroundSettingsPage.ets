@@ -18,6 +18,7 @@ import { AppServices } from '../services/AppServices';
 import { ChatBackgroundConfig, ChatBackgroundService, ReasoningEffort } from '../services/ChatBackgroundService';
 import { Logger } from '../utils/Logger';
 import { promptAction } from '@kit.ArkUI';
+import { ThemePalette } from '../theme/ThemePalette';
 
 const LOG_TAG: string = 'ChatBackgroundSettingsPage';
 
@@ -54,6 +55,7 @@ struct ChatBackgroundSettingsPage {
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   /** 底部导航栏/手势条避让高度 */
   @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
 
   aboutToAppear(): void {
     try {
@@ -97,27 +99,27 @@ struct ChatBackgroundSettingsPage {
           // 预览区域
           this.previewArea()
 
-          Divider().color($r('app.color.app_divider')).margin({ top: 16, bottom: 8 })
+          Divider().color(ThemePalette.dividerColor(this.effectiveTheme)).margin({ top: 16, bottom: 8 })
 
           // 启用开关
           this.enableRow()
 
-          Divider().color($r('app.color.app_divider')).margin({ top: 4, bottom: 4 })
+          Divider().color(ThemePalette.dividerColor(this.effectiveTheme)).margin({ top: 4, bottom: 4 })
 
           // 模糊度 Slider
           this.blurRow()
 
-          Divider().color($r('app.color.app_divider')).margin({ top: 4, bottom: 4 })
+          Divider().color(ThemePalette.dividerColor(this.effectiveTheme)).margin({ top: 4, bottom: 4 })
 
           // 暗化程度 Slider
           this.dimRow()
 
-          Divider().color($r('app.color.app_divider')).margin({ top: 4, bottom: 4 })
+          Divider().color(ThemePalette.dividerColor(this.effectiveTheme)).margin({ top: 4, bottom: 4 })
 
           // 思考强度
           this.reasoningEffortRow()
 
-          Divider().color($r('app.color.app_divider')).margin({ top: 4, bottom: 4 })
+          Divider().color(ThemePalette.dividerColor(this.effectiveTheme)).margin({ top: 4, bottom: 4 })
 
           // 操作按钮
           this.actionButtons()
@@ -133,7 +135,7 @@ struct ChatBackgroundSettingsPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.page_background'))
+    .backgroundColor(ThemePalette.pageBackgroundColor(this.effectiveTheme))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 
@@ -143,7 +145,7 @@ struct ChatBackgroundSettingsPage {
       Button($r('app.string.branch_map_back'))
         .fontSize(14)
         .backgroundColor(Color.Transparent)
-        .fontColor($r('app.color.app_accent'))
+        .fontColor(ThemePalette.accentColor(this.effectiveTheme))
         .onClick(() => {
           router.back();
         })
@@ -153,7 +155,7 @@ struct ChatBackgroundSettingsPage {
       Text($r('app.string.chat_background_title'))
         .fontSize(18)
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
 
       Blank()
 
@@ -164,7 +166,7 @@ struct ChatBackgroundSettingsPage {
     }
     .width('100%')
     .padding({ left: 12, right: 12, top: this.statusBarHeight + 4, bottom: 8 })
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
     .alignItems(VerticalAlign.Center)
   }
 
@@ -214,11 +216,11 @@ struct ChatBackgroundSettingsPage {
             .margin({ bottom: 8 })
           Text($r('app.string.chat_background_no_image'))
             .fontSize(14)
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         }
         .width('100%')
         .height(220)
-        .backgroundColor($r('app.color.app_surface_2'))
+        .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
         .borderRadius(12)
         .justifyContent(FlexAlign.Center)
         .alignItems(HorizontalAlign.Center)
@@ -234,10 +236,10 @@ struct ChatBackgroundSettingsPage {
       Column() {
         Text($r('app.string.chat_background_enable'))
           .fontSize(16)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         Text($r('app.string.chat_background_enable_desc'))
           .fontSize(12)
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .margin({ top: 2 })
       }
       .alignItems(HorizontalAlign.Start)
@@ -259,11 +261,11 @@ struct ChatBackgroundSettingsPage {
       Row() {
         Text($r('app.string.chat_background_blur'))
           .fontSize(16)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .layoutWeight(1)
         Text(this.config.blur.toString())
           .fontSize(14)
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .width(40)
           .textAlign(TextAlign.End)
       }
@@ -277,9 +279,9 @@ struct ChatBackgroundSettingsPage {
         step: 1,
         style: SliderStyle.OutSet
       })
-        .blockColor($r('app.color.app_accent'))
-        .trackColor($r('app.color.app_surface_2'))
-        .selectedColor($r('app.color.app_accent'))
+        .blockColor(ThemePalette.accentColor(this.effectiveTheme))
+        .trackColor(ThemePalette.surface2Color(this.effectiveTheme))
+        .selectedColor(ThemePalette.accentColor(this.effectiveTheme))
         .width('100%')
         .onChange((value: number, mode: SliderChangeMode) => {
           this.onBlurChange(value);
@@ -295,11 +297,11 @@ struct ChatBackgroundSettingsPage {
       Row() {
         Text($r('app.string.chat_background_dim'))
           .fontSize(16)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .layoutWeight(1)
         Text(this.config.dim.toString())
           .fontSize(14)
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .width(40)
           .textAlign(TextAlign.End)
       }
@@ -313,9 +315,9 @@ struct ChatBackgroundSettingsPage {
         step: 1,
         style: SliderStyle.OutSet
       })
-        .blockColor($r('app.color.app_accent'))
-        .trackColor($r('app.color.app_surface_2'))
-        .selectedColor($r('app.color.app_accent'))
+        .blockColor(ThemePalette.accentColor(this.effectiveTheme))
+        .trackColor(ThemePalette.surface2Color(this.effectiveTheme))
+        .selectedColor(ThemePalette.accentColor(this.effectiveTheme))
         .width('100%')
         .onChange((value: number, mode: SliderChangeMode) => {
           this.onDimChange(value);
@@ -331,11 +333,11 @@ struct ChatBackgroundSettingsPage {
       Row() {
         Text('思考强度')
           .fontSize(16)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .layoutWeight(1)
         Text(this.getEffortLabel(this.reasoningEffort))
           .fontSize(14)
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
       }
       .width('100%')
       .margin({ bottom: 4 })
@@ -346,11 +348,11 @@ struct ChatBackgroundSettingsPage {
             Text(opt.label)
               .fontSize(14)
               .fontColor(this.reasoningEffort === opt.value
-                ? $r('app.color.app_accent')
-                : $r('app.color.app_text_primary'))
+                ? ThemePalette.accentColor(this.effectiveTheme)
+                : ThemePalette.textPrimaryColor(this.effectiveTheme))
             Text(opt.desc)
               .fontSize(11)
-              .fontColor($r('app.color.app_text_tertiary'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
               .margin({ top: 2 })
           }
           .alignItems(HorizontalAlign.Start)
@@ -379,7 +381,7 @@ struct ChatBackgroundSettingsPage {
       Button($r('app.string.chat_background_import'))
         .fontSize(16)
         .fontColor($r('app.color.app_on_accent'))
-        .backgroundColor($r('app.color.app_accent'))
+        .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
         .borderRadius(24)
         .width('100%')
         .height(48)

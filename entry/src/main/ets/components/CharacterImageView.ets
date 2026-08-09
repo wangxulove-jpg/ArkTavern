@@ -16,6 +16,8 @@
  * - 修改原始图片文件
  */
 
+import { ThemePalette } from '../theme/ThemePalette';
+
 @Component
 export struct CharacterImageView {
   /** 图片本地 URI(file://...),为空时显示占位 */
@@ -35,6 +37,8 @@ export struct CharacterImageView {
 
   /** 图片加载失败状态(内部) */
   @State loadFailed: boolean = false;
+  /** 当前有效主题 */
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
 
   aboutToAppear(): void {
     this.loadFailed = false;
@@ -77,7 +81,7 @@ export struct CharacterImageView {
     }
     .width(this.imgWidth)
     .height(this.imgHeight)
-    .backgroundColor($r('app.color.app_accent'))
+    .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
     .borderRadius(this.imgBorderRadius)
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)

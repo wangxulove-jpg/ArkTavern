@@ -30,6 +30,7 @@ import {
 import { WorldStatus } from '../../models/world/World';
 import { EmptyStateView } from '../../components/EmptyStateView';
 import { Logger } from '../../utils/Logger';
+import { ThemePalette } from '../../theme/ThemePalette';
 
 const LOG_TAG: string = 'WorldEdgeEditPage';
 
@@ -59,6 +60,7 @@ struct WorldEdgeEditPage {
   @State private fromMissing: boolean = false;
   @State private toMissing: boolean = false;
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
 
   async aboutToAppear(): Promise<void> {
     try {
@@ -154,7 +156,7 @@ struct WorldEdgeEditPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.app_bg'))
+    .backgroundColor(ThemePalette.pageBgColor(this.effectiveTheme))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 
@@ -163,7 +165,7 @@ struct WorldEdgeEditPage {
     Row() {
       Button($r('app.string.world_cancel'))
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_accent'))
+        .fontColor(ThemePalette.accentColor(this.effectiveTheme))
         .backgroundColor(Color.Transparent)
         .height(36)
         .padding({ left: 0, right: 8 })
@@ -177,7 +179,7 @@ struct WorldEdgeEditPage {
         : $r('app.string.world_edge_edit_title_edit'))
         .fontSize($r('app.float.app_font_title'))
         .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .layoutWeight(1)
@@ -208,7 +210,7 @@ struct WorldEdgeEditPage {
   @Builder
   loadingView(): void {
     Column() {
-      LoadingProgress().width(40).height(40).color($r('app.color.app_accent'))
+      LoadingProgress().width(40).height(40).color(ThemePalette.accentColor(this.effectiveTheme))
     }
     .width('100%')
     .layoutWeight(1)
@@ -223,7 +225,7 @@ struct WorldEdgeEditPage {
       Button($r('app.string.world_back_to_list'))
         .fontSize($r('app.float.app_font_body'))
         .fontColor($r('app.color.app_on_accent'))
-        .backgroundColor($r('app.color.app_accent'))
+        .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_sm'))
         .height(40)
         .padding({ left: 24, right: 24 })
@@ -246,7 +248,7 @@ struct WorldEdgeEditPage {
       Button($r('app.string.world_home_reload'))
         .fontSize($r('app.float.app_font_body'))
         .fontColor($r('app.color.app_on_accent'))
-        .backgroundColor($r('app.color.app_accent'))
+        .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_sm'))
         .height(40)
         .padding({ left: 24, right: 24 })
@@ -270,7 +272,7 @@ struct WorldEdgeEditPage {
         // 起点地点
         Text($r('app.string.world_edge_from_location_label'))
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .width('100%')
           .margin({ bottom: 6 })
 
@@ -279,9 +281,9 @@ struct WorldEdgeEditPage {
           .fontColor(this.fromMissing
             ? $r('app.color.app_danger')
             : (this.fromLocationId.length === 0
-              ? $r('app.color.app_text_tertiary')
-              : $r('app.color.app_text_primary')))
-          .backgroundColor($r('app.color.app_surface_1'))
+              ? ThemePalette.textTertiaryColor(this.effectiveTheme)
+              : ThemePalette.textPrimaryColor(this.effectiveTheme)))
+          .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
           .borderRadius($r('app.float.app_radius_sm'))
           .height(48)
           .width('100%')
@@ -297,7 +299,7 @@ struct WorldEdgeEditPage {
         // 终点地点
         Text($r('app.string.world_edge_to_location_label'))
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .width('100%')
           .margin({ top: 16, bottom: 6 })
 
@@ -306,9 +308,9 @@ struct WorldEdgeEditPage {
           .fontColor(this.toMissing
             ? $r('app.color.app_danger')
             : (this.toLocationId.length === 0
-              ? $r('app.color.app_text_tertiary')
-              : $r('app.color.app_text_primary')))
-          .backgroundColor($r('app.color.app_surface_1'))
+              ? ThemePalette.textTertiaryColor(this.effectiveTheme)
+              : ThemePalette.textPrimaryColor(this.effectiveTheme)))
+          .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
           .borderRadius($r('app.float.app_radius_sm'))
           .height(48)
           .width('100%')
@@ -324,7 +326,7 @@ struct WorldEdgeEditPage {
         // 连接类型:单向 / 双向
         Text($r('app.string.world_edge_bidirectional'))
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .width('100%')
           .margin({ top: 16, bottom: 6 })
 
@@ -332,11 +334,11 @@ struct WorldEdgeEditPage {
           Button($r('app.string.world_edge_unidirectional'))
             .fontSize($r('app.float.app_font_caption'))
             .backgroundColor(!this.isBidirectional
-              ? $r('app.color.app_accent')
-              : $r('app.color.app_surface_2'))
+              ? ThemePalette.accentColor(this.effectiveTheme)
+              : ThemePalette.surface2Color(this.effectiveTheme))
             .fontColor(!this.isBidirectional
               ? $r('app.color.app_on_accent')
-              : $r('app.color.app_text_secondary'))
+              : ThemePalette.textSecondaryColor(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_sm'))
             .height(40)
             .layoutWeight(1)
@@ -353,11 +355,11 @@ struct WorldEdgeEditPage {
           Button($r('app.string.world_edge_bidirectional'))
             .fontSize($r('app.float.app_font_caption'))
             .backgroundColor(this.isBidirectional
-              ? $r('app.color.app_accent')
-              : $r('app.color.app_surface_2'))
+              ? ThemePalette.accentColor(this.effectiveTheme)
+              : ThemePalette.surface2Color(this.effectiveTheme))
             .fontColor(this.isBidirectional
               ? $r('app.color.app_on_accent')
-              : $r('app.color.app_text_secondary'))
+              : ThemePalette.textSecondaryColor(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_sm'))
             .height(40)
             .layoutWeight(1)
@@ -379,7 +381,7 @@ struct WorldEdgeEditPage {
         if (!this.isCreateMode) {
           Text($r('app.string.model_settings_enabled'))
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
             .width('100%')
             .margin({ top: 16, bottom: 6 })
 
@@ -387,11 +389,11 @@ struct WorldEdgeEditPage {
             Button($r('app.string.world_edge_enable'))
               .fontSize($r('app.float.app_font_caption'))
               .backgroundColor(this.isEnabled
-                ? $r('app.color.app_accent')
-                : $r('app.color.app_surface_2'))
+                ? ThemePalette.accentColor(this.effectiveTheme)
+                : ThemePalette.surface2Color(this.effectiveTheme))
               .fontColor(this.isEnabled
                 ? $r('app.color.app_on_accent')
-                : $r('app.color.app_text_secondary'))
+                : ThemePalette.textSecondaryColor(this.effectiveTheme))
               .borderRadius($r('app.float.app_radius_sm'))
               .height(40)
               .layoutWeight(1)
@@ -408,11 +410,11 @@ struct WorldEdgeEditPage {
             Button($r('app.string.world_edge_disable'))
               .fontSize($r('app.float.app_font_caption'))
               .backgroundColor(!this.isEnabled
-                ? $r('app.color.app_text_secondary')
-                : $r('app.color.app_surface_2'))
+                ? ThemePalette.textSecondaryColor(this.effectiveTheme)
+                : ThemePalette.surface2Color(this.effectiveTheme))
               .fontColor(!this.isEnabled
                 ? $r('app.color.app_on_accent')
-                : $r('app.color.app_text_secondary'))
+                : ThemePalette.textSecondaryColor(this.effectiveTheme))
               .borderRadius($r('app.float.app_radius_sm'))
               .height(40)
               .layoutWeight(1)
@@ -434,14 +436,14 @@ struct WorldEdgeEditPage {
         // 方向标签
         Text($r('app.string.world_edge_direction_label'))
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .width('100%')
           .margin({ top: 16, bottom: 6 })
 
         TextInput({ text: this.directionLabelInput, placeholder: $r('app.string.world_edge_direction_placeholder') })
           .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_primary'))
-          .backgroundColor($r('app.color.app_surface_1'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+          .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
           .borderRadius($r('app.float.app_radius_sm'))
           .height(48)
           .maxLength(this.viewModel !== null ? this.viewModel.getDirectionLabelMax() : 100)
@@ -458,14 +460,14 @@ struct WorldEdgeEditPage {
         // 旅行描述
         Text($r('app.string.world_edge_travel_label'))
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .width('100%')
           .margin({ top: 16, bottom: 6 })
 
         TextArea({ text: this.travelDescriptionInput, placeholder: $r('app.string.world_edge_travel_placeholder') })
           .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_primary'))
-          .backgroundColor($r('app.color.app_surface_1'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+          .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
           .borderRadius($r('app.float.app_radius_sm'))
           .height(96)
           .maxLength(this.viewModel !== null ? this.viewModel.getTravelDescriptionMax() : 2000)
@@ -501,7 +503,7 @@ struct WorldEdgeEditPage {
         Button($r('app.string.world_save'))
           .fontSize($r('app.float.app_font_body'))
           .fontColor($r('app.color.app_on_accent'))
-          .backgroundColor($r('app.color.app_accent'))
+          .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
           .borderRadius($r('app.float.app_radius_sm'))
           .height(48)
           .width('100%')
@@ -545,24 +547,24 @@ struct WorldEdgeEditPage {
         Text($r('app.string.world_edge_select_from'))
           .fontSize(17)
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .margin({ bottom: 16 })
 
         if (this.locationOptions.length === 0) {
           Text('当前世界没有 Active 地点')
             .fontSize(14)
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
             .margin({ bottom: 12 })
         } else {
           ForEach(this.locationOptions, (loc: WorldEdgeLocationOptionUiModel) => {
             Button(loc.name)
               .fontSize(14)
               .backgroundColor(this.fromLocationId === loc.id
-                ? $r('app.color.app_accent')
-                : $r('app.color.app_surface_2'))
+                ? ThemePalette.accentColor(this.effectiveTheme)
+                : ThemePalette.surface2Color(this.effectiveTheme))
               .fontColor(this.fromLocationId === loc.id
                 ? $r('app.color.app_on_accent')
-                : $r('app.color.app_text_primary'))
+                : ThemePalette.textPrimaryColor(this.effectiveTheme))
               .borderRadius(8)
               .height(40)
               .width('100%')
@@ -585,7 +587,7 @@ struct WorldEdgeEditPage {
         Button($r('app.string.world_cancel'))
           .fontSize(14)
           .backgroundColor(Color.Transparent)
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .borderRadius(8)
           .height(40)
           .width('100%')
@@ -596,7 +598,7 @@ struct WorldEdgeEditPage {
       }
       .width('80%')
       .padding(20)
-      .backgroundColor($r('app.color.app_surface_1'))
+      .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
       .borderRadius(16)
     }
     .width('100%')
@@ -616,24 +618,24 @@ struct WorldEdgeEditPage {
         Text($r('app.string.world_edge_select_to'))
           .fontSize(17)
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .margin({ bottom: 16 })
 
         if (this.locationOptions.length === 0) {
           Text('当前世界没有 Active 地点')
             .fontSize(14)
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
             .margin({ bottom: 12 })
         } else {
           ForEach(this.locationOptions, (loc: WorldEdgeLocationOptionUiModel) => {
             Button(loc.name)
               .fontSize(14)
               .backgroundColor(this.toLocationId === loc.id
-                ? $r('app.color.app_accent')
-                : $r('app.color.app_surface_2'))
+                ? ThemePalette.accentColor(this.effectiveTheme)
+                : ThemePalette.surface2Color(this.effectiveTheme))
               .fontColor(this.toLocationId === loc.id
                 ? $r('app.color.app_on_accent')
-                : $r('app.color.app_text_primary'))
+                : ThemePalette.textPrimaryColor(this.effectiveTheme))
               .borderRadius(8)
               .height(40)
               .width('100%')
@@ -656,7 +658,7 @@ struct WorldEdgeEditPage {
         Button($r('app.string.world_cancel'))
           .fontSize(14)
           .backgroundColor(Color.Transparent)
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .borderRadius(8)
           .height(40)
           .width('100%')
@@ -667,7 +669,7 @@ struct WorldEdgeEditPage {
       }
       .width('80%')
       .padding(20)
-      .backgroundColor($r('app.color.app_surface_1'))
+      .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
       .borderRadius(16)
     }
     .width('100%')

@@ -35,6 +35,7 @@ import { WorldSessionParticipantSnapshot } from '../../models/world/WorldConvers
 import { WorldCharacterInstance } from '../../models/world/WorldCharacterInstance';
 import { WorldColors, WorldMetrics } from '../../components/world/WorldDesignTokens';
 import { Logger } from '../../utils/Logger';
+import { ThemePalette } from '../../theme/ThemePalette';
 
 const LOG_TAG: string = 'WorldInspectorPage';
 
@@ -81,6 +82,7 @@ struct WorldInspectorPage {
 
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navigationBarHeight') navBarHeight: number = 0;
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
 
   private inspectorService: WorldInspectorService | null = null;
   private preselectSceneId: string = '';

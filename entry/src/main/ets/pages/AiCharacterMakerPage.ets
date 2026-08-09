@@ -36,6 +36,7 @@ import {
   AiMakerState
 } from '../viewmodels/AiCharacterMakerViewModel';
 import { AiGenerationResult } from '../models/AiGenerationResult';
+import { ThemePalette } from '../theme/ThemePalette';
 
 @Entry
 @Component
@@ -47,6 +48,8 @@ struct AiCharacterMakerPage {
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   /** 底部导航栏/手势条避让高度 */
   @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
+  /** 当前有效主题 */
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
   /** 草稿保存防抖定时器 ID */
   private draftTimerId: number = -1;
 
@@ -229,7 +232,7 @@ struct AiCharacterMakerPage {
       }
       .width('100%')
       .height('100%')
-      .backgroundColor($r('app.color.app_bg'))
+      .backgroundColor(ThemePalette.pageBgColor(this.effectiveTheme))
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
       // 隐私提示对话框(覆盖整个页面)
@@ -249,7 +252,7 @@ struct AiCharacterMakerPage {
       Button($r('app.string.character_edit_back'))
         .fontSize($r('app.float.app_font_body'))
         .backgroundColor(Color.Transparent)
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .height(40)
         .padding({ left: 8, right: 8 })
         .onClick(() => {
@@ -259,7 +262,7 @@ struct AiCharacterMakerPage {
       Text('AI 制作角色卡')
         .fontSize($r('app.float.app_font_title'))
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .layoutWeight(1)
         .textAlign(TextAlign.Center)
         .maxLines(1)
@@ -277,7 +280,7 @@ struct AiCharacterMakerPage {
     .width('100%')
     .padding({ left: 8, right: 8, top: this.statusBarHeight + 4, bottom: 4 })
     .alignItems(VerticalAlign.Center)
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
   }
 
   // ===== 表单视图(卡片化分组) =====
@@ -289,7 +292,7 @@ struct AiCharacterMakerPage {
         // ===== 顶部说明条 =====
         Text('输入角色创意,由你已配置的 AI 模型生成标准 Tavern Card V2。仅需创意描述,其余选项均为可选辅助。')
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .backgroundColor($r('app.color.app_accent_surface'))
           .width('100%')
           .padding({
@@ -307,8 +310,8 @@ struct AiCharacterMakerPage {
             text: this.viewModel !== null ? this.viewModel!.conceptDescription : ''
           })
             .fontSize($r('app.float.app_font_body'))
-            .fontColor($r('app.color.app_text_primary'))
-            .backgroundColor($r('app.color.app_surface_2'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_sm'))
             .height(120)
             .width('100%')
@@ -319,7 +322,7 @@ struct AiCharacterMakerPage {
         }
         .width('100%')
         .padding($r('app.float.app_spacing_16'))
-        .backgroundColor($r('app.color.app_surface_1'))
+        .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_lg'))
         .margin({
           left: $r('app.float.app_spacing_12'),
@@ -338,8 +341,8 @@ struct AiCharacterMakerPage {
             text: this.viewModel !== null ? this.viewModel!.name : ''
           })
             .fontSize($r('app.float.app_font_body'))
-            .fontColor($r('app.color.app_text_primary'))
-            .backgroundColor($r('app.color.app_surface_2'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_sm'))
             .height(48)
             .width('100%')
@@ -358,8 +361,8 @@ struct AiCharacterMakerPage {
             text: this.viewModel !== null ? this.viewModel!.backstory : ''
           })
             .fontSize($r('app.float.app_font_body'))
-            .fontColor($r('app.color.app_text_primary'))
-            .backgroundColor($r('app.color.app_surface_2'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_sm'))
             .height(80)
             .width('100%')
@@ -378,8 +381,8 @@ struct AiCharacterMakerPage {
             text: this.viewModel !== null ? this.viewModel!.personalityKeywords : ''
           })
             .fontSize($r('app.float.app_font_body'))
-            .fontColor($r('app.color.app_text_primary'))
-            .backgroundColor($r('app.color.app_surface_2'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_sm'))
             .height(48)
             .width('100%')
@@ -398,8 +401,8 @@ struct AiCharacterMakerPage {
             text: this.viewModel !== null ? this.viewModel!.relationshipWithUser : ''
           })
             .fontSize($r('app.float.app_font_body'))
-            .fontColor($r('app.color.app_text_primary'))
-            .backgroundColor($r('app.color.app_surface_2'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_sm'))
             .height(48)
             .width('100%')
@@ -418,8 +421,8 @@ struct AiCharacterMakerPage {
             text: this.viewModel !== null ? this.viewModel!.speechStyle : ''
           })
             .fontSize($r('app.float.app_font_body'))
-            .fontColor($r('app.color.app_text_primary'))
-            .backgroundColor($r('app.color.app_surface_2'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_sm'))
             .height(48)
             .width('100%')
@@ -433,7 +436,7 @@ struct AiCharacterMakerPage {
         }
         .width('100%')
         .padding($r('app.float.app_spacing_16'))
-        .backgroundColor($r('app.color.app_surface_1'))
+        .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_lg'))
         .margin({
           left: $r('app.float.app_spacing_12'),
@@ -459,7 +462,7 @@ struct AiCharacterMakerPage {
         }
         .width('100%')
         .padding($r('app.float.app_spacing_16'))
-        .backgroundColor($r('app.color.app_surface_1'))
+        .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_lg'))
         .margin({
           left: $r('app.float.app_spacing_12'),
@@ -472,7 +475,7 @@ struct AiCharacterMakerPage {
           Text(this.viewModel!.errorMessage)
             .fontSize($r('app.float.app_font_caption'))
             .fontColor($r('app.color.app_danger'))
-            .backgroundColor($r('app.color.app_surface_1'))
+            .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
             .width('100%')
             .padding({
               left: $r('app.float.app_spacing_16'),
@@ -509,8 +512,8 @@ struct AiCharacterMakerPage {
     Row() {
       Button('放弃')
         .fontSize($r('app.float.app_font_body'))
-        .backgroundColor($r('app.color.app_surface_2'))
-        .fontColor($r('app.color.app_text_secondary'))
+        .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_md'))
         .height(48)
         .layoutWeight(1)
@@ -520,7 +523,7 @@ struct AiCharacterMakerPage {
 
       Button('生成角色卡')
         .fontSize($r('app.float.app_font_body'))
-        .backgroundColor($r('app.color.app_accent'))
+        .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
         .fontColor($r('app.color.app_on_accent'))
         .borderRadius($r('app.float.app_radius_md'))
         .height(48)
@@ -537,7 +540,7 @@ struct AiCharacterMakerPage {
       top: $r('app.float.app_spacing_12'),
       bottom: this.navigationBarHeight + 12
     })
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
   }
 
   // ===== 生成中视图 =====
@@ -548,18 +551,18 @@ struct AiCharacterMakerPage {
       LoadingProgress()
         .width(48)
         .height(48)
-        .color($r('app.color.app_accent'))
+        .color(ThemePalette.accentColor(this.effectiveTheme))
         .margin({ top: 80 })
 
       Text('正在生成角色卡...')
         .fontSize($r('app.float.app_font_subtitle'))
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .margin({ top: 16 })
 
       Text('AI 正在根据你的创意生成标准 Tavern Card V2 JSON,生成期间不会写入数据库')
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .textAlign(TextAlign.Center)
         .width('80%')
         .margin({ top: 8 })
@@ -568,14 +571,14 @@ struct AiCharacterMakerPage {
       if (this.viewModel !== null && this.viewModel!.accumulatedText.length > 0) {
         Text('已接收 ' + this.viewModel!.accumulatedText.length.toString() + ' 字符')
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .margin({ top: 8 })
       }
 
       // 停止按钮
       Button('停止生成')
         .fontSize($r('app.float.app_font_body'))
-        .backgroundColor($r('app.color.app_surface_2'))
+        .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
         .fontColor($r('app.color.app_danger'))
         .borderRadius($r('app.float.app_radius_md'))
         .height(44)
@@ -602,14 +605,14 @@ struct AiCharacterMakerPage {
           Text('隐私提示')
             .fontSize(17)
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .width('100%')
             .textAlign(TextAlign.Center)
             .margin({ bottom: 12 })
 
           Text('你的角色创意将发送到当前聊天配置的 AI 模型,由该模型生成角色卡草案。\n\n请确保你已在模型设置中配置好 Provider 与 API Key。ArkTavern 不会记录你的 API Key、完整创意内容或完整模型响应。')
             .fontSize(14)
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .width('100%')
             .margin({ bottom: 20 })
 
@@ -617,7 +620,7 @@ struct AiCharacterMakerPage {
             Button('取消')
               .fontSize(14)
               .backgroundColor(Color.Transparent)
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .height(40)
               .layoutWeight(1)
               .onClick(() => {
@@ -626,7 +629,7 @@ struct AiCharacterMakerPage {
 
             Button('我已了解,开始生成')
               .fontSize(14)
-              .backgroundColor($r('app.color.app_accent'))
+              .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
               .fontColor($r('app.color.app_on_accent'))
               .borderRadius($r('app.float.app_radius_sm'))
               .height(40)
@@ -640,7 +643,7 @@ struct AiCharacterMakerPage {
         }
         .width('85%')
         .padding(20)
-        .backgroundColor($r('app.color.app_surface_1'))
+        .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_lg'))
       }
       .width('100%')
@@ -663,7 +666,7 @@ struct AiCharacterMakerPage {
         Text(title)
           .fontSize($r('app.float.app_font_subtitle'))
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         if (required) {
           Text(' *')
             .fontSize($r('app.float.app_font_subtitle'))
@@ -675,7 +678,7 @@ struct AiCharacterMakerPage {
       if (subtitle.length > 0) {
         Text(subtitle)
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .width('100%')
           .margin({ top: $r('app.float.app_spacing_4') })
       }
@@ -692,13 +695,13 @@ struct AiCharacterMakerPage {
       Text(label)
         .fontSize($r('app.float.app_font_body'))
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .width('100%')
 
       if (hint.length > 0) {
         Text(hint)
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .width('100%')
           .margin({ top: $r('app.float.app_spacing_4') })
       }
@@ -715,11 +718,11 @@ struct AiCharacterMakerPage {
       Column() {
         Text(title)
           .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         if (subtitle.length > 0) {
           Text(subtitle)
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
             .margin({ top: 2 })
         }
       }
@@ -727,7 +730,7 @@ struct AiCharacterMakerPage {
       .layoutWeight(1)
 
       Toggle({ type: ToggleType.Switch, isOn: value })
-        .selectedColor($r('app.color.app_accent'))
+        .selectedColor(ThemePalette.accentColor(this.effectiveTheme))
         .onChange((v: boolean) => onChange(v))
     }
     .width('100%')
@@ -746,7 +749,7 @@ struct AiCharacterMakerPage {
       LoadingProgress()
         .width(40)
         .height(40)
-        .color($r('app.color.app_accent'))
+        .color(ThemePalette.accentColor(this.effectiveTheme))
     }
     .width('100%')
     .layoutWeight(1)

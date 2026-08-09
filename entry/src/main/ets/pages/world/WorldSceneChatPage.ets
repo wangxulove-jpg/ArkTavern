@@ -34,6 +34,7 @@ import { WorldStatusChip } from '../../components/world/WorldStatusChip';
 import { WorldPrimaryButton } from '../../components/world/WorldPrimaryButton';
 import { WorldSecondaryButton } from '../../components/world/WorldSecondaryButton';
 import { Logger } from '../../utils/Logger';
+import { ThemePalette } from '../../theme/ThemePalette';
 
 const LOG_TAG: string = 'WorldSceneChatPage';
 
@@ -62,6 +63,7 @@ struct WorldSceneChatPage {
 
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navBarHeight') navBarHeight: number = 0;
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
   @StorageProp(WORLD_SCENE_CHAT_REFRESH_TOKEN_KEY) @Watch('onRefreshTokenChange')
   sceneRefreshToken: number = 0;
 
@@ -207,18 +209,18 @@ struct WorldSceneChatPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.world_bg'))
+    .backgroundColor(ThemePalette.pageBgColor(this.effectiveTheme))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .bindSheet(this.endConfirmVisible, this.endConfirmSheet, {
       height: SheetSize.FIT_CONTENT,
       dragBar: true,
-      backgroundColor: $r('app.color.world_surface_1'),
+      backgroundColor: ThemePalette.worldSurfaceColor(this.effectiveTheme),
       onDisappear: () => { this.endConfirmVisible = false; }
     })
     .bindSheet(this.characterSheetInstanceId.length > 0, this.characterInfoSheet, {
       height: SheetSize.FIT_CONTENT,
       dragBar: true,
-      backgroundColor: $r('app.color.world_surface_1'),
+      backgroundColor: ThemePalette.worldSurfaceColor(this.effectiveTheme),
       onDisappear: () => { this.characterSheetInstanceId = ''; }
     })
   }
@@ -229,7 +231,7 @@ struct WorldSceneChatPage {
       Row() {
         Button('←')
           .fontSize(22)
-          .fontColor($r('app.color.world_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .backgroundColor(Color.Transparent)
           .width(40)
           .height(40)
@@ -241,7 +243,7 @@ struct WorldSceneChatPage {
             Text(this.detail.sceneName)
               .fontSize($r('app.float.world_font_title'))
               .fontWeight(FontWeight.Bold)
-              .fontColor($r('app.color.world_text_primary'))
+              .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
             Row() {
@@ -251,18 +253,18 @@ struct WorldSceneChatPage {
               })
               Text('会话 #' + this.detail.sessionSequenceNumber.toString())
                 .fontSize($r('app.float.world_font_micro'))
-                .fontColor($r('app.color.world_text_tertiary'))
+                .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
                 .margin({ left: 6 })
               if (this.detail.characters.length > 0) {
                 if (this.detail.characters.length === 1) {
                   Text(this.detail.characters[0].displayName)
                     .fontSize($r('app.float.world_font_micro'))
-                    .fontColor($r('app.color.world_text_secondary'))
+                    .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
                     .margin({ left: 6 })
                 } else {
                   Text(this.detail.participantCount.toString() + '名角色')
                     .fontSize($r('app.float.world_font_micro'))
-                    .fontColor($r('app.color.world_text_secondary'))
+                    .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
                     .margin({ left: 6 })
                 }
               }
@@ -272,7 +274,7 @@ struct WorldSceneChatPage {
             Text($r('app.string.world_scene_chat_title'))
               .fontSize($r('app.float.world_font_title'))
               .fontWeight(FontWeight.Bold)
-              .fontColor($r('app.color.world_text_primary'))
+              .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           }
         }
         .alignItems(HorizontalAlign.Start)
@@ -283,8 +285,8 @@ struct WorldSceneChatPage {
           && !this.isGenerating) {
           Text('⋯')
             .fontSize(22)
-            .fontColor($r('app.color.world_text_secondary'))
-            .backgroundColor($r('app.color.world_surface_1'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.worldSurfaceColor(this.effectiveTheme))
             .borderRadius($r('app.float.world_radius_chip'))
             .width(36)
             .height(36)
@@ -306,7 +308,7 @@ struct WorldSceneChatPage {
       }
     }
     .width('100%')
-    .backgroundColor($r('app.color.world_surface_1'))
+    .backgroundColor(ThemePalette.worldSurfaceColor(this.effectiveTheme))
   }
 
   @Builder
@@ -314,7 +316,7 @@ struct WorldSceneChatPage {
     if (characters.length === 0) {
       Text($r('app.string.world_scene_no_characters'))
         .fontSize($r('app.float.world_font_caption'))
-        .fontColor($r('app.color.world_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .width('100%')
         .textAlign(TextAlign.Center)
         .padding({ top: 8, bottom: 8 })
@@ -349,7 +351,7 @@ struct WorldSceneChatPage {
         })
         if (!c.isActive) {
           Circle({ width: 10, height: 10 })
-            .fill($r('app.color.world_text_tertiary'))
+            .fill(ThemePalette.textTertiaryColor(this.effectiveTheme))
             .position({ x: 26, y: 26 })
         }
       }
@@ -357,7 +359,7 @@ struct WorldSceneChatPage {
       .height(36)
       Text(c.displayName)
         .fontSize(10)
-        .fontColor(c.isActive ? $r('app.color.world_text_primary') : $r('app.color.world_text_tertiary'))
+        .fontColor(c.isActive ? ThemePalette.textPrimaryColor(this.effectiveTheme) : ThemePalette.textTertiaryColor(this.effectiveTheme))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .margin({ top: 2 })
@@ -431,7 +433,7 @@ struct WorldSceneChatPage {
     Column() {
       Text($r('app.string.world_scene_empty_messages'))
         .fontSize($r('app.float.world_font_body'))
-        .fontColor($r('app.color.world_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .margin({ top: 40 })
     }
     .width('100%')
@@ -463,20 +465,20 @@ struct WorldSceneChatPage {
       })
         .width(80)
         .height(6)
-        .color($r('app.color.world_gold'))
-        .backgroundColor($r('app.color.world_surface_2'))
+        .color(ThemePalette.accentColor(this.effectiveTheme))
+        .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
 
       Text(rp.currentSpeakerIndex.toString() + '/' + rp.totalSpeakers.toString())
         .fontSize($r('app.float.world_font_micro'))
-        .fontColor($r('app.color.world_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .margin({ left: 8 })
 
       if (rp.roundStatus === 'running' && rp.currentSpeakerDisplayName.length > 0) {
-        LoadingProgress().width(12).height(12).color($r('app.color.world_gold'))
+        LoadingProgress().width(12).height(12).color(ThemePalette.accentColor(this.effectiveTheme))
           .margin({ left: 6 })
         Text(rp.currentSpeakerDisplayName + ' 回复中')
           .fontSize($r('app.float.world_font_micro'))
-          .fontColor($r('app.color.world_gold'))
+          .fontColor(ThemePalette.accentColor(this.effectiveTheme))
       } else if (rp.roundStatus === 'failed') {
         Text('轮次中断')
           .fontSize($r('app.float.world_font_micro'))
@@ -484,15 +486,15 @@ struct WorldSceneChatPage {
       } else if (rp.roundStatus === 'cancelled') {
         Text('已停止')
           .fontSize($r('app.float.world_font_micro'))
-          .fontColor($r('app.color.world_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
       } else if (rp.roundStatus === 'completed') {
         Text('本轮完成')
           .fontSize($r('app.float.world_font_micro'))
-          .fontColor($r('app.color.world_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
       } else if (rp.roundStatus === 'resumable') {
         Text('可续跑')
           .fontSize($r('app.float.world_font_micro'))
-          .fontColor($r('app.color.world_gold'))
+          .fontColor(ThemePalette.accentColor(this.effectiveTheme))
       }
     }
     .width('100%')
@@ -506,12 +508,12 @@ struct WorldSceneChatPage {
       Row() {
         Text('上一轮未完成')
           .fontSize($r('app.float.world_font_caption'))
-          .fontColor($r('app.color.world_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .layoutWeight(1)
         Text('续跑')
           .fontSize($r('app.float.world_font_caption'))
-          .fontColor($r('app.color.world_on_gold'))
-          .backgroundColor($r('app.color.world_gold'))
+          .fontColor((this.effectiveTheme === 'tavern' ? '#1A1510' : $r('app.color.app_on_accent')))
+          .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
           .borderRadius($r('app.float.world_radius_button'))
           .padding({ left: 12, right: 12, top: 6, bottom: 6 })
           .enabled(!this.isSending)
@@ -522,7 +524,7 @@ struct WorldSceneChatPage {
       .alignItems(VerticalAlign.Center)
     }
     .width('100%')
-    .backgroundColor($r('app.color.world_surface_1'))
+    .backgroundColor(ThemePalette.worldSurfaceColor(this.effectiveTheme))
   }
 
   @Builder
@@ -553,7 +555,7 @@ struct WorldSceneChatPage {
           Text(this.statusTag(m.messageStatus))
             .fontSize($r('app.float.world_font_micro'))
             .fontColor(this.statusColor(m.messageStatus))
-            .backgroundColor($r('app.color.world_surface_2'))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius(3)
             .padding({ left: 4, right: 4, top: 1, bottom: 1 })
             .margin({ left: 4 })
@@ -561,7 +563,7 @@ struct WorldSceneChatPage {
 
         Text(formatChatTimestamp(m.createdAt))
           .fontSize($r('app.float.world_font_micro'))
-          .fontColor($r('app.color.world_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .margin({ left: 6 })
           .layoutWeight(1)
           .textAlign(TextAlign.End)
@@ -572,23 +574,23 @@ struct WorldSceneChatPage {
       if (m.id === this.streamingMessageId && this.streamingContent.length > 0) {
         Text(this.streamingContent)
           .fontSize($r('app.float.world_font_body'))
-          .fontColor($r('app.color.world_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .width('100%')
           .margin({ top: 4 })
           .textAlign(TextAlign.Start)
       } else if (m.messageStatus === 'streaming') {
         Row() {
-          LoadingProgress().width(14).height(14).color($r('app.color.world_gold'))
+          LoadingProgress().width(14).height(14).color(ThemePalette.accentColor(this.effectiveTheme))
           Text('生成中')
             .fontSize($r('app.float.world_font_caption'))
-            .fontColor($r('app.color.world_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
             .margin({ left: 6 })
         }
         .margin({ top: 4 })
       } else {
         Text(m.content)
           .fontSize($r('app.float.world_font_body'))
-          .fontColor($r('app.color.world_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .width('100%')
           .margin({ top: 4 })
           .textAlign(TextAlign.Start)
@@ -601,8 +603,8 @@ struct WorldSceneChatPage {
             .fontColor($r('app.color.world_error'))
           Text('重试')
             .fontSize($r('app.float.world_font_caption'))
-            .fontColor($r('app.color.world_on_gold'))
-            .backgroundColor($r('app.color.world_gold'))
+            .fontColor((this.effectiveTheme === 'tavern' ? '#1A1510' : $r('app.color.app_on_accent')))
+            .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
             .borderRadius($r('app.float.world_radius_chip'))
             .padding({ left: 10, right: 10, top: 4, bottom: 4 })
             .margin({ left: 8 })
@@ -615,13 +617,13 @@ struct WorldSceneChatPage {
       if (m.messageStatus === 'cancelled') {
         Text('已停止')
           .fontSize($r('app.float.world_font_caption'))
-          .fontColor($r('app.color.world_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .margin({ top: 4 })
       }
     }
     .width('100%')
     .padding({ left: 12, right: 12, top: 8, bottom: 8 })
-    .backgroundColor($r('app.color.world_surface_1'))
+    .backgroundColor(ThemePalette.worldSurfaceColor(this.effectiveTheme))
     .borderRadius($r('app.float.world_radius_card'))
     .margin({ bottom: 8 })
     .alignItems(HorizontalAlign.Start)
@@ -633,9 +635,9 @@ struct WorldSceneChatPage {
       Row() {
         TextArea({ text: this.inputContent, placeholder: '输入消息...' })
           .fontSize($r('app.float.world_font_body'))
-          .fontColor($r('app.color.world_text_primary'))
-          .placeholderColor($r('app.color.world_text_tertiary'))
-          .backgroundColor($r('app.color.world_surface_2'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+          .placeholderColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+          .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
           .borderRadius($r('app.float.world_radius_chip'))
           .layoutWeight(1)
           .height(44)
@@ -653,16 +655,16 @@ struct WorldSceneChatPage {
         } else if (this.isStopping) {
           Text('停止中')
             .fontSize($r('app.float.world_font_caption'))
-            .fontColor($r('app.color.world_text_tertiary'))
-            .backgroundColor($r('app.color.world_surface_2'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius($r('app.float.world_radius_button'))
             .padding({ left: 12, right: 12, top: 6, bottom: 6 })
             .margin({ left: 6 })
         } else {
           Text('发送')
             .fontSize($r('app.float.world_font_caption'))
-            .fontColor($r('app.color.world_on_gold'))
-            .backgroundColor($r('app.color.world_gold'))
+            .fontColor((this.effectiveTheme === 'tavern' ? '#1A1510' : $r('app.color.app_on_accent')))
+            .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
             .borderRadius($r('app.float.world_radius_button'))
             .padding({ left: 12, right: 12, top: 6, bottom: 6 })
             .margin({ left: 6 })
@@ -675,7 +677,7 @@ struct WorldSceneChatPage {
       .alignItems(VerticalAlign.Center)
     }
     .width('100%')
-    .backgroundColor($r('app.color.world_surface_1'))
+    .backgroundColor(ThemePalette.worldSurfaceColor(this.effectiveTheme))
   }
 
   @Builder
@@ -683,13 +685,13 @@ struct WorldSceneChatPage {
     Column() {
       Text($r('app.string.world_scene_ended_hint'))
         .fontSize($r('app.float.world_font_body'))
-        .fontColor($r('app.color.world_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .width('100%')
         .textAlign(TextAlign.Center)
         .padding({ top: 12, bottom: 12 + this.navBarHeight })
     }
     .width('100%')
-    .backgroundColor($r('app.color.world_surface_1'))
+    .backgroundColor(ThemePalette.worldSurfaceColor(this.effectiveTheme))
   }
 
   @Builder
@@ -697,13 +699,13 @@ struct WorldSceneChatPage {
     Column() {
       Text('该会话已结束')
         .fontSize($r('app.float.world_font_body'))
-        .fontColor($r('app.color.world_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .width('100%')
         .textAlign(TextAlign.Center)
         .padding({ top: 12, bottom: 12 + this.navBarHeight })
     }
     .width('100%')
-    .backgroundColor($r('app.color.world_surface_1'))
+    .backgroundColor(ThemePalette.worldSurfaceColor(this.effectiveTheme))
   }
 
   @Builder
@@ -717,13 +719,13 @@ struct WorldSceneChatPage {
         .padding({ top: 12, bottom: 12 + this.navBarHeight })
     }
     .width('100%')
-    .backgroundColor($r('app.color.world_surface_1'))
+    .backgroundColor(ThemePalette.worldSurfaceColor(this.effectiveTheme))
   }
 
   @Builder
   loadingView(): void {
     Column() {
-      LoadingProgress().width(40).height(40).color($r('app.color.world_gold'))
+      LoadingProgress().width(40).height(40).color(ThemePalette.accentColor(this.effectiveTheme))
     }
     .width('100%')
     .layoutWeight(1)
@@ -736,7 +738,7 @@ struct WorldSceneChatPage {
     Column() {
       Text($r('app.string.world_scene_not_found'))
         .fontSize($r('app.float.world_font_body'))
-        .fontColor($r('app.color.world_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
     }
     .width('100%')
     .layoutWeight(1)
@@ -752,8 +754,8 @@ struct WorldSceneChatPage {
         .fontColor($r('app.color.world_error'))
       Text('重试')
         .fontSize($r('app.float.world_font_caption'))
-        .fontColor($r('app.color.world_on_gold'))
-        .backgroundColor($r('app.color.world_gold'))
+        .fontColor((this.effectiveTheme === 'tavern' ? '#1A1510' : $r('app.color.app_on_accent')))
+        .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
         .borderRadius($r('app.float.world_radius_button'))
         .padding({ left: 16, right: 16, top: 6, bottom: 6 })
         .margin({ top: 12 })
@@ -771,13 +773,13 @@ struct WorldSceneChatPage {
       Text($r('app.string.world_scene_end_confirm_title'))
         .fontSize($r('app.float.world_font_subtitle'))
         .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.world_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .width('100%')
         .padding({ left: 16, top: 16, bottom: 12 })
 
       Text($r('app.string.world_scene_end_confirm_desc'))
         .fontSize($r('app.float.world_font_body'))
-        .fontColor($r('app.color.world_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .width('100%')
         .padding({ left: 16, right: 16, bottom: 16 })
 
@@ -801,7 +803,7 @@ struct WorldSceneChatPage {
       .padding({ left: 16, right: 16, bottom: 16 })
     }
     .width('100%')
-    .backgroundColor($r('app.color.world_surface_1'))
+    .backgroundColor(ThemePalette.worldSurfaceColor(this.effectiveTheme))
   }
 
   @Builder
@@ -810,7 +812,7 @@ struct WorldSceneChatPage {
       Text($r('app.string.world_memory_character_sheet_title'))
         .fontSize($r('app.float.world_font_subtitle'))
         .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.world_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .width('100%')
         .padding({ left: 16, top: 16, bottom: 12 })
 
@@ -829,7 +831,7 @@ struct WorldSceneChatPage {
             Text(this.resolveCharacterName(this.characterSheetInstanceId))
               .fontSize($r('app.float.world_font_body'))
               .fontWeight(FontWeight.Medium)
-              .fontColor($r('app.color.world_text_primary'))
+              .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .width('100%')
@@ -843,15 +845,15 @@ struct WorldSceneChatPage {
                 Text($r('app.string.world_character_card_missing'))
                   .fontSize(10)
                   .fontColor($r('app.color.world_error'))
-                  .backgroundColor($r('app.color.world_surface_2'))
+                  .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
                   .borderRadius(3)
                   .padding({ left: 4, right: 4, top: 1, bottom: 1 })
                   .margin({ left: 4 })
               }
               Text(this.detail.locationName)
                 .fontSize(10)
-                .fontColor($r('app.color.world_text_secondary'))
-                .backgroundColor($r('app.color.world_surface_2'))
+                .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+                .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
                 .borderRadius(3)
                 .padding({ left: 4, right: 4, top: 1, bottom: 1 })
                 .margin({ left: 4 })
@@ -887,7 +889,7 @@ struct WorldSceneChatPage {
 
         Text($r('app.string.world_scene_cancel'))
           .fontSize($r('app.float.world_font_body'))
-          .fontColor($r('app.color.world_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .width('100%')
           .padding({ top: 12, bottom: 12 })
           .margin({ left: 16, right: 16, bottom: 16 })
@@ -896,7 +898,7 @@ struct WorldSceneChatPage {
       }
     }
     .width('100%')
-    .backgroundColor($r('app.color.world_surface_1'))
+    .backgroundColor(ThemePalette.worldSurfaceColor(this.effectiveTheme))
   }
 
   private async sendUserMessage(): Promise<void> {
@@ -1000,22 +1002,22 @@ struct WorldSceneChatPage {
 
   private senderLabelColor(t: WorldSceneMessageSenderType): ResourceColor {
     if (t === WorldSceneMessageSenderType.User) {
-      return $r('app.color.world_on_gold');
+      return (this.effectiveTheme === 'tavern' ? '#1A1510' : $r('app.color.app_on_accent'));
     }
     if (t === WorldSceneMessageSenderType.Character) {
-      return $r('app.color.world_text_primary');
+      return ThemePalette.textPrimaryColor(this.effectiveTheme);
     }
-    return $r('app.color.world_text_tertiary');
+    return ThemePalette.textTertiaryColor(this.effectiveTheme);
   }
 
   private senderLabelBg(t: WorldSceneMessageSenderType): ResourceColor {
     if (t === WorldSceneMessageSenderType.User) {
-      return $r('app.color.world_gold');
+      return ThemePalette.accentColor(this.effectiveTheme);
     }
     if (t === WorldSceneMessageSenderType.Character) {
-      return $r('app.color.world_surface_2');
+      return ThemePalette.surface2Color(this.effectiveTheme);
     }
-    return $r('app.color.world_surface_1');
+    return ThemePalette.worldSurfaceColor(this.effectiveTheme);
   }
 
   private statusTag(s: string): string {
@@ -1033,15 +1035,15 @@ struct WorldSceneChatPage {
 
   private statusColor(s: string): ResourceColor {
     if (s === 'streaming') {
-      return $r('app.color.world_gold');
+      return ThemePalette.accentColor(this.effectiveTheme);
     }
     if (s === 'cancelled') {
-      return $r('app.color.world_text_tertiary');
+      return ThemePalette.textTertiaryColor(this.effectiveTheme);
     }
     if (s === 'failed') {
       return $r('app.color.world_error');
     }
-    return $r('app.color.world_text_secondary');
+    return ThemePalette.textSecondaryColor(this.effectiveTheme);
   }
 
   private resolveCharacterName(instanceId: string): string {

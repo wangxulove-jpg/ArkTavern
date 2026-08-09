@@ -19,6 +19,7 @@ import { WorldSectionHeader } from '../../components/world/WorldSectionHeader';
 import { WorldStatusChip } from '../../components/world/WorldStatusChip';
 import { WorldEmptyState } from '../../components/world/WorldEmptyState';
 import { Logger } from '../../utils/Logger';
+import { ThemePalette } from '../../theme/ThemePalette';
 
 const LOG_TAG: string = 'WorldMemoryEvidencePage';
 
@@ -49,6 +50,7 @@ struct WorldMemoryEvidencePage {
 
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navBarHeight') navBarHeight: number = 0;
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
 
   async aboutToAppear(): Promise<void> {
     try {
@@ -156,7 +158,7 @@ struct WorldMemoryEvidencePage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.app_bg'))
+    .backgroundColor(ThemePalette.pageBgColor(this.effectiveTheme))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 
@@ -165,7 +167,7 @@ struct WorldMemoryEvidencePage {
     Row() {
       Button($r('app.string.world_home_back'))
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_accent'))
+        .fontColor(ThemePalette.accentColor(this.effectiveTheme))
         .backgroundColor(Color.Transparent)
         .height(36)
         .padding({ left: 0, right: 8 })
@@ -177,7 +179,7 @@ struct WorldMemoryEvidencePage {
       Text('来源证据')
         .fontSize($r('app.float.app_font_title'))
         .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .layoutWeight(1)
@@ -195,7 +197,7 @@ struct WorldMemoryEvidencePage {
   @Builder
   loadingView(): void {
     Column() {
-      LoadingProgress().width(40).height(40).color($r('app.color.app_accent'))
+      LoadingProgress().width(40).height(40).color(ThemePalette.accentColor(this.effectiveTheme))
     }
     .width('100%')
     .layoutWeight(1)
@@ -210,7 +212,7 @@ struct WorldMemoryEvidencePage {
       Button($r('app.string.world_home_back'))
         .fontSize($r('app.float.app_font_body'))
         .fontColor($r('app.color.app_on_accent'))
-        .backgroundColor($r('app.color.app_accent'))
+        .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_sm'))
         .height(40)
         .padding({ left: 24, right: 24 })
@@ -230,7 +232,7 @@ struct WorldMemoryEvidencePage {
       Button($r('app.string.world_home_reload'))
         .fontSize($r('app.float.app_font_body'))
         .fontColor($r('app.color.app_on_accent'))
-        .backgroundColor($r('app.color.app_accent'))
+        .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_sm'))
         .height(40)
         .padding({ left: 24, right: 24 })
@@ -274,8 +276,8 @@ struct WorldMemoryEvidencePage {
         Row() {
           Text(this.headerTypeLabel)
             .fontSize(11)
-            .fontColor($r('app.color.app_accent'))
-            .backgroundColor($r('app.color.app_surface_2'))
+            .fontColor(ThemePalette.accentColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius(3)
             .padding({ left: 6, right: 6, top: 2, bottom: 2 })
 
@@ -291,14 +293,14 @@ struct WorldMemoryEvidencePage {
 
         Text(this.headerOwnerName)
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .width('100%')
           .margin({ top: 8 })
 
         Scroll() {
           Text(this.headerContent)
             .fontSize($r('app.float.app_font_body'))
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .width('100%')
             .textAlign(TextAlign.Start)
         }
@@ -341,7 +343,7 @@ struct WorldMemoryEvidencePage {
       }
       .width('100%')
       .padding($r('app.float.app_spacing_12'))
-      .backgroundColor($r('app.color.app_surface_1'))
+      .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
       .borderRadius($r('app.float.app_radius_md'))
       .margin({ top: $r('app.float.app_spacing_8') })
     }
@@ -354,13 +356,13 @@ struct WorldMemoryEvidencePage {
     Row() {
       Text(label)
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .width(72)
         .flexShrink(0)
 
       Text(value)
         .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .layoutWeight(1)
         .maxLines(2)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -392,13 +394,13 @@ struct WorldMemoryEvidencePage {
       Row() {
         Text('#' + msg.messageId.substring(0, 8))
           .fontSize(9)
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
 
         Blank().layoutWeight(1)
 
         Text(msg.sentAtLabel)
           .fontSize(9)
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
@@ -408,8 +410,8 @@ struct WorldMemoryEvidencePage {
 
         Text(msg.visibilityLabel)
           .fontSize(10)
-          .fontColor($r('app.color.app_text_tertiary'))
-          .backgroundColor($r('app.color.app_surface_1'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+          .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
           .borderRadius(3)
           .padding({ left: 4, right: 4, top: 1, bottom: 1 })
           .margin({ left: 6 })
@@ -421,7 +423,7 @@ struct WorldMemoryEvidencePage {
       if (msg.participantNames.length > 0) {
         Text(msg.participantNames.join(', '))
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .width('100%')
           .margin({ top: 4 })
           .maxLines(1)
@@ -430,7 +432,7 @@ struct WorldMemoryEvidencePage {
 
       Text(msg.content)
         .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .width('100%')
         .margin({ top: 6 })
         .textAlign(TextAlign.Start)
@@ -450,7 +452,7 @@ struct WorldMemoryEvidencePage {
         Row() {
           Text('原始证据')
             .fontSize(10)
-            .fontColor($r('app.color.app_accent'))
+            .fontColor(ThemePalette.accentColor(this.effectiveTheme))
             .fontWeight(FontWeight.Medium)
         }
         .width('100%')
@@ -460,12 +462,12 @@ struct WorldMemoryEvidencePage {
     }
     .width('100%')
     .padding($r('app.float.app_spacing_12'))
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
     .borderRadius($r('app.float.app_radius_md'))
     .borderWidth(msg.isOriginalEvidence ? 1.5 : 1)
     .borderColor(msg.isOriginalEvidence
-      ? $r('app.color.app_accent')
-      : $r('app.color.app_surface_2'))
+      ? ThemePalette.accentColor(this.effectiveTheme)
+      : ThemePalette.surface2Color(this.effectiveTheme))
     .margin({ bottom: $r('app.float.app_spacing_8') })
     .alignItems(HorizontalAlign.Start)
   }
@@ -476,21 +478,21 @@ struct WorldMemoryEvidencePage {
       Text('[玩家]')
         .fontSize($r('app.float.app_font_caption'))
         .fontColor($r('app.color.app_on_accent'))
-        .backgroundColor($r('app.color.app_accent'))
+        .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
         .borderRadius(3)
         .padding({ left: 6, right: 6, top: 2, bottom: 2 })
     } else if (msg.speakerType === 'character') {
       Text('[角色·' + msg.speakerName + ']')
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_primary'))
-        .backgroundColor($r('app.color.app_surface_2'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+        .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
         .borderRadius(3)
         .padding({ left: 6, right: 6, top: 2, bottom: 2 })
     } else {
       Text('[旁白]')
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_secondary'))
-        .backgroundColor($r('app.color.app_surface_1'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+        .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
         .borderRadius(3)
         .padding({ left: 6, right: 6, top: 2, bottom: 2 })
     }

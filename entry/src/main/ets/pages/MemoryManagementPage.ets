@@ -26,6 +26,7 @@ import { router, promptAction } from '@kit.ArkUI';
 import { AppServices } from '../services/AppServices';
 import { MemoryManagementViewModel, MemoryDisplayItem, MemoryTypeGroup } from '../viewmodels/MemoryManagementViewModel';
 import { Logger } from '../utils/Logger';
+import { ThemePalette } from '../theme/ThemePalette';
 
 const LOG_TAG: string = 'MemoryMgmtPage';
 
@@ -47,6 +48,7 @@ struct MemoryManagementPage {
   @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
   /** 是否显示清除确认 */
   @State showClearConfirm: boolean = false;
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
 
   aboutToAppear(): void {
     this.handleReady();
@@ -93,7 +95,7 @@ struct MemoryManagementPage {
             if (this.viewModel.isLoading) {
               Text('加载中...')
                 .fontSize(14)
-                .fontColor($r('app.color.app_text_tertiary'))
+                .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
                 .margin({ top: 40, bottom: 40 })
             } else if (this.viewModel.memoryGroups.length === 0) {
               this.emptyState()
@@ -123,7 +125,7 @@ struct MemoryManagementPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.page_background'))
+    .backgroundColor(ThemePalette.pageBackgroundColor(this.effectiveTheme))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 
@@ -133,7 +135,7 @@ struct MemoryManagementPage {
       Button($r('app.string.branch_map_back'))
         .fontSize(14)
         .backgroundColor(Color.Transparent)
-        .fontColor($r('app.color.app_accent'))
+        .fontColor(ThemePalette.accentColor(this.effectiveTheme))
         .onClick(() => {
           router.back();
         })
@@ -143,7 +145,7 @@ struct MemoryManagementPage {
       Text('对话记忆')
         .fontSize(18)
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
 
       Blank()
 
@@ -167,14 +169,14 @@ struct MemoryManagementPage {
       Button('×')
         .fontSize(14)
         .backgroundColor(Color.Transparent)
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .onClick(() => {
           this.viewModel.clearErrorMessage();
         })
     }
     .width('100%')
     .padding({ left: 16, right: 16, top: 8, bottom: 8 })
-    .backgroundColor($r('app.color.app_surface_2'))
+    .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
   }
 
   @Builder
@@ -182,19 +184,19 @@ struct MemoryManagementPage {
     Row() {
       Text(this.viewModel.statusMessage)
         .fontSize(13)
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .layoutWeight(1)
       Button('×')
         .fontSize(14)
         .backgroundColor(Color.Transparent)
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .onClick(() => {
           this.viewModel.clearStatusMessage();
         })
     }
     .width('100%')
     .padding({ left: 16, right: 16, top: 8, bottom: 8 })
-    .backgroundColor($r('app.color.app_surface_2'))
+    .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
   }
 
   @Builder
@@ -202,12 +204,12 @@ struct MemoryManagementPage {
     Column() {
       Text('当前分支暂无记忆')
         .fontSize(16)
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .margin({ top: 32, bottom: 8 })
 
       Text('未总结的消息数达到阈值时将自动生成摘要,也可手动生成。')
         .fontSize(13)
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .textAlign(TextAlign.Center)
         .margin({ left: 24, right: 24 })
 
@@ -254,11 +256,11 @@ struct MemoryManagementPage {
         Text(group.typeLabel)
           .fontSize(15)
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         Blank()
         Text(group.items.length.toString() + ' 条')
           .fontSize(12)
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
       }
       .width('100%')
       .padding({ top: 12, bottom: 8 })
@@ -279,7 +281,7 @@ struct MemoryManagementPage {
         Text(item.displayTitle)
           .fontSize(14)
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .layoutWeight(1)
 
         // 失效标签
@@ -294,7 +296,7 @@ struct MemoryManagementPage {
         if (item.isInherited) {
           Text('继承')
             .fontSize(11)
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
             .margin({ left: 8 })
         }
 
@@ -302,7 +304,7 @@ struct MemoryManagementPage {
         if (!item.isEnabled && !item.isInvalidated) {
           Text('已禁用')
             .fontSize(11)
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
             .margin({ left: 8 })
         }
       }
@@ -311,7 +313,7 @@ struct MemoryManagementPage {
       // 摘要预览
       Text(item.summaryPreview)
         .fontSize(13)
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .width('100%')
         .margin({ top: 6 })
         .maxLines(2)
@@ -326,11 +328,11 @@ struct MemoryManagementPage {
       Row() {
         Text('范围: ' + item.coverageText)
           .fontSize(11)
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         Blank()
         Text(item.createdTimeText)
           .fontSize(11)
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
       }
       .width('100%')
       .margin({ top: 8 })
@@ -341,26 +343,26 @@ struct MemoryManagementPage {
           Button(item.isEnabled ? '禁用' : '启用')
             .fontSize(12)
             .backgroundColor(Color.Transparent)
-            .fontColor($r('app.color.app_accent'))
+            .fontColor(ThemePalette.accentColor(this.effectiveTheme))
             .layoutWeight(1)
             .enabled(!this.viewModel.isOperating)
             .onClick(() => {
               this.viewModel.toggleEnabled(item.memory.id);
             })
 
-          Divider().vertical(true).height(20).color($r('app.color.app_divider'))
+          Divider().vertical(true).height(20).color(ThemePalette.dividerColor(this.effectiveTheme))
 
           Button('编辑')
             .fontSize(12)
             .backgroundColor(Color.Transparent)
-            .fontColor($r('app.color.app_accent'))
+            .fontColor(ThemePalette.accentColor(this.effectiveTheme))
             .layoutWeight(1)
             .enabled(!this.viewModel.isOperating)
             .onClick(() => {
               this.viewModel.enterEditMode(item.memory.id);
             })
 
-          Divider().vertical(true).height(20).color($r('app.color.app_divider'))
+          Divider().vertical(true).height(20).color(ThemePalette.dividerColor(this.effectiveTheme))
 
           Button('删除')
             .fontSize(12)
@@ -379,7 +381,7 @@ struct MemoryManagementPage {
     .width('100%')
     .padding(12)
     .borderRadius(8)
-    .backgroundColor($r('app.color.app_surface_2'))
+    .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
     .margin({ top: 8 })
     .onClick(() => {
       this.viewModel.toggleExpand(item.memory.id);
@@ -395,7 +397,7 @@ struct MemoryManagementPage {
       } else {
         Text(item.memory.summary)
           .fontSize(13)
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .width('100%')
           .margin({ top: 8 })
           .lineHeight(20)
@@ -403,15 +405,15 @@ struct MemoryManagementPage {
 
       // 详细内容(如果有)
       if (item.memory.detail.length > 0) {
-        Divider().color($r('app.color.app_divider')).margin({ top: 8, bottom: 8 })
+        Divider().color(ThemePalette.dividerColor(this.effectiveTheme)).margin({ top: 8, bottom: 8 })
 
         Text('详细内容')
           .fontSize(12)
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .margin({ bottom: 4 })
         Text(item.memory.detail)
           .fontSize(13)
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .width('100%')
           .lineHeight(20)
       }
@@ -429,18 +431,18 @@ struct MemoryManagementPage {
       Row() {
         Text('编辑摘要')
           .fontSize(13)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         Blank()
         Text('取消')
           .fontSize(12)
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .margin({ right: 16 })
           .onClick(() => {
             this.viewModel.cancelEdit();
           })
         Text('保存')
           .fontSize(12)
-          .fontColor($r('app.color.app_accent'))
+          .fontColor(ThemePalette.accentColor(this.effectiveTheme))
           .onClick(() => {
             this.viewModel.saveEditedSummary();
           })
@@ -466,11 +468,11 @@ struct MemoryManagementPage {
       Row() {
         Text('消息总数')
           .fontSize(13)
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         Blank()
         Text(this.viewModel.totalMessageCount.toString())
           .fontSize(13)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
       }
       .width('100%')
       .padding({ top: 8, bottom: 4 })
@@ -478,11 +480,11 @@ struct MemoryManagementPage {
       Row() {
         Text('已总结消息数')
           .fontSize(13)
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         Blank()
         Text(this.viewModel.summarizedMessageCount.toString())
           .fontSize(13)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
       }
       .width('100%')
       .padding({ top: 4, bottom: 4 })
@@ -490,11 +492,11 @@ struct MemoryManagementPage {
       Row() {
         Text('未总结消息数')
           .fontSize(13)
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         Blank()
         Text(this.viewModel.unsummarizedMessageCount.toString())
           .fontSize(13)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
       }
       .width('100%')
       .padding({ top: 4, bottom: 4 })
@@ -502,11 +504,11 @@ struct MemoryManagementPage {
       Row() {
         Text('未总结字符数')
           .fontSize(13)
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         Blank()
         Text(this.viewModel.unsummarizedChars.toString())
           .fontSize(13)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
       }
       .width('100%')
       .padding({ top: 4, bottom: 4 })
@@ -514,11 +516,11 @@ struct MemoryManagementPage {
       Row() {
         Text('记忆总字符数')
           .fontSize(13)
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         Blank()
         Text(this.viewModel.summaryChars.toString())
           .fontSize(13)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
       }
       .width('100%')
       .padding({ top: 4, bottom: 8 })
@@ -526,7 +528,7 @@ struct MemoryManagementPage {
     .width('100%')
     .padding({ left: 12, right: 12, top: 4, bottom: 4 })
     .borderRadius(8)
-    .backgroundColor($r('app.color.app_surface_2'))
+    .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
     .margin({ top: 8 })
   }
 
@@ -539,8 +541,8 @@ struct MemoryManagementPage {
         .width('100%')
         .height(44)
         .margin({ top: 16 })
-        .backgroundColor($r('app.color.app_accent'))
-        .fontColor($r('app.color.app_text_primary'))
+        .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .enabled(!this.viewModel.isOperating && this.viewModel.totalMessageCount > 0)
         .onClick(() => {
           this.viewModel.regenerateSummary();
@@ -570,29 +572,29 @@ struct MemoryManagementPage {
         Text('清除当前分支记忆')
           .fontSize(18)
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .margin({ top: 16, bottom: 8 })
 
         Text('此操作将删除当前分支自产的记忆摘要(继承自祖先的不删)。原始消息不会被修改。')
           .fontSize(13)
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .lineHeight(20)
           .margin({ left: 16, right: 16, bottom: 16 })
 
-        Divider().color($r('app.color.app_divider'))
+        Divider().color(ThemePalette.dividerColor(this.effectiveTheme))
 
         Row() {
           Button('取消')
             .fontSize(15)
             .backgroundColor(Color.Transparent)
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .layoutWeight(1)
             .height(48)
             .onClick(() => {
               this.showClearConfirm = false;
             })
 
-          Divider().vertical(true).height(24).color($r('app.color.app_divider'))
+          Divider().vertical(true).height(24).color(ThemePalette.dividerColor(this.effectiveTheme))
 
           Button('清除')
             .fontSize(15)
@@ -608,7 +610,7 @@ struct MemoryManagementPage {
         .width('100%')
       }
       .width('80%')
-      .backgroundColor($r('app.color.app_surface_1'))
+      .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
       .borderRadius(12)
     }
     .width('100%')
@@ -626,29 +628,29 @@ struct MemoryManagementPage {
         Text('删除记忆')
           .fontSize(18)
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .margin({ top: 16, bottom: 8 })
 
         Text('确定要删除这条记忆吗?删除后不可恢复,但原始消息不会被修改。')
           .fontSize(13)
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .lineHeight(20)
           .margin({ left: 16, right: 16, bottom: 16 })
 
-        Divider().color($r('app.color.app_divider'))
+        Divider().color(ThemePalette.dividerColor(this.effectiveTheme))
 
         Row() {
           Button('取消')
             .fontSize(15)
             .backgroundColor(Color.Transparent)
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .layoutWeight(1)
             .height(48)
             .onClick(() => {
               this.viewModel.cancelDelete();
             })
 
-          Divider().vertical(true).height(24).color($r('app.color.app_divider'))
+          Divider().vertical(true).height(24).color(ThemePalette.dividerColor(this.effectiveTheme))
 
           Button('删除')
             .fontSize(15)
@@ -663,7 +665,7 @@ struct MemoryManagementPage {
         .width('100%')
       }
       .width('80%')
-      .backgroundColor($r('app.color.app_surface_1'))
+      .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
       .borderRadius(12)
     }
     .width('100%')

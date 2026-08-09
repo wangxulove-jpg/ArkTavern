@@ -23,6 +23,7 @@ import { AppServices } from '../services/AppServices';
 import { picker } from '@kit.CoreFileKit';
 import { promptAction, router } from '@kit.ArkUI';
 import { image } from '@kit.ImageKit';
+import { ThemePalette } from '../theme/ThemePalette';
 
 @Entry
 @Component
@@ -39,6 +40,8 @@ struct CharacterListPage {
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   /** 底部导航栏/手势条避让高度(由 EntryAbility 写入 AppStorage) */
   @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
+  /** 当前有效主题 */
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
 
   async aboutToAppear(): Promise<void> {
     const charService = AppServices.getCharacterService();
@@ -54,7 +57,7 @@ struct CharacterListPage {
         Row() {
           SymbolGlyph($r('sys.symbol.chevron_left'))
             .fontSize(24)
-            .fontColor([$r('sys.color.ohos_id_color_text_primary')])
+            .fontColor([ThemePalette.textPrimaryColor(this.effectiveTheme)])
             .padding(8)
             .onClick(() => {
               router.back();
@@ -62,7 +65,7 @@ struct CharacterListPage {
 
           Text($r('app.string.nav_character_list_title'))
             .fontSize($r('app.float.nav_title_font_size'))
-            .fontColor($r('sys.color.ohos_id_color_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .fontWeight(FontWeight.Medium)
             .layoutWeight(1)
             .maxLines(1)
@@ -71,7 +74,7 @@ struct CharacterListPage {
 
           Button($r('app.string.character_import'))
             .fontSize(13)
-            .backgroundColor($r('sys.color.ohos_id_color_emphasize'))
+            .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
             .fontColor(Color.White)
             .borderRadius(16)
             .height(32)
@@ -127,7 +130,7 @@ struct CharacterListPage {
         // 新建按钮(FAB)
         Button($r('app.string.character_new'))
           .fontSize(14)
-          .backgroundColor($r('sys.color.ohos_id_color_emphasize'))
+          .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
           .fontColor(Color.White)
           .borderRadius(24)
           .padding({ left: 20, right: 20, top: 10, bottom: 10 })
@@ -154,7 +157,7 @@ struct CharacterListPage {
       }
       .width('100%')
       .height('100%')
-      .backgroundColor($r('sys.color.ohos_id_color_sub_background'))
+      .backgroundColor(ThemePalette.pageBgColor(this.effectiveTheme))
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     }
 
@@ -165,12 +168,12 @@ struct CharacterListPage {
     Column() {
       Text($r('app.string.character_no_characters'))
         .fontSize(16)
-        .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .margin({ bottom: 8 })
 
       Text($r('app.string.character_no_characters_desc'))
         .fontSize(13)
-        .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
     }
     .width('100%')
     .height(200)
@@ -189,7 +192,7 @@ struct CharacterListPage {
         Text(char.name.charAt(0))
           .fontSize(18)
           .fontColor(Color.White)
-          .backgroundColor($r('sys.color.ohos_id_color_emphasize'))
+          .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
           .borderRadius(20)
           .width(40)
           .height(40)
@@ -200,14 +203,14 @@ struct CharacterListPage {
           Text(char.name)
             .fontSize(16)
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('sys.color.ohos_id_color_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
 
           if (char.description.length > 0) {
             Text(char.description)
               .fontSize(13)
-              .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .maxLines(2)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .margin({ top: 4 })
@@ -219,8 +222,8 @@ struct CharacterListPage {
         if (this.viewModel!.isCurrent(char)) {
           Text($r('app.string.character_current_badge'))
             .fontSize(12)
-            .fontColor($r('sys.color.ohos_id_color_emphasize'))
-            .border({ width: 1, color: $r('sys.color.ohos_id_color_emphasize') })
+            .fontColor(ThemePalette.accentColor(this.effectiveTheme))
+            .border({ width: 1, color: ThemePalette.accentColor(this.effectiveTheme) })
             .borderRadius(8)
             .padding({ left: 8, right: 8, top: 2, bottom: 2 })
         }
@@ -234,7 +237,7 @@ struct CharacterListPage {
           Button($r('app.string.character_set_current'))
             .fontSize(12)
             .backgroundColor(Color.Transparent)
-            .fontColor($r('sys.color.ohos_id_color_emphasize'))
+            .fontColor(ThemePalette.accentColor(this.effectiveTheme))
             .height(32)
             .padding({ left: 8, right: 8 })
             .onClick(() => {
@@ -245,7 +248,7 @@ struct CharacterListPage {
         Button($r('app.string.character_edit'))
           .fontSize(12)
           .backgroundColor(Color.Transparent)
-          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .height(32)
           .padding({ left: 8, right: 8 })
           .onClick(() => {
@@ -256,7 +259,7 @@ struct CharacterListPage {
         Button($r('app.string.character_export'))
           .fontSize(12)
           .backgroundColor(Color.Transparent)
-          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .height(32)
           .padding({ left: 8, right: 8 })
           .onClick(() => {
@@ -280,7 +283,7 @@ struct CharacterListPage {
     .width('100%')
     .padding(12)
     .margin({ bottom: 8 })
-    .backgroundColor($r('sys.color.ohos_id_color_dialog_bg'))
+    .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
     .borderRadius(12)
     .alignItems(HorizontalAlign.Start)
   }
@@ -296,7 +299,7 @@ struct CharacterListPage {
         : $r('app.string.character_form_title_edit'))
         .fontSize(18)
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('sys.color.ohos_id_color_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .width('100%')
         .textAlign(TextAlign.Center)
         .margin({ bottom: 16 })
@@ -305,14 +308,14 @@ struct CharacterListPage {
       Column() {
         Text($r('app.string.character_form_name'))
           .fontSize(13)
-          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .width('100%')
           .margin({ bottom: 4 })
         TextInput({ placeholder: $r('app.string.character_form_name_placeholder'), text: $$this.formName })
           .fontSize(14)
           .width('100%')
           .height(40)
-          .backgroundColor($r('sys.color.ohos_id_color_sub_background'))
+          .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
           .borderRadius(8)
           .padding({ left: 12, right: 12 })
       }
@@ -324,14 +327,14 @@ struct CharacterListPage {
       Column() {
         Text($r('app.string.character_form_description'))
           .fontSize(13)
-          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .width('100%')
           .margin({ bottom: 4 })
         TextArea({ placeholder: $r('app.string.character_form_description_placeholder'), text: $$this.formDescription })
           .fontSize(14)
           .maxLines(3)
           .width('100%')
-          .backgroundColor($r('sys.color.ohos_id_color_sub_background'))
+          .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
           .borderRadius(8)
           .padding({ left: 12, right: 12, top: 8, bottom: 8 })
       }
@@ -343,14 +346,14 @@ struct CharacterListPage {
       Column() {
         Text($r('app.string.character_form_personality'))
           .fontSize(13)
-          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .width('100%')
           .margin({ bottom: 4 })
         TextArea({ placeholder: $r('app.string.character_form_personality_placeholder'), text: $$this.formPersonality })
           .fontSize(14)
           .maxLines(3)
           .width('100%')
-          .backgroundColor($r('sys.color.ohos_id_color_sub_background'))
+          .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
           .borderRadius(8)
           .padding({ left: 12, right: 12, top: 8, bottom: 8 })
       }
@@ -362,14 +365,14 @@ struct CharacterListPage {
       Column() {
         Text($r('app.string.character_form_scenario'))
           .fontSize(13)
-          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .width('100%')
           .margin({ bottom: 4 })
         TextArea({ placeholder: $r('app.string.character_form_scenario_placeholder'), text: $$this.formScenario })
           .fontSize(14)
           .maxLines(3)
           .width('100%')
-          .backgroundColor($r('sys.color.ohos_id_color_sub_background'))
+          .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
           .borderRadius(8)
           .padding({ left: 12, right: 12, top: 8, bottom: 8 })
       }
@@ -381,14 +384,14 @@ struct CharacterListPage {
       Column() {
         Text($r('app.string.character_form_first_message'))
           .fontSize(13)
-          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .width('100%')
           .margin({ bottom: 4 })
         TextArea({ placeholder: $r('app.string.character_form_first_message_placeholder'), text: $$this.formFirstMessage })
           .fontSize(14)
           .maxLines(3)
           .width('100%')
-          .backgroundColor($r('sys.color.ohos_id_color_sub_background'))
+          .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
           .borderRadius(8)
           .padding({ left: 12, right: 12, top: 8, bottom: 8 })
       }
@@ -400,14 +403,14 @@ struct CharacterListPage {
       Column() {
         Text($r('app.string.character_form_system_prompt'))
           .fontSize(13)
-          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .width('100%')
           .margin({ bottom: 4 })
         TextArea({ placeholder: $r('app.string.character_form_system_prompt_placeholder'), text: $$this.formSystemPrompt })
           .fontSize(14)
           .maxLines(4)
           .width('100%')
-          .backgroundColor($r('sys.color.ohos_id_color_sub_background'))
+          .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
           .borderRadius(8)
           .padding({ left: 12, right: 12, top: 8, bottom: 8 })
       }
@@ -429,7 +432,7 @@ struct CharacterListPage {
         Button($r('app.string.character_form_cancel'))
           .fontSize(14)
           .backgroundColor(Color.Transparent)
-          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .height(40)
           .layoutWeight(1)
           .onClick(() => {
@@ -438,7 +441,7 @@ struct CharacterListPage {
 
         Button($r('app.string.character_form_save'))
           .fontSize(14)
-          .backgroundColor($r('sys.color.ohos_id_color_emphasize'))
+          .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
           .fontColor(Color.White)
           .borderRadius(20)
           .height(40)
@@ -454,7 +457,7 @@ struct CharacterListPage {
     }
     .width('100%')
     .padding(20)
-    .backgroundColor($r('sys.color.ohos_id_color_dialog_bg'))
+    .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
     .borderRadius({ topLeft: 16, topRight: 16 })
   }
 
@@ -487,19 +490,19 @@ struct CharacterListPage {
         Text('确认删除')
           .fontSize(17)
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('sys.color.ohos_id_color_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .margin({ bottom: 12 })
 
         Text('确定删除角色"' + this.viewModel!.deleteTarget!.name + '"吗?此操作不可撤销。')
           .fontSize(14)
-          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .margin({ bottom: 20 })
 
         Row() {
           Button('取消')
             .fontSize(14)
             .backgroundColor(Color.Transparent)
-            .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .layoutWeight(1)
             .height(40)
             .onClick(() => {
@@ -524,7 +527,7 @@ struct CharacterListPage {
       }
       .width('80%')
       .padding(20)
-      .backgroundColor($r('sys.color.ohos_id_color_dialog_bg'))
+      .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
       .borderRadius(16)
     }
     .width('100%')
@@ -563,7 +566,7 @@ struct CharacterListPage {
         Text($r('app.string.character_import_preview'))
           .fontSize(18)
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('sys.color.ohos_id_color_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .width('100%')
           .textAlign(TextAlign.Center)
           .margin({ bottom: 16 })
@@ -588,7 +591,7 @@ struct CharacterListPage {
         // 来源格式
         Text('来源格式: ' + this.formatSourceLabel(this.viewModel!.previewCard!.sourceFormat))
           .fontSize(12)
-          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .width('100%')
           .margin({ top: 8, bottom: 16 })
 
@@ -604,7 +607,7 @@ struct CharacterListPage {
           Button($r('app.string.character_import_cancel'))
             .fontSize(14)
             .backgroundColor(Color.Transparent)
-            .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .height(40)
             .layoutWeight(1)
             .onClick(() => {
@@ -613,7 +616,7 @@ struct CharacterListPage {
 
           Button($r('app.string.character_import_confirm'))
             .fontSize(14)
-            .backgroundColor($r('sys.color.ohos_id_color_emphasize'))
+            .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
             .fontColor(Color.White)
             .borderRadius(20)
             .height(40)
@@ -627,7 +630,7 @@ struct CharacterListPage {
       }
       .width('85%')
       .padding(20)
-      .backgroundColor($r('sys.color.ohos_id_color_dialog_bg'))
+      .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
       .borderRadius(16)
     }
     .width('100%')
@@ -647,7 +650,7 @@ struct CharacterListPage {
         Row() {
           Text(label)
             .fontSize(12)
-            .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .fontWeight(FontWeight.Medium)
           if (isRequired) {
             Text(' *')
@@ -660,8 +663,8 @@ struct CharacterListPage {
         Text(value.length > 0 ? value : '(空)')
           .fontSize(13)
           .fontColor(value.length > 0
-            ? $r('sys.color.ohos_id_color_text_primary')
-            : $r('sys.color.ohos_id_color_text_secondary'))
+            ? ThemePalette.textPrimaryColor(this.effectiveTheme)
+            : ThemePalette.textSecondaryColor(this.effectiveTheme))
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .width('100%')

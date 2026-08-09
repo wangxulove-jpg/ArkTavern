@@ -34,9 +34,11 @@ import { ChatRichText, ChatSenderType } from './ChatRichText';
 import { ChatTextStyle } from '../utils/ChatTextStyleSettings';
 import { ChatMarkdownColorTheme } from '../utils/ChatTextColorTheme';
 import { ChatMessageRenderState } from '../models/ChatMessageRenderState';
+import { ThemePalette } from '../theme/ThemePalette';
 
 @Component
 export struct ChatMessageBubble {
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
   /** 稳定渲染状态(@ObjectLink 单向同步,字段赋值触发本组件重建) */
   @ObjectLink renderState: ChatMessageRenderState;
   /** 角色头像 URI(无角色时为空,显示占位) */
@@ -239,7 +241,7 @@ export struct ChatMessageBubble {
         if (this.renderState.isStreaming && this.renderState.content.length > 0) {
           Text('▍')
             .fontSize($r('app.float.app_font_body'))
-            .fontColor($r('app.color.app_accent'))
+            .fontColor(ThemePalette.accentColor(this.effectiveTheme))
             .margin({ top: 2 })
         }
 
@@ -248,11 +250,11 @@ export struct ChatMessageBubble {
           Row() {
             Text('思考中')
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_text_tertiary'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
               .fontStyle(FontStyle.Italic)
             Text('...')
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_accent'))
+              .fontColor(ThemePalette.accentColor(this.effectiveTheme))
               .margin({ left: 2 })
           }
           .margin({ top: 2 })
@@ -263,7 +265,7 @@ export struct ChatMessageBubble {
           Row() {
             Text('■ 已停止')
               .fontSize(11)
-              .fontColor($r('app.color.app_text_tertiary'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           }
           .padding({ left: 8, right: 8, top: 3, bottom: 3 })
           .backgroundColor($r('app.color.chat_status_stopped_bg'))

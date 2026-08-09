@@ -15,8 +15,11 @@
  * 复用 ChatViewModel 数据,不在组件内做业务操作。
  */
 
+import { ThemePalette } from '../theme/ThemePalette';
+
 @Component
 export struct ChatMoreMenuSheet {
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
   /** 是否显示 */
   visible: boolean = false;
   /** 当前角色名 */
@@ -80,7 +83,7 @@ export struct ChatMoreMenuSheet {
             this.sheetContent()
           }
           .width('100%')
-          .backgroundColor($r('app.color.app_surface_1'))
+          .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
           .borderRadius({
             topLeft: 16, topRight: 16,
             bottomLeft: 0, bottomRight: 0
@@ -105,7 +108,7 @@ export struct ChatMoreMenuSheet {
     Column() {
       Text('对话设置')
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .margin({ top: 12, bottom: 8, left: 16, right: 16 })
 
       // 模型信息
@@ -128,7 +131,7 @@ export struct ChatMoreMenuSheet {
         })
       }
 
-      Divider().color($r('app.color.app_divider')).margin({ top: 8, bottom: 8 })
+      Divider().color(ThemePalette.dividerColor(this.effectiveTheme)).margin({ top: 8, bottom: 8 })
 
       // 会话列表
       this.menuRow('会话列表', false, false, (): void => {
@@ -182,7 +185,7 @@ export struct ChatMoreMenuSheet {
         })
       }
 
-      Divider().color($r('app.color.app_divider')).margin({ top: 8, bottom: 8 })
+      Divider().color(ThemePalette.dividerColor(this.effectiveTheme)).margin({ top: 8, bottom: 8 })
 
       // T-CHAT.1: 导出当前聊天(对话就绪时显示)
       if (this.currentConversationId.length > 0) {
@@ -217,19 +220,19 @@ export struct ChatMoreMenuSheet {
     Row() {
       Text(label)
         .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .width(56)
       Text(value)
         .fontSize($r('app.float.app_font_body'))
         .fontColor(enabled
-          ? $r('app.color.app_text_primary')
-          : $r('app.color.app_text_tertiary'))
+          ? ThemePalette.textPrimaryColor(this.effectiveTheme)
+          : ThemePalette.textTertiaryColor(this.effectiveTheme))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .layoutWeight(1)
       Text('›')
         .fontSize(20)
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
     }
     .width('100%')
     .height(52)
@@ -250,8 +253,8 @@ export struct ChatMoreMenuSheet {
       Text(label)
         .fontSize($r('app.float.app_font_body'))
         .fontColor(isDestructive
-          ? (disabled ? $r('app.color.app_text_tertiary') : $r('app.color.app_danger'))
-          : (disabled ? $r('app.color.app_text_tertiary') : $r('app.color.app_text_primary')))
+          ? (disabled ? ThemePalette.textTertiaryColor(this.effectiveTheme) : $r('app.color.app_danger'))
+          : (disabled ? ThemePalette.textTertiaryColor(this.effectiveTheme) : ThemePalette.textPrimaryColor(this.effectiveTheme)))
         .layoutWeight(1)
     }
     .width('100%')

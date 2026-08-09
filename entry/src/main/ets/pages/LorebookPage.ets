@@ -17,6 +17,7 @@ import { LorebookService } from '../services/LorebookService';
 import { Lorebook, LorebookEntry } from '../models/Lorebook';
 import { AppServices } from '../services/AppServices';
 import { router } from '@kit.ArkUI';
+import { ThemePalette } from '../theme/ThemePalette';
 
 /**
  * 颜色资源引用(全部通过 $r('app.color.worldbook_*') 主题资源访问,
@@ -63,6 +64,7 @@ struct LorebookPage {
   @State editEntryPriority: number = 0;
   /** 顶部状态栏避让高度(由 EntryAbility 写入 AppStorage) */
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
 
   aboutToAppear(): void {
     const service: LorebookService = AppServices.getLorebookService();

@@ -41,6 +41,7 @@ import { WorldStatusChip } from '../../components/world/WorldStatusChip';
 import { WorldEmptyState } from '../../components/world/WorldEmptyState';
 import { WorldColors } from '../../components/world/WorldDesignTokens';
 import { Logger } from '../../utils/Logger';
+import { ThemePalette } from '../../theme/ThemePalette';
 
 const LOG_TAG: string = 'WorldCharacterMemoryPage';
 
@@ -89,6 +90,7 @@ struct WorldCharacterMemoryPage {
 
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navBarHeight') navBarHeight: number = 0;
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
   @StorageProp(WORLD_CHARACTER_MEMORY_REFRESH_TOKEN_KEY) @Watch('onRefreshTokenChange')
   refreshToken: number = 0;
 
@@ -221,12 +223,12 @@ struct WorldCharacterMemoryPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.world_bg'))
+    .backgroundColor(ThemePalette.pageBgColor(this.effectiveTheme))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .bindSheet(this.formMode === MemoryFormMode.Create, this.createFormSheet, {
       height: SheetSize.FIT_CONTENT,
       dragBar: true,
-      backgroundColor: $r('app.color.world_surface_1'),
+      backgroundColor: ThemePalette.worldSurfaceColor(this.effectiveTheme),
       onDisappear: () => {
         if (this.formMode === MemoryFormMode.Create) {
           this.formMode = MemoryFormMode.None;
@@ -236,7 +238,7 @@ struct WorldCharacterMemoryPage {
     .bindSheet(this.formMode === MemoryFormMode.Edit, this.editFormSheet, {
       height: SheetSize.FIT_CONTENT,
       dragBar: true,
-      backgroundColor: $r('app.color.world_surface_1'),
+      backgroundColor: ThemePalette.worldSurfaceColor(this.effectiveTheme),
       onDisappear: () => {
         if (this.formMode === MemoryFormMode.Edit) {
           this.formMode = MemoryFormMode.None;
@@ -246,7 +248,7 @@ struct WorldCharacterMemoryPage {
     .bindSheet(this.deletingMemoryId.length > 0, this.deleteConfirmSheet, {
       height: SheetSize.FIT_CONTENT,
       dragBar: true,
-      backgroundColor: $r('app.color.world_surface_1'),
+      backgroundColor: ThemePalette.worldSurfaceColor(this.effectiveTheme),
       onDisappear: () => {
         this.deletingMemoryId = '';
       }
@@ -258,7 +260,7 @@ struct WorldCharacterMemoryPage {
     Row() {
       Button('←')
         .fontSize(22)
-        .fontColor($r('app.color.world_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .backgroundColor(Color.Transparent)
         .width(40)
         .height(40)
@@ -271,12 +273,12 @@ struct WorldCharacterMemoryPage {
         Text($r('app.string.world_archive_page_title'))
           .fontSize($r('app.float.world_font_title'))
           .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.world_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
         Text(this.displayName)
           .fontSize($r('app.float.world_font_caption'))
-          .fontColor($r('app.color.world_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .margin({ top: 2 })
@@ -298,7 +300,7 @@ struct WorldCharacterMemoryPage {
   @Builder
   loadingView(): void {
     Column() {
-      LoadingProgress().width(40).height(40).color($r('app.color.world_gold'))
+      LoadingProgress().width(40).height(40).color(ThemePalette.accentColor(this.effectiveTheme))
     }
     .width('100%')
     .layoutWeight(1)
@@ -373,7 +375,7 @@ struct WorldCharacterMemoryPage {
         Text(this.displayName)
           .fontSize($r('app.float.world_font_body'))
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.world_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .width('100%')
@@ -388,7 +390,7 @@ struct WorldCharacterMemoryPage {
             Text($r('app.string.world_character_card_missing'))
               .fontSize(10)
               .fontColor($r('app.color.world_error'))
-              .backgroundColor($r('app.color.world_surface_2'))
+              .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
               .borderRadius(3)
               .padding({ left: 4, right: 4, top: 1, bottom: 1 })
               .margin({ left: 4 })
@@ -396,8 +398,8 @@ struct WorldCharacterMemoryPage {
 
           Text(this.currentLocationLabel)
             .fontSize(10)
-            .fontColor($r('app.color.world_text_secondary'))
-            .backgroundColor($r('app.color.world_surface_2'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius(3)
             .padding({ left: 4, right: 4, top: 1, bottom: 1 })
             .margin({ left: 4 })
@@ -407,7 +409,7 @@ struct WorldCharacterMemoryPage {
 
         Text('记忆 ' + this.memoryCount.toString())
           .fontSize($r('app.float.world_font_micro'))
-          .fontColor($r('app.color.world_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .margin({ top: 4 })
       }
       .layoutWeight(1)
@@ -421,7 +423,7 @@ struct WorldCharacterMemoryPage {
       top: $r('app.float.app_spacing_12'),
       bottom: $r('app.float.app_spacing_8')
     })
-    .backgroundColor($r('app.color.world_surface_1'))
+    .backgroundColor(ThemePalette.worldSurfaceColor(this.effectiveTheme))
     .alignItems(VerticalAlign.Center)
   }
 
@@ -443,7 +445,7 @@ struct WorldCharacterMemoryPage {
               Text(item.displayName)
                 .fontSize($r('app.float.world_font_micro'))
                 .fontColor(item.instanceId === this.viewModel?.expectedCharacterInstanceIdOfPage()
-                  ? $r('app.color.world_gold') : $r('app.color.world_text_secondary'))
+                  ? ThemePalette.accentColor(this.effectiveTheme) : ThemePalette.textSecondaryColor(this.effectiveTheme))
                 .maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
                 .margin({ left: 4 })
@@ -451,9 +453,9 @@ struct WorldCharacterMemoryPage {
             .padding({ left: 8, right: 8, top: 4, bottom: 4 })
             .borderRadius($r('app.float.world_radius_chip'))
             .backgroundColor(item.instanceId === this.viewModel?.expectedCharacterInstanceIdOfPage()
-              ? $r('app.color.world_surface_2') : Color.Transparent)
+              ? ThemePalette.surface2Color(this.effectiveTheme) : Color.Transparent)
             .borderWidth(item.instanceId === this.viewModel?.expectedCharacterInstanceIdOfPage() ? 1 : 0)
-            .borderColor($r('app.color.world_gold'))
+            .borderColor(ThemePalette.accentColor(this.effectiveTheme))
             .alignItems(VerticalAlign.Center)
             .onClick(() => {
               this.switchCharacter(item.instanceId);
@@ -471,9 +473,9 @@ struct WorldCharacterMemoryPage {
         top: 6,
         bottom: 6
       })
-      .backgroundColor($r('app.color.world_surface_1'))
+      .backgroundColor(ThemePalette.worldSurfaceColor(this.effectiveTheme))
       .borderWidth({ top: 1 })
-      .borderColor($r('app.color.world_border'))
+      .borderColor(ThemePalette.worldBorderColor(this.effectiveTheme))
     }
   }
 
@@ -490,7 +492,7 @@ struct WorldCharacterMemoryPage {
       left: $r('app.float.world_page_padding'),
       right: $r('app.float.world_page_padding')
     })
-    .backgroundColor($r('app.color.world_bg'))
+    .backgroundColor(ThemePalette.pageBgColor(this.effectiveTheme))
     .justifyContent(FlexAlign.Start)
     .alignItems(VerticalAlign.Center)
   }
@@ -501,14 +503,14 @@ struct WorldCharacterMemoryPage {
       Text(label)
         .fontSize($r('app.float.world_font_body'))
         .fontColor(this.selectedTab === tab
-          ? $r('app.color.world_gold') : $r('app.color.world_text_secondary'))
+          ? ThemePalette.accentColor(this.effectiveTheme) : ThemePalette.textSecondaryColor(this.effectiveTheme))
         .fontWeight(this.selectedTab === tab ? FontWeight.Medium : FontWeight.Normal)
         .padding({ top: 10, bottom: 8 })
 
       Divider()
         .width(this.selectedTab === tab ? 24 : 0)
         .height(2)
-        .color($r('app.color.world_gold'))
+        .color(ThemePalette.accentColor(this.effectiveTheme))
         .borderRadius(1)
     }
     .margin({ right: 16 })
@@ -584,9 +586,9 @@ struct WorldCharacterMemoryPage {
       Button($r('app.string.world_memory_filter_all'))
         .fontSize($r('app.float.world_font_caption'))
         .fontColor(this.filter === WorldCharacterMemoryListFilter.All
-          ? $r('app.color.world_on_gold') : $r('app.color.world_text_primary'))
+          ? (this.effectiveTheme === 'tavern' ? '#1A1510' : $r('app.color.app_on_accent')) : ThemePalette.textPrimaryColor(this.effectiveTheme))
         .backgroundColor(this.filter === WorldCharacterMemoryListFilter.All
-          ? $r('app.color.world_gold') : $r('app.color.world_surface_2'))
+          ? ThemePalette.accentColor(this.effectiveTheme) : ThemePalette.surface2Color(this.effectiveTheme))
         .borderRadius($r('app.float.world_radius_chip'))
         .height(30)
         .padding({ left: 10, right: 10 })
@@ -594,9 +596,9 @@ struct WorldCharacterMemoryPage {
       Button($r('app.string.world_archive_filter_manual'))
         .fontSize($r('app.float.world_font_caption'))
         .fontColor(this.filter === WorldCharacterMemoryListFilter.Manual
-          ? $r('app.color.world_on_gold') : $r('app.color.world_text_primary'))
+          ? (this.effectiveTheme === 'tavern' ? '#1A1510' : $r('app.color.app_on_accent')) : ThemePalette.textPrimaryColor(this.effectiveTheme))
         .backgroundColor(this.filter === WorldCharacterMemoryListFilter.Manual
-          ? $r('app.color.world_gold') : $r('app.color.world_surface_2'))
+          ? ThemePalette.accentColor(this.effectiveTheme) : ThemePalette.surface2Color(this.effectiveTheme))
         .borderRadius($r('app.float.world_radius_chip'))
         .height(30)
         .padding({ left: 10, right: 10 })
@@ -605,9 +607,9 @@ struct WorldCharacterMemoryPage {
       Button($r('app.string.world_archive_filter_scene'))
         .fontSize($r('app.float.world_font_caption'))
         .fontColor(this.filter === WorldCharacterMemoryListFilter.Scene
-          ? $r('app.color.world_on_gold') : $r('app.color.world_text_primary'))
+          ? (this.effectiveTheme === 'tavern' ? '#1A1510' : $r('app.color.app_on_accent')) : ThemePalette.textPrimaryColor(this.effectiveTheme))
         .backgroundColor(this.filter === WorldCharacterMemoryListFilter.Scene
-          ? $r('app.color.world_gold') : $r('app.color.world_surface_2'))
+          ? ThemePalette.accentColor(this.effectiveTheme) : ThemePalette.surface2Color(this.effectiveTheme))
         .borderRadius($r('app.float.world_radius_chip'))
         .height(30)
         .padding({ left: 10, right: 10 })
@@ -618,8 +620,8 @@ struct WorldCharacterMemoryPage {
 
       Button('+')
         .fontSize(18)
-        .fontColor($r('app.color.world_on_gold'))
-        .backgroundColor($r('app.color.world_gold'))
+        .fontColor((this.effectiveTheme === 'tavern' ? '#1A1510' : $r('app.color.app_on_accent')))
+        .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
         .borderRadius(15)
         .width(30)
         .height(30)
@@ -639,23 +641,23 @@ struct WorldCharacterMemoryPage {
         Row() {
           Text(m.typeLabel)
             .fontSize(11)
-            .fontColor($r('app.color.world_gold'))
-            .backgroundColor($r('app.color.world_surface_2'))
+            .fontColor(ThemePalette.accentColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius(3)
             .padding({ left: 6, right: 6, top: 2, bottom: 2 })
 
           Text(this.importanceLabel(m.importance))
             .fontSize(11)
-            .fontColor($r('app.color.world_text_secondary'))
-            .backgroundColor($r('app.color.world_surface_2'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius(3)
             .padding({ left: 6, right: 6, top: 2, bottom: 2 })
             .margin({ left: 6 })
 
           Text(m.originLabel)
             .fontSize(11)
-            .fontColor($r('app.color.world_text_tertiary'))
-            .backgroundColor($r('app.color.world_surface_2'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius(3)
             .padding({ left: 6, right: 6, top: 2, bottom: 2 })
             .margin({ left: 6 })
@@ -672,7 +674,7 @@ struct WorldCharacterMemoryPage {
 
         Text(m.content)
           .fontSize($r('app.float.world_font_body'))
-          .fontColor($r('app.color.world_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .width('100%')
           .margin({ top: 8 })
           .maxLines(5)
@@ -683,7 +685,7 @@ struct WorldCharacterMemoryPage {
         if (m.sourceSummary.length > 0) {
           Text(m.sourceSummary)
             .fontSize($r('app.float.world_font_caption'))
-            .fontColor($r('app.color.world_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
             .width('100%')
             .margin({ top: 6 })
         }
@@ -692,25 +694,25 @@ struct WorldCharacterMemoryPage {
           if (m.occurredAtLabel.length > 0) {
             Text(m.occurredAtLabel)
               .fontSize(10)
-              .fontColor($r('app.color.world_text_tertiary'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           }
           Text(m.createdAtLabel)
             .fontSize(10)
-            .fontColor($r('app.color.world_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
             .margin({ left: m.occurredAtLabel.length > 0 ? 8 : 0 })
         }
         .width('100%')
         .margin({ top: 6 })
         .alignItems(VerticalAlign.Center)
 
-        Divider().color($r('app.color.world_border')).margin({ top: 8, bottom: 6 })
+        Divider().color(ThemePalette.worldBorderColor(this.effectiveTheme)).margin({ top: 8, bottom: 6 })
 
         Row() {
           if (m.hasEvidence) {
             Button($r('app.string.world_archive_view_evidence'))
               .fontSize($r('app.float.world_font_caption'))
-              .fontColor($r('app.color.world_gold'))
-              .backgroundColor($r('app.color.world_surface_2'))
+              .fontColor(ThemePalette.accentColor(this.effectiveTheme))
+              .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
               .borderRadius($r('app.float.world_radius_chip'))
               .height(28)
               .padding({ left: 8, right: 8 })
@@ -721,8 +723,8 @@ struct WorldCharacterMemoryPage {
 
           Button($r('app.string.world_memory_edit'))
             .fontSize($r('app.float.world_font_caption'))
-            .fontColor($r('app.color.world_gold'))
-            .backgroundColor($r('app.color.world_surface_2'))
+            .fontColor(ThemePalette.accentColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius($r('app.float.world_radius_chip'))
             .height(28)
             .padding({ left: 8, right: 8 })
@@ -732,8 +734,8 @@ struct WorldCharacterMemoryPage {
           if (m.status === WorldCharacterMemoryStatus.Active) {
             Button($r('app.string.world_memory_archive'))
               .fontSize($r('app.float.world_font_caption'))
-              .fontColor($r('app.color.world_text_secondary'))
-              .backgroundColor($r('app.color.world_surface_2'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+              .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
               .borderRadius($r('app.float.world_radius_chip'))
               .height(28)
               .padding({ left: 8, right: 8 })
@@ -743,8 +745,8 @@ struct WorldCharacterMemoryPage {
           } else {
             Button($r('app.string.world_memory_restore'))
               .fontSize($r('app.float.world_font_caption'))
-              .fontColor($r('app.color.world_gold'))
-              .backgroundColor($r('app.color.world_surface_2'))
+              .fontColor(ThemePalette.accentColor(this.effectiveTheme))
+              .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
               .borderRadius($r('app.float.world_radius_chip'))
               .height(28)
               .padding({ left: 8, right: 8 })
@@ -756,7 +758,7 @@ struct WorldCharacterMemoryPage {
           Button($r('app.string.world_memory_delete'))
             .fontSize($r('app.float.world_font_caption'))
             .fontColor($r('app.color.world_error'))
-            .backgroundColor($r('app.color.world_surface_2'))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius($r('app.float.world_radius_chip'))
             .height(28)
             .padding({ left: 8, right: 8 })
@@ -781,7 +783,7 @@ struct WorldCharacterMemoryPage {
     if (this.activityScenes.length === 0) {
       Text('该角色尚未参与任何场景')
         .fontSize($r('app.float.world_font_body'))
-        .fontColor($r('app.color.world_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .margin({ top: 12 })
     } else {
       ForEach(this.activityScenes, (scene: ActivitySceneUiModel) => {
@@ -795,7 +797,7 @@ struct WorldCharacterMemoryPage {
     if (this.activityMessages.length === 0) {
       Text('该角色尚未发送任何消息')
         .fontSize($r('app.float.world_font_body'))
-        .fontColor($r('app.color.world_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .margin({ top: 12 })
     } else {
       ForEach(this.activityMessages.slice(0, 20), (msg: ActivityMessageUiModel) => {
@@ -809,7 +811,7 @@ struct WorldCharacterMemoryPage {
     if (this.activityMoves.length === 0) {
       Text($r('app.string.world_archive_no_move_history'))
         .fontSize($r('app.float.world_font_caption'))
-        .fontColor($r('app.color.world_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .margin({ top: 8 })
     } else {
       ForEach(this.activityMoves, (move: ActivityMoveUiModel) => {
@@ -825,7 +827,7 @@ struct WorldCharacterMemoryPage {
         Row() {
           Text(scene.locationMissing ? '地点已删除' : scene.locationName)
             .fontSize($r('app.float.world_font_body'))
-            .fontColor($r('app.color.world_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .layoutWeight(1)
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -841,11 +843,11 @@ struct WorldCharacterMemoryPage {
         Row() {
           Text(scene.startedAtLabel)
             .fontSize($r('app.float.world_font_micro'))
-            .fontColor($r('app.color.world_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           if (scene.endedAtLabel.length > 0) {
             Text(' → ' + scene.endedAtLabel)
               .fontSize($r('app.float.world_font_micro'))
-              .fontColor($r('app.color.world_text_tertiary'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           }
         }
         .margin({ top: 4 })
@@ -853,16 +855,16 @@ struct WorldCharacterMemoryPage {
         Row() {
           Text('消息 ' + scene.messageCount.toString())
             .fontSize($r('app.float.world_font_micro'))
-            .fontColor($r('app.color.world_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           Text('参与 ' + scene.participantCount.toString())
             .fontSize($r('app.float.world_font_micro'))
-            .fontColor($r('app.color.world_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
             .margin({ left: 8 })
           if (scene.characterSpoke) {
             Text('已发言')
               .fontSize($r('app.float.world_font_micro'))
-              .fontColor($r('app.color.world_gold'))
-              .backgroundColor($r('app.color.world_surface_2'))
+              .fontColor(ThemePalette.accentColor(this.effectiveTheme))
+              .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
               .borderRadius(3)
               .padding({ left: 4, right: 4, top: 1, bottom: 1 })
               .margin({ left: 8 })
@@ -883,15 +885,15 @@ struct WorldCharacterMemoryPage {
         Row() {
           Text(msg.locationMissing ? '地点已删除' : msg.locationName)
             .fontSize($r('app.float.world_font_micro'))
-            .fontColor($r('app.color.world_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           Text(msg.sentAtLabel)
             .fontSize($r('app.float.world_font_micro'))
-            .fontColor($r('app.color.world_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
             .margin({ left: 8 })
           Text(msg.visibilityLabel)
             .fontSize($r('app.float.world_font_micro'))
-            .fontColor($r('app.color.world_text_tertiary'))
-            .backgroundColor($r('app.color.world_surface_2'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius(3)
             .padding({ left: 4, right: 4, top: 1, bottom: 1 })
             .margin({ left: 8 })
@@ -901,7 +903,7 @@ struct WorldCharacterMemoryPage {
 
         Text(msg.contentPreview)
           .fontSize($r('app.float.world_font_caption'))
-          .fontColor($r('app.color.world_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .width('100%')
           .margin({ top: 6 })
           .maxLines(3)
@@ -910,7 +912,7 @@ struct WorldCharacterMemoryPage {
         if (msg.coParticipantNames.length > 0) {
           Text('同场: ' + msg.coParticipantNames.join(', '))
             .fontSize($r('app.float.world_font_micro'))
-            .fontColor($r('app.color.world_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
             .margin({ top: 4 })
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -928,24 +930,24 @@ struct WorldCharacterMemoryPage {
       Row() {
         Text(move.fromLocationMissing ? '未知' : move.fromLocationName)
           .fontSize($r('app.float.world_font_caption'))
-          .fontColor($r('app.color.world_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
 
         Text(' → ')
           .fontSize($r('app.float.world_font_caption'))
-          .fontColor($r('app.color.world_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
 
         Text(move.toLocationMissing ? '未知' : move.toLocationName)
           .fontSize($r('app.float.world_font_caption'))
-          .fontColor($r('app.color.world_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .layoutWeight(1)
 
         Text(move.occurredAtLabel)
           .fontSize($r('app.float.world_font_micro'))
-          .fontColor($r('app.color.world_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .margin({ left: 8 })
       }
       .width('100%')
@@ -960,33 +962,33 @@ struct WorldCharacterMemoryPage {
       Text($r('app.string.world_archive_relationship_not_available'))
         .fontSize($r('app.float.world_font_title'))
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.world_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .textAlign(TextAlign.Center)
 
       Text('世界角色关系模型尚未建立,未来将支持角色间关系图谱、好感度追踪与认知分析。')
         .fontSize($r('app.float.world_font_body'))
-        .fontColor($r('app.color.world_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .margin({ top: 8 })
         .textAlign(TextAlign.Center)
 
       Text($r('app.string.world_archive_player_identity_not_available'))
         .fontSize($r('app.float.world_font_section'))
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.world_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .margin({ top: 24 })
         .textAlign(TextAlign.Center)
 
       Text('世界玩家身份尚未接入,未来将支持玩家在世界中的角色定位、与 NPC 的关系记录。')
         .fontSize($r('app.float.world_font_body'))
-        .fontColor($r('app.color.world_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .margin({ top: 8 })
         .textAlign(TextAlign.Center)
 
-      Divider().color($r('app.color.world_border')).margin({ top: 24, bottom: 16 })
+      Divider().color(ThemePalette.worldBorderColor(this.effectiveTheme)).margin({ top: 24, bottom: 16 })
 
       Text($r('app.string.world_archive_original_card'))
         .fontSize($r('app.float.world_font_section'))
-        .fontColor($r('app.color.world_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
 
       if (this.characterCardMissing) {
         Text($r('app.string.world_character_card_missing'))
@@ -1005,7 +1007,7 @@ struct WorldCharacterMemoryPage {
           })
           Text(this.displayName)
             .fontSize($r('app.float.world_font_body'))
-            .fontColor($r('app.color.world_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .margin({ left: 8 })
         }
         .margin({ top: 8 })
@@ -1015,12 +1017,12 @@ struct WorldCharacterMemoryPage {
       Row() {
         Text($r('app.string.world_archive_world_instance'))
           .fontSize($r('app.float.world_font_caption'))
-          .fontColor($r('app.color.world_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .width(72)
           .flexShrink(0)
         Text(this.isActive ? '活跃' : '已停用')
           .fontSize($r('app.float.world_font_caption'))
-          .fontColor($r('app.color.world_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
       }
       .margin({ top: 8 })
     }
@@ -1035,7 +1037,7 @@ struct WorldCharacterMemoryPage {
     if (this.diagnostic === null) {
       Text('诊断数据不可用')
         .fontSize($r('app.float.world_font_body'))
-        .fontColor($r('app.color.world_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .margin({ top: 24 })
     } else {
       WorldSectionHeader({ title: $r('app.string.world_archive_diagnostic_title') })
@@ -1044,19 +1046,19 @@ struct WorldCharacterMemoryPage {
         Column() {
           Row() {
             this.diagnosticMetric($r('app.string.world_archive_diagnostic_total'),
-              this.diagnostic.totalMemories, $r('app.color.world_text_primary'))
+              this.diagnostic.totalMemories, ThemePalette.textPrimaryColor(this.effectiveTheme))
             this.diagnosticMetric($r('app.string.world_archive_diagnostic_with_source'),
               this.diagnostic.withSourceCount, $r('app.color.world_success'))
             this.diagnosticMetric($r('app.string.world_archive_diagnostic_without_source'),
-              this.diagnostic.withoutSourceCount, $r('app.color.world_text_tertiary'))
+              this.diagnostic.withoutSourceCount, ThemePalette.textTertiaryColor(this.effectiveTheme))
             this.diagnosticMetric($r('app.string.world_archive_diagnostic_archived'),
-              this.diagnostic.archivedCount, $r('app.color.world_text_tertiary'))
+              this.diagnostic.archivedCount, ThemePalette.textTertiaryColor(this.effectiveTheme))
           }
           .width('100%')
           .justifyContent(FlexAlign.SpaceBetween)
           .alignItems(VerticalAlign.Top)
 
-          Divider().color($r('app.color.world_border')).margin({ top: 12, bottom: 8 })
+          Divider().color(ThemePalette.worldBorderColor(this.effectiveTheme)).margin({ top: 12, bottom: 8 })
 
           Row() {
             this.diagnosticMetric($r('app.string.world_archive_diagnostic_dup_source'),
@@ -1076,9 +1078,9 @@ struct WorldCharacterMemoryPage {
             this.diagnosticMetric($r('app.string.world_archive_diagnostic_missing_message'),
               this.diagnostic.missingMessageRefCount, $r('app.color.world_warning'))
             this.diagnosticMetric($r('app.string.world_archive_diagnostic_missing_location'),
-              this.diagnostic.missingLocationRefCount, $r('app.color.world_text_tertiary'))
+              this.diagnostic.missingLocationRefCount, ThemePalette.textTertiaryColor(this.effectiveTheme))
             this.diagnosticMetric($r('app.string.world_archive_diagnostic_missing_character'),
-              this.diagnostic.missingCharacterRefCount, $r('app.color.world_text_tertiary'))
+              this.diagnostic.missingCharacterRefCount, ThemePalette.textTertiaryColor(this.effectiveTheme))
           }
           .width('100%')
           .justifyContent(FlexAlign.SpaceBetween)
@@ -1116,7 +1118,7 @@ struct WorldCharacterMemoryPage {
         .fontColor(color)
       Text(label)
         .fontSize($r('app.float.world_font_micro'))
-        .fontColor($r('app.color.world_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .margin({ top: 2 })
     }
     .alignItems(HorizontalAlign.Center)
@@ -1129,7 +1131,7 @@ struct WorldCharacterMemoryPage {
       Row() {
         Text(issue.issueType)
           .fontSize($r('app.float.world_font_caption'))
-          .fontColor($r('app.color.world_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .layoutWeight(1)
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -1148,7 +1150,7 @@ struct WorldCharacterMemoryPage {
 
       Text(issue.description)
         .fontSize($r('app.float.world_font_micro'))
-        .fontColor($r('app.color.world_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .margin({ top: 4 })
         .width('100%')
         .maxLines(2)
@@ -1174,13 +1176,13 @@ struct WorldCharacterMemoryPage {
         : $r('app.string.world_memory_create_title'))
         .fontSize($r('app.float.world_font_title'))
         .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.world_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .width('100%')
         .padding({ left: 16, top: 16, bottom: 12 })
 
       Text($r('app.string.world_memory_form_content'))
         .fontSize($r('app.float.world_font_caption'))
-        .fontColor($r('app.color.world_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .width('100%')
         .padding({ left: 16, bottom: 4 })
       TextArea({
@@ -1188,8 +1190,8 @@ struct WorldCharacterMemoryPage {
         placeholder: $r('app.string.world_memory_form_content_placeholder')
       })
         .fontSize($r('app.float.world_font_body'))
-        .fontColor($r('app.color.world_text_primary'))
-        .backgroundColor($r('app.color.world_surface_2'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+        .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
         .borderRadius($r('app.float.world_radius_card'))
         .width('100%')
         .height(120)
@@ -1201,22 +1203,22 @@ struct WorldCharacterMemoryPage {
       Text($r('app.string.world_memory_form_content_count',
         this.formContent.length, WORLD_CHARACTER_MEMORY_CONTENT_MAX))
         .fontSize(10)
-        .fontColor($r('app.color.world_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .width('100%')
         .padding({ left: 16, right: 16, bottom: 8 })
 
       Text($r('app.string.world_memory_form_type'))
         .fontSize($r('app.float.world_font_caption'))
-        .fontColor($r('app.color.world_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .width('100%')
         .padding({ left: 16, bottom: 4 })
       Row() {
         Button($r('app.string.world_memory_type_episodic'))
           .fontSize($r('app.float.world_font_caption'))
           .fontColor(this.formType === WorldCharacterMemoryType.Episodic
-            ? $r('app.color.world_on_gold') : $r('app.color.world_text_primary'))
+            ? (this.effectiveTheme === 'tavern' ? '#1A1510' : $r('app.color.app_on_accent')) : ThemePalette.textPrimaryColor(this.effectiveTheme))
           .backgroundColor(this.formType === WorldCharacterMemoryType.Episodic
-            ? $r('app.color.world_gold') : $r('app.color.world_surface_2'))
+            ? ThemePalette.accentColor(this.effectiveTheme) : ThemePalette.surface2Color(this.effectiveTheme))
           .borderRadius($r('app.float.world_radius_chip'))
           .height(30)
           .padding({ left: 10, right: 10 })
@@ -1224,9 +1226,9 @@ struct WorldCharacterMemoryPage {
         Button($r('app.string.world_memory_type_semantic'))
           .fontSize($r('app.float.world_font_caption'))
           .fontColor(this.formType === WorldCharacterMemoryType.Semantic
-            ? $r('app.color.world_on_gold') : $r('app.color.world_text_primary'))
+            ? (this.effectiveTheme === 'tavern' ? '#1A1510' : $r('app.color.app_on_accent')) : ThemePalette.textPrimaryColor(this.effectiveTheme))
           .backgroundColor(this.formType === WorldCharacterMemoryType.Semantic
-            ? $r('app.color.world_gold') : $r('app.color.world_surface_2'))
+            ? ThemePalette.accentColor(this.effectiveTheme) : ThemePalette.surface2Color(this.effectiveTheme))
           .borderRadius($r('app.float.world_radius_chip'))
           .height(30)
           .padding({ left: 10, right: 10 })
@@ -1235,9 +1237,9 @@ struct WorldCharacterMemoryPage {
         Button($r('app.string.world_memory_type_reflection'))
           .fontSize($r('app.float.world_font_caption'))
           .fontColor(this.formType === WorldCharacterMemoryType.Reflection
-            ? $r('app.color.world_on_gold') : $r('app.color.world_text_primary'))
+            ? (this.effectiveTheme === 'tavern' ? '#1A1510' : $r('app.color.app_on_accent')) : ThemePalette.textPrimaryColor(this.effectiveTheme))
           .backgroundColor(this.formType === WorldCharacterMemoryType.Reflection
-            ? $r('app.color.world_gold') : $r('app.color.world_surface_2'))
+            ? ThemePalette.accentColor(this.effectiveTheme) : ThemePalette.surface2Color(this.effectiveTheme))
           .borderRadius($r('app.float.world_radius_chip'))
           .height(30)
           .padding({ left: 10, right: 10 })
@@ -1249,7 +1251,7 @@ struct WorldCharacterMemoryPage {
 
       Text($r('app.string.world_memory_form_importance'))
         .fontSize($r('app.float.world_font_caption'))
-        .fontColor($r('app.color.world_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .width('100%')
         .padding({ left: 16, bottom: 4 })
       Row() {
@@ -1257,9 +1259,9 @@ struct WorldCharacterMemoryPage {
           Button(n.toString())
             .fontSize($r('app.float.world_font_caption'))
             .fontColor(this.formImportance === n
-              ? $r('app.color.world_on_gold') : $r('app.color.world_text_primary'))
+              ? (this.effectiveTheme === 'tavern' ? '#1A1510' : $r('app.color.app_on_accent')) : ThemePalette.textPrimaryColor(this.effectiveTheme))
             .backgroundColor(this.formImportance === n
-              ? $r('app.color.world_gold') : $r('app.color.world_surface_2'))
+              ? ThemePalette.accentColor(this.effectiveTheme) : ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius($r('app.float.world_radius_chip'))
             .height(30)
             .width(44)
@@ -1273,7 +1275,7 @@ struct WorldCharacterMemoryPage {
 
       Text($r('app.string.world_memory_form_location'))
         .fontSize($r('app.float.world_font_caption'))
-        .fontColor($r('app.color.world_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .width('100%')
         .padding({ left: 16, bottom: 4 })
       Row() {
@@ -1281,8 +1283,8 @@ struct WorldCharacterMemoryPage {
           ? $r('app.string.world_memory_form_location_none')
           : this.resolveLocationName(this.formLocationId))
           .fontSize($r('app.float.world_font_caption'))
-          .fontColor($r('app.color.world_text_primary'))
-          .backgroundColor($r('app.color.world_surface_2'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+          .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
           .borderRadius($r('app.float.world_radius_chip'))
           .height(30)
           .padding({ left: 10, right: 10 })
@@ -1291,7 +1293,7 @@ struct WorldCharacterMemoryPage {
           })
         Text($r('app.string.world_memory_form_location_clear'))
           .fontSize($r('app.float.world_font_caption'))
-          .fontColor($r('app.color.world_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .margin({ left: 8 })
       }
       .width('100%')
@@ -1302,9 +1304,9 @@ struct WorldCharacterMemoryPage {
           Button(loc.name)
             .fontSize($r('app.float.world_font_caption'))
             .fontColor(this.formLocationId === loc.id
-              ? $r('app.color.world_on_gold') : $r('app.color.world_text_primary'))
+              ? (this.effectiveTheme === 'tavern' ? '#1A1510' : $r('app.color.app_on_accent')) : ThemePalette.textPrimaryColor(this.effectiveTheme))
             .backgroundColor(this.formLocationId === loc.id
-              ? $r('app.color.world_gold') : $r('app.color.world_surface_2'))
+              ? ThemePalette.accentColor(this.effectiveTheme) : ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius($r('app.float.world_radius_chip'))
             .height(30)
             .padding({ left: 8, right: 8 })
@@ -1317,15 +1319,15 @@ struct WorldCharacterMemoryPage {
 
       Text($r('app.string.world_memory_form_occurred_at'))
         .fontSize($r('app.float.world_font_caption'))
-        .fontColor($r('app.color.world_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .width('100%')
         .padding({ left: 16, bottom: 4 })
       Row() {
         Text(this.formOccurredAt > 0
           ? this.formatTimestamp(this.formOccurredAt) : '未指定')
           .fontSize($r('app.float.world_font_body'))
-          .fontColor($r('app.color.world_text_primary'))
-          .backgroundColor($r('app.color.world_surface_2'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+          .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
           .borderRadius($r('app.float.world_radius_chip'))
           .height(30)
           .padding({ left: 10, right: 10 })
@@ -1334,8 +1336,8 @@ struct WorldCharacterMemoryPage {
           ? $r('app.string.world_memory_form_occurred_clear')
           : $r('app.string.world_memory_form_occurred_now'))
           .fontSize($r('app.float.world_font_caption'))
-          .fontColor($r('app.color.world_gold'))
-          .backgroundColor($r('app.color.world_surface_2'))
+          .fontColor(ThemePalette.accentColor(this.effectiveTheme))
+          .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
           .borderRadius($r('app.float.world_radius_chip'))
           .height(30)
           .padding({ left: 8, right: 8 })
@@ -1355,8 +1357,8 @@ struct WorldCharacterMemoryPage {
       Row() {
         Button($r('app.string.world_memory_cancel'))
           .fontSize($r('app.float.world_font_body'))
-          .fontColor($r('app.color.world_text_secondary'))
-          .backgroundColor($r('app.color.world_surface_2'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+          .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
           .borderRadius($r('app.float.world_radius_chip'))
           .height(36)
           .layoutWeight(1)
@@ -1366,8 +1368,8 @@ struct WorldCharacterMemoryPage {
           ? $r('app.string.world_memory_save')
           : $r('app.string.world_memory_create'))
           .fontSize($r('app.float.world_font_body'))
-          .fontColor($r('app.color.world_on_gold'))
-          .backgroundColor($r('app.color.world_gold'))
+          .fontColor((this.effectiveTheme === 'tavern' ? '#1A1510' : $r('app.color.app_on_accent')))
+          .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
           .borderRadius($r('app.float.world_radius_chip'))
           .height(36)
           .layoutWeight(1)
@@ -1378,7 +1380,7 @@ struct WorldCharacterMemoryPage {
       .padding({ left: 16, right: 16, bottom: 16 })
     }
     .width('100%')
-    .backgroundColor($r('app.color.world_surface_1'))
+    .backgroundColor(ThemePalette.worldSurfaceColor(this.effectiveTheme))
   }
 
   @Builder
@@ -1387,21 +1389,21 @@ struct WorldCharacterMemoryPage {
       Text($r('app.string.world_memory_delete_title'))
         .fontSize($r('app.float.world_font_title'))
         .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.world_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .width('100%')
         .padding({ left: 16, top: 16, bottom: 12 })
 
       Text($r('app.string.world_memory_delete_confirm'))
         .fontSize($r('app.float.world_font_body'))
-        .fontColor($r('app.color.world_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .width('100%')
         .padding({ left: 16, right: 16, bottom: 16 })
 
       Row() {
         Button($r('app.string.world_memory_cancel'))
           .fontSize($r('app.float.world_font_body'))
-          .fontColor($r('app.color.world_text_secondary'))
-          .backgroundColor($r('app.color.world_surface_2'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+          .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
           .borderRadius($r('app.float.world_radius_chip'))
           .height(36)
           .layoutWeight(1)
@@ -1409,7 +1411,7 @@ struct WorldCharacterMemoryPage {
           .onClick(() => { this.deletingMemoryId = ''; })
         Button($r('app.string.world_memory_delete'))
           .fontSize($r('app.float.world_font_body'))
-          .fontColor($r('app.color.world_on_gold'))
+          .fontColor((this.effectiveTheme === 'tavern' ? '#1A1510' : $r('app.color.app_on_accent')))
           .backgroundColor($r('app.color.world_error'))
           .borderRadius($r('app.float.world_radius_chip'))
           .height(36)
@@ -1421,7 +1423,7 @@ struct WorldCharacterMemoryPage {
       .padding({ left: 16, right: 16, bottom: 16 })
     }
     .width('100%')
-    .backgroundColor($r('app.color.world_surface_1'))
+    .backgroundColor(ThemePalette.worldSurfaceColor(this.effectiveTheme))
   }
 
   private async changeFilter(filter: WorldCharacterMemoryListFilter): Promise<void> {

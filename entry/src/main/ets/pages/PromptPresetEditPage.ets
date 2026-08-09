@@ -7,12 +7,12 @@
  * 每个页面实例持有独立 ViewModel,支持新建和编辑模式切换。
  *
  * 主题适配:
- * - 页面背景使用 $r('app.color.page_background')(浅色 #F5F5F5 / 深色 #121212)
- * - 标题栏使用 $r('app.color.app_surface_1')
- * - 文字使用 $r('app.color.app_text_primary') / $r('app.color.app_text_secondary')
- * - 主操作按钮使用 $r('app.color.app_accent') + $r('app.color.app_on_accent')
+ * - 页面背景使用 ThemePalette.pageBackgroundColor(this.effectiveTheme)(浅色 #F5F5F5 / 深色 #121212)
+ * - 标题栏使用 ThemePalette.surface1Color(this.effectiveTheme)
+ * - 文字使用 ThemePalette.textPrimaryColor(this.effectiveTheme) / ThemePalette.textSecondaryColor(this.effectiveTheme)
+ * - 主操作按钮使用 ThemePalette.accentColor(this.effectiveTheme) + $r('app.color.app_on_accent')
  * - 错误文字使用 $r('app.color.app_danger')
- * - 分隔线使用 $r('app.color.app_divider')
+ * - 分隔线使用 ThemePalette.dividerColor(this.effectiveTheme)
  * - 不在组件中散落十六进制颜色,浅色/深色模式自动切换
  *
  * 系统状态栏:
@@ -24,6 +24,7 @@ import { PromptPresetEditViewModel, PromptPresetEditFormState, emptyFormState, c
 import { AppServices } from '../services/AppServices';
 import { router } from '@kit.ArkUI';
 import { Logger } from '../utils/Logger';
+import { ThemePalette } from '../theme/ThemePalette';
 
 const LOG_TAG: string = 'PromptPresetEditPage';
 
@@ -40,6 +41,7 @@ struct PromptPresetEditPage {
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   /** 底部导航栏/手势条避让高度 */
   @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
 
   private viewModel: PromptPresetEditViewModel = new PromptPresetEditViewModel(
     AppServices.getPromptPresetService()
@@ -58,7 +60,7 @@ struct PromptPresetEditPage {
         Button('取消')
           .fontSize(14)
           .backgroundColor(Color.Transparent)
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .onClick(() => {
             router.back();
           })
@@ -68,13 +70,13 @@ struct PromptPresetEditPage {
         Text(this.isEditing ? '编辑预设' : '新建预设')
           .fontSize(18)
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
 
         Blank()
 
         Button('保存')
           .fontSize(14)
-          .backgroundColor($r('app.color.app_accent'))
+          .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
           .fontColor($r('app.color.app_on_accent'))
           .borderRadius(6)
           .padding({ left: 12, right: 12 })
@@ -86,18 +88,18 @@ struct PromptPresetEditPage {
       .width('100%')
       .padding({ left: 12, right: 12, top: this.statusBarHeight + 8, bottom: 8 })
       .alignItems(VerticalAlign.Center)
-      .backgroundColor($r('app.color.app_surface_1'))
+      .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
 
       Divider()
         .height(1)
-        .color($r('app.color.app_divider'))
+        .color(ThemePalette.dividerColor(this.effectiveTheme))
 
       if (this.isLoading) {
         Column() {
           LoadingProgress()
             .width(40)
             .height(40)
-            .color($r('app.color.app_accent'))
+            .color(ThemePalette.accentColor(this.effectiveTheme))
         }
         .width('100%')
         .layoutWeight(1)
@@ -132,7 +134,7 @@ struct PromptPresetEditPage {
                 .width('100%')
                 .margin({ top: 8, bottom: 8 })
                 .padding(12)
-                .backgroundColor($r('app.color.app_surface_1'))
+                .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
                 .borderRadius(8)
             }
 
@@ -149,7 +151,7 @@ struct PromptPresetEditPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.page_background'))
+    .backgroundColor(ThemePalette.pageBackgroundColor(this.effectiveTheme))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 
@@ -162,7 +164,7 @@ struct PromptPresetEditPage {
       Text('基本信息')
         .fontSize(15)
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .width('100%')
         .margin({ bottom: 12 })
 
@@ -170,7 +172,7 @@ struct PromptPresetEditPage {
       this.fieldLabel('名称 *')
       TextInput({ placeholder: '输入预设名称', text: this.formState.nameInput })
         .maxLength(100)
-        .backgroundColor($r('app.color.app_surface_2'))
+        .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
         .borderRadius(8)
         .padding({ left: 12, right: 12, top: 10, bottom: 10 })
         .onChange((value: string) => {
@@ -185,7 +187,7 @@ struct PromptPresetEditPage {
       this.fieldLabel('描述(可选)')
       TextInput({ placeholder: '输入描述', text: this.formState.descriptionInput })
         .maxLength(1000)
-        .backgroundColor($r('app.color.app_surface_2'))
+        .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
         .borderRadius(8)
         .padding({ left: 12, right: 12, top: 10, bottom: 10 })
         .onChange((value: string) => {
@@ -198,7 +200,7 @@ struct PromptPresetEditPage {
       // 3. System Prompt
       this.fieldLabel('System Prompt(可选)')
       TextArea({ placeholder: '输入附加 System Prompt', text: this.formState.systemPromptInput })
-        .backgroundColor($r('app.color.app_surface_2'))
+        .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
         .borderRadius(8)
         .padding({ left: 12, right: 12, top: 10, bottom: 10 })
         .onChange((value: string) => {
@@ -212,7 +214,7 @@ struct PromptPresetEditPage {
     }
     .width('100%')
     .padding(16)
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
     .borderRadius(12)
     .margin({ bottom: 12 })
   }
@@ -226,13 +228,13 @@ struct PromptPresetEditPage {
       Text('参数覆盖(可选)')
         .fontSize(15)
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .width('100%')
         .margin({ bottom: 4 })
 
       Text('启用后可覆盖模型默认参数')
         .fontSize(12)
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .width('100%')
         .margin({ bottom: 12 })
 
@@ -258,7 +260,7 @@ struct PromptPresetEditPage {
 
       Divider()
         .height(1)
-        .color($r('app.color.app_divider'))
+        .color(ThemePalette.dividerColor(this.effectiveTheme))
         .margin({ top: 8, bottom: 8 })
 
       // 5. Top P
@@ -283,7 +285,7 @@ struct PromptPresetEditPage {
 
       Divider()
         .height(1)
-        .color($r('app.color.app_divider'))
+        .color(ThemePalette.dividerColor(this.effectiveTheme))
         .margin({ top: 8, bottom: 8 })
 
       // 6. maxOutputTokens
@@ -308,7 +310,7 @@ struct PromptPresetEditPage {
 
       Divider()
         .height(1)
-        .color($r('app.color.app_divider'))
+        .color(ThemePalette.dividerColor(this.effectiveTheme))
         .margin({ top: 8, bottom: 8 })
 
       // 7. contextWindow
@@ -333,7 +335,7 @@ struct PromptPresetEditPage {
     }
     .width('100%')
     .padding(16)
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
     .borderRadius(12)
   }
 
@@ -412,7 +414,7 @@ struct PromptPresetEditPage {
   fieldLabel(label: string) {
     Text(label)
       .fontSize(13)
-      .fontColor($r('app.color.app_text_secondary'))
+      .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
       .fontWeight(FontWeight.Regular)
       .width('100%')
       .margin({ top: 12, bottom: 6 })
@@ -443,11 +445,11 @@ struct PromptPresetEditPage {
         Column() {
           Text(label)
             .fontSize(14)
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           if (hint.length > 0) {
             Text(hint)
               .fontSize(11)
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .margin({ top: 2 })
           }
         }
@@ -455,7 +457,7 @@ struct PromptPresetEditPage {
         .layoutWeight(1)
 
         Toggle({ type: ToggleType.Switch, isOn: enabled })
-          .selectedColor($r('app.color.app_accent'))
+          .selectedColor(ThemePalette.accentColor(this.effectiveTheme))
           .onChange((isOn: boolean) => {
             onToggle(isOn);
           })
@@ -466,7 +468,7 @@ struct PromptPresetEditPage {
       if (enabled) {
         TextInput({ placeholder: '请输入 ' + hint, text: inputValue })
           .type(InputType.Number)
-          .backgroundColor($r('app.color.app_surface_2'))
+          .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
           .borderRadius(8)
           .padding({ left: 12, right: 12, top: 10, bottom: 10 })
           .onChange((value: string) => {

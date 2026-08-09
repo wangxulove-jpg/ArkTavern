@@ -21,17 +21,10 @@
  * - ChatPage 负责调用 ViewModel.editUserMessageAndGenerate
  */
 
-const COLOR_BG: string = '#FFFFFF';
+import { ThemePalette } from '../theme/ThemePalette';
+
 const COLOR_MASK: string = 'rgba(0,0,0,0.4)';
-const COLOR_TEXT_PRIMARY: string = '#333333';
-const COLOR_TEXT_SECONDARY: string = '#888888';
-const COLOR_DIVIDER: string = '#E0E0E0';
-const COLOR_INPUT_BG: string = '#F5F5F5';
-const COLOR_INPUT_BORDER: string = '#D0D0D0';
-const COLOR_BUTTON_PRIMARY: string = '#5B7CFA';
-const COLOR_BUTTON_DISABLED: string = '#CCCCCC';
 const COLOR_BUTTON_TEXT: string = '#FFFFFF';
-const COLOR_CANCEL_TEXT: string = '#007AFF';
 
 const RES_TITLE: string = 'chat_edit_message_title';
 const RES_PLACEHOLDER: string = 'chat_edit_message_placeholder';
@@ -41,6 +34,7 @@ const RES_SUBMITTING: string = 'chat_edit_message_submitting';
 
 @CustomDialog
 export struct HistoricalMessageEditDialog {
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
   controller: CustomDialogController;
   /** 原始 User 正文(预填) */
   originalContent: string = '';
@@ -65,7 +59,7 @@ export struct HistoricalMessageEditDialog {
       Text($r('app.string.' + RES_TITLE))
         .fontSize(17)
         .fontWeight(FontWeight.Medium)
-        .fontColor(COLOR_TEXT_PRIMARY)
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .width('100%')
         .textAlign(TextAlign.Center)
         .padding({ top: 20, bottom: 16 })
@@ -73,10 +67,10 @@ export struct HistoricalMessageEditDialog {
       // 输入框
       TextArea({ text: this.editingContent, placeholder: $r('app.string.' + RES_PLACEHOLDER) })
         .fontSize(14)
-        .fontColor(COLOR_TEXT_PRIMARY)
-        .backgroundColor(COLOR_INPUT_BG)
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+        .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
         .borderRadius(8)
-        .border({ width: 1, color: COLOR_INPUT_BORDER })
+        .border({ width: 1, color: ThemePalette.dividerColor(this.effectiveTheme) })
         .padding(10)
         .width('100%')
         .height(180)
@@ -92,7 +86,7 @@ export struct HistoricalMessageEditDialog {
           : $r('app.string.' + RES_CANCEL))
           .fontSize(15)
           .backgroundColor(Color.Transparent)
-          .fontColor(COLOR_CANCEL_TEXT)
+          .fontColor(ThemePalette.accentColor(this.effectiveTheme))
           .layoutWeight(1)
           .height(44)
           .enabled(!this.localSubmitting)
@@ -103,13 +97,13 @@ export struct HistoricalMessageEditDialog {
         Divider()
           .vertical(true)
           .height(24)
-          .color(COLOR_DIVIDER)
+          .color(ThemePalette.dividerColor(this.effectiveTheme))
 
         Button(this.localSubmitting
           ? $r('app.string.' + RES_SUBMITTING)
           : $r('app.string.' + RES_CONFIRM))
           .fontSize(15)
-          .backgroundColor(this.canConfirm() ? COLOR_BUTTON_PRIMARY : COLOR_BUTTON_DISABLED)
+          .backgroundColor(this.canConfirm() ? ThemePalette.accentColor(this.effectiveTheme) : ThemePalette.textTertiaryColor(this.effectiveTheme))
           .fontColor(COLOR_BUTTON_TEXT)
           .layoutWeight(1)
           .height(44)
@@ -120,10 +114,10 @@ export struct HistoricalMessageEditDialog {
       }
       .width('100%')
       .margin({ top: 20 })
-      .border({ width: { top: 1 }, color: COLOR_DIVIDER })
+      .border({ width: { top: 1 }, color: ThemePalette.dividerColor(this.effectiveTheme) })
     }
     .width('88%')
-    .backgroundColor(COLOR_BG)
+    .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
     .borderRadius(12)
   }
 

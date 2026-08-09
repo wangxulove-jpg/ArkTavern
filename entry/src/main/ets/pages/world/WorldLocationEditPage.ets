@@ -23,6 +23,7 @@ import {
 import { WorldLocationStatus } from '../../models/world/WorldLocation';
 import { EmptyStateView } from '../../components/EmptyStateView';
 import { Logger } from '../../utils/Logger';
+import { ThemePalette } from '../../theme/ThemePalette';
 
 const LOG_TAG: string = 'WorldLocationEditPage';
 
@@ -41,6 +42,7 @@ struct WorldLocationEditPage {
   @State private showDeleteConfirm: boolean = false;
   @State private showArchiveConfirm: boolean = false;
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
 
   async aboutToAppear(): Promise<void> {
     try {
@@ -98,7 +100,7 @@ struct WorldLocationEditPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.app_bg'))
+    .backgroundColor(ThemePalette.pageBgColor(this.effectiveTheme))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 
@@ -107,7 +109,7 @@ struct WorldLocationEditPage {
     Row() {
       Button($r('app.string.world_cancel'))
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_accent'))
+        .fontColor(ThemePalette.accentColor(this.effectiveTheme))
         .backgroundColor(Color.Transparent)
         .height(36)
         .padding({ left: 0, right: 8 })
@@ -121,7 +123,7 @@ struct WorldLocationEditPage {
         : $r('app.string.world_location_edit_title_edit'))
         .fontSize($r('app.float.app_font_title'))
         .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .layoutWeight(1)
@@ -152,7 +154,7 @@ struct WorldLocationEditPage {
   @Builder
   loadingView(): void {
     Column() {
-      LoadingProgress().width(40).height(40).color($r('app.color.app_accent'))
+      LoadingProgress().width(40).height(40).color(ThemePalette.accentColor(this.effectiveTheme))
     }
     .width('100%')
     .layoutWeight(1)
@@ -167,7 +169,7 @@ struct WorldLocationEditPage {
       Button($r('app.string.world_back_to_list'))
         .fontSize($r('app.float.app_font_body'))
         .fontColor($r('app.color.app_on_accent'))
-        .backgroundColor($r('app.color.app_accent'))
+        .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_sm'))
         .height(40)
         .padding({ left: 24, right: 24 })
@@ -190,7 +192,7 @@ struct WorldLocationEditPage {
       Button($r('app.string.world_home_reload'))
         .fontSize($r('app.float.app_font_body'))
         .fontColor($r('app.color.app_on_accent'))
-        .backgroundColor($r('app.color.app_accent'))
+        .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_sm'))
         .height(40)
         .padding({ left: 24, right: 24 })
@@ -214,14 +216,14 @@ struct WorldLocationEditPage {
         // 名称
         Text($r('app.string.world_location_name_label'))
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .width('100%')
           .margin({ bottom: 6 })
 
         TextInput({ text: this.nameInput, placeholder: $r('app.string.world_location_name_placeholder') })
           .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_primary'))
-          .backgroundColor($r('app.color.app_surface_1'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+          .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
           .borderRadius($r('app.float.app_radius_sm'))
           .height(48)
           .maxLength(this.viewModel !== null ? this.viewModel.getNameMax() : 100)
@@ -237,14 +239,14 @@ struct WorldLocationEditPage {
         // 描述
         Text($r('app.string.world_location_desc_label'))
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .width('100%')
           .margin({ top: 16, bottom: 6 })
 
         TextArea({ text: this.descriptionInput, placeholder: $r('app.string.world_location_desc_placeholder') })
           .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_primary'))
-          .backgroundColor($r('app.color.app_surface_1'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+          .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
           .borderRadius($r('app.float.app_radius_sm'))
           .height(120)
           .maxLength(this.viewModel !== null ? this.viewModel.getDescriptionMax() : 5000)
@@ -265,8 +267,8 @@ struct WorldLocationEditPage {
               : $r('app.string.world_location_status_archived'))
               .fontSize(11)
               .fontColor(this.currentStatus === WorldLocationStatus.Active
-                ? $r('app.color.app_accent') : $r('app.color.app_text_tertiary'))
-              .backgroundColor($r('app.color.app_surface_2'))
+                ? ThemePalette.accentColor(this.effectiveTheme) : ThemePalette.textTertiaryColor(this.effectiveTheme))
+              .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
               .borderRadius(4)
               .padding({ left: 8, right: 8, top: 3, bottom: 3 })
           }
@@ -287,7 +289,7 @@ struct WorldLocationEditPage {
         Button($r('app.string.world_save'))
           .fontSize($r('app.float.app_font_body'))
           .fontColor($r('app.color.app_on_accent'))
-          .backgroundColor($r('app.color.app_accent'))
+          .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
           .borderRadius($r('app.float.app_radius_sm'))
           .height(48)
           .width('100%')
@@ -304,8 +306,8 @@ struct WorldLocationEditPage {
           if (this.currentStatus === WorldLocationStatus.Active) {
             Button($r('app.string.world_location_archive'))
               .fontSize($r('app.float.app_font_body'))
-              .fontColor($r('app.color.app_text_secondary'))
-              .backgroundColor($r('app.color.app_surface_2'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+              .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
               .borderRadius($r('app.float.app_radius_sm'))
               .height(44)
               .width('100%')
@@ -318,8 +320,8 @@ struct WorldLocationEditPage {
           } else {
             Button($r('app.string.world_location_activate'))
               .fontSize($r('app.float.app_font_body'))
-              .fontColor($r('app.color.app_accent'))
-              .backgroundColor($r('app.color.app_surface_2'))
+              .fontColor(ThemePalette.accentColor(this.effectiveTheme))
+              .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
               .borderRadius($r('app.float.app_radius_sm'))
               .height(44)
               .width('100%')
@@ -335,7 +337,7 @@ struct WorldLocationEditPage {
           Button($r('app.string.world_location_delete'))
             .fontSize($r('app.float.app_font_body'))
             .fontColor($r('app.color.app_danger'))
-            .backgroundColor($r('app.color.app_surface_2'))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_sm'))
             .height(44)
             .width('100%')
@@ -380,19 +382,19 @@ struct WorldLocationEditPage {
         Text($r('app.string.world_location_delete'))
           .fontSize(17)
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .margin({ bottom: 12 })
 
         Text($r('app.string.world_location_delete_confirm'))
           .fontSize(14)
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .margin({ bottom: 20 })
 
         Row() {
           Button($r('app.string.world_cancel'))
             .fontSize(14)
             .backgroundColor(Color.Transparent)
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .layoutWeight(1)
             .height(40)
             .onClick(() => {
@@ -417,7 +419,7 @@ struct WorldLocationEditPage {
       }
       .width('80%')
       .padding(20)
-      .backgroundColor($r('app.color.app_surface_1'))
+      .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
       .borderRadius(16)
     }
     .width('100%')
@@ -437,19 +439,19 @@ struct WorldLocationEditPage {
         Text($r('app.string.world_location_archive'))
           .fontSize(17)
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .margin({ bottom: 12 })
 
         Text($r('app.string.world_archive_confirm'))
           .fontSize(14)
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .margin({ bottom: 20 })
 
         Row() {
           Button($r('app.string.world_cancel'))
             .fontSize(14)
             .backgroundColor(Color.Transparent)
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .layoutWeight(1)
             .height(40)
             .onClick(() => {
@@ -458,7 +460,7 @@ struct WorldLocationEditPage {
 
           Button($r('app.string.world_location_archive'))
             .fontSize(14)
-            .backgroundColor($r('app.color.app_accent'))
+            .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
             .fontColor(Color.White)
             .borderRadius(20)
             .layoutWeight(1)
@@ -474,7 +476,7 @@ struct WorldLocationEditPage {
       }
       .width('80%')
       .padding(20)
-      .backgroundColor($r('app.color.app_surface_1'))
+      .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
       .borderRadius(16)
     }
     .width('100%')

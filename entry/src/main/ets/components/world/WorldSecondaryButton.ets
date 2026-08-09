@@ -7,8 +7,11 @@
  * 注意:属性名 isEnabled / onButtonClick 避免与 CustomComponent 基类方法冲突。
  */
 
+import { ThemePalette } from '../../theme/ThemePalette';
+
 @Component
 export struct WorldSecondaryButton {
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
   label: ResourceStr = '';
   @Prop isEnabled: boolean = true;
   @Prop fullWidth: boolean = false;
@@ -18,9 +21,9 @@ export struct WorldSecondaryButton {
     Button(this.label)
       .fontSize($r('app.float.world_font_body'))
       .fontColor(this.isEnabled
-        ? $r('app.color.world_text_secondary')
-        : $r('app.color.world_text_tertiary'))
-      .backgroundColor($r('app.color.world_surface_2'))
+        ? ThemePalette.textSecondaryColor(this.effectiveTheme)
+        : ThemePalette.textTertiaryColor(this.effectiveTheme))
+      .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
       .borderRadius($r('app.float.world_radius_button'))
       .height(44)
       .width(this.fullWidth ? '100%' : undefined)

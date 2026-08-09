@@ -5,8 +5,11 @@
  * 不依赖 Repository / Service / AppServices / 数据库。
  */
 
+import { ThemePalette } from '../../theme/ThemePalette';
+
 @Component
 export struct WorldSectionHeader {
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
   title: ResourceStr = '';
   subtitle: ResourceStr = '';
   actionLabel: ResourceStr = '';
@@ -18,14 +21,14 @@ export struct WorldSectionHeader {
         Text(this.title)
           .fontSize($r('app.float.world_font_section'))
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.world_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
 
         if (this.hasValue(this.subtitle)) {
           Text(this.subtitle)
             .fontSize($r('app.float.world_font_micro'))
-            .fontColor($r('app.color.world_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .margin({ top: 2 })
@@ -37,7 +40,7 @@ export struct WorldSectionHeader {
       if (this.hasValue(this.actionLabel)) {
         Button(this.actionLabel)
           .fontSize($r('app.float.world_font_caption'))
-          .fontColor($r('app.color.world_gold'))
+          .fontColor(ThemePalette.accentColor(this.effectiveTheme))
           .backgroundColor(Color.Transparent)
           .height(32)
           .padding({ left: 8, right: 8 })

@@ -22,6 +22,7 @@
 import { MarketCharacter } from '../models/MarketCharacter';
 import { MarketCharacterAvatar } from './MarketCharacterAvatar';
 import { MarketTranslationResult } from '../models/MarketTranslation';
+import { ThemePalette } from '../theme/ThemePalette';
 
 /** 卡片点击参数 */
 export interface MarketCardClickParams {
@@ -40,6 +41,8 @@ export struct MarketCharacterCard {
   allowImageLoad: boolean = true;
   /** 点击回调 */
   onPress: (params: MarketCardClickParams) => void = (_: MarketCardClickParams) => {};
+  /** 当前有效主题 */
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
 
   build(): void {
     Column() {
@@ -67,7 +70,7 @@ export struct MarketCharacterCard {
           Text(this.resolveName())
             .fontSize($r('app.float.app_font_body'))
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .maxLines(2)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .width('100%')
@@ -76,7 +79,7 @@ export struct MarketCharacterCard {
           if (this.item!.creator.length > 0) {
             Text(this.item!.creator)
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .margin({ top: 2 })
@@ -87,7 +90,7 @@ export struct MarketCharacterCard {
           if (this.resolveSummary().length > 0) {
             Text(this.resolveSummary())
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .maxLines(2)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .margin({ top: 4 })
@@ -113,7 +116,7 @@ export struct MarketCharacterCard {
       }
     }
     .width('100%')
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
     .borderRadius($r('app.float.app_radius_md'))
     .clip(true)
     .onClick(() => {
@@ -134,8 +137,8 @@ export struct MarketCharacterCard {
       ForEach(this.takeFirstTags(), (tag: string, index: number) => {
         Text(tag)
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_secondary'))
-          .backgroundColor($r('app.color.app_surface_2'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+          .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
           .borderRadius($r('app.float.app_radius_sm'))
           .padding({ left: 6, right: 6, top: 2, bottom: 2 })
           .margin({ right: 4 })
@@ -159,8 +162,8 @@ export struct MarketCharacterCard {
       // 来源徽章(Provider 名,不翻译)
       Text(this.item!.providerId)
         .fontSize(10)
-        .fontColor($r('app.color.app_text_tertiary'))
-        .backgroundColor($r('app.color.app_surface_2'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+        .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_sm'))
         .padding({ left: 4, right: 4, top: 1, bottom: 1 })
         .maxLines(1)
@@ -172,7 +175,7 @@ export struct MarketCharacterCard {
         Text($r('app.string.market_already_imported'))
           .fontSize(10)
           .fontColor($r('app.color.app_on_accent'))
-          .backgroundColor($r('app.color.app_accent'))
+          .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
           .borderRadius($r('app.float.app_radius_sm'))
           .padding({ left: 4, right: 4, top: 1, bottom: 1 })
           .margin({ left: 4 })
@@ -182,8 +185,8 @@ export struct MarketCharacterCard {
       if (this.item!.hasCharacterBook) {
         Text($r('app.string.market_contains_lorebook'))
           .fontSize(10)
-          .fontColor($r('app.color.app_text_tertiary'))
-          .backgroundColor($r('app.color.app_surface_2'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+          .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
           .borderRadius($r('app.float.app_radius_sm'))
           .padding({ left: 4, right: 4, top: 1, bottom: 1 })
           .margin({ left: 4 })
@@ -206,7 +209,7 @@ export struct MarketCharacterCard {
       if (this.item!.updatedAt > 0) {
         Text(this.formatDate(this.item!.updatedAt))
           .fontSize(10)
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
       }
     }
     .width('100%')

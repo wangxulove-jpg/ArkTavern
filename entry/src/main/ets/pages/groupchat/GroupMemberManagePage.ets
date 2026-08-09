@@ -32,6 +32,7 @@ import {
   CharacterPickState,
   PENDING_GROUP_CHAT_ID_KEY
 } from '../../viewmodels/groupchat/GroupChatUiModels';
+import { ThemePalette } from '../../theme/ThemePalette';
 
 @Entry
 @Component
@@ -58,6 +59,7 @@ struct GroupMemberManagePage {
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   /** 底部导航栏避让高度 */
   @StorageProp('navBarHeight') navBarHeight: number = 0;
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
 
   private viewModel: GroupMemberManageViewModel | null = null;
 
@@ -130,7 +132,7 @@ struct GroupMemberManagePage {
       }
       .width('100%')
       .height('100%')
-      .backgroundColor($r('app.color.app_bg'))
+      .backgroundColor(ThemePalette.pageBgColor(this.effectiveTheme))
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
       // 添加角色弹窗
@@ -147,7 +149,7 @@ struct GroupMemberManagePage {
     Column() {
       Text('加载中…')
         .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
     }
     .width('100%')
     .height('100%')
@@ -160,11 +162,11 @@ struct GroupMemberManagePage {
     Column() {
       Text('加载失败')
         .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
       Button('重新加载')
         .fontSize($r('app.float.app_font_body'))
         .fontColor($r('app.color.app_on_accent'))
-        .backgroundColor($r('app.color.app_accent'))
+        .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_sm'))
         .height(40)
         .padding({ left: 20, right: 20 })
@@ -184,13 +186,13 @@ struct GroupMemberManagePage {
     Column() {
       Text('多人聊天不存在或已被删除')
         .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .textAlign(TextAlign.Center)
         .width('80%')
       Button('返回多人聊天首页')
         .fontSize($r('app.float.app_font_body'))
         .fontColor($r('app.color.app_on_accent'))
-        .backgroundColor($r('app.color.app_accent'))
+        .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_sm'))
         .height(40)
         .padding({ left: 20, right: 20 })
@@ -220,7 +222,7 @@ struct GroupMemberManagePage {
       Button() {
         SymbolGlyph($r('sys.symbol.chevron_left'))
           .fontSize(22)
-          .fontColor([$r('app.color.app_text_primary')])
+          .fontColor([ThemePalette.textPrimaryColor(this.effectiveTheme)])
       }
       .type(ButtonType.Circle)
       .backgroundColor(Color.Transparent)
@@ -235,14 +237,14 @@ struct GroupMemberManagePage {
         Text($r('app.string.group_manage_title'))
           .fontSize($r('app.float.app_font_subtitle'))
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .width('100%')
 
         Text(this.chatTitle)
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .width('100%')
@@ -267,7 +269,7 @@ struct GroupMemberManagePage {
   hintArea(): void {
     Text($r('app.string.group_member_min_hint'))
       .fontSize($r('app.float.app_font_caption'))
-      .fontColor($r('app.color.app_text_tertiary'))
+      .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
       .width('100%')
       .padding({
         left: $r('app.float.app_spacing_16'),
@@ -314,7 +316,7 @@ struct GroupMemberManagePage {
         Text(String(index + 1))
           .fontSize($r('app.float.app_font_body'))
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .width(24)
           .textAlign(TextAlign.Center)
 
@@ -336,7 +338,7 @@ struct GroupMemberManagePage {
           Text(member.name)
             .fontSize($r('app.float.app_font_body'))
             .fontWeight(FontWeight.Medium)
-            .fontColor(member.isEnabled ? $r('app.color.app_text_primary') : $r('app.color.app_text_tertiary'))
+            .fontColor(member.isEnabled ? ThemePalette.textPrimaryColor(this.effectiveTheme) : ThemePalette.textTertiaryColor(this.effectiveTheme))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .width('100%')
@@ -358,8 +360,8 @@ struct GroupMemberManagePage {
       Row() {
         Button($r('app.string.group_create_move_up'))
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_secondary'))
-          .backgroundColor($r('app.color.app_surface_2'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+          .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
           .borderRadius($r('app.float.app_radius_sm'))
           .height(32)
           .padding({ left: 12, right: 12 })
@@ -371,8 +373,8 @@ struct GroupMemberManagePage {
 
         Button($r('app.string.group_create_move_down'))
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_secondary'))
-          .backgroundColor($r('app.color.app_surface_2'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+          .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
           .borderRadius($r('app.float.app_radius_sm'))
           .height(32)
           .padding({ left: 12, right: 12 })
@@ -385,8 +387,8 @@ struct GroupMemberManagePage {
 
         Button(member.isEnabled ? $r('app.string.group_manage_disable') : $r('app.string.group_manage_enable'))
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor(member.isEnabled ? $r('app.color.app_danger') : $r('app.color.app_accent'))
-          .backgroundColor($r('app.color.app_surface_2'))
+          .fontColor(member.isEnabled ? $r('app.color.app_danger') : ThemePalette.accentColor(this.effectiveTheme))
+          .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
           .borderRadius($r('app.float.app_radius_sm'))
           .height(32)
           .padding({ left: 12, right: 12 })
@@ -400,7 +402,7 @@ struct GroupMemberManagePage {
         Button($r('app.string.group_manage_remove'))
           .fontSize($r('app.float.app_font_caption'))
           .fontColor($r('app.color.app_danger'))
-          .backgroundColor($r('app.color.app_surface_2'))
+          .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
           .borderRadius($r('app.float.app_radius_sm'))
           .height(32)
           .padding({ left: 12, right: 12 })
@@ -421,7 +423,7 @@ struct GroupMemberManagePage {
       top: $r('app.float.app_spacing_12'),
       bottom: $r('app.float.app_spacing_12')
     })
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
     .borderRadius($r('app.float.app_radius_md'))
   }
 
@@ -438,7 +440,7 @@ struct GroupMemberManagePage {
     if (!member.characterExists) {
       return $r('app.color.app_danger');
     }
-    return member.isEnabled ? $r('app.color.app_accent') : $r('app.color.app_text_tertiary');
+    return member.isEnabled ? ThemePalette.accentColor(this.effectiveTheme) : ThemePalette.textTertiaryColor(this.effectiveTheme);
   }
 
   /** 底部添加按钮 */
@@ -448,7 +450,7 @@ struct GroupMemberManagePage {
       Button($r('app.string.group_manage_add'))
         .fontSize($r('app.float.app_font_body'))
         .fontColor($r('app.color.app_on_accent'))
-        .backgroundColor(this.members.length >= MAX_MEMBER_COUNT ? $r('app.color.app_surface_2') : $r('app.color.app_accent'))
+        .backgroundColor(this.members.length >= MAX_MEMBER_COUNT ? ThemePalette.surface2Color(this.effectiveTheme) : ThemePalette.accentColor(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_sm'))
         .height(44)
         .layoutWeight(1)
@@ -464,8 +466,8 @@ struct GroupMemberManagePage {
       top: $r('app.float.app_spacing_8'),
       bottom: this.navBarHeight + 8
     })
-    .backgroundColor($r('app.color.app_surface_1'))
-    .border({ width: { top: 0.5 }, color: $r('app.color.app_divider') })
+    .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
+    .border({ width: { top: 0.5 }, color: ThemePalette.dividerColor(this.effectiveTheme) })
     .alignItems(VerticalAlign.Center)
   }
 
@@ -487,28 +489,28 @@ struct GroupMemberManagePage {
           Text($r('app.string.group_manage_add_title'))
             .fontSize(17)
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .margin({ bottom: 12 })
             .width('100%')
 
           if (this.addableState === CharacterPickState.Loading) {
             Text('加载中…')
               .fontSize($r('app.float.app_font_body'))
-              .fontColor($r('app.color.app_text_tertiary'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
               .width('100%')
               .height(280)
               .textAlign(TextAlign.Center)
           } else if (this.addableState === CharacterPickState.Empty) {
             Text('暂无可添加的角色')
               .fontSize($r('app.float.app_font_body'))
-              .fontColor($r('app.color.app_text_tertiary'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
               .width('100%')
               .height(280)
               .textAlign(TextAlign.Center)
           } else if (this.addableState === CharacterPickState.Error) {
             Text('加载可添加角色失败')
               .fontSize($r('app.float.app_font_body'))
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .width('100%')
               .height(280)
               .textAlign(TextAlign.Center)
@@ -531,13 +533,13 @@ struct GroupMemberManagePage {
                     Column() {
                       Text(char.name)
                         .fontSize($r('app.float.app_font_body'))
-                        .fontColor($r('app.color.app_text_primary'))
+                        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
                         .maxLines(1)
                         .textOverflow({ overflow: TextOverflow.Ellipsis })
                         .width('100%')
                       Text(char.description)
                         .fontSize($r('app.float.app_font_caption'))
-                        .fontColor($r('app.color.app_text_tertiary'))
+                        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
                         .maxLines(1)
                         .textOverflow({ overflow: TextOverflow.Ellipsis })
                         .width('100%')
@@ -550,7 +552,7 @@ struct GroupMemberManagePage {
                     Button($r('app.string.group_manage_add'))
                       .fontSize($r('app.float.app_font_caption'))
                       .fontColor($r('app.color.app_on_accent'))
-                      .backgroundColor($r('app.color.app_accent'))
+                      .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
                       .borderRadius($r('app.float.app_radius_sm'))
                       .height(32)
                       .padding({ left: 12, right: 12 })
@@ -573,7 +575,7 @@ struct GroupMemberManagePage {
 
           Button($r('app.string.group_cancel'))
             .fontSize(15)
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .backgroundColor(Color.Transparent)
             .borderRadius($r('app.float.app_radius_sm'))
             .width('100%')
@@ -585,7 +587,7 @@ struct GroupMemberManagePage {
         }
         .width('85%')
         .padding(20)
-        .backgroundColor($r('app.color.app_surface_1'))
+        .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_lg'))
       }
       .width('100%')

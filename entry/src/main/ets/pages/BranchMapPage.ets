@@ -37,6 +37,7 @@ import { BranchMapDisplayInfo } from '../models/BranchMapDisplayInfo';
 import { BranchMapNodeLayout, BranchTreeEdge } from '../models/BranchMapNodeLayout';
 import { Logger } from '../utils/Logger';
 import { router } from '@kit.ArkUI';
+import { ThemePalette } from '../theme/ThemePalette';
 
 const LOG_TAG: string = 'BranchMapPage';
 
@@ -61,6 +62,7 @@ struct BranchMapPage {
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   /** 底部导航栏/手势条避让高度 */
   @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
 
   // ===== 缩放与平移状态(T-6.4B-4) =====
   @State zoomScale: number = 1.0;
@@ -97,12 +99,12 @@ struct BranchMapPage {
         if (this.viewModel.getStatusText().length > 0) {
           Text(this.viewModel.getStatusText())
             .fontSize(12)
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .width('100%')
             .padding({ left: 16, right: 16, top: 4, bottom: 8 })
         }
 
-        Divider().color($r('app.color.app_divider')).height(1).width('100%')
+        Divider().color(ThemePalette.dividerColor(this.effectiveTheme)).height(1).width('100%')
 
         if (this.viewModel.isLoading) {
           this.loadingState();
@@ -115,7 +117,7 @@ struct BranchMapPage {
       }
       .width('100%')
       .height('100%')
-      .backgroundColor($r('app.color.page_background'))
+      .backgroundColor(ThemePalette.pageBackgroundColor(this.effectiveTheme))
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
       // 缩放控件浮层
@@ -133,7 +135,7 @@ struct BranchMapPage {
       Button($r('app.string.' + RES_BRANCH_BACK))
         .fontSize(14)
         .backgroundColor(Color.Transparent)
-        .fontColor($r('app.color.app_accent'))
+        .fontColor(ThemePalette.accentColor(this.effectiveTheme))
         .onClick(() => {
           this.popBack();
         })
@@ -143,7 +145,7 @@ struct BranchMapPage {
       Text($r('app.string.' + RES_BRANCH_MAP_TITLE))
         .fontSize(18)
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
 
       Blank()
 
@@ -153,7 +155,7 @@ struct BranchMapPage {
     }
     .width('100%')
     .padding({ left: 12, right: 12, top: this.statusBarHeight + 4, bottom: 0 })
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
     .alignItems(VerticalAlign.Center)
   }
 
@@ -175,7 +177,7 @@ struct BranchMapPage {
     Column() {
       Text($r('app.string.' + RES_BRANCH_EMPTY))
         .fontSize(14)
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
     }
     .width('100%')
     .layoutWeight(1)
@@ -442,13 +444,13 @@ struct BranchMapPage {
         Text('适应')
           .fontSize(12)
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
       }
       .width(44)
       .height(36)
-      .backgroundColor($r('app.color.app_surface_1'))
+      .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
       .borderRadius(8)
-      .border({ width: 1, color: $r('app.color.app_divider') })
+      .border({ width: 1, color: ThemePalette.dividerColor(this.effectiveTheme) })
       .margin({ bottom: 8 })
       .onClick(() => {
         this.fitMapToViewport();
@@ -460,14 +462,14 @@ struct BranchMapPage {
           .fontSize(24)
           .fontWeight(FontWeight.Medium)
           .fontColor(this.zoomScale < this.MAX_SCALE - 0.001
-            ? $r('app.color.app_text_primary')
-            : $r('app.color.app_text_secondary'))
+            ? ThemePalette.textPrimaryColor(this.effectiveTheme)
+            : ThemePalette.textSecondaryColor(this.effectiveTheme))
       }
       .width(44)
       .height(44)
-      .backgroundColor($r('app.color.app_surface_1'))
+      .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
       .borderRadius(22)
-      .border({ width: 1, color: $r('app.color.app_divider') })
+      .border({ width: 1, color: ThemePalette.dividerColor(this.effectiveTheme) })
       .margin({ bottom: 8 })
       .opacity(this.zoomScale < this.MAX_SCALE - 0.001 ? 1.0 : 0.4)
       .onClick(() => {
@@ -479,13 +481,13 @@ struct BranchMapPage {
       Stack() {
         Text(Math.round(this.zoomScale * 100) + '%')
           .fontSize(12)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
       }
       .width(44)
       .height(36)
-      .backgroundColor($r('app.color.app_surface_1'))
+      .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
       .borderRadius(8)
-      .border({ width: 1, color: $r('app.color.app_divider') })
+      .border({ width: 1, color: ThemePalette.dividerColor(this.effectiveTheme) })
       .margin({ bottom: 8 })
       .onClick(() => {
         this.applyZoomAtViewportCenter(1.0);
@@ -497,14 +499,14 @@ struct BranchMapPage {
           .fontSize(24)
           .fontWeight(FontWeight.Medium)
           .fontColor(this.zoomScale > this.MIN_SCALE + 0.001
-            ? $r('app.color.app_text_primary')
-            : $r('app.color.app_text_secondary'))
+            ? ThemePalette.textPrimaryColor(this.effectiveTheme)
+            : ThemePalette.textSecondaryColor(this.effectiveTheme))
       }
       .width(44)
       .height(44)
-      .backgroundColor($r('app.color.app_surface_1'))
+      .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
       .borderRadius(22)
-      .border({ width: 1, color: $r('app.color.app_divider') })
+      .border({ width: 1, color: ThemePalette.dividerColor(this.effectiveTheme) })
       .opacity(this.zoomScale > this.MIN_SCALE + 0.001 ? 1.0 : 0.4)
       .onClick(() => {
         const newScale: number = this.clampScale(this.zoomScale - 0.25);
@@ -539,13 +541,13 @@ struct BranchMapPage {
   @Builder
   bottomBar() {
     Column() {
-      Divider().color($r('app.color.app_divider')).height(1).width('100%')
+      Divider().color(ThemePalette.dividerColor(this.effectiveTheme)).height(1).width('100%')
 
       Row() {
         Column() {
           Text(this.viewModel.getSelectedDisplayName())
             .fontSize(14)
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .fontWeight(FontWeight.Medium)
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -553,7 +555,7 @@ struct BranchMapPage {
           if (this.viewModel.getSelectedForkUserPreview().length > 0) {
             Text('你:' + this.viewModel.getSelectedForkUserPreview())
               .fontSize(12)
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .margin({ top: 2 })
@@ -562,7 +564,7 @@ struct BranchMapPage {
           if (this.viewModel.getSelectedAssistantPreview().length > 0) {
             Text('艾伦:' + this.viewModel.getSelectedAssistantPreview())
               .fontSize(12)
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .margin({ top: 2 })
@@ -570,7 +572,7 @@ struct BranchMapPage {
 
           Text(this.viewModel.getSelectedMessageCount().toString() + ' 条消息')
             .fontSize(12)
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .margin({ top: 2 })
         }
         .alignItems(HorizontalAlign.Start)
@@ -579,8 +581,8 @@ struct BranchMapPage {
         Button($r('app.string.' + RES_BRANCH_SWITCH))
           .fontSize(14)
           .backgroundColor(this.canSwitch()
-            ? $r('app.color.app_accent')
-            : $r('app.color.app_surface_2'))
+            ? ThemePalette.accentColor(this.effectiveTheme)
+            : ThemePalette.surface2Color(this.effectiveTheme))
           .fontColor(Color.White)
           .borderRadius(8)
           .height(40)
@@ -592,7 +594,7 @@ struct BranchMapPage {
       }
       .width('100%')
       .padding({ left: 16, right: 16, top: 12, bottom: this.navigationBarHeight + 12 })
-      .backgroundColor($r('app.color.app_surface_1'))
+      .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
       .alignItems(VerticalAlign.Center)
     }
   }

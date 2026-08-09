@@ -32,6 +32,7 @@ import {
 import { GroupChatDraftState } from '../../services/groupchat/builder/GroupChatDraftTypes';
 import { Character } from '../../models/Character';
 import { Logger } from '../../utils/Logger';
+import { ThemePalette } from '../../theme/ThemePalette';
 
 @Entry
 @Component
@@ -64,6 +65,7 @@ struct GroupChatAiBuilderPage {
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   /** 底部导航栏避让高度 */
   @StorageProp('navBarHeight') navBarHeight: number = 0;
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
 
   private viewModel: GroupChatAiBuilderViewModel | null = null;
   private scroller: Scroller = new Scroller();
@@ -143,7 +145,7 @@ struct GroupChatAiBuilderPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.app_bg'))
+    .backgroundColor(ThemePalette.pageBgColor(this.effectiveTheme))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 
@@ -154,7 +156,7 @@ struct GroupChatAiBuilderPage {
       Button() {
         SymbolGlyph($r('sys.symbol.chevron_left'))
           .fontSize(22)
-          .fontColor([$r('app.color.app_text_primary')])
+          .fontColor([ThemePalette.textPrimaryColor(this.effectiveTheme)])
       }
       .type(ButtonType.Circle)
       .backgroundColor(Color.Transparent)
@@ -168,7 +170,7 @@ struct GroupChatAiBuilderPage {
       Text($r('app.string.group_ai_builder_title'))
         .fontSize($r('app.float.app_font_subtitle'))
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .layoutWeight(1)
@@ -203,7 +205,7 @@ struct GroupChatAiBuilderPage {
     Column() {
       Text('加载中…')
         .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
     }
     .width('100%')
     .layoutWeight(1)
@@ -216,11 +218,11 @@ struct GroupChatAiBuilderPage {
     Column() {
       Text('角色加载失败')
         .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
       Button('重新加载')
         .fontSize($r('app.float.app_font_body'))
         .fontColor($r('app.color.app_on_accent'))
-        .backgroundColor($r('app.color.app_accent'))
+        .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_sm'))
         .height(40)
         .padding({ left: 20, right: 20 })
@@ -241,12 +243,12 @@ struct GroupChatAiBuilderPage {
       Text('还没有角色')
         .fontSize($r('app.float.app_font_subtitle'))
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .textAlign(TextAlign.Center)
         .width('100%')
       Text('请先创建或导入至少两个角色。')
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .margin({ top: 6 })
         .textAlign(TextAlign.Center)
         .width('100%')
@@ -292,13 +294,13 @@ struct GroupChatAiBuilderPage {
       Text($r('app.string.group_ai_builder_description_hint'))
         .fontSize($r('app.float.app_font_body'))
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .width('100%')
 
       TextArea({ placeholder: $r('app.string.group_ai_builder_description_placeholder'), text: this.description })
         .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_primary'))
-        .backgroundColor($r('app.color.app_surface_2'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+        .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_sm'))
         .height(80)
         .padding({ left: 12, right: 12, top: 8, bottom: 8 })
@@ -318,7 +320,7 @@ struct GroupChatAiBuilderPage {
       top: $r('app.float.app_spacing_12'),
       bottom: $r('app.float.app_spacing_12')
     })
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
   }
 
   /** 候选角色选择区 */
@@ -329,28 +331,28 @@ struct GroupChatAiBuilderPage {
         Text($r('app.string.group_ai_builder_candidates'))
           .fontSize($r('app.float.app_font_body'))
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .layoutWeight(1)
         Text('已选 ' + String(this.selectedCandidateIds.length) + ' / 12')
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
       }
       .width('100%')
 
       Text($r('app.string.group_ai_builder_candidates_hint'))
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .margin({ top: 4 })
 
       // 搜索框
       Row() {
         SymbolGlyph($r('sys.symbol.magnifyingglass'))
           .fontSize(18)
-          .fontColor([$r('app.color.app_text_tertiary')])
+          .fontColor([ThemePalette.textTertiaryColor(this.effectiveTheme)])
           .margin({ right: 8 })
         TextInput({ placeholder: $r('app.string.group_create_search_placeholder'), text: this.searchKeyword })
           .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .backgroundColor(Color.Transparent)
           .layoutWeight(1)
           .onChange((value: string) => {
@@ -359,7 +361,7 @@ struct GroupChatAiBuilderPage {
       }
       .width('100%')
       .height(40)
-      .backgroundColor($r('app.color.app_surface_2'))
+      .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
       .borderRadius($r('app.float.app_radius_md'))
       .padding({ left: 12, right: 12 })
       .margin({ top: 8 })
@@ -383,7 +385,7 @@ struct GroupChatAiBuilderPage {
       top: $r('app.float.app_spacing_12'),
       bottom: $r('app.float.app_spacing_12')
     })
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
     .margin({ top: 8 })
   }
 
@@ -403,14 +405,14 @@ struct GroupChatAiBuilderPage {
       Column() {
         Text(c.name)
           .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .width('100%')
         if (c.description.trim().length > 0) {
           Text(c.description.trim())
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .width('100%')
@@ -425,7 +427,7 @@ struct GroupChatAiBuilderPage {
       if (this.isCandidateSelected(c.id)) {
         Text('✓')
           .fontSize(16)
-          .fontColor($r('app.color.app_accent'))
+          .fontColor(ThemePalette.accentColor(this.effectiveTheme))
           .margin({ left: 8 })
       }
     }
@@ -456,16 +458,16 @@ struct GroupChatAiBuilderPage {
           LoadingProgress()
             .width(16)
             .height(16)
-            .color($r('app.color.app_text_tertiary'))
+            .color(ThemePalette.textTertiaryColor(this.effectiveTheme))
             .margin({ right: 8 })
           Text($r('app.string.group_ai_builder_generating'))
             .fontSize($r('app.float.app_font_body'))
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .layoutWeight(1)
           Button($r('app.string.group_ai_builder_stop'))
             .fontSize($r('app.float.app_font_body'))
-            .fontColor($r('app.color.app_text_primary'))
-            .backgroundColor($r('app.color.app_surface_2'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_md'))
             .height(40)
             .padding({ left: 16, right: 16 })
@@ -480,7 +482,7 @@ struct GroupChatAiBuilderPage {
         Button($r('app.string.group_ai_builder_generate'))
           .fontSize($r('app.float.app_font_body'))
           .fontColor($r('app.color.app_on_accent'))
-          .backgroundColor(this.selectedCandidateIds.length >= 2 ? $r('app.color.app_accent') : $r('app.color.app_surface_2'))
+          .backgroundColor(this.selectedCandidateIds.length >= 2 ? ThemePalette.accentColor(this.effectiveTheme) : ThemePalette.surface2Color(this.effectiveTheme))
           .borderRadius($r('app.float.app_radius_md'))
           .height(44)
           .width('100%')
@@ -497,9 +499,9 @@ struct GroupChatAiBuilderPage {
       top: $r('app.float.app_spacing_12'),
       bottom: this.navBarHeight + 12
     })
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
     .margin({ top: 8 })
-    .border({ width: { top: 0.5 }, color: $r('app.color.app_divider') })
+    .border({ width: { top: 0.5 }, color: ThemePalette.dividerColor(this.effectiveTheme) })
   }
 
   /** 草案结果区 */
@@ -509,19 +511,19 @@ struct GroupChatAiBuilderPage {
       Text($r('app.string.group_ai_builder_draft_title'))
         .fontSize($r('app.float.app_font_body'))
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .width('100%')
         .margin({ bottom: 8 })
 
       // 群聊名称
       Text($r('app.string.group_ai_builder_draft_chat_name'))
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .width('100%')
       TextInput({ text: this.draftTitle })
         .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_primary'))
-        .backgroundColor($r('app.color.app_surface_2'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+        .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_sm'))
         .height(44)
         .padding({ left: 12, right: 12 })
@@ -533,7 +535,7 @@ struct GroupChatAiBuilderPage {
       // 成员与发言顺序
       Text($r('app.string.group_ai_builder_draft_members'))
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .width('100%')
         .margin({ top: 12 })
 
@@ -545,34 +547,34 @@ struct GroupChatAiBuilderPage {
       if (this.draftRationale.length > 0) {
         Text($r('app.string.group_ai_builder_draft_rationale'))
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .width('100%')
           .margin({ top: 12 })
         Text(this.draftRationale)
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .width('100%')
           .margin({ top: 4 })
           .padding({ left: 12, right: 12, top: 8, bottom: 8 })
-          .backgroundColor($r('app.color.app_surface_2'))
+          .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
           .borderRadius($r('app.float.app_radius_sm'))
       }
 
       // 开场消息草案
       Text($r('app.string.group_ai_builder_draft_opening'))
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .width('100%')
         .margin({ top: 12 })
       Text($r('app.string.group_ai_builder_draft_opening_hint'))
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .width('100%')
         .margin({ top: 2 })
       TextArea({ text: this.draftOpeningMessage })
         .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_primary'))
-        .backgroundColor($r('app.color.app_surface_2'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+        .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_sm'))
         .height(70)
         .padding({ left: 12, right: 12, top: 8, bottom: 8 })
@@ -585,8 +587,8 @@ struct GroupChatAiBuilderPage {
       Row() {
         Button($r('app.string.group_ai_builder_regenerate'))
           .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_primary'))
-          .backgroundColor($r('app.color.app_surface_2'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+          .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
           .borderRadius($r('app.float.app_radius_md'))
           .height(44)
           .layoutWeight(1)
@@ -598,7 +600,7 @@ struct GroupChatAiBuilderPage {
         Button($r('app.string.group_ai_builder_confirm'))
           .fontSize($r('app.float.app_font_body'))
           .fontColor($r('app.color.app_on_accent'))
-          .backgroundColor($r('app.color.app_accent'))
+          .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
           .borderRadius($r('app.float.app_radius_md'))
           .height(44)
           .layoutWeight(1)
@@ -617,9 +619,9 @@ struct GroupChatAiBuilderPage {
       top: $r('app.float.app_spacing_12'),
       bottom: this.navBarHeight + 12
     })
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
     .margin({ top: 8 })
-    .border({ width: { top: 0.5 }, color: $r('app.color.app_divider') })
+    .border({ width: { top: 0.5 }, color: ThemePalette.dividerColor(this.effectiveTheme) })
   }
 
   /** 草案成员项(含上移/下移/移除) */
@@ -629,7 +631,7 @@ struct GroupChatAiBuilderPage {
       // 顺序编号
       Text(String(index + 1))
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .width(20)
         .textAlign(TextAlign.Center)
 
@@ -646,7 +648,7 @@ struct GroupChatAiBuilderPage {
 
       Text(m.name)
         .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .layoutWeight(1)
@@ -656,7 +658,7 @@ struct GroupChatAiBuilderPage {
       Button() {
         SymbolGlyph($r('sys.symbol.arrow_up'))
           .fontSize(14)
-          .fontColor([$r('app.color.app_text_secondary')])
+          .fontColor([ThemePalette.textSecondaryColor(this.effectiveTheme)])
       }
       .type(ButtonType.Circle)
       .backgroundColor(Color.Transparent)
@@ -671,7 +673,7 @@ struct GroupChatAiBuilderPage {
       Button() {
         SymbolGlyph($r('sys.symbol.arrow_down'))
           .fontSize(14)
-          .fontColor([$r('app.color.app_text_secondary')])
+          .fontColor([ThemePalette.textSecondaryColor(this.effectiveTheme)])
       }
       .type(ButtonType.Circle)
       .backgroundColor(Color.Transparent)
@@ -687,7 +689,7 @@ struct GroupChatAiBuilderPage {
       Button() {
         SymbolGlyph($r('sys.symbol.xmark'))
           .fontSize(14)
-          .fontColor([$r('app.color.app_text_secondary')])
+          .fontColor([ThemePalette.textSecondaryColor(this.effectiveTheme)])
       }
       .type(ButtonType.Circle)
       .backgroundColor(Color.Transparent)

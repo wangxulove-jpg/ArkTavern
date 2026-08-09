@@ -24,6 +24,7 @@ import {
 } from '../../viewmodels/groupchat/GroupChatUiModels';
 import { CharacterImageView } from '../../components/CharacterImageView';
 import { GroupEmptyState } from '../../components/groupchat/GroupEmptyState';
+import { ThemePalette } from '../../theme/ThemePalette';
 
 @Entry
 @Component
@@ -38,6 +39,7 @@ struct GroupChatHomePage {
   @State renameInput: string = '';
   /** 顶部状态栏避让高度 */
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
 
   private viewModel: GroupChatHomeViewModel | null = null;
 
@@ -79,7 +81,7 @@ struct GroupChatHomePage {
       }
       .width('100%')
       .height('100%')
-      .backgroundColor($r('app.color.app_bg'))
+      .backgroundColor(ThemePalette.pageBgColor(this.effectiveTheme))
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
       if (this.moreTargetId.length > 0) {
@@ -101,13 +103,13 @@ struct GroupChatHomePage {
         Text($r('app.string.group_home_title'))
           .fontSize($r('app.float.app_font_title'))
           .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
 
         Text($r('app.string.group_home_subtitle'))
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .margin({ top: 2 })
@@ -118,7 +120,7 @@ struct GroupChatHomePage {
       Button($r('app.string.group_create'))
         .fontSize($r('app.float.app_font_caption'))
         .fontColor($r('app.color.app_on_accent'))
-        .backgroundColor($r('app.color.app_accent'))
+        .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_sm'))
         .height(32)
         .padding({ left: 16, right: 16 })
@@ -156,7 +158,7 @@ struct GroupChatHomePage {
     Column() {
       Text('加载中…')
         .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
     }
     .width('100%')
     .layoutWeight(1)
@@ -169,11 +171,11 @@ struct GroupChatHomePage {
     Column() {
       Text('多人聊天加载失败')
         .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
       Button('重新加载')
         .fontSize($r('app.float.app_font_body'))
         .fontColor($r('app.color.app_on_accent'))
-        .backgroundColor($r('app.color.app_accent'))
+        .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_sm'))
         .height(40)
         .padding({ left: 20, right: 20 })
@@ -243,14 +245,14 @@ struct GroupChatHomePage {
           Text(item.title)
             .fontSize($r('app.float.app_font_subtitle'))
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .width('100%')
 
           Text(this.composeMemberSummary(item.members))
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .width('100%')
@@ -264,7 +266,7 @@ struct GroupChatHomePage {
         Button() {
           SymbolGlyph($r('sys.symbol.more'))
             .fontSize(18)
-            .fontColor([$r('app.color.app_text_tertiary')])
+            .fontColor([ThemePalette.textTertiaryColor(this.effectiveTheme)])
         }
         .type(ButtonType.Circle)
         .backgroundColor(Color.Transparent)
@@ -283,14 +285,14 @@ struct GroupChatHomePage {
       Row() {
         Text(item.lastMessagePreview)
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .layoutWeight(1)
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
 
         Text(formatGroupTimestamp(item.updatedAt))
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
       }
       .width('100%')
       .margin({ top: 8 })
@@ -303,7 +305,7 @@ struct GroupChatHomePage {
       top: $r('app.float.app_spacing_12'),
       bottom: $r('app.float.app_spacing_12')
     })
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
     .borderRadius($r('app.float.app_radius_md'))
     .onClick(() => {
       this.openGroupChat(item.chatId);
@@ -386,12 +388,12 @@ struct GroupChatHomePage {
           Text($r('app.string.group_more_title'))
             .fontSize(17)
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .margin({ bottom: 12 })
 
           Text(this.moreTargetTitle)
             .fontSize(14)
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .width('100%')
@@ -399,8 +401,8 @@ struct GroupChatHomePage {
 
           Button($r('app.string.group_rename'))
             .fontSize(15)
-            .fontColor($r('app.color.app_text_primary'))
-            .backgroundColor($r('app.color.app_surface_2'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_sm'))
             .width('100%')
             .height(44)
@@ -410,8 +412,8 @@ struct GroupChatHomePage {
 
           Button($r('app.string.group_manage_members'))
             .fontSize(15)
-            .fontColor($r('app.color.app_text_primary'))
-            .backgroundColor($r('app.color.app_surface_2'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_sm'))
             .width('100%')
             .height(44)
@@ -423,7 +425,7 @@ struct GroupChatHomePage {
           Button($r('app.string.group_delete_preview'))
             .fontSize(15)
             .fontColor($r('app.color.app_danger'))
-            .backgroundColor($r('app.color.app_surface_2'))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_sm'))
             .width('100%')
             .height(44)
@@ -434,7 +436,7 @@ struct GroupChatHomePage {
 
           Button($r('app.string.group_cancel'))
             .fontSize(15)
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .backgroundColor(Color.Transparent)
             .borderRadius($r('app.float.app_radius_sm'))
             .width('100%')
@@ -447,7 +449,7 @@ struct GroupChatHomePage {
         }
         .width('80%')
         .padding(20)
-        .backgroundColor($r('app.color.app_surface_1'))
+        .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_lg'))
       }
       .width('100%')
@@ -515,13 +517,13 @@ struct GroupChatHomePage {
           Text($r('app.string.group_rename'))
             .fontSize(17)
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .margin({ bottom: 12 })
 
           TextInput({ placeholder: $r('app.string.group_rename_placeholder'), text: this.renameInput })
             .fontSize(15)
-            .fontColor($r('app.color.app_text_primary'))
-            .backgroundColor($r('app.color.app_surface_2'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_sm'))
             .height(44)
             .padding({ left: 12, right: 12 })
@@ -533,7 +535,7 @@ struct GroupChatHomePage {
             Button($r('app.string.group_cancel'))
               .fontSize(15)
               .backgroundColor(Color.Transparent)
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .layoutWeight(1)
               .height(40)
               .onClick(() => {
@@ -542,7 +544,7 @@ struct GroupChatHomePage {
               })
             Button($r('app.string.group_save'))
               .fontSize(15)
-              .backgroundColor($r('app.color.app_accent'))
+              .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
               .fontColor($r('app.color.app_on_accent'))
               .borderRadius($r('app.float.app_radius_sm'))
               .layoutWeight(1)
@@ -557,7 +559,7 @@ struct GroupChatHomePage {
         }
         .width('80%')
         .padding(20)
-        .backgroundColor($r('app.color.app_surface_1'))
+        .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_lg'))
       }
       .width('100%')

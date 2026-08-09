@@ -23,8 +23,11 @@
  * - 自动适配深色模式
  */
 
+import { ThemePalette } from '../theme/ThemePalette';
+
 @Component
 export struct MessageSwipeControls {
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
   @Prop activeCandidateIndex: number = 0;
   @Prop candidateCount: number = 1;
   @Prop isGenerating: boolean = false;
@@ -73,7 +76,7 @@ export struct MessageSwipeControls {
 
           Text(this.displayText)
             .fontSize(14)
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .textAlign(TextAlign.Center)
             .width(56)
 
@@ -92,7 +95,7 @@ export struct MessageSwipeControls {
         // 无 Candidate Group 时不渲染任何内容(避免无意义的 `1 / 1`)
         Text(this.displayText)
           .fontSize(13)
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .textAlign(TextAlign.Center)
       }
     }
@@ -117,8 +120,8 @@ export struct MessageSwipeControls {
       .fontSize(20)
       .fontWeight(FontWeight.Bold)
       .fontColor(disabled
-        ? $r('app.color.app_text_tertiary')
-        : $r('app.color.app_text_primary'))
+        ? ThemePalette.textTertiaryColor(this.effectiveTheme)
+        : ThemePalette.textPrimaryColor(this.effectiveTheme))
       .backgroundColor(Color.Transparent)
       .width(36)
       .height(36)
@@ -134,7 +137,7 @@ export struct MessageSwipeControls {
     Button($r('app.string.chat_stop'))
       .fontSize(13)
       .fontColor($r('app.color.app_danger'))
-      .backgroundColor($r('app.color.app_surface_2'))
+      .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
       .borderRadius(14)
       .height(28)
       .padding({ left: 12, right: 12 })
@@ -149,11 +152,11 @@ export struct MessageSwipeControls {
     Button($r('app.string.chat_regenerate'))
       .fontSize(13)
       .fontColor(this.isMaxReached
-        ? $r('app.color.app_text_tertiary')
-        : $r('app.color.app_text_primary'))
+        ? ThemePalette.textTertiaryColor(this.effectiveTheme)
+        : ThemePalette.textPrimaryColor(this.effectiveTheme))
       .backgroundColor(this.isMaxReached
-        ? $r('app.color.app_bg')
-        : $r('app.color.app_surface_2'))
+        ? ThemePalette.pageBgColor(this.effectiveTheme)
+        : ThemePalette.surface2Color(this.effectiveTheme))
       .borderRadius(14)
       .height(28)
       .padding({ left: 12, right: 12 })

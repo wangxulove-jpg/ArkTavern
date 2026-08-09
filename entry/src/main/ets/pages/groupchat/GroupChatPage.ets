@@ -66,6 +66,7 @@ import {
   DEFAULT_BUBBLE_OPACITY
 } from '../../utils/ChatBubbleAppearance';
 import { Logger } from '../../utils/Logger';
+import { ThemePalette } from '../../theme/ThemePalette';
 
 @Entry
 @Component
@@ -161,6 +162,7 @@ struct GroupChatPage {
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   /** 底部导航栏避让高度 */
   @StorageProp('navBarHeight') navBarHeight: number = 0;
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
   /**
    * 聊天文本样式设置(G-RUNTIME-1C-FIX)。
    * 复用单聊同一套 ChatTextStyleSettings,确保多人消息字体/行距/Markdown
@@ -563,7 +565,7 @@ struct GroupChatPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.page_background'))
+    .backgroundColor(ThemePalette.pageBackgroundColor(this.effectiveTheme))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 
@@ -572,7 +574,7 @@ struct GroupChatPage {
     Column() {
       Text('加载中…')
         .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
     }
     .width('100%')
     .height('100%')
@@ -585,11 +587,11 @@ struct GroupChatPage {
     Column() {
       Text('加载失败')
         .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
       Button('重新加载')
         .fontSize($r('app.float.app_font_body'))
         .fontColor($r('app.color.app_on_accent'))
-        .backgroundColor($r('app.color.app_accent'))
+        .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_sm'))
         .height(40)
         .padding({ left: 20, right: 20 })
@@ -609,13 +611,13 @@ struct GroupChatPage {
     Column() {
       Text('多人聊天不存在或已被删除')
         .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .textAlign(TextAlign.Center)
         .width('80%')
       Button('返回多人聊天首页')
         .fontSize($r('app.float.app_font_body'))
         .fontColor($r('app.color.app_on_accent'))
-        .backgroundColor($r('app.color.app_accent'))
+        .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_sm'))
         .height(40)
         .padding({ left: 20, right: 20 })
@@ -691,9 +693,9 @@ struct GroupChatPage {
             Button({ type: ButtonType.Circle, stateEffect: false }) {
               SymbolGlyph($r('sys.symbol.chevron_down'))
                 .fontSize(20)
-                .fontColor([$r('app.color.app_text_primary')])
+                .fontColor([ThemePalette.textPrimaryColor(this.effectiveTheme)])
             }
-            .backgroundColor($r('app.color.app_surface_1'))
+            .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
             .borderRadius(22)
             .width(44)
             .height(44)
@@ -803,7 +805,7 @@ struct GroupChatPage {
         Button({ type: ButtonType.Circle, stateEffect: false }) {
           SymbolGlyph($r('sys.symbol.xmark'))
             .fontSize(12)
-            .fontColor([$r('app.color.app_text_tertiary')])
+            .fontColor([ThemePalette.textTertiaryColor(this.effectiveTheme)])
         }
         .width(24)
         .height(24)
@@ -838,10 +840,10 @@ struct GroupChatPage {
       Row() {
         SymbolGlyph($r('sys.symbol.lock'))
           .fontSize(12)
-          .fontColor([$r('app.color.app_text_secondary')])
+          .fontColor([ThemePalette.textSecondaryColor(this.effectiveTheme)])
         Text('另一个群聊正在回复,当前输入暂不可用')
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .layoutWeight(1)
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -850,7 +852,7 @@ struct GroupChatPage {
       .width('100%')
       .padding({ left: 12, right: 12, top: 5, bottom: 5 })
       .margin({ left: 12, right: 12, top: 4 })
-      .backgroundColor($r('app.color.app_surface_2'))
+      .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
       .borderRadius($r('app.float.app_radius_sm'))
       .alignItems(VerticalAlign.Center)
     }
@@ -871,7 +873,7 @@ struct GroupChatPage {
       Row() {
         Text(this.composeRoundStatusText())
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .layoutWeight(1)
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -939,7 +941,7 @@ struct GroupChatPage {
       Stack() {
         SymbolGlyph($r('sys.symbol.chevron_left'))
           .fontSize(24)
-          .fontColor([$r('app.color.app_text_primary')])
+          .fontColor([ThemePalette.textPrimaryColor(this.effectiveTheme)])
       }
       .width(40)
       .height(40)
@@ -952,7 +954,7 @@ struct GroupChatPage {
       Text(this.detail!.title)
         .fontSize($r('app.float.app_font_subtitle'))
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .layoutWeight(1)
@@ -962,14 +964,14 @@ struct GroupChatPage {
       Stack() {
         SymbolGlyph($r('sys.symbol.textformat'))
           .fontSize(20)
-          .fontColor([$r('app.color.app_text_primary')])
+          .fontColor([ThemePalette.textPrimaryColor(this.effectiveTheme)])
       }
       .width(40)
       .height(40)
       .margin({ right: 4 })
       .borderRadius($r('app.float.app_radius_sm'))
       .backgroundColor(this.appearancePanelVisible
-        ? $r('app.color.app_surface_2') : Color.Transparent)
+        ? ThemePalette.surface2Color(this.effectiveTheme) : Color.Transparent)
       .accessibilityText('打开显示设置')
       .onClick(() => {
         this.appearancePanelVisible = !this.appearancePanelVisible;
@@ -979,7 +981,7 @@ struct GroupChatPage {
       Stack() {
         SymbolGlyph($r('sys.symbol.more'))
           .fontSize(22)
-          .fontColor([$r('app.color.app_text_primary')])
+          .fontColor([ThemePalette.textPrimaryColor(this.effectiveTheme)])
       }
       .width(40)
       .height(40)
@@ -1031,7 +1033,7 @@ struct GroupChatPage {
       // 成员数量文字
       Text(this.composeMemberCountText())
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .maxLines(1)
         .margin({ left: 8 })
     }
@@ -1083,7 +1085,7 @@ struct GroupChatPage {
                   LoadingProgress()
                     .width(12)
                     .height(12)
-                    .color($r('app.color.app_accent'))
+                    .color(ThemePalette.accentColor(this.effectiveTheme))
                     .position({ x: 24, y: -2 })
                 }
               }
@@ -1143,7 +1145,7 @@ struct GroupChatPage {
                   Text('◎')
                     .fontSize(12)
                     .fontColor($r('app.color.app_on_accent'))
-                    .backgroundColor($r('app.color.app_accent'))
+                    .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
                     .borderRadius(6)
                     .width(12)
                     .height(12)
@@ -1168,7 +1170,7 @@ struct GroupChatPage {
               // G-UI-ALIGN-2A: 状态文字(名称下方)
               Text(member.isEnabled ? '就绪' : '未启用')
                 .fontSize($r('app.float.app_font_caption'))
-                .fontColor($r('app.color.app_text_tertiary'))
+                .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
                 .maxLines(1)
                 .width(48)
                 .textAlign(TextAlign.Center)
@@ -1258,12 +1260,12 @@ struct GroupChatPage {
   /** 成员运行时状态文字颜色 */
   private memberRuntimeTextColor(state: GroupMemberRuntimeState): ResourceColor {
     if (state === GroupMemberRuntimeState.Generating) {
-      return $r('app.color.app_accent');
+      return ThemePalette.accentColor(this.effectiveTheme);
     }
     if (state === GroupMemberRuntimeState.Completed) {
-      return $r('app.color.app_text_primary');
+      return ThemePalette.textPrimaryColor(this.effectiveTheme);
     }
-    return $r('app.color.app_text_tertiary');
+    return ThemePalette.textTertiaryColor(this.effectiveTheme);
   }
 
   /** 成员运行时状态透明度 */
@@ -1296,12 +1298,12 @@ struct GroupChatPage {
   /** G-CONTROL-1: 成员栏文字颜色(非生成态) */
   private memberTextColor(member: GroupMemberUiModel): ResourceColor {
     if (this.isMemberReplyTarget(member.characterId)) {
-      return $r('app.color.app_accent');
+      return ThemePalette.accentColor(this.effectiveTheme);
     }
     if (!member.isEnabled) {
-      return $r('app.color.app_text_tertiary');
+      return ThemePalette.textTertiaryColor(this.effectiveTheme);
     }
-    return $r('app.color.app_text_primary');
+    return ThemePalette.textPrimaryColor(this.effectiveTheme);
   }
 
   /** G-CONTROL-1: 成员栏透明度(非生成态) */
@@ -1364,7 +1366,7 @@ struct GroupChatPage {
     Column() {
       Text('加载消息…')
         .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
     }
     .width('100%')
     .height('100%')
@@ -1391,18 +1393,18 @@ struct GroupChatPage {
       Text(this.detail !== null ? this.detail.title : '')
         .fontSize($r('app.float.app_font_subtitle'))
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .margin({ top: $r('app.float.app_spacing_12') })
 
       // 成员数 + 提示
       Text(this.composeMemberCountText())
         .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .margin({ top: $r('app.float.app_spacing_8') })
 
       Text('发送消息开始多人对话')
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .margin({ top: $r('app.float.app_spacing_4') })
     }
     .width('100%')
@@ -1456,16 +1458,16 @@ struct GroupChatPage {
                   Row() {
                     SymbolGlyph($r('sys.symbol.arrow_clockwise'))
                       .fontSize(14)
-                      .fontColor([$r('app.color.app_accent')])
+                      .fontColor([ThemePalette.accentColor(this.effectiveTheme)])
                     Text('重新生成')
                       .fontSize($r('app.float.app_font_caption'))
-                      .fontColor($r('app.color.app_accent'))
+                      .fontColor(ThemePalette.accentColor(this.effectiveTheme))
                       .margin({ left: 4 })
                   }
                 }
                 .type(ButtonType.Capsule)
-                .backgroundColor($r('app.color.app_surface_2'))
-                .border({ width: 1, color: $r('app.color.app_accent') })
+                .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
+                .border({ width: 1, color: ThemePalette.accentColor(this.effectiveTheme) })
                 .height(28)
                 .padding({ left: 10, right: 10 })
                 .enabled(!this.isRetrying && !this.isEndingRound)
@@ -1825,7 +1827,7 @@ struct GroupChatPage {
             })
           }
           .padding({ left: 10, right: 6, top: 4, bottom: 4 })
-          .backgroundColor($r('app.color.app_accent'))
+          .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
           .borderRadius($r('app.float.app_radius_sm'))
           .alignItems(VerticalAlign.Center)
         } else if (this.persistentReplyTargetCharacterId.length > 0) {
@@ -1865,7 +1867,7 @@ struct GroupChatPage {
             })
           }
           .padding({ left: 10, right: 6, top: 4, bottom: 4 })
-          .backgroundColor($r('app.color.app_accent'))
+          .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
           .borderRadius($r('app.float.app_radius_sm'))
           .alignItems(VerticalAlign.Center)
         } else if (this.selectedReplyTargetMembers.length > 0) {
@@ -1893,7 +1895,7 @@ struct GroupChatPage {
             })
           }
           .padding({ left: 10, right: 6, top: 4, bottom: 4 })
-          .backgroundColor($r('app.color.app_accent'))
+          .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
           .borderRadius($r('app.float.app_radius_sm'))
           .alignItems(VerticalAlign.Center)
         }
@@ -1914,7 +1916,7 @@ struct GroupChatPage {
           text: this.inputText
         })
           .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .backgroundColor(Color.Transparent)
           .borderRadius($r('app.float.app_radius_md'))
           .border({ width: 0 })
@@ -1972,11 +1974,11 @@ struct GroupChatPage {
               .fontColor([
                 this.canSendInput()
                   ? $r('app.color.app_on_accent')
-                  : $r('app.color.app_text_tertiary')
+                  : ThemePalette.textTertiaryColor(this.effectiveTheme)
               ])
           }
           .backgroundColor(this.canSendInput()
-            ? $r('app.color.app_accent')
+            ? ThemePalette.accentColor(this.effectiveTheme)
             : Color.Transparent)
           .borderRadius(24)
           .width(48)
@@ -1992,7 +1994,7 @@ struct GroupChatPage {
       .width('100%')
       .alignItems(VerticalAlign.Center)
       .borderRadius(28)
-      .border({ width: 0.5, color: $r('app.color.app_surface_2') })
+      .border({ width: 0.5, color: ThemePalette.surface2Color(this.effectiveTheme) })
       .backgroundBlurStyle(BlurStyle.Regular, {
         policy: BlurStyleActivePolicy.ALWAYS_ACTIVE
       })
@@ -2044,8 +2046,8 @@ struct GroupChatPage {
               Text(member.name)
                 .fontSize($r('app.float.app_font_caption'))
                 .fontColor(this.isMemberReplyTarget(member.characterId)
-                  ? $r('app.color.app_accent')
-                  : $r('app.color.app_text_primary'))
+                  ? ThemePalette.accentColor(this.effectiveTheme)
+                  : ThemePalette.textPrimaryColor(this.effectiveTheme))
                 .maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
                 .margin({ left: 6 })
@@ -2054,7 +2056,7 @@ struct GroupChatPage {
               if (this.isMemberReplyTarget(member.characterId)) {
                 Text('✓')
                   .fontSize(12)
-                  .fontColor($r('app.color.app_accent'))
+                  .fontColor(ThemePalette.accentColor(this.effectiveTheme))
                   .margin({ left: 4 })
               }
             }
@@ -2074,7 +2076,7 @@ struct GroupChatPage {
       .backgroundBlurStyle(BlurStyle.Regular, {
         policy: BlurStyleActivePolicy.ALWAYS_ACTIVE
       })
-      .border({ width: 0.5, color: $r('app.color.app_surface_2') })
+      .border({ width: 0.5, color: ThemePalette.surface2Color(this.effectiveTheme) })
       .shadow({ radius: 8, color: 'rgba(0,0,0,0.12)', offsetY: 2 })
     }
     .width('100%')
@@ -2263,13 +2265,13 @@ this.syncFromViewModel();
             Text('显示设置')
               .fontSize($r('app.float.app_font_body'))
               .fontWeight(FontWeight.Medium)
-              .fontColor($r('app.color.app_text_primary'))
+              .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             Blank()
             // 关闭按钮
             Stack() {
               SymbolGlyph($r('sys.symbol.xmark'))
                 .fontSize(14)
-                .fontColor([$r('app.color.app_text_secondary')])
+                .fontColor([ThemePalette.textSecondaryColor(this.effectiveTheme)])
             }
             .width(28)
             .height(28)
@@ -2287,12 +2289,12 @@ this.syncFromViewModel();
           Row() {
             Text('气泡不透明度')
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             Blank()
             Text(`${Math.round(this.bubbleOpacity * 100)}%`)
               .fontSize($r('app.float.app_font_caption'))
               .fontWeight(FontWeight.Medium)
-              .fontColor($r('app.color.app_text_primary'))
+              .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           }
           .width('100%')
           .alignItems(VerticalAlign.Center)
@@ -2305,9 +2307,9 @@ this.syncFromViewModel();
             step: 10,
             style: SliderStyle.OutSet
           })
-            .blockColor($r('app.color.app_accent'))
-            .trackColor($r('app.color.app_surface_2'))
-            .selectedColor($r('app.color.app_accent'))
+            .blockColor(ThemePalette.accentColor(this.effectiveTheme))
+            .trackColor(ThemePalette.surface2Color(this.effectiveTheme))
+            .selectedColor(ThemePalette.accentColor(this.effectiveTheme))
             .width('100%')
             .onChange((value: number, mode: SliderChangeMode) => {
               const opacity: number = normalizeBubbleOpacity(value / 100);
@@ -2320,17 +2322,17 @@ this.syncFromViewModel();
           Row() {
             Text('0%')
               .fontSize(11)
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             Blank()
             Text('100%')
               .fontSize(11)
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           }
           .width('100%')
           .margin({ top: 4 })
         }
         .padding(16)
-        .backgroundColor($r('app.color.app_surface_2'))
+        .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_lg'))
         .width('80%')
       }
@@ -2364,14 +2366,14 @@ this.syncFromViewModel();
             .width(36)
             .height(4)
             .borderRadius(2)
-            .backgroundColor($r('app.color.app_divider'))
+            .backgroundColor(ThemePalette.dividerColor(this.effectiveTheme))
             .margin({ top: 8, bottom: 12 })
 
           // 标题
           Text($r('app.string.group_more_title'))
             .fontSize($r('app.float.app_font_subtitle'))
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .margin({ bottom: 12, left: 16, right: 16 })
             .width('100%')
 
@@ -2403,8 +2405,8 @@ this.syncFromViewModel();
           // 关闭按钮
           Button($r('app.string.group_cancel'))
             .fontSize($r('app.float.app_font_body'))
-            .fontColor($r('app.color.app_text_secondary'))
-            .backgroundColor($r('app.color.app_surface_2'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_md'))
             .width('100%')
             .height(44)
@@ -2415,7 +2417,7 @@ this.syncFromViewModel();
             })
         }
         .width('100%')
-        .backgroundColor($r('app.color.app_surface_1'))
+        .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
         .borderRadius({ topLeft: 16, topRight: 16, bottomLeft: 0, bottomRight: 0 })
         .padding({ top: 0, bottom: this.navBarHeight + 16 })
       }
@@ -2440,11 +2442,11 @@ this.syncFromViewModel();
     Row() {
       Text(label)
         .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .layoutWeight(1)
       SymbolGlyph($r('sys.symbol.chevron_right'))
         .fontSize(16)
-        .fontColor([$r('app.color.app_text_tertiary')])
+        .fontColor([ThemePalette.textTertiaryColor(this.effectiveTheme)])
     }
     .width('100%')
     .height(48)
@@ -2540,14 +2542,14 @@ this.syncFromViewModel();
             .width(36)
             .height(4)
             .borderRadius(2)
-            .backgroundColor($r('app.color.app_divider'))
+            .backgroundColor(ThemePalette.dividerColor(this.effectiveTheme))
             .margin({ top: 8, bottom: 12 })
 
           // 标题
           Text('角色记忆')
             .fontSize($r('app.float.app_font_subtitle'))
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .margin({ bottom: 12, left: 16, right: 16 })
             .width('100%')
 
@@ -2567,7 +2569,7 @@ this.syncFromViewModel();
                 Column() {
                   Text(member.name)
                     .fontSize($r('app.float.app_font_body'))
-                    .fontColor($r('app.color.app_text_primary'))
+                    .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
                     .maxLines(1)
                     .textOverflow({ overflow: TextOverflow.Ellipsis })
                     .width('100%')
@@ -2576,15 +2578,15 @@ this.syncFromViewModel();
                     Text(member.isEnabled ? '启用' : '停用')
                       .fontSize(10)
                       .fontColor(member.isEnabled
-                        ? $r('app.color.app_accent') : $r('app.color.app_text_tertiary'))
-                      .backgroundColor($r('app.color.app_surface_2'))
+                        ? ThemePalette.accentColor(this.effectiveTheme) : ThemePalette.textTertiaryColor(this.effectiveTheme))
+                      .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
                       .borderRadius(3)
                       .padding({ left: 4, right: 4, top: 1, bottom: 1 })
 
                     Text(this.memberMemoryCountText(member.characterId))
                       .fontSize(10)
-                      .fontColor($r('app.color.app_text_tertiary'))
-                      .backgroundColor($r('app.color.app_surface_2'))
+                      .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+                      .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
                       .borderRadius(3)
                       .padding({ left: 4, right: 4, top: 1, bottom: 1 })
                       .margin({ left: 4 })
@@ -2598,7 +2600,7 @@ this.syncFromViewModel();
 
                 SymbolGlyph($r('sys.symbol.chevron_right'))
                   .fontSize(16)
-                  .fontColor([$r('app.color.app_text_tertiary')])
+                  .fontColor([ThemePalette.textTertiaryColor(this.effectiveTheme)])
               }
               .width('100%')
               .height(56)
@@ -2617,8 +2619,8 @@ this.syncFromViewModel();
           // 关闭按钮
           Button($r('app.string.group_cancel'))
             .fontSize($r('app.float.app_font_body'))
-            .fontColor($r('app.color.app_text_secondary'))
-            .backgroundColor($r('app.color.app_surface_2'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_md'))
             .width('100%')
             .height(44)
@@ -2629,7 +2631,7 @@ this.syncFromViewModel();
             })
         }
         .width('100%')
-        .backgroundColor($r('app.color.app_surface_1'))
+        .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
         .borderRadius({ topLeft: 16, topRight: 16, bottomLeft: 0, bottomRight: 0 })
         .padding({ top: 0, bottom: this.navBarHeight + 16 })
       }
@@ -2670,22 +2672,22 @@ this.syncFromViewModel();
             .width(36)
             .height(4)
             .borderRadius(2)
-            .backgroundColor($r('app.color.app_divider'))
+            .backgroundColor(ThemePalette.dividerColor(this.effectiveTheme))
             .margin({ top: 8, bottom: 12 })
 
           // 标题
           Text($r('app.string.group_chat_menu_rename'))
             .fontSize($r('app.float.app_font_subtitle'))
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .margin({ bottom: 12, left: 16, right: 16 })
             .width('100%')
 
           // 群聊名称输入框
           TextInput({ placeholder: $r('app.string.group_rename_placeholder'), text: this.renameInput })
             .fontSize($r('app.float.app_font_body'))
-            .fontColor($r('app.color.app_text_primary'))
-            .backgroundColor($r('app.color.app_surface_2'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_md'))
             .height(44)
             .padding({ left: 12, right: 12 })
@@ -2699,8 +2701,8 @@ this.syncFromViewModel();
           Row() {
             Button($r('app.string.group_cancel'))
               .fontSize($r('app.float.app_font_body'))
-              .backgroundColor($r('app.color.app_surface_2'))
-              .fontColor($r('app.color.app_text_secondary'))
+              .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .borderRadius($r('app.float.app_radius_md'))
               .layoutWeight(1)
               .height(44)
@@ -2712,7 +2714,7 @@ this.syncFromViewModel();
               })
             Button(this.renameSaving ? $r('app.string.group_saving') : $r('app.string.group_save'))
               .fontSize($r('app.float.app_font_body'))
-              .backgroundColor($r('app.color.app_accent'))
+              .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
               .fontColor($r('app.color.app_on_accent'))
               .borderRadius($r('app.float.app_radius_md'))
               .layoutWeight(1)
@@ -2728,7 +2730,7 @@ this.syncFromViewModel();
           .margin({ top: 16, left: 16, right: 16 })
         }
         .width('100%')
-        .backgroundColor($r('app.color.app_surface_1'))
+        .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
         .borderRadius({ topLeft: 16, topRight: 16, bottomLeft: 0, bottomRight: 0 })
         .padding({ top: 0, bottom: this.navBarHeight + 16 })
       }

@@ -32,6 +32,7 @@ import { CharacterListViewModel } from '../viewmodels/CharacterListViewModel';
 import { AppServices } from '../services/AppServices';
 import { picker } from '@kit.CoreFileKit';
 import { promptAction, router } from '@kit.ArkUI';
+import { ThemePalette } from '../theme/ThemePalette';
 
 const TAB_NEW: number = 0;
 const TAB_IMPORT: number = 1;
@@ -47,6 +48,8 @@ struct AddCharacterPage {
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   /** 底部导航栏/手势条避让高度 */
   @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
+  /** 当前有效主题 */
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
 
   async aboutToAppear(): Promise<void> {
     try {
@@ -207,7 +210,7 @@ struct AddCharacterPage {
       }
       .width('100%')
       .height('100%')
-      .backgroundColor($r('app.color.app_bg'))
+      .backgroundColor(ThemePalette.pageBgColor(this.effectiveTheme))
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
       // 导入预览弹窗:浮层,覆盖整个页面(包括顶栏),居中显示
@@ -229,7 +232,7 @@ struct AddCharacterPage {
       Button($r('app.string.character_edit_back'))
         .fontSize($r('app.float.app_font_body'))
         .backgroundColor(Color.Transparent)
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .height(40)
         .padding({ left: 8, right: 8 })
         .onClick(() => {
@@ -239,7 +242,7 @@ struct AddCharacterPage {
       Text($r('app.string.add_character_title'))
         .fontSize($r('app.float.app_font_title'))
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .layoutWeight(1)
         .textAlign(TextAlign.Center)
         .maxLines(1)
@@ -257,7 +260,7 @@ struct AddCharacterPage {
     .width('100%')
     .padding({ left: 8, right: 8, top: this.statusBarHeight + 4, bottom: 4 })
     .alignItems(VerticalAlign.Center)
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
 
     // 分段切换
     Row() {
@@ -266,9 +269,9 @@ struct AddCharacterPage {
         .fontWeight(this.activeTab === TAB_NEW ? FontWeight.Medium : FontWeight.Normal)
         .fontColor(this.activeTab === TAB_NEW
           ? $r('app.color.app_on_accent')
-          : $r('app.color.app_text_secondary'))
+          : ThemePalette.textSecondaryColor(this.effectiveTheme))
         .backgroundColor(this.activeTab === TAB_NEW
-          ? $r('app.color.app_accent')
+          ? ThemePalette.accentColor(this.effectiveTheme)
           : Color.Transparent)
         .borderRadius($r('app.float.app_radius_sm'))
         .height(32)
@@ -282,9 +285,9 @@ struct AddCharacterPage {
         .fontWeight(this.activeTab === TAB_AI ? FontWeight.Medium : FontWeight.Normal)
         .fontColor(this.activeTab === TAB_AI
           ? $r('app.color.app_on_accent')
-          : $r('app.color.app_text_secondary'))
+          : ThemePalette.textSecondaryColor(this.effectiveTheme))
         .backgroundColor(this.activeTab === TAB_AI
-          ? $r('app.color.app_accent')
+          ? ThemePalette.accentColor(this.effectiveTheme)
           : Color.Transparent)
         .borderRadius($r('app.float.app_radius_sm'))
         .height(32)
@@ -299,9 +302,9 @@ struct AddCharacterPage {
         .fontWeight(this.activeTab === TAB_IMPORT ? FontWeight.Medium : FontWeight.Normal)
         .fontColor(this.activeTab === TAB_IMPORT
           ? $r('app.color.app_on_accent')
-          : $r('app.color.app_text_secondary'))
+          : ThemePalette.textSecondaryColor(this.effectiveTheme))
         .backgroundColor(this.activeTab === TAB_IMPORT
-          ? $r('app.color.app_accent')
+          ? ThemePalette.accentColor(this.effectiveTheme)
           : Color.Transparent)
         .borderRadius($r('app.float.app_radius_sm'))
         .height(32)
@@ -313,7 +316,7 @@ struct AddCharacterPage {
     }
     .width('100%')
     .padding({ left: 16, right: 16, top: 8, bottom: 8 })
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
   }
 
   // ===== 主内容区 =====
@@ -338,12 +341,12 @@ struct AddCharacterPage {
         Text($r('app.string.add_character_ai_title'))
           .fontSize($r('app.float.app_font_subtitle'))
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .textAlign(TextAlign.Center)
 
         Text($r('app.string.add_character_ai_desc'))
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .margin({ top: 8 })
           .textAlign(TextAlign.Center)
       }
@@ -352,7 +355,7 @@ struct AddCharacterPage {
 
       Button($r('app.string.add_character_start_ai'))
         .fontSize($r('app.float.app_font_body'))
-        .backgroundColor($r('app.color.app_accent'))
+        .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
         .fontColor($r('app.color.app_on_accent'))
         .borderRadius($r('app.float.app_radius_md'))
         .height(48)
@@ -382,12 +385,12 @@ struct AddCharacterPage {
         Text($r('app.string.add_character_new_title'))
           .fontSize($r('app.float.app_font_subtitle'))
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .textAlign(TextAlign.Center)
 
         Text($r('app.string.add_character_new_desc'))
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .margin({ top: 8 })
           .textAlign(TextAlign.Center)
       }
@@ -396,7 +399,7 @@ struct AddCharacterPage {
 
       Button($r('app.string.add_character_start_new'))
         .fontSize($r('app.float.app_font_body'))
-        .backgroundColor($r('app.color.app_accent'))
+        .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
         .fontColor($r('app.color.app_on_accent'))
         .borderRadius($r('app.float.app_radius_md'))
         .height(48)
@@ -427,18 +430,18 @@ struct AddCharacterPage {
         Column() {
           Text($r('app.string.add_character_import_icon'))
             .fontSize(48)
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
             .margin({ bottom: 12 })
 
           Text($r('app.string.add_character_import_title'))
             .fontSize($r('app.float.app_font_subtitle'))
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .textAlign(TextAlign.Center)
 
           Text($r('app.string.add_character_import_desc'))
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .margin({ top: 6 })
             .textAlign(TextAlign.Center)
         }
@@ -452,7 +455,7 @@ struct AddCharacterPage {
         .alignItems(HorizontalAlign.Center)
       }
       .type(ButtonType.Capsule)
-      .backgroundColor($r('app.color.app_surface_1'))
+      .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
       .borderRadius($r('app.float.app_radius_lg'))
       .width('100%')
       .onClick(() => {
@@ -461,7 +464,7 @@ struct AddCharacterPage {
 
       Text($r('app.string.add_character_import_formats'))
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .margin({ top: 16 })
         .textAlign(TextAlign.Center)
     }
@@ -486,7 +489,7 @@ struct AddCharacterPage {
           Text($r('app.string.character_import_preview'))
             .fontSize(17)
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .width('100%')
             .textAlign(TextAlign.Center)
             .margin({ bottom: 12 })
@@ -511,7 +514,7 @@ struct AddCharacterPage {
           // 来源格式
           Text('来源格式: ' + this.formatSourceLabel(this.viewModel!.previewCard!.sourceFormat))
             .fontSize(12)
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .width('100%')
             .margin({ top: 8, bottom: 16 })
 
@@ -527,7 +530,7 @@ struct AddCharacterPage {
             Button($r('app.string.character_import_cancel'))
               .fontSize(14)
               .backgroundColor(Color.Transparent)
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .height(40)
               .layoutWeight(1)
               .onClick(() => {
@@ -536,7 +539,7 @@ struct AddCharacterPage {
 
             Button($r('app.string.character_import_confirm'))
               .fontSize(14)
-              .backgroundColor($r('app.color.app_accent'))
+              .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
               .fontColor($r('app.color.app_on_accent'))
               .borderRadius($r('app.float.app_radius_sm'))
               .height(40)
@@ -551,7 +554,7 @@ struct AddCharacterPage {
         }
         .width('85%')
         .padding(20)
-        .backgroundColor($r('app.color.app_surface_1'))
+        .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_lg'))
       }
       .width('100%')
@@ -572,7 +575,7 @@ struct AddCharacterPage {
         Row() {
           Text(label)
             .fontSize(12)
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .fontWeight(FontWeight.Medium)
           if (isRequired) {
             Text(' *')
@@ -585,8 +588,8 @@ struct AddCharacterPage {
         Text(value.length > 0 ? value : '(空)')
           .fontSize(13)
           .fontColor(value.length > 0
-            ? $r('app.color.app_text_primary')
-            : $r('app.color.app_text_secondary'))
+            ? ThemePalette.textPrimaryColor(this.effectiveTheme)
+            : ThemePalette.textSecondaryColor(this.effectiveTheme))
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .width('100%')
@@ -605,7 +608,7 @@ struct AddCharacterPage {
       LoadingProgress()
         .width(40)
         .height(40)
-        .color($r('app.color.app_accent'))
+        .color(ThemePalette.accentColor(this.effectiveTheme))
     }
     .width('100%')
     .layoutWeight(1)

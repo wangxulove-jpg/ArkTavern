@@ -46,6 +46,7 @@ import { WorldEmptyState } from '../../components/world/WorldEmptyState';
 import { WorldPrimaryButton } from '../../components/world/WorldPrimaryButton';
 import { WorldSecondaryButton } from '../../components/world/WorldSecondaryButton';
 import { WorldBottomActionBar } from '../../components/world/WorldBottomActionBar';
+import { ThemePalette } from '../../theme/ThemePalette';
 
 const LOG_TAG: string = 'WorldHomePage';
 
@@ -62,6 +63,7 @@ struct WorldHomePage {
   @State private errorMessage: string = '';
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navigationBarHeight') navBarHeight: number = 0;
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
 
   @State private searchText: string = '';
   @State private currentFilter: WorldFilter = 'all';
@@ -131,7 +133,7 @@ struct WorldHomePage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.world_bg'))
+    .backgroundColor(ThemePalette.pageBgColor(this.effectiveTheme))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 
@@ -141,7 +143,7 @@ struct WorldHomePage {
       Row() {
         Button('←')
           .fontSize(22)
-          .fontColor($r('app.color.world_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .backgroundColor(Color.Transparent)
           .width(40)
           .height(40)
@@ -154,7 +156,7 @@ struct WorldHomePage {
         Text($r('app.string.world_home_title'))
           .fontSize($r('app.float.world_font_display'))
           .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.world_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .layoutWeight(1)
@@ -174,9 +176,9 @@ struct WorldHomePage {
           placeholder: $r('app.string.world_ui_search_placeholder')
         })
           .fontSize($r('app.float.world_font_body'))
-          .fontColor($r('app.color.world_text_primary'))
-          .placeholderColor($r('app.color.world_text_tertiary'))
-          .backgroundColor($r('app.color.world_surface_1'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+          .placeholderColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+          .backgroundColor(ThemePalette.worldSurfaceColor(this.effectiveTheme))
           .borderRadius($r('app.float.world_radius_chip'))
           .height(40)
           .layoutWeight(1)
@@ -216,11 +218,11 @@ struct WorldHomePage {
     Text(label)
       .fontSize($r('app.float.world_font_caption'))
       .fontColor(this.currentFilter === filter
-        ? $r('app.color.world_on_gold')
-        : $r('app.color.world_text_secondary'))
+        ? (this.effectiveTheme === 'tavern' ? '#1A1510' : $r('app.color.app_on_accent'))
+        : ThemePalette.textSecondaryColor(this.effectiveTheme))
       .backgroundColor(this.currentFilter === filter
-        ? $r('app.color.world_gold')
-        : $r('app.color.world_surface_1'))
+        ? ThemePalette.accentColor(this.effectiveTheme)
+        : ThemePalette.worldSurfaceColor(this.effectiveTheme))
       .borderRadius($r('app.float.world_radius_chip'))
       .padding({ left: 14, right: 14, top: 6, bottom: 6 })
       .margin({ right: 8 })
@@ -255,7 +257,7 @@ struct WorldHomePage {
       LoadingProgress()
         .width(40)
         .height(40)
-        .color($r('app.color.world_gold'))
+        .color(ThemePalette.accentColor(this.effectiveTheme))
     }
     .width('100%')
     .layoutWeight(1)
@@ -349,7 +351,7 @@ struct WorldHomePage {
           Text(item.name.length > 0 ? item.name : '(未命名世界)')
             .fontSize($r('app.float.world_font_title'))
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.world_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .layoutWeight(1)
@@ -365,7 +367,7 @@ struct WorldHomePage {
         if (item.description.length > 0) {
           Text(item.description)
             .fontSize($r('app.float.world_font_body'))
-            .fontColor($r('app.color.world_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .maxLines(2)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .margin({ top: 8 })
@@ -376,14 +378,14 @@ struct WorldHomePage {
         Row() {
           Text(this.composeStatsLine(item))
             .fontSize($r('app.float.world_font_caption'))
-            .fontColor($r('app.color.world_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
             .layoutWeight(1)
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
 
           Text(formatWorldTimestamp(item.updatedAt))
             .fontSize($r('app.float.world_font_caption'))
-            .fontColor($r('app.color.world_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
             .margin({ left: 8 })
         }
         .width('100%')

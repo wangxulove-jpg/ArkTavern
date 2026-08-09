@@ -61,6 +61,50 @@
       "value": "应用设置"
     },
     {
+      "name": "settings_theme_section",
+      "value": "外观"
+    },
+    {
+      "name": "settings_theme_title",
+      "value": "主题"
+    },
+    {
+      "name": "settings_theme_desc",
+      "value": "选择应用整体配色"
+    },
+    {
+      "name": "settings_theme_follow_system",
+      "value": "跟随设备"
+    },
+    {
+      "name": "settings_theme_follow_system_desc",
+      "value": "根据系统浅色与深色外观自动切换"
+    },
+    {
+      "name": "settings_theme_light",
+      "value": "浅色"
+    },
+    {
+      "name": "settings_theme_light_desc",
+      "value": "明亮清爽的浅色界面"
+    },
+    {
+      "name": "settings_theme_dark",
+      "value": "深色"
+    },
+    {
+      "name": "settings_theme_dark_desc",
+      "value": "深色沉浸式界面"
+    },
+    {
+      "name": "settings_theme_tavern",
+      "value": "酒馆棕"
+    },
+    {
+      "name": "settings_theme_tavern_desc",
+      "value": "暖金与深木色的 ArkTavern 酒馆风格"
+    },
+    {
       "name": "settings_global_user_name_section",
       "value": "全局用户称呼"
     },

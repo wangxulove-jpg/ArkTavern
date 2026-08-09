@@ -15,6 +15,7 @@
 
 import { ChatMessage } from '../models/ChatMessage';
 import { ChatRole } from '../models/ChatRole';
+import { ThemePalette } from '../theme/ThemePalette';
 
 /** 操作类型 */
 export type MessageAction =
@@ -36,6 +37,7 @@ interface ActionItem {
 
 @Component
 export struct ChatMessageActionSheet {
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
   /** 是否显示 */
   visible: boolean = false;
   /** 目标消息 */
@@ -68,7 +70,7 @@ export struct ChatMessageActionSheet {
             this.sheetContent()
           }
           .width('100%')
-          .backgroundColor($r('app.color.app_surface_1'))
+          .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
           .borderRadius({
             topLeft: 16, topRight: 16,
             bottomLeft: 0, bottomRight: 0
@@ -94,7 +96,7 @@ export struct ChatMessageActionSheet {
       // 标题
       Text(this.getTitle())
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .margin({ bottom: 8, top: 8 })
 
       // 操作列表
@@ -114,8 +116,8 @@ export struct ChatMessageActionSheet {
         .fontColor(item.isDestructive
           ? $r('app.color.app_danger')
           : (item.enabled
-            ? $r('app.color.app_text_primary')
-            : $r('app.color.app_text_tertiary')))
+            ? ThemePalette.textPrimaryColor(this.effectiveTheme)
+            : ThemePalette.textTertiaryColor(this.effectiveTheme)))
         .layoutWeight(1)
     }
     .width('100%')

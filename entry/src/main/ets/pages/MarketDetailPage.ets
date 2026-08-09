@@ -41,6 +41,7 @@ import { MarketCharacter } from '../models/MarketCharacter';
 import { MarketCharacterAvatar } from '../components/MarketCharacterAvatar';
 import { EmptyStateView } from '../components/EmptyStateView';
 import { router, promptAction } from '@kit.ArkUI';
+import { ThemePalette } from '../theme/ThemePalette';
 
 @Entry
 @Component
@@ -58,6 +59,8 @@ struct MarketDetailPage {
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   /** 底部导航栏/手势条避让高度 */
   @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
+  /** 当前有效主题 */
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
 
   private readyHandled: boolean = false;
 
@@ -156,7 +159,7 @@ struct MarketDetailPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.app_bg'))
+    .backgroundColor(ThemePalette.pageBgColor(this.effectiveTheme))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 
@@ -168,7 +171,7 @@ struct MarketDetailPage {
       Button($r('app.string.market_detail_back'))
         .fontSize($r('app.float.app_font_body'))
         .backgroundColor(Color.Transparent)
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .height(40)
         .padding({ left: 8, right: 8 })
         .onClick(() => {
@@ -180,7 +183,7 @@ struct MarketDetailPage {
       Text(this.resolveTitle())
         .fontSize($r('app.float.app_font_subtitle'))
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .layoutWeight(1)
@@ -193,7 +196,7 @@ struct MarketDetailPage {
         Button(this.resolveLanguageToggleLabel())
           .fontSize($r('app.float.app_font_caption'))
           .backgroundColor(Color.Transparent)
-          .fontColor($r('app.color.app_accent'))
+          .fontColor(ThemePalette.accentColor(this.effectiveTheme))
           .height(40)
           .padding({ left: 8, right: 8 })
           .onClick(() => {
@@ -209,7 +212,7 @@ struct MarketDetailPage {
     .width('100%')
     .padding({ left: 8, right: 12, top: this.statusBarHeight + 4, bottom: 4 })
     .alignItems(VerticalAlign.Center)
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
   }
 
   /**
@@ -330,7 +333,7 @@ struct MarketDetailPage {
       Text(this.resolveDisplayName())
         .fontSize($r('app.float.app_font_title'))
         .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .maxLines(2)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .textAlign(TextAlign.Center)
@@ -340,10 +343,10 @@ struct MarketDetailPage {
         Row() {
           Text($r('app.string.market_creator_prefix'))
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           Text(this.viewModel!.detail!.base.creator)
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         }
         .margin({ top: 4 })
         .justifyContent(FlexAlign.Center)
@@ -353,8 +356,8 @@ struct MarketDetailPage {
       Row() {
         Text(this.viewModel!.detail!.base.providerId)
           .fontSize(10)
-          .fontColor($r('app.color.app_text_tertiary'))
-          .backgroundColor($r('app.color.app_surface_2'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+          .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
           .borderRadius($r('app.float.app_radius_sm'))
           .padding({ left: 6, right: 6, top: 2, bottom: 2 })
 
@@ -371,8 +374,8 @@ struct MarketDetailPage {
         if (this.viewModel!.detail!.base.hasCharacterBook) {
           Text($r('app.string.market_contains_lorebook'))
             .fontSize(10)
-            .fontColor($r('app.color.app_text_tertiary'))
-            .backgroundColor($r('app.color.app_surface_2'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_sm'))
             .padding({ left: 6, right: 6, top: 2, bottom: 2 })
             .margin({ left: 6 })
@@ -409,11 +412,11 @@ struct MarketDetailPage {
         Column() {
           Text($r('app.string.market_detail_rating'))
             .fontSize(10)
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           Text(this.viewModel!.detail!.base.rating.toFixed(1))
             .fontSize($r('app.float.app_font_subtitle'))
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .margin({ top: 2 })
         }
         .alignItems(HorizontalAlign.Center)
@@ -425,11 +428,11 @@ struct MarketDetailPage {
         Column() {
           Text($r('app.string.market_detail_download'))
             .fontSize(10)
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           Text(this.formatCount(this.viewModel!.detail!.base.downloadCount))
             .fontSize($r('app.float.app_font_subtitle'))
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .margin({ top: 2 })
         }
         .alignItems(HorizontalAlign.Center)
@@ -441,10 +444,10 @@ struct MarketDetailPage {
         Column() {
           Text($r('app.string.market_detail_updated'))
             .fontSize(10)
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           Text(this.formatDate(this.viewModel!.detail!.base.updatedAt))
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .margin({ top: 2 })
         }
         .alignItems(HorizontalAlign.Center)
@@ -457,7 +460,7 @@ struct MarketDetailPage {
       top: $r('app.float.app_spacing_12'),
       bottom: $r('app.float.app_spacing_12')
     })
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
     .borderRadius($r('app.float.app_radius_md'))
     .alignItems(VerticalAlign.Center)
   }
@@ -469,15 +472,15 @@ struct MarketDetailPage {
         Text($r('app.string.market_detail_tags_label'))
           .fontSize($r('app.float.app_font_body'))
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .width('100%')
 
         Flex({ wrap: FlexWrap.Wrap }) {
           ForEach(this.resolveDisplayTags(), (tag: string, index: number) => {
             Text(tag)
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_text_secondary'))
-              .backgroundColor($r('app.color.app_surface_2'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+              .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
               .borderRadius($r('app.float.app_radius_sm'))
               .padding({ left: 8, right: 8, top: 4, bottom: 4 })
               .margin({ right: 6, top: 6 })
@@ -515,12 +518,12 @@ struct MarketDetailPage {
         Text($r('app.string.market_detail_description_label'))
           .fontSize($r('app.float.app_font_body'))
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .width('100%')
 
         Text(this.resolveDisplayDescription())
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .margin({ top: 6 })
           .width('100%')
       }
@@ -553,12 +556,12 @@ struct MarketDetailPage {
         Text($r('app.string.market_detail_creator_notes_label'))
           .fontSize($r('app.float.app_font_body'))
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .width('100%')
 
         Text(this.resolveDisplayCreatorNotes())
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .margin({ top: 6 })
           .width('100%')
       }
@@ -591,12 +594,12 @@ struct MarketDetailPage {
         Text($r('app.string.market_detail_first_message_label'))
           .fontSize($r('app.float.app_font_body'))
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .width('100%')
 
         Text(this.resolveDisplayFirstMessage())
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .margin({ top: 6 })
           .width('100%')
       }
@@ -665,7 +668,7 @@ struct MarketDetailPage {
     }
     .width('100%')
     .margin({ top: $r('app.float.app_spacing_16') })
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
     .borderRadius($r('app.float.app_radius_md'))
     .padding({
       left: $r('app.float.app_spacing_16'),
@@ -680,11 +683,11 @@ struct MarketDetailPage {
     Row() {
       Text(label)
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
       Blank()
       Text(value)
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
     }
@@ -701,7 +704,7 @@ struct MarketDetailPage {
         .fontSize($r('app.float.app_font_body'))
         .fontWeight(FontWeight.Medium)
         .fontColor($r('app.color.app_on_accent'))
-        .backgroundColor(this.canImport() ? $r('app.color.app_accent') : $r('app.color.app_surface_2'))
+        .backgroundColor(this.canImport() ? ThemePalette.accentColor(this.effectiveTheme) : ThemePalette.surface2Color(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_md'))
         .height(48)
         .width('100%')
@@ -727,7 +730,7 @@ struct MarketDetailPage {
       top: $r('app.float.app_spacing_8'),
       bottom: this.navigationBarHeight + 8
     })
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
   }
 
   /**
@@ -803,7 +806,7 @@ struct MarketDetailPage {
       LoadingProgress()
         .width(40)
         .height(40)
-        .color($r('app.color.app_accent'))
+        .color(ThemePalette.accentColor(this.effectiveTheme))
     }
     .width('100%')
     .layoutWeight(1)
@@ -822,7 +825,7 @@ struct MarketDetailPage {
       Button($r('app.string.market_retry'))
         .fontSize($r('app.float.app_font_body'))
         .fontColor($r('app.color.app_on_accent'))
-        .backgroundColor($r('app.color.app_accent'))
+        .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_md'))
         .height(44)
         .width('50%')
@@ -852,19 +855,19 @@ struct MarketDetailPage {
           Text($r('app.string.market_content_warning'))
             .fontSize(17)
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .margin({ bottom: 12 })
 
           Text($r('app.string.market_detail_nsfw_warning'))
             .fontSize(14)
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .margin({ bottom: 20 })
             .textAlign(TextAlign.Center)
             .width('100%')
 
           Button($r('app.string.market_detail_i_understand'))
             .fontSize(14)
-            .backgroundColor($r('app.color.app_accent'))
+            .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
             .fontColor($r('app.color.app_on_accent'))
             .borderRadius(20)
             .width('100%')
@@ -878,7 +881,7 @@ struct MarketDetailPage {
         }
         .width('80%')
         .padding(20)
-        .backgroundColor($r('app.color.app_surface_1'))
+        .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
         .borderRadius(16)
       }
       .width('100%')
@@ -901,7 +904,7 @@ struct MarketDetailPage {
           Text($r('app.string.market_detail_duplicate_title'))
             .fontSize(17)
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .margin({ bottom: 12 })
 
           // 使用 Span 组合显示动态名称消息
@@ -911,7 +914,7 @@ struct MarketDetailPage {
             Span($r('app.string.market_detail_duplicate_message_suffix'))
           }
           .fontSize(14)
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .margin({ bottom: 20 })
           .textAlign(TextAlign.Center)
           .width('100%')
@@ -919,7 +922,7 @@ struct MarketDetailPage {
           // 查看本地角色
           Button($r('app.string.market_detail_view_local'))
             .fontSize(14)
-            .fontColor($r('app.color.app_accent'))
+            .fontColor(ThemePalette.accentColor(this.effectiveTheme))
             .backgroundColor($r('app.color.app_accent_surface'))
             .borderRadius(20)
             .width('100%')
@@ -932,8 +935,8 @@ struct MarketDetailPage {
           // 仍导入为副本
           Button($r('app.string.market_detail_import_as_duplicate'))
             .fontSize(14)
-            .backgroundColor($r('app.color.app_surface_2'))
-            .fontColor($r('app.color.app_text_primary'))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .borderRadius(20)
             .width('100%')
             .height(40)
@@ -954,7 +957,7 @@ struct MarketDetailPage {
           Button($r('app.string.market_cancel'))
             .fontSize(14)
             .backgroundColor(Color.Transparent)
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .borderRadius(20)
             .width('100%')
             .height(40)
@@ -967,7 +970,7 @@ struct MarketDetailPage {
         }
         .width('80%')
         .padding(20)
-        .backgroundColor($r('app.color.app_surface_1'))
+        .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
         .borderRadius(16)
       }
       .width('100%')
@@ -1035,7 +1038,7 @@ struct MarketDetailPage {
           Text($r('app.string.market_detail_import_success_title'))
             .fontSize(17)
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .margin({ bottom: 12 })
 
           // 使用 Span 组合显示动态名称消息
@@ -1047,14 +1050,14 @@ struct MarketDetailPage {
               Span($r('app.string.market_detail_import_success_suffix'))
             }
             .fontSize(14)
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .margin({ bottom: 20 })
             .textAlign(TextAlign.Center)
             .width('100%')
           } else {
             Text($r('app.string.market_detail_import_success_default'))
               .fontSize(14)
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .margin({ bottom: 20 })
               .textAlign(TextAlign.Center)
               .width('100%')
@@ -1063,7 +1066,7 @@ struct MarketDetailPage {
           // 查看角色
           Button($r('app.string.market_detail_view_character'))
             .fontSize(14)
-            .backgroundColor($r('app.color.app_accent'))
+            .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
             .fontColor($r('app.color.app_on_accent'))
             .borderRadius(20)
             .width('100%')
@@ -1076,8 +1079,8 @@ struct MarketDetailPage {
           // 新建对话
           Button($r('app.string.market_detail_start_new_chat'))
             .fontSize(14)
-            .backgroundColor($r('app.color.app_surface_2'))
-            .fontColor($r('app.color.app_text_primary'))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .borderRadius(20)
             .width('100%')
             .height(40)
@@ -1090,7 +1093,7 @@ struct MarketDetailPage {
           Button($r('app.string.market_detail_continue_browsing'))
             .fontSize(14)
             .backgroundColor(Color.Transparent)
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .borderRadius(20)
             .width('100%')
             .height(40)
@@ -1103,7 +1106,7 @@ struct MarketDetailPage {
         }
         .width('80%')
         .padding(20)
-        .backgroundColor($r('app.color.app_surface_1'))
+        .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
         .borderRadius(16)
       }
       .width('100%')

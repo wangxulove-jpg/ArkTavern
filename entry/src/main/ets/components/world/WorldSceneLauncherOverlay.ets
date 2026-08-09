@@ -21,6 +21,7 @@ import { WorldPrimaryButton } from './WorldPrimaryButton';
 import { WorldSecondaryButton } from './WorldSecondaryButton';
 import { CharacterImageView } from '../CharacterImageView';
 import { formatWorldTimestamp } from '../../viewmodels/world/WorldUiModels';
+import { ThemePalette } from '../../theme/ThemePalette';
 
 export interface LauncherData {
   readonly worldId: string;
@@ -38,6 +39,7 @@ export interface LauncherData {
 @CustomDialog
 @Component
 export struct WorldSceneLauncherOverlay {
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
   controller: CustomDialogController;
   @Prop data: LauncherData | null = null;
   private onContinueScene: (locationId: string) => void = (_locationId: string) => {};
@@ -51,12 +53,12 @@ export struct WorldSceneLauncherOverlay {
       } else {
         Text('加载中...')
           .fontSize($r('app.float.world_font_body'))
-          .fontColor($r('app.color.world_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .padding(24)
       }
     }
     .width('100%')
-    .backgroundColor($r('app.color.world_surface_1'))
+    .backgroundColor(ThemePalette.worldSurfaceColor(this.effectiveTheme))
     .borderRadius({ topLeft: $r('app.float.world_radius_card'), topRight: $r('app.float.world_radius_card') })
     .padding({ left: $r('app.float.world_page_padding'), right: $r('app.float.world_page_padding'), bottom: 24 })
   }
@@ -67,7 +69,7 @@ export struct WorldSceneLauncherOverlay {
       Text(d.locationName)
         .fontSize($r('app.float.world_font_subtitle'))
         .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.world_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .width('100%')
         .margin({ top: 16, bottom: 12 })
 
@@ -77,11 +79,11 @@ export struct WorldSceneLauncherOverlay {
           Row() {
             Text('参与角色')
               .fontSize($r('app.float.world_font_caption'))
-              .fontColor($r('app.color.world_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .layoutWeight(1)
             Text('(即将支持选择)')
               .fontSize($r('app.float.world_font_micro'))
-              .fontColor($r('app.color.world_text_tertiary'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           }
           .width('100%')
           .margin({ bottom: 8 })
@@ -89,7 +91,7 @@ export struct WorldSceneLauncherOverlay {
           if (d.characters.length === 0) {
             Text('当前地点无角色')
               .fontSize($r('app.float.world_font_caption'))
-              .fontColor($r('app.color.world_text_tertiary'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
               .width('100%')
               .textAlign(TextAlign.Center)
               .padding({ top: 8, bottom: 8 })
@@ -109,7 +111,7 @@ export struct WorldSceneLauncherOverlay {
                       })
                       if (!c.isActive) {
                         Circle({ width: 8, height: 8 })
-                          .fill($r('app.color.world_text_tertiary'))
+                          .fill(ThemePalette.textTertiaryColor(this.effectiveTheme))
                           .position({ x: 24, y: 24 })
                       }
                     }
@@ -117,7 +119,7 @@ export struct WorldSceneLauncherOverlay {
                     .height(32)
                     Text(c.displayName)
                       .fontSize(9)
-                      .fontColor(c.isActive ? $r('app.color.world_text_primary') : $r('app.color.world_text_tertiary'))
+                      .fontColor(c.isActive ? ThemePalette.textPrimaryColor(this.effectiveTheme) : ThemePalette.textTertiaryColor(this.effectiveTheme))
                       .maxLines(1)
                       .textOverflow({ overflow: TextOverflow.Ellipsis })
                       .margin({ top: 2 })
@@ -145,7 +147,7 @@ export struct WorldSceneLauncherOverlay {
             Row() {
               Text('当前进行中的会话')
                 .fontSize($r('app.float.world_font_caption'))
-                .fontColor($r('app.color.world_text_secondary'))
+                .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
                 .layoutWeight(1)
               WorldStatusChip({ label: '活动中', isActive: true })
             }
@@ -153,7 +155,7 @@ export struct WorldSceneLauncherOverlay {
 
             Text('开始: ' + formatWorldTimestamp(d.activeScene.startedAt))
               .fontSize($r('app.float.world_font_micro'))
-              .fontColor($r('app.color.world_text_tertiary'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
               .margin({ top: 4 })
 
             WorldPrimaryButton({
@@ -178,7 +180,7 @@ export struct WorldSceneLauncherOverlay {
             Row() {
               Text('上次会话')
                 .fontSize($r('app.float.world_font_caption'))
-                .fontColor($r('app.color.world_text_secondary'))
+                .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
                 .layoutWeight(1)
               WorldStatusChip({ label: '已结束', isActive: false })
             }
@@ -187,12 +189,12 @@ export struct WorldSceneLauncherOverlay {
             Text('结束于: ' + formatWorldTimestamp(
               d.lastEndedScene.endedAt !== undefined ? d.lastEndedScene.endedAt : d.lastEndedScene.startedAt))
               .fontSize($r('app.float.world_font_micro'))
-              .fontColor($r('app.color.world_text_tertiary'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
               .margin({ top: 4 })
 
             Text($r('app.string.world_scene_history_continue_no_copy'))
               .fontSize($r('app.float.world_font_micro'))
-              .fontColor($r('app.color.world_text_tertiary'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
               .margin({ top: 2 })
 
             WorldSecondaryButton({
@@ -226,7 +228,7 @@ export struct WorldSceneLauncherOverlay {
       if (d.endedSceneCount > 0) {
         Text(d.endedSceneCount.toString() + ' 个历史会话可在历史页查看')
           .fontSize($r('app.float.world_font_micro'))
-          .fontColor($r('app.color.world_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .width('100%')
           .textAlign(TextAlign.Center)
           .margin({ top: 8 })
@@ -234,7 +236,7 @@ export struct WorldSceneLauncherOverlay {
 
       Text('关闭')
         .fontSize($r('app.float.world_font_caption'))
-        .fontColor($r('app.color.world_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .width('100%')
         .textAlign(TextAlign.Center)
         .padding({ top: 12, bottom: 4 })

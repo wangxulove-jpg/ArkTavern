@@ -11,16 +11,20 @@
  * - 右侧操作按钮(如有需要由调用方在外层 Row 自行组合)
  */
 
+import { ThemePalette } from '../theme/ThemePalette';
+
 @Component
 export struct SectionHeader {
   /** 区块标题(必填) */
   title: ResourceStr = '';
+  /** 当前有效主题 */
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
 
   build(): void {
     Text(this.title)
       .fontSize($r('app.float.app_font_caption'))
       .fontWeight(FontWeight.Medium)
-      .fontColor($r('app.color.app_text_tertiary'))
+      .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
       .width('100%')
       .textAlign(TextAlign.Start)
       .padding({

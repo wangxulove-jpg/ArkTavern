@@ -6,10 +6,12 @@
  * 纯 UI 组件,不依赖 Repository / Service / AppServices / 数据库。
  */
 
+import { ThemePalette } from '../../theme/ThemePalette';
 import { WorldPrimaryButton } from './WorldPrimaryButton';
 
 @Component
 export struct WorldBottomActionBar {
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
   primaryLabel: ResourceStr = '';
   @Prop isPrimaryEnabled: boolean = true;
   @StorageProp('navigationBarHeight') navBarHeight: number = 0;
@@ -44,9 +46,9 @@ export struct WorldBottomActionBar {
       top: 12,
       bottom: this.navBarHeight + 12
     })
-    .backgroundColor($r('app.color.world_bg'))
+    .backgroundColor(this.effectiveTheme === 'tavern' ? '#241A13' : ThemePalette.surface1Color(this.effectiveTheme))
     .borderWidth({ top: 1 })
-    .borderColor($r('app.color.world_border'))
+    .borderColor(ThemePalette.worldBorderColor(this.effectiveTheme))
   }
 
   private hasLabel(value: ResourceStr): boolean {

@@ -96,6 +96,7 @@ import {
 import { CharacterImageView } from '../../components/CharacterImageView';
 import { EmptyStateView } from '../../components/EmptyStateView';
 import { Logger } from '../../utils/Logger';
+import { ThemePalette } from '../../theme/ThemePalette';
 
 const LOG_TAG: string = 'GroupCharacterMemoryPage';
 
@@ -228,6 +229,7 @@ struct GroupCharacterMemoryPage {
 
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navBarHeight') navBarHeight: number = 0;
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
 
   async aboutToAppear(): Promise<void> {
     try {
@@ -411,7 +413,7 @@ struct GroupCharacterMemoryPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.app_bg'))
+    .backgroundColor(ThemePalette.pageBgColor(this.effectiveTheme))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 
@@ -420,7 +422,7 @@ struct GroupCharacterMemoryPage {
     Row() {
       Button($r('app.string.group_cancel'))
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_accent'))
+        .fontColor(ThemePalette.accentColor(this.effectiveTheme))
         .backgroundColor(Color.Transparent)
         .height(36)
         .padding({ left: 0, right: 8 })
@@ -432,7 +434,7 @@ struct GroupCharacterMemoryPage {
       Text('角色记忆')
         .fontSize($r('app.float.app_font_title'))
         .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .layoutWeight(1)
@@ -450,7 +452,7 @@ struct GroupCharacterMemoryPage {
   @Builder
   loadingView(): void {
     Column() {
-      LoadingProgress().width(40).height(40).color($r('app.color.app_accent'))
+      LoadingProgress().width(40).height(40).color(ThemePalette.accentColor(this.effectiveTheme))
     }
     .width('100%')
     .layoutWeight(1)
@@ -465,7 +467,7 @@ struct GroupCharacterMemoryPage {
       Button($r('app.string.group_cancel'))
         .fontSize($r('app.float.app_font_body'))
         .fontColor($r('app.color.app_on_accent'))
-        .backgroundColor($r('app.color.app_accent'))
+        .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_sm'))
         .height(40)
         .padding({ left: 24, right: 24 })
@@ -485,7 +487,7 @@ struct GroupCharacterMemoryPage {
       Button('重新加载')
         .fontSize($r('app.float.app_font_body'))
         .fontColor($r('app.color.app_on_accent'))
-        .backgroundColor($r('app.color.app_accent'))
+        .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_sm'))
         .height(40)
         .padding({ left: 24, right: 24 })
@@ -577,9 +579,9 @@ struct GroupCharacterMemoryPage {
       Button('记忆')
         .fontSize($r('app.float.app_font_caption'))
         .fontColor(this.viewMode === PageViewMode.Memory
-          ? $r('app.color.app_on_accent') : $r('app.color.app_text_secondary'))
+          ? $r('app.color.app_on_accent') : ThemePalette.textSecondaryColor(this.effectiveTheme))
         .backgroundColor(this.viewMode === PageViewMode.Memory
-          ? $r('app.color.app_accent') : $r('app.color.app_surface_2'))
+          ? ThemePalette.accentColor(this.effectiveTheme) : ThemePalette.surface2Color(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_sm'))
         .height(30)
         .padding({ left: 14, right: 14 })
@@ -591,9 +593,9 @@ struct GroupCharacterMemoryPage {
       Button('关系')
         .fontSize($r('app.float.app_font_caption'))
         .fontColor(this.viewMode === PageViewMode.Relationship
-          ? $r('app.color.app_on_accent') : $r('app.color.app_text_secondary'))
+          ? $r('app.color.app_on_accent') : ThemePalette.textSecondaryColor(this.effectiveTheme))
         .backgroundColor(this.viewMode === PageViewMode.Relationship
-          ? $r('app.color.app_accent') : $r('app.color.app_surface_2'))
+          ? ThemePalette.accentColor(this.effectiveTheme) : ThemePalette.surface2Color(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_sm'))
         .height(30)
         .padding({ left: 14, right: 14 })
@@ -607,9 +609,9 @@ struct GroupCharacterMemoryPage {
       Button('上下文')
         .fontSize($r('app.float.app_font_caption'))
         .fontColor(this.viewMode === PageViewMode.ContextInspector
-          ? $r('app.color.app_on_accent') : $r('app.color.app_text_secondary'))
+          ? $r('app.color.app_on_accent') : ThemePalette.textSecondaryColor(this.effectiveTheme))
         .backgroundColor(this.viewMode === PageViewMode.ContextInspector
-          ? $r('app.color.app_accent') : $r('app.color.app_surface_2'))
+          ? ThemePalette.accentColor(this.effectiveTheme) : ThemePalette.surface2Color(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_sm'))
         .height(30)
         .padding({ left: 14, right: 14 })
@@ -655,7 +657,7 @@ struct GroupCharacterMemoryPage {
                   .width(52)
                   .height(52)
                   .borderRadius(26)
-                  .border({ width: 2, color: $r('app.color.app_accent') })
+                  .border({ width: 2, color: ThemePalette.accentColor(this.effectiveTheme) })
               }
             }
             .width(52)
@@ -667,7 +669,7 @@ struct GroupCharacterMemoryPage {
               .fontWeight(this.selectedCharacterId === member.characterId
                 ? FontWeight.Medium : FontWeight.Normal)
               .fontColor(this.selectedCharacterId === member.characterId
-                ? $r('app.color.app_accent') : $r('app.color.app_text_secondary'))
+                ? ThemePalette.accentColor(this.effectiveTheme) : ThemePalette.textSecondaryColor(this.effectiveTheme))
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .width(68)
@@ -708,7 +710,7 @@ struct GroupCharacterMemoryPage {
         Text(this.header !== null ? this.header.displayName : '角色已删除')
           .fontSize($r('app.float.app_font_body'))
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .width('100%')
@@ -718,15 +720,15 @@ struct GroupCharacterMemoryPage {
           Text(this.header !== null ? this.header.memberStatusLabel : '')
             .fontSize(10)
             .fontColor(this.memberStatusColor(this.header))
-            .backgroundColor($r('app.color.app_surface_2'))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius(3)
             .padding({ left: 4, right: 4, top: 1, bottom: 1 })
 
           // 所属群聊名称
           Text(this.header !== null ? this.header.groupTitle : '')
             .fontSize(10)
-            .fontColor($r('app.color.app_text_secondary'))
-            .backgroundColor($r('app.color.app_surface_2'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius(3)
             .padding({ left: 4, right: 4, top: 1, bottom: 1 })
             .margin({ left: 4 })
@@ -739,7 +741,7 @@ struct GroupCharacterMemoryPage {
 
         Text('共 ' + (this.header !== null ? this.header.memoryCount : 0).toString() + ' 条记忆')
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .margin({ top: 4 })
       }
       .layoutWeight(1)
@@ -753,7 +755,7 @@ struct GroupCharacterMemoryPage {
       top: $r('app.float.app_spacing_12'),
       bottom: $r('app.float.app_spacing_12')
     })
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
     .alignItems(VerticalAlign.Center)
   }
 
@@ -768,7 +770,7 @@ struct GroupCharacterMemoryPage {
       Row() {
         Text('自动总结')
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .fontWeight(FontWeight.Medium)
           .layoutWeight(1)
         if (this.isAutoSummaryLoading) {
@@ -822,14 +824,14 @@ struct GroupCharacterMemoryPage {
         this.autoSummaryDiagnosticRow('计划', '未生成')
       }
 
-      Divider().color($r('app.color.app_divider')).margin({ top: 8, bottom: 8 })
+      Divider().color(ThemePalette.dividerColor(this.effectiveTheme)).margin({ top: 8, bottom: 8 })
 
       // G-GROUP-AUTO-SUMMARY-1B: 执行状态诊断
       if (this.autoSummaryIsExecuting) {
         Text(this.autoSummaryExecutingLabel.length > 0
           ? this.autoSummaryExecutingLabel : '正在自动整理该角色的记忆…')
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .width('100%')
           .textAlign(TextAlign.Start)
       }
@@ -845,13 +847,13 @@ struct GroupCharacterMemoryPage {
 
       Text('自动总结将在本轮对话结束后执行')
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .width('100%')
         .textAlign(TextAlign.Start)
     }
     .width('100%')
     .padding({ left: 16, right: 16, top: 12, bottom: 12 })
-    .backgroundColor($r('app.color.app_surface_2'))
+    .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
     .borderRadius($r('app.float.app_radius_md'))
     .margin({ left: 12, right: 12, top: 8 })
   }
@@ -862,10 +864,10 @@ struct GroupCharacterMemoryPage {
     Row() {
       Text(label)
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
       Text(value)
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .fontWeight(FontWeight.Medium)
         .margin({ left: 8 })
         .layoutWeight(1)
@@ -906,9 +908,9 @@ struct GroupCharacterMemoryPage {
     Row() {
       Button('全部')        .fontSize($r('app.float.app_font_caption'))
         .fontColor(this.filter === GroupCharacterMemoryListFilter.All
-          ? $r('app.color.app_on_accent') : $r('app.color.app_text_primary'))
+          ? $r('app.color.app_on_accent') : ThemePalette.textPrimaryColor(this.effectiveTheme))
         .backgroundColor(this.filter === GroupCharacterMemoryListFilter.All
-          ? $r('app.color.app_accent') : $r('app.color.app_surface_2'))
+          ? ThemePalette.accentColor(this.effectiveTheme) : ThemePalette.surface2Color(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_sm'))
         .height(32)
         .padding({ left: 12, right: 12 })
@@ -916,9 +918,9 @@ struct GroupCharacterMemoryPage {
       Button('活跃')
         .fontSize($r('app.float.app_font_caption'))
         .fontColor(this.filter === GroupCharacterMemoryListFilter.Active
-          ? $r('app.color.app_on_accent') : $r('app.color.app_text_primary'))
+          ? $r('app.color.app_on_accent') : ThemePalette.textPrimaryColor(this.effectiveTheme))
         .backgroundColor(this.filter === GroupCharacterMemoryListFilter.Active
-          ? $r('app.color.app_accent') : $r('app.color.app_surface_2'))
+          ? ThemePalette.accentColor(this.effectiveTheme) : ThemePalette.surface2Color(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_sm'))
         .height(32)
         .padding({ left: 12, right: 12 })
@@ -927,9 +929,9 @@ struct GroupCharacterMemoryPage {
       Button('已归档')
         .fontSize($r('app.float.app_font_caption'))
         .fontColor(this.filter === GroupCharacterMemoryListFilter.Archived
-          ? $r('app.color.app_on_accent') : $r('app.color.app_text_primary'))
+          ? $r('app.color.app_on_accent') : ThemePalette.textPrimaryColor(this.effectiveTheme))
         .backgroundColor(this.filter === GroupCharacterMemoryListFilter.Archived
-          ? $r('app.color.app_accent') : $r('app.color.app_surface_2'))
+          ? ThemePalette.accentColor(this.effectiveTheme) : ThemePalette.surface2Color(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_sm'))
         .height(32)
         .padding({ left: 12, right: 12 })
@@ -945,8 +947,8 @@ struct GroupCharacterMemoryPage {
       // - 无可用模型:仍可点击,点击后 prepareSelfSummary 返回 NoModelConfig 错误,显示在 actionError
       Button(this.isSummarizing ? '正在总结…' : '自动总结')
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_accent'))
-        .backgroundColor($r('app.color.app_surface_2'))
+        .fontColor(ThemePalette.accentColor(this.effectiveTheme))
+        .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_sm'))
         .height(32)
         .padding({ left: 12, right: 12 })
@@ -959,7 +961,7 @@ struct GroupCharacterMemoryPage {
       Button('新增记忆')
         .fontSize($r('app.float.app_font_caption'))
         .fontColor($r('app.color.app_on_accent'))
-        .backgroundColor($r('app.color.app_accent'))
+        .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_sm'))
         .height(32)
         .padding({ left: 12, right: 12 })
@@ -983,7 +985,7 @@ struct GroupCharacterMemoryPage {
         Button('新增记忆')
           .fontSize($r('app.float.app_font_body'))
           .fontColor($r('app.color.app_on_accent'))
-          .backgroundColor($r('app.color.app_accent'))
+          .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
           .borderRadius($r('app.float.app_radius_sm'))
           .height(40)
           .padding({ left: 24, right: 24 })
@@ -1006,15 +1008,15 @@ struct GroupCharacterMemoryPage {
         Text(m.title)
           .fontSize($r('app.float.app_font_body'))
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .layoutWeight(1)
 
         Text(m.originLabel)
           .fontSize(11)
-          .fontColor($r('app.color.app_text_tertiary'))
-          .backgroundColor($r('app.color.app_surface_2'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+          .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
           .borderRadius(3)
           .padding({ left: 6, right: 6, top: 2, bottom: 2 })
           .margin({ left: 6 })
@@ -1022,8 +1024,8 @@ struct GroupCharacterMemoryPage {
         Text(m.statusLabel)
           .fontSize(11)
           .fontColor(m.status === GroupCharacterMemoryStatus.Active
-            ? $r('app.color.app_accent') : $r('app.color.app_text_tertiary'))
-          .backgroundColor($r('app.color.app_surface_2'))
+            ? ThemePalette.accentColor(this.effectiveTheme) : ThemePalette.textTertiaryColor(this.effectiveTheme))
+          .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
           .borderRadius(3)
           .padding({ left: 6, right: 6, top: 2, bottom: 2 })
           .margin({ left: 6 })
@@ -1034,7 +1036,7 @@ struct GroupCharacterMemoryPage {
       // 内容摘要
       Text(m.contentPreview)
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .width('100%')
         .margin({ top: 6 })
         .maxLines(3)
@@ -1045,16 +1047,16 @@ struct GroupCharacterMemoryPage {
       Row() {
         Text(this.importanceLabel(m.importance))
           .fontSize(11)
-          .fontColor($r('app.color.app_text_secondary'))
-          .backgroundColor($r('app.color.app_surface_2'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+          .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
           .borderRadius(3)
           .padding({ left: 6, right: 6, top: 2, bottom: 2 })
 
         if (m.keywordsText.length > 0) {
           Text(m.keywordsText)
             .fontSize(11)
-            .fontColor($r('app.color.app_text_tertiary'))
-            .backgroundColor($r('app.color.app_surface_2'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius(3)
             .padding({ left: 6, right: 6, top: 2, bottom: 2 })
             .margin({ left: 6 })
@@ -1073,7 +1075,7 @@ struct GroupCharacterMemoryPage {
       if (m.sourceSummary.length > 0) {
         Text(m.sourceSummary)
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .width('100%')
           .margin({ top: 4 })
       }
@@ -1082,11 +1084,11 @@ struct GroupCharacterMemoryPage {
       Row() {
         Text('创建: ' + m.createdAtLabel)
           .fontSize(10)
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         if (m.updatedAt !== m.createdAt && m.updatedAtLabel.length > 0) {
           Text(' · 更新: ' + m.updatedAtLabel)
             .fontSize(10)
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
             .margin({ left: 4 })
         }
       }
@@ -1109,13 +1111,13 @@ struct GroupCharacterMemoryPage {
       } else if (m.isSelfSummary) {
         Text('自动总结 · 可修改内容')
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .width('100%')
           .margin({ top: 6 })
       } else if (m.isInteraction) {
         Text('交互记忆由消息来源管理')
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .width('100%')
           .margin({ top: 6 })
       }
@@ -1128,7 +1130,7 @@ struct GroupCharacterMemoryPage {
     .padding({
       left: 12, right: 12, top: 10, bottom: 10
     })
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
     .borderRadius($r('app.float.app_radius_md'))
     .margin({ bottom: 8 })
     .alignItems(HorizontalAlign.Start)
@@ -1158,12 +1160,12 @@ struct GroupCharacterMemoryPage {
             : '新增手动记忆')
             .fontSize($r('app.float.app_font_title'))
             .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .layoutWeight(1)
 
           Text('关闭')
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
             .padding({ left: 8, right: 8, top: 4, bottom: 4 })
             .onClick(() => { this.closeForm(); })
         }
@@ -1171,7 +1173,7 @@ struct GroupCharacterMemoryPage {
         .padding({ left: 16, right: 16, top: 16, bottom: 8 })
         .alignItems(VerticalAlign.Center)
 
-        Divider().color($r('app.color.app_divider'))
+        Divider().color(ThemePalette.dividerColor(this.effectiveTheme))
 
         // 可滚动表单内容
         Scroll() {
@@ -1179,7 +1181,7 @@ struct GroupCharacterMemoryPage {
             // 标题
             Text('标题')
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .width('100%')
               .padding({ left: 16, bottom: 4, top: 8 })
             TextInput({
@@ -1187,8 +1189,8 @@ struct GroupCharacterMemoryPage {
               text: this.formTitle
             })
               .fontSize($r('app.float.app_font_body'))
-              .fontColor($r('app.color.app_text_primary'))
-              .backgroundColor($r('app.color.app_surface_2'))
+              .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+              .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
               .borderRadius($r('app.float.app_radius_md'))
               .width('100%')
               .height(44)
@@ -1199,14 +1201,14 @@ struct GroupCharacterMemoryPage {
               })
             Text(this.formTitle.length.toString() + ' / ' + GROUP_MEMORY_TITLE_MAX.toString())
               .fontSize(10)
-              .fontColor($r('app.color.app_text_tertiary'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
               .width('100%')
               .padding({ left: 16, right: 16, bottom: 8 })
 
             // 内容
             Text('内容')
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .width('100%')
               .padding({ left: 16, bottom: 4 })
             TextArea({
@@ -1214,8 +1216,8 @@ struct GroupCharacterMemoryPage {
               placeholder: '请输入记忆内容'
             })
               .fontSize($r('app.float.app_font_body'))
-              .fontColor($r('app.color.app_text_primary'))
-              .backgroundColor($r('app.color.app_surface_2'))
+              .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+              .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
               .borderRadius($r('app.float.app_radius_md'))
               .width('100%')
               .height(140)
@@ -1226,14 +1228,14 @@ struct GroupCharacterMemoryPage {
               })
             Text(this.formContent.length.toString() + ' / ' + GROUP_MEMORY_CONTENT_MAX.toString())
               .fontSize(10)
-              .fontColor($r('app.color.app_text_tertiary'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
               .width('100%')
               .padding({ left: 16, right: 16, bottom: 8 })
 
             // 重要度
             Text('重要度')
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .width('100%')
               .padding({ left: 16, bottom: 4 })
             Row() {
@@ -1241,9 +1243,9 @@ struct GroupCharacterMemoryPage {
                 Button(n.toString())
                   .fontSize($r('app.float.app_font_caption'))
                   .fontColor(this.formImportance === n
-                    ? $r('app.color.app_on_accent') : $r('app.color.app_text_primary'))
+                    ? $r('app.color.app_on_accent') : ThemePalette.textPrimaryColor(this.effectiveTheme))
                   .backgroundColor(this.formImportance === n
-                    ? $r('app.color.app_accent') : $r('app.color.app_surface_2'))
+                    ? ThemePalette.accentColor(this.effectiveTheme) : ThemePalette.surface2Color(this.effectiveTheme))
                   .borderRadius($r('app.float.app_radius_sm'))
                   .height(32)
                   .width(44)
@@ -1258,7 +1260,7 @@ struct GroupCharacterMemoryPage {
             // 关键词
             Text('关键词')
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .width('100%')
               .padding({ left: 16, bottom: 4 })
             TextInput({
@@ -1266,8 +1268,8 @@ struct GroupCharacterMemoryPage {
               text: this.formKeywords
             })
               .fontSize($r('app.float.app_font_body'))
-              .fontColor($r('app.color.app_text_primary'))
-              .backgroundColor($r('app.color.app_surface_2'))
+              .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+              .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
               .borderRadius($r('app.float.app_radius_md'))
               .width('100%')
               .height(44)
@@ -1297,8 +1299,8 @@ struct GroupCharacterMemoryPage {
         Row() {
           Button($r('app.string.group_cancel'))
             .fontSize($r('app.float.app_font_body'))
-            .fontColor($r('app.color.app_text_secondary'))
-            .backgroundColor($r('app.color.app_surface_2'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_sm'))
             .height(40)
             .layoutWeight(1)
@@ -1310,7 +1312,7 @@ struct GroupCharacterMemoryPage {
             : '创建'))
             .fontSize($r('app.float.app_font_body'))
             .fontColor($r('app.color.app_on_accent'))
-            .backgroundColor($r('app.color.app_accent'))
+            .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_sm'))
             .height(40)
             .layoutWeight(1)
@@ -1324,7 +1326,7 @@ struct GroupCharacterMemoryPage {
       }
       .width('90%')
       .constraintSize({ maxHeight: '80%' })
-      .backgroundColor($r('app.color.app_surface_1'))
+      .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
       .borderRadius(12)
       // 拦截点击,不冒泡到外层 Stack(避免点击表单内部关闭表单)
       .onClick(() => {})
@@ -1346,29 +1348,29 @@ struct GroupCharacterMemoryPage {
         Text(this.deletingMemoryIsSelfSummary ? '删除自动总结' : '删除记忆')
           .fontSize($r('app.float.app_font_title'))
           .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .margin({ top: 16, bottom: 8 })
 
         Text(this.deletingMemoryIsSelfSummary
           ? '删除后无法恢复。来源消息不会被删除,下次总结不会重复生成已删除的内容。'
           : '删除后无法恢复,确定删除吗?')
           .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .lineHeight(20)
           .margin({ left: 16, right: 16, bottom: 16 })
 
-        Divider().color($r('app.color.app_divider'))
+        Divider().color(ThemePalette.dividerColor(this.effectiveTheme))
 
         Row() {
           Button('取消')
             .fontSize($r('app.float.app_font_body'))
             .backgroundColor(Color.Transparent)
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .layoutWeight(1)
             .height(48)
             .onClick(() => { this.deletingMemoryId = ''; })
 
-          Divider().vertical(true).height(24).color($r('app.color.app_divider'))
+          Divider().vertical(true).height(24).color(ThemePalette.dividerColor(this.effectiveTheme))
 
           Button(this.isDeleting ? '删除中…' : '删除')
             .fontSize($r('app.float.app_font_body'))
@@ -1382,7 +1384,7 @@ struct GroupCharacterMemoryPage {
         .width('100%')
       }
       .width('80%')
-      .backgroundColor($r('app.color.app_surface_1'))
+      .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
       .borderRadius(12)
       // 拦截点击,不冒泡到外层 Stack
       .onClick(() => {})
@@ -1421,12 +1423,12 @@ struct GroupCharacterMemoryPage {
           Text('自动总结结果')
             .fontSize($r('app.float.app_font_title'))
             .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .layoutWeight(1)
 
           Text('关闭')
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
             .padding({ left: 8, right: 8, top: 4, bottom: 4 })
             .onClick(() => { this.closeSummary(); })
         }
@@ -1434,7 +1436,7 @@ struct GroupCharacterMemoryPage {
         .padding({ left: 16, right: 16, top: 16, bottom: 8 })
         .alignItems(VerticalAlign.Center)
 
-        Divider().color($r('app.color.app_divider'))
+        Divider().color(ThemePalette.dividerColor(this.effectiveTheme))
 
         // 可滚动表单内容
         Scroll() {
@@ -1442,20 +1444,20 @@ struct GroupCharacterMemoryPage {
             // 来源说明(G-MEMORY-AUTO-1A-FIX:文案扩展为包含用户发言)
             Text('根据该角色可见的用户发言和该角色自己的发言生成')
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .width('100%')
               .padding({ left: 16, right: 16, top: 8, bottom: 4 })
             // 来源信息(只读)
             Text(this.buildSummarySourceInfo())
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_text_tertiary'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
               .width('100%')
               .padding({ left: 16, right: 16, top: 0, bottom: 8 })
 
             // 标题
             Text('标题')
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .width('100%')
               .padding({ left: 16, bottom: 4 })
             TextInput({
@@ -1463,8 +1465,8 @@ struct GroupCharacterMemoryPage {
               text: this.summaryTitle
             })
               .fontSize($r('app.float.app_font_body'))
-              .fontColor($r('app.color.app_text_primary'))
-              .backgroundColor($r('app.color.app_surface_2'))
+              .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+              .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
               .borderRadius($r('app.float.app_radius_md'))
               .width('100%')
               .height(44)
@@ -1473,14 +1475,14 @@ struct GroupCharacterMemoryPage {
               .onChange((v: string) => { this.summaryTitle = v; })
             Text(this.summaryTitle.length.toString() + ' / ' + GROUP_MEMORY_TITLE_MAX.toString())
               .fontSize(10)
-              .fontColor($r('app.color.app_text_tertiary'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
               .width('100%')
               .padding({ left: 16, right: 16, bottom: 8 })
 
             // 正文
             Text('正文')
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .width('100%')
               .padding({ left: 16, bottom: 4 })
             TextArea({
@@ -1488,8 +1490,8 @@ struct GroupCharacterMemoryPage {
               placeholder: '模型生成的摘要(可编辑)'
             })
               .fontSize($r('app.float.app_font_body'))
-              .fontColor($r('app.color.app_text_primary'))
-              .backgroundColor($r('app.color.app_surface_2'))
+              .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+              .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
               .borderRadius($r('app.float.app_radius_md'))
               .width('100%')
               .height(180)
@@ -1498,14 +1500,14 @@ struct GroupCharacterMemoryPage {
               .onChange((v: string) => { this.summaryContent = v; })
             Text(this.summaryContent.length.toString() + ' / ' + GROUP_MEMORY_CONTENT_MAX.toString())
               .fontSize(10)
-              .fontColor($r('app.color.app_text_tertiary'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
               .width('100%')
               .padding({ left: 16, right: 16, bottom: 8 })
 
             // 重要度
             Text('重要度')
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .width('100%')
               .padding({ left: 16, bottom: 4 })
             Row() {
@@ -1513,9 +1515,9 @@ struct GroupCharacterMemoryPage {
                 Button(n.toString())
                   .fontSize($r('app.float.app_font_caption'))
                   .fontColor(this.summaryImportance === n
-                    ? $r('app.color.app_on_accent') : $r('app.color.app_text_primary'))
+                    ? $r('app.color.app_on_accent') : ThemePalette.textPrimaryColor(this.effectiveTheme))
                   .backgroundColor(this.summaryImportance === n
-                    ? $r('app.color.app_accent') : $r('app.color.app_surface_2'))
+                    ? ThemePalette.accentColor(this.effectiveTheme) : ThemePalette.surface2Color(this.effectiveTheme))
                   .borderRadius($r('app.float.app_radius_sm'))
                   .height(32)
                   .width(44)
@@ -1530,7 +1532,7 @@ struct GroupCharacterMemoryPage {
             // 关键词
             Text('关键词')
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .width('100%')
               .padding({ left: 16, bottom: 4 })
             TextInput({
@@ -1538,8 +1540,8 @@ struct GroupCharacterMemoryPage {
               text: this.summaryKeywords
             })
               .fontSize($r('app.float.app_font_body'))
-              .fontColor($r('app.color.app_text_primary'))
-              .backgroundColor($r('app.color.app_surface_2'))
+              .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+              .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
               .borderRadius($r('app.float.app_radius_md'))
               .width('100%')
               .height(44)
@@ -1567,8 +1569,8 @@ struct GroupCharacterMemoryPage {
         Row() {
           Button($r('app.string.group_cancel'))
             .fontSize($r('app.float.app_font_body'))
-            .fontColor($r('app.color.app_text_secondary'))
-            .backgroundColor($r('app.color.app_surface_2'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_sm'))
             .height(40)
             .layoutWeight(1)
@@ -1577,8 +1579,8 @@ struct GroupCharacterMemoryPage {
             .onClick(() => { this.closeSummary(); })
           Button(this.isSummarizing ? '生成中…' : '重新生成')
             .fontSize($r('app.float.app_font_body'))
-            .fontColor($r('app.color.app_accent'))
-            .backgroundColor($r('app.color.app_surface_2'))
+            .fontColor(ThemePalette.accentColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_sm'))
             .height(40)
             .layoutWeight(1)
@@ -1588,7 +1590,7 @@ struct GroupCharacterMemoryPage {
           Button(this.isApprovingSummary() ? '保存中…' : '批准保存')
             .fontSize($r('app.float.app_font_body'))
             .fontColor($r('app.color.app_on_accent'))
-            .backgroundColor($r('app.color.app_accent'))
+            .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_sm'))
             .height(40)
             .layoutWeight(1)
@@ -1602,7 +1604,7 @@ struct GroupCharacterMemoryPage {
       }
       .width('92%')
       .constraintSize({ maxHeight: '85%' })
-      .backgroundColor($r('app.color.app_surface_1'))
+      .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
       .borderRadius(12)
       // 拦截点击,不冒泡到外层 Stack
       .onClick(() => {})
@@ -1647,12 +1649,12 @@ struct GroupCharacterMemoryPage {
           // 记忆不存在(可能已被删除),显示提示并关闭
             Text('记忆不存在或已删除')
               .fontSize($r('app.float.app_font_body'))
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .margin({ top: 24, bottom: 24 })
           Button('关闭')
             .fontSize($r('app.float.app_font_body'))
             .fontColor($r('app.color.app_on_accent'))
-            .backgroundColor($r('app.color.app_accent'))
+            .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_sm'))
             .height(40)
             .padding({ left: 24, right: 24 })
@@ -1664,12 +1666,12 @@ struct GroupCharacterMemoryPage {
             Text(this.detailMemory.isSelfSummary ? '自动总结详情' : (this.detailMemory.isInteraction ? '交互记忆详情' : '记忆详情'))
               .fontSize($r('app.float.app_font_title'))
               .fontWeight(FontWeight.Bold)
-              .fontColor($r('app.color.app_text_primary'))
+              .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
               .layoutWeight(1)
 
             Button('关闭')
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_accent'))
+              .fontColor(ThemePalette.accentColor(this.effectiveTheme))
               .backgroundColor(Color.Transparent)
               .height(32)
               .accessibilityText('关闭详情')
@@ -1686,7 +1688,7 @@ struct GroupCharacterMemoryPage {
               Text(this.detailMemory.title)
                 .fontSize($r('app.float.app_font_title'))
                 .fontWeight(FontWeight.Medium)
-                .fontColor($r('app.color.app_text_primary'))
+                .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
                 .width('100%')
                 .textAlign(TextAlign.Start)
 
@@ -1694,24 +1696,24 @@ struct GroupCharacterMemoryPage {
               Row() {
                 Text(this.detailMemory.originLabel)
                   .fontSize(11)
-                  .fontColor($r('app.color.app_text_tertiary'))
-                  .backgroundColor($r('app.color.app_surface_2'))
+                  .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+                  .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
                   .borderRadius(3)
                   .padding({ left: 6, right: 6, top: 2, bottom: 2 })
 
                 Text(this.detailMemory.statusLabel)
                   .fontSize(11)
                   .fontColor(this.detailMemory.status === GroupCharacterMemoryStatus.Active
-                    ? $r('app.color.app_accent') : $r('app.color.app_text_tertiary'))
-                  .backgroundColor($r('app.color.app_surface_2'))
+                    ? ThemePalette.accentColor(this.effectiveTheme) : ThemePalette.textTertiaryColor(this.effectiveTheme))
+                  .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
                   .borderRadius(3)
                   .padding({ left: 6, right: 6, top: 2, bottom: 2 })
                   .margin({ left: 6 })
 
                 Text(this.importanceLabel(this.detailMemory.importance))
                   .fontSize(11)
-                  .fontColor($r('app.color.app_text_secondary'))
-                  .backgroundColor($r('app.color.app_surface_2'))
+                  .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+                  .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
                   .borderRadius(3)
                   .padding({ left: 6, right: 6, top: 2, bottom: 2 })
                   .margin({ left: 6 })
@@ -1723,13 +1725,13 @@ struct GroupCharacterMemoryPage {
               // 完整正文
               Text('正文')
                 .fontSize($r('app.float.app_font_caption'))
-                .fontColor($r('app.color.app_text_tertiary'))
+                .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
                 .width('100%')
                 .margin({ top: 16 })
                 .textAlign(TextAlign.Start)
               Text(this.detailMemory.content)
                 .fontSize($r('app.float.app_font_body'))
-                .fontColor($r('app.color.app_text_primary'))
+                .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
                 .width('100%')
                 .margin({ top: 4 })
                 .textAlign(TextAlign.Start)
@@ -1738,13 +1740,13 @@ struct GroupCharacterMemoryPage {
               if (this.detailMemory.keywordsText.length > 0) {
                 Text('关键词')
                   .fontSize($r('app.float.app_font_caption'))
-                  .fontColor($r('app.color.app_text_tertiary'))
+                  .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
                   .width('100%')
                   .margin({ top: 16 })
                   .textAlign(TextAlign.Start)
                 Text(this.detailMemory.keywordsText)
                   .fontSize($r('app.float.app_font_body'))
-                  .fontColor($r('app.color.app_text_secondary'))
+                  .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
                   .width('100%')
                   .margin({ top: 4 })
                   .textAlign(TextAlign.Start)
@@ -1754,13 +1756,13 @@ struct GroupCharacterMemoryPage {
               if (this.detailMemory.sourceSummary.length > 0) {
                 Text('来源')
                   .fontSize($r('app.float.app_font_caption'))
-                  .fontColor($r('app.color.app_text_tertiary'))
+                  .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
                   .width('100%')
                   .margin({ top: 16 })
                   .textAlign(TextAlign.Start)
                 Text(this.detailMemory.sourceSummary)
                   .fontSize($r('app.float.app_font_body'))
-                  .fontColor($r('app.color.app_text_secondary'))
+                  .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
                   .width('100%')
                   .margin({ top: 4 })
                   .textAlign(TextAlign.Start)
@@ -1770,7 +1772,7 @@ struct GroupCharacterMemoryPage {
               if (this.detailMemory.isSelfSummary && !this.detailMemory.isInvalidated) {
                 Text('你可以修正总结内容,但不能修改其来源消息。')
                   .fontSize($r('app.float.app_font_caption'))
-                  .fontColor($r('app.color.app_text_tertiary'))
+                  .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
                   .width('100%')
                   .margin({ top: 12 })
                   .textAlign(TextAlign.Start)
@@ -1779,7 +1781,7 @@ struct GroupCharacterMemoryPage {
               // 时间信息
               Text('创建: ' + this.detailMemory.createdAtLabel)
                 .fontSize($r('app.float.app_font_caption'))
-                .fontColor($r('app.color.app_text_tertiary'))
+                .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
                 .width('100%')
                 .margin({ top: 16 })
                 .textAlign(TextAlign.Start)
@@ -1787,7 +1789,7 @@ struct GroupCharacterMemoryPage {
                 && this.detailMemory.updatedAtLabel.length > 0) {
                 Text('更新: ' + this.detailMemory.updatedAtLabel)
                   .fontSize($r('app.float.app_font_caption'))
-                  .fontColor($r('app.color.app_text_tertiary'))
+                  .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
                   .width('100%')
                   .margin({ top: 4 })
                   .textAlign(TextAlign.Start)
@@ -1799,7 +1801,7 @@ struct GroupCharacterMemoryPage {
                   if (this.detailMemory.canEdit) {
                     Button(this.detailMemory.isSelfSummary ? '修改' : '编辑')
                       .fontSize($r('app.float.app_font_body'))
-                      .backgroundColor($r('app.color.app_accent'))
+                      .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
                       .fontColor($r('app.color.app_on_accent'))
                       .borderRadius($r('app.float.app_radius_sm'))
                       .height(40)
@@ -1818,8 +1820,8 @@ struct GroupCharacterMemoryPage {
                     if (this.detailMemory.status === GroupCharacterMemoryStatus.Active) {
                       Button('归档')
                         .fontSize($r('app.float.app_font_body'))
-                        .backgroundColor($r('app.color.app_surface_2'))
-                        .fontColor($r('app.color.app_text_secondary'))
+                        .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
+                        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
                         .borderRadius($r('app.float.app_radius_sm'))
                         .height(40)
                         .padding({ left: 16, right: 16 })
@@ -1835,8 +1837,8 @@ struct GroupCharacterMemoryPage {
                     } else if (this.detailMemory.status === GroupCharacterMemoryStatus.Archived) {
                       Button('恢复')
                         .fontSize($r('app.float.app_font_body'))
-                        .backgroundColor($r('app.color.app_surface_2'))
-                        .fontColor($r('app.color.app_accent'))
+                        .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
+                        .fontColor(ThemePalette.accentColor(this.effectiveTheme))
                         .borderRadius($r('app.float.app_radius_sm'))
                         .height(40)
                         .padding({ left: 16, right: 16 })
@@ -1855,7 +1857,7 @@ struct GroupCharacterMemoryPage {
                   if (this.detailMemory.canDelete) {
                     Button('删除')
                       .fontSize($r('app.float.app_font_body'))
-                      .backgroundColor($r('app.color.app_surface_2'))
+                      .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
                       .fontColor($r('app.color.app_danger'))
                       .borderRadius($r('app.float.app_radius_sm'))
                       .height(40)
@@ -1895,7 +1897,7 @@ struct GroupCharacterMemoryPage {
               .width('100%')
               .margin({ top: 8 })
               .padding({ top: 8, bottom: 8, left: 12, right: 12 })
-              .backgroundColor($r('app.color.app_surface_2'))
+              .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
               .borderRadius($r('app.float.app_radius_sm'))
               .textAlign(TextAlign.Start)
           }
@@ -1908,7 +1910,7 @@ struct GroupCharacterMemoryPage {
         top: $r('app.float.app_spacing_16'),
         bottom: $r('app.float.app_spacing_16')
       })
-      .backgroundColor($r('app.color.app_surface_1'))
+      .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
       .borderRadius($r('app.float.app_radius_lg'))
       .constraintSize({ maxHeight: '85%' })
     }
@@ -2419,15 +2421,15 @@ struct GroupCharacterMemoryPage {
 
   private memberStatusColor(header: GroupCharacterMemoryHeaderUiModel | null): ResourceColor {
     if (header === null) {
-      return $r('app.color.app_text_tertiary');
+      return ThemePalette.textTertiaryColor(this.effectiveTheme);
     }
     if (header.memberStatus === GroupCharacterMemberStatus.ActiveMember) {
-      return $r('app.color.app_accent');
+      return ThemePalette.accentColor(this.effectiveTheme);
     }
     if (header.memberStatus === GroupCharacterMemberStatus.CharacterMissing) {
       return $r('app.color.app_danger');
     }
-    return $r('app.color.app_text_tertiary');
+    return ThemePalette.textTertiaryColor(this.effectiveTheme);
   }
 
   private importanceLabel(importance: number): string {
@@ -2559,7 +2561,7 @@ struct GroupCharacterMemoryPage {
       // 视角提示
       Text(this.buildRelationshipPerspectiveHint())
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .width('100%')
         .padding({ left: 16, right: 16, top: 4, bottom: 4 })
         .textAlign(TextAlign.Start)
@@ -2568,13 +2570,13 @@ struct GroupCharacterMemoryPage {
       Row() {
         Text('关系记录: ' + this.relationshipList.length.toString() + ' 条')
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .layoutWeight(1)
 
         Button(this.isPreparingRelationship ? '总结中…' : '总结新关系')
           .fontSize($r('app.float.app_font_caption'))
           .fontColor($r('app.color.app_on_accent'))
-          .backgroundColor($r('app.color.app_accent'))
+          .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
           .borderRadius($r('app.float.app_radius_sm'))
           .height(32)
           .padding({ left: 12, right: 12 })
@@ -2602,7 +2604,7 @@ struct GroupCharacterMemoryPage {
       // 列表
       if (this.isRelationshipListLoading) {
         Column() {
-          LoadingProgress().width(32).height(32).color($r('app.color.app_accent'))
+          LoadingProgress().width(32).height(32).color(ThemePalette.accentColor(this.effectiveTheme))
         }
         .width('100%')
         .layoutWeight(1)
@@ -2662,7 +2664,7 @@ struct GroupCharacterMemoryPage {
             LoadingProgress().width(20).height(20)
             Text('加载中…')
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .margin({ left: 8 })
           }
           .width('100%')
@@ -2672,11 +2674,11 @@ struct GroupCharacterMemoryPage {
           Column() {
             Text('暂无上下文快照')
               .fontSize($r('app.float.app_font_body'))
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .textAlign(TextAlign.Center)
             Text('发送消息后会自动捕获最近一次的 Prompt 诊断数据')
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_text_tertiary'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
               .textAlign(TextAlign.Center)
               .margin({ top: 8 })
               .padding({ left: 32, right: 32 })
@@ -2714,7 +2716,7 @@ struct GroupCharacterMemoryPage {
       Column() {
         Text('快照概览')
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .fontWeight(FontWeight.Medium)
           .width('100%')
           .margin({ bottom: 6 })
@@ -2722,10 +2724,10 @@ struct GroupCharacterMemoryPage {
         Row() {
           Text('角色:')
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           Text(this.inspectionSnapshot.speakerCharacterName)
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .fontWeight(FontWeight.Medium)
             .margin({ left: 4 })
         }
@@ -2734,10 +2736,10 @@ struct GroupCharacterMemoryPage {
         Row() {
           Text('回复模式:')
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           Text(this.inspectionSnapshot.replyTargetMode)
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .margin({ left: 4 })
         }
         .width('100%')
@@ -2746,10 +2748,10 @@ struct GroupCharacterMemoryPage {
         Row() {
           Text('参与者:')
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           Text(this.inspectionSnapshot.participantNames.join('、'))
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .margin({ left: 4 })
             .layoutWeight(1)
         }
@@ -2759,7 +2761,7 @@ struct GroupCharacterMemoryPage {
       }
       .width('100%')
       .padding({ left: 16, right: 16, top: 12, bottom: 12 })
-      .backgroundColor($r('app.color.app_surface_2'))
+      .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
       .borderRadius($r('app.float.app_radius_md'))
       .margin({ left: 12, right: 12, top: 8 })
     }
@@ -2775,7 +2777,7 @@ struct GroupCharacterMemoryPage {
     Column() {
       Text('调整上下文窗口')
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .fontWeight(FontWeight.Medium)
         .width('100%')
         .margin({ bottom: 6 })
@@ -2784,17 +2786,17 @@ struct GroupCharacterMemoryPage {
       Row() {
         Text('当前生效:')
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         if (this.inspectionSnapshot !== null) {
           Text(String(this.inspectionSnapshot.tokenBudget.contextWindow))
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .fontWeight(FontWeight.Medium)
             .margin({ left: 4 })
         } else {
           Text('-')
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
             .margin({ left: 4 })
         }
       }
@@ -2805,7 +2807,7 @@ struct GroupCharacterMemoryPage {
       Row() {
         Text('配置值:')
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
 
         TextInput({ text: this.contextWindowInput, placeholder: '如 65536' })
           .fontSize($r('app.float.app_font_caption'))
@@ -2821,7 +2823,7 @@ struct GroupCharacterMemoryPage {
         Button(this.isSavingContextWindow ? '保存中…' : '保存')
           .fontSize($r('app.float.app_font_caption'))
           .fontColor($r('app.color.app_on_accent'))
-          .backgroundColor($r('app.color.app_accent'))
+          .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
           .borderRadius($r('app.float.app_radius_sm'))
           .height(32)
           .padding({ left: 12, right: 12 })
@@ -2837,7 +2839,7 @@ struct GroupCharacterMemoryPage {
 
       Text('范围 1024 ~ 1048576,持久化到当前模型配置,下一轮对话生效')
         .fontSize(11)
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .width('100%')
         .margin({ top: 6 })
         .textAlign(TextAlign.Start)
@@ -2846,7 +2848,7 @@ struct GroupCharacterMemoryPage {
         Text(this.contextAdjustMessage)
           .fontSize($r('app.float.app_font_caption'))
           .fontColor(this.contextAdjustIsError
-            ? $r('app.color.app_danger') : $r('app.color.app_accent'))
+            ? $r('app.color.app_danger') : ThemePalette.accentColor(this.effectiveTheme))
           .width('100%')
           .margin({ top: 4 })
           .textAlign(TextAlign.Start)
@@ -2854,7 +2856,7 @@ struct GroupCharacterMemoryPage {
     }
     .width('100%')
     .padding({ left: 16, right: 16, top: 12, bottom: 12 })
-    .backgroundColor($r('app.color.app_surface_2'))
+    .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
     .borderRadius($r('app.float.app_radius_md'))
     .margin({ left: 12, right: 12, top: 8 })
   }
@@ -2871,7 +2873,7 @@ struct GroupCharacterMemoryPage {
         Text('历史可见性 (' + String(this.inspectionSnapshot.historyVisibility !== undefined
           ? this.inspectionSnapshot.historyVisibility.length : 0) + ' 条)')
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .fontWeight(FontWeight.Medium)
           .width('100%')
           .margin({ bottom: 6 })
@@ -2879,25 +2881,25 @@ struct GroupCharacterMemoryPage {
         Row() {
           Text('输入:')
             .fontSize(11)
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           Text(String(this.inspectionSnapshot.visibilitySummary !== undefined
             ? this.inspectionSnapshot.visibilitySummary.inputCount : 0))
             .fontSize(11)
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .margin({ left: 2, right: 10 })
 
           Text('进入:')
             .fontSize(11)
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           Text(String(this.inspectionSnapshot.visibilitySummary !== undefined
             ? this.inspectionSnapshot.visibilitySummary.includedCount : 0))
             .fontSize(11)
-            .fontColor($r('app.color.app_accent'))
+            .fontColor(ThemePalette.accentColor(this.effectiveTheme))
             .margin({ left: 2, right: 10 })
 
           Text('排除:')
             .fontSize(11)
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           Text(String(this.inspectionSnapshot.visibilitySummary !== undefined
             ? this.inspectionSnapshot.visibilitySummary.excludedCount : 0))
             .fontSize(11)
@@ -2916,14 +2918,14 @@ struct GroupCharacterMemoryPage {
                 Row() {
                   Text('[' + String(index) + ']')
                     .fontSize(11)
-                    .fontColor($r('app.color.app_text_tertiary'))
+                    .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
                     .width(28)
 
                   Text(item.visibleToCurrentCharacter ? '进入' : '排除')
                     .fontSize(11)
                     .fontColor(item.visibleToCurrentCharacter
-                      ? $r('app.color.app_accent') : $r('app.color.app_danger'))
-                    .backgroundColor($r('app.color.app_surface_1'))
+                      ? ThemePalette.accentColor(this.effectiveTheme) : $r('app.color.app_danger'))
+                    .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
                     .borderRadius(3)
                     .padding({ left: 4, right: 4, top: 1, bottom: 1 })
                     .width(34)
@@ -2931,17 +2933,17 @@ struct GroupCharacterMemoryPage {
 
                   Text(item.senderType === 'narrator' ? '旁白' : item.senderType)
                     .fontSize(11)
-                    .fontColor($r('app.color.app_text_tertiary'))
+                    .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
                     .margin({ left: 4 })
 
                   Text(item.status)
                     .fontSize(11)
-                    .fontColor($r('app.color.app_text_tertiary'))
+                    .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
                     .margin({ left: 4 })
 
                   Text(item.visibility)
                     .fontSize(11)
-                    .fontColor($r('app.color.app_text_tertiary'))
+                    .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
                     .margin({ left: 4 })
                 }
                 .width('100%')
@@ -2950,7 +2952,7 @@ struct GroupCharacterMemoryPage {
                 Text(item.decisionReason)
                   .fontSize(11)
                   .fontColor(item.visibleToCurrentCharacter
-                    ? $r('app.color.app_accent') : $r('app.color.app_danger'))
+                    ? ThemePalette.accentColor(this.effectiveTheme) : $r('app.color.app_danger'))
                   .width('100%')
                   .margin({ top: 2 })
                   .textAlign(TextAlign.Start)
@@ -2958,14 +2960,14 @@ struct GroupCharacterMemoryPage {
                 if (!item.enteredFinalPrompt && item.visibleToCurrentCharacter) {
                   Text('可见但被裁剪,未进入最终 Prompt')
                     .fontSize(11)
-                    .fontColor($r('app.color.app_text_tertiary'))
+                    .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
                     .width('100%')
                     .textAlign(TextAlign.Start)
                 }
 
                 Text(item.content)
                   .fontSize(11)
-                  .fontColor($r('app.color.app_text_secondary'))
+                  .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
                   .width('100%')
                   .maxLines(2)
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -2981,7 +2983,7 @@ struct GroupCharacterMemoryPage {
       }
       .width('100%')
       .padding({ left: 16, right: 16, top: 12, bottom: 12 })
-      .backgroundColor($r('app.color.app_surface_2'))
+      .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
       .borderRadius($r('app.float.app_radius_md'))
       .margin({ left: 12, right: 12, top: 8 })
     }
@@ -3004,7 +3006,7 @@ struct GroupCharacterMemoryPage {
           .fontColor($r('app.color.app_on_accent'))
           .width('100%')
           .padding({ left: 12, right: 12, top: 8, bottom: 8 })
-          .backgroundColor($r('app.color.app_accent'))
+          .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
           .borderRadius($r('app.float.app_radius_md'))
           .textAlign(TextAlign.Start)
       }
@@ -3030,7 +3032,7 @@ struct GroupCharacterMemoryPage {
       }
       .width('100%')
       .padding({ left: 12, right: 12, top: 8, bottom: 8 })
-      .backgroundColor($r('app.color.app_accent'))
+      .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
       .borderRadius($r('app.float.app_radius_md'))
       .alignItems(VerticalAlign.Center)
 
@@ -3066,7 +3068,7 @@ struct GroupCharacterMemoryPage {
         + String(sel.eligiblePersonalMemories.length) + ' 条合格 / '
         + String(sel.selectedPersonalMemories.length) + ' 条选中)')
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .fontWeight(FontWeight.Medium)
         .width('100%')
         .margin({ bottom: 6 })
@@ -3075,7 +3077,7 @@ struct GroupCharacterMemoryPage {
       if (sel.selectedPersonalMemories.length > 0) {
         Text('实际选择')
           .fontSize(11)
-          .fontColor($r('app.color.app_accent'))
+          .fontColor(ThemePalette.accentColor(this.effectiveTheme))
           .width('100%')
           .margin({ top: 4, bottom: 4 })
         ForEach(sel.selectedPersonalMemories, (s: SelectedPersonalMemory) => {
@@ -3083,10 +3085,10 @@ struct GroupCharacterMemoryPage {
             Row() {
               Text('#' + String(s.finalRank))
                 .fontSize(11)
-                .fontColor($r('app.color.app_accent'))
+                .fontColor(ThemePalette.accentColor(this.effectiveTheme))
               Text(s.memory.title)
                 .fontSize(11)
-                .fontColor($r('app.color.app_text_primary'))
+                .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
                 .maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
                 .layoutWeight(1)
@@ -3096,7 +3098,7 @@ struct GroupCharacterMemoryPage {
             .alignItems(VerticalAlign.Center)
             Text(s.memory.content)
               .fontSize(11)
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .width('100%')
               .maxLines(2)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -3105,22 +3107,22 @@ struct GroupCharacterMemoryPage {
             Row() {
               Text(s.selectionReason)
                 .fontSize(10)
-                .fontColor($r('app.color.app_text_tertiary'))
+                .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
               Text('关键词命中 ' + String(s.keywordHitCount))
                 .fontSize(10)
-                .fontColor($r('app.color.app_text_tertiary'))
+                .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
                 .margin({ left: 6 })
               Text('估 ' + String(s.estimatedTokens) + ' / 累计 '
                 + String(s.cumulativeTokens))
                 .fontSize(10)
-                .fontColor($r('app.color.app_text_tertiary'))
+                .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
                 .margin({ left: 6 })
             }
             .width('100%')
             .margin({ top: 2 })
             Text('ID: ' + s.memory.id)
               .fontSize(10)
-              .fontColor($r('app.color.app_text_tertiary'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
               .width('100%')
               .textAlign(TextAlign.Start)
           }
@@ -3142,12 +3144,12 @@ struct GroupCharacterMemoryPage {
               Text(this.memoryExclusionLabel(e.reason))
                 .fontSize(10)
                 .fontColor($r('app.color.app_danger'))
-                .backgroundColor($r('app.color.app_surface_1'))
+                .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
                 .borderRadius(3)
                 .padding({ left: 4, right: 4, top: 1, bottom: 1 })
               Text(e.memory.title)
                 .fontSize(11)
-                .fontColor($r('app.color.app_text_primary'))
+                .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
                 .maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
                 .layoutWeight(1)
@@ -3159,13 +3161,13 @@ struct GroupCharacterMemoryPage {
               && e.duplicateOfMemoryId.length > 0) {
               Text('重复,保留 ID: ' + e.duplicateOfMemoryId)
                 .fontSize(10)
-                .fontColor($r('app.color.app_text_tertiary'))
+                .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
                 .width('100%')
                 .textAlign(TextAlign.Start)
             }
             Text(e.memory.content)
               .fontSize(10)
-              .fontColor($r('app.color.app_text_tertiary'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
               .width('100%')
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -3179,7 +3181,7 @@ struct GroupCharacterMemoryPage {
       // 全部个人记忆
       Text('全部记忆 (' + String(sel.allPersonalMemories.length) + ')')
         .fontSize(11)
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .width('100%')
         .margin({ top: 4, bottom: 4 })
       ForEach(sel.allPersonalMemories, (m: GroupCharacterMemory) => {
@@ -3187,20 +3189,20 @@ struct GroupCharacterMemoryPage {
           Row() {
             Text(m.origin === GroupCharacterMemoryOrigin.Manual ? '手动' : '自动')
               .fontSize(10)
-              .fontColor($r('app.color.app_text_tertiary'))
-              .backgroundColor($r('app.color.app_surface_1'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+              .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
               .borderRadius(3)
               .padding({ left: 4, right: 4, top: 1, bottom: 1 })
             Text(m.status)
               .fontSize(10)
-              .fontColor($r('app.color.app_text_tertiary'))
-              .backgroundColor($r('app.color.app_surface_1'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+              .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
               .borderRadius(3)
               .padding({ left: 4, right: 4, top: 1, bottom: 1 })
               .margin({ left: 4 })
             Text(m.title)
               .fontSize(11)
-              .fontColor($r('app.color.app_text_primary'))
+              .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .layoutWeight(1)
@@ -3210,7 +3212,7 @@ struct GroupCharacterMemoryPage {
           .alignItems(VerticalAlign.Center)
           Text(m.content)
             .fontSize(11)
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .width('100%')
             .maxLines(3)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -3219,17 +3221,17 @@ struct GroupCharacterMemoryPage {
           Row() {
             Text('ID: ' + m.id)
               .fontSize(10)
-              .fontColor($r('app.color.app_text_tertiary'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
             if (m.sourceMessageId !== undefined && m.sourceMessageId.length > 0) {
               Text(' · 来源消息: ' + m.sourceMessageId)
                 .fontSize(10)
-                .fontColor($r('app.color.app_text_tertiary'))
+                .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
                 .margin({ left: 4 })
             }
             if (m.sourceType !== undefined && m.sourceType.length > 0) {
               Text(' · ' + m.sourceType)
                 .fontSize(10)
-                .fontColor($r('app.color.app_text_tertiary'))
+                .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
                 .margin({ left: 4 })
             }
           }
@@ -3242,7 +3244,7 @@ struct GroupCharacterMemoryPage {
     }
     .width('100%')
     .padding({ left: 16, right: 16, top: 12, bottom: 12 })
-    .backgroundColor($r('app.color.app_surface_2'))
+    .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
     .borderRadius($r('app.float.app_radius_md'))
     .margin({ left: 12, right: 12, top: 8 })
   }
@@ -3266,7 +3268,7 @@ struct GroupCharacterMemoryPage {
         + String(sel.selectedRelationships.length) + ' 条选中 / 反向 '
         + String(sel.reverseRelationships.length) + ' 条)')
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .fontWeight(FontWeight.Medium)
         .width('100%')
         .margin({ bottom: 6 })
@@ -3277,13 +3279,13 @@ struct GroupCharacterMemoryPage {
         && this.inspectionSnapshot.replyTargetCharacterIds.length > 0) {
         Text('本轮回复目标: ' + this.inspectionSnapshot.replyTargetCharacterIds.join('、'))
           .fontSize(10)
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .width('100%')
           .textAlign(TextAlign.Start)
       }
       Text('回复目标只控制发言者,不用于选择关系记忆')
         .fontSize(10)
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .width('100%')
         .textAlign(TextAlign.Start)
         .margin({ top: 2 })
@@ -3292,7 +3294,7 @@ struct GroupCharacterMemoryPage {
       if (sel.selectedRelationships.length > 0) {
         Text('实际选择')
           .fontSize(11)
-          .fontColor($r('app.color.app_accent'))
+          .fontColor(ThemePalette.accentColor(this.effectiveTheme))
           .width('100%')
           .margin({ top: 4, bottom: 4 })
         ForEach(sel.selectedRelationships, (r: SelectedRelationshipMemory) => {
@@ -3300,10 +3302,10 @@ struct GroupCharacterMemoryPage {
             Row() {
               Text('#' + String(r.finalRank))
                 .fontSize(11)
-                .fontColor($r('app.color.app_accent'))
+                .fontColor(ThemePalette.accentColor(this.effectiveTheme))
               Text(this.relationshipDirectionLabel(r.memory))
                 .fontSize(11)
-                .fontColor($r('app.color.app_text_primary'))
+                .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
                 .layoutWeight(1)
                 .margin({ left: 6 })
             }
@@ -3312,19 +3314,19 @@ struct GroupCharacterMemoryPage {
             Text('来源: ' + this.relationshipSourceLabel(r.source)
               + ' · ' + r.selectionReason)
               .fontSize(10)
-              .fontColor($r('app.color.app_text_tertiary'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
               .width('100%')
               .margin({ top: 2 })
               .textAlign(TextAlign.Start)
             Text('估 ' + String(r.estimatedTokens) + ' / 累计 '
               + String(r.cumulativeTokens))
               .fontSize(10)
-              .fontColor($r('app.color.app_text_tertiary'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
               .width('100%')
               .textAlign(TextAlign.Start)
             Text('ID: ' + r.memory.id)
               .fontSize(10)
-              .fontColor($r('app.color.app_text_tertiary'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
               .width('100%')
               .textAlign(TextAlign.Start)
           }
@@ -3346,12 +3348,12 @@ struct GroupCharacterMemoryPage {
               Text(this.relationshipExclusionLabel(e.reason))
                 .fontSize(10)
                 .fontColor($r('app.color.app_danger'))
-                .backgroundColor($r('app.color.app_surface_1'))
+                .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
                 .borderRadius(3)
                 .padding({ left: 4, right: 4, top: 1, bottom: 1 })
               Text(this.relationshipDirectionLabel(e.memory))
                 .fontSize(11)
-                .fontColor($r('app.color.app_text_primary'))
+                .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
                 .maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
                 .layoutWeight(1)
@@ -3363,7 +3365,7 @@ struct GroupCharacterMemoryPage {
               && e.duplicateOfId.length > 0) {
               Text('重复,保留 ID: ' + e.duplicateOfId)
                 .fontSize(10)
-                .fontColor($r('app.color.app_text_tertiary'))
+                .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
                 .width('100%')
                 .textAlign(TextAlign.Start)
             }
@@ -3376,7 +3378,7 @@ struct GroupCharacterMemoryPage {
       // 全部拥有关系
       Text('全部拥有关系 (' + String(sel.allOwnedRelationships.length) + ')')
         .fontSize(11)
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .width('100%')
         .margin({ top: 4, bottom: 4 })
       ForEach(sel.allOwnedRelationships, (r: GroupCharacterRelationshipMemory) => {
@@ -3384,12 +3386,12 @@ struct GroupCharacterMemoryPage {
           Row() {
             Text(this.relationshipDirectionLabel(r))
               .fontSize(11)
-              .fontColor($r('app.color.app_text_primary'))
+              .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
               .layoutWeight(1)
             Text(r.status)
               .fontSize(10)
-              .fontColor($r('app.color.app_text_tertiary'))
-              .backgroundColor($r('app.color.app_surface_1'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+              .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
               .borderRadius(3)
               .padding({ left: 4, right: 4, top: 1, bottom: 1 })
           }
@@ -3397,7 +3399,7 @@ struct GroupCharacterMemoryPage {
           .alignItems(VerticalAlign.Center)
           Text(this.relationshipSummaryPreview(r))
             .fontSize(10)
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .width('100%')
             .maxLines(2)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -3405,7 +3407,7 @@ struct GroupCharacterMemoryPage {
             .margin({ top: 2 })
           Text('ID: ' + r.id)
             .fontSize(10)
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
             .width('100%')
             .textAlign(TextAlign.Start)
         }
@@ -3417,19 +3419,19 @@ struct GroupCharacterMemoryPage {
       if (sel.reverseRelationships.length > 0) {
         Text('反向关系(仅诊断,不属于当前角色,不进入 Prompt)')
           .fontSize(11)
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .width('100%')
           .margin({ top: 4, bottom: 4 })
         ForEach(sel.reverseRelationships, (r: GroupCharacterRelationshipMemory) => {
           Column() {
             Text(this.relationshipDirectionLabel(r))
               .fontSize(11)
-              .fontColor($r('app.color.app_text_tertiary'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
               .width('100%')
               .textAlign(TextAlign.Start)
             Text('ID: ' + r.id)
               .fontSize(10)
-              .fontColor($r('app.color.app_text_tertiary'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
               .width('100%')
               .textAlign(TextAlign.Start)
           }
@@ -3440,7 +3442,7 @@ struct GroupCharacterMemoryPage {
     }
     .width('100%')
     .padding({ left: 16, right: 16, top: 12, bottom: 12 })
-    .backgroundColor($r('app.color.app_surface_2'))
+    .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
     .borderRadius($r('app.float.app_radius_md'))
     .margin({ left: 12, right: 12, top: 8 })
   }
@@ -3464,7 +3466,7 @@ struct GroupCharacterMemoryPage {
         ? snap.totalMemoriesFormatted : 0) + ' 格式化 / '
         + String(snap.totalMemoriesInjected) + ' 注入)')
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .fontWeight(FontWeight.Medium)
         .width('100%')
         .margin({ bottom: 6 })
@@ -3476,21 +3478,21 @@ struct GroupCharacterMemoryPage {
               Text(item.injected ? '注入' : (item.formatted ? '已格式化' : '未格式化'))
                 .fontSize(10)
                 .fontColor(item.injected
-                  ? $r('app.color.app_accent')
-                  : (item.formatted ? $r('app.color.app_text_secondary') : $r('app.color.app_danger')))
-                .backgroundColor($r('app.color.app_surface_1'))
+                  ? ThemePalette.accentColor(this.effectiveTheme)
+                  : (item.formatted ? ThemePalette.textSecondaryColor(this.effectiveTheme) : $r('app.color.app_danger')))
+                .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
                 .borderRadius(3)
                 .padding({ left: 4, right: 4, top: 1, bottom: 1 })
               Text(item.title)
                 .fontSize(11)
-                .fontColor($r('app.color.app_text_primary'))
+                .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
                 .maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
                 .layoutWeight(1)
                 .margin({ left: 6 })
               Text('msg#' + (item.messageIndex >= 0 ? String(item.messageIndex) : '-'))
                 .fontSize(10)
-                .fontColor($r('app.color.app_text_tertiary'))
+                .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
             }
             .width('100%')
             .alignItems(VerticalAlign.Center)
@@ -3503,7 +3505,7 @@ struct GroupCharacterMemoryPage {
             }
             Text('估 ' + String(item.estimatedTokens) + ' Token · ID: ' + item.memoryId)
               .fontSize(10)
-              .fontColor($r('app.color.app_text_tertiary'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
               .width('100%')
               .textAlign(TextAlign.Start)
           }
@@ -3517,19 +3519,19 @@ struct GroupCharacterMemoryPage {
         && snap.personalMemorySegmentText.length > 0) {
         Text('最终注入段完整正文')
           .fontSize(11)
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .width('100%')
           .margin({ top: 6, bottom: 4 })
         Text(snap.personalMemorySegmentText)
           .fontSize(10)
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .width('100%')
           .textAlign(TextAlign.Start)
           .lineHeight(14)
       } else {
         Text('本阶段未注入个人记忆段(无选中或段被裁剪)')
           .fontSize(10)
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .width('100%')
           .textAlign(TextAlign.Start)
           .margin({ top: 4 })
@@ -3537,7 +3539,7 @@ struct GroupCharacterMemoryPage {
     }
     .width('100%')
     .padding({ left: 16, right: 16, top: 12, bottom: 12 })
-    .backgroundColor($r('app.color.app_surface_2'))
+    .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
     .borderRadius($r('app.float.app_radius_md'))
     .margin({ left: 12, right: 12, top: 8 })
   }
@@ -3561,7 +3563,7 @@ struct GroupCharacterMemoryPage {
         ? snap.totalRelationshipsFormatted : 0) + ' 格式化 / '
         + String(snap.totalRelationshipsInjected) + ' 注入)')
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .fontWeight(FontWeight.Medium)
         .width('100%')
         .margin({ bottom: 6 })
@@ -3573,21 +3575,21 @@ struct GroupCharacterMemoryPage {
               Text(item.injected ? '注入' : (item.formatted ? '已格式化' : '未格式化'))
                 .fontSize(10)
                 .fontColor(item.injected
-                  ? $r('app.color.app_accent')
-                  : (item.formatted ? $r('app.color.app_text_secondary') : $r('app.color.app_danger')))
-                .backgroundColor($r('app.color.app_surface_1'))
+                  ? ThemePalette.accentColor(this.effectiveTheme)
+                  : (item.formatted ? ThemePalette.textSecondaryColor(this.effectiveTheme) : $r('app.color.app_danger')))
+                .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
                 .borderRadius(3)
                 .padding({ left: 4, right: 4, top: 1, bottom: 1 })
               Text(item.direction)
                 .fontSize(11)
-                .fontColor($r('app.color.app_text_primary'))
+                .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
                 .maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
                 .layoutWeight(1)
                 .margin({ left: 6 })
               Text('msg#' + (item.messageIndex >= 0 ? String(item.messageIndex) : '-'))
                 .fontSize(10)
-                .fontColor($r('app.color.app_text_tertiary'))
+                .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
             }
             .width('100%')
             .alignItems(VerticalAlign.Center)
@@ -3601,7 +3603,7 @@ struct GroupCharacterMemoryPage {
             Text('来源: ' + item.source + ' · 估 ' + String(item.estimatedTokens)
               + ' Token · ID: ' + item.relationshipId)
               .fontSize(10)
-              .fontColor($r('app.color.app_text_tertiary'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
               .width('100%')
               .textAlign(TextAlign.Start)
           }
@@ -3615,19 +3617,19 @@ struct GroupCharacterMemoryPage {
         && snap.relationshipMemorySegmentText.length > 0) {
         Text('最终注入段完整正文')
           .fontSize(11)
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .width('100%')
           .margin({ top: 6, bottom: 4 })
         Text(snap.relationshipMemorySegmentText)
           .fontSize(10)
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .width('100%')
           .textAlign(TextAlign.Start)
           .lineHeight(14)
       } else {
         Text('本阶段未注入关系段(无选中或段被裁剪)')
           .fontSize(10)
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .width('100%')
           .textAlign(TextAlign.Start)
           .margin({ top: 4 })
@@ -3635,7 +3637,7 @@ struct GroupCharacterMemoryPage {
     }
     .width('100%')
     .padding({ left: 16, right: 16, top: 12, bottom: 12 })
-    .backgroundColor($r('app.color.app_surface_2'))
+    .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
     .borderRadius($r('app.float.app_radius_md'))
     .margin({ left: 12, right: 12, top: 8 })
   }
@@ -3647,7 +3649,7 @@ struct GroupCharacterMemoryPage {
       Column() {
         Text('记忆注入状态')
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .fontWeight(FontWeight.Medium)
           .width('100%')
           .margin({ bottom: 6 })
@@ -3655,36 +3657,36 @@ struct GroupCharacterMemoryPage {
         Row() {
           Text('已存储:')
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           Text(String(this.inspectionSnapshot.totalMemoriesStored))
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .fontWeight(FontWeight.Medium)
             .margin({ left: 4, right: 16 })
 
           Text('活跃:')
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           Text(String(this.inspectionSnapshot.totalMemoriesActive))
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .margin({ left: 4, right: 16 })
 
           Text('已选:')
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           Text(String(this.inspectionSnapshot.totalMemoriesSelected))
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_accent'))
+            .fontColor(ThemePalette.accentColor(this.effectiveTheme))
             .margin({ left: 4, right: 16 })
 
           Text('已注入:')
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           Text(String(this.inspectionSnapshot.totalMemoriesInjected))
             .fontSize($r('app.float.app_font_caption'))
             .fontColor(this.inspectionSnapshot.totalMemoriesInjected > 0
-              ? $r('app.color.app_accent') : $r('app.color.app_text_tertiary'))
+              ? ThemePalette.accentColor(this.effectiveTheme) : ThemePalette.textTertiaryColor(this.effectiveTheme))
             .margin({ left: 4 })
         }
         .width('100%')
@@ -3702,7 +3704,7 @@ struct GroupCharacterMemoryPage {
       }
       .width('100%')
       .padding({ left: 16, right: 16, top: 12, bottom: 12 })
-      .backgroundColor($r('app.color.app_surface_2'))
+      .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
       .borderRadius($r('app.float.app_radius_md'))
       .margin({ left: 12, right: 12, top: 8 })
     }
@@ -3715,7 +3717,7 @@ struct GroupCharacterMemoryPage {
       Column() {
       Text('关系注入状态')
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .fontWeight(FontWeight.Medium)
         .width('100%')
         .margin({ bottom: 6 })
@@ -3723,36 +3725,36 @@ struct GroupCharacterMemoryPage {
       Row() {
         Text('已存储:')
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         Text(String(this.inspectionSnapshot.totalRelationshipsStored))
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .fontWeight(FontWeight.Medium)
           .margin({ left: 4, right: 16 })
 
         Text('活跃:')
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         Text(String(this.inspectionSnapshot.totalRelationshipsActive))
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .margin({ left: 4, right: 16 })
 
         Text('已选:')
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         Text(String(this.inspectionSnapshot.totalRelationshipsSelected))
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_accent'))
+          .fontColor(ThemePalette.accentColor(this.effectiveTheme))
           .margin({ left: 4, right: 16 })
 
         Text('已注入:')
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         Text(String(this.inspectionSnapshot.totalRelationshipsInjected))
           .fontSize($r('app.float.app_font_caption'))
           .fontColor(this.inspectionSnapshot.totalRelationshipsInjected > 0
-            ? $r('app.color.app_accent') : $r('app.color.app_text_tertiary'))
+            ? ThemePalette.accentColor(this.effectiveTheme) : ThemePalette.textTertiaryColor(this.effectiveTheme))
           .margin({ left: 4 })
       }
       .width('100%')
@@ -3761,7 +3763,7 @@ struct GroupCharacterMemoryPage {
       if (this.inspectionSnapshot.reverseRelationships.length > 0) {
         Text('反向关系(不会作为当前角色的关系注入):')
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .width('100%')
           .margin({ top: 8 })
 
@@ -3771,7 +3773,7 @@ struct GroupCharacterMemoryPage {
             Row() {
               Text(rel.ownerCharacterName + ' → ' + rel.targetName)
                 .fontSize($r('app.float.app_font_caption'))
-                .fontColor($r('app.color.app_text_tertiary'))
+                .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
             }
             .width('100%')
             .padding({ left: 8, top: 2, bottom: 2 })
@@ -3792,7 +3794,7 @@ struct GroupCharacterMemoryPage {
     }
     .width('100%')
     .padding({ left: 16, right: 16, top: 12, bottom: 12 })
-    .backgroundColor($r('app.color.app_surface_2'))
+    .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
     .borderRadius($r('app.float.app_radius_md'))
     .margin({ left: 12, right: 12, top: 8 })
     }
@@ -3805,7 +3807,7 @@ struct GroupCharacterMemoryPage {
       Column() {
         Text('Token 预算')
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .fontWeight(FontWeight.Medium)
           .width('100%')
           .margin({ bottom: 6 })
@@ -3813,28 +3815,28 @@ struct GroupCharacterMemoryPage {
         Row() {
           Text('上下文窗口:')
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           Text(String(this.inspectionSnapshot.tokenBudget.contextWindow))
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .margin({ left: 4, right: 16 })
 
           Text('输入预算:')
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           Text(String(this.inspectionSnapshot.tokenBudget.availableInputTokens))
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .margin({ left: 4, right: 16 })
 
           Text('估算使用:')
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           Text(String(this.inspectionSnapshot.tokenBudget.estimatedTotalTokens)
             + ' (' + String(this.inspectionSnapshot.tokenBudget.usagePercent) + '%)')
             .fontSize($r('app.float.app_font_caption'))
             .fontColor(this.inspectionSnapshot.tokenBudget.usagePercent > 90
-              ? $r('app.color.app_danger') : $r('app.color.app_text_secondary'))
+              ? $r('app.color.app_danger') : ThemePalette.textSecondaryColor(this.effectiveTheme))
             .margin({ left: 4 })
         }
         .width('100%')
@@ -3843,24 +3845,24 @@ struct GroupCharacterMemoryPage {
         Row() {
           Text('裁剪前:')
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           Text(String(this.inspectionSnapshot.tokenBudget.totalMessagesBeforeTrim) + ' 条')
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .margin({ left: 4, right: 16 })
 
           Text('裁剪后:')
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           Text(String(this.inspectionSnapshot.tokenBudget.totalMessagesAfterTrim) + ' 条')
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .margin({ left: 4, right: 16 })
 
           if (this.inspectionSnapshot.tokenBudget.trimmedMessageCount > 0) {
             Text('裁剪:')
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_text_tertiary'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
             Text('-' + String(this.inspectionSnapshot.tokenBudget.trimmedMessageCount) + ' 条')
               .fontSize($r('app.float.app_font_caption'))
               .fontColor($r('app.color.app_danger'))
@@ -3880,11 +3882,11 @@ struct GroupCharacterMemoryPage {
           .borderRadius(3)
           .margin({ top: 8 })
           .color(this.inspectionSnapshot.tokenBudget.usagePercent > 90
-            ? $r('app.color.app_danger') : $r('app.color.app_accent'))
+            ? $r('app.color.app_danger') : ThemePalette.accentColor(this.effectiveTheme))
       }
       .width('100%')
       .padding({ left: 16, right: 16, top: 12, bottom: 12 })
-      .backgroundColor($r('app.color.app_surface_2'))
+      .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
       .borderRadius($r('app.float.app_radius_md'))
       .margin({ left: 12, right: 12, top: 8 })
     }
@@ -3897,7 +3899,7 @@ struct GroupCharacterMemoryPage {
       Column() {
       Text('Prompt 消息 (' + String(this.inspectionSnapshot.promptMessages.length) + ' 条)')
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .fontWeight(FontWeight.Medium)
         .width('100%')
         .margin({ bottom: 6 })
@@ -3908,13 +3910,13 @@ struct GroupCharacterMemoryPage {
           Row() {
             Text('[' + String(index) + ']')
               .fontSize(11)
-              .fontColor($r('app.color.app_text_tertiary'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
               .width(28)
 
             Text(msg.category)
               .fontSize(11)
-              .fontColor($r('app.color.app_accent'))
-              .backgroundColor($r('app.color.app_surface_1'))
+              .fontColor(ThemePalette.accentColor(this.effectiveTheme))
+              .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
               .borderRadius(3)
               .padding({ left: 4, right: 4, top: 1, bottom: 1 })
               .width(52)
@@ -3922,7 +3924,7 @@ struct GroupCharacterMemoryPage {
 
             Text(msg.contentPreview)
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .layoutWeight(1)
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -3938,14 +3940,14 @@ struct GroupCharacterMemoryPage {
       Row() {
         Text('世界书匹配: ' + String(this.inspectionSnapshot.lorebook.matchedEntryCount) + ' 条')
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .margin({ top: 4 })
       }
       .width('100%')
     }
     .width('100%')
     .padding({ left: 16, right: 16, top: 12, bottom: 12 })
-    .backgroundColor($r('app.color.app_surface_2'))
+    .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
     .borderRadius($r('app.float.app_radius_md'))
     .margin({ left: 12, right: 12, top: 8 })
     }
@@ -3958,7 +3960,7 @@ struct GroupCharacterMemoryPage {
       Column() {
       Text('群聊约束指令')
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .fontWeight(FontWeight.Medium)
         .width('100%')
         .margin({ bottom: 6 })
@@ -3966,12 +3968,12 @@ struct GroupCharacterMemoryPage {
       if (this.inspectionSnapshot.presetSystemPromptPreview.length > 0) {
         Text('预设 System Prompt:')
           .fontSize(11)
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .width('100%')
           .margin({ bottom: 2 })
         Text(this.inspectionSnapshot.presetSystemPromptPreview)
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .width('100%')
           .maxLines(5)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -3981,12 +3983,12 @@ struct GroupCharacterMemoryPage {
 
       Text('群聊约束:')
         .fontSize(11)
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .width('100%')
         .margin({ bottom: 2 })
       Text(this.inspectionSnapshot.groupConstraintPreview)
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .width('100%')
         .maxLines(10)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -3994,7 +3996,7 @@ struct GroupCharacterMemoryPage {
     }
     .width('100%')
     .padding({ left: 16, right: 16, top: 12, bottom: 12 })
-    .backgroundColor($r('app.color.app_surface_2'))
+    .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
     .borderRadius($r('app.float.app_radius_md'))
     .margin({ left: 12, right: 12, top: 8, bottom: 16 })
     }
@@ -4022,12 +4024,12 @@ struct GroupCharacterMemoryPage {
           Text(r.targetName)
             .fontSize($r('app.float.app_font_body'))
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
           Text(r.directionLabel)
             .fontSize(11)
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
             .maxLines(1)
         }
         .layoutWeight(1)
@@ -4038,16 +4040,16 @@ struct GroupCharacterMemoryPage {
         Text(r.statusLabel)
           .fontSize(11)
           .fontColor(r.status === GroupRelationshipMemoryStatus.Active
-            ? $r('app.color.app_accent') : $r('app.color.app_text_tertiary'))
-          .backgroundColor($r('app.color.app_surface_2'))
+            ? ThemePalette.accentColor(this.effectiveTheme) : ThemePalette.textTertiaryColor(this.effectiveTheme))
+          .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
           .borderRadius(3)
           .padding({ left: 6, right: 6, top: 2, bottom: 2 })
 
         if (r.isTargetRemoved) {
           Text('已移出群聊')
             .fontSize(11)
-            .fontColor($r('app.color.app_text_tertiary'))
-            .backgroundColor($r('app.color.app_surface_2'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius(3)
             .padding({ left: 6, right: 6, top: 2, bottom: 2 })
             .margin({ left: 4 })
@@ -4060,7 +4062,7 @@ struct GroupCharacterMemoryPage {
       if (r.relationshipSummary.length > 0) {
         Text(r.relationshipSummary)
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .width('100%')
           .margin({ top: 6 })
           .maxLines(2)
@@ -4072,7 +4074,7 @@ struct GroupCharacterMemoryPage {
       if (r.attitudeSummary.length > 0) {
         Text('态度:' + r.attitudePreview)
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .width('100%')
           .margin({ top: 4 })
           .maxLines(2)
@@ -4084,16 +4086,16 @@ struct GroupCharacterMemoryPage {
       Row() {
         Text(this.importanceLabel(r.importance))
           .fontSize(11)
-          .fontColor($r('app.color.app_text_secondary'))
-          .backgroundColor($r('app.color.app_surface_2'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+          .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
           .borderRadius(3)
           .padding({ left: 6, right: 6, top: 2, bottom: 2 })
 
         if (r.keywordsText.length > 0) {
           Text(r.keywordsText)
             .fontSize(11)
-            .fontColor($r('app.color.app_text_tertiary'))
-            .backgroundColor($r('app.color.app_surface_2'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius(3)
             .padding({ left: 6, right: 6, top: 2, bottom: 2 })
             .margin({ left: 6 })
@@ -4106,7 +4108,7 @@ struct GroupCharacterMemoryPage {
 
         Text(r.updatedAtLabel)
           .fontSize(10)
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
       }
       .width('100%')
       .margin({ top: 6 })
@@ -4114,7 +4116,7 @@ struct GroupCharacterMemoryPage {
     }
     .width('100%')
     .padding({ left: 12, right: 12, top: 10, bottom: 10 })
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
     .borderRadius($r('app.float.app_radius_md'))
     .margin({ bottom: 8 })
     .alignItems(HorizontalAlign.Start)
@@ -4132,12 +4134,12 @@ struct GroupCharacterMemoryPage {
         if (this.relationshipDetail === null) {
           Text('关系记录不存在或已删除')
             .fontSize($r('app.float.app_font_body'))
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .margin({ top: 24, bottom: 24 })
           Button('关闭')
             .fontSize($r('app.float.app_font_body'))
             .fontColor($r('app.color.app_on_accent'))
-            .backgroundColor($r('app.color.app_accent'))
+            .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_sm'))
             .height(40)
             .padding({ left: 24, right: 24 })
@@ -4149,12 +4151,12 @@ struct GroupCharacterMemoryPage {
             Text('关系详情')
               .fontSize($r('app.float.app_font_title'))
               .fontWeight(FontWeight.Bold)
-              .fontColor($r('app.color.app_text_primary'))
+              .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
               .layoutWeight(1)
 
             Button('关闭')
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_accent'))
+              .fontColor(ThemePalette.accentColor(this.effectiveTheme))
               .backgroundColor(Color.Transparent)
               .height(32)
               .accessibilityText('关闭关系详情')
@@ -4170,7 +4172,7 @@ struct GroupCharacterMemoryPage {
               // 视角提示
               Text(this.buildRelationshipPerspectiveHint())
                 .fontSize($r('app.float.app_font_caption'))
-                .fontColor($r('app.color.app_text_tertiary'))
+                .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
                 .width('100%')
                 .margin({ top: 0, bottom: 12 })
                 .textAlign(TextAlign.Start)
@@ -4189,10 +4191,10 @@ struct GroupCharacterMemoryPage {
                   Text(this.relationshipDetail.targetName)
                     .fontSize($r('app.float.app_font_body'))
                     .fontWeight(FontWeight.Medium)
-                    .fontColor($r('app.color.app_text_primary'))
+                    .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
                   Text(this.relationshipDetail.directionLabel)
                     .fontSize(11)
-                    .fontColor($r('app.color.app_text_tertiary'))
+                    .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
                 }
                 .layoutWeight(1)
                 .alignItems(HorizontalAlign.Start)
@@ -4206,15 +4208,15 @@ struct GroupCharacterMemoryPage {
                 Text(this.relationshipDetail.statusLabel)
                   .fontSize(11)
                   .fontColor(this.relationshipDetail.status === GroupRelationshipMemoryStatus.Active
-                    ? $r('app.color.app_accent') : $r('app.color.app_text_tertiary'))
-                  .backgroundColor($r('app.color.app_surface_2'))
+                    ? ThemePalette.accentColor(this.effectiveTheme) : ThemePalette.textTertiaryColor(this.effectiveTheme))
+                  .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
                   .borderRadius(3)
                   .padding({ left: 6, right: 6, top: 2, bottom: 2 })
 
                 Text(this.importanceLabel(this.relationshipDetail.importance))
                   .fontSize(11)
-                  .fontColor($r('app.color.app_text_secondary'))
-                  .backgroundColor($r('app.color.app_surface_2'))
+                  .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+                  .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
                   .borderRadius(3)
                   .padding({ left: 6, right: 6, top: 2, bottom: 2 })
                   .margin({ left: 6 })
@@ -4222,8 +4224,8 @@ struct GroupCharacterMemoryPage {
                 if (this.relationshipDetail.isTargetRemoved) {
                   Text('已移出群聊')
                     .fontSize(11)
-                    .fontColor($r('app.color.app_text_tertiary'))
-                    .backgroundColor($r('app.color.app_surface_2'))
+                    .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+                    .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
                     .borderRadius(3)
                     .padding({ left: 6, right: 6, top: 2, bottom: 2 })
                     .margin({ left: 6 })
@@ -4237,13 +4239,13 @@ struct GroupCharacterMemoryPage {
               if (this.relationshipDetail.experienceSummary.length > 0) {
                 Text('共同经历')
                   .fontSize($r('app.float.app_font_caption'))
-                  .fontColor($r('app.color.app_text_tertiary'))
+                  .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
                   .width('100%')
                   .margin({ top: 16 })
                   .textAlign(TextAlign.Start)
                 Text(this.relationshipDetail.experienceSummary)
                   .fontSize($r('app.float.app_font_body'))
-                  .fontColor($r('app.color.app_text_primary'))
+                  .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
                   .width('100%')
                   .margin({ top: 4 })
                   .textAlign(TextAlign.Start)
@@ -4253,13 +4255,13 @@ struct GroupCharacterMemoryPage {
               if (this.relationshipDetail.attitudeSummary.length > 0) {
                 Text('态度')
                   .fontSize($r('app.float.app_font_caption'))
-                  .fontColor($r('app.color.app_text_tertiary'))
+                  .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
                   .width('100%')
                   .margin({ top: 16 })
                   .textAlign(TextAlign.Start)
                 Text(this.relationshipDetail.attitudeSummary)
                   .fontSize($r('app.float.app_font_body'))
-                  .fontColor($r('app.color.app_text_primary'))
+                  .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
                   .width('100%')
                   .margin({ top: 4 })
                   .textAlign(TextAlign.Start)
@@ -4269,13 +4271,13 @@ struct GroupCharacterMemoryPage {
               if (this.relationshipDetail.relationshipSummary.length > 0) {
                 Text('当前关系')
                   .fontSize($r('app.float.app_font_caption'))
-                  .fontColor($r('app.color.app_text_tertiary'))
+                  .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
                   .width('100%')
                   .margin({ top: 16 })
                   .textAlign(TextAlign.Start)
                 Text(this.relationshipDetail.relationshipSummary)
                   .fontSize($r('app.float.app_font_body'))
-                  .fontColor($r('app.color.app_text_primary'))
+                  .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
                   .width('100%')
                   .margin({ top: 4 })
                   .textAlign(TextAlign.Start)
@@ -4285,13 +4287,13 @@ struct GroupCharacterMemoryPage {
               if (this.relationshipDetail.keywordsText.length > 0) {
                 Text('关键词')
                   .fontSize($r('app.float.app_font_caption'))
-                  .fontColor($r('app.color.app_text_tertiary'))
+                  .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
                   .width('100%')
                   .margin({ top: 16 })
                   .textAlign(TextAlign.Start)
                 Text(this.relationshipDetail.keywordsText)
                   .fontSize($r('app.float.app_font_body'))
-                  .fontColor($r('app.color.app_text_secondary'))
+                  .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
                   .width('100%')
                   .margin({ top: 4 })
                   .textAlign(TextAlign.Start)
@@ -4300,7 +4302,7 @@ struct GroupCharacterMemoryPage {
               // 来源消息数量
               Text('来源消息:' + this.relationshipDetail.sourceMessageCount.toString() + ' 条')
                 .fontSize($r('app.float.app_font_caption'))
-                .fontColor($r('app.color.app_text_tertiary'))
+                .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
                 .width('100%')
                 .margin({ top: 16 })
                 .textAlign(TextAlign.Start)
@@ -4308,7 +4310,7 @@ struct GroupCharacterMemoryPage {
               // 时间信息
               Text('创建:' + this.relationshipDetail.createdAtLabel)
                 .fontSize($r('app.float.app_font_caption'))
-                .fontColor($r('app.color.app_text_tertiary'))
+                .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
                 .width('100%')
                 .margin({ top: 8 })
                 .textAlign(TextAlign.Start)
@@ -4316,7 +4318,7 @@ struct GroupCharacterMemoryPage {
                 && this.relationshipDetail.updatedAtLabel.length > 0) {
                 Text('更新:' + this.relationshipDetail.updatedAtLabel)
                   .fontSize($r('app.float.app_font_caption'))
-                  .fontColor($r('app.color.app_text_tertiary'))
+                  .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
                   .width('100%')
                   .margin({ top: 4 })
                   .textAlign(TextAlign.Start)
@@ -4328,7 +4330,7 @@ struct GroupCharacterMemoryPage {
                   if (this.relationshipDetail.canEdit) {
                     Button('修改')
                       .fontSize($r('app.float.app_font_body'))
-                      .backgroundColor($r('app.color.app_accent'))
+                      .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
                       .fontColor($r('app.color.app_on_accent'))
                       .borderRadius($r('app.float.app_radius_sm'))
                       .height(40)
@@ -4347,8 +4349,8 @@ struct GroupCharacterMemoryPage {
                     if (this.relationshipDetail.status === GroupRelationshipMemoryStatus.Active) {
                       Button('归档')
                         .fontSize($r('app.float.app_font_body'))
-                        .backgroundColor($r('app.color.app_surface_2'))
-                        .fontColor($r('app.color.app_text_secondary'))
+                        .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
+                        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
                         .borderRadius($r('app.float.app_radius_sm'))
                         .height(40)
                         .padding({ left: 16, right: 16 })
@@ -4364,8 +4366,8 @@ struct GroupCharacterMemoryPage {
                     } else if (this.relationshipDetail.status === GroupRelationshipMemoryStatus.Archived) {
                       Button('恢复')
                         .fontSize($r('app.float.app_font_body'))
-                        .backgroundColor($r('app.color.app_surface_2'))
-                        .fontColor($r('app.color.app_accent'))
+                        .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
+                        .fontColor(ThemePalette.accentColor(this.effectiveTheme))
                         .borderRadius($r('app.float.app_radius_sm'))
                         .height(40)
                         .padding({ left: 16, right: 16 })
@@ -4395,7 +4397,7 @@ struct GroupCharacterMemoryPage {
                   .width('100%')
                   .margin({ top: 12 })
                   .padding({ top: 8, bottom: 8, left: 12, right: 12 })
-                  .backgroundColor($r('app.color.app_surface_2'))
+                  .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
                   .borderRadius($r('app.float.app_radius_sm'))
                   .textAlign(TextAlign.Start)
               }
@@ -4417,7 +4419,7 @@ struct GroupCharacterMemoryPage {
         top: $r('app.float.app_spacing_16'),
         bottom: $r('app.float.app_spacing_16')
       })
-      .backgroundColor($r('app.color.app_surface_1'))
+      .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
       .borderRadius($r('app.float.app_radius_lg'))
       .constraintSize({ maxHeight: '85%' })
     }
@@ -4441,12 +4443,12 @@ struct GroupCharacterMemoryPage {
           Text('修改关系')
             .fontSize($r('app.float.app_font_title'))
             .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .layoutWeight(1)
 
           Text('关闭')
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
             .padding({ left: 8, right: 8, top: 4, bottom: 4 })
             .onClick(() => { this.closeRelationshipEdit(); })
         }
@@ -4454,7 +4456,7 @@ struct GroupCharacterMemoryPage {
         .padding({ left: 16, right: 16, top: 16, bottom: 8 })
         .alignItems(VerticalAlign.Center)
 
-        Divider().color($r('app.color.app_divider'))
+        Divider().color(ThemePalette.dividerColor(this.effectiveTheme))
 
         // 可滚动表单内容
         Scroll() {
@@ -4464,7 +4466,7 @@ struct GroupCharacterMemoryPage {
               Text('对象:' + this.relationshipDetail.targetName
                 + '  方向:' + this.relationshipDetail.directionLabel)
                 .fontSize($r('app.float.app_font_caption'))
-                .fontColor($r('app.color.app_text_tertiary'))
+                .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
                 .width('100%')
                 .padding({ left: 16, right: 16, top: 8, bottom: 8 })
             }
@@ -4472,13 +4474,13 @@ struct GroupCharacterMemoryPage {
             // 共同经历
             Text('共同经历')
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .width('100%')
               .padding({ left: 16, bottom: 4 })
             TextArea({ text: this.relFormExperience, placeholder: '双方发生过什么' })
               .fontSize($r('app.float.app_font_body'))
-              .fontColor($r('app.color.app_text_primary'))
-              .backgroundColor($r('app.color.app_surface_2'))
+              .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+              .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
               .borderRadius($r('app.float.app_radius_md'))
               .width('100%')
               .height(100)
@@ -4487,20 +4489,20 @@ struct GroupCharacterMemoryPage {
               .onChange((v: string) => { this.relFormExperience = v; })
             Text(this.relFormExperience.length.toString() + ' / ' + RELATIONSHIP_EXPERIENCE_MAX.toString())
               .fontSize(10)
-              .fontColor($r('app.color.app_text_tertiary'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
               .width('100%')
               .padding({ left: 16, right: 16, bottom: 8 })
 
             // 态度
             Text('态度')
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .width('100%')
               .padding({ left: 16, bottom: 4 })
             TextArea({ text: this.relFormAttitude, placeholder: 'owner 对对方的态度' })
               .fontSize($r('app.float.app_font_body'))
-              .fontColor($r('app.color.app_text_primary'))
-              .backgroundColor($r('app.color.app_surface_2'))
+              .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+              .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
               .borderRadius($r('app.float.app_radius_md'))
               .width('100%')
               .height(100)
@@ -4509,20 +4511,20 @@ struct GroupCharacterMemoryPage {
               .onChange((v: string) => { this.relFormAttitude = v; })
             Text(this.relFormAttitude.length.toString() + ' / ' + RELATIONSHIP_ATTITUDE_MAX.toString())
               .fontSize(10)
-              .fontColor($r('app.color.app_text_tertiary'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
               .width('100%')
               .padding({ left: 16, right: 16, bottom: 8 })
 
             // 关系
             Text('当前关系')
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .width('100%')
               .padding({ left: 16, bottom: 4 })
             TextArea({ text: this.relFormRelationship, placeholder: '当前关系的谨慎概括' })
               .fontSize($r('app.float.app_font_body'))
-              .fontColor($r('app.color.app_text_primary'))
-              .backgroundColor($r('app.color.app_surface_2'))
+              .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+              .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
               .borderRadius($r('app.float.app_radius_md'))
               .width('100%')
               .height(100)
@@ -4531,14 +4533,14 @@ struct GroupCharacterMemoryPage {
               .onChange((v: string) => { this.relFormRelationship = v; })
             Text(this.relFormRelationship.length.toString() + ' / ' + RELATIONSHIP_SUMMARY_MAX.toString())
               .fontSize(10)
-              .fontColor($r('app.color.app_text_tertiary'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
               .width('100%')
               .padding({ left: 16, right: 16, bottom: 8 })
 
             // 重要度
             Text('重要度')
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .width('100%')
               .padding({ left: 16, bottom: 4 })
             Row() {
@@ -4546,9 +4548,9 @@ struct GroupCharacterMemoryPage {
                 Button(n.toString())
                   .fontSize($r('app.float.app_font_caption'))
                   .fontColor(this.relFormImportance === n
-                    ? $r('app.color.app_on_accent') : $r('app.color.app_text_primary'))
+                    ? $r('app.color.app_on_accent') : ThemePalette.textPrimaryColor(this.effectiveTheme))
                   .backgroundColor(this.relFormImportance === n
-                    ? $r('app.color.app_accent') : $r('app.color.app_surface_2'))
+                    ? ThemePalette.accentColor(this.effectiveTheme) : ThemePalette.surface2Color(this.effectiveTheme))
                   .borderRadius($r('app.float.app_radius_sm'))
                   .height(32)
                   .width(44)
@@ -4563,13 +4565,13 @@ struct GroupCharacterMemoryPage {
             // 关键词
             Text('关键词')
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .width('100%')
               .padding({ left: 16, bottom: 4 })
             TextInput({ placeholder: '逗号分隔', text: this.relFormKeywords })
               .fontSize($r('app.float.app_font_body'))
-              .fontColor($r('app.color.app_text_primary'))
-              .backgroundColor($r('app.color.app_surface_2'))
+              .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+              .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
               .borderRadius($r('app.float.app_radius_md'))
               .width('100%')
               .height(44)
@@ -4597,8 +4599,8 @@ struct GroupCharacterMemoryPage {
         Row() {
           Button($r('app.string.group_cancel'))
             .fontSize($r('app.float.app_font_body'))
-            .fontColor($r('app.color.app_text_secondary'))
-            .backgroundColor($r('app.color.app_surface_2'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_sm'))
             .height(40)
             .layoutWeight(1)
@@ -4608,7 +4610,7 @@ struct GroupCharacterMemoryPage {
           Button(this.isSaving ? '保存中…' : '保存修改')
             .fontSize($r('app.float.app_font_body'))
             .fontColor($r('app.color.app_on_accent'))
-            .backgroundColor($r('app.color.app_accent'))
+            .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_sm'))
             .height(40)
             .layoutWeight(1)
@@ -4620,7 +4622,7 @@ struct GroupCharacterMemoryPage {
       }
       .width('92%')
       .constraintSize({ maxHeight: '85%' })
-      .backgroundColor($r('app.color.app_surface_1'))
+      .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
       .borderRadius(12)
       .onClick(() => {})
     }
@@ -4643,12 +4645,12 @@ struct GroupCharacterMemoryPage {
           Text('关系总结结果')
             .fontSize($r('app.float.app_font_title'))
             .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .layoutWeight(1)
 
           Text('关闭')
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
             .padding({ left: 8, right: 8, top: 4, bottom: 4 })
             .onClick(() => { this.closeRelationshipReview(); })
         }
@@ -4656,12 +4658,12 @@ struct GroupCharacterMemoryPage {
         .padding({ left: 16, right: 16, top: 16, bottom: 8 })
         .alignItems(VerticalAlign.Center)
 
-        Divider().color($r('app.color.app_divider'))
+        Divider().color(ThemePalette.dividerColor(this.effectiveTheme))
 
         // 来源信息(只读)
         Text(this.buildRelationshipSourceInfo())
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .width('100%')
           .padding({ left: 16, right: 16, top: 8, bottom: 8 })
 
@@ -4670,7 +4672,7 @@ struct GroupCharacterMemoryPage {
           Column() {
             Text('没有形成明确的关系记忆')
               .fontSize($r('app.float.app_font_body'))
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .margin({ top: 24, bottom: 24 })
           }
           .width('100%')
@@ -4706,8 +4708,8 @@ struct GroupCharacterMemoryPage {
         Row() {
           Button('全部拒绝')
             .fontSize($r('app.float.app_font_body'))
-            .fontColor($r('app.color.app_text_secondary'))
-            .backgroundColor($r('app.color.app_surface_2'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_sm'))
             .height(40)
             .layoutWeight(1)
@@ -4717,7 +4719,7 @@ struct GroupCharacterMemoryPage {
           Button('全部批准')
             .fontSize($r('app.float.app_font_body'))
             .fontColor($r('app.color.app_on_accent'))
-            .backgroundColor($r('app.color.app_accent'))
+            .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_sm'))
             .height(40)
             .layoutWeight(1)
@@ -4726,8 +4728,8 @@ struct GroupCharacterMemoryPage {
             .onClick(() => { this.handleApproveAllCandidates(); })
           Button('完成')
             .fontSize($r('app.float.app_font_body'))
-            .fontColor($r('app.color.app_accent'))
-            .backgroundColor($r('app.color.app_surface_2'))
+            .fontColor(ThemePalette.accentColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_sm'))
             .height(40)
             .layoutWeight(1)
@@ -4739,7 +4741,7 @@ struct GroupCharacterMemoryPage {
       }
       .width('92%')
       .constraintSize({ maxHeight: '90%' })
-      .backgroundColor($r('app.color.app_surface_1'))
+      .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
       .borderRadius(12)
       .onClick(() => {})
     }
@@ -4775,12 +4777,12 @@ struct GroupCharacterMemoryPage {
           Text(c.targetName)
             .fontSize($r('app.float.app_font_body'))
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
           Text(c.directionLabel)
             .fontSize(11)
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         }
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Start)
@@ -4791,14 +4793,14 @@ struct GroupCharacterMemoryPage {
           Text('已批准')
             .fontSize(11)
             .fontColor($r('app.color.app_on_accent'))
-            .backgroundColor($r('app.color.app_accent'))
+            .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
             .borderRadius(3)
             .padding({ left: 6, right: 6, top: 2, bottom: 2 })
         } else if (c.reviewState === 'rejected') {
           Text('已拒绝')
             .fontSize(11)
-            .fontColor($r('app.color.app_text_tertiary'))
-            .backgroundColor($r('app.color.app_surface_2'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius(3)
             .padding({ left: 6, right: 6, top: 2, bottom: 2 })
         }
@@ -4809,7 +4811,7 @@ struct GroupCharacterMemoryPage {
       // 来源消息数量(只读)
       Text('来源消息:' + c.sourceMessageIds.length.toString() + ' 条')
         .fontSize(10)
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .width('100%')
         .margin({ top: 4 })
         .textAlign(TextAlign.Start)
@@ -4817,14 +4819,14 @@ struct GroupCharacterMemoryPage {
       // 共同经历(可编辑)
       Text('共同经历')
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .width('100%')
         .margin({ top: 8 })
         .textAlign(TextAlign.Start)
       TextArea({ text: c.experienceSummary, placeholder: '双方发生过什么' })
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_primary'))
-        .backgroundColor($r('app.color.app_surface_2'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+        .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_sm'))
         .width('100%')
         .height(70)
@@ -4838,14 +4840,14 @@ struct GroupCharacterMemoryPage {
       // 态度(可编辑)
       Text('态度')
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .width('100%')
         .margin({ top: 8 })
         .textAlign(TextAlign.Start)
       TextArea({ text: c.attitudeSummary, placeholder: 'owner 对对方的态度' })
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_primary'))
-        .backgroundColor($r('app.color.app_surface_2'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+        .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_sm'))
         .width('100%')
         .height(70)
@@ -4859,14 +4861,14 @@ struct GroupCharacterMemoryPage {
       // 关系(可编辑)
       Text('当前关系')
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .width('100%')
         .margin({ top: 8 })
         .textAlign(TextAlign.Start)
       TextArea({ text: c.relationshipSummary, placeholder: '当前关系的谨慎概括' })
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_primary'))
-        .backgroundColor($r('app.color.app_surface_2'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+        .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_sm'))
         .width('100%')
         .height(70)
@@ -4880,7 +4882,7 @@ struct GroupCharacterMemoryPage {
       // 重要度(可编辑)
       Text('重要度')
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .width('100%')
         .margin({ top: 8 })
         .textAlign(TextAlign.Start)
@@ -4889,9 +4891,9 @@ struct GroupCharacterMemoryPage {
           Button(n.toString())
             .fontSize($r('app.float.app_font_caption'))
             .fontColor(c.importance === n
-              ? $r('app.color.app_on_accent') : $r('app.color.app_text_primary'))
+              ? $r('app.color.app_on_accent') : ThemePalette.textPrimaryColor(this.effectiveTheme))
             .backgroundColor(c.importance === n
-              ? $r('app.color.app_accent') : $r('app.color.app_surface_2'))
+              ? ThemePalette.accentColor(this.effectiveTheme) : ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_sm'))
             .height(28)
             .width(40)
@@ -4907,14 +4909,14 @@ struct GroupCharacterMemoryPage {
       // 关键词(可编辑)
       Text('关键词')
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .width('100%')
         .margin({ top: 8 })
         .textAlign(TextAlign.Start)
       TextInput({ placeholder: '逗号分隔', text: c.keywordsText })
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_primary'))
-        .backgroundColor($r('app.color.app_surface_2'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+        .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_sm'))
         .width('100%')
         .height(36)
@@ -4928,8 +4930,8 @@ struct GroupCharacterMemoryPage {
       Row() {
         Button('拒绝')
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_secondary'))
-          .backgroundColor($r('app.color.app_surface_2'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+          .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
           .borderRadius($r('app.float.app_radius_sm'))
           .height(32)
           .layoutWeight(1)
@@ -4939,7 +4941,7 @@ struct GroupCharacterMemoryPage {
         Button('批准')
           .fontSize($r('app.float.app_font_caption'))
           .fontColor($r('app.color.app_on_accent'))
-          .backgroundColor($r('app.color.app_accent'))
+          .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
           .borderRadius($r('app.float.app_radius_sm'))
           .height(32)
           .layoutWeight(1)
@@ -4952,7 +4954,7 @@ struct GroupCharacterMemoryPage {
     }
     .width('100%')
     .padding({ left: 12, right: 12, top: 10, bottom: 10 })
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
     .borderRadius($r('app.float.app_radius_md'))
     .margin({ bottom: 8 })
     .alignItems(HorizontalAlign.Start)

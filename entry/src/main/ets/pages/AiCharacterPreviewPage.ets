@@ -36,6 +36,7 @@ import {
   FieldRegenResult
 } from '../viewmodels/AiCharacterPreviewViewModel';
 import { Logger } from '../utils/Logger';
+import { ThemePalette } from '../theme/ThemePalette';
 
 const LOG_TAG: string = 'AiCharPreviewPage';
 
@@ -54,6 +55,8 @@ struct AiCharacterPreviewPage {
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   /** 底部导航栏/手势条避让高度 */
   @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
+  /** 当前有效主题 */
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
 
   async aboutToAppear(): Promise<void> {
     try {
@@ -322,7 +325,7 @@ struct AiCharacterPreviewPage {
       }
       .width('100%')
       .height('100%')
-      .backgroundColor($r('app.color.app_bg'))
+      .backgroundColor(ThemePalette.pageBgColor(this.effectiveTheme))
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
       // 字段重新生成遮罩
@@ -353,7 +356,7 @@ struct AiCharacterPreviewPage {
       Button($r('app.string.character_edit_back'))
         .fontSize($r('app.float.app_font_body'))
         .backgroundColor(Color.Transparent)
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .height(40)
         .padding({ left: 8, right: 8 })
         .onClick(() => {
@@ -363,7 +366,7 @@ struct AiCharacterPreviewPage {
       Text('AI 角色卡预览')
         .fontSize($r('app.float.app_font_title'))
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .layoutWeight(1)
         .textAlign(TextAlign.Center)
         .maxLines(1)
@@ -372,7 +375,7 @@ struct AiCharacterPreviewPage {
       Button('保存')
         .fontSize($r('app.float.app_font_body'))
         .backgroundColor(Color.Transparent)
-        .fontColor($r('app.color.app_accent'))
+        .fontColor(ThemePalette.accentColor(this.effectiveTheme))
         .height(40)
         .padding({ left: 12, right: 12 })
         .enabled(this.viewModel !== null && !this.viewModel!.isSaving)
@@ -383,7 +386,7 @@ struct AiCharacterPreviewPage {
     .width('100%')
     .padding({ left: 8, right: 8, top: this.statusBarHeight + 4, bottom: 4 })
     .alignItems(VerticalAlign.Center)
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
   }
 
   // ===== 主内容 =====
@@ -401,11 +404,11 @@ struct AiCharacterPreviewPage {
           Column() {
             Text('作者')
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             TextInput({ text: this.viewModel!.creator })
               .fontSize($r('app.float.app_font_body'))
-              .fontColor($r('app.color.app_text_primary'))
-              .backgroundColor($r('app.color.app_surface_1'))
+              .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+              .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
               .borderRadius($r('app.float.app_radius_sm'))
               .height(40)
               .width('100%')
@@ -420,11 +423,11 @@ struct AiCharacterPreviewPage {
           Column() {
             Text('版本')
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             TextInput({ text: this.viewModel!.characterVersion })
               .fontSize($r('app.float.app_font_body'))
-              .fontColor($r('app.color.app_text_primary'))
-              .backgroundColor($r('app.color.app_surface_1'))
+              .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+              .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
               .borderRadius($r('app.float.app_radius_sm'))
               .height(40)
               .width('100%')
@@ -485,7 +488,7 @@ struct AiCharacterPreviewPage {
         this.sectionTitle('角色世界书 (character_book)')
         Text('JSON 格式,留空表示无世界书')
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .width('100%')
           .padding({
             left: $r('app.float.app_spacing_20'),
@@ -494,8 +497,8 @@ struct AiCharacterPreviewPage {
           })
         TextArea({ text: this.viewModel!.characterBookJson, placeholder: '{\n  "entries": []\n}' })
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_primary'))
-          .backgroundColor($r('app.color.app_surface_1'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+          .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
           .borderRadius($r('app.float.app_radius_sm'))
           .height(160)
           .width('100%')
@@ -507,7 +510,7 @@ struct AiCharacterPreviewPage {
         this.sectionTitle('Extensions')
         Text('JSON 格式,保存时与 character_book 一同保留')
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .width('100%')
           .padding({
             left: $r('app.float.app_spacing_20'),
@@ -516,8 +519,8 @@ struct AiCharacterPreviewPage {
           })
         TextArea({ text: this.viewModel!.extensionsJson, placeholder: '{}' })
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_primary'))
-          .backgroundColor($r('app.color.app_surface_1'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+          .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
           .borderRadius($r('app.float.app_radius_sm'))
           .height(120)
           .width('100%')
@@ -530,11 +533,11 @@ struct AiCharacterPreviewPage {
           Text('原始 JSON')
             .fontSize($r('app.float.app_font_subtitle'))
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .layoutWeight(1)
           Text(this.showRawJson ? '收起' : '展开')
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_accent'))
+            .fontColor(ThemePalette.accentColor(this.effectiveTheme))
             .onClick(() => {
               this.showRawJson = !this.showRawJson;
             })
@@ -549,8 +552,8 @@ struct AiCharacterPreviewPage {
         if (this.showRawJson) {
           Text(this.viewModel!.rawResponse.length > 0 ? this.viewModel!.rawResponse : '(无)')
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_secondary'))
-            .backgroundColor($r('app.color.app_surface_1'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_sm'))
             .width('100%')
             .padding(12)
@@ -583,8 +586,8 @@ struct AiCharacterPreviewPage {
           // 重新生成整张卡
           Button('重新生成整张卡')
             .fontSize($r('app.float.app_font_body'))
-            .backgroundColor($r('app.color.app_surface_2'))
-            .fontColor($r('app.color.app_text_primary'))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_md'))
             .height(44)
             .width('100%')
@@ -596,8 +599,8 @@ struct AiCharacterPreviewPage {
           Row() {
             Button('导出 JSON')
               .fontSize($r('app.float.app_font_body'))
-              .backgroundColor($r('app.color.app_surface_2'))
-              .fontColor($r('app.color.app_text_primary'))
+              .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
+              .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
               .borderRadius($r('app.float.app_radius_md'))
               .height(44)
               .layoutWeight(1)
@@ -607,8 +610,8 @@ struct AiCharacterPreviewPage {
 
             Button('导出 PNG')
               .fontSize($r('app.float.app_font_body'))
-              .backgroundColor($r('app.color.app_surface_2'))
-              .fontColor($r('app.color.app_text_primary'))
+              .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
+              .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
               .borderRadius($r('app.float.app_radius_md'))
               .height(44)
               .layoutWeight(1)
@@ -623,7 +626,7 @@ struct AiCharacterPreviewPage {
           // 放弃
           Button('放弃')
             .fontSize($r('app.float.app_font_body'))
-            .backgroundColor($r('app.color.app_surface_2'))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .fontColor($r('app.color.app_danger'))
             .borderRadius($r('app.float.app_radius_md'))
             .height(44)
@@ -657,7 +660,7 @@ struct AiCharacterPreviewPage {
     Text(title)
       .fontSize($r('app.float.app_font_subtitle'))
       .fontWeight(FontWeight.Medium)
-      .fontColor($r('app.color.app_text_primary'))
+      .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
       .width('100%')
       .padding({
         left: $r('app.float.app_spacing_20'),
@@ -682,11 +685,11 @@ struct AiCharacterPreviewPage {
       Row() {
         Text(label)
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .layoutWeight(1)
         Text('重新生成')
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_accent'))
+          .fontColor(ThemePalette.accentColor(this.effectiveTheme))
           .onClick(() => {
             this.onRegenerateFieldClick(fieldPath);
           })
@@ -695,8 +698,8 @@ struct AiCharacterPreviewPage {
 
       TextInput({ text: value })
         .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_primary'))
-        .backgroundColor($r('app.color.app_surface_1'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+        .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_sm'))
         .height(40)
         .width('100%')
@@ -724,11 +727,11 @@ struct AiCharacterPreviewPage {
       Row() {
         Text(label)
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .layoutWeight(1)
         Text('重新生成')
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_accent'))
+          .fontColor(ThemePalette.accentColor(this.effectiveTheme))
           .onClick(() => {
             this.onRegenerateFieldClick(fieldPath);
           })
@@ -737,8 +740,8 @@ struct AiCharacterPreviewPage {
 
       TextArea({ text: value })
         .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_primary'))
-        .backgroundColor($r('app.color.app_surface_1'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+        .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_sm'))
         .height(80)
         .width('100%')
@@ -766,21 +769,21 @@ struct AiCharacterPreviewPage {
         LoadingProgress()
           .width(40)
           .height(40)
-          .color($r('app.color.app_accent'))
+          .color(ThemePalette.accentColor(this.effectiveTheme))
         Text('正在重新生成字段...')
           .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .margin({ top: 12 })
         if (this.viewModel!.regeneratingField.length > 0) {
           Text(this.viewModel!.regeneratingField)
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .margin({ top: 4 })
         }
         Button('取消')
           .fontSize($r('app.float.app_font_body'))
-          .backgroundColor($r('app.color.app_surface_2'))
-          .fontColor($r('app.color.app_text_primary'))
+          .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .borderRadius($r('app.float.app_radius_md'))
           .height(40)
           .width('60%')
@@ -793,7 +796,7 @@ struct AiCharacterPreviewPage {
       .alignItems(HorizontalAlign.Center)
       .width('80%')
       .padding(24)
-      .backgroundColor($r('app.color.app_surface_1'))
+      .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
       .borderRadius($r('app.float.app_radius_lg'))
     }
     .width('100%')
@@ -810,14 +813,14 @@ struct AiCharacterPreviewPage {
         Text('重新生成会替换当前草案')
           .fontSize(17)
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .width('100%')
           .textAlign(TextAlign.Center)
           .margin({ bottom: 12 })
 
         Text('当前已编辑的角色草案将被丢弃,返回输入页重新生成。是否继续?')
           .fontSize(14)
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .width('100%')
           .margin({ bottom: 20 })
 
@@ -825,7 +828,7 @@ struct AiCharacterPreviewPage {
           Button('取消')
             .fontSize(14)
             .backgroundColor(Color.Transparent)
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .height(40)
             .layoutWeight(1)
             .onClick(() => {
@@ -834,7 +837,7 @@ struct AiCharacterPreviewPage {
 
           Button('继续')
             .fontSize(14)
-            .backgroundColor($r('app.color.app_accent'))
+            .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
             .fontColor($r('app.color.app_on_accent'))
             .height(40)
             .layoutWeight(1)
@@ -847,7 +850,7 @@ struct AiCharacterPreviewPage {
       }
       .width('80%')
       .padding(24)
-      .backgroundColor($r('app.color.app_surface_1'))
+      .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
       .borderRadius($r('app.float.app_radius_lg'))
     }
     .width('100%')
@@ -864,14 +867,14 @@ struct AiCharacterPreviewPage {
         Text('已存在同名角色')
           .fontSize(17)
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .width('100%')
           .textAlign(TextAlign.Center)
           .margin({ bottom: 12 })
 
         Text('已存在同名角色,继续保存将创建独立的新角色,不会覆盖原有角色。是否继续保存?')
           .fontSize(14)
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .width('100%')
           .margin({ bottom: 20 })
 
@@ -879,7 +882,7 @@ struct AiCharacterPreviewPage {
           Button('取消')
             .fontSize(14)
             .backgroundColor(Color.Transparent)
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .height(40)
             .layoutWeight(1)
             .onClick(() => {
@@ -888,7 +891,7 @@ struct AiCharacterPreviewPage {
 
           Button('仍然保存')
             .fontSize(14)
-            .backgroundColor($r('app.color.app_accent'))
+            .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
             .fontColor($r('app.color.app_on_accent'))
             .height(40)
             .layoutWeight(1)
@@ -901,7 +904,7 @@ struct AiCharacterPreviewPage {
       }
       .width('80%')
       .padding(24)
-      .backgroundColor($r('app.color.app_surface_1'))
+      .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
       .borderRadius($r('app.float.app_radius_lg'))
     }
     .width('100%')
@@ -917,7 +920,7 @@ struct AiCharacterPreviewPage {
       LoadingProgress()
         .width(40)
         .height(40)
-        .color($r('app.color.app_accent'))
+        .color(ThemePalette.accentColor(this.effectiveTheme))
     }
     .width('100%')
     .layoutWeight(1)
@@ -931,12 +934,12 @@ struct AiCharacterPreviewPage {
       Text(this.viewModel !== null && this.viewModel!.errorMessage.length > 0
         ? this.viewModel!.errorMessage : '加载失败')
         .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .textAlign(TextAlign.Center)
         .margin({ top: 80 })
       Button('返回')
         .fontSize($r('app.float.app_font_body'))
-        .backgroundColor($r('app.color.app_accent'))
+        .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
         .fontColor($r('app.color.app_on_accent'))
         .borderRadius($r('app.float.app_radius_md'))
         .height(44)

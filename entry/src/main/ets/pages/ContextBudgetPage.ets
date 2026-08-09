@@ -34,6 +34,7 @@ import {
   MIN_CUSTOM_RESERVED_OUTPUT_TOKENS
 } from '../models/ContextBudgetConfig';
 import { Logger } from '../utils/Logger';
+import { ThemePalette } from '../theme/ThemePalette';
 
 const LOG_TAG: string = 'ContextBudgetPage';
 
@@ -50,6 +51,7 @@ struct ContextBudgetPage {
   @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
   /** 预算配置变更通知(由本页面写入触发) */
   @StorageProp('chatBudgetConfigVersion') @Watch('onBudgetConfigVersionChanged') chatBudgetConfigVersion: number = 0;
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
 
   aboutToAppear(): void {
     try {
@@ -129,22 +131,22 @@ struct ContextBudgetPage {
           // 模型信息
           this.modelInfoSection()
 
-          Divider().color($r('app.color.app_divider')).margin({ top: 8, bottom: 8 })
+          Divider().color(ThemePalette.dividerColor(this.effectiveTheme)).margin({ top: 8, bottom: 8 })
 
           // 预算配置
           this.budgetConfigSection()
 
-          Divider().color($r('app.color.app_divider')).margin({ top: 8, bottom: 8 })
+          Divider().color(ThemePalette.dividerColor(this.effectiveTheme)).margin({ top: 8, bottom: 8 })
 
           // 当前占用
           this.usageSection()
 
-          Divider().color($r('app.color.app_divider')).margin({ top: 8, bottom: 8 })
+          Divider().color(ThemePalette.dividerColor(this.effectiveTheme)).margin({ top: 8, bottom: 8 })
 
           // 分段占用详情
           this.segmentBreakdownSection()
 
-          Divider().color($r('app.color.app_divider')).margin({ top: 8, bottom: 8 })
+          Divider().color(ThemePalette.dividerColor(this.effectiveTheme)).margin({ top: 8, bottom: 8 })
 
           // 操作按钮
           this.actionButtons()
@@ -160,7 +162,7 @@ struct ContextBudgetPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.page_background'))
+    .backgroundColor(ThemePalette.pageBackgroundColor(this.effectiveTheme))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 
@@ -170,7 +172,7 @@ struct ContextBudgetPage {
       Button($r('app.string.branch_map_back'))
         .fontSize(14)
         .backgroundColor(Color.Transparent)
-        .fontColor($r('app.color.app_accent'))
+        .fontColor(ThemePalette.accentColor(this.effectiveTheme))
         .onClick(() => {
           router.back();
         })
@@ -180,7 +182,7 @@ struct ContextBudgetPage {
       Text('上下文管理')
         .fontSize(18)
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
 
       Blank()
 
@@ -191,7 +193,7 @@ struct ContextBudgetPage {
     }
     .width('100%')
     .padding({ left: 12, right: 12, top: this.statusBarHeight + 4, bottom: 8 })
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
     .alignItems(VerticalAlign.Center)
   }
 
@@ -200,7 +202,7 @@ struct ContextBudgetPage {
     Column() {
       Text('模型信息')
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .margin({ bottom: 8 })
 
       this.readonlyRow('模型名称', this.getModelName())
@@ -216,23 +218,23 @@ struct ContextBudgetPage {
     Column() {
       Text('预算配置')
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .margin({ bottom: 8 })
 
       // 跟随模型配置
       this.followModelRow()
 
-      Divider().color($r('app.color.app_divider')).margin({ top: 4, bottom: 4 })
+      Divider().color(ThemePalette.dividerColor(this.effectiveTheme)).margin({ top: 4, bottom: 4 })
 
       // 自定义上下文窗口
       this.customContextWindowRow()
 
-      Divider().color($r('app.color.app_divider')).margin({ top: 4, bottom: 4 })
+      Divider().color(ThemePalette.dividerColor(this.effectiveTheme)).margin({ top: 4, bottom: 4 })
 
       // 自定义预留输出
       this.customReservedRow()
 
-      Divider().color($r('app.color.app_divider')).margin({ top: 4, bottom: 4 })
+      Divider().color(ThemePalette.dividerColor(this.effectiveTheme)).margin({ top: 4, bottom: 4 })
 
       // 自动管理
       this.autoManageRow()
@@ -246,13 +248,13 @@ struct ContextBudgetPage {
     Column() {
       Text('当前占用(基于当前分支)')
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .margin({ bottom: 8 })
 
       if (this.stats === null) {
         Text('暂无统计数据,发送一次消息后再查看')
           .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .padding({ top: 12, bottom: 12 })
       } else {
         // 占用百分比与进度条(基于 effectiveAvailable)
@@ -279,7 +281,7 @@ struct ContextBudgetPage {
               .layoutWeight(1)
           }
           .width('100%')
-          .backgroundColor($r('app.color.app_surface_2'))
+          .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
           .borderRadius(8)
           .padding({ left: 12, right: 12, top: 8, bottom: 8 })
         }
@@ -294,13 +296,13 @@ struct ContextBudgetPage {
     Column() {
       Text('分段占用(估算)')
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .margin({ bottom: 8 })
 
       if (this.stats === null || this.stats!.segments.length === 0) {
         Text('暂无分段统计')
           .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .padding({ top: 12, bottom: 12 })
       } else {
         ForEach(this.stats!.segments, (seg: SegmentTokenStat) => {
@@ -342,11 +344,11 @@ struct ContextBudgetPage {
     Row() {
       Text(label)
         .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .layoutWeight(1)
       Text(value)
         .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .width('40%')
@@ -364,10 +366,10 @@ struct ContextBudgetPage {
       Column() {
         Text('跟随模型配置')
           .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         Text('关闭后可自定义上下文长度与输出 Token')
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .margin({ top: 2 })
       }
       .alignItems(HorizontalAlign.Start)
@@ -391,12 +393,12 @@ struct ContextBudgetPage {
         Text('自定义上下文长度')
           .fontSize($r('app.float.app_font_body'))
           .fontColor(this.getFollowModel()
-            ? $r('app.color.app_text_tertiary')
-            : $r('app.color.app_text_primary'))
+            ? ThemePalette.textTertiaryColor(this.effectiveTheme)
+            : ThemePalette.textPrimaryColor(this.effectiveTheme))
           .layoutWeight(1)
         Text(this.formatTokenNumber(this.getCustomContextWindow()))
           .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .width(80)
           .textAlign(TextAlign.End)
       }
@@ -410,9 +412,9 @@ struct ContextBudgetPage {
         step: 1024,
         style: SliderStyle.OutSet
       })
-        .blockColor($r('app.color.app_accent'))
-        .trackColor($r('app.color.app_surface_2'))
-        .selectedColor($r('app.color.app_accent'))
+        .blockColor(ThemePalette.accentColor(this.effectiveTheme))
+        .trackColor(ThemePalette.surface2Color(this.effectiveTheme))
+        .selectedColor(ThemePalette.accentColor(this.effectiveTheme))
         .width('100%')
         .enabled(this.viewModel !== null
           && !this.viewModel!.isOperating
@@ -430,10 +432,10 @@ struct ContextBudgetPage {
             .fontSize($r('app.float.app_font_caption'))
             .fontColor(this.isContextWindowPresetActive(preset)
               ? $r('app.color.app_on_accent')
-              : $r('app.color.app_text_secondary'))
+              : ThemePalette.textSecondaryColor(this.effectiveTheme))
             .backgroundColor(this.isContextWindowPresetActive(preset)
-              ? $r('app.color.app_accent')
-              : $r('app.color.app_surface_2'))
+              ? ThemePalette.accentColor(this.effectiveTheme)
+              : ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius(12)
             .padding({ left: 10, right: 10, top: 4, bottom: 4 })
             .margin({ right: 6, bottom: 6 })
@@ -451,7 +453,7 @@ struct ContextBudgetPage {
         + ' ~ ' + this.formatTokenNumber(this.getCustomContextWindowMax())
         + '(不可超过模型上限 1M)')
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
     }
     .width('100%')
     .padding({ top: 12, bottom: 12 })
@@ -464,12 +466,12 @@ struct ContextBudgetPage {
         Text('最大输出 Token')
           .fontSize($r('app.float.app_font_body'))
           .fontColor(this.getFollowModel()
-            ? $r('app.color.app_text_tertiary')
-            : $r('app.color.app_text_primary'))
+            ? ThemePalette.textTertiaryColor(this.effectiveTheme)
+            : ThemePalette.textPrimaryColor(this.effectiveTheme))
           .layoutWeight(1)
         Text(this.formatTokenNumber(this.getCustomReserved()))
           .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .width(80)
           .textAlign(TextAlign.End)
       }
@@ -483,9 +485,9 @@ struct ContextBudgetPage {
         step: 256,
         style: SliderStyle.OutSet
       })
-        .blockColor($r('app.color.app_accent'))
-        .trackColor($r('app.color.app_surface_2'))
-        .selectedColor($r('app.color.app_accent'))
+        .blockColor(ThemePalette.accentColor(this.effectiveTheme))
+        .trackColor(ThemePalette.surface2Color(this.effectiveTheme))
+        .selectedColor(ThemePalette.accentColor(this.effectiveTheme))
         .width('100%')
         .enabled(this.viewModel !== null
           && !this.viewModel!.isOperating
@@ -500,7 +502,7 @@ struct ContextBudgetPage {
         + ' ~ ' + this.formatTokenNumber(this.getCustomReservedMax())
         + '(不得超过当前上下文)')
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
     }
     .width('100%')
     .padding({ top: 12, bottom: 12 })
@@ -512,10 +514,10 @@ struct ContextBudgetPage {
       Column() {
         Text('自动管理最近消息')
           .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         Text('超预算时自动裁剪最旧的对话历史')
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .margin({ top: 2 })
       }
       .alignItems(HorizontalAlign.Start)
@@ -538,7 +540,7 @@ struct ContextBudgetPage {
       Row() {
         Text('占用')
           .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .layoutWeight(1)
         Text(this.formatUsagePercent())
           .fontSize($r('app.float.app_font_body'))
@@ -552,7 +554,7 @@ struct ContextBudgetPage {
       Progress({ value: this.getUsageProgressValue(), total: 100, type: ProgressType.Linear })
         .width('100%')
         .color(this.getUsageColor())
-        .backgroundColor($r('app.color.app_surface_2'))
+        .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
         .margin({ bottom: 8 })
     }
     .width('100%')
@@ -564,11 +566,11 @@ struct ContextBudgetPage {
     Row() {
       Text(label)
         .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .layoutWeight(1)
       Text(value)
         .fontSize($r('app.float.app_font_body'))
-        .fontColor(isDanger ? $r('app.color.app_danger') : $r('app.color.app_text_primary'))
+        .fontColor(isDanger ? $r('app.color.app_danger') : ThemePalette.textPrimaryColor(this.effectiveTheme))
         .width('40%')
         .textAlign(TextAlign.End)
     }
@@ -583,16 +585,16 @@ struct ContextBudgetPage {
       Row() {
         Text(seg.label)
           .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .layoutWeight(1)
         Text(this.formatTokenNumber(seg.tokenCount))
           .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .width(80)
           .textAlign(TextAlign.End)
         Text(this.formatRatioPercent(seg.ratio))
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .width(56)
           .textAlign(TextAlign.End)
       }
@@ -601,8 +603,8 @@ struct ContextBudgetPage {
       // 段内条形进度(占总输入的占比)
       Progress({ value: seg.ratio * 100, total: 100, type: ProgressType.Linear })
         .width('100%')
-        .color($r('app.color.app_accent'))
-        .backgroundColor($r('app.color.app_surface_2'))
+        .color(ThemePalette.accentColor(this.effectiveTheme))
+        .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
         .margin({ top: 4, bottom: 4 })
     }
     .width('100%')
@@ -766,7 +768,7 @@ struct ContextBudgetPage {
 
   private getUsageColor(): ResourceColor {
     if (this.viewModel === null || this.stats === null) {
-      return $r('app.color.app_text_tertiary');
+      return ThemePalette.textTertiaryColor(this.effectiveTheme);
     }
     const available: number = this.getEffectiveAvailable();
     if (available <= 0) {
@@ -780,9 +782,9 @@ struct ContextBudgetPage {
       case BudgetLevel.High:
         return $r('app.color.app_danger');
       case BudgetLevel.Warning:
-        return $r('app.color.app_accent');
+        return ThemePalette.accentColor(this.effectiveTheme);
       default:
-        return $r('app.color.app_text_secondary');
+        return ThemePalette.textSecondaryColor(this.effectiveTheme);
     }
   }
 

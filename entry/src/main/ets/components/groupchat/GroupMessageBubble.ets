@@ -31,6 +31,7 @@ import {
   computeUserBubbleColor
 } from '../../utils/ChatBubbleAppearance';
 import { GroupMessageRenderState } from '../../viewmodels/groupchat/GroupMessageRenderState';
+import { ThemePalette } from '../../theme/ThemePalette';
 
 @Component
 export struct GroupMessageBubble {
@@ -45,6 +46,7 @@ export struct GroupMessageBubble {
   @Prop bubbleOpacity: number = 1.0;
   /** G-UI-ALIGN-2A: 当前是否为深色模式(用于动态计算气泡背景 RGB) */
   @Prop isDarkMode: boolean = false;
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
 
   build() {
     if (this.renderState.role === ChatRole.User) {
@@ -63,7 +65,7 @@ export struct GroupMessageBubble {
       // 标签:"旁白"
       Text('旁白')
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .fontStyle(FontStyle.Italic)
         .margin({ bottom: 4 })
 
@@ -83,21 +85,21 @@ export struct GroupMessageBubble {
       if (this.renderState.isStreaming && this.renderState.content.length === 0) {
         Text('旁白生成中…')
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .fontStyle(FontStyle.Italic)
       }
 
       if (this.renderState.isStreaming && this.renderState.content.length > 0) {
         Text('▍')
           .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.app_accent'))
+          .fontColor(ThemePalette.accentColor(this.effectiveTheme))
           .margin({ top: 2 })
       }
     }
     .width('100%')
     .alignItems(HorizontalAlign.Center)
     .margin({ top: 12, bottom: 12 })
-    .backgroundColor($r('app.color.app_surface_2'))
+    .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
     .borderRadius($r('app.float.app_radius_md'))
     .padding({
       left: 16,
@@ -142,7 +144,7 @@ export struct GroupMessageBubble {
         Row() {
           Text(this.formatReplyTargetLabel())
             .fontSize(10)
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
         }
@@ -152,7 +154,7 @@ export struct GroupMessageBubble {
       // 时间
       Text(this.formatTime(this.renderState.createdAt))
         .fontSize(10)
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .margin({ top: 4, right: 4 })
     }
     .width('100%')
@@ -206,11 +208,11 @@ export struct GroupMessageBubble {
           Row() {
             Text('思考中')
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_text_tertiary'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
               .fontStyle(FontStyle.Italic)
             Text('...')
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_accent'))
+              .fontColor(ThemePalette.accentColor(this.effectiveTheme))
               .margin({ left: 2 })
           }
           .margin({ top: 2 })
@@ -220,7 +222,7 @@ export struct GroupMessageBubble {
         if (this.renderState.isStreaming && this.renderState.content.length > 0) {
           Text('▍')
             .fontSize($r('app.float.app_font_body'))
-            .fontColor($r('app.color.app_accent'))
+            .fontColor(ThemePalette.accentColor(this.effectiveTheme))
             .margin({ top: 2 })
         }
 
@@ -229,7 +231,7 @@ export struct GroupMessageBubble {
           Row() {
             Text('■ 已停止')
               .fontSize(11)
-              .fontColor($r('app.color.app_text_tertiary'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           }
           .padding({ left: 8, right: 8, top: 3, bottom: 3 })
           .backgroundColor($r('app.color.chat_status_stopped_bg'))
@@ -281,7 +283,7 @@ export struct GroupMessageBubble {
   private resolveCharacterColor(): ResourceColor {
     const id: string = this.renderState.senderCharacterId;
     if (id.length === 0) {
-      return $r('app.color.app_text_secondary');
+      return ThemePalette.textSecondaryColor(this.effectiveTheme);
     }
     if (!this.renderState.characterExists) {
       return $r('app.color.app_danger');

@@ -200,6 +200,7 @@ import {
   ArkWebAvatarChatFinalResult,
   ArkWebAvatarChatFinalResultSource
 } from '../services/avatar/ArkWebAvatarChatBridgeTypes';
+import { ThemePalette } from '../theme/ThemePalette';
 
 /**
  * 传给 JavaScript loadVrmaResource 的资源 JSON 载荷。
@@ -263,6 +264,7 @@ class ViewerEventListener implements ArkWebViewerEventListener {
 struct VrmViewerPage {
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
 
   // ===== UI 状态 =====
   // Phase 2H: 演示模式状态
@@ -7110,7 +7112,7 @@ struct VrmViewerPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.page_background'))
+    .backgroundColor(ThemePalette.pageBackgroundColor(this.effectiveTheme))
     .onAreaChange((_old: Area, newArea: Area) => {
       const rawH: Length = newArea.height;
       let h: number = 0;
@@ -7201,7 +7203,7 @@ struct VrmViewerPage {
           Text('加载失败')
             .fontSize($r('app.float.app_font_subtitle'))
             .fontWeight(FontWeight.Bold)
-            .fontColor('#FF6B6B')
+            .fontColor($r('app.color.app_danger'))
             .margin({ bottom: 8 })
           Text(this.lastError || this.viewerDetail)
             .fontSize($r('app.float.app_font_caption'))
@@ -7284,7 +7286,7 @@ struct VrmViewerPage {
           Text('模型自动恢复失败')
             .fontSize($r('app.float.app_font_subtitle'))
             .fontWeight(FontWeight.Bold)
-            .fontColor('#FF6B6B')
+            .fontColor($r('app.color.app_danger'))
             .margin({ bottom: 8 })
           Text(this.modelRestoreErrorCode)
             .fontSize($r('app.float.app_font_caption'))

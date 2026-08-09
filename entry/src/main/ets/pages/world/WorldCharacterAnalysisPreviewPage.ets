@@ -26,6 +26,7 @@ import { WorldEmptyState } from '../../components/world/WorldEmptyState';
 import { WorldStatusChip } from '../../components/world/WorldStatusChip';
 import { CharacterImageView } from '../../components/CharacterImageView';
 import { Logger } from '../../utils/Logger';
+import { ThemePalette } from '../../theme/ThemePalette';
 
 const LOG_TAG: string = 'WorldCharAnalysisPreviewPage';
 
@@ -43,6 +44,7 @@ struct WorldCharacterAnalysisPreviewPage {
   @State private selectedLocationId: string = '';
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navigationBarHeight') navBarHeight: number = 0;
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
 
   async aboutToAppear(): Promise<void> {
     try {
@@ -99,7 +101,7 @@ struct WorldCharacterAnalysisPreviewPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.world_bg'))
+    .backgroundColor(ThemePalette.pageBgColor(this.effectiveTheme))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 
@@ -108,7 +110,7 @@ struct WorldCharacterAnalysisPreviewPage {
     Row() {
       Button('←')
         .fontSize(22)
-        .fontColor($r('app.color.world_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .backgroundColor(Color.Transparent)
         .width(40)
         .height(40)
@@ -120,7 +122,7 @@ struct WorldCharacterAnalysisPreviewPage {
       Text($r('app.string.world_char_analysis_title'))
         .fontSize($r('app.float.world_font_title'))
         .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.world_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .layoutWeight(1)
@@ -152,7 +154,7 @@ struct WorldCharacterAnalysisPreviewPage {
   @Builder
   loadingView(): void {
     Column() {
-      LoadingProgress().width(40).height(40).color($r('app.color.world_gold'))
+      LoadingProgress().width(40).height(40).color(ThemePalette.accentColor(this.effectiveTheme))
     }
     .width('100%')
     .layoutWeight(1)
@@ -212,7 +214,7 @@ struct WorldCharacterAnalysisPreviewPage {
           Text($r('app.string.world_char_analysis_ai_not_connected'))
             .fontSize($r('app.float.world_font_caption'))
             .fontColor($r('app.color.world_warning'))
-            .backgroundColor($r('app.color.world_gold_surface'))
+            .backgroundColor((this.effectiveTheme === 'tavern' ? '#3D3220' : $r('app.color.app_accent_surface')))
             .borderRadius($r('app.float.world_radius_chip'))
             .padding({ left: 12, right: 12, top: 6, bottom: 6 })
             .borderWidth(1)
@@ -241,14 +243,14 @@ struct WorldCharacterAnalysisPreviewPage {
                 Text(p.characterName)
                   .fontSize($r('app.float.world_font_title'))
                   .fontWeight(FontWeight.Medium)
-                  .fontColor($r('app.color.world_text_primary'))
+                  .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
                   .maxLines(1)
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
 
                 if (p.tags.length > 0) {
                   Text(p.tags.join(' · '))
                     .fontSize($r('app.float.world_font_micro'))
-                    .fontColor($r('app.color.world_text_tertiary'))
+                    .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
                     .maxLines(1)
                     .textOverflow({ overflow: TextOverflow.Ellipsis })
                     .margin({ top: 2 })
@@ -264,7 +266,7 @@ struct WorldCharacterAnalysisPreviewPage {
             if (p.description.length > 0) {
               Text(p.description)
                 .fontSize($r('app.float.world_font_body'))
-                .fontColor($r('app.color.world_text_secondary'))
+                .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
                 .maxLines(6)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
                 .margin({ top: 10 })
@@ -285,12 +287,12 @@ struct WorldCharacterAnalysisPreviewPage {
             // 地点选择
             Text($r('app.string.world_char_analysis_suggested_location'))
               .fontSize($r('app.float.world_font_body'))
-              .fontColor($r('app.color.world_text_primary'))
+              .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
               .margin({ top: 12 })
             if (this.activeLocationIds.length === 0) {
               Text($r('app.string.world_char_analysis_no_locations'))
                 .fontSize($r('app.float.world_font_caption'))
-                .fontColor($r('app.color.world_text_tertiary'))
+                .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
                 .margin({ top: 4 })
             } else {
               Column() {
@@ -321,7 +323,7 @@ struct WorldCharacterAnalysisPreviewPage {
             .fontColor($r('app.color.world_error'))
             .width('100%')
             .padding(10)
-            .backgroundColor($r('app.color.world_surface_1'))
+            .backgroundColor(ThemePalette.worldSurfaceColor(this.effectiveTheme))
             .borderRadius($r('app.float.world_radius_chip'))
             .margin({ top: 12 })
         }
@@ -371,10 +373,10 @@ struct WorldCharacterAnalysisPreviewPage {
     Column() {
       Text(label)
         .fontSize($r('app.float.world_font_body'))
-        .fontColor($r('app.color.world_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
       Text(value.length > 0 ? value : '—')
         .fontSize($r('app.float.world_font_caption'))
-        .fontColor($r('app.color.world_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .margin({ top: 4 })
     }
     .width('100%')
@@ -387,11 +389,11 @@ struct WorldCharacterAnalysisPreviewPage {
     Text(label)
       .fontSize($r('app.float.world_font_body'))
       .fontColor(isSelected
-        ? $r('app.color.world_on_gold')
-        : $r('app.color.world_text_primary'))
+        ? (this.effectiveTheme === 'tavern' ? '#1A1510' : $r('app.color.app_on_accent'))
+        : ThemePalette.textPrimaryColor(this.effectiveTheme))
       .backgroundColor(isSelected
-        ? $r('app.color.world_gold')
-        : $r('app.color.world_surface_2'))
+        ? ThemePalette.accentColor(this.effectiveTheme)
+        : ThemePalette.surface2Color(this.effectiveTheme))
       .borderRadius($r('app.float.world_radius_chip'))
       .height(40)
       .width('100%')

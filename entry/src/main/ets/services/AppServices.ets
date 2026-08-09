@@ -20,6 +20,7 @@
 
 import { common } from '@kit.AbilityKit';
 import { AppPreferences } from '../storage/AppPreferences';
+import { ThemeManager } from './ThemeManager';
 import { ProviderConfigStore } from '../storage/ProviderConfigStore';
 import { AssetStoreKeyStore } from '../storage/AssetStoreKeyStore';
 import { ProviderKeyStore } from '../storage/ProviderKeyStore';
@@ -188,6 +189,8 @@ export class AppServices {
   private readonly lorebookSelectionStore: LorebookSelectionStore;
   /** AppPreferences(不对页面公开) */
   private readonly appPreferences: AppPreferences;
+  /** ThemeManager 全局主题权威(ARK-UI-THEME-1,不对页面公开) */
+  private readonly themeManager: ThemeManager;
   /** CharacterMigrationService(不对页面公开) */
   private readonly characterMigrationService: CharacterMigrationService;
   /** LorebookMigrationService(不对页面公开) */
@@ -365,6 +368,7 @@ export class AppServices {
    */
   private constructor() {
     this.appPreferences = new AppPreferences();
+    this.themeManager = ThemeManager.getInstance(this.appPreferences);
     this.chatTextStyleSettings = new ChatTextStyleSettings(this.appPreferences);
     const configStore: ProviderConfigStore = new ProviderConfigStore(this.appPreferences);
     const assetKeyStore: AssetStoreKeyStore = new AssetStoreKeyStore();
@@ -927,6 +931,7 @@ export class AppServices {
     services.appContext = context;
     AppServices.readyPromise = services.modelService.initialize(context)
       .then((): Promise<void> => services.appPreferences.initialize(context))
+      .then((): Promise<void> => services.themeManager.initialize(context))
       .then(async (): Promise<void> => {
         await services.chatTextStyleSettings.load();
       })
@@ -1170,6 +1175,14 @@ export class AppServices {
    */
   static getAppPreferences(): AppPreferences {
     return AppServices.getInstance().appPreferences;
+  }
+
+  /**
+   * 获取全局主题权威实例(ARK-UI-THEME-1)。
+   * 页面不保存独立 theme state,统一通过 ThemeManager 读取/设置。
+   */
+  static getThemeManager(): ThemeManager {
+    return AppServices.getInstance().themeManager;
   }
 
   /**

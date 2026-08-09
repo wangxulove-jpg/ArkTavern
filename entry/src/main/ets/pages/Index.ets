@@ -21,6 +21,7 @@
 import { HdsTabs, HdsTabsController, hdsMaterial } from '@kit.UIDesignKit';
 import { SymbolGlyphModifier, router } from '@kit.ArkUI';
 import { AppServices } from '../services/AppServices';
+import { ThemePalette } from '../theme/ThemePalette';
 import { CharacterRootView } from './tabs/CharacterRootView';
 import { ChatSessionRootView } from './tabs/ChatSessionRootView';
 import { MarketPage } from './tabs/MarketPage';
@@ -33,6 +34,8 @@ struct Index {
   private tabsController: HdsTabsController = new HdsTabsController();
   /** 当前选中的 Tab 索引(0:角色卡, 1:对话记录, 2:市场, 3:设置) */
   @State selectedTab: number = 0;
+  /** 当前有效主题(ARK-UI-THEME-1,响应式驱动 Root Shell) */
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
 
   async aboutToAppear(): Promise<void> {
     try {
@@ -43,6 +46,21 @@ struct Index {
     }
   }
 
+  /** Tab 内容背景色:Tavern 使用酒馆棕,其余走资源限定符 */
+  private tabBg(): ResourceColor {
+    return ThemePalette.pageBgColor(this.effectiveTheme);
+  }
+
+  /** Tab 未选中图标色 */
+  private tabIconNormal(): string {
+    return this.effectiveTheme === 'tavern' ? ThemePalette.forTheme('tavern').textTertiary : '#667085';
+  }
+
+  /** Tab 选中图标色 */
+  private tabIconSelected(): string {
+    return this.effectiveTheme === 'tavern' ? ThemePalette.forTheme('tavern').accent : '#2F73FF';
+  }
+
   build() {
     Stack() {
       HdsTabs({ controller: this.tabsController }) {
@@ -51,8 +69,8 @@ struct Index {
           this.TabCharacterBuilder()
         }
         .tabBar(new BottomTabBarStyle({
-          normal: new SymbolGlyphModifier($r('sys.symbol.person')).fontColor(['#667085']),
-          selected: new SymbolGlyphModifier($r('sys.symbol.person')).fontColor(['#2F73FF'])
+          normal: new SymbolGlyphModifier($r('sys.symbol.person')).fontColor([this.tabIconNormal()]),
+          selected: new SymbolGlyphModifier($r('sys.symbol.person')).fontColor([this.tabIconSelected()])
         }, $r('app.string.tab_characters')))
 
         // ===== Tab 2: 对话记录 =====
@@ -60,8 +78,8 @@ struct Index {
           this.TabSessionsBuilder()
         }
         .tabBar(new BottomTabBarStyle({
-          normal: new SymbolGlyphModifier($r('sys.symbol.bell')).fontColor(['#667085']),
-          selected: new SymbolGlyphModifier($r('sys.symbol.bell')).fontColor(['#2F73FF'])
+          normal: new SymbolGlyphModifier($r('sys.symbol.bell')).fontColor([this.tabIconNormal()]),
+          selected: new SymbolGlyphModifier($r('sys.symbol.bell')).fontColor([this.tabIconSelected()])
         }, $r('app.string.tab_sessions')))
 
         // ===== Tab 3: 市场 =====
@@ -69,8 +87,8 @@ struct Index {
           this.TabMarketBuilder()
         }
         .tabBar(new BottomTabBarStyle({
-          normal: new SymbolGlyphModifier($r('sys.symbol.star')).fontColor(['#667085']),
-          selected: new SymbolGlyphModifier($r('sys.symbol.star')).fontColor(['#2F73FF'])
+          normal: new SymbolGlyphModifier($r('sys.symbol.star')).fontColor([this.tabIconNormal()]),
+          selected: new SymbolGlyphModifier($r('sys.symbol.star')).fontColor([this.tabIconSelected()])
         }, $r('app.string.tab_market')))
 
         // ===== Tab 4: 设置 =====
@@ -78,8 +96,8 @@ struct Index {
           this.TabSettingsBuilder()
         }
         .tabBar(new BottomTabBarStyle({
-          normal: new SymbolGlyphModifier($r('sys.symbol.exposure')).fontColor(['#667085']),
-          selected: new SymbolGlyphModifier($r('sys.symbol.exposure')).fontColor(['#2F73FF'])
+          normal: new SymbolGlyphModifier($r('sys.symbol.exposure')).fontColor([this.tabIconNormal()]),
+          selected: new SymbolGlyphModifier($r('sys.symbol.exposure')).fontColor([this.tabIconSelected()])
         }, $r('app.string.tab_settings')))
       }
       .barOverlap(true)
@@ -117,7 +135,7 @@ struct Index {
       Column()
         .width('100%')
         .height('100%')
-        .backgroundColor($r('app.color.app_bg'))
+        .backgroundColor(this.tabBg())
 
       // 第2层:内容层(角色卡列表)
       CharacterRootView()
@@ -134,7 +152,7 @@ struct Index {
       Column()
         .width('100%')
         .height('100%')
-        .backgroundColor($r('app.color.app_bg'))
+        .backgroundColor(this.tabBg())
 
       ChatSessionRootView()
     }
@@ -150,7 +168,7 @@ struct Index {
       Column()
         .width('100%')
         .height('100%')
-        .backgroundColor($r('app.color.app_bg'))
+        .backgroundColor(this.tabBg())
 
       MarketPage()
     }
@@ -166,7 +184,7 @@ struct Index {
       Column()
         .width('100%')
         .height('100%')
-        .backgroundColor($r('app.color.app_bg'))
+        .backgroundColor(this.tabBg())
 
       SettingsRootView()
     }

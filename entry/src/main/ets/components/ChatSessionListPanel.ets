@@ -24,10 +24,13 @@
 
 import { ChatViewModel } from '../viewmodels/ChatViewModel';
 import { Chat } from '../models/Chat';
+import { ThemePalette } from '../theme/ThemePalette';
 
 @Component
 export struct ChatSessionListPanel {
   @ObjectLink viewModel: ChatViewModel;
+  /** 当前有效主题 */
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
 
   build() {
     Stack() {
@@ -53,7 +56,7 @@ export struct ChatSessionListPanel {
             .width('100%')
             .padding({ left: 16, right: 16, bottom: 8 })
         }
-        Divider().color($r('app.color.app_divider')).height(1).width('100%')
+        Divider().color(ThemePalette.dividerColor(this.effectiveTheme)).height(1).width('100%')
 
         if (this.viewModel.isLoadingSessions) {
           this.loadingState();
@@ -65,7 +68,7 @@ export struct ChatSessionListPanel {
       }
       .width('100%')
       .height('100%')
-      .backgroundColor($r('app.color.app_surface_1'))
+      .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
 
       // 删除确认对话框(覆盖在面板之上)
       if (this.viewModel.showDeleteSessionConfirm) {
@@ -82,18 +85,18 @@ export struct ChatSessionListPanel {
       Text($r('app.string.tab_sessions'))
         .fontSize(18)
         .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
 
       Blank()
 
       Button($r('app.string.tab_sessions_new_chat'))
         .fontSize(13)
         .backgroundColor(this.viewModel.canOperateSessions
-          ? $r('app.color.app_accent')
-          : $r('app.color.app_surface_2'))
+          ? ThemePalette.accentColor(this.effectiveTheme)
+          : ThemePalette.surface2Color(this.effectiveTheme))
         .fontColor(this.viewModel.canOperateSessions
           ? $r('app.color.app_on_accent')
-          : $r('app.color.app_text_tertiary'))
+          : ThemePalette.textTertiaryColor(this.effectiveTheme))
         .borderRadius(16)
         .height(36)
         .padding({ left: 12, right: 12 })
@@ -105,7 +108,7 @@ export struct ChatSessionListPanel {
       Button({ type: ButtonType.Circle, stateEffect: false }) {
         SymbolGlyph($r('sys.symbol.xmark'))
           .fontSize(16)
-          .fontColor([$r('app.color.app_text_secondary')])
+          .fontColor([ThemePalette.textSecondaryColor(this.effectiveTheme)])
       }
       .width(36)
       .height(36)
@@ -125,12 +128,12 @@ export struct ChatSessionListPanel {
     Row() {
       Text('当前上下文:')
         .fontSize(12)
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
       Text(this.viewModel.characterName.length > 0
         ? this.viewModel.characterName
         : '普通聊天')
         .fontSize(12)
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .margin({ left: 4 })
     }
     .width('100%')
@@ -143,7 +146,7 @@ export struct ChatSessionListPanel {
       LoadingProgress()
         .width(36)
         .height(36)
-        .color($r('app.color.app_text_secondary'))
+        .color(ThemePalette.textSecondaryColor(this.effectiveTheme))
     }
     .width('100%')
     .height('100%')
@@ -156,12 +159,12 @@ export struct ChatSessionListPanel {
     Column() {
       Text('暂无会话')
         .fontSize(14)
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .margin({ bottom: 16 })
 
       Button($r('app.string.tab_sessions_new_chat'))
         .fontSize(13)
-        .backgroundColor($r('app.color.app_accent'))
+        .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
         .fontColor($r('app.color.app_on_accent'))
         .borderRadius(20)
         .height(36)
@@ -201,14 +204,14 @@ export struct ChatSessionListPanel {
       Column() {
         Text(this.viewModel.getSessionTitle(chat))
           .fontSize(15)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .width('100%')
 
         Text(this.viewModel.getSessionSubtitle(chat))
           .fontSize(12)
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .margin({ top: 2 })
           .width('100%')
       }
@@ -218,7 +221,7 @@ export struct ChatSessionListPanel {
       if (this.viewModel.isCurrentSession(chat.id)) {
         Text($r('app.string.chat_branch_current_badge'))
           .fontSize(12)
-          .fontColor($r('app.color.app_accent'))
+          .fontColor(ThemePalette.accentColor(this.effectiveTheme))
           .margin({ right: 8 })
       }
 
@@ -235,7 +238,7 @@ export struct ChatSessionListPanel {
     }
     .width('100%')
     .padding({ left: 16, right: 12, top: 12, bottom: 12 })
-    .backgroundColor($r('app.color.app_surface_2'))
+    .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
     .borderRadius(12)
     .margin({ top: 4, bottom: 4 })
     .alignItems(VerticalAlign.Center)
@@ -260,18 +263,18 @@ export struct ChatSessionListPanel {
       Column() {
         Text('删除该会话及其中的全部消息?')
           .fontSize(15)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .margin({ bottom: 8 })
         Text('此操作无法撤销。')
           .fontSize(13)
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .margin({ bottom: 20 })
 
         Row() {
           Button($r('app.string.chat_edit_message_cancel'))
             .fontSize(14)
-            .backgroundColor($r('app.color.app_surface_2'))
-            .fontColor($r('app.color.app_text_primary'))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .borderRadius(20)
             .height(40)
             .layoutWeight(1)
@@ -296,7 +299,7 @@ export struct ChatSessionListPanel {
       }
       .width('80%')
       .padding(20)
-      .backgroundColor($r('app.color.app_surface_1'))
+      .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
       .borderRadius(16)
     }
     .width('100%')

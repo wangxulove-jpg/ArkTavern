@@ -16,6 +16,7 @@ import { AppServices } from '../services/AppServices';
 import { ProviderConfig } from '../models/ProviderConfig';
 import { ProviderType } from '../models/ProviderType';
 import { router } from '@kit.ArkUI';
+import { ThemePalette } from '../theme/ThemePalette';
 
 const APP_STORAGE_VM_KEY: string = 'ModelSettingsViewModel';
 
@@ -26,6 +27,7 @@ struct ModelSettingsPage {
   @State initError: string = '';
   /** 顶部状态栏避让高度(由 EntryAbility 写入 AppStorage) */
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
 
   async aboutToAppear(): Promise<void> {
     try {
@@ -52,7 +54,7 @@ struct ModelSettingsPage {
         Row() {
           SymbolGlyph($r('sys.symbol.chevron_left'))
             .fontSize(24)
-            .fontColor([$r('app.color.page_primary_text')])
+            .fontColor([ThemePalette.textPrimaryColor(this.effectiveTheme)])
             .padding(8)
             .onClick(() => {
               router.back();
@@ -60,7 +62,7 @@ struct ModelSettingsPage {
 
           Text($r('app.string.nav_model_settings_title'))
             .fontSize($r('app.float.nav_title_font_size'))
-            .fontColor($r('app.color.page_primary_text'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .fontWeight(FontWeight.Medium)
             .layoutWeight(1)
             .maxLines(1)
@@ -79,7 +81,7 @@ struct ModelSettingsPage {
       }
       .width('100%')
       .height('100%')
-      .backgroundColor($r('app.color.page_background'))
+      .backgroundColor(ThemePalette.pageBackgroundColor(this.effectiveTheme))
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     }
   }
@@ -90,7 +92,7 @@ struct ModelSettingsPage {
       if (this.initError.length > 0) {
         Text(this.initError)
           .fontSize($r('app.float.app_font_body'))
-          .fontColor($r('app.color.page_secondary_text'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
       } else {
         LoadingProgress()
           .width(36)
@@ -100,7 +102,7 @@ struct ModelSettingsPage {
     .width('100%')
     .height('100%')
     .justifyContent(FlexAlign.Center)
-    .backgroundColor($r('app.color.page_background'))
+    .backgroundColor(ThemePalette.pageBackgroundColor(this.effectiveTheme))
   }
 
   @Builder
@@ -122,7 +124,7 @@ struct ModelSettingsPage {
           .height(48)
           .fontSize($r('app.float.app_font_body'))
           .fontColor($r('app.color.app_on_accent'))
-          .backgroundColor($r('app.color.app_accent'))
+          .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
           .borderRadius($r('app.float.app_radius_sm'))
           .margin({ top: 8, bottom: 32 })
           .onClick(() => {
@@ -137,7 +139,7 @@ struct ModelSettingsPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.page_background'))
+    .backgroundColor(ThemePalette.pageBackgroundColor(this.effectiveTheme))
     .scrollBar(BarState.Auto)
     .layoutWeight(1)
   }
@@ -149,7 +151,7 @@ struct ModelSettingsPage {
         Row() {
           Text($r('app.string.model_settings_current_config_title'))
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           Blank()
           if (this.currentConfig.enabled) {
             Text($r('app.string.model_settings_config_enabled'))
@@ -158,7 +160,7 @@ struct ModelSettingsPage {
           } else {
             Text($r('app.string.model_settings_config_disabled'))
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           }
         }
         .width('100%')
@@ -166,7 +168,7 @@ struct ModelSettingsPage {
         Text(this.currentConfig.name)
           .fontSize($r('app.float.app_font_subtitle'))
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .width('100%')
@@ -174,13 +176,13 @@ struct ModelSettingsPage {
         Row() {
           Text(this.providerDisplayName(this.currentConfig.type))
             .fontSize($r('app.float.app_font_body'))
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           Text(' · ')
             .fontSize($r('app.float.app_font_body'))
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           Text(this.currentConfig.modelName)
             .fontSize($r('app.float.app_font_body'))
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .layoutWeight(1)
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -190,19 +192,19 @@ struct ModelSettingsPage {
         Row() {
           SymbolGlyph($r('sys.symbol.key'))
             .fontSize(16)
-            .fontColor([$r('app.color.app_text_tertiary')])
+            .fontColor([ThemePalette.textTertiaryColor(this.effectiveTheme)])
           Text(this.viewModel!.currentConfigKeyConfigured
             ? $r('app.string.model_settings_api_key_status_configured')
             : $r('app.string.model_settings_api_key_status_not_configured'))
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .margin({ left: 4 })
         }
         .width('100%')
       }
       .width('100%')
       .padding(16)
-      .backgroundColor($r('app.color.app_surface_1'))
+      .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
       .borderRadius($r('app.float.app_radius_md'))
       .alignItems(HorizontalAlign.Start)
     }
@@ -214,7 +216,7 @@ struct ModelSettingsPage {
       Text($r('app.string.model_settings_config_list'))
         .fontSize($r('app.float.app_font_subtitle'))
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .width('100%')
 
       List({ space: 8 }) {
@@ -239,7 +241,7 @@ struct ModelSettingsPage {
           Text(config.name)
             .fontSize($r('app.float.app_font_body'))
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .layoutWeight(1)
@@ -247,7 +249,7 @@ struct ModelSettingsPage {
           if (this.viewModel!.currentConfigId === config.id) {
             Text($r('app.string.model_settings_current_badge'))
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_accent'))
+              .fontColor(ThemePalette.accentColor(this.effectiveTheme))
               .margin({ left: 8 })
           }
         }
@@ -256,13 +258,13 @@ struct ModelSettingsPage {
         Row() {
           Text(this.providerDisplayName(config.type))
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           Text(' · ')
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           Text(config.modelName)
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .layoutWeight(1)
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -274,12 +276,12 @@ struct ModelSettingsPage {
 
       SymbolGlyph($r('sys.symbol.chevron_right'))
         .fontSize(18)
-        .fontColor([$r('app.color.app_text_tertiary')])
+        .fontColor([ThemePalette.textTertiaryColor(this.effectiveTheme)])
         .margin({ left: 8 })
     }
     .width('100%')
     .padding(16)
-    .backgroundColor($r('app.color.app_surface_1'))
+    .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
     .borderRadius($r('app.float.app_radius_md'))
     .onClick(() => {
       this.viewModel!.selectConfig(config.id);
@@ -294,10 +296,10 @@ struct ModelSettingsPage {
       Text($r('app.string.model_settings_empty_title'))
         .fontSize($r('app.float.app_font_subtitle'))
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
       Text($r('app.string.model_settings_empty_desc'))
         .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .textAlign(TextAlign.Center)
     }
     .width('100%')
@@ -313,7 +315,7 @@ struct ModelSettingsPage {
         .fontColor($r('app.color.app_danger'))
         .padding(12)
         .width('100%')
-        .backgroundColor($r('app.color.app_surface_2'))
+        .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_sm'))
     }
     if (this.viewModel!.statusMessage.length > 0) {
@@ -322,7 +324,7 @@ struct ModelSettingsPage {
         .fontColor($r('app.color.model_settings_success'))
         .padding(12)
         .width('100%')
-        .backgroundColor($r('app.color.app_surface_2'))
+        .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_sm'))
     }
   }

@@ -13,25 +13,29 @@
  * - 图标(本轮不引入 SymbolGlyph / Image,保持纯文字)
  */
 
+import { ThemePalette } from '../theme/ThemePalette';
+
 @Component
 export struct EmptyStateView {
   /** 状态标题(必填) */
   title: ResourceStr = '';
   /** 状态描述(必填,可为空字符串) */
   description: ResourceStr = '';
+  /** 当前有效主题 */
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
 
   build(): void {
     Column() {
       Text(this.title)
         .fontSize($r('app.float.app_font_subtitle'))
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .textAlign(TextAlign.Center)
         .width('100%')
 
       Text(this.description)
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .margin({ top: 6 })
         .textAlign(TextAlign.Center)
         .width('100%')

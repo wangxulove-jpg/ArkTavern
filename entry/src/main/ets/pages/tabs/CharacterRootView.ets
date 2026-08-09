@@ -28,6 +28,7 @@ import { CharacterImageView } from '../../components/CharacterImageView';
 import { router, promptAction } from '@kit.ArkUI';
 import { picker } from '@kit.CoreFileKit';
 import { fileIo } from '@kit.CoreFileKit';
+import { ThemePalette } from '../../theme/ThemePalette';
 
 /** 角色编辑页路由参数,携带 characterId */
 interface CharacterEditNavParam {
@@ -38,8 +39,8 @@ interface CharacterEditNavParam {
 interface SwipeGridCellParams {
   icon: Resource;
   label: Resource;
-  bgColor: Resource;
-  fgColor: Resource;
+  bgColor: ResourceColor;
+  fgColor: ResourceColor;
   disabled: boolean;
   action: () => void;
 }
@@ -70,6 +71,8 @@ export struct CharacterRootView {
   @StorageProp('characterListVersion') @Watch('onListVersionChange') characterListVersion: number = 0;
   /** 顶部状态栏避让高度(由 EntryAbility 写入 AppStorage) */
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
+  /** 当前有效主题 */
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
 
   async aboutToAppear(): Promise<void> {
     try {
@@ -324,7 +327,7 @@ export struct CharacterRootView {
       Text($r('app.string.tab_characters'))
         .fontSize($r('app.float.app_font_title'))
         .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
 
@@ -332,7 +335,7 @@ export struct CharacterRootView {
 
       Button($r('app.string.character_import'))
         .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_accent'))
+        .fontColor(ThemePalette.accentColor(this.effectiveTheme))
         .backgroundColor(Color.Transparent)
         .height(48)
         .padding({ left: 16, right: 16 })
@@ -420,15 +423,15 @@ export struct CharacterRootView {
           this.gridCell({
             icon: $r('sys.symbol.arrow_up'),
             label: $r('app.string.card_action_move_up'),
-            bgColor: $r('app.color.app_surface_2'),
-            fgColor: $r('app.color.app_text_primary'),
+            bgColor: ThemePalette.surface2Color(this.effectiveTheme),
+            fgColor: ThemePalette.textPrimaryColor(this.effectiveTheme),
             disabled: index === 0,
             action: (): void => { this.viewModel!.moveUp(char.id); }
           })
           this.gridCell({
             icon: $r('sys.symbol.plus'),
             label: $r('app.string.character_action_new_chat'),
-            bgColor: $r('app.color.app_accent'),
+            bgColor: ThemePalette.accentColor(this.effectiveTheme),
             fgColor: $r('app.color.app_on_accent'),
             disabled: false,
             action: (): void => { this.startNewChatWithCharacter(char.id); }
@@ -436,8 +439,8 @@ export struct CharacterRootView {
           this.gridCell({
             icon: $r('sys.symbol.square_and_pencil'),
             label: $r('app.string.character_action_edit'),
-            bgColor: $r('app.color.app_surface_2'),
-            fgColor: $r('app.color.app_text_primary'),
+            bgColor: ThemePalette.surface2Color(this.effectiveTheme),
+            fgColor: ThemePalette.textPrimaryColor(this.effectiveTheme),
             disabled: false,
             action: (): void => { this.editCharacter(char.id); }
           })
@@ -450,16 +453,16 @@ export struct CharacterRootView {
           this.gridCell({
             icon: $r('sys.symbol.arrow_down'),
             label: $r('app.string.card_action_move_down'),
-            bgColor: $r('app.color.app_surface_2'),
-            fgColor: $r('app.color.app_text_primary'),
+            bgColor: ThemePalette.surface2Color(this.effectiveTheme),
+            fgColor: ThemePalette.textPrimaryColor(this.effectiveTheme),
             disabled: index === this.viewModel!.characters.length - 1,
             action: (): void => { this.viewModel!.moveDown(char.id); }
           })
           this.gridCell({
             icon: $r('sys.symbol.share'),
             label: $r('app.string.character_action_export'),
-            bgColor: $r('app.color.app_surface_2'),
-            fgColor: $r('app.color.app_text_primary'),
+            bgColor: ThemePalette.surface2Color(this.effectiveTheme),
+            fgColor: ThemePalette.textPrimaryColor(this.effectiveTheme),
             disabled: false,
             action: (): void => { this.promptExport(char); }
           })
@@ -529,7 +532,7 @@ export struct CharacterRootView {
         // 点击角色卡 -> 跳转到该角色详情(编辑弹窗)
         this.openCharacterDetail(char.id);
       },
-      surfaceColor: $r('app.color.app_surface_1')
+      surfaceColor: ThemePalette.surface1Color(this.effectiveTheme)
     }) {
       Row() {
         // 左侧角色图片
@@ -548,7 +551,7 @@ export struct CharacterRootView {
           Text(char.name)
             .fontSize($r('app.float.app_font_subtitle'))
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .width('100%')
@@ -557,7 +560,7 @@ export struct CharacterRootView {
           if (char.description.length > 0) {
             Text(char.description)
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .maxLines(3)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .margin({ top: 6 })
@@ -568,7 +571,7 @@ export struct CharacterRootView {
           if (char.personality.length > 0) {
             Text(char.personality)
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_text_tertiary'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .margin({ top: 4 })
@@ -582,7 +585,7 @@ export struct CharacterRootView {
 
         Text('›')
           .fontSize(20)
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .margin({ left: 8 })
       }
       .width('100%')
@@ -605,7 +608,7 @@ export struct CharacterRootView {
         // 统一入口:进入"添加角色"页面(新建角色 / 文件导入二选一)
         Button($r('app.string.character_import'))
           .fontSize($r('app.float.app_font_body'))
-          .backgroundColor($r('app.color.app_accent'))
+          .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
           .fontColor($r('app.color.app_on_accent'))
           .borderRadius($r('app.float.app_radius_md'))
           .height(48)
@@ -637,7 +640,7 @@ export struct CharacterRootView {
       LoadingProgress()
         .width(40)
         .height(40)
-        .color($r('app.color.app_accent'))
+        .color(ThemePalette.accentColor(this.effectiveTheme))
     }
     .width('100%')
     .layoutWeight(1)
@@ -670,13 +673,13 @@ export struct CharacterRootView {
           Text($r('app.string.character_delete_confirm_title'))
             .fontSize(17)
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .margin({ bottom: 12 })
 
           // 提示内容(含角色名)
           Text(this.formatDeleteMessage(this.deleteTarget!.name))
             .fontSize(14)
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .margin({ bottom: 20 })
 
           // 按钮行
@@ -684,7 +687,7 @@ export struct CharacterRootView {
             Button($r('app.string.character_delete_confirm_cancel'))
               .fontSize(14)
               .backgroundColor(Color.Transparent)
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .layoutWeight(1)
               .height(40)
               .onClick(() => {
@@ -707,7 +710,7 @@ export struct CharacterRootView {
         }
         .width('80%')
         .padding(20)
-        .backgroundColor($r('app.color.app_surface_1'))
+        .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
         .borderRadius(16)
       }
       .width('100%')
@@ -735,14 +738,14 @@ export struct CharacterRootView {
           Text($r('app.string.character_export_choose_format'))
             .fontSize(17)
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .margin({ bottom: 16 })
 
           // PNG 选项
           Button($r('app.string.character_export_png'))
             .fontSize(15)
             .fontColor($r('app.color.app_on_accent'))
-            .backgroundColor($r('app.color.app_accent'))
+            .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_md'))
             .width('100%')
             .height(44)
@@ -754,8 +757,8 @@ export struct CharacterRootView {
           // JSON 选项
           Button($r('app.string.character_export_json'))
             .fontSize(15)
-            .fontColor($r('app.color.app_text_primary'))
-            .backgroundColor($r('app.color.app_surface_2'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_md'))
             .width('100%')
             .height(44)
@@ -767,7 +770,7 @@ export struct CharacterRootView {
           // 取消
           Button($r('app.string.character_export_cancel'))
             .fontSize(15)
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .backgroundColor(Color.Transparent)
             .borderRadius($r('app.float.app_radius_md'))
             .width('100%')
@@ -778,7 +781,7 @@ export struct CharacterRootView {
         }
         .width('80%')
         .padding(20)
-        .backgroundColor($r('app.color.app_surface_1'))
+        .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
         .borderRadius(16)
       }
       .width('100%')

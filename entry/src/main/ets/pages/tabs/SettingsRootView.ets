@@ -12,11 +12,14 @@
 
 import { PressableCard } from '../../components/PressableCard';
 import { router } from '@kit.ArkUI';
+import { ThemePalette } from '../../theme/ThemePalette';
 
 @Component
 export struct SettingsRootView {
   /** 顶部状态栏避让高度(由 EntryAbility 写入 AppStorage) */
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
+  /** 当前有效主题 */
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
 
   build() {
     Stack() {
@@ -26,7 +29,7 @@ export struct SettingsRootView {
           Text($r('app.string.tab_settings'))
             .fontSize($r('app.float.app_font_title'))
             .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
         }
@@ -44,7 +47,7 @@ export struct SettingsRootView {
           Column() {
             Text($r('app.string.tab_settings_desc'))
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_text_tertiary'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
               .width('100%')
               .textAlign(TextAlign.Start)
               .padding({
@@ -131,7 +134,7 @@ export struct SettingsRootView {
   sectionHeader(title: ResourceStr) {
     Text(title)
       .fontSize($r('app.float.app_font_caption'))
-      .fontColor($r('app.color.app_text_tertiary'))
+      .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
       .fontWeight(FontWeight.Medium)
       .width('100%')
       .textAlign(TextAlign.Start)
@@ -153,7 +156,7 @@ export struct SettingsRootView {
             Text(title)
               .fontSize($r('app.float.app_font_body'))
               .fontWeight(FontWeight.Medium)
-              .fontColor($r('app.color.app_text_primary'))
+              .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .width('100%')
@@ -161,7 +164,7 @@ export struct SettingsRootView {
 
             Text(desc)
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .maxLines(2)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .margin({ top: 2 })
@@ -173,7 +176,7 @@ export struct SettingsRootView {
 
           Text('›')
             .fontSize(20)
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         }
         .width('100%')
         .padding({

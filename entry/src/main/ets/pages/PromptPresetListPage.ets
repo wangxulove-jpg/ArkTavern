@@ -5,12 +5,12 @@
  * 通过 PromptPresetListViewModel 操作,不直接访问 Repository 或 Service。
  *
  * 主题适配:
- * - 页面背景使用 $r('app.color.page_background')(浅色 #F5F5F5 / 深色 #121212)
- * - 标题栏使用 $r('app.color.app_surface_1')
- * - 文字使用 $r('app.color.app_text_primary') / $r('app.color.app_text_secondary')
- * - 主操作按钮使用 $r('app.color.app_accent') + $r('app.color.app_on_accent')
+ * - 页面背景使用 ThemePalette.pageBackgroundColor(this.effectiveTheme)(浅色 #F5F5F5 / 深色 #121212)
+ * - 标题栏使用 ThemePalette.surface1Color(this.effectiveTheme)
+ * - 文字使用 ThemePalette.textPrimaryColor(this.effectiveTheme) / ThemePalette.textSecondaryColor(this.effectiveTheme)
+ * - 主操作按钮使用 ThemePalette.accentColor(this.effectiveTheme) + $r('app.color.app_on_accent')
  * - 删除按钮使用 $r('app.color.app_danger')
- * - 分隔线使用 $r('app.color.app_divider')
+ * - 分隔线使用 ThemePalette.dividerColor(this.effectiveTheme)
  * - 不在组件中散落十六进制颜色,浅色/深色模式自动切换
  *
  * 系统状态栏:
@@ -23,6 +23,7 @@ import { PromptPresetListViewModel } from '../viewmodels/PromptPresetListViewMod
 import { AppServices } from '../services/AppServices';
 import { PromptPreset } from '../models/PromptPreset';
 import { router } from '@kit.ArkUI';
+import { ThemePalette } from '../theme/ThemePalette';
 
 interface PresetEditRouteParam {
   presetId: string;
@@ -39,6 +40,7 @@ struct PromptPresetListPage {
   @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
   /** 标记是否已完成首次加载,用于区分 onPageShow 是首次还是从子页返回 */
   private hasInitialized: boolean = false;
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
 
   aboutToAppear(): void {
     // 首次加载由 onPageShow 统一触发,避免与 onPageShow 重复调用
@@ -66,7 +68,7 @@ struct PromptPresetListPage {
         Button('返回')
           .fontSize(14)
           .backgroundColor(Color.Transparent)
-          .fontColor($r('app.color.app_accent'))
+          .fontColor(ThemePalette.accentColor(this.effectiveTheme))
           .onClick(() => {
             router.back();
           })
@@ -76,14 +78,14 @@ struct PromptPresetListPage {
         Text('提示词预设')
           .fontSize(18)
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
 
         Blank()
 
         Button('清除当前')
           .fontSize(12)
           .backgroundColor(Color.Transparent)
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .onClick(() => {
             this.viewModel.clearCurrent();
           })
@@ -91,21 +93,21 @@ struct PromptPresetListPage {
       .width('100%')
       .padding({ left: 12, right: 12, top: this.statusBarHeight + 8, bottom: 8 })
       .alignItems(VerticalAlign.Center)
-      .backgroundColor($r('app.color.app_surface_1'))
+      .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
 
       // 当前预设状态区(标签:次级文字,值:主文字,不再用 disabled 灰色)
       Row() {
         Text('当前预设：')
           .fontSize(13)
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         Text(this.viewModel.currentPresetId.length > 0
           ? '已启用'
           : '未使用')
           .fontSize(13)
           .fontWeight(FontWeight.Medium)
           .fontColor(this.viewModel.currentPresetId.length > 0
-            ? $r('app.color.app_accent')
-            : $r('app.color.app_text_primary'))
+            ? ThemePalette.accentColor(this.effectiveTheme)
+            : ThemePalette.textPrimaryColor(this.effectiveTheme))
       }
       .width('100%')
       .padding({ left: 16, right: 16, top: 14, bottom: 14 })
@@ -120,13 +122,13 @@ struct PromptPresetListPage {
 
       Divider()
         .height(1)
-        .color($r('app.color.app_divider'))
+        .color(ThemePalette.dividerColor(this.effectiveTheme))
 
       // 新建按钮(品牌蓝背景 + 完全不透明白色文字)
       Row() {
         Button('+ 新建预设')
           .fontSize(14)
-          .backgroundColor($r('app.color.app_accent'))
+          .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
           .fontColor($r('app.color.app_on_accent'))
           .borderRadius(20)
           .height(40)
@@ -147,10 +149,10 @@ struct PromptPresetListPage {
           LoadingProgress()
             .width(40)
             .height(40)
-            .color($r('app.color.app_accent'))
+            .color(ThemePalette.accentColor(this.effectiveTheme))
           Text('加载中...')
             .fontSize(14)
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .margin({ top: 12 })
         }
         .width('100%')
@@ -162,10 +164,10 @@ struct PromptPresetListPage {
           Text('暂无预设')
             .fontSize(16)
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           Text('点击上方按钮创建第一个预设')
             .fontSize(13)
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .margin({ top: 8 })
         }
         .width('100%')
@@ -183,7 +185,7 @@ struct PromptPresetListPage {
         .width('100%')
         .divider({
           strokeWidth: 1,
-          color: $r('app.color.app_divider'),
+          color: ThemePalette.dividerColor(this.effectiveTheme),
           startMargin: 16,
           endMargin: 16
         })
@@ -194,7 +196,7 @@ struct PromptPresetListPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.page_background'))
+    .backgroundColor(ThemePalette.pageBackgroundColor(this.effectiveTheme))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 
@@ -207,7 +209,7 @@ struct PromptPresetListPage {
             Text(preset.name)
               .fontSize(16)
               .fontWeight(FontWeight.Medium)
-              .fontColor($r('app.color.app_text_primary'))
+              .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .layoutWeight(1)
@@ -217,7 +219,7 @@ struct PromptPresetListPage {
               Text('当前')
                 .fontSize(10)
                 .fontColor($r('app.color.app_on_accent'))
-                .backgroundColor($r('app.color.app_accent'))
+                .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
                 .borderRadius(4)
                 .padding({ left: 6, right: 6, top: 2, bottom: 2 })
                 .margin({ left: 8 })
@@ -229,7 +231,7 @@ struct PromptPresetListPage {
           if (preset.description.length > 0) {
             Text(preset.description)
               .fontSize(12)
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .margin({ top: 4 })
@@ -237,7 +239,7 @@ struct PromptPresetListPage {
 
           Text(this.viewModel.getPresetSummary(preset))
             .fontSize(12)
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .margin({ top: 4 })
         }
         .layoutWeight(1)
@@ -247,7 +249,7 @@ struct PromptPresetListPage {
         Row() {
           Button('设为当前')
             .fontSize(12)
-            .backgroundColor($r('app.color.app_accent'))
+            .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
             .fontColor($r('app.color.app_on_accent'))
             .borderRadius(6)
             .height(28)
@@ -258,8 +260,8 @@ struct PromptPresetListPage {
 
           Button('编辑')
             .fontSize(12)
-            .backgroundColor($r('app.color.app_surface_2'))
-            .fontColor($r('app.color.app_text_primary'))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .borderRadius(6)
             .height(28)
             .padding({ left: 10, right: 10 })

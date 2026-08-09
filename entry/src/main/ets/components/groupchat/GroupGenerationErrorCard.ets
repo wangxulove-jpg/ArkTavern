@@ -13,6 +13,8 @@
  * 纯 UI,按钮回调和状态由父组件注入。
  */
 
+import { ThemePalette } from '../../theme/ThemePalette';
+
 @Component
 export struct GroupGenerationErrorCard {
   /** 失败说明文字 */
@@ -25,6 +27,7 @@ export struct GroupGenerationErrorCard {
   onRetry: () => void = () => {};
   /** 结束本轮回调 */
   onEndRound: () => void = () => {};
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
 
   build(): void {
     Column() {
@@ -62,7 +65,7 @@ export struct GroupGenerationErrorCard {
           }
         }
         .type(ButtonType.Capsule)
-        .backgroundColor($r('app.color.app_accent'))
+        .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_sm'))
         .height(32)
         .padding({ left: 16, right: 16 })
@@ -82,16 +85,16 @@ export struct GroupGenerationErrorCard {
               LoadingProgress()
                 .width(14)
                 .height(14)
-                .color($r('app.color.app_text_secondary'))
+                .color(ThemePalette.textSecondaryColor(this.effectiveTheme))
                 .margin({ right: 6 })
             }
             Text(this.isEndingRound ? $r('app.string.group_ending_round') : $r('app.string.group_end_round'))
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           }
         }
         .type(ButtonType.Capsule)
-        .backgroundColor($r('app.color.app_surface_2'))
+        .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_sm'))
         .height(32)
         .padding({ left: 16, right: 16 })

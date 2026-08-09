@@ -97,6 +97,7 @@ import {
   ArkWebAvatarToolExecutorBusinessState
 } from '../avatarai/ArkWebAvatarAiToolExecutor';
 import { LastAvatarToolCallSummary } from '../avatarai/ArkWebAvatarAiToolTypes';
+import { ThemePalette } from '../theme/ThemePalette';
 
 const LOG_TAG: string = 'ChatPage';
 
@@ -127,6 +128,7 @@ class ChatAvatarStageListenerImpl implements ChatAvatarStageEventListener {
 @Entry
 @Component
 struct ChatPage {
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
   @State viewModel: ChatViewModel | null = null;
   /** 业务消息列表(@State 用于触发消息源数据变更,ForEach 不再直接使用) */
   @State messages: ChatMessage[] = [];
@@ -1758,9 +1760,9 @@ struct ChatPage {
               Button({ type: ButtonType.Circle, stateEffect: false }) {
                 SymbolGlyph($r('sys.symbol.chevron_down'))
                   .fontSize(20)
-                  .fontColor([$r('app.color.app_text_primary')])
+                  .fontColor([ThemePalette.textPrimaryColor(this.effectiveTheme)])
               }
-              .backgroundColor($r('app.color.app_surface_1'))
+              .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
               .borderRadius(22)
               .width(44)
               .height(44)
@@ -1876,14 +1878,14 @@ struct ChatPage {
                 top: $r('app.float.app_spacing_4'),
                 bottom: $r('app.float.app_spacing_4')
               })
-              .backgroundColor($r('app.color.app_surface_2'))
+              .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
           }
 
           // 状态条(生成中/已停止 - 轻量提示)
           if (this.viewModel !== null && this.viewModel!.statusMessage.length > 0) {
             Text(this.viewModel!.statusMessage)
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_text_tertiary'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
               .width('100%')
               .textAlign(TextAlign.Center)
               .padding({ top: 2, bottom: 2 })
@@ -2010,7 +2012,7 @@ struct ChatPage {
       .width('100%')
       .height('100%')
       // PanoVR2 模式:不透明背景填满到状态栏区域
-      .backgroundColor($r('app.color.page_background'))
+      .backgroundColor(ThemePalette.pageBackgroundColor(this.effectiveTheme))
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 
@@ -2023,7 +2025,7 @@ struct ChatPage {
       Stack() {
         SymbolGlyph($r('sys.symbol.chevron_left'))
           .fontSize(24)
-          .fontColor([$r('app.color.app_text_primary')])
+          .fontColor([ThemePalette.textPrimaryColor(this.effectiveTheme)])
       }
       .width(40)
       .height(40)
@@ -2036,7 +2038,7 @@ struct ChatPage {
         Stack() {
           SymbolGlyph($r('sys.symbol.line_3_horizontal'))
             .fontSize(22)
-            .fontColor([$r('app.color.app_text_primary')])
+            .fontColor([ThemePalette.textPrimaryColor(this.effectiveTheme)])
         }
         .width(40)
         .height(40)
@@ -2053,14 +2055,14 @@ struct ChatPage {
       Stack() {
         SymbolGlyph($r('sys.symbol.textformat'))
           .fontSize(20)
-          .fontColor([$r('app.color.app_text_primary')])
+          .fontColor([ThemePalette.textPrimaryColor(this.effectiveTheme)])
       }
       .width(40)
       .height(40)
       .margin({ right: 4 })
       .borderRadius($r('app.float.app_radius_sm'))
       .backgroundColor(this.chatAppearancePanelVisible
-        ? $r('app.color.app_surface_2') : Color.Transparent)
+        ? ThemePalette.surface2Color(this.effectiveTheme) : Color.Transparent)
       .onClick(() => {
         this.chatAppearancePanelVisible = !this.chatAppearancePanelVisible;
       })
@@ -2072,14 +2074,14 @@ struct ChatPage {
         Text('AI')
           .fontSize(13)
           .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
       }
       .width(40)
       .height(40)
       .margin({ right: 4 })
       .borderRadius($r('app.float.app_radius_sm'))
       .backgroundColor(this.aiPanelVisible
-        ? $r('app.color.app_surface_2') : Color.Transparent)
+        ? ThemePalette.surface2Color(this.effectiveTheme) : Color.Transparent)
       .onClick(() => {
         this.aiPanelVisible = !this.aiPanelVisible;
         // 打开面板时刷新能力快照 + 验证 endpoint + 刷新 Avatar Tool 状态
@@ -2095,7 +2097,7 @@ struct ChatPage {
       Stack() {
         SymbolGlyph($r('sys.symbol.more'))
           .fontSize(22)
-          .fontColor([$r('app.color.app_text_primary')])
+          .fontColor([ThemePalette.textPrimaryColor(this.effectiveTheme)])
       }
       .width(40)
       .height(40)
@@ -2127,14 +2129,14 @@ struct ChatPage {
             Text(this.avatarModelDisplayName.length > 0
               ? this.avatarModelDisplayName : '未加载模型')
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_text_primary'))
+              .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
               .layoutWeight(1)
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
 
             // 模型显示开关 (Toggle)
             Toggle({ type: ToggleType.Switch, isOn: this.chatAvatarVisible })
-              .selectedColor($r('app.color.app_accent'))
+              .selectedColor(ThemePalette.accentColor(this.effectiveTheme))
               .scale({ x: 0.8, y: 0.8 })
               .onChange((isOn: boolean) => {
                 this.chatAvatarVisible = isOn;
@@ -2145,7 +2147,7 @@ struct ChatPage {
             Stack() {
               SymbolGlyph($r('sys.symbol.xmark'))
                 .fontSize(14)
-                .fontColor([$r('app.color.app_text_secondary')])
+                .fontColor([ThemePalette.textSecondaryColor(this.effectiveTheme)])
             }
             .width(28)
             .height(28)
@@ -2164,7 +2166,7 @@ struct ChatPage {
             .type(ButtonType.Normal)
             .borderRadius($r('app.float.app_radius_sm'))
             .backgroundColor('rgba(255,255,255,0.12)')
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .fontSize($r('app.float.app_font_caption'))
             .width('100%')
             .height(30)
@@ -2179,9 +2181,9 @@ struct ChatPage {
               .type(ButtonType.Normal)
               .borderRadius($r('app.float.app_radius_sm'))
               .backgroundColor(this.avatarShotControlMode === 'AUTO'
-                ? $r('app.color.app_accent') : 'rgba(255,255,255,0.12)')
+                ? ThemePalette.accentColor(this.effectiveTheme) : 'rgba(255,255,255,0.12)')
               .fontColor(this.avatarShotControlMode === 'AUTO'
-                ? $r('app.color.app_on_accent') : $r('app.color.app_text_primary'))
+                ? $r('app.color.app_on_accent') : ThemePalette.textPrimaryColor(this.effectiveTheme))
               .fontSize($r('app.float.app_font_caption'))
               .height(28)
               .layoutWeight(1)
@@ -2194,9 +2196,9 @@ struct ChatPage {
               .type(ButtonType.Normal)
               .borderRadius($r('app.float.app_radius_sm'))
               .backgroundColor(this.avatarShotControlMode === 'MANUAL_FULL_BODY'
-                ? $r('app.color.app_accent') : 'rgba(255,255,255,0.12)')
+                ? ThemePalette.accentColor(this.effectiveTheme) : 'rgba(255,255,255,0.12)')
               .fontColor(this.avatarShotControlMode === 'MANUAL_FULL_BODY'
-                ? $r('app.color.app_on_accent') : $r('app.color.app_text_primary'))
+                ? $r('app.color.app_on_accent') : ThemePalette.textPrimaryColor(this.effectiveTheme))
               .fontSize($r('app.float.app_font_caption'))
               .height(28)
               .layoutWeight(1)
@@ -2210,9 +2212,9 @@ struct ChatPage {
               .type(ButtonType.Normal)
               .borderRadius($r('app.float.app_radius_sm'))
               .backgroundColor(this.avatarShotControlMode === 'MANUAL_FACE_RESET_VIEW'
-                ? $r('app.color.app_accent') : 'rgba(255,255,255,0.12)')
+                ? ThemePalette.accentColor(this.effectiveTheme) : 'rgba(255,255,255,0.12)')
               .fontColor(this.avatarShotControlMode === 'MANUAL_FACE_RESET_VIEW'
-                ? $r('app.color.app_on_accent') : $r('app.color.app_text_primary'))
+                ? $r('app.color.app_on_accent') : ThemePalette.textPrimaryColor(this.effectiveTheme))
               .fontSize($r('app.float.app_font_caption'))
               .height(28)
               .layoutWeight(1)
@@ -2229,13 +2231,13 @@ struct ChatPage {
           Row() {
             Text('缩放')
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .width(56)
             Slider({ value: this.avatarCameraZoomMultiplier, min: 0.5, max: 3.0, step: 0.1 })
               .layoutWeight(1)
-              .selectedColor($r('app.color.app_accent'))
+              .selectedColor(ThemePalette.accentColor(this.effectiveTheme))
               .trackColor('rgba(255,255,255,0.15)')
-              .blockColor($r('app.color.app_accent'))
+              .blockColor(ThemePalette.accentColor(this.effectiveTheme))
               .onChange((value: number, mode: SliderChangeMode) => {
                 this.avatarCameraZoomMultiplier = value;
                 if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
@@ -2244,7 +2246,7 @@ struct ChatPage {
               })
             Text(this.formatZoomMultiplier(this.avatarCameraZoomMultiplier))
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .width(40)
               .textAlign(TextAlign.RIGHT)
           }
@@ -2259,7 +2261,7 @@ struct ChatPage {
           if (this.aiCapabilitySnapshot === null) {
             Text('暂无可用能力 (需先在 VRM Viewer 导入模型/动作/姿势/表情)')
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_text_tertiary'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
               .width('100%')
               .textAlign(TextAlign.Center)
               .padding({ top: 16, bottom: 16 })
@@ -2270,7 +2272,7 @@ struct ChatPage {
                 Text('动作')
                   .fontSize($r('app.float.app_font_caption'))
                   .fontWeight(FontWeight.Medium)
-                  .fontColor($r('app.color.app_text_secondary'))
+                  .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
                   .width('100%')
                   .margin({ top: 8, bottom: 4 })
                 ForEach(this.aiCapabilitySnapshot!.animations,
@@ -2292,7 +2294,7 @@ struct ChatPage {
                 Text('姿势')
                   .fontSize($r('app.float.app_font_caption'))
                   .fontWeight(FontWeight.Medium)
-                  .fontColor($r('app.color.app_text_secondary'))
+                  .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
                   .width('100%')
                   .margin({ top: 8, bottom: 4 })
                 ForEach(this.aiCapabilitySnapshot!.poses,
@@ -2314,7 +2316,7 @@ struct ChatPage {
                 Text('表情')
                   .fontSize($r('app.float.app_font_caption'))
                   .fontWeight(FontWeight.Medium)
-                  .fontColor($r('app.color.app_text_secondary'))
+                  .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
                   .width('100%')
                   .margin({ top: 8, bottom: 4 })
                 ForEach(this.aiCapabilitySnapshot!.expressions,
@@ -2340,7 +2342,7 @@ struct ChatPage {
 
           Text('调试信息')
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
             .width('100%')
             .margin({ bottom: 4 })
 
@@ -2408,7 +2410,7 @@ struct ChatPage {
       .type(ButtonType.Normal)
       .borderRadius($r('app.float.app_radius_sm'))
       .backgroundColor('rgba(255,255,255,0.08)')
-      .fontColor($r('app.color.app_text_primary'))
+      .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
       .fontSize($r('app.float.app_font_caption'))
       .width('100%')
       .height(32)
@@ -2431,14 +2433,14 @@ struct ChatPage {
     Column() {
       Text(`Stage: ${this.avatarStageState} | Viewer: ${this.stageViewerStateText()} | 模型: ${this.stageModelText()}`)
         .fontSize(11)
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .width('100%')
         .maxLines(2)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
 
       Text(`Profile: ${this.stageProfileText()} | 尺寸: ${this.stageSizeText()}`)
         .fontSize(11)
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .width('100%')
         .margin({ top: 2 })
         .maxLines(1)
@@ -2447,7 +2449,7 @@ struct ChatPage {
       // Phase 4B-2: 镜头状态行
       Text(`镜头: ${this.shotStateText()}`)
         .fontSize(11)
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .width('100%')
         .margin({ top: 2 })
         .maxLines(1)
@@ -2481,14 +2483,14 @@ struct ChatPage {
     Column() {
       Text(`镜头模式: ${this.runtimeShotControlModeText()} | 镜头: ${this.runtimeShotText()}`)
         .fontSize(11)
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .width('100%')
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
 
       Text(`模型倍率: ${this.runtimeCameraZoomText()}`)
         .fontSize(11)
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .width('100%')
         .margin({ top: 2 })
         .maxLines(1)
@@ -2496,7 +2498,7 @@ struct ChatPage {
 
       Text(`动作: ${this.runtimeActionText()} | 状态: ${this.runtimeAnimationStateText()}`)
         .fontSize(11)
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .width('100%')
         .margin({ top: 2 })
         .maxLines(1)
@@ -2504,7 +2506,7 @@ struct ChatPage {
 
       Text(`动画加载: ${this.runtimeAnimationLoadText()}`)
         .fontSize(11)
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .width('100%')
         .margin({ top: 2 })
         .maxLines(1)
@@ -2512,7 +2514,7 @@ struct ChatPage {
 
       Text(`姿势: ${this.runtimePoseText()} | 状态: ${this.runtimePoseStateText()}`)
         .fontSize(11)
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .width('100%')
         .margin({ top: 2 })
         .maxLines(1)
@@ -2520,7 +2522,7 @@ struct ChatPage {
 
       Text(`表情: ${this.runtimeExpressionText()} | 状态: ${this.runtimeExpressionStateText()}`)
         .fontSize(11)
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .width('100%')
         .margin({ top: 2 })
         .maxLines(1)
@@ -2528,7 +2530,7 @@ struct ChatPage {
 
       Text(`Turn: ${this.runtimeLastTurnIdText()} | Lifecycle: ${this.runtimeLifecycleStateText()}`)
         .fontSize(11)
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .width('100%')
         .margin({ top: 2 })
         .maxLines(1)
@@ -2538,7 +2540,7 @@ struct ChatPage {
         .fontSize(11)
         .fontColor(this.aiPanelLastErrorCode.length > 0
           ? $r('app.color.app_danger')
-          : $r('app.color.app_text_secondary'))
+          : ThemePalette.textSecondaryColor(this.effectiveTheme))
         .width('100%')
         .margin({ top: 2 })
         .maxLines(2)
@@ -2565,7 +2567,7 @@ struct ChatPage {
       Text('AI 模型权限')
         .fontSize($r('app.float.app_font_caption'))
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .width('100%')
         .margin({ bottom: 4 })
 
@@ -2573,7 +2575,7 @@ struct ChatPage {
       if (this.providerInfoText.length > 0) {
         Text(this.providerInfoText)
           .fontSize(11)
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .width('100%')
           .margin({ top: 2 })
           .maxLines(2)
@@ -2585,7 +2587,7 @@ struct ChatPage {
         Text(`工具接线:${this.buildIntegrationStateText()}`)
           .fontSize(11)
           .fontColor(this.isIntegrationConnected()
-            ? $r('app.color.app_text_secondary')
+            ? ThemePalette.textSecondaryColor(this.effectiveTheme)
             : $r('app.color.app_danger'))
           .layoutWeight(1)
           .maxLines(1)
@@ -2603,7 +2605,7 @@ struct ChatPage {
       // Phase 4A-3R: Avatar 能力状态 (独立于 Provider 工具状态)
       Text(this.buildAvatarCapabilityText())
         .fontSize(11)
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .width('100%')
         .margin({ top: 2 })
         .maxLines(1)
@@ -2613,14 +2615,14 @@ struct ChatPage {
       Row() {
         Text(this.buildToolCountText())
           .fontSize(11)
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .layoutWeight(1)
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
 
         Text(this.buildStrategyInjectionText())
           .fontSize(11)
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .layoutWeight(1)
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -2655,9 +2657,9 @@ struct ChatPage {
           .type(ButtonType.Normal)
           .borderRadius($r('app.float.app_radius_sm'))
           .backgroundColor(this.avatarToolPermissionMode === 'DENY'
-            ? $r('app.color.app_accent') : 'rgba(255,255,255,0.08)')
+            ? ThemePalette.accentColor(this.effectiveTheme) : 'rgba(255,255,255,0.08)')
           .fontColor(this.avatarToolPermissionMode === 'DENY'
-            ? Color.White : $r('app.color.app_text_primary'))
+            ? Color.White : ThemePalette.textPrimaryColor(this.effectiveTheme))
           .fontSize(11)
           .height(28)
           .layoutWeight(1)
@@ -2671,9 +2673,9 @@ struct ChatPage {
           .type(ButtonType.Normal)
           .borderRadius($r('app.float.app_radius_sm'))
           .backgroundColor(this.avatarToolPermissionMode === 'READ_ONLY'
-            ? $r('app.color.app_accent') : 'rgba(255,255,255,0.08)')
+            ? ThemePalette.accentColor(this.effectiveTheme) : 'rgba(255,255,255,0.08)')
           .fontColor(this.avatarToolPermissionMode === 'READ_ONLY'
-            ? Color.White : $r('app.color.app_text_primary'))
+            ? Color.White : ThemePalette.textPrimaryColor(this.effectiveTheme))
           .fontSize(11)
           .height(28)
           .layoutWeight(1)
@@ -2687,9 +2689,9 @@ struct ChatPage {
           .type(ButtonType.Normal)
           .borderRadius($r('app.float.app_radius_sm'))
           .backgroundColor(this.avatarToolPermissionMode === 'CONTROL_THIS_CHAT'
-            ? $r('app.color.app_accent') : 'rgba(255,255,255,0.08)')
+            ? ThemePalette.accentColor(this.effectiveTheme) : 'rgba(255,255,255,0.08)')
           .fontColor(this.avatarToolPermissionMode === 'CONTROL_THIS_CHAT'
-            ? Color.White : $r('app.color.app_text_primary'))
+            ? Color.White : ThemePalette.textPrimaryColor(this.effectiveTheme))
           .fontSize(11)
           .height(28)
           .layoutWeight(1)
@@ -2707,10 +2709,10 @@ struct ChatPage {
       Row() {
         Text('循环播放动作')
           .fontSize(11)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .layoutWeight(1)
         Toggle({ type: ToggleType.Switch, isOn: this.avatarLoopAnimation })
-          .selectedColor($r('app.color.app_accent'))
+          .selectedColor(ThemePalette.accentColor(this.effectiveTheme))
           .onChange((isOn: boolean): void => {
             this.avatarLoopAnimation = isOn;
             this.viewModel!.setAvatarLoopAnimation(isOn);
@@ -2726,10 +2728,10 @@ struct ChatPage {
       Row() {
         Text('每次回复都调用动作')
           .fontSize(11)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .layoutWeight(1)
         Toggle({ type: ToggleType.Switch, isOn: this.avatarAlwaysPerform })
-          .selectedColor($r('app.color.app_accent'))
+          .selectedColor(ThemePalette.accentColor(this.effectiveTheme))
           .onChange((isOn: boolean): void => {
             this.avatarAlwaysPerform = isOn;
             this.viewModel!.setAvatarAlwaysPerform(isOn);
@@ -2758,7 +2760,7 @@ struct ChatPage {
       Text('AI 工具调试')
         .fontSize($r('app.float.app_font_caption'))
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .width('100%')
         .margin({ bottom: 4 })
 
@@ -2767,7 +2769,7 @@ struct ChatPage {
         .type(ButtonType.Normal)
         .borderRadius($r('app.float.app_radius_sm'))
         .backgroundColor('rgba(255,255,255,0.12)')
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .fontSize(11)
         .width('100%')
         .height(28)
@@ -2781,7 +2783,7 @@ struct ChatPage {
       if (this.probeResultText.length > 0) {
         Text(this.probeResultText)
           .fontSize(11)
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .width('100%')
           .margin({ top: 2 })
           .maxLines(3)
@@ -2796,7 +2798,7 @@ struct ChatPage {
           .type(ButtonType.Normal)
           .borderRadius($r('app.float.app_radius_sm'))
           .backgroundColor('rgba(255,255,255,0.08)')
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .fontSize(11)
           .width('100%')
           .height(28)
@@ -2811,7 +2813,7 @@ struct ChatPage {
         .type(ButtonType.Normal)
         .borderRadius($r('app.float.app_radius_sm'))
         .backgroundColor('rgba(255,255,255,0.12)')
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .fontSize(11)
         .width('100%')
         .height(28)
@@ -2827,7 +2829,7 @@ struct ChatPage {
       if (this.smokeTestResultText.length > 0) {
         Text(this.smokeTestResultText)
           .fontSize(11)
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .width('100%')
           .margin({ top: 2 })
           .maxLines(3)
@@ -2839,7 +2841,7 @@ struct ChatPage {
         .type(ButtonType.Normal)
         .borderRadius($r('app.float.app_radius_sm'))
         .backgroundColor('rgba(255,255,255,0.12)')
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .fontSize(11)
         .width('100%')
         .height(28)
@@ -2855,7 +2857,7 @@ struct ChatPage {
       if (this.runtimeSmokeTestResultText.length > 0) {
         Text(this.runtimeSmokeTestResultText)
           .fontSize(11)
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .width('100%')
           .margin({ top: 2 })
           .maxLines(4)
@@ -2868,7 +2870,7 @@ struct ChatPage {
         .type(ButtonType.Normal)
         .borderRadius($r('app.float.app_radius_sm'))
         .backgroundColor('rgba(255,255,255,0.12)')
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .fontSize(11)
         .width('100%')
         .height(28)
@@ -2885,7 +2887,7 @@ struct ChatPage {
       if (this.aiPerformSmokeTestResultText.length > 0) {
         Text(this.aiPerformSmokeTestResultText)
           .fontSize(11)
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .width('100%')
           .margin({ top: 2 })
           .maxLines(5)
@@ -2962,9 +2964,9 @@ struct ChatPage {
   private buildNativeToolCallingSupportColor(): ResourceColor {
     const support: string = this.getNativeToolCallingSupportState();
     if (support === 'SUPPORTED') {
-      return $r('app.color.app_text_secondary');
+      return ThemePalette.textSecondaryColor(this.effectiveTheme);
     } else if (support === 'UNKNOWN') {
-      return $r('app.color.app_text_secondary');
+      return ThemePalette.textSecondaryColor(this.effectiveTheme);
     }
     return $r('app.color.app_danger');
   }
@@ -3090,7 +3092,7 @@ struct ChatPage {
       Text('最后一次 AI 工具调用')
         .fontSize($r('app.float.app_font_caption'))
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .width('100%')
         .margin({ bottom: 4 })
 
@@ -3098,17 +3100,17 @@ struct ChatPage {
         // 情况 1: 本 Turn 未发生 Avatar 工具调用
         Text('未调用 Avatar 工具')
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .width('100%')
       } else {
         // 情况 2/3: AI 实际调用了工具
         Text(`来源：AI 原生工具`)
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .width('100%')
         Text(`工具：${this.lastAvatarToolCallSummary!.toolName}`)
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .width('100%')
 
         // avatar_perform 额外显示动作参数
@@ -3117,12 +3119,12 @@ struct ChatPage {
             (this.lastAvatarToolCallSummary!.motionId.length > 0
               ? ` · ${this.lastAvatarToolCallSummary!.motionId}` : ''))
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .width('100%')
           if (this.lastAvatarToolCallSummary!.expressionId.length > 0) {
             Text(`表情：${this.lastAvatarToolCallSummary!.expressionId}`)
               .fontSize($r('app.float.app_font_caption'))
-              .fontColor($r('app.color.app_text_primary'))
+              .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
               .width('100%')
           }
         }
@@ -3176,21 +3178,21 @@ struct ChatPage {
       Text('演出策略')
         .fontSize($r('app.float.app_font_caption'))
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .width('100%')
         .margin({ bottom: 4 })
 
       Row() {
         Text(`策略：${this.avatarStrategyStatus !== null ? this.avatarStrategyStatus!.strategyMode : 'BALANCED'}`)
           .fontSize(11)
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .layoutWeight(1)
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
 
         Text(`版本：${this.avatarStrategyStatus !== null ? this.avatarStrategyStatus!.strategyVersion.replace('AVATAR_DIALOGUE_STRATEGY_', '') : 'V1'}`)
           .fontSize(11)
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .layoutWeight(1)
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -3201,7 +3203,7 @@ struct ChatPage {
         .fontSize(11)
         .fontColor(this.avatarStrategyStatus !== null && this.avatarStrategyStatus!.lastError.length > 0
           ? $r('app.color.app_danger')
-          : $r('app.color.app_text_secondary'))
+          : ThemePalette.textSecondaryColor(this.effectiveTheme))
         .width('100%')
         .margin({ top: 2 })
         .maxLines(2)
@@ -3213,7 +3215,7 @@ struct ChatPage {
         && this.avatarStrategyStatus!.injected) {
         Text(this.avatarRhythmStatusText)
           .fontSize(11)
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .width('100%')
           .margin({ top: 4 })
           .padding({ top: 4, bottom: 4, left: 6, right: 6 })
@@ -3227,11 +3229,11 @@ struct ChatPage {
       Row() {
         Text(this.avatarStrategySummaryExpanded ? '收起摘要' : '查看策略摘要')
           .fontSize(11)
-          .fontColor($r('app.color.app_accent'))
+          .fontColor(ThemePalette.accentColor(this.effectiveTheme))
           .layoutWeight(1)
         Text(this.avatarStrategySummaryExpanded ? '▲' : '▼')
           .fontSize(11)
-          .fontColor($r('app.color.app_accent'))
+          .fontColor(ThemePalette.accentColor(this.effectiveTheme))
       }
       .width('100%')
       .margin({ top: 4 })
@@ -3243,29 +3245,29 @@ struct ChatPage {
         Column() {
           Text(`当前权限：${this.avatarStrategyStatus!.permissionMode}`)
             .fontSize(11)
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .width('100%')
             .margin({ top: 2 })
           Text(`Provider：${this.avatarStrategyStatus!.providerSupported ? '支持' : '不支持'}`)
             .fontSize(11)
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .width('100%')
             .margin({ top: 2 })
           Text(`能力数量：${this.avatarStrategyStatus!.capabilityCount}`)
             .fontSize(11)
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .width('100%')
             .margin({ top: 2 })
           Text(`每 Turn 演出上限：${this.avatarStrategyStatus!.maxPerformPerTurn}`)
             .fontSize(11)
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .width('100%')
             .margin({ top: 2 })
           // Phase 4C-2: 节奏策略版本
           if (this.avatarRhythmPolicyVersion.length > 0) {
             Text(`节奏策略：${this.avatarRhythmPolicyVersion}`)
               .fontSize(11)
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .width('100%')
               .margin({ top: 2 })
           }
@@ -3631,13 +3633,13 @@ struct ChatPage {
               Text('显示设置')
                 .fontSize($r('app.float.app_font_body'))
                 .fontWeight(FontWeight.Medium)
-                .fontColor($r('app.color.app_text_primary'))
+                .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
               Blank()
               // 关闭按钮
               Stack() {
                 SymbolGlyph($r('sys.symbol.xmark'))
                   .fontSize(14)
-                  .fontColor([$r('app.color.app_text_secondary')])
+                  .fontColor([ThemePalette.textSecondaryColor(this.effectiveTheme)])
               }
               .width(28)
               .height(28)
@@ -3654,12 +3656,12 @@ struct ChatPage {
             Row() {
               Text('气泡不透明度')
                 .fontSize($r('app.float.app_font_caption'))
-                .fontColor($r('app.color.app_text_secondary'))
+                .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               Blank()
               Text(`${Math.round(this.chatBubbleOpacity * 100)}%`)
                 .fontSize($r('app.float.app_font_caption'))
                 .fontWeight(FontWeight.Medium)
-                .fontColor($r('app.color.app_text_primary'))
+                .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             }
             .width('100%')
             .alignItems(VerticalAlign.Center)
@@ -3672,9 +3674,9 @@ struct ChatPage {
               step: 10,
               style: SliderStyle.OutSet
             })
-              .blockColor($r('app.color.app_accent'))
-              .trackColor($r('app.color.app_surface_2'))
-              .selectedColor($r('app.color.app_accent'))
+              .blockColor(ThemePalette.accentColor(this.effectiveTheme))
+              .trackColor(ThemePalette.surface2Color(this.effectiveTheme))
+              .selectedColor(ThemePalette.accentColor(this.effectiveTheme))
               .width('100%')
               .onChange((value: number, mode: SliderChangeMode) => {
                 const opacity: number = this.normalizeChatBubbleOpacity(value / 100);
@@ -3687,29 +3689,29 @@ struct ChatPage {
             Row() {
               Text('0%')
                 .fontSize(11)
-                .fontColor($r('app.color.app_text_secondary'))
+                .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               Blank()
               Text('100%')
                 .fontSize(11)
-                .fontColor($r('app.color.app_text_secondary'))
+                .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             }
             .width('100%')
             .margin({ top: 4 })
 
             Divider()
-              .color($r('app.color.app_divider'))
+              .color(ThemePalette.dividerColor(this.effectiveTheme))
               .margin({ top: 16, bottom: 12 })
 
             // ===== 聊天显示范围 (顶部压缩, 消息渐变淡出) =====
             Row() {
               Text('聊天显示范围')
                 .fontSize($r('app.float.app_font_caption'))
-                .fontColor($r('app.color.app_text_secondary'))
+                .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               Blank()
               Text(`${Math.round(this.chatContentHeightRatio * 100)}%`)
                 .fontSize($r('app.float.app_font_caption'))
                 .fontWeight(FontWeight.Medium)
-                .fontColor($r('app.color.app_text_primary'))
+                .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             }
             .width('100%')
             .alignItems(VerticalAlign.Center)
@@ -3722,9 +3724,9 @@ struct ChatPage {
               step: 5,
               style: SliderStyle.OutSet
             })
-              .blockColor($r('app.color.app_accent'))
-              .trackColor($r('app.color.app_surface_2'))
-              .selectedColor($r('app.color.app_accent'))
+              .blockColor(ThemePalette.accentColor(this.effectiveTheme))
+              .trackColor(ThemePalette.surface2Color(this.effectiveTheme))
+              .selectedColor(ThemePalette.accentColor(this.effectiveTheme))
               .width('100%')
               .onChange((value: number, mode: SliderChangeMode) => {
                 const ratio: number = value / 100;
@@ -3737,27 +3739,27 @@ struct ChatPage {
             Row() {
               Text('50%')
                 .fontSize(11)
-                .fontColor($r('app.color.app_text_secondary'))
+                .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               Blank()
               Text('100%')
                 .fontSize(11)
-                .fontColor($r('app.color.app_text_secondary'))
+                .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             }
             .width('100%')
             .margin({ top: 4 })
 
             Divider()
-              .color($r('app.color.app_divider'))
+              .color(ThemePalette.dividerColor(this.effectiveTheme))
               .margin({ top: 16, bottom: 12 })
 
             // ===== 模型位置与大小 (调整 + 持久化) =====
             Row() {
               Text('模型位置调整')
                 .fontSize($r('app.float.app_font_caption'))
-                .fontColor($r('app.color.app_text_secondary'))
+                .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
                 .layoutWeight(1)
               Toggle({ type: ToggleType.Switch, isOn: this.avatarPositionAdjustMode })
-                .selectedColor($r('app.color.app_accent'))
+                .selectedColor(ThemePalette.accentColor(this.effectiveTheme))
                 .onChange((isOn: boolean): void => {
                   this.avatarPositionAdjustMode = isOn;
                   // 关闭调整模式时持久化当前 offset
@@ -3773,7 +3775,7 @@ struct ChatPage {
             if (this.avatarPositionAdjustMode) {
               Text('调整模式已开启:拖动模型可调整位置,聊天界面不响应触控')
                 .fontSize(11)
-                .fontColor($r('app.color.app_accent'))
+                .fontColor(ThemePalette.accentColor(this.effectiveTheme))
                 .width('100%')
                 .margin({ bottom: 8 })
 
@@ -3781,8 +3783,8 @@ struct ChatPage {
               Button('重置模型位置')
                 .type(ButtonType.Normal)
                 .borderRadius($r('app.float.app_radius_sm'))
-                .backgroundColor($r('app.color.app_surface_2'))
-                .fontColor($r('app.color.app_text_primary'))
+                .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
+                .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
                 .fontSize($r('app.float.app_font_caption'))
                 .width('100%')
                 .height(30)
@@ -3798,12 +3800,12 @@ struct ChatPage {
             Row() {
               Text('模型大小')
                 .fontSize($r('app.float.app_font_caption'))
-                .fontColor($r('app.color.app_text_secondary'))
+                .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               Blank()
               Text(this.formatZoomMultiplier(this.avatarCameraZoomMultiplier))
                 .fontSize($r('app.float.app_font_caption'))
                 .fontWeight(FontWeight.Medium)
-                .fontColor($r('app.color.app_text_primary'))
+                .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             }
             .width('100%')
             .alignItems(VerticalAlign.Center)
@@ -3816,9 +3818,9 @@ struct ChatPage {
               step: 1,
               style: SliderStyle.OutSet
             })
-              .blockColor($r('app.color.app_accent'))
-              .trackColor($r('app.color.app_surface_2'))
-              .selectedColor($r('app.color.app_accent'))
+              .blockColor(ThemePalette.accentColor(this.effectiveTheme))
+              .trackColor(ThemePalette.surface2Color(this.effectiveTheme))
+              .selectedColor(ThemePalette.accentColor(this.effectiveTheme))
               .width('100%')
               .onChange((value: number, mode: SliderChangeMode) => {
                 const zoom: number = value / 10;
@@ -3831,24 +3833,24 @@ struct ChatPage {
             Row() {
               Text('0.5×')
                 .fontSize(11)
-                .fontColor($r('app.color.app_text_secondary'))
+                .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               Blank()
               Text('3.0×')
                 .fontSize(11)
-                .fontColor($r('app.color.app_text_secondary'))
+                .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             }
             .width('100%')
             .margin({ top: 4 })
 
             Divider()
-              .color($r('app.color.app_divider'))
+              .color(ThemePalette.dividerColor(this.effectiveTheme))
               .margin({ top: 16, bottom: 12 })
 
             // ===== 文字配色模式 =====
             Row() {
               Text('文字配色')
                 .fontSize($r('app.float.app_font_caption'))
-                .fontColor($r('app.color.app_text_secondary'))
+                .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               Blank()
             }
             .width('100%')
@@ -3867,10 +3869,10 @@ struct ChatPage {
                   .fontSize($r('app.float.app_font_caption'))
                   .fontColor(this.chatTextColorMode === mode
                     ? $r('app.color.app_on_accent')
-                    : $r('app.color.app_text_primary'))
+                    : ThemePalette.textPrimaryColor(this.effectiveTheme))
                   .backgroundColor(this.chatTextColorMode === mode
-                    ? $r('app.color.app_accent')
-                    : $r('app.color.app_surface_2'))
+                    ? ThemePalette.accentColor(this.effectiveTheme)
+                    : ThemePalette.surface2Color(this.effectiveTheme))
                   .borderRadius(14)
                   .height(28)
                   .padding({ left: 10, right: 10 })
@@ -3884,7 +3886,7 @@ struct ChatPage {
             // 对比度辅助提示
             Text('气泡较透明时建议使用浅色文字,气泡较不透明时可使用深色文字')
               .fontSize(10)
-              .fontColor($r('app.color.app_text_tertiary'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
               .width('100%')
               .margin({ top: 8 })
 
@@ -3894,13 +3896,13 @@ struct ChatPage {
                 .fontSize(11)
                 .fontColor(this.chatTextColorMode === ChatTextColorMode.LIGHT
                   ? $r('app.color.app_on_accent')
-                  : $r('app.color.app_accent'))
+                  : ThemePalette.accentColor(this.effectiveTheme))
                 .backgroundColor(this.chatTextColorMode === ChatTextColorMode.LIGHT
-                  ? $r('app.color.app_accent')
+                  ? ThemePalette.accentColor(this.effectiveTheme)
                   : Color.Transparent)
                 .border({
                   width: 1,
-                  color: $r('app.color.app_accent')
+                  color: ThemePalette.accentColor(this.effectiveTheme)
                 })
                 .borderRadius(12)
                 .height(24)
@@ -3912,13 +3914,13 @@ struct ChatPage {
                 .fontSize(11)
                 .fontColor(this.chatTextColorMode === ChatTextColorMode.DARK
                   ? $r('app.color.app_on_accent')
-                  : $r('app.color.app_accent'))
+                  : ThemePalette.accentColor(this.effectiveTheme))
                 .backgroundColor(this.chatTextColorMode === ChatTextColorMode.DARK
-                  ? $r('app.color.app_accent')
+                  ? ThemePalette.accentColor(this.effectiveTheme)
                   : Color.Transparent)
                 .border({
                   width: 1,
-                  color: $r('app.color.app_accent')
+                  color: ThemePalette.accentColor(this.effectiveTheme)
                 })
                 .borderRadius(12)
                 .height(24)
@@ -3933,13 +3935,13 @@ struct ChatPage {
             // ===== 自定义配色(仅在 CUSTOM 模式下显示)=====
             if (this.chatTextColorMode === ChatTextColorMode.CUSTOM) {
               Divider()
-                .color($r('app.color.app_divider'))
+                .color(ThemePalette.dividerColor(this.effectiveTheme))
                 .margin({ top: 12, bottom: 12 })
 
               Text('自定义配色')
                 .fontSize($r('app.float.app_font_caption'))
                 .fontWeight(FontWeight.Medium)
-                .fontColor($r('app.color.app_text_primary'))
+                .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
                 .width('100%')
                 .margin({ bottom: 8 })
 
@@ -3957,14 +3959,14 @@ struct ChatPage {
             }
 
             Divider()
-              .color($r('app.color.app_divider'))
+              .color(ThemePalette.dividerColor(this.effectiveTheme))
               .margin({ top: 12, bottom: 12 })
 
             // ===== 预览区域 =====
             Text('预览')
               .fontSize($r('app.float.app_font_caption'))
               .fontWeight(FontWeight.Medium)
-              .fontColor($r('app.color.app_text_primary'))
+              .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
               .width('100%')
               .margin({ bottom: 6 })
 
@@ -3974,7 +3976,7 @@ struct ChatPage {
             Row({ space: 8 }) {
               Button('恢复默认')
                 .fontSize($r('app.float.app_font_caption'))
-                .fontColor($r('app.color.app_accent'))
+                .fontColor(ThemePalette.accentColor(this.effectiveTheme))
                 .backgroundColor(Color.Transparent)
                 .borderRadius(8)
                 .height(32)
@@ -3985,7 +3987,7 @@ struct ChatPage {
                 })
               Button('全部恢复默认')
                 .fontSize($r('app.float.app_font_caption'))
-                .fontColor($r('app.color.app_text_secondary'))
+                .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
                 .backgroundColor(Color.Transparent)
                 .borderRadius(8)
                 .height(32)
@@ -4052,7 +4054,7 @@ struct ChatPage {
       Row() {
         Text(label)
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         Blank()
         // 当前颜色预览圆点(响应式:访问 @State)
         Stack()
@@ -4060,7 +4062,7 @@ struct ChatPage {
           .height(16)
           .borderRadius(8)
           .backgroundColor(this.getCustomColorByTarget(target))
-          .border({ width: 1, color: $r('app.color.app_divider') })
+          .border({ width: 1, color: ThemePalette.dividerColor(this.effectiveTheme) })
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
@@ -4086,8 +4088,8 @@ struct ChatPage {
           .border({
             width: this.getCustomColorByTarget(target).toUpperCase() === swatch.toUpperCase() ? 2 : 1,
             color: this.getCustomColorByTarget(target).toUpperCase() === swatch.toUpperCase()
-              ? $r('app.color.app_accent')
-              : $r('app.color.app_divider')
+              ? ThemePalette.accentColor(this.effectiveTheme)
+              : ThemePalette.dividerColor(this.effectiveTheme)
           })
           .margin({ right: 8, bottom: 6 })
           .onClick(() => {
@@ -4101,8 +4103,8 @@ struct ChatPage {
       Row() {
         TextInput({ text: this.getCustomColorByTarget(target), placeholder: '#RRGGBB' })
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_primary'))
-          .backgroundColor($r('app.color.app_surface_2'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+          .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
           .borderRadius(8)
           .height(32)
           .layoutWeight(1)
@@ -4348,10 +4350,10 @@ struct ChatPage {
                     Row() {
                       SymbolGlyph($r('sys.symbol.arrow_clockwise'))
                         .fontSize(14)
-                        .fontColor([$r('app.color.app_accent')])
+                        .fontColor([ThemePalette.accentColor(this.effectiveTheme)])
                       Text($r('app.string.chat_regenerate'))
                         .fontSize($r('app.float.app_font_caption'))
-                        .fontColor($r('app.color.app_accent'))
+                        .fontColor(ThemePalette.accentColor(this.effectiveTheme))
                         .margin({ left: 4 })
                     }
                   }
@@ -4456,12 +4458,12 @@ struct ChatPage {
       if (this.viewModel !== null && !this.viewModel!.hasCurrentModel) {
         Text($r('app.string.chat_no_model'))
           .fontSize($r('app.float.app_font_subtitle'))
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .margin({ bottom: $r('app.float.app_spacing_16') })
 
         Button($r('app.string.chat_go_settings'))
           .fontSize($r('app.float.app_font_body'))
-          .backgroundColor($r('app.color.app_accent'))
+          .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
           .fontColor($r('app.color.app_on_accent'))
           .borderRadius($r('app.float.app_radius_md'))
           .height(40)
@@ -4483,13 +4485,13 @@ struct ChatPage {
         Text(this.character!.name)
           .fontSize($r('app.float.app_font_subtitle'))
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .margin({ top: $r('app.float.app_spacing_12') })
 
         if (this.character!.firstMessage.length > 0) {
           Text(this.character!.firstMessage)
             .fontSize($r('app.float.app_font_body'))
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .textAlign(TextAlign.Center)
             .margin({ top: $r('app.float.app_spacing_12'), left: 32, right: 32 })
             .padding({
@@ -4498,18 +4500,18 @@ struct ChatPage {
               top: $r('app.float.app_spacing_12'),
               bottom: $r('app.float.app_spacing_12')
             })
-            .backgroundColor($r('app.color.app_surface_1'))
+            .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_md'))
         }
 
         Text($r('app.string.nav_chat_empty'))
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor($r('app.color.app_text_tertiary'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
           .margin({ top: $r('app.float.app_spacing_24') })
       } else {
         Text($r('app.string.nav_chat_empty'))
           .fontSize($r('app.float.app_font_subtitle'))
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
       }
     }
     .width('100%')
@@ -4527,10 +4529,10 @@ struct ChatPage {
       LoadingProgress()
         .width(40)
         .height(40)
-        .color($r('app.color.app_accent'))
+        .color(ThemePalette.accentColor(this.effectiveTheme))
       Text('加载会话中…')
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_tertiary'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         .margin({ top: 8 })
     }
     .width('100%')
@@ -4548,7 +4550,7 @@ struct ChatPage {
         .margin({ bottom: 8 })
       Text(this.viewModel !== null ? this.viewModel!.initError : '')
         .fontSize($r('app.float.app_font_caption'))
-        .fontColor($r('app.color.app_text_secondary'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
         .textAlign(TextAlign.Center)
         .padding({ left: 24, right: 24 })
     }
@@ -4584,7 +4586,7 @@ struct ChatPage {
       .padding({ left: 12, right: 12, top: 4, bottom: 4 })
       .margin({ bottom: 6 })
       .borderRadius(12)
-      .backgroundColor($r('app.color.app_surface_1'))
+      .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
       .onClick(() => {
         this.navigateToContextBudget();
       })
@@ -4602,7 +4604,7 @@ struct ChatPage {
         text: this.viewModel !== null ? this.viewModel!.inputText : ''
       })
         .fontSize($r('app.float.app_font_body'))
-        .fontColor($r('app.color.app_text_primary'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         // 背景透明:由外层 Row 的 backgroundBlurStyle 统一提供视觉容器
         .backgroundColor(Color.Transparent)
         .borderRadius($r('app.float.app_radius_md'))
@@ -4677,11 +4679,11 @@ struct ChatPage {
             .fontColor([
               this.canSend()
                 ? $r('app.color.app_on_accent')
-                : $r('app.color.app_text_tertiary')
+                : ThemePalette.textTertiaryColor(this.effectiveTheme)
             ])
         }
         .backgroundColor(this.canSend()
-          ? $r('app.color.app_accent')
+          ? ThemePalette.accentColor(this.effectiveTheme)
           : Color.Transparent)
         .borderRadius(24)
         .height(48)
@@ -4702,7 +4704,7 @@ struct ChatPage {
     .alignItems(VerticalAlign.Center)
     // 胶囊造型:大圆角,轻量边框增强层次(边框色用 surface_2 自动适配深浅色)
     .borderRadius(28)
-    .border({ width: 0.5, color: $r('app.color.app_surface_2') })
+    .border({ width: 0.5, color: ThemePalette.surface2Color(this.effectiveTheme) })
     // 鸿蒙原生材质模糊:Regular 厚度,自动适配深浅色模式,隐约透出后方页面背景
     .backgroundBlurStyle(BlurStyle.Regular, {
       policy: BlurStyleActivePolicy.ALWAYS_ACTIVE
@@ -4720,12 +4722,12 @@ struct ChatPage {
           Text($r('app.string.chat_clear'))
             .fontSize(17)
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .margin({ bottom: 8 })
 
           Text('将删除当前会话的所有消息,此操作不可撤销。')
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .textAlign(TextAlign.Center)
             .margin({ bottom: 16 })
 
@@ -4733,7 +4735,7 @@ struct ChatPage {
             Button('取消')
               .fontSize(15)
               .backgroundColor(Color.Transparent)
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .height(40)
               .layoutWeight(1)
               .onClick(() => {
@@ -4758,7 +4760,7 @@ struct ChatPage {
         }
         .width('80%')
         .padding(20)
-        .backgroundColor($r('app.color.app_surface_1'))
+        .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_lg'))
       }
       .width('100%')
@@ -4833,12 +4835,12 @@ struct ChatPage {
           Text($r('app.string.chat_user_name_override_menu_title'))
             .fontSize(17)
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .margin({ bottom: 8 })
 
           Text($r('app.string.chat_user_name_override_hint'))
             .fontSize($r('app.float.app_font_caption'))
-            .fontColor($r('app.color.app_text_secondary'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
             .textAlign(TextAlign.Center)
             .margin({ bottom: 16 })
 
@@ -4847,8 +4849,8 @@ struct ChatPage {
             text: this.userNameOverrideDraft
           })
             .fontSize($r('app.float.app_font_body'))
-            .fontColor($r('app.color.app_text_primary'))
-            .backgroundColor($r('app.color.app_surface_2'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_md'))
             .height(48)
             .padding({ left: 16, right: 16 })
@@ -4861,7 +4863,7 @@ struct ChatPage {
             Button('取消')
               .fontSize(15)
               .backgroundColor(Color.Transparent)
-              .fontColor($r('app.color.app_text_secondary'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .height(40)
               .layoutWeight(1)
               .onClick(() => {
@@ -4869,7 +4871,7 @@ struct ChatPage {
               })
             Button($r('app.string.character_edit_save'))
               .fontSize(15)
-              .backgroundColor($r('app.color.app_accent'))
+              .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
               .fontColor($r('app.color.app_on_accent'))
               .borderRadius($r('app.float.app_radius_sm'))
               .height(40)
@@ -4884,7 +4886,7 @@ struct ChatPage {
         }
         .width('80%')
         .padding(20)
-        .backgroundColor($r('app.color.app_surface_1'))
+        .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
         .borderRadius($r('app.float.app_radius_lg'))
       }
       .width('100%')
@@ -4990,16 +4992,16 @@ struct ChatPage {
    */
   private getBudgetIndicatorColor(): ResourceColor {
     if (this.budgetViewModel === null || this.budgetStats === null) {
-      return $r('app.color.app_text_tertiary');
+      return ThemePalette.textTertiaryColor(this.effectiveTheme);
     }
     const ratio: number = this.getBudgetUsageRatio();
     if (ratio >= 0.9) {
       return $r('app.color.app_danger');
     }
     if (ratio >= 0.7) {
-      return $r('app.color.app_accent');
+      return ThemePalette.accentColor(this.effectiveTheme);
     }
-    return $r('app.color.app_text_tertiary');
+    return ThemePalette.textTertiaryColor(this.effectiveTheme);
   }
 
   /**
@@ -5397,26 +5399,26 @@ struct ChatPage {
         Text('从此处创建独立对话')
           .fontSize(18)
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.app_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .margin({ top: 20, bottom: 8 })
 
         Text('选择新会话的初始内容范围,新会话与原会话后续完全独立。')
           .fontSize(13)
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .lineHeight(20)
           .margin({ left: 16, right: 16, bottom: 12 })
 
-        Divider().color($r('app.color.app_divider'))
+        Divider().color(ThemePalette.dividerColor(this.effectiveTheme))
 
         // 携带完整历史
         Column() {
           Text('携带完整历史')
             .fontSize(15)
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .margin({ top: 12, bottom: 4 })
           Text('复制从根到当前消息的全部历史与记忆')
             .fontSize(12)
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         }
         .width('100%')
         .alignItems(HorizontalAlign.Center)
@@ -5426,17 +5428,17 @@ struct ChatPage {
           void this.executeForkChat(this.forkTargetMessageId, true);
         })
 
-        Divider().color($r('app.color.app_divider'))
+        Divider().color(ThemePalette.dividerColor(this.effectiveTheme))
 
         // 只携带记忆
         Column() {
           Text('只携带记忆')
             .fontSize(15)
-            .fontColor($r('app.color.app_text_primary'))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
             .margin({ top: 12, bottom: 4 })
           Text('不复制旧消息,仅继承记忆摘要 + 最近 2 条消息')
             .fontSize(12)
-            .fontColor($r('app.color.app_text_tertiary'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
         }
         .width('100%')
         .alignItems(HorizontalAlign.Center)
@@ -5446,12 +5448,12 @@ struct ChatPage {
           void this.executeForkChat(this.forkTargetMessageId, false);
         })
 
-        Divider().color($r('app.color.app_divider'))
+        Divider().color(ThemePalette.dividerColor(this.effectiveTheme))
 
         // 取消
         Text('取消')
           .fontSize(15)
-          .fontColor($r('app.color.app_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .width('100%')
           .textAlign(TextAlign.Center)
           .padding({ top: 14, bottom: 14 })
@@ -5460,7 +5462,7 @@ struct ChatPage {
           })
       }
       .width('80%')
-      .backgroundColor($r('app.color.app_surface_1'))
+      .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
       .borderRadius(12)
     }
     .width('100%')

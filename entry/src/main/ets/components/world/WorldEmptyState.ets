@@ -5,11 +5,13 @@
  * 纯 UI 组件,不依赖 Repository / Service / AppServices / 数据库。
  */
 
+import { ThemePalette } from '../../theme/ThemePalette';
 import { WorldPrimaryButton } from './WorldPrimaryButton';
 import { WorldSecondaryButton } from './WorldSecondaryButton';
 
 @Component
 export struct WorldEmptyState {
+  @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
   title: ResourceStr = '';
   description: ResourceStr = '';
   primaryLabel: ResourceStr = '';
@@ -22,22 +24,22 @@ export struct WorldEmptyState {
       Column() {
         Text('◯')
           .fontSize(48)
-          .fontColor($r('app.color.world_border'))
+          .fontColor(ThemePalette.worldBorderColor(this.effectiveTheme))
       }
       .width(80)
       .height(80)
       .justifyContent(FlexAlign.Center)
       .alignItems(HorizontalAlign.Center)
       .borderRadius(40)
-      .backgroundColor($r('app.color.world_surface_1'))
+      .backgroundColor(ThemePalette.worldSurfaceColor(this.effectiveTheme))
       .borderWidth(1)
-      .borderColor($r('app.color.world_border'))
+      .borderColor(ThemePalette.worldBorderColor(this.effectiveTheme))
 
       if (this.hasValue(this.title)) {
         Text(this.title)
           .fontSize($r('app.float.world_font_title'))
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.world_text_primary'))
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .margin({ top: 16 })
           .textAlign(TextAlign.Center)
       }
@@ -45,7 +47,7 @@ export struct WorldEmptyState {
       if (this.hasValue(this.description)) {
         Text(this.description)
           .fontSize($r('app.float.world_font_body'))
-          .fontColor($r('app.color.world_text_secondary'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .margin({ top: 8 })
           .textAlign(TextAlign.Center)
           .maxLines(3)
