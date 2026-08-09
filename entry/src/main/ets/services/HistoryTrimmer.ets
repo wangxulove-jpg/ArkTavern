@@ -125,14 +125,14 @@ export class HistoryTrimmer {
         continue;
       }
       if (m.source === ChatMessageSource.CrossSessionContext) {
-        trimPriority[i] = TRIM_PRIORITY_MEDIUM;
+        trimPriority[i] = TRIM_PRIORITY_LOW;
         continue;
       }
       if (m.source !== undefined && m.source !== ChatMessageSource.Conversation) {
         trimPriority[i] = TRIM_PRIORITY_PROTECTED;
         continue;
       }
-      trimPriority[i] = TRIM_PRIORITY_LOW;
+      trimPriority[i] = TRIM_PRIORITY_MEDIUM;
     }
 
     const lowUnits: TrimUnit[] = [];

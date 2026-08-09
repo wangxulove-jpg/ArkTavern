@@ -22,6 +22,8 @@ import characterPlacementContractTest from './CharacterPlacementContract.test';
 import sceneLaunchContractTest from './SceneLaunchContract.test';
 import worldRuntimeContractTest from './WorldRuntimeContract.test';
 import worldUiRuntimeContractTest from './WorldUiRuntimeContract.test';
+import historyTrimmerPriorityContractTest from './HistoryTrimmerPriorityContract.test';
+import recoveryScopeContractTest from './RecoveryScopeContract.test';
 
 export default function testsuite() {
   groupRuntimeDeviceTest();
@@ -48,4 +50,6 @@ export default function testsuite() {
   sceneLaunchContractTest();
   worldRuntimeContractTest();
   worldUiRuntimeContractTest();
+  historyTrimmerPriorityContractTest();
+  recoveryScopeContractTest();
 }

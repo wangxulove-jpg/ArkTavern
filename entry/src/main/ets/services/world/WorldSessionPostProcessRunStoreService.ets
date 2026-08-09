@@ -536,6 +536,38 @@ export class WorldSessionPostProcessRunStoreService {
     return recovered;
   }
 
+  async recoverInterruptedRun(runId: string): Promise<boolean> {
+    const store: relationalStore.RdbStore = this.dbHelper.getStore();
+    const run: WorldSessionPostProcessRun | null =
+      await this.runRepo.getByIdWithStore(store, runId);
+    if (run === null || run.status !== WorldSessionPostProcessRunStatus.Running) {
+      return false;
+    }
+    try {
+      const state: WorldSessionPostProcessState = parsePostProcessState(run.stateJson);
+      const recoveredState: WorldSessionPostProcessState = resetRunningToPending(state);
+      const recoveredStateJson: string = serializePostProcessState(recoveredState);
+      const now: number = nowMillis();
+      const updated: WorldSessionPostProcessRun = {
+        id: run.id,
+        worldId: run.worldId,
+        sceneId: run.sceneId,
+        sessionId: run.sessionId,
+        pipelineVersion: run.pipelineVersion,
+        status: WorldSessionPostProcessRunStatus.Pending,
+        stateJson: recoveredStateJson,
+        attemptCount: run.attemptCount,
+        revision: run.revision + 1,
+        createdAt: run.createdAt,
+        updatedAt: now,
+        completedAt: undefined
+      };
+      return await this.runRepo.updateWithRevisionWithStore(store, updated, run.revision);
+    } catch (_err) {
+      return false;
+    }
+  }
+
   async finalizeRun(runId: string): Promise<WorldSessionPostProcessRun> {
     let result: WorldSessionPostProcessRun | null = null;
     await this.dbHelper.runInTransaction(

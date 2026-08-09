@@ -104,32 +104,31 @@ export class WorldSessionPostProcessingOrchestrator {
 
   async resumeIncompleteForWorld(worldId: string): Promise<void> {
     try {
-      const recovered: number = await this.runStoreService.recoverInterruptedRuns();
-      if (recovered > 0) {
-        Logger.info(LOG_TAG, 'resumeIncomplete: recovered ' + recovered.toString() + ' interrupted runs');
-      }
-      const incompleteRuns: WorldSessionPostProcessRun[] =
-        await this.runStoreService.listIncompleteByWorld(worldId);
-      for (let i = 0; i < incompleteRuns.length; i++) {
-        const run: WorldSessionPostProcessRun = incompleteRuns[i];
-        if (run.status === WorldSessionPostProcessRunStatus.Completed
-            || run.status === WorldSessionPostProcessRunStatus.CompletedWithErrors) {
-          continue;
-        }
+      const runningRuns: WorldSessionPostProcessRun[] =
+        await this.runStoreService.listRunningByWorld(worldId);
+      for (let i = 0; i < runningRuns.length; i++) {
+        const run: WorldSessionPostProcessRun = runningRuns[i];
         const activeKey: string = run.worldId + ':' + run.sessionId;
         if (this.activeSessions.has(activeKey)) {
-          Logger.info(LOG_TAG, 'resumeIncomplete: skip active key=' + activeKey.substring(0, 16));
+          Logger.info(LOG_TAG, 'resumeIncomplete: skip active Running runId=' + run.id.substring(0, 16));
           continue;
         }
-        if (run.status === WorldSessionPostProcessRunStatus.Running) {
-          Logger.info(LOG_TAG, 'resumeIncomplete: interrupted runId=' + run.id.substring(0, 16));
-          this.startEndedSessionProcessing(run.worldId, run.sceneId, run.sessionId);
+        const ok: boolean = await this.runStoreService.recoverInterruptedRun(run.id);
+        if (ok) {
+          Logger.info(LOG_TAG, 'resumeIncomplete: recovered interrupted runId=' + run.id.substring(0, 16));
+        }
+      }
+      const pendingRuns: WorldSessionPostProcessRun[] =
+        await this.runStoreService.listIncompleteByWorld(worldId);
+      for (let i = 0; i < pendingRuns.length; i++) {
+        const run: WorldSessionPostProcessRun = pendingRuns[i];
+        const activeKey: string = run.worldId + ':' + run.sessionId;
+        if (this.activeSessions.has(activeKey)) {
+          Logger.info(LOG_TAG, 'resumeIncomplete: skip active Pending runId=' + run.id.substring(0, 16));
           continue;
         }
-        if (run.status === WorldSessionPostProcessRunStatus.Pending) {
-          Logger.info(LOG_TAG, 'resumeIncomplete: pending runId=' + run.id.substring(0, 16));
-          this.startEndedSessionProcessing(run.worldId, run.sceneId, run.sessionId);
-        }
+        Logger.info(LOG_TAG, 'resumeIncomplete: resume runId=' + run.id.substring(0, 16));
+        this.startEndedSessionProcessing(run.worldId, run.sceneId, run.sessionId);
       }
     } catch (err) {
       this.logSafeError('resumeIncompleteForWorld', worldId, '', err);
