@@ -121,6 +121,11 @@ export class WorldSessionPostProcessRunStoreService {
     return this.runRepo.listRunningByWorldWithStore(store, worldId);
   }
 
+  async listRecentByWorld(worldId: string, limit: number): Promise<WorldSessionPostProcessRun[]> {
+    const store: relationalStore.RdbStore = this.dbHelper.getStore();
+    return this.runRepo.listRecentByWorldWithStore(store, worldId, limit);
+  }
+
   async beginAttempt(runId: string): Promise<WorldSessionPostProcessRun> {
     let result: WorldSessionPostProcessRun | null = null;
     await this.dbHelper.runInTransaction(

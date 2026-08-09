@@ -3651,6 +3651,22 @@
     {
       "name": "world_risk_critical",
       "value": "严重"
+    },
+    {
+      "name": "world_inspector_entry",
+      "value": "世界检查器"
+    },
+    {
+      "name": "world_inspector_pipeline",
+      "value": "管线"
+    },
+    {
+      "name": "world_inspector_context",
+      "value": "上下文"
+    },
+    {
+      "name": "world_inspector_dossier",
+      "value": "档案"
     }
   ]
 }

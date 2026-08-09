@@ -255,6 +255,33 @@ export class WorldSessionPostProcessRunRepository {
     return results;
   }
 
+  async listRecentByWorldWithStore(
+    store: relationalStore.RdbStore,
+    worldId: string,
+    limit: number
+  ): Promise<WorldSessionPostProcessRun[]> {
+    if (worldId === '') {
+      throw DatabaseError.invalidData('WorldSessionPostProcessRun.listRecentByWorldWithStore: worldId empty');
+    }
+    const predicates: relationalStore.RdbPredicates =
+      new relationalStore.RdbPredicates(TABLE_WORLD_SESSION_POST_PROCESS_RUNS);
+    predicates.equalTo(COLUMN_WORLD_ID, worldId);
+    predicates.orderByDesc(COLUMN_CREATED_AT);
+    if (limit > 0) {
+      predicates.limitAs(limit);
+    }
+    const rs: relationalStore.ResultSet = await store.query(predicates);
+    const results: WorldSessionPostProcessRun[] = [];
+    try {
+      while (rs.goToNextRow()) {
+        results.push(runFromRow(rs));
+      }
+    } finally {
+      rs.close();
+    }
+    return results;
+  }
+
   async listRunningByWorldWithStore(
     store: relationalStore.RdbStore,
     worldId: string

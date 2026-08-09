@@ -15,6 +15,9 @@ import {
   PENDING_WORLD_SESSION_ID_KEY,
   PENDING_WORLD_MEMORY_WORLD_ID_KEY,
   PENDING_WORLD_MEMORY_CHARACTER_INSTANCE_ID_KEY,
+  PENDING_WORLD_INSPECTOR_WORLD_ID_KEY,
+  PENDING_WORLD_INSPECTOR_SCENE_ID_KEY,
+  PENDING_WORLD_INSPECTOR_SESSION_ID_KEY,
   WORLD_SCENE_CHAT_REFRESH_TOKEN_KEY
 } from '../../viewmodels/world/WorldUiModels';
 import { WorldSceneStatus } from '../../models/world/WorldScene';
@@ -873,6 +876,15 @@ struct WorldSceneChatPage {
           .width('100%')
           .margin({ left: 16, right: 16, bottom: 8 })
 
+        WorldPrimaryButton({
+          label: '上下文检查',
+          onButtonClick: (): void => {
+            this.openContextInspector();
+          }
+        })
+          .width('100%')
+          .margin({ left: 16, right: 16, bottom: 8 })
+
         Text($r('app.string.world_scene_cancel'))
           .fontSize($r('app.float.world_font_body'))
           .fontColor($r('app.color.world_text_tertiary'))
@@ -1108,5 +1120,22 @@ struct WorldSceneChatPage {
     AppStorage.setOrCreate<string>(PENDING_WORLD_MEMORY_WORLD_ID_KEY, worldId);
     AppStorage.setOrCreate<string>(PENDING_WORLD_MEMORY_CHARACTER_INSTANCE_ID_KEY, instanceId);
     router.pushUrl({ url: 'pages/world/WorldCharacterMemoryPage' });
+  }
+
+  private openContextInspector(): void {
+    if (this.detail === null || this.viewModel === null) {
+      return;
+    }
+    const worldId: string = this.detail.worldId;
+    if (worldId.length === 0) {
+      return;
+    }
+    const sceneId: string = this.viewModel.expectedSceneIdOfPage();
+    const sessionId: string = this.viewModel.expectedSessionIdOfPage();
+    this.characterSheetInstanceId = '';
+    AppStorage.setOrCreate<string>(PENDING_WORLD_INSPECTOR_WORLD_ID_KEY, worldId);
+    AppStorage.setOrCreate<string>(PENDING_WORLD_INSPECTOR_SCENE_ID_KEY, sceneId);
+    AppStorage.setOrCreate<string>(PENDING_WORLD_INSPECTOR_SESSION_ID_KEY, sessionId);
+    router.pushUrl({ url: 'pages/world/WorldInspectorPage' });
   }
 }

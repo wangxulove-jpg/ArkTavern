@@ -32,6 +32,7 @@ import {
   PENDING_WORLD_SESSION_ID_KEY,
   PENDING_WORLD_INSTANCE_DETAIL_ID_KEY,
   PENDING_WORLD_CURATOR_WORLD_ID_KEY,
+  PENDING_WORLD_INSPECTOR_WORLD_ID_KEY,
   WORLD_DETAIL_REFRESH_TOKEN_KEY,
   WORLD_SCENE_CHAT_REFRESH_TOKEN_KEY,
   formatWorldTimestamp
@@ -356,6 +357,10 @@ struct WorldDetailPage {
         this.moreMenuItem($r('app.string.world_curator_entry'), false, (): void => {
           this.moreMenuVisible = false;
           this.openCurator();
+        })
+        this.moreMenuItem($r('app.string.world_inspector_entry'), false, (): void => {
+          this.moreMenuVisible = false;
+          this.openInspector();
         })
 
         Divider().color($r('app.color.world_border')).margin({ top: 4, bottom: 4 })
@@ -1354,6 +1359,14 @@ struct WorldDetailPage {
     }
     AppStorage.setOrCreate<string>(PENDING_WORLD_CURATOR_WORLD_ID_KEY, this.currentWorldId);
     router.pushUrl({ url: 'pages/world/WorldCuratorPage' });
+  }
+
+  private openInspector(): void {
+    if (this.currentWorldId.length === 0) {
+      return;
+    }
+    AppStorage.setOrCreate<string>(PENDING_WORLD_INSPECTOR_WORLD_ID_KEY, this.currentWorldId);
+    router.pushUrl({ url: 'pages/world/WorldInspectorPage' });
   }
 
   private openInstanceDetail(instanceId: string): void {

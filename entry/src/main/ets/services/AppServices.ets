@@ -120,6 +120,7 @@ import { WorldKnownEventStoreService } from './world/WorldKnownEventStoreService
 import { WorldDirectionalRelationshipStoreService } from './world/WorldDirectionalRelationshipStoreService';
 import { WorldSessionPostProcessRunStoreService } from './world/WorldSessionPostProcessRunStoreService';
 import { WorldSessionPostProcessingOrchestrator } from './world/WorldSessionPostProcessingOrchestrator';
+import { WorldInspectorService } from './world/WorldInspectorService';
 import { WorldDirectionalRelationshipPromptAssembler } from './world/WorldDirectionalRelationshipPromptAssembler';
 import { WorldDirectionalRelationshipGenerationService } from './world/WorldDirectionalRelationshipGenerationService';
 import { WorldEventExtractionPromptAssembler } from './world/WorldEventExtractionPromptAssembler';
@@ -355,6 +356,8 @@ export class AppServices {
   private readonly worldSessionPostProcessRunStoreService: WorldSessionPostProcessRunStoreService;
   /** WorldSessionPostProcessingOrchestrator 世界会话后处理编排器(W7B) */
   private readonly worldSessionPostProcessingOrchestrator: WorldSessionPostProcessingOrchestrator;
+  /** WorldInspectorService 世界检查器只读聚合服务(W7C) */
+  private readonly worldInspectorService: WorldInspectorService;
 
   /**
    * 私有构造,组装全部依赖。
@@ -715,6 +718,20 @@ export class AppServices {
       this.worldKnownEventStoreService,
       this.worldDirectionalRelationshipGenerationService,
       this.worldEventStoreService
+    );
+    // W7C: 世界检查器只读聚合服务(读取 Run/Context/Memory/KnownEvent/Relationship/Event)。
+    // 不写入数据库,不调用 Generator,不调用 ModelService。
+    this.worldInspectorService = new WorldInspectorService(
+      this.worldSessionPostProcessRunStoreService,
+      this.worldCrossSessionContextService,
+      this.worldCharacterMemoryStoreService,
+      this.worldKnownEventStoreService,
+      this.worldDirectionalRelationshipStoreService,
+      this.worldEventStoreService,
+      this.worldConversationSessionService,
+      this.worldConversationSessionRepository,
+      this.worldSceneRepository,
+      this.worldCharacterInstanceRepository
     );
     // v8.3 Phase 2: 最近原始消息窗口选择器(去重 + 窗口 + 完整轮次)
     this.recentMessageSelector = new RecentMessageSelector(this.tokenCounter);
@@ -1593,5 +1610,21 @@ export class AppServices {
 
   static getWorldSessionPostProcessingOrchestrator(): WorldSessionPostProcessingOrchestrator {
     return AppServices.getInstance().worldSessionPostProcessingOrchestrator;
+  }
+
+  static getWorldKnownEventStoreService(): WorldKnownEventStoreService {
+    return AppServices.getInstance().worldKnownEventStoreService;
+  }
+
+  static getWorldDirectionalRelationshipStoreService(): WorldDirectionalRelationshipStoreService {
+    return AppServices.getInstance().worldDirectionalRelationshipStoreService;
+  }
+
+  static getWorldSessionPostProcessRunStoreService(): WorldSessionPostProcessRunStoreService {
+    return AppServices.getInstance().worldSessionPostProcessRunStoreService;
+  }
+
+  static getWorldInspectorService(): WorldInspectorService {
+    return AppServices.getInstance().worldInspectorService;
   }
 }

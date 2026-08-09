@@ -41,6 +41,7 @@
     "pages/world/WorldCharacterAnalysisPreviewPage",
     "pages/world/WorldCharacterInstanceDetailPage",
     "pages/world/WorldMemoryEvidencePage",
-    "pages/world/WorldCuratorPage"
+    "pages/world/WorldCuratorPage",
+    "pages/world/WorldInspectorPage"
   ]
 }
