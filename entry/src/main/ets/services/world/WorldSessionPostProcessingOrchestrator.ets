@@ -4,7 +4,6 @@ import { WorldCharacterMemoryGenerationService, WorldCharacterMemoryGenerationOp
 import { WorldEventExtractionGenerationService, WorldEventExtractionGenerationOptions, WorldEventExtractionGenerationStatus, WorldEventExtractionGenerationError, WorldEventExtractionGenerationErrorKind } from './WorldEventExtractionGenerationService';
 import { WorldKnownEventStoreService } from './WorldKnownEventStoreService';
 import { WorldDirectionalRelationshipGenerationService, WorldDirectionalRelationshipPairGenerationOptions, WorldDirectionalRelationshipPairGenerationStatus, MAX_RELATIONSHIP_PAIR_GENERATIONS_PER_BATCH } from './WorldDirectionalRelationshipGenerationService';
-import { WorldConversationSessionService } from './WorldConversationSessionService';
 import { WorldEventStoreService } from './WorldEventStoreService';
 import {
   WorldSessionPostProcessRun,
@@ -26,7 +25,6 @@ const RELATIONSHIP_PAIR_CAP: number = MAX_RELATIONSHIP_PAIR_GENERATIONS_PER_BATC
 
 export class WorldSessionPostProcessingOrchestrator {
   private readonly runStoreService: WorldSessionPostProcessRunStoreService;
-  private readonly sessionService: WorldConversationSessionService;
   private readonly summaryGenerationService: WorldSessionSummaryGenerationService;
   private readonly memoryGenerationService: WorldCharacterMemoryGenerationService;
   private readonly eventGenerationService: WorldEventExtractionGenerationService;
@@ -38,7 +36,6 @@ export class WorldSessionPostProcessingOrchestrator {
 
   constructor(
     runStoreService: WorldSessionPostProcessRunStoreService,
-    sessionService: WorldConversationSessionService,
     summaryGenerationService: WorldSessionSummaryGenerationService,
     memoryGenerationService: WorldCharacterMemoryGenerationService,
     eventGenerationService: WorldEventExtractionGenerationService,
@@ -47,7 +44,6 @@ export class WorldSessionPostProcessingOrchestrator {
     eventStoreService: WorldEventStoreService
   ) {
     this.runStoreService = runStoreService;
-    this.sessionService = sessionService;
     this.summaryGenerationService = summaryGenerationService;
     this.memoryGenerationService = memoryGenerationService;
     this.eventGenerationService = eventGenerationService;
@@ -78,7 +74,6 @@ export class WorldSessionPostProcessingOrchestrator {
     }
     this.activeSessions.add(activeKey);
     try {
-      await this.ensureSessionEnded(worldId, sessionId);
       const run: WorldSessionPostProcessRun =
         await this.runStoreService.getOrCreateForEndedSession(worldId, sceneId, sessionId);
       if (run.status === WorldSessionPostProcessRunStatus.Completed
@@ -137,18 +132,6 @@ export class WorldSessionPostProcessingOrchestrator {
     }
   }
 
-  private async ensureSessionEnded(
-    worldId: string,
-    sessionId: string
-  ): Promise<void> {
-    try {
-      await this.sessionService.endSession({ worldId: worldId, sessionId: sessionId });
-    } catch (_err) {
-      // 幂等:已 Ended 的 Session 再次 endSession 返回原记录,不抛异常。
-      // 其他异常不阻断后处理,后续 getOrCreateForEndedSession 会校验 Ended 状态。
-    }
-  }
-
   private async executePipeline(run: WorldSessionPostProcessRun): Promise<void> {
     let currentRun: WorldSessionPostProcessRun = run;
 
@@ -194,6 +177,24 @@ export class WorldSessionPostProcessingOrchestrator {
     }
     try {
       const result = await this.summaryGenerationService.generateSummary(run.sessionId);
+      if (result.status === WorldSessionSummaryGenerationStatus.NoPublicContent) {
+        const updatedState: WorldSessionPostProcessState = {
+          participantCharacterInstanceIds: state.participantCharacterInstanceIds,
+          summary: {
+            status: WorldSessionPostProcessStepStatus.Skipped,
+            resultCode: WorldSessionPostProcessResultCode.NoPublicContent,
+            errorKind: undefined,
+            updatedAt: this.now()
+          },
+          memories: state.memories,
+          eventExtraction: state.eventExtraction,
+          knownEvents: state.knownEvents,
+          relationships: state.relationships
+        };
+        return await this.runStoreService.markSummarySkipped(
+          run.id, WorldSessionPostProcessResultCode.NoPublicContent,
+          serializePostProcessState(updatedState));
+      }
       const resultCode: WorldSessionPostProcessResultCode =
         this.mapSummaryStatus(result.status);
       const updatedState: WorldSessionPostProcessState = {
@@ -664,10 +665,7 @@ export class WorldSessionPostProcessingOrchestrator {
     if (status === WorldSessionSummaryGenerationStatus.Generated) {
       return WorldSessionPostProcessResultCode.Generated;
     }
-    if (status === WorldSessionSummaryGenerationStatus.Existing) {
-      return WorldSessionPostProcessResultCode.Existing;
-    }
-    return WorldSessionPostProcessResultCode.NoPublicContent;
+    return WorldSessionPostProcessResultCode.Existing;
   }
 
   private mapErrorKind(err: Object): WorldSessionPostProcessErrorKind {

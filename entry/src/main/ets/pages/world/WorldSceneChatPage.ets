@@ -955,6 +955,13 @@ struct WorldSceneChatPage {
         const sceneId: string = this.viewModel.expectedSceneIdOfPage();
         const sessionId: string = this.viewModel.expectedSessionIdOfPage();
         if (worldId.length > 0 && sceneId.length > 0 && sessionId.length > 0) {
+          try {
+            await AppServices.getWorldConversationSessionService()
+              .endSession({ worldId: worldId, sessionId: sessionId });
+          } catch (_err) {
+            // 幂等:已 Ended 的 Session 再次 endSession 返回原记录,不抛异常。
+            // 其他异常不阻断 UI,后续 getOrCreateForEndedSession 会校验 Ended。
+          }
           AppServices.getWorldSessionPostProcessingOrchestrator()
             .startEndedSessionProcessing(worldId, sceneId, sessionId);
         }

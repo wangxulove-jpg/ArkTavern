@@ -709,7 +709,6 @@ export class AppServices {
     // 不直接调用网络,不直接操作数据库,通过各 Service 间接执行。
     this.worldSessionPostProcessingOrchestrator = new WorldSessionPostProcessingOrchestrator(
       this.worldSessionPostProcessRunStoreService,
-      this.worldConversationSessionService,
       this.worldSessionSummaryGenerationService,
       this.worldCharacterMemoryGenerationService,
       this.worldEventExtractionGenerationService,
