@@ -45,7 +45,8 @@ import { NetworkError } from '../../models/NetworkError';
 import { Logger } from '../../utils/Logger';
 import { generateUuid } from '../../utils/Uuid';
 import {
-  AiCharacterInput
+  AiCharacterInput,
+  createEmptyAiCharacterInput
 } from '../../models/AiCharacterInput';
 import {
   AiGenerationResult,
@@ -210,8 +211,7 @@ export class AiCharacterGenerationService {
    * @param callbacks 完成回调
    * @returns 生成句柄
    */
-  regenerateField(
-    fieldPath: string,
+  regenerateField(    fieldPath: string,
     currentCard: ParsedCharacterCard,
     useCurrentModel: boolean,
     configId: string,
@@ -253,6 +253,153 @@ export class AiCharacterGenerationService {
       (): boolean => state.done
     );
     return handle;
+  }
+
+  /**
+   * 优化现有角色卡(ARK-UI-LAYOUT-OPT-02 后新增功能)。
+   *
+   * 语义:不改变角色卡的内容与设定,而是根据角色卡已有内容,
+   * 让 AI 将其重写为规范、完整的 Tavern Card V2 JSON 结构。
+   * 主要用于导入 PNG/JSON 角色卡时,内容字段不完整/结构混乱的整理。
+   *
+   * 约束:
+   * - 保持角色名称、设定、性格、场景等核心内容一致,不重新创作
+   * - 只整理字段归属、补全缺失字段(空字段补空串/空数组)、统一语言风格
+   * - 不修改头像 / 世界书已有条目内容
+   *
+   * @param card 现有角色卡(来自导入解析)
+   * @param useCurrentModel true=跟随当前 ProviderConfig;false=使用指定 configId
+   * @param configId 指定 ProviderConfig ID
+   * @param callbacks 流式回调
+   * @returns 生成句柄(用于取消)
+   */
+  optimizeCharacterCard(
+    card: ParsedCharacterCard,
+    useCurrentModel: boolean,
+    configId: string,
+    callbacks: AiGenerationCallbacks
+  ): AiGenerationHandle {
+    const state: GenerationState = {
+      aborted: false,
+      done: false,
+      accumulated: '',
+      meta: null,
+      autoFixAttempts: 0,
+      streamHandle: null,
+      abortChecker: null
+    };
+
+    this.executeOptimize(card, useCurrentModel, configId, state, callbacks).then(
+      (): void => { /* 正常完成 */ },
+      (err: Object): void => {
+        if (state.done) {
+          return;
+        }
+        state.done = true;
+        Logger.error(LOG_TAG, 'optimize unexpected error: ' + String(err));
+        const result: AiGenerationResult = createFailed(
+          state.accumulated,
+          [],
+          state.autoFixAttempts,
+          false,
+          state.meta,
+          '优化失败: ' + String(err)
+        );
+        try {
+          callbacks.onComplete(result);
+        } catch (e) {
+          Logger.error(LOG_TAG, 'onComplete throw: ' + String(e));
+        }
+      }
+    );
+
+    const handle: AiGenerationHandle = new AiGenerationHandleImpl(
+      (): void => {
+        if (state.done) {
+          return;
+        }
+        state.aborted = true;
+      },
+      (): boolean => state.done
+    );
+    return handle;
+  }
+
+  /**
+   * 执行角色卡优化(内部实现)。
+   */
+  private async executeOptimize(
+    card: ParsedCharacterCard,
+    useCurrentModel: boolean,
+    configId: string,
+    state: GenerationState,
+    callbacks: AiGenerationCallbacks
+  ): Promise<void> {
+    const config: ProviderConfig | null = useCurrentModel
+      ? await this.modelService.getCurrentConfig()
+      : await this.modelService.getConfig(configId);
+    if (config === null) {
+      state.done = true;
+      callbacks.onComplete(createFailed(
+        '', [], 0, false, null, '未找到可用的 Provider 配置,请先在模型设置中配置'
+      ));
+      return;
+    }
+    if (config.modelName.trim().length === 0) {
+      state.done = true;
+      callbacks.onComplete(createFailed(
+        '', [], 0, false, null, '当前 Provider 配置未指定模型名称'
+      ));
+      return;
+    }
+    const hasKey: boolean = await this.modelService.hasApiKey(config.id);
+    if (!hasKey) {
+      state.done = true;
+      callbacks.onComplete(createFailed(
+        '', [], 0, false, null, '当前 Provider 配置未设置 API Key'
+      ));
+      return;
+    }
+
+    const meta: AiGenerationMeta = {
+      providerId: config.id,
+      modelId: config.modelName,
+      generatedAt: Date.now(),
+      generationVersion: AI_GENERATION_VERSION
+    };
+    state.meta = meta;
+
+    // 构造优化消息(保持内容,重写为规范 V2 JSON)
+    const messages: ChatMessage[] = buildOptimizeMessages(card);
+    const options: ChatRequestOptions = {
+      temperature: GENERATION_TEMPERATURE,
+      topP: GENERATION_TOP_P,
+      maxTokens: GENERATION_MAX_TOKENS,
+      stream: true
+    };
+
+    const rawResponse: string = await this.streamMessages(
+      messages, options, state, callbacks, '优化失败'
+    );
+    if (state.aborted) {
+      state.done = true;
+      callbacks.onComplete(createCancelledResult(rawResponse));
+      return;
+    }
+    if (rawResponse.length === 0) {
+      state.done = true;
+      callbacks.onComplete(createFailed(
+        '', [], 0, false, meta, '优化失败:模型返回空响应'
+      ));
+      return;
+    }
+
+    // 校验 + 自动修复(复用生成路径)
+    const finalResult: AiGenerationResult = await this.validateAndAutoFix(
+      rawResponse, meta, state, callbacks, messages, options, createEmptyAiCharacterInput()
+    );
+    state.done = true;
+    callbacks.onComplete(finalResult);
   }
 
   // ===== 内部实现 =====
@@ -740,6 +887,81 @@ function buildFieldRegenMessages(
   return [
     createChatMessage('ai-field-sys-' + generateUuid(), ChatRole.System, systemPrompt, Date.now()),
     createChatMessage('ai-field-usr-' + generateUuid(), ChatRole.User, userPrompt, Date.now())
+  ];
+}
+
+/**
+ * 构造角色卡优化请求的消息(ARK-UI-LAYOUT-OPT-02)。
+ *
+ * 语义:保持现有角色卡内容,让 AI 重写为规范、完整的 Tavern Card V2 JSON 结构。
+ * 不改变角色设定,不重新创作,只整理字段归属与补全缺失字段。
+ */
+function buildOptimizeMessages(card: ParsedCharacterCard): ChatMessage[] {
+  const systemPrompt: string = '你是 Tavern Card V2 角色卡整理助手。'
+    + '用户会给你一个现有角色卡的内容,你需要**保持角色设定不变**,将其整理为规范、完整的 Tavern Card V2 JSON。'
+    + '\n\n核心原则:'
+    + '\n- **不重新创作**:保留角色名称、描述、性格、场景、开场白等原有内容与设定,不添加原创设定'
+    + '\n- **不删减有效信息**:将原有内容按字段语义归类到正确字段,不丢失已有设定'
+    + '\n- **结构匹配**:根据内容判断它属于 description / personality / scenario / first_mes / system_prompt 等哪个字段'
+    + '\n- **补全结构**:缺失字段填空字符串或空数组,但不得虚构内容填充必填字段(name 除外,保留原值)'
+    + '\n- **语言风格统一**:仅做轻度润色与标点/换行整理,保持原有语言'
+    + '\n- 不要修改头像、不要修改角色书已有条目内容'
+    + '\n\n输出要求:'
+    + '\n- **只输出**标准 Tavern Card V2 JSON,不要输出 Markdown 代码块标记、解释、标题或其他任何文字'
+    + '\n- JSON 必须可被 JSON.parse 直接解析'
+    + '\n- 必须包含 spec="chara_card_v2"、spec_version="2.0" 和 data 对象'
+    + '\n\nJSON 结构要求(所有字段必填,数组字段即使为空也必须是空数组,extensions 即使为空也必须是空对象):'
+    + '\n{'
+    + '\n  "spec": "chara_card_v2",'
+    + '\n  "spec_version": "2.0",'
+    + '\n  "data": {'
+    + '\n    "name": "角色名称(保持原值)",'
+    + '\n    "description": "角色身份、经历、外貌和行为习惯的描述",'
+    + '\n    "personality": "性格描述",'
+    + '\n    "scenario": "场景设定",'
+    + '\n    "first_mes": "开场白",'
+    + '\n    "mes_example": "对话示例(空则空字符串)",'
+    + '\n    "creator_notes": "创作者备注(空则空字符串)",'
+    + '\n    "system_prompt": "System Prompt(空则空字符串)",'
+    + '\n    "post_history_instructions": "Post-History Instructions(空则空字符串)",'
+    + '\n    "alternate_greetings": [],'
+    + '\n    "character_book": {"name": "", "description": "", "scan_depth": 100, "token_budget": 500, "recursive_scanning": false, "extensions": {}, "entries": []},'
+    + '\n    "tags": [],'
+    + '\n    "creator": "创作者名(空则空字符串)",'
+    + '\n    "character_version": "角色卡版本(空则空字符串)",'
+    + '\n    "extensions": {}'
+    + '\n  }'
+    + '\n}';
+
+  // 构造现有卡片内容(序列化为紧凑 JSON,便于模型读取)
+  const cardContent: Record<string, Object> = {};
+  cardContent['name'] = card.name;
+  cardContent['description'] = card.description;
+  cardContent['personality'] = card.personality;
+  cardContent['scenario'] = card.scenario;
+  cardContent['first_mes'] = card.firstMessage;
+  cardContent['system_prompt'] = card.systemPrompt;
+  cardContent['mes_example'] = card.mesExample;
+  cardContent['creator_notes'] = card.creatorNotes;
+  cardContent['post_history_instructions'] = card.postHistoryInstructions;
+  if (card.alternateGreetings.length > 0) {
+    cardContent['alternate_greetings'] = card.alternateGreetings.slice();
+  }
+  if (card.tags.length > 0) {
+    cardContent['tags'] = card.tags.slice();
+  }
+  if (card.creator.length > 0) {
+    cardContent['creator'] = card.creator;
+  }
+
+  const userPrompt: string = '以下是需要整理的现有角色卡内容:\n\n'
+    + JSON.stringify(cardContent, null, 2)
+    + '\n\n请保持以上角色设定与内容不变,将其整理为规范、完整的 Tavern Card V2 JSON。'
+    + '只输出 JSON,不要输出任何其他文字或 Markdown 代码块。';
+
+  return [
+    createChatMessage('ai-opt-sys-' + generateUuid(), ChatRole.System, systemPrompt, Date.now()),
+    createChatMessage('ai-opt-usr-' + generateUuid(), ChatRole.User, userPrompt, Date.now())
   ];
 }
 

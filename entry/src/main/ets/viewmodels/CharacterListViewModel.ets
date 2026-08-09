@@ -11,6 +11,9 @@ import { ParsedCharacterCard } from '../parser/CharacterCardJsonParser';
 import { PngParseResult } from '../parser/PngCharacterCardParser';
 import { Logger } from '../utils/Logger';
 import { CharacterReferencedByWorldError, isCharacterReferencedByWorldError } from '../models/world/WorldStateError';
+import { AiCharacterGenerationService, AiGenerationHandle } from '../services/ai/AiCharacterGenerationService';
+import { AiGenerationResult, AiGenerationStatus } from '../models/AiGenerationResult';
+import { AppServices } from '../services/AppServices';
 
 const LOG_TAG: string = 'CharacterListViewModel';
 
@@ -42,11 +45,18 @@ export class CharacterListViewModel {
   /** PNG 导入特有状态 */
   isPngImport: boolean = false;
   previewPngUri: string = '';
+  /** AI 优化导入卡片状态(ARK-UI-LAYOUT-OPT-02) */
+  aiOptimizing: boolean = false;
+  aiOptimizeError: string = '';
+  /** AI 优化是否已成功完成(供 UI 显示"查看优化结果"入口) */
+  aiOptimized: boolean = false;
   /** 导出 */
   exporting: boolean = false;
   exportError: string = '';
 
   private readonly service: CharacterService;
+  private generationService: AiCharacterGenerationService | null = null;
+  private optimizeHandle: AiGenerationHandle | null = null;
 
   constructor(service: CharacterService) {
     this.service = service;
@@ -300,6 +310,94 @@ export class CharacterListViewModel {
   }
 
   /**
+   * 使用 AI 优化预览中的角色卡内容(ARK-UI-LAYOUT-OPT-02)。
+   * 不改变角色设定,由 AI 根据内容重写为规范 V2 JSON 结构。
+   * 成功后替换 previewCard,头像/世界书保持原样。
+   */
+  async optimizePreviewCard(): Promise<void> {
+    if (this.previewCard === null || this.aiOptimizing) {
+      return;
+    }
+    this.ensureGenerationService();
+    if (this.generationService === null) {
+      this.aiOptimizeError = 'AI 服务不可用';
+      return;
+    }
+    this.aiOptimizing = true;
+    this.aiOptimizeError = '';
+    this.aiOptimized = false;
+    try {
+      const card: ParsedCharacterCard = this.previewCard;
+      this.optimizeHandle = this.generationService.optimizeCharacterCard(
+        card,
+        true,
+        '',
+        {
+          onDelta: (_content: string): void => {
+            // 优化过程不需要展示进度,静默
+          },
+          onComplete: (result: AiGenerationResult): void => {
+            if (result.status === AiGenerationStatus.Success && result.card !== null) {
+              // 保留头像 URI 与来源格式
+              const optimized: ParsedCharacterCard = result.card;
+              const merged: ParsedCharacterCard = {
+                name: optimized.name.length > 0 ? optimized.name : card.name,
+                description: optimized.description,
+                personality: optimized.personality,
+                scenario: optimized.scenario,
+                firstMessage: optimized.firstMessage,
+                systemPrompt: optimized.systemPrompt,
+                avatarUri: card.avatarUri,
+                sourceFormat: card.sourceFormat,
+                mesExample: optimized.mesExample,
+                creatorNotes: optimized.creatorNotes,
+                postHistoryInstructions: optimized.postHistoryInstructions,
+                alternateGreetings: optimized.alternateGreetings,
+                tags: optimized.tags,
+                creator: optimized.creator,
+                characterVersion: optimized.characterVersion,
+                extensions: optimized.extensions,
+                characterBook: optimized.characterBook,
+                userName: optimized.userName
+              };
+              this.previewCard = merged;
+              this.aiOptimizing = false;
+              this.aiOptimized = true;
+            } else {
+              this.aiOptimizing = false;
+              this.aiOptimizeError = result.errorMessage.length > 0
+                ? result.errorMessage
+                : 'AI 优化失败,请重试';
+            }
+          }
+        }
+      );
+    } catch (e) {
+      this.aiOptimizing = false;
+      this.aiOptimizeError = 'AI 优化失败: ' + String(e);
+      Logger.error(LOG_TAG, 'optimizePreviewCard failed: ' + String(e));
+    }
+  }
+
+  /** 取消 AI 优化 */
+  cancelOptimize(): void {
+    if (this.optimizeHandle !== null && !this.optimizeHandle.isDone()) {
+      this.optimizeHandle.abort();
+    }
+    this.optimizeHandle = null;
+    this.aiOptimizing = false;
+  }
+
+  /** 懒创建 AI 生成服务 */
+  private ensureGenerationService(): void {
+    if (this.generationService === null) {
+      this.generationService = new AiCharacterGenerationService(
+        AppServices.getModelService()
+      );
+    }
+  }
+
+  /**
    * 确认导入:保存预览中的角色卡。
    * PNG 导入时保存头像并创建角色,JSON 导入时直接创建角色。
    * 导入成功后刷新列表,但不自动设为当前角色。
@@ -343,6 +441,10 @@ export class CharacterListViewModel {
     this.isPngImport = false;
     // 不删除原始 PNG 文件(只取消导入,不产生残留)
     this.previewPngUri = '';
+    this.aiOptimizing = false;
+    this.aiOptimized = false;
+    this.aiOptimizeError = '';
+    this.optimizeHandle = null;
   }
 
   /**

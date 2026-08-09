@@ -441,6 +441,34 @@
       "value": "确认导入"
     },
     {
+      "name": "character_import_ai_optimize",
+      "value": "使用 AI 优化内容"
+    },
+    {
+      "name": "character_import_ai_optimize_desc",
+      "value": "根据角色卡内容,整理为规范的结构(不改变角色设定)"
+    },
+    {
+      "name": "character_import_ai_optimizing",
+      "value": "AI 优化中…"
+    },
+    {
+      "name": "character_import_ai_optimize_again",
+      "value": "重新优化"
+    },
+    {
+      "name": "character_import_ai_optimize_view",
+      "value": "查看优化内容"
+    },
+    {
+      "name": "character_import_ai_optimized_title",
+      "value": "优化后内容"
+    },
+    {
+      "name": "character_import_close",
+      "value": "关闭"
+    },
+    {
       "name": "character_import_cancel",
       "value": "取消"
     },
