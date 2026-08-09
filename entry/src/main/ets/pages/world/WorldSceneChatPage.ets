@@ -950,6 +950,15 @@ struct WorldSceneChatPage {
       this.actionError = errorMsg;
     } else {
       this.endConfirmVisible = false;
+      if (this.detail !== null) {
+        const worldId: string = this.detail.worldId;
+        const sceneId: string = this.viewModel.expectedSceneIdOfPage();
+        const sessionId: string = this.viewModel.expectedSessionIdOfPage();
+        if (worldId.length > 0 && sceneId.length > 0 && sessionId.length > 0) {
+          AppServices.getWorldSessionPostProcessingOrchestrator()
+            .startEndedSessionProcessing(worldId, sceneId, sessionId);
+        }
+      }
     }
     this.syncFromViewModel();
   }

@@ -159,6 +159,8 @@ struct WorldDetailPage {
         + ', worldShortId=' + worldId.substring(worldId.length - 8));
       this.isInitializing = false;
       await this.loadDetail(worldId);
+      AppServices.getWorldSessionPostProcessingOrchestrator()
+        .startResumeIncompleteForWorld(worldId);
     } catch (e) {
       Logger.error(LOG_TAG, 'aboutToAppear failed: ' + (e as Error).message);
       this.isInitializing = false;

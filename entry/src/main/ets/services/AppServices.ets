@@ -119,6 +119,7 @@ import { WorldEventStoreService } from './world/WorldEventStoreService';
 import { WorldKnownEventStoreService } from './world/WorldKnownEventStoreService';
 import { WorldDirectionalRelationshipStoreService } from './world/WorldDirectionalRelationshipStoreService';
 import { WorldSessionPostProcessRunStoreService } from './world/WorldSessionPostProcessRunStoreService';
+import { WorldSessionPostProcessingOrchestrator } from './world/WorldSessionPostProcessingOrchestrator';
 import { WorldDirectionalRelationshipPromptAssembler } from './world/WorldDirectionalRelationshipPromptAssembler';
 import { WorldDirectionalRelationshipGenerationService } from './world/WorldDirectionalRelationshipGenerationService';
 import { WorldEventExtractionPromptAssembler } from './world/WorldEventExtractionPromptAssembler';
@@ -352,6 +353,8 @@ export class AppServices {
   private readonly worldDirectionalRelationshipGenerationService: WorldDirectionalRelationshipGenerationService;
   /** WorldSessionPostProcessRunStoreService 世界会话后处理运行存储服务(W7A) */
   private readonly worldSessionPostProcessRunStoreService: WorldSessionPostProcessRunStoreService;
+  /** WorldSessionPostProcessingOrchestrator 世界会话后处理编排器(W7B) */
+  private readonly worldSessionPostProcessingOrchestrator: WorldSessionPostProcessingOrchestrator;
 
   /**
    * 私有构造,组装全部依赖。
@@ -700,6 +703,19 @@ export class AppServices {
       this.worldSessionPostProcessRunRepository,
       this.worldConversationSessionRepository,
       this.dbHelper
+    );
+    // W7B: 世界会话后处理编排器(End Session 后非阻塞触发 + World 重进恢复)。
+    // 依赖 RunStoreService + SessionService + 全部 Generation Service + EventStoreService。
+    // 不直接调用网络,不直接操作数据库,通过各 Service 间接执行。
+    this.worldSessionPostProcessingOrchestrator = new WorldSessionPostProcessingOrchestrator(
+      this.worldSessionPostProcessRunStoreService,
+      this.worldConversationSessionService,
+      this.worldSessionSummaryGenerationService,
+      this.worldCharacterMemoryGenerationService,
+      this.worldEventExtractionGenerationService,
+      this.worldKnownEventStoreService,
+      this.worldDirectionalRelationshipGenerationService,
+      this.worldEventStoreService
     );
     // v8.3 Phase 2: 最近原始消息窗口选择器(去重 + 窗口 + 完整轮次)
     this.recentMessageSelector = new RecentMessageSelector(this.tokenCounter);
@@ -1574,5 +1590,9 @@ export class AppServices {
 
   static getWorldEventExtractionGenerationService(): WorldEventExtractionGenerationService {
     return AppServices.getInstance().worldEventExtractionGenerationService;
+  }
+
+  static getWorldSessionPostProcessingOrchestrator(): WorldSessionPostProcessingOrchestrator {
+    return AppServices.getInstance().worldSessionPostProcessingOrchestrator;
   }
 }
