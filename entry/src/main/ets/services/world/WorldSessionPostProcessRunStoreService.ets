@@ -494,33 +494,38 @@ export class WorldSessionPostProcessRunStoreService {
   async recoverInterruptedRuns(): Promise<number> {
     const store: relationalStore.RdbStore = this.dbHelper.getStore();
     const runningRuns: WorldSessionPostProcessRun[] =
-      await this.runRepo.listRunningByWorldWithStore(store, '');
+      await this.runRepo.listAllRunningWithStore(store);
     let recovered: number = 0;
     for (let i = 0; i < runningRuns.length; i++) {
       const run: WorldSessionPostProcessRun = runningRuns[i];
-      const state: WorldSessionPostProcessState = parsePostProcessState(run.stateJson);
-      const recoveredState: WorldSessionPostProcessState = resetRunningToPending(state);
-      const recoveredStateJson: string = serializePostProcessState(recoveredState);
-      const now: number = nowMillis();
-      const updated: WorldSessionPostProcessRun = {
-        id: run.id,
-        worldId: run.worldId,
-        sceneId: run.sceneId,
-        sessionId: run.sessionId,
-        pipelineVersion: run.pipelineVersion,
-        status: WorldSessionPostProcessRunStatus.Pending,
-        stateJson: recoveredStateJson,
-        attemptCount: run.attemptCount,
-        revision: run.revision + 1,
-        createdAt: run.createdAt,
-        updatedAt: now,
-        completedAt: undefined
-      };
-      const ok: boolean = await this.runRepo.updateWithRevisionWithStore(
-        store, updated, run.revision
-      );
-      if (ok) {
-        recovered++;
+      try {
+        const state: WorldSessionPostProcessState = parsePostProcessState(run.stateJson);
+        const recoveredState: WorldSessionPostProcessState = resetRunningToPending(state);
+        const recoveredStateJson: string = serializePostProcessState(recoveredState);
+        const now: number = nowMillis();
+        const updated: WorldSessionPostProcessRun = {
+          id: run.id,
+          worldId: run.worldId,
+          sceneId: run.sceneId,
+          sessionId: run.sessionId,
+          pipelineVersion: run.pipelineVersion,
+          status: WorldSessionPostProcessRunStatus.Pending,
+          stateJson: recoveredStateJson,
+          attemptCount: run.attemptCount,
+          revision: run.revision + 1,
+          createdAt: run.createdAt,
+          updatedAt: now,
+          completedAt: undefined
+        };
+        const ok: boolean = await this.runRepo.updateWithRevisionWithStore(
+          store, updated, run.revision
+        );
+        if (ok) {
+          recovered++;
+        }
+      } catch (_err) {
+        // 单个 Run 恢复失败不阻塞其余 Run 的恢复。
+        // revision conflict 表示该 Run 已被其他进程更新,跳过即可。
       }
     }
     return recovered;
