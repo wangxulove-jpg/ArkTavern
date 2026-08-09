@@ -64,6 +64,8 @@ export function mapWorldRuntimeErrorToMessage(e: Object): string {
         return '本轮生成已中断';
       case WorldRuntimeErrorKind.InvalidBatchState:
         return '生成状态异常,请重试';
+      case WorldRuntimeErrorKind.ContextUnavailable:
+        return '跨会话上下文不可用';
       default:
         return '操作失败,请重试';
     }

@@ -15,7 +15,8 @@ import {
 } from '../../models/world/WorldSessionPostProcessRun';
 import {
   WorldCrossSessionContextSnapshot,
-  WorldCrossSessionContextRequest
+  WorldCrossSessionContextRequest,
+  WorldCrossSessionContextError
 } from '../../models/world/WorldCrossSessionContext';
 import { WorldCharacterMemoryEntry } from '../../models/world/WorldCharacterMemoryEntry';
 import { WorldKnownEventEntry } from '../../models/world/WorldKnownEventEntry';
@@ -167,9 +168,10 @@ export class WorldInspectorService {
       }
       return { snapshot: snapshot, totalDisplayChars: totalChars };
     } catch (err) {
-      const msg: string = (err instanceof Error) ? err.message : 'Unknown';
-      const safeCategory: string = this.safeErrorCategory(msg);
-      return { errorCategory: safeCategory };
+      if (err instanceof WorldCrossSessionContextError) {
+        return { errorCategory: err.category };
+      }
+      return { errorCategory: 'ContextUnavailable' };
     }
   }
 
@@ -223,23 +225,5 @@ export class WorldInspectorService {
       participants = [];
     }
     return { session: session, scene: scene, participants: participants };
-  }
-
-  private safeErrorCategory(rawMessage: string): string {
-    if (rawMessage.indexOf('not found') >= 0) {
-      return 'DataUnavailable';
-    }
-    if (rawMessage.indexOf('not ended') >= 0 ||
-        rawMessage.indexOf('must be Active') >= 0) {
-      return 'InvalidState';
-    }
-    if (rawMessage.indexOf('not in current session') >= 0 ||
-        rawMessage.indexOf('not in') >= 0) {
-      return 'Unauthorized';
-    }
-    if (rawMessage.indexOf('mismatch') >= 0) {
-      return 'ConsistencyError';
-    }
-    return 'ContextUnavailable';
   }
 }

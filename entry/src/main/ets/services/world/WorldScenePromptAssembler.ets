@@ -14,7 +14,7 @@ import {
   WorldSceneMessageVisibility,
   WorldSceneMessageStatus
 } from '../../models/world/WorldSceneMessage';
-import { WorldRuntimeError } from '../../models/world/WorldRuntimeError';
+import { WorldRuntimeError, WorldRuntimeErrorKind } from '../../models/world/WorldRuntimeError';
 import { MacroContext, MacroContextBuilder } from '../../models/MacroContext';
 import { PromptBuilder, PromptBuildContext } from '../../services/PromptBuilder';
 import { LorebookService } from '../../services/LorebookService';
@@ -30,7 +30,8 @@ import {
   WorldCrossSessionContextRequest,
   WorldCrossSessionContextSnapshot,
   WorldCrossSessionSummaryContextItem,
-  WorldCrossSessionMemoryContextItem
+  WorldCrossSessionMemoryContextItem,
+  WorldCrossSessionContextError
 } from '../../models/world/WorldCrossSessionContext';
 
 const LOG_TAG: string = 'WorldPromptAsm';
@@ -226,7 +227,21 @@ export class WorldScenePromptAssembler {
       };
       crossSessionSnapshot = await this.crossSessionContextService.prepareContext(contextRequest);
     } catch (e) {
-      Logger.warn(LOG_TAG, 'crossSessionContext failed: ' + (e as Error).message);
+      const ctxErr: WorldCrossSessionContextError | null =
+        e instanceof WorldCrossSessionContextError ? e as WorldCrossSessionContextError : null;
+      if (ctxErr !== null) {
+        const cat: string = ctxErr.category;
+        if (cat === 'ConsistencyError' || cat === 'Unauthorized') {
+          Logger.error(LOG_TAG, 'crossSessionContext severe: category=' + cat);
+          throw new WorldRuntimeError(
+            WorldRuntimeErrorKind.ContextUnavailable,
+            'Cross-session context unavailable: ' + cat
+          );
+        }
+        Logger.warn(LOG_TAG, 'crossSessionContext degraded: category=' + cat);
+      } else {
+        Logger.warn(LOG_TAG, 'crossSessionContext failed: ' + (e as Error).message);
+      }
     }
 
     const crossSessionText: string | null = crossSessionSnapshot !== null

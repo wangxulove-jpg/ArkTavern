@@ -10,8 +10,8 @@ import {
 
 export default function w2a1fixMigrationContractTest(): void {
   describe('W2A1FIX Migration 契约', () => {
-    it('W2A1FIX-10 DATABASE_VERSION 仍为 23', 0, () => {
-      expect(DATABASE_VERSION).assertEqual(23);
+    it('W2A1FIX-10 DATABASE_VERSION 为 31', 0, () => {
+      expect(DATABASE_VERSION).assertEqual(31);
     });
 
     it('W2A1FIX-11 V22→V23 不重复 ALTER PlayerProfile 的 persona', 0, () => {

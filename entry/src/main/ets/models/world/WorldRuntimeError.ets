@@ -26,7 +26,8 @@ export enum WorldRuntimeErrorKind {
   SpeakerCharacterNotFound,
   SpeakerEmptyResponse,
   RoundInterrupted,
-  InvalidBatchState
+  InvalidBatchState,
+  ContextUnavailable
 }
 
 export class WorldRuntimeError extends Error {
@@ -148,6 +149,11 @@ export class WorldRuntimeError extends Error {
   static invalidBatchState(detail: string): WorldRuntimeError {
     return new WorldRuntimeError(WorldRuntimeErrorKind.InvalidBatchState,
       '批次状态无效: ' + detail);
+  }
+
+  static contextUnavailable(category: string): WorldRuntimeError {
+    return new WorldRuntimeError(WorldRuntimeErrorKind.ContextUnavailable,
+      '跨会话上下文不可用: ' + category);
   }
 }
 

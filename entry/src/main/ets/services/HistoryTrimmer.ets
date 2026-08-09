@@ -54,11 +54,14 @@ export interface HistoryTrimOptions {
  * 一个可裁剪单元(用于轮次删除)。
  */
 interface TrimUnit {
-  /** 单元在 messages 数组中的索引集合(连续段或单条) */
   readonly indices: number[];
-  /** 估算 Token 数(单元内所有消息之和) */
   readonly tokens: number;
+  readonly priority: number;
 }
+
+const TRIM_PRIORITY_LOW: number = 0;
+const TRIM_PRIORITY_MEDIUM: number = 1;
+const TRIM_PRIORITY_PROTECTED: number = 2;
 
 /**
  * 历史裁剪服务。
@@ -105,39 +108,45 @@ export class HistoryTrimmer {
     }
 
     // 标记可裁剪索引
-    const isTrimmable: boolean[] = new Array(messages.length).fill(false);
+    const trimPriority: number[] = new Array(messages.length).fill(TRIM_PRIORITY_PROTECTED);
     const lastIndex: number = messages.length - 1;
     for (let i = 0; i < messages.length; i++) {
       const m: ChatMessage = messages[i];
-      // 最后一条消息无论 role 都受保护(不删除当前正在发送的内容)
       if (i === lastIndex) {
-        isTrimmable[i] = false;
+        trimPriority[i] = TRIM_PRIORITY_PROTECTED;
         continue;
       }
-      // 显式 protected ID 受保护
       if (protectedIds.has(m.id)) {
-        isTrimmable[i] = false;
+        trimPriority[i] = TRIM_PRIORITY_PROTECTED;
         continue;
       }
-      // source 受保护的非 Conversation 全部不裁剪
-      if (m.source !== undefined && m.source !== ChatMessageSource.Conversation) {
-        isTrimmable[i] = false;
-        continue;
-      }
-      // System 消息一律不裁剪
       if (m.role === ChatRole.System) {
-        isTrimmable[i] = false;
+        trimPriority[i] = TRIM_PRIORITY_PROTECTED;
         continue;
       }
-      // firstMessage(CharacterFirstMessage)已在 source 分支中保护
-      // 可裁剪只能是 Conversation 角色 + User/Assistant
-      isTrimmable[i] = true;
+      if (m.source === ChatMessageSource.CrossSessionContext) {
+        trimPriority[i] = TRIM_PRIORITY_MEDIUM;
+        continue;
+      }
+      if (m.source !== undefined && m.source !== ChatMessageSource.Conversation) {
+        trimPriority[i] = TRIM_PRIORITY_PROTECTED;
+        continue;
+      }
+      trimPriority[i] = TRIM_PRIORITY_LOW;
     }
 
-    // 构建可裁剪轮次单元(从旧到新)
-    const units: TrimUnit[] = this.buildTrimUnits(messages, isTrimmable);
-    if (units.length === 0) {
-      // 全部受保护:返回原列表
+    const lowUnits: TrimUnit[] = [];
+    const mediumUnits: TrimUnit[] = [];
+    for (let i = 0; i < messages.length; i++) {
+      if (trimPriority[i] === TRIM_PRIORITY_LOW) {
+        this.appendToUnits(lowUnits, i, messages);
+      } else if (trimPriority[i] === TRIM_PRIORITY_MEDIUM) {
+        this.appendToUnits(mediumUnits, i, messages);
+      }
+    }
+
+    const sortedUnits: TrimUnit[] = lowUnits.concat(mediumUnits);
+    if (sortedUnits.length === 0) {
       const copy: ChatMessage[] = messages.slice();
       return createHistoryTrimResult(
         copy,
@@ -149,13 +158,12 @@ export class HistoryTrimmer {
       );
     }
 
-    // 决定要删除的单元(从最旧开始)
     const removedSet: Set<number> = new Set<number>();
     const removedIds: string[] = [];
     let currentTokens: number = originalTokens;
     let iterations: number = 0;
 
-    for (let u = 0; u < units.length; u++) {
+    for (let u = 0; u < sortedUnits.length; u++) {
       if (currentTokens <= available) {
         break;
       }
@@ -163,14 +171,13 @@ export class HistoryTrimmer {
       if (iterations > MAX_TRIM_ITERATIONS) {
         break;
       }
-      const unit: TrimUnit = units[u];
+      const unit: TrimUnit = sortedUnits[u];
       for (let k = 0; k < unit.indices.length; k++) {
         const idx: number = unit.indices[k];
         removedSet.add(idx);
         removedIds.push(messages[idx].id);
       }
       currentTokens = currentTokens - unit.tokens;
-      // 防止 currentTokens 异常下溢
       if (currentTokens < 0) {
         currentTokens = 0;
       }
@@ -196,63 +203,22 @@ export class HistoryTrimmer {
     );
   }
 
-  /**
-   * 从旧到新构建可裁剪单元。
-   * 优先按"User + 紧邻 Assistant"完整轮次;
-   * 不可配对的孤立消息作为单条单元。
-   */
-  private buildTrimUnits(messages: ChatMessage[], isTrimmable: boolean[]): TrimUnit[] {
-    const units: TrimUnit[] = [];
-    let i: number = 0;
-    const n: number = messages.length;
-    while (i < n) {
-      if (!isTrimmable[i]) {
-        i++;
-        continue;
-      }
-      // 找到一个可裁剪段
-      const start: number = i;
-      // 先判断本段第一个消息的角色
-      const first: ChatMessage = messages[i];
-      if (first.role === ChatRole.User) {
-        // 寻找紧邻的 Assistant 配对(只有紧邻才算同一轮次,跳过不可裁剪的除外)
-        let j: number = i + 1;
-        if (j < n && isTrimmable[j] && messages[j].role === ChatRole.Assistant) {
-          j++;
-        }
-        // [start, j) 是一个 User(+ Assistant) 单元
-        units.push(this.makeUnit(messages, isTrimmable, start, j));
-        i = j;
-      } else if (first.role === ChatRole.Assistant) {
-        // 孤立 Assistant(没有紧邻 User)作为单条单元
-        units.push(this.makeUnit(messages, isTrimmable, start, start + 1));
-        i = start + 1;
-      } else {
-        // 其他角色(User/Assistant 之外):保守作为单条单元
-        units.push(this.makeUnit(messages, isTrimmable, start, start + 1));
-        i = start + 1;
+  private appendToUnits(units: TrimUnit[], index: number, messages: ChatMessage[]): void {
+    const m: ChatMessage = messages[index];
+    const lastUnit: TrimUnit | undefined = units.length > 0 ? units[units.length - 1] : undefined;
+    if (lastUnit !== undefined) {
+      const lastIdx: number = lastUnit.indices[lastUnit.indices.length - 1];
+      if (lastIdx === index - 1) {
+        const newIndices: number[] = lastUnit.indices.slice();
+        newIndices.push(index);
+        const slice: ChatMessage[] = newIndices.map((i: number): ChatMessage => messages[i]);
+        const tokens: number = estimateMessagesTokens(slice);
+        units[units.length - 1] = { indices: newIndices, tokens: tokens, priority: TRIM_PRIORITY_LOW };
+        return;
       }
     }
-    return units;
-  }
-
-  /**
-   * 构造单元。
-   * 内部去除 [start, end) 内不可裁剪的项,只保留可裁剪索引。
-   */
-  private makeUnit(messages: ChatMessage[], isTrimmable: boolean[], start: number, end: number): TrimUnit {
-    const indices: number[] = [];
-    for (let k = start; k < end; k++) {
-      if (isTrimmable[k]) {
-        indices.push(k);
-      }
-    }
-    if (indices.length === 0) {
-      return { indices: [], tokens: 0 };
-    }
-    const slice: ChatMessage[] = indices.map((i: number): ChatMessage => messages[i]);
-    const tokens: number = estimateMessagesTokens(slice);
-    return { indices: indices, tokens: tokens };
+    const tokens: number = estimateMessagesTokens([m]);
+    units.push({ indices: [index], tokens: tokens, priority: TRIM_PRIORITY_LOW });
   }
 
   /**

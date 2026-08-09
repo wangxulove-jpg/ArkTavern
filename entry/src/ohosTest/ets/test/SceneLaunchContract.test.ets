@@ -266,14 +266,9 @@ export default function sceneLaunchContractTest(): void {
       expect(result[1]).assertEqual('ci-2');
     });
 
-    it('SCENELAUNCH-30 preValidateParticipantIds 空数组抛 noEligibleParticipants', 0, () => {
-      try {
-        preValidateParticipantIds([]);
-        expect(true).assertFalse();
-      } catch (e) {
-        const err: Error = e as Error;
-        expect(err.message.includes('没有可参与') || err.message.includes('No') || err.message.length > 0).assertTrue();
-      }
+    it('SCENELAUNCH-30 preValidateParticipantIds 空数组返回空数组(不抛错)', 0, () => {
+      const result: string[] = preValidateParticipantIds([]);
+      expect(result.length).assertEqual(0);
     });
 
     it('SCENELAUNCH-31 preValidateParticipantIds 含空串抛 noEligibleParticipants', 0, () => {

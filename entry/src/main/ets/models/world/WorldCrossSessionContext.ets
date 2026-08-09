@@ -44,6 +44,22 @@ export interface WorldCrossSessionContextRequest {
   readonly speakerCharacterInstanceId: string;
 }
 
+export type WorldCrossSessionContextErrorCategory =
+  'DataUnavailable' |
+  'InvalidState' |
+  'ConsistencyError' |
+  'Unauthorized' |
+  'ContextUnavailable';
+
+export class WorldCrossSessionContextError extends Error {
+  readonly category: WorldCrossSessionContextErrorCategory;
+
+  constructor(message: string, category: WorldCrossSessionContextErrorCategory) {
+    super(message);
+    this.category = category;
+  }
+}
+
 export const MAX_SHARED_SUMMARY_ITEMS: number = 5;
 export const MAX_CHARACTER_MEMORY_ITEMS: number = 10;
 export const MAX_CROSS_SESSION_CONTEXT_CHARS: number = 15000;

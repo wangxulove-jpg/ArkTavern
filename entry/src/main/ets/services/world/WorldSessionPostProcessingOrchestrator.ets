@@ -104,6 +104,10 @@ export class WorldSessionPostProcessingOrchestrator {
 
   async resumeIncompleteForWorld(worldId: string): Promise<void> {
     try {
+      const recovered: number = await this.runStoreService.recoverInterruptedRuns();
+      if (recovered > 0) {
+        Logger.info(LOG_TAG, 'resumeIncomplete: recovered ' + recovered.toString() + ' interrupted runs');
+      }
       const incompleteRuns: WorldSessionPostProcessRun[] =
         await this.runStoreService.listIncompleteByWorld(worldId);
       for (let i = 0; i < incompleteRuns.length; i++) {

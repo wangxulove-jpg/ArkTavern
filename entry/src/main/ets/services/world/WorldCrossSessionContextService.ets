@@ -25,6 +25,7 @@ import {
   WorldCrossSessionContextSnapshot,
   WorldCrossSessionSummaryContextItem,
   WorldCrossSessionMemoryContextItem,
+  WorldCrossSessionContextError,
   MAX_SHARED_SUMMARY_ITEMS,
   MAX_CHARACTER_MEMORY_ITEMS,
   MAX_CROSS_SESSION_CONTEXT_CHARS
@@ -58,24 +59,24 @@ export class WorldCrossSessionContextService {
     const currentSession: WorldConversationSession | null =
       await this.sessionRepo.getByIdWithStore(store, request.sessionId);
     if (currentSession === null) {
-      throw new Error('WorldCrossSessionContext: session not found');
+      throw new WorldCrossSessionContextError('session not found', 'DataUnavailable');
     }
     if (currentSession.status !== WorldConversationSessionStatus.Active) {
-      throw new Error('WorldCrossSessionContext: session must be Active');
+      throw new WorldCrossSessionContextError('session must be Active', 'InvalidState');
     }
     if (currentSession.worldId !== request.worldId) {
-      throw new Error('WorldCrossSessionContext: session worldId mismatch');
+      throw new WorldCrossSessionContextError('session worldId mismatch', 'ConsistencyError');
     }
     if (currentSession.sceneId !== request.sceneId) {
-      throw new Error('WorldCrossSessionContext: session sceneId mismatch');
+      throw new WorldCrossSessionContextError('session sceneId mismatch', 'ConsistencyError');
     }
     const scene: WorldScene | null =
       await this.sceneRepo.getByIdWithStore(store, request.sceneId);
     if (scene === null) {
-      throw new Error('WorldCrossSessionContext: scene not found');
+      throw new WorldCrossSessionContextError('scene not found', 'DataUnavailable');
     }
     if (scene.worldId !== request.worldId) {
-      throw new Error('WorldCrossSessionContext: scene worldId mismatch');
+      throw new WorldCrossSessionContextError('scene worldId mismatch', 'ConsistencyError');
     }
     const currentParticipants: WorldSessionParticipantSnapshot[] =
       this.deserializeSnapshotSafe(currentSession.participantSnapshotJson);
@@ -83,7 +84,7 @@ export class WorldCrossSessionContextService {
       request.speakerCharacterInstanceId, currentParticipants
     );
     if (!speakerInSession) {
-      throw new Error('WorldCrossSessionContext: speaker not in current session participantSnapshot');
+      throw new WorldCrossSessionContextError('speaker not in current session participantSnapshot', 'Unauthorized');
     }
     const allSceneSessions: WorldConversationSession[] =
       await this.sessionRepo.listBySceneId(request.sceneId);
@@ -308,16 +309,16 @@ export class WorldCrossSessionContextService {
 
   private validateRequest(request: WorldCrossSessionContextRequest): void {
     if (request.worldId === '') {
-      throw new Error('WorldCrossSessionContext: worldId empty');
+      throw new WorldCrossSessionContextError('worldId empty', 'InvalidState');
     }
     if (request.sceneId === '') {
-      throw new Error('WorldCrossSessionContext: sceneId empty');
+      throw new WorldCrossSessionContextError('sceneId empty', 'InvalidState');
     }
     if (request.sessionId === '') {
-      throw new Error('WorldCrossSessionContext: sessionId empty');
+      throw new WorldCrossSessionContextError('sessionId empty', 'InvalidState');
     }
     if (request.speakerCharacterInstanceId === '') {
-      throw new Error('WorldCrossSessionContext: speakerCharacterInstanceId empty');
+      throw new WorldCrossSessionContextError('speakerCharacterInstanceId empty', 'InvalidState');
     }
   }
 

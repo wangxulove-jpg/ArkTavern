@@ -18,10 +18,10 @@ export default function worldUiRuntimeContractTest(): void {
   describe('WORLDUIRT 世界聊天UI运行时契约(W3A2)', () => {
 
     describe('WORLDUIRT-01~04 单角色边界', () => {
-      it('WORLDUIRT-03 UnsupportedParticipantCount maps to multi-chat message', 0, () => {
+      it('WORLDUIRT-03 UnsupportedParticipantCount maps to unsupported message', 0, () => {
         const err: WorldRuntimeError = WorldRuntimeError.unsupportedParticipantCount(3);
         const msg: string = mapWorldRuntimeErrorToMessage(err);
-        expect(msg).assertEqual('多人世界聊天将在下一阶段接入');
+        expect(msg).assertEqual('不支持的参与者数量');
       });
     });
 
