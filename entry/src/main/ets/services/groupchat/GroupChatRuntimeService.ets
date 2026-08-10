@@ -1104,6 +1104,10 @@ export class GroupChatRuntimeService {
     const settings: EffectiveGenerationSettings = promptResult.effectiveSettings;
     const speakerName: string | null = promptResult.character !== null
       ? promptResult.character.name : null;
+    // G-IDENTITY-REINFORCE-1: 其他参与者名称列表(用于检测模型以他人身份发言)
+    const otherParticipantNames: string[] = this.filterOtherParticipantNames(
+      promptResult.participantNames, speakerName
+    );
     const options: ChatRequestOptions = {
       temperature: settings.temperature !== undefined
         ? settings.temperature : TEMPERATURE_DEFAULT,
@@ -1132,11 +1136,15 @@ export class GroupChatRuntimeService {
           // 累积内容
           const accumulated: string | undefined = delta.accumulatedContent;
           if (accumulated !== undefined && accumulated.length > 0) {
-            this.currentAccumulatedContent = this.stripSpeakerPrefix(accumulated, speakerName);
+            this.currentAccumulatedContent = this.sanitizeSpeakerOutput(
+              accumulated, speakerName, otherParticipantNames
+            );
           } else if (delta.content.length > 0) {
             this.currentAccumulatedContent = this.currentAccumulatedContent + delta.content;
-            // 增量累积后也剥离前缀(防止前缀跨 delta 出现)
-            const stripped: string = this.stripSpeakerPrefix(this.currentAccumulatedContent, speakerName);
+            // 增量累积后也剥离前缀/检测错位(防止前缀跨 delta 出现)
+            const stripped: string = this.sanitizeSpeakerOutput(
+              this.currentAccumulatedContent, speakerName, otherParticipantNames
+            );
             if (stripped !== this.currentAccumulatedContent) {
               this.currentAccumulatedContent = stripped;
             }
@@ -1163,12 +1171,13 @@ export class GroupChatRuntimeService {
           this.currentStreamResolver = null;
           this.currentHandle = null;
 
-          // 确定最终正文(剥离说话人名称前缀)
-          const finalContent: string = this.stripSpeakerPrefix(
+          // 确定最终正文(剥离说话人名称前缀 + 身份错位检测)
+          const finalContent: string = this.sanitizeSpeakerOutput(
             result.content.length > 0
               ? result.content
               : this.currentAccumulatedContent,
-            speakerName
+            speakerName,
+            otherParticipantNames
           );
           this.currentAccumulatedContent = finalContent;
 
@@ -1847,29 +1856,116 @@ export class GroupChatRuntimeService {
   }
 
   /**
-   * 剥离模型输出的说话人名称前缀。
-   * 优先按说话人姓名精确匹配,再 fallback 到泛化方括号匹配。
-   * "[角色名]: " → "", "[角色名]：" → "", "角色名: " → "", "角色名：" → ""
+   * G-IDENTITY-REINFORCE-1: 过滤出"其他参与者"名称列表(排除当前 Speaker 与空名)。
    */
-  private stripSpeakerPrefix(content: string, speakerName: string | null): string {
+  private filterOtherParticipantNames(
+    participantNames: string[],
+    speakerName: string | null
+  ): string[] {
+    const result: string[] = [];
+    for (let i = 0; i < participantNames.length; i++) {
+      const name: string = participantNames[i];
+      if (name.length === 0) {
+        continue;
+      }
+      if (name === speakerName) {
+        continue;
+      }
+      result.push(name);
+    }
+    return result;
+  }
+
+  /**
+   * G-IDENTITY-REINFORCE-1: 净化模型输出,处理身份错位。
+   *
+   * 分步处理:
+   * 1. 精确剥离当前 Speaker 名称前缀("[角色名]: " / "角色名: " / 全角冒号)
+   * 2. 检测输出以"其他参与者名称"开头(身份错位),剥离该前缀并告警
+   * 3. 检测正文中混入"第二段他人发言"(形如 "\n[他人名]: " 或 "\n他人名: "),
+   *    只保留首段(当前 Speaker 的部分),截断并告警
+   * 4. Fallback: 泛化方括号 "[任意名字]:" 前缀剥离(兼容历史行为)
+   */
+  private sanitizeSpeakerOutput(
+    content: string,
+    speakerName: string | null,
+    otherParticipantNames: string[]
+  ): string {
     if (content.length === 0) {
       return content;
     }
-    // 1. 按说话人姓名精确剥离(方括号 + 无方括号)
+    // 1. 精确剥离当前 Speaker 名称前缀(方括号 + 无方括号)
+    let result: string = content;
     if (speakerName !== null && speakerName.length > 0) {
       const escaped: string = speakerName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const exactPattern: string = '^(?:\\[' + escaped + '\\]|' + escaped + ')[：:]\\s*';
-      const exactMatch: RegExpMatchArray | null = content.match(exactPattern);
+      const exactMatch: RegExpMatchArray | null = result.match(exactPattern);
       if (exactMatch !== null) {
-        return content.substring(exactMatch[0].length);
+        result = result.substring(exactMatch[0].length);
       }
     }
-    // 2. Fallback: 泛化方括号 [任意名字]:
-    const bracketMatch: RegExpMatchArray | null = content.match(/^\[[^\]]+\][：:]\s*/);
-    if (bracketMatch !== null) {
-      return content.substring(bracketMatch[0].length);
+
+    // 2. 检测"以其他参与者名称开头"(身份错位),剥离并告警
+    for (let i = 0; i < otherParticipantNames.length; i++) {
+      const otherName: string = otherParticipantNames[i];
+      const escapedOther: string = otherName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const otherPattern: string = '^(?:\\[' + escapedOther + '\\]|' + escapedOther + ')[：:]\\s*';
+      const otherMatch: RegExpMatchArray | null = result.match(otherPattern);
+      if (otherMatch !== null) {
+        Logger.warn(LOG_TAG, 'identity mismatch: leading prefix belongs to other participant: '
+          + this.tailOf(otherName));
+        result = result.substring(otherMatch[0].length);
+        break;
+      }
     }
-    return content;
+
+    // 3. 检测正文中混入"第二段他人发言",只保留首段(截断)
+    result = this.truncateAtOtherSpeakerSegment(result, otherParticipantNames);
+
+    // 4. Fallback: 泛化方括号 [任意名字]:
+    const bracketMatch: RegExpMatchArray | null = result.match(/^\[[^\]]+\][：:]\s*/);
+    if (bracketMatch !== null) {
+      result = result.substring(bracketMatch[0].length);
+    }
+    return result;
+  }
+
+  /**
+   * G-IDENTITY-REINFORCE-1: 截断正文中混入的"第二段他人发言"。
+   *
+   * 检测形如 "\n[其他角色名]: " 或 "\n其他角色名: " 的行(全角/半角冒号),
+   * 从最早出现的位置截断,只保留当前 Speaker 的首段发言。
+   * 未匹配到则原样返回。
+   */
+  private truncateAtOtherSpeakerSegment(
+    content: string,
+    otherParticipantNames: string[]
+  ): string {
+    let earliestCut: number = -1;
+    for (let i = 0; i < otherParticipantNames.length; i++) {
+      const otherName: string = otherParticipantNames[i];
+      if (otherName.length === 0) {
+        continue;
+      }
+      // 形如 "\n[其他角色名]: " 或 "\n其他角色名: "(全角/半角冒号)
+      const newlineBracket: string = '\n[' + otherName + ']';
+      const newlinePlain: string = '\n' + otherName;
+      const candidates: string[] = [
+        newlineBracket + ':', newlineBracket + '：',
+        newlinePlain + ':', newlinePlain + '：'
+      ];
+      for (let k = 0; k < candidates.length; k++) {
+        const idx: number = content.indexOf(candidates[k]);
+        if (idx >= 0 && (earliestCut === -1 || idx < earliestCut)) {
+          earliestCut = idx;
+        }
+      }
+    }
+    if (earliestCut === -1) {
+      return content;
+    }
+    Logger.warn(LOG_TAG, 'identity mismatch: embedded other-participant segment truncated');
+    return content.substring(0, earliestCut);
   }
 
   /**

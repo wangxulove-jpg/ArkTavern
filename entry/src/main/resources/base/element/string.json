@@ -1469,6 +1469,74 @@
       "value": "原文"
     },
     {
+      "name": "market_category_all",
+      "value": "全部"
+    },
+    {
+      "name": "market_category_roleplay",
+      "value": "角色扮演"
+    },
+    {
+      "name": "market_category_fantasy",
+      "value": "奇幻"
+    },
+    {
+      "name": "market_category_romance",
+      "value": "恋爱"
+    },
+    {
+      "name": "market_category_action",
+      "value": "动作"
+    },
+    {
+      "name": "market_category_horror",
+      "value": "恐怖"
+    },
+    {
+      "name": "market_category_scifi",
+      "value": "科幻"
+    },
+    {
+      "name": "market_category_comedy",
+      "value": "喜剧"
+    },
+    {
+      "name": "market_category_drama",
+      "value": "剧情"
+    },
+    {
+      "name": "market_category_mystery",
+      "value": "悬疑"
+    },
+    {
+      "name": "market_category_anime",
+      "value": "动漫"
+    },
+    {
+      "name": "market_category_vtuber",
+      "value": "VTuber"
+    },
+    {
+      "name": "market_category_game",
+      "value": "游戏"
+    },
+    {
+      "name": "market_category_helper",
+      "value": "助手"
+    },
+    {
+      "name": "market_category_chinese",
+      "value": "中文"
+    },
+    {
+      "name": "market_category_female",
+      "value": "女性"
+    },
+    {
+      "name": "market_category_male",
+      "value": "男性"
+    },
+    {
       "name": "tab_settings",
       "value": "设置"
     },

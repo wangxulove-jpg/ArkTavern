@@ -35,16 +35,39 @@ import { EmptyStateView } from '../../components/EmptyStateView';
 import { router } from '@kit.ArkUI';
 import { ThemePalette } from '../../theme/ThemePalette';
 
+interface MarketCategoryDef {
+  readonly label: string;
+  readonly searchtag: string;
+}
+
+const MARKET_CATEGORIES: MarketCategoryDef[] = [
+  { label: '全部', searchtag: '' },
+  { label: '中文', searchtag: 'Chinese' },
+  { label: '角色扮演', searchtag: 'Roleplay' },
+  { label: '奇幻', searchtag: 'Fantasy' },
+  { label: '恋爱', searchtag: 'Romance' },
+  { label: '动漫', searchtag: 'Anime' },
+  { label: 'VTuber', searchtag: 'VTuber' },
+  { label: '游戏', searchtag: 'Game' },
+  { label: '科幻', searchtag: 'Sci-fi' },
+  { label: '恐怖', searchtag: 'Horror' },
+  { label: '动作', searchtag: 'Action' },
+  { label: '喜剧', searchtag: 'Comedy' },
+  { label: '剧情', searchtag: 'Drama' },
+  { label: '悬疑', searchtag: 'Mystery' },
+  { label: '助手', searchtag: 'Helper' },
+  { label: '女性', searchtag: 'Female' },
+  { label: '男性', searchtag: 'Male' },
+];
+
 @Component
 export struct MarketPage {
   @State viewModel: MarketViewModel | null = null;
   @State isInitializing: boolean = true;
-  /** 下拉刷新状态(绑定到 Refresh 组件) */
   @State refreshing: boolean = false;
-  /** NSFW 弹窗显示状态(ViewModel 触发后由本组件渲染) */
   @State showNsfwConfirm: boolean = false;
-  /** 翻译隐私弹窗显示状态 */
   @State showTranslatePrivacy: boolean = false;
+  @State selectedCategoryIndex: number = 0;
   /** 顶部状态栏避让高度 */
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   /** 当前有效主题 */
@@ -107,6 +130,9 @@ export struct MarketPage {
 
         // ===== 排序 + 筛选 =====
         this.filterBar()
+
+        // ===== 分类浏览 =====
+        this.categoryRow()
 
         // ===== 错误提示 =====
         if (this.viewModel !== null && this.viewModel!.errorMessage.length > 0) {
@@ -347,6 +373,41 @@ export struct MarketPage {
   }
 
   @Builder
+  categoryRow(): void {
+    Scroll() {
+      Row() {
+        ForEach(MARKET_CATEGORIES, (cat: MarketCategoryDef, index: number) => {
+          Text(cat.label)
+            .fontSize($r('app.float.app_font_caption'))
+            .fontColor(this.selectedCategoryIndex === index ? $r('app.color.app_on_accent') : ThemePalette.textSecondaryColor(this.effectiveTheme))
+            .backgroundColor(this.selectedCategoryIndex === index ? ThemePalette.accentColor(this.effectiveTheme) : ThemePalette.surface2Color(this.effectiveTheme))
+            .borderRadius($r('app.float.app_radius_sm'))
+            .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+            .margin({ right: 6 })
+            .onClick(() => {
+              if (this.selectedCategoryIndex === index) {
+                return;
+              }
+              this.selectedCategoryIndex = index;
+              if (this.viewModel !== null) {
+                void this.viewModel!.setTag(cat.searchtag);
+              }
+            })
+        }, (cat: MarketCategoryDef, index: number) => cat.searchtag + '|' + index.toString())
+      }
+    }
+    .scrollable(ScrollDirection.Horizontal)
+    .scrollBar(BarState.Off)
+    .width('100%')
+    .padding({
+      left: $r('app.float.app_spacing_16'),
+      right: $r('app.float.app_spacing_16'),
+      top: $r('app.float.app_spacing_4'),
+      bottom: $r('app.float.app_spacing_4')
+    })
+  }
+
+  @Builder
   chineseOnlyChip(): void {
     Text($r('app.string.market_chinese_only'))
       .fontSize($r('app.float.app_font_caption'))
@@ -455,6 +516,24 @@ export struct MarketPage {
             })
           }
         }, (item: MarketCharacter, index: number) => marketCharacterKey(item))
+
+        if (this.viewModel!.loadingMore) {
+          GridItem() {
+            Row() {
+              LoadingProgress()
+                .width(24)
+                .height(24)
+                .color(ThemePalette.accentColor(this.effectiveTheme))
+              Text($r('app.string.market_loading'))
+                .fontSize($r('app.float.app_font_caption'))
+                .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+                .margin({ left: 8 })
+            }
+            .width('100%')
+            .justifyContent(FlexAlign.Center)
+            .padding({ top: 16, bottom: 16 })
+          }
+        }
       }
       .columnsTemplate('1fr 1fr')
       .columnsGap($r('app.float.app_spacing_12'))

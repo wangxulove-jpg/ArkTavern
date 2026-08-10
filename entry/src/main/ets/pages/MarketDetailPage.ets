@@ -629,10 +629,10 @@ struct MarketDetailPage {
   statsSection(): void {
     Column() {
       // 备用开场白数量
-      this.statRow(
+      this.statRowWithCount(
         $r('app.string.market_detail_alt_greetings_label'),
-        this.viewModel!.detail!.alternateGreetingsCount.toString()
-          + $r('app.string.market_detail_stat_unit_entries')
+        this.viewModel!.detail!.alternateGreetingsCount,
+        $r('app.string.market_detail_stat_unit_entries')
       )
 
       // 对话示例
@@ -644,10 +644,10 @@ struct MarketDetailPage {
       )
 
       // 角色世界书
-      this.statRow(
+      this.statRowWithCount(
         $r('app.string.market_detail_character_book_label'),
-        this.viewModel!.detail!.characterBookEntryCount.toString()
-          + $r('app.string.market_detail_stat_unit_entries')
+        this.viewModel!.detail!.characterBookEntryCount,
+        $r('app.string.market_detail_stat_unit_entries')
       )
 
       // 卡版本
@@ -686,6 +686,26 @@ struct MarketDetailPage {
         .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
       Blank()
       Text(value)
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+    }
+    .width('100%')
+    .padding({ top: 6, bottom: 6 })
+  }
+
+  @Builder
+  statRowWithCount(label: ResourceStr, count: number, unit: ResourceStr): void {
+    Row() {
+      Text(label)
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+      Blank()
+      Text() {
+        Span(count.toString())
+        Span(unit)
+      }
         .fontSize($r('app.float.app_font_caption'))
         .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .maxLines(1)

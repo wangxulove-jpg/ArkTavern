@@ -638,13 +638,11 @@ function mapChubNodeToMarketCharacter(node: Record<string, Object>): MarketChara
 
   // 数值字段
   const rating: number = getNumberField(node, 'rating');
-  // 下载量优先用 starCount(Chub 实际返回的星数/收藏数)
-  const downloadCount: number = getNumberField(node, 'starCount');
+  let downloadCount: number = getNumberField(node, 'starCount');
   if (downloadCount < 0) {
-    // 兜底:尝试 n_favorites 字段
     const favCount: number = getNumberField(node, 'n_favorites');
     if (favCount >= 0) {
-      // 不覆盖,使用原值或 -1
+      downloadCount = favCount;
     }
   }
 

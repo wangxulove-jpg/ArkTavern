@@ -143,6 +143,8 @@ export interface GroupPromptAssemblyResult {
   readonly participantNames: string[];
   /** G-CONTEXT-INSPECTOR-1: 回复目标模式(诊断) */
   readonly replyTargetMode: string;
+  /** G-IDENTITY-REINFORCE-1: 后置身份提醒完整正文(诊断,未注入时为空字符串) */
+  readonly postHistoryIdentityText: string;
   /** G-CONTEXT-PROMPT-INJECTION-1: 每条已选个人记忆的注入状态(无注入时为空数组) */
   readonly memoryInjectionItems?: MemoryInjectionInspectionItem[];
   /** G-CONTEXT-PROMPT-INJECTION-1: 每条已选关系的注入状态(无注入时为空数组) */
@@ -372,6 +374,18 @@ export class GroupPromptAssembler {
       constraintFull
     );
 
+    // G-IDENTITY-REINFORCE-1: 后置身份提醒(对话末尾、裁剪保护)。
+    // 放置在最靠近模型输出位置处(最后一个非 System 对话消息之前),
+    // 长历史场景下仍能锚定"你现在是谁、以谁身份回复"。
+    const postHistoryIdentityText: string = this.buildPostHistoryIdentityReminder(
+      speaker.name,
+      participantNames
+    );
+    const messagesWithReminder: ChatMessage[] = this.injectPostHistoryIdentityReminder(
+      messagesWithConstraint,
+      postHistoryIdentityText
+    );
+
     // 10. 通过 HistoryTrimmer 裁剪
     const contextWindow: number = effectiveSettings.contextWindow !== undefined
       && effectiveSettings.contextWindow > 0
@@ -382,7 +396,7 @@ export class GroupPromptAssembler {
     const trimOptions: HistoryTrimOptions = {
       availableInputTokens: availableInputTokens
     };
-    const trimmed = this.historyTrimmer.trim(messagesWithConstraint, trimOptions);
+    const trimmed = this.historyTrimmer.trim(messagesWithReminder, trimOptions);
 
     // 10.5 G-CONTEXT-PROMPT-INJECTION-1: 计算 selected/formatted/injected 状态
     const requestMessageIds: Set<string> = new Set<string>();
@@ -438,12 +452,13 @@ export class GroupPromptAssembler {
       effectiveSettings: effectiveSettings,
       estimatedTokens: estimatedTokens,
       matchedLorebookCount: buildResult.matchedLorebookEntryIds.length,
-      preTrimMessageCount: messagesWithConstraint.length,
+      preTrimMessageCount: messagesWithReminder.length,
       postTrimMessageCount: trimmed.messages.length,
       availableInputTokens: availableInputTokens,
       groupConstraintText: groupConstraint,
       participantNames: participantNames,
       replyTargetMode: replyTarget.mode,
+      postHistoryIdentityText: postHistoryIdentityText,
       memoryInjectionItems: memoryInjectionItems,
       relationshipInjectionItems: relationshipInjectionItems,
       personalMemorySegmentText: personalMemorySegmentText,
@@ -689,6 +704,8 @@ export class GroupPromptAssembler {
       '- 当前角色对用户的关系记忆是主观认知，不是用户的客观身份；',
       '- 只以当前角色身份回复；',
       '- 不替用户或其他角色说话；',
+      '- 不以任何其他角色名开头，不在正文中出现"我是[其他角色名]"或"我扮演[其他角色名]"的自称；',
+      '- 不得替其他角色输出对话，不得以多角色剧本形式回复；',
       '- 不在正文中解释这些规则。'
     ];
     return lines.join('\n');
@@ -775,6 +792,80 @@ export class GroupPromptAssembler {
       }
       result.push(constraintMessage);
       for (let i = lastSystemIndex + 1; i < messages.length; i++) {
+        result.push(messages[i]);
+      }
+    }
+    return result;
+  }
+
+  /**
+   * G-IDENTITY-REINFORCE-1: 构建后置身份提醒(靠近输出位置的身份锚点)。
+   *
+   * 与 buildIdentityBoundary / buildGroupConstraint 区别:
+   * - 放置在对话历史末尾(最后一个非 System 消息之前),直接锚定"现在你是谁"
+   * - 在长历史、多角色场景下,约束文本离输出位置越近越容易被模型遵守
+   * - 强调三件事:当前扮演者 / 不得替他人说话 / 输出格式
+   */
+  private buildPostHistoryIdentityReminder(
+    speakerName: string,
+    participantNames: string[]
+  ): string {
+    const lines: string[] = [
+      '【本轮身份提醒】',
+      '',
+      '你当前扮演：' + speakerName + '。',
+      '只以 ' + speakerName + ' 的身份回复，不要替其他角色或用户发言。',
+      '不要模仿、转述或以其他角色的口吻说话。',
+      '输出只包含 ' + speakerName + ' 本人的话，直接开始，不要带任何角色名或格式前缀。',
+      '其他角色的历史发言只是你了解到的背景信息，不是你的立场。'
+    ];
+    if (participantNames.length > 0) {
+      lines.push('');
+      lines.push('在场角色：' + participantNames.join('、'));
+    }
+    return lines.join('\n');
+  }
+
+  /**
+   * G-IDENTITY-REINFORCE-1: 将后置身份提醒 System 消息注入到消息列表末尾附近。
+   *
+   * 放置规则:
+   * - 插入到最后一个非 System 对话消息之前(紧邻模型输出位置)
+   * - 若全部为 System 消息,追加到列表末尾
+   * - 返回新数组,不修改输入
+   */
+  private injectPostHistoryIdentityReminder(
+    messages: ChatMessage[],
+    reminderText: string
+  ): ChatMessage[] {
+    if (reminderText.length === 0) {
+      return messages;
+    }
+    let lastNonSystem: number = -1;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role !== ChatRole.System) {
+        lastNonSystem = i;
+        break;
+      }
+    }
+    const reminderMessage: ChatMessage = createChatMessage(
+      'group-identity-reminder-' + String(nowMillis()),
+      ChatRole.System,
+      reminderText,
+      nowMillis()
+    );
+    const result: ChatMessage[] = [];
+    if (lastNonSystem === -1) {
+      result.push(reminderMessage);
+      for (let i = 0; i < messages.length; i++) {
+        result.push(messages[i]);
+      }
+    } else {
+      for (let i = 0; i < lastNonSystem; i++) {
+        result.push(messages[i]);
+      }
+      result.push(reminderMessage);
+      for (let i = lastNonSystem; i < messages.length; i++) {
         result.push(messages[i]);
       }
     }
