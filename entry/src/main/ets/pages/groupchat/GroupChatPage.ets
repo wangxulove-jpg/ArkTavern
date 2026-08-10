@@ -65,6 +65,9 @@ import {
   normalizeBubbleOpacity,
   DEFAULT_BUBBLE_OPACITY
 } from '../../utils/ChatBubbleAppearance';
+import {
+  ChatBackgroundConfig
+} from '../../services/ChatBackgroundService';
 import { Logger } from '../../utils/Logger';
 import { ThemePalette } from '../../theme/ThemePalette';
 
@@ -181,6 +184,10 @@ struct GroupChatPage {
   @State isDarkMode: boolean = false;
   /** G-UI-ALIGN-2A: 显示设置面板可见性(轻量卡片,非 Dialog) */
   @State appearancePanelVisible: boolean = false;
+  /** 聊天背景配置(从 ChatBackgroundService 加载) */
+  @State chatBgConfig: ChatBackgroundConfig | null = null;
+  /** 聊天背景配置变更通知(由 ChatBackgroundSettingsPage 触发) */
+  @StorageProp('chatBgConfigVersion') @Watch('onChatBgConfigVersionChanged') chatBgConfigVersion: number = 0;
   /**
    * G-UI-ALIGN-2A: 键盘高度(vp),0 表示键盘未弹起。
    * OFFSET 模式下用于消息列表底部占位与输入栏间距判断。
@@ -265,6 +272,8 @@ struct GroupChatPage {
       this.hasInitialScrolled = true;
       // 启动状态轮询(生成期间持续同步 ViewModel 状态)
       this.startSyncPolling();
+      // 加载聊天背景配置(与单聊共享配置)
+      this.loadChatBackground();
     } catch (e) {
       this.state = GroupChatDetailState.Error;
     }
@@ -659,6 +668,26 @@ struct GroupChatPage {
   @Builder
   chatLayout(): void {
     Stack() {
+      // ===== 0. 背景层(最底层)=====
+      if (this.chatBgConfig !== null
+        && this.chatBgConfig!.enabled
+        && this.chatBgConfig!.imageUri.length > 0) {
+        Image(this.chatBgConfig!.imageUri)
+          .width('100%')
+          .height('100%')
+          .objectFit(ImageFit.Cover)
+          .blur(this.chatBgConfig!.blur)
+          .hitTestBehavior(HitTestMode.Transparent)
+          .expandSafeArea([SafeAreaType.KEYBOARD], [SafeAreaEdge.BOTTOM])
+
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor('rgba(0,0,0,' + (this.chatBgConfig!.dim / 100).toString() + ')')
+          .hitTestBehavior(HitTestMode.Transparent)
+          .expandSafeArea([SafeAreaType.KEYBOARD], [SafeAreaEdge.BOTTOM])
+      }
+
       // ===== 1. 消息列表层(含顶部擦除遮罩 + 回到底部按钮)=====
       Column() {
         Stack({ alignContent: Alignment.BottomEnd }) {
@@ -2402,6 +2431,12 @@ this.syncFromViewModel();
             this.goCharacterMemoryPage();
           })
 
+          // 菜单项:对话设置(背景图片等,与单聊共享配置)
+          this.sheetMenuItem('对话设置', (): void => {
+            this.moreMenuVisible = false;
+            this.navigateToChatBackgroundSettings();
+          })
+
           // 关闭按钮
           Button($r('app.string.group_cancel'))
             .fontSize($r('app.float.app_font_body'))
@@ -2773,6 +2808,34 @@ this.syncFromViewModel();
     } finally {
       this.renameSaving = false;
     }
+  }
+
+  /** 加载聊天背景配置 */
+  private loadChatBackground(): void {
+    const service = AppServices.getChatBackgroundService();
+    if (service === null) {
+      return;
+    }
+    service.getConfig(this.chatId)
+      .then((cfg: ChatBackgroundConfig): void => {
+        this.chatBgConfig = cfg;
+      })
+      .catch((): void => {
+        this.chatBgConfig = null;
+      });
+  }
+
+  /** 聊天背景配置变更监听 */
+  private onChatBgConfigVersionChanged(): void {
+    this.loadChatBackground();
+  }
+
+  /** 导航到聊天背景设置页 */
+  private navigateToChatBackgroundSettings(): void {
+    router.pushUrl({
+      url: 'pages/ChatBackgroundSettingsPage',
+      params: { chatId: this.chatId }
+    });
   }
 }
 
