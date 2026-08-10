@@ -487,7 +487,7 @@ struct WorldSceneManagePage {
             WorldPrimaryButton({
               label: $r('app.string.world_scene_history_card_continue'),
               onButtonClick: (): void => {
-                this.openSceneChat(sc.sceneId);
+                this.continueActiveSession(sc.sceneId);
               }
             })
             WorldSecondaryButton({
@@ -597,13 +597,12 @@ struct WorldSceneManagePage {
     this.syncFromViewModel();
   }
 
-  private openSceneChat(sceneId: string, sessionId?: string): void {
+  private openSceneChat(sceneId: string, sessionId: string): void {
     if (sceneId.length === 0 || this.viewModel === null) {
       return;
     }
-    const sid: string = sessionId !== undefined ? sessionId : sceneId;
     AppStorage.setOrCreate<string>(PENDING_WORLD_SCENE_CHAT_ID_KEY, sceneId);
-    AppStorage.setOrCreate<string>(PENDING_WORLD_SESSION_ID_KEY, sid);
+    AppStorage.setOrCreate<string>(PENDING_WORLD_SESSION_ID_KEY, sessionId.length > 0 ? sessionId : sceneId);
     router.pushUrl({ url: 'pages/world/WorldSceneChatPage' });
   }
 
@@ -615,6 +614,14 @@ struct WorldSceneManagePage {
     AppStorage.setOrCreate<string>(PENDING_WORLD_ID_KEY, worldId);
     AppStorage.setOrCreate<string>(PENDING_WORLD_SCENE_ID_KEY, sceneId);
     router.pushUrl({ url: 'pages/world/WorldSceneDetailPage' });
+  }
+
+  private async continueActiveSession(sceneId: string): Promise<void> {
+    if (this.viewModel === null) {
+      return;
+    }
+    const sessionId: string = await this.viewModel.getActiveSessionId(sceneId);
+    this.openSceneChat(sceneId, sessionId);
   }
 
   private async createNewFromEnded(sc: HistorySceneCardUiModel): Promise<void> {

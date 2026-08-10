@@ -289,6 +289,7 @@ export class WorldSceneChatViewModel implements WorldRuntimeObserver {
         this.state = WorldSceneChatLoadState.NotFound;
         return;
       }
+      this.expectedWorldId = world.id;
 
       const location: WorldLocation | null = await this.locationRepo.getById(scene.locationId);
       if (operationId !== this.loadOperationId || this.disposed) {

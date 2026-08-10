@@ -30,6 +30,10 @@ import { DatabaseError } from '../../models/DatabaseError';
 import { mapWorldSceneErrorToMessage } from './WorldSceneErrorMapper';
 import { mapWorldStateErrorToMessage } from './WorldStateErrorMapper';
 import {
+  WorldConversationSessionError,
+  SessionErrorKind
+} from '../../models/world/WorldConversationSessionError';
+import {
   WORLD_DETAIL_REFRESH_TOKEN_KEY,
   formatWorldTimestamp
 } from './WorldUiModels';
@@ -307,16 +311,47 @@ export class WorldSceneManageViewModel {
     }
   }
 
+  async getActiveSessionId(sceneId: string): Promise<string> {
+    try {
+      const session: WorldConversationSession | null =
+        await this.sessionService.getActiveSessionForScene(this.expectedWorldId, sceneId);
+      return session !== null ? session.id : '';
+    } catch (e) {
+      return '';
+    }
+  }
+
   async listActiveLocations(): Promise<ActiveLocationOption[]> {
     const locations: WorldLocation[] = await this.safeListLocations(this.expectedWorldId);
+    const activeScenes: WorldScene[] = await this.safeListActiveScenes(this.expectedWorldId);
+    const busyLocations: string[] = [];
+    for (const sc of activeScenes) {
+      busyLocations.push(sc.locationId);
+    }
     const options: ActiveLocationOption[] = [];
     for (let i: number = 0; i < locations.length; i++) {
-      if (locations[i].status === WorldLocationStatus.Active) {
+      if (locations[i].status === WorldLocationStatus.Active && busyLocations.indexOf(locations[i].id) === -1) {
         const option: ActiveLocationOption = { id: locations[i].id, name: locations[i].name };
         options.push(option);
       }
     }
     return options;
+  }
+
+  private async safeListActiveScenes(worldId: string): Promise<WorldScene[]> {
+    try {
+      const scenes: WorldScene[] = await this.sceneRepo.listByWorld(worldId);
+      const active: WorldScene[] = [];
+      for (const sc of scenes) {
+        if (sc.status === WorldSceneStatus.Active) {
+          active.push(sc);
+        }
+      }
+      return active;
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'listByWorld(scenes) failed: ' + this.safeErrorCategory(e));
+      return [];
+    }
   }
 
   dispose(): void {
@@ -338,6 +373,25 @@ export class WorldSceneManageViewModel {
   }
 
   private resolveErrorMessage(e: Object): string {
+    if (e instanceof WorldConversationSessionError) {
+      const err: WorldConversationSessionError = e as WorldConversationSessionError;
+      if (err.kind === SessionErrorKind.NoParticipants) {
+        return '该地点没有可参与的角色实例';
+      }
+      if (err.kind === SessionErrorKind.ActiveSessionAlreadyExists) {
+        return '该场景已有活跃会话';
+      }
+      if (err.kind === SessionErrorKind.ParticipantNotFound) {
+        return '参与者角色实例不存在或已被移除';
+      }
+      if (err.kind === SessionErrorKind.ParticipantLocationMismatch) {
+        return '部分角色不在该场景地点';
+      }
+      if (err.kind === SessionErrorKind.ParticipantInactive) {
+        return '部分角色实例未激活';
+      }
+      return '会话操作失败,请重试';
+    }
     const sceneMsg: string = mapWorldSceneErrorToMessage(e);
     if (sceneMsg !== '操作失败,请重试') {
       return sceneMsg;

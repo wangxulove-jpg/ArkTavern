@@ -45,6 +45,9 @@ export function mapWorldRuntimeErrorToMessage(e: Object): string {
       case WorldRuntimeErrorKind.EmptyUserMessage:
         return '消息不能为空';
       case WorldRuntimeErrorKind.ModelRequestFailed:
+        if (err.message.includes('未配置 Provider')) {
+          return '请先在模型设置中配置 API Provider';
+        }
         return '请求失败,请稍后重试';
       case WorldRuntimeErrorKind.ModelCancelled:
         return '生成已取消';
