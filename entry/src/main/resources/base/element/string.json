@@ -3799,6 +3799,90 @@
     {
       "name": "world_inspector_dossier",
       "value": "档案"
+    },
+    {
+      "name": "world_ai_create",
+      "value": "AI 创建世界"
+    },
+    {
+      "name": "world_ai_create_title",
+      "value": "AI 创建世界"
+    },
+    {
+      "name": "world_ai_select_chars_hint",
+      "value": "选择角色卡(AI 将基于角色设定构建世界)"
+    },
+    {
+      "name": "world_ai_selected_count",
+      "value": " 个角色已选"
+    },
+    {
+      "name": "world_no_description",
+      "value": "无描述"
+    },
+    {
+      "name": "world_ai_next_theme",
+      "value": "下一步: 输入主题"
+    },
+    {
+      "name": "world_ai_theme_hint",
+      "value": "描述你想创建的世界(可选)"
+    },
+    {
+      "name": "world_ai_theme_placeholder",
+      "value": "例如: 仙侠世界、现代都市、魔法学院..."
+    },
+    {
+      "name": "world_ai_back_select",
+      "value": "返回选择角色"
+    },
+    {
+      "name": "world_ai_generate",
+      "value": "AI 生成世界"
+    },
+    {
+      "name": "world_ai_generating",
+      "value": "AI 正在生成世界..."
+    },
+    {
+      "name": "world_ai_generating_hint",
+      "value": "分析角色设定并构建世界观,可能需要 10-30 秒"
+    },
+    {
+      "name": "world_ai_regenerate",
+      "value": "重新生成"
+    },
+    {
+      "name": "world_ai_confirm_create",
+      "value": "确认创建"
+    },
+    {
+      "name": "world_ai_world_info",
+      "value": "世界信息"
+    },
+    {
+      "name": "world_ai_locations",
+      "value": "地点"
+    },
+    {
+      "name": "world_ai_lorebook",
+      "value": "世界观条目"
+    },
+    {
+      "name": "world_ai_char_notes",
+      "value": "角色定位建议"
+    },
+    {
+      "name": "world_ai_player_name_label",
+      "value": "玩家名称"
+    },
+    {
+      "name": "world_ai_player_name_placeholder",
+      "value": "输入你在世界中的名称"
+    },
+    {
+      "name": "world_create_success",
+      "value": "世界创建成功"
     }
   ]
 }

@@ -43,6 +43,7 @@
     "pages/world/WorldCharacterInstanceDetailPage",
     "pages/world/WorldMemoryEvidencePage",
     "pages/world/WorldCuratorPage",
-    "pages/world/WorldInspectorPage"
+    "pages/world/WorldInspectorPage",
+    "pages/world/WorldAICreatePage"
   ]
 }

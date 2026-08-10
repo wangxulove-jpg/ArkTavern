@@ -484,6 +484,9 @@ struct WorldSceneChatPage {
     if (content.length === 0) { this.actionError = '消息不能为空'; return; }
     this.actionError = ''; this.runtimeError = ''; this.inputContent = '';
 
+    // 先同步 VM 状态(isSending/roundStatus 等),再追加乐观消息
+    this.syncFromViewModel();
+
     const optimisticMsg: ChatMessageUiModel = {
       id: 'opt_' + Date.now().toString(),
       sequenceNumber: this.detail.messages.length + 1,
@@ -527,7 +530,6 @@ struct WorldSceneChatPage {
       if (errorMsg.length > 0) { this.actionError = errorMsg; }
       this.syncFromViewModel();
     });
-    this.syncFromViewModel();
     setTimeout((): void => {
       try { this.scroller.scrollEdge(Edge.Bottom); } catch (_e) { /* ignore */ }
     }, 100);

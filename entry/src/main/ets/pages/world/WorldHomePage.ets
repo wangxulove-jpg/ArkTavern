@@ -155,6 +155,19 @@ struct WorldHomePage {
           .layoutWeight(1)
           .margin({ left: 4 })
 
+        // AI创建世界(右上角)
+        Button($r('app.string.world_ai_create'))
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor($r('app.color.app_on_accent'))
+          .backgroundColor('#8B5CF6')
+          .borderRadius($r('app.float.app_radius_sm'))
+          .height(32)
+          .padding({ left: 16, right: 16 })
+          .margin({ right: 8 })
+          .onClick(() => {
+            router.pushUrl({ url: 'pages/world/WorldAICreatePage' });
+          })
+
         // 创建世界(右上角)
         Button($r('app.string.world_create'))
           .fontSize($r('app.float.app_font_caption'))
