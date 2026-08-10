@@ -247,66 +247,75 @@ struct WorldDetailPage {
   }
 
   build(): void {
-    Stack() {
-      Column() {
-        this.topNavArea();
-        this.contentArea();
-        this.bottomSummaryBar();
+    Column() {
+      Stack() {
+        Column() {
+          this.topNavArea();
+          this.contentArea();
+          this.bottomSummaryBar();
+        }
+        .width('100%')
+        .height('100%')
+        .backgroundColor(ThemePalette.pageBgColor(this.effectiveTheme))
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+
+        if (this.moreMenuVisible) {
+          this.moreMenuOverlay()
+        }
+        if (this.addMenuVisible) {
+          this.addMenuOverlay()
+        }
       }
       .width('100%')
-      .height('100%')
-      .backgroundColor(ThemePalette.pageBgColor(this.effectiveTheme))
-      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+      .layoutWeight(1)
+      .bindSheet(this.unplacedSheetVisible, this.unplacedCharactersSheet, {
+        height: SheetSize.FIT_CONTENT,
+        dragBar: true,
+        backgroundColor: ThemePalette.worldSurfaceColor(this.effectiveTheme),
+        onDisappear: () => {
+          this.unplacedSheetVisible = false;
+        }
+      })
+      .bindSheet(this.placeLocationSheetVisible, this.placeLocationSelectSheet, {
+        height: SheetSize.FIT_CONTENT,
+        dragBar: true,
+        backgroundColor: ThemePalette.worldSurfaceColor(this.effectiveTheme),
+        onDisappear: () => {
+          this.placeLocationSheetVisible = false;
+          this.placeForInstanceId = '';
+        }
+      })
+      .bindSheet(this.travelSheetVisible, this.travelDestinationSheet, {
+        height: SheetSize.FIT_CONTENT,
+        dragBar: true,
+        backgroundColor: ThemePalette.worldSurfaceColor(this.effectiveTheme),
+        onDisappear: () => {
+          this.travelSheetVisible = false;
+          this.travelInstanceId = '';
+        }
+      })
 
-      if (this.moreMenuVisible) {
-        this.moreMenuOverlay()
-      }
-      if (this.addMenuVisible) {
-        this.addMenuOverlay()
-      }
+      // 独立宿主:隔离地图组件重建对 bindSheet 的影响
+      Column()
+        .width(0)
+        .height(0)
+        .bindSheet(this.launcherSheetVisible, this.sceneLauncherSheet, {
+          height: SheetSize.FIT_CONTENT,
+          dragBar: true,
+          backgroundColor: ThemePalette.worldSurfaceColor(this.effectiveTheme),
+          onDisappear: () => {
+            if (this.launcherViewModel !== null) {
+              this.launcherViewModel.dispose();
+              this.launcherViewModel = null;
+            }
+            this.launcherSheetVisible = false;
+            this.launcherDetail = null;
+            this.launcherActionError = '';
+          }
+        })
     }
     .width('100%')
     .height('100%')
-    .bindSheet(this.launcherSheetVisible, this.sceneLauncherSheet, {
-      height: SheetSize.FIT_CONTENT,
-      dragBar: true,
-      backgroundColor: ThemePalette.worldSurfaceColor(this.effectiveTheme),
-      onDisappear: () => {
-        if (this.launcherViewModel !== null) {
-          this.launcherViewModel.dispose();
-          this.launcherViewModel = null;
-        }
-        this.launcherSheetVisible = false;
-        this.launcherDetail = null;
-        this.launcherActionError = '';
-      }
-    })
-    .bindSheet(this.unplacedSheetVisible, this.unplacedCharactersSheet, {
-      height: SheetSize.FIT_CONTENT,
-      dragBar: true,
-      backgroundColor: ThemePalette.worldSurfaceColor(this.effectiveTheme),
-      onDisappear: () => {
-        this.unplacedSheetVisible = false;
-      }
-    })
-    .bindSheet(this.placeLocationSheetVisible, this.placeLocationSelectSheet, {
-      height: SheetSize.FIT_CONTENT,
-      dragBar: true,
-      backgroundColor: ThemePalette.worldSurfaceColor(this.effectiveTheme),
-      onDisappear: () => {
-        this.placeLocationSheetVisible = false;
-        this.placeForInstanceId = '';
-      }
-    })
-    .bindSheet(this.travelSheetVisible, this.travelDestinationSheet, {
-      height: SheetSize.FIT_CONTENT,
-      dragBar: true,
-      backgroundColor: ThemePalette.worldSurfaceColor(this.effectiveTheme),
-      onDisappear: () => {
-        this.travelSheetVisible = false;
-        this.travelInstanceId = '';
-      }
-    })
   }
 
   @Builder
@@ -379,9 +388,13 @@ struct WorldDetailPage {
       .borderRadius({ topLeft: 16, topRight: 16 })
       .borderWidth({ top: 1 })
       .borderColor(ThemePalette.worldBorderColor(this.effectiveTheme))
+      .transition(TransitionEffect.translate({ y: 400 })
+        .animation({ duration: 250, curve: Curve.EaseOut })
+        .combine(TransitionEffect.OPACITY.animation({ duration: 200 })))
     }
     .width('100%')
     .height('100%')
+    .transition(TransitionEffect.OPACITY.animation({ duration: 200 }))
   }
 
   @Builder
@@ -696,10 +709,10 @@ struct WorldDetailPage {
 
   @Builder
   addMenuOverlay(): void {
-    Stack() {
+    Stack({ alignContent: Alignment.BottomStart }) {
       Column()
         .width('100%')
-        .layoutWeight(1)
+        .height('100%')
         .backgroundColor($r('app.color.world_scrim'))
         .onClick(() => {
           this.addMenuVisible = false;
@@ -716,12 +729,12 @@ struct WorldDetailPage {
         })
       }
       .width('100%')
-      .padding({ left: 16, right: 16, bottom: this.navBarHeight + 80 })
-      .backgroundColor(Color.Transparent)
+      .padding({ left: 16, right: 16, bottom: this.navBarHeight + 80, top: 12 })
+      .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
+      .borderRadius({ topLeft: 16, topRight: 16 })
     }
     .width('100%')
     .height('100%')
-    .alignContent(Alignment.BottomStart)
   }
 
   @Builder

@@ -35,7 +35,6 @@ import { WorldPrimaryButton } from '../../components/world/WorldPrimaryButton';
 import { WorldSecondaryButton } from '../../components/world/WorldSecondaryButton';
 import { WorldEmptyState } from '../../components/world/WorldEmptyState';
 import { WorldStatusChip } from '../../components/world/WorldStatusChip';
-import { WorldBottomActionBar } from '../../components/world/WorldBottomActionBar';
 import { CharacterImageView } from '../../components/CharacterImageView';
 import { Logger } from '../../utils/Logger';
 import { ThemePalette } from '../../theme/ThemePalette';
@@ -59,19 +58,12 @@ struct WorldCharacterInstanceDetailPage {
   @StorageProp('navigationBarHeight') navBarHeight: number = 0;
   @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
 
-  /** 场景启动器 Sheet */
   @State private sceneLauncherVisible: boolean = false;
-  /** 位置选择 dialog */
   @State private locationSelectVisible: boolean = false;
-  /** 位置选择用途: 'place' | 'adjust' */
   @State private locationSelectMode: string = '';
-  /** 从地图撤下确认 */
   @State private unplaceConfirmVisible: boolean = false;
-  /** 前往目的地 Sheet */
   @State private travelDestinationVisible: boolean = false;
-  /** 从世界移除确认 */
   @State private removeFromWorldConfirmVisible: boolean = false;
-  /** 实例已被移除(导航回退标记) */
   @State private instanceRemoved: boolean = false;
 
   async aboutToAppear(): Promise<void> {
@@ -135,54 +127,74 @@ struct WorldCharacterInstanceDetailPage {
   }
 
   build(): void {
-    Column() {
-      this.topNav()
-      this.contentArea()
+    Stack() {
+      Column() {
+        this.topNav()
+        this.contentArea()
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor(ThemePalette.pageBgColor(this.effectiveTheme))
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+      .bindSheet(this.sceneLauncherVisible, this.sceneLauncherSheet, {
+        height: SheetSize.FIT_CONTENT,
+        dragBar: true,
+        backgroundColor: ThemePalette.worldSurfaceColor(this.effectiveTheme),
+        onDisappear: () => {
+          this.sceneLauncherVisible = false;
+        }
+      })
+
+      Column()
+        .width(0)
+        .height(0)
+        .bindSheet(this.locationSelectVisible, this.locationSelectSheet, {
+          height: SheetSize.FIT_CONTENT,
+          dragBar: true,
+          backgroundColor: ThemePalette.worldSurfaceColor(this.effectiveTheme),
+          onDisappear: () => {
+            this.locationSelectVisible = false;
+          }
+        })
+
+      Column()
+        .width(0)
+        .height(0)
+        .bindSheet(this.unplaceConfirmVisible, this.unplaceConfirmSheet, {
+          height: SheetSize.FIT_CONTENT,
+          dragBar: true,
+          backgroundColor: ThemePalette.worldSurfaceColor(this.effectiveTheme),
+          onDisappear: () => {
+            this.unplaceConfirmVisible = false;
+          }
+        })
+
+      Column()
+        .width(0)
+        .height(0)
+        .bindSheet(this.travelDestinationVisible, this.travelDestinationSheet, {
+          height: SheetSize.FIT_CONTENT,
+          dragBar: true,
+          backgroundColor: ThemePalette.worldSurfaceColor(this.effectiveTheme),
+          onDisappear: () => {
+            this.travelDestinationVisible = false;
+          }
+        })
+
+      Column()
+        .width(0)
+        .height(0)
+        .bindSheet(this.removeFromWorldConfirmVisible, this.removeFromWorldConfirmSheet, {
+          height: SheetSize.FIT_CONTENT,
+          dragBar: true,
+          backgroundColor: ThemePalette.worldSurfaceColor(this.effectiveTheme),
+          onDisappear: () => {
+            this.removeFromWorldConfirmVisible = false;
+          }
+        })
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(ThemePalette.pageBgColor(this.effectiveTheme))
-    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-    .bindSheet(this.sceneLauncherVisible, this.sceneLauncherSheet, {
-      height: SheetSize.FIT_CONTENT,
-      dragBar: true,
-      backgroundColor: ThemePalette.worldSurfaceColor(this.effectiveTheme),
-      onDisappear: () => {
-        this.sceneLauncherVisible = false;
-      }
-    })
-    .bindSheet(this.locationSelectVisible, this.locationSelectSheet, {
-      height: SheetSize.FIT_CONTENT,
-      dragBar: true,
-      backgroundColor: ThemePalette.worldSurfaceColor(this.effectiveTheme),
-      onDisappear: () => {
-        this.locationSelectVisible = false;
-      }
-    })
-    .bindSheet(this.unplaceConfirmVisible, this.unplaceConfirmSheet, {
-      height: SheetSize.FIT_CONTENT,
-      dragBar: true,
-      backgroundColor: ThemePalette.worldSurfaceColor(this.effectiveTheme),
-      onDisappear: () => {
-        this.unplaceConfirmVisible = false;
-      }
-    })
-    .bindSheet(this.travelDestinationVisible, this.travelDestinationSheet, {
-      height: SheetSize.FIT_CONTENT,
-      dragBar: true,
-      backgroundColor: ThemePalette.worldSurfaceColor(this.effectiveTheme),
-      onDisappear: () => {
-        this.travelDestinationVisible = false;
-      }
-    })
-    .bindSheet(this.removeFromWorldConfirmVisible, this.removeFromWorldConfirmSheet, {
-      height: SheetSize.FIT_CONTENT,
-      dragBar: true,
-      backgroundColor: ThemePalette.worldSurfaceColor(this.effectiveTheme),
-      onDisappear: () => {
-        this.removeFromWorldConfirmVisible = false;
-      }
-    })
   }
 
   @Builder
@@ -227,7 +239,7 @@ struct WorldCharacterInstanceDetailPage {
     } else if (this.loadState === WorldInstanceDetailLoadState.Error) {
       this.errorView();
     } else if (this.loadState === WorldInstanceDetailLoadState.Ready && this.detail !== null) {
-      this.readyView(this.detail)
+      this.readyView()
     }
   }
 
@@ -282,20 +294,33 @@ struct WorldCharacterInstanceDetailPage {
   }
 
   @Builder
-  readyView(d: WorldCharacterInstanceDetailUiModel): void {
+  readyView(): void {
     Column() {
       Scroll() {
         Column() {
-          this.headerCard(d)
+          this.headerCard()
+
+          this.actionButtons()
 
           WorldSurfaceCard({}) {
             Column() {
               this.infoField($r('app.string.world_char_detail_world_identity'), '尚未建立')
               this.infoField($r('app.string.world_char_detail_current_status'),
-                d.isActive ? '活跃 · 位于 ' + (d.currentLocationName.length > 0 ? d.currentLocationName : '未放置') : '已停用')
+                this.detail!.isActive ? '活跃 · 位于 ' + (this.detail!.currentLocationName.length > 0 ? this.detail!.currentLocationName : '未放置') : '已停用')
               this.infoField($r('app.string.world_char_detail_current_goal'), '尚未建立')
               if (this.coPresentDisplayNames.length > 0) {
-                this.infoField('同地点角色', this.coPresentDisplayNames.join('、'))
+                Column() {
+                  Text('同地点角色')
+                    .fontSize($r('app.float.world_font_body'))
+                    .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+                  Text(this.coPresentDisplayNames.join('、'))
+                    .fontSize($r('app.float.world_font_caption'))
+                    .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+                    .margin({ top: 4 })
+                }
+                .width('100%')
+                .margin({ top: 12 })
+                .alignItems(HorizontalAlign.Start)
               }
             }
             .padding(14)
@@ -305,7 +330,7 @@ struct WorldCharacterInstanceDetailPage {
           WorldSurfaceCard({}) {
             Column() {
               WorldSectionHeader({ title: $r('app.string.world_char_detail_recent_activity') })
-              Text(formatWorldTimestamp(d.updatedAt))
+              Text(formatWorldTimestamp(this.detail!.updatedAt))
                 .fontSize($r('app.float.world_font_caption'))
                 .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
                 .margin({ top: 8 })
@@ -350,11 +375,10 @@ struct WorldCharacterInstanceDetailPage {
             .alignItems(HorizontalAlign.Start)
           }
 
-          // 诊断区:世界实例 ID
           WorldSurfaceCard({}) {
             Column() {
               WorldSectionHeader({ title: $r('app.string.world_char_detail_world_instance_id') })
-              Text(d.instanceId.substring(d.instanceId.length - 16))
+              Text(this.detail!.instanceId.substring(this.detail!.instanceId.length - 16))
                 .fontSize($r('app.float.world_font_micro'))
                 .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
                 .margin({ top: 4 })
@@ -363,22 +387,21 @@ struct WorldCharacterInstanceDetailPage {
             .alignItems(HorizontalAlign.Start)
           }
 
-          // 原始角色卡入口
           WorldSurfaceCard({}) {
             Column() {
               WorldSectionHeader({ title: $r('app.string.world_char_detail_original_card') })
-              if (d.characterCardMissing) {
+              if (this.detail!.characterCardMissing) {
                 Text($r('app.string.world_character_card_missing'))
                   .fontSize($r('app.float.world_font_caption'))
                   .fontColor($r('app.color.world_error'))
                   .margin({ top: 8 })
               } else {
-                Text(d.displayName)
+                Text(this.detail!.displayName)
                   .fontSize($r('app.float.world_font_body'))
                   .fontColor(ThemePalette.accentColor(this.effectiveTheme))
                   .margin({ top: 8 })
                   .onClick(() => {
-                    this.openOriginalCharacterCard(d.characterId);
+                    this.openOriginalCharacterCard(this.detail!.characterId);
                   })
               }
             }
@@ -386,7 +409,7 @@ struct WorldCharacterInstanceDetailPage {
             .alignItems(HorizontalAlign.Start)
           }
 
-          Column().width('100%').height(120)
+          Column().width('100%').height($r('app.float.world_page_padding'))
         }
         .width('100%')
         .padding({
@@ -399,21 +422,19 @@ struct WorldCharacterInstanceDetailPage {
       .layoutWeight(1)
       .scrollBar(BarState.Off)
       .edgeEffect(EdgeEffect.Spring)
-
-      this.bottomActionBar(d)
     }
     .width('100%')
     .height('100%')
   }
 
   @Builder
-  headerCard(d: WorldCharacterInstanceDetailUiModel): void {
+  headerCard(): void {
     WorldSurfaceCard({ elevated: true }) {
       Column() {
         Row() {
           CharacterImageView({
-            imageUri: d.avatarUri,
-            fallbackName: d.fallbackName,
+            imageUri: this.detail!.avatarUri,
+            fallbackName: this.detail!.fallbackName,
             imgWidth: 64,
             imgHeight: 64,
             imgBorderRadius: 32,
@@ -422,27 +443,27 @@ struct WorldCharacterInstanceDetailPage {
           })
 
           Column() {
-            Text(d.displayName)
+            Text(this.detail!.displayName)
               .fontSize($r('app.float.world_font_title'))
               .fontWeight(FontWeight.Medium)
               .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-            Text(d.worldName)
+            Text(this.detail!.worldName)
               .fontSize($r('app.float.world_font_caption'))
               .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .margin({ top: 2 })
 
             Row() {
               WorldStatusChip({
-                label: d.isActive ? '活跃' : '已停用',
-                isActive: d.isActive
+                label: this.detail!.isActive ? '活跃' : '已停用',
+                isActive: this.detail!.isActive
               })
-              if (d.currentLocationId.length > 0) {
-                Text(d.currentLocationName.length > 0 ? d.currentLocationName : '(未知地点)')
+              if (this.detail!.currentLocationId.length > 0) {
+                Text(this.detail!.currentLocationName.length > 0 ? this.detail!.currentLocationName : '(未知地点)')
                   .fontSize($r('app.float.world_font_micro'))
-                  .fontColor(d.locationMissing
+                  .fontColor(this.detail!.locationMissing
                     ? $r('app.color.world_error')
                     : ThemePalette.textSecondaryColor(this.effectiveTheme))
                   .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
@@ -475,6 +496,102 @@ struct WorldCharacterInstanceDetailPage {
   }
 
   @Builder
+  actionButtons(): void {
+    Column() {
+      Row() {
+        Button($r('app.string.world_char_detail_view_memory'))
+          .fontSize($r('app.float.world_font_caption'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+          .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
+          .borderRadius($r('app.float.world_radius_button'))
+          .height(34)
+          .layoutWeight(1)
+          .margin({ right: 6 })
+          .onClick(() => { this.openCharacterMemory(this.detail!.instanceId, this.detail!.worldId); })
+
+        Button($r('app.string.world_char_detail_start_conversation'))
+          .fontSize($r('app.float.world_font_caption'))
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.app_on_accent'))
+          .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
+          .borderRadius($r('app.float.world_radius_button'))
+          .height(34)
+          .layoutWeight(1)
+          .onClick(() => { this.sceneLauncherVisible = true; })
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      Row() {
+        if (this.detail!.currentLocationId.length > 0) {
+          Button('前往')
+            .fontSize($r('app.float.world_font_caption'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
+            .borderRadius($r('app.float.world_radius_button'))
+            .height(34)
+            .layoutWeight(1)
+            .margin({ right: 6 })
+            .enabled(!this.isOperating && !this.isTravelling && this.travelOptions.length > 0)
+            .onClick(() => { this.travelDestinationVisible = true; })
+          Button('调整位置')
+            .fontSize($r('app.float.world_font_caption'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
+            .borderRadius($r('app.float.world_radius_button'))
+            .height(34)
+            .layoutWeight(1)
+            .enabled(!this.isOperating)
+            .onClick(() => { this.locationSelectMode = 'adjust'; this.locationSelectVisible = true; })
+        } else {
+          Button('放置到地点')
+            .fontSize($r('app.float.world_font_caption'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
+            .borderRadius($r('app.float.world_radius_button'))
+            .height(34)
+            .layoutWeight(1)
+            .enabled(!this.isOperating && this.activeLocations.length > 0)
+            .onClick(() => { this.locationSelectMode = 'place'; this.locationSelectVisible = true; })
+        }
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+      .margin({ top: 4 })
+
+      Row() {
+        if (this.detail!.currentLocationId.length > 0) {
+          Button('从地图撤下')
+            .fontSize($r('app.float.world_font_caption'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
+            .borderRadius($r('app.float.world_radius_button'))
+            .height(34)
+            .layoutWeight(1)
+            .margin({ right: 6 })
+            .enabled(!this.isOperating)
+            .onClick(() => { this.unplaceConfirmVisible = true; })
+        }
+
+        Button('从世界移除')
+          .fontSize($r('app.float.world_font_caption'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+          .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
+          .borderRadius($r('app.float.world_radius_button'))
+          .height(34)
+          .layoutWeight(1)
+          .enabled(!this.isOperating)
+          .onClick(() => { this.removeFromWorldConfirmVisible = true; })
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+      .margin({ top: 4 })
+    }
+    .width('100%')
+    .margin({ top: 12, bottom: 4 })
+  }
+
+  @Builder
   infoField(label: ResourceStr, value: string): void {
     Column() {
       Text(label)
@@ -488,94 +605,6 @@ struct WorldCharacterInstanceDetailPage {
     .width('100%')
     .margin({ top: 12 })
     .alignItems(HorizontalAlign.Start)
-  }
-
-  @Builder
-  bottomActionBar(d: WorldCharacterInstanceDetailUiModel): void {
-    WorldBottomActionBar({}) {
-      Column() {
-        Row() {
-          WorldSecondaryButton({
-            label: $r('app.string.world_char_detail_view_memory'),
-            onButtonClick: (): void => {
-              this.openCharacterMemory(d.instanceId, d.worldId);
-            }
-          })
-            .layoutWeight(1)
-            .margin({ right: 6 })
-
-          if (d.currentLocationId.length > 0) {
-            WorldSecondaryButton({
-              label: '前往',
-              isEnabled: !this.isOperating && !this.isTravelling && this.travelOptions.length > 0,
-              onButtonClick: (): void => {
-                this.travelDestinationVisible = true;
-              }
-            })
-              .layoutWeight(1)
-              .margin({ right: 6 })
-            WorldSecondaryButton({
-              label: '调整位置',
-              isEnabled: !this.isOperating,
-              onButtonClick: (): void => {
-                this.locationSelectMode = 'adjust';
-                this.locationSelectVisible = true;
-              }
-            })
-              .layoutWeight(1)
-              .margin({ right: 6 })
-          } else {
-            WorldSecondaryButton({
-              label: '放置到地点',
-              isEnabled: !this.isOperating && this.activeLocations.length > 0,
-              onButtonClick: (): void => {
-                this.locationSelectMode = 'place';
-                this.locationSelectVisible = true;
-              }
-            })
-              .layoutWeight(1)
-              .margin({ right: 6 })
-          }
-
-          WorldPrimaryButton({
-            label: $r('app.string.world_char_detail_start_conversation'),
-            onButtonClick: (): void => {
-              this.sceneLauncherVisible = true;
-            }
-          })
-            .layoutWeight(1)
-        }
-        .width('100%')
-        .alignItems(VerticalAlign.Center)
-
-        Row() {
-          if (d.currentLocationId.length > 0) {
-            WorldSecondaryButton({
-              label: '从地图撤下',
-              isEnabled: !this.isOperating,
-              onButtonClick: (): void => {
-                this.unplaceConfirmVisible = true;
-              }
-            })
-              .layoutWeight(1)
-              .margin({ right: 6 })
-          }
-
-          WorldSecondaryButton({
-            label: '从世界移除',
-            isEnabled: !this.isOperating,
-            onButtonClick: (): void => {
-              this.removeFromWorldConfirmVisible = true;
-            }
-          })
-            .layoutWeight(1)
-        }
-        .width('100%')
-        .margin({ top: 8 })
-        .alignItems(VerticalAlign.Center)
-      }
-      .width('100%')
-    }
   }
 
   @Builder
@@ -600,7 +629,6 @@ struct WorldCharacterInstanceDetailPage {
 
             Divider().color(ThemePalette.worldBorderColor(this.effectiveTheme)).margin({ top: 12, bottom: 8 })
 
-            // 可用操作:查看现有场景 / 创建新场景
             this.sceneLauncherAction($r('app.string.world_scene_launcher_view_scenes'), false,
               (): void => {
                 this.openSceneManage();
@@ -612,7 +640,6 @@ struct WorldCharacterInstanceDetailPage {
 
             Divider().color(ThemePalette.worldBorderColor(this.effectiveTheme)).margin({ top: 12, bottom: 8 })
 
-            // 尚未实现的操作(禁用,标记"即将支持")
             this.sceneLauncherAction($r('app.string.world_scene_launcher_solo_talk'), true, (): void => {})
             this.sceneLauncherAction($r('app.string.world_scene_launcher_group_talk'), true, (): void => {})
             this.sceneLauncherAction($r('app.string.world_scene_launcher_select_participants'), true, (): void => {})
@@ -850,17 +877,25 @@ struct WorldCharacterInstanceDetailPage {
   @Builder
   removeFromWorldConfirmSheet(): void {
     Column() {
+      Text('⚠')
+        .fontSize(40)
+        .textAlign(TextAlign.Center)
+        .width('100%')
+        .padding({ top: 8 })
+
       Text('从世界移除')
         .fontSize($r('app.float.world_font_title'))
         .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.world_error'))
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
         .width('100%')
-        .padding({ top: 12, bottom: 8 })
+        .textAlign(TextAlign.Center)
+        .padding({ top: 12, bottom: 4 })
 
       Text('此操作将永久移除角色实例及其全部世界记忆。角色卡本身不会被删除。')
         .fontSize($r('app.float.world_font_body'))
         .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
-        .margin({ bottom: 16 })
+        .textAlign(TextAlign.Center)
+        .margin({ top: 8, bottom: 16 })
 
       Row() {
         WorldSecondaryButton({
@@ -872,14 +907,17 @@ struct WorldCharacterInstanceDetailPage {
         })
           .layoutWeight(1)
           .margin({ right: 8 })
-        WorldPrimaryButton({
-          label: '移除',
-          isEnabled: !this.isOperating,
-          onButtonClick: (): void => {
-            this.handleRemoveFromWorld();
-          }
-        })
+
+        Button('确认移除')
+          .fontSize($r('app.float.world_font_body'))
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.app_on_accent'))
+          .backgroundColor($r('app.color.world_error'))
+          .borderRadius($r('app.float.world_radius_button'))
+          .height(40)
           .layoutWeight(1)
+          .enabled(!this.isOperating)
+          .onClick(() => { this.handleRemoveFromWorld(); })
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
@@ -888,7 +926,7 @@ struct WorldCharacterInstanceDetailPage {
     }
     .width('100%')
     .padding({ left: 16, right: 16 })
-    .alignItems(HorizontalAlign.Start)
+    .alignItems(HorizontalAlign.Center)
   }
 
   private openCharacterMemory(instanceId: string, worldId: string): void {

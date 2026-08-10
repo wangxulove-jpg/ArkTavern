@@ -44,7 +44,7 @@ export struct WorldBottomActionBar {
       left: $r('app.float.world_page_padding'),
       right: $r('app.float.world_page_padding'),
       top: 12,
-      bottom: this.navBarHeight + 12
+      bottom: (this.navBarHeight > 0 ? this.navBarHeight : 48) + 12
     })
     .backgroundColor(this.effectiveTheme === 'tavern' ? '#241A13' : ThemePalette.surface1Color(this.effectiveTheme))
     .borderWidth({ top: 1 })

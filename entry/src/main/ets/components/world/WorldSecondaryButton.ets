@@ -15,17 +15,19 @@ export struct WorldSecondaryButton {
   label: ResourceStr = '';
   @Prop isEnabled: boolean = true;
   @Prop fullWidth: boolean = false;
+  @Prop fontSize: Resource = $r('app.float.world_font_body');
+  @Prop buttonHeight: number = 44;
   onButtonClick: () => void = (): void => {};
 
   build() {
     Button(this.label)
-      .fontSize($r('app.float.world_font_body'))
+      .fontSize(this.fontSize)
       .fontColor(this.isEnabled
         ? ThemePalette.textSecondaryColor(this.effectiveTheme)
         : ThemePalette.textTertiaryColor(this.effectiveTheme))
       .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
       .borderRadius($r('app.float.world_radius_button'))
-      .height(44)
+      .height(this.buttonHeight)
       .width(this.fullWidth ? '100%' : undefined)
       .enabled(this.isEnabled)
       .onClick(() => {

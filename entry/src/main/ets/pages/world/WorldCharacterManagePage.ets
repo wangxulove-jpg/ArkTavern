@@ -417,7 +417,8 @@ struct WorldCharacterManagePage {
   @Builder
   instanceCard(inst: WorldCharacterInstanceManageUiModel): void {
     WorldSurfaceCard({ elevated: true }) {
-      Column() {
+      Row() {
+        // 左侧:头像+角色信息
         Row() {
           CharacterImageView({
             imageUri: inst.avatarUri,
@@ -471,71 +472,79 @@ struct WorldCharacterManagePage {
           .alignItems(HorizontalAlign.Start)
           .margin({ left: 12 })
         }
-        .width('100%')
-        .alignItems(VerticalAlign.Center)
+        .layoutWeight(1)
 
-        // 操作按钮
-        Row() {
-          // 查看角色
+        // 右侧:操作按钮 4x1 矩阵
+        Column() {
           WorldPrimaryButton({
             label: $r('app.string.world_char_manage_view_character'),
+            fontSize: $r('app.float.world_font_caption'),
+            buttonHeight: 30,
             onButtonClick: (): void => {
               this.openInstanceDetail(inst.id);
             }
           })
-
-          Blank().layoutWeight(1)
+            .constraintSize({ minWidth: 100, maxWidth: 100, minHeight: 30, maxHeight: 30 })
 
           if (inst.currentLocationId.length === 0 && !inst.characterCardMissing) {
             WorldSecondaryButton({
               label: '放置到地点',
+              fontSize: $r('app.float.world_font_caption'),
+              buttonHeight: 30,
               isEnabled: !this.isSaving && !this.isDeleting && this.hasLocations,
               onButtonClick: (): void => {
                 this.selectingLocationForInstance = inst.id;
               }
             })
-              .margin({ left: 8 })
+              .constraintSize({ minWidth: 100, maxWidth: 100, minHeight: 30, maxHeight: 30 })
+              .margin({ top: 4 })
           }
 
           if (inst.currentLocationId.length > 0) {
             WorldSecondaryButton({
               label: '从地图撤下',
+              fontSize: $r('app.float.world_font_caption'),
+              buttonHeight: 30,
               isEnabled: !this.isSaving && !this.isDeleting,
               onButtonClick: (): void => {
                 this.unplacingInstanceId = inst.id;
               }
             })
-              .margin({ left: 8 })
+              .constraintSize({ minWidth: 100, maxWidth: 100, minHeight: 30, maxHeight: 30 })
+              .margin({ top: 4 })
           }
 
-          // 启用/停用
           WorldSecondaryButton({
             label: inst.isActive
               ? $r('app.string.world_character_deactivate')
               : $r('app.string.world_character_activate'),
+            fontSize: $r('app.float.world_font_caption'),
+            buttonHeight: 30,
             isEnabled: !this.isSaving && !this.isDeleting,
             onButtonClick: (): void => {
               this.handleSetInstanceActive(inst.id, !inst.isActive);
             }
           })
-            .margin({ left: 8 })
+            .constraintSize({ minWidth: 100, maxWidth: 100, minHeight: 30, maxHeight: 30 })
+            .margin({ top: 4 })
 
-          // 移除
           WorldSecondaryButton({
             label: $r('app.string.world_character_remove'),
+            fontSize: $r('app.float.world_font_caption'),
+            buttonHeight: 30,
             isEnabled: !this.isSaving && !this.isDeleting,
             onButtonClick: (): void => {
               this.removingInstanceId = inst.id;
             }
           })
-            .margin({ left: 8 })
+            .constraintSize({ minWidth: 100, maxWidth: 100, minHeight: 30, maxHeight: 30 })
+            .margin({ top: 4 })
         }
-        .width('100%')
-        .margin({ top: 10 })
-        .alignItems(VerticalAlign.Center)
+        .margin({ left: 8 })
       }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
       .padding(12)
-      .alignItems(HorizontalAlign.Start)
     }
   }
 

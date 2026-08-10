@@ -15,11 +15,13 @@ export struct WorldPrimaryButton {
   label: ResourceStr = '';
   @Prop isEnabled: boolean = true;
   @Prop fullWidth: boolean = false;
+  @Prop fontSize: Resource = $r('app.float.world_font_body');
+  @Prop buttonHeight: number = 44;
   onButtonClick: () => void = (): void => {};
 
   build() {
     Button(this.label)
-      .fontSize($r('app.float.world_font_body'))
+      .fontSize(this.fontSize)
       .fontWeight(FontWeight.Medium)
       .fontColor(this.isEnabled
         ? (this.effectiveTheme === 'tavern' ? '#1A1510' : $r('app.color.app_on_accent'))
@@ -28,7 +30,7 @@ export struct WorldPrimaryButton {
         ? ThemePalette.accentColor(this.effectiveTheme)
         : ThemePalette.surface2Color(this.effectiveTheme))
       .borderRadius($r('app.float.world_radius_button'))
-      .height(44)
+      .height(this.buttonHeight)
       .width(this.fullWidth ? '100%' : undefined)
       .enabled(this.isEnabled)
       .onClick(() => {

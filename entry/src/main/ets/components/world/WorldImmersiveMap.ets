@@ -78,12 +78,9 @@ export struct WorldImmersiveMap {
 
       Row() {
         WorldMapToolbar({
-          onLayers: (): void => {},
-          onFilter: (): void => {},
           onLocate: (): void => {
             this.onLocate();
           },
-          onCompass: (): void => {},
           onZoomIn: (): void => {
             this.onZoomIn();
           },
