@@ -36,6 +36,7 @@
 import { ChatMessage, createChatMessage, MessageSenderType } from '../../models/ChatMessage';
 import { ChatRole } from '../../models/ChatRole';
 import { Character } from '../../models/Character';
+import { GroupCharacterOverride } from '../../models/groupchat/GroupCharacterOverride';
 import { Lorebook } from '../../models/Lorebook';
 import { PromptPreset } from '../../models/PromptPreset';
 import { ProviderConfig } from '../../models/ProviderConfig';
@@ -54,6 +55,7 @@ import { LorebookService } from '../LorebookService';
 import { CharacterService } from '../CharacterService';
 import { PromptPresetService } from '../PromptPresetService';
 import { ModelService } from '../ModelService';
+import { GroupCharacterOverrideService } from './GroupCharacterOverrideService';
 import {
   EffectiveGenerationSettings,
   resolveEffectiveGenerationSettings
@@ -166,6 +168,7 @@ export class GroupPromptAssembler {
   private readonly characterService: CharacterService;
   private readonly promptPresetService: PromptPresetService | null;
   private readonly modelService: ModelService;
+  private readonly overrideService: GroupCharacterOverrideService | null;
 
   constructor(
     promptBuilder: PromptBuilder,
@@ -174,7 +177,8 @@ export class GroupPromptAssembler {
     lorebookService: LorebookService,
     characterService: CharacterService,
     promptPresetService: PromptPresetService | null,
-    modelService: ModelService
+    modelService: ModelService,
+    overrideService: GroupCharacterOverrideService | null = null
   ) {
     this.promptBuilder = promptBuilder;
     this.historyTrimmer = historyTrimmer;
@@ -183,6 +187,7 @@ export class GroupPromptAssembler {
     this.characterService = characterService;
     this.promptPresetService = promptPresetService;
     this.modelService = modelService;
+    this.overrideService = overrideService;
   }
 
   /**
@@ -211,11 +216,22 @@ export class GroupPromptAssembler {
     }
 
     // 1. 加载当前角色
-    const speaker: Character | null = await this.characterService.getById(
+    let speaker: Character | null = await this.characterService.getById(
       context.speakerCharacterId
     );
     if (speaker === null) {
       throw new Error('GroupPromptAssembler: speaker character not found');
+    }
+
+    // 1a. 应用角色覆写(G-OVERRIDE-1A)
+    if (this.overrideService !== null) {
+      const overrides: GroupCharacterOverride | null =
+        await this.overrideService.getOverrides(
+          context.chatId, context.speakerCharacterId
+        );
+      if (overrides !== null) {
+        speaker = this.overrideService.applyOverrides(speaker, overrides);
+      }
     }
 
     // 2. 加载其他参与者角色名称(仅公开信息)

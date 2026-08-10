@@ -33,6 +33,7 @@ import {
   PENDING_GROUP_CHAT_ID_KEY
 } from '../../viewmodels/groupchat/GroupChatUiModels';
 import { ThemePalette } from '../../theme/ThemePalette';
+import { GroupCharacterOverrideEditSheet } from './GroupCharacterOverrideEditSheet';
 
 @Entry
 @Component
@@ -53,6 +54,10 @@ struct GroupMemberManagePage {
   @State isSaving: boolean = false;
   /** G-RUNTIME-1C: 是否正在生成(生成中禁止修改成员) */
   @State isGenerating: boolean = false;
+  /** G-OVERRIDE-1A: 正在编辑覆写的角色 ID */
+  @State editingOverrideCharacterId: string = '';
+  /** G-OVERRIDE-1A: 正在编辑覆写的角色名 */
+  @State editingOverrideCharacterName: string = '';
   /** 添加角色弹窗是否可见 */
   @State addDialogVisible: boolean = false;
   /** 顶部状态栏避让高度 */
@@ -139,6 +144,18 @@ struct GroupMemberManagePage {
       if (this.addDialogVisible) {
         this.addDialog()
       }
+
+      // G-OVERRIDE-1A: 角色覆写编辑 Sheet
+      Column().width(0).height(0).bindSheet(
+        this.editingOverrideCharacterId.length > 0,
+        this.overrideEditSheet,
+        {
+          height: SheetSize.LARGE,
+          dragBar: true,
+          backgroundColor: ThemePalette.pageBackgroundColor(this.effectiveTheme),
+          onDisappear: () => { this.editingOverrideCharacterId = ''; }
+        }
+      )
     }
     .width('100%')
     .height('100%')
@@ -355,6 +372,10 @@ struct GroupMemberManagePage {
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
+      .onClick(() => {
+        this.editingOverrideCharacterId = member.characterId;
+        this.editingOverrideCharacterName = member.name;
+      })
 
       // 第二行:操作按钮
       Row() {
@@ -709,5 +730,14 @@ struct GroupMemberManagePage {
       }
       await this.reloadCurrent();
     }
+  }
+
+  /** G-OVERRIDE-1A: 角色覆写编辑 Sheet */
+  @Builder overrideEditSheet(): void {
+    GroupCharacterOverrideEditSheet({
+      chatId: this.chatId,
+      characterId: this.editingOverrideCharacterId,
+      characterName: this.editingOverrideCharacterName
+    })
   }
 }

@@ -6,7 +6,7 @@
  */
 
 export const DATABASE_NAME: string = 'arktavern.db';
-export const DATABASE_VERSION: number = 31;
+export const DATABASE_VERSION: number = 32;
 
 export const TABLE_CHARACTERS: string = 'characters';
 export const TABLE_CHATS: string = 'chats';
@@ -736,3 +736,21 @@ export const INDEX_WORLD_EVENT_EXTRACTION_RUNS_WORLD_SCENE_CREATED: string = 'id
 export const INDEX_WORLD_EVENT_EXTRACTION_RUNS_WORLD_STATUS_CREATED: string = 'idx_weer_world_status_created';
 export const INDEX_WORLD_EVENT_ENTRIES_WORLD_SESSION_ORDINAL: string = 'idx_wee_world_session_ordinal';
 export const INDEX_WORLD_EVENT_ENTRIES_WORLD_RUN_STATUS: string = 'idx_wee_world_run_status';
+
+// ===== v32: 多人聊天角色覆写(G-OVERRIDE-1A) =====
+export const TABLE_GROUP_CHARACTER_OVERRIDES: string = 'group_character_overrides';
+
+export const COLUMN_OVERRIDE_NAME: string = 'override_name';
+export const COLUMN_OVERRIDE_DESCRIPTION: string = 'override_description';
+export const COLUMN_OVERRIDE_PERSONALITY: string = 'override_personality';
+export const COLUMN_OVERRIDE_SCENARIO: string = 'override_scenario';
+export const COLUMN_OVERRIDE_SYSTEM_PROMPT: string = 'override_system_prompt';
+export const COLUMN_OVERRIDE_MES_EXAMPLE: string = 'override_mes_example';
+export const COLUMN_OVERRIDE_POST_HISTORY_INSTRUCTIONS: string = 'override_post_history_instructions';
+export const COLUMN_OVERRIDE_FIRST_MESSAGE: string = 'override_first_message';
+
+export const INDEX_GROUP_CHARACTER_OVERRIDES_GROUP_CHARACTER: string = 'idx_group_char_overrides_group_char';
+
+export const CREATE_INDEX_GROUP_CHARACTER_OVERRIDES_GROUP_CHARACTER: string =
+  `CREATE UNIQUE INDEX IF NOT EXISTS ${INDEX_GROUP_CHARACTER_OVERRIDES_GROUP_CHARACTER} ` +
+  `ON ${TABLE_GROUP_CHARACTER_OVERRIDES}(${COLUMN_GROUP_CONVERSATION_ID}, ${COLUMN_CHARACTER_ID})`;

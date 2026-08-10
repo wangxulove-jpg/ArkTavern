@@ -91,6 +91,8 @@ import { GroupCharacterRelationshipMemoryService } from './groupchat/GroupCharac
 import { GroupCharacterRelationshipSummaryService } from './groupchat/GroupCharacterRelationshipSummaryService';
 import { GroupPromptInspectionStore } from './groupchat/GroupPromptInspectionStore';
 import { GroupCharacterMemorySelector } from './groupchat/GroupCharacterMemorySelector';
+import { GroupCharacterOverrideRepository } from '../repositories/groupchat/GroupCharacterOverrideRepository';
+import { GroupCharacterOverrideService } from './groupchat/GroupCharacterOverrideService';
 import { WorldRepository } from '../repositories/world/WorldRepository';
 import { WorldLocationRepository } from '../repositories/world/WorldLocationRepository';
 import { WorldLocationEdgeRepository } from '../repositories/world/WorldLocationEdgeRepository';
@@ -262,6 +264,10 @@ export class AppServices {
   private readonly groupCharacterRelationshipMemoryService: GroupCharacterRelationshipMemoryService;
   /** GroupCharacterRelationshipSummaryService 多人角色关系与经历手动总结服务(G-MEMORY-AUTO-1B) */
   private readonly groupCharacterRelationshipSummaryService: GroupCharacterRelationshipSummaryService;
+  /** GroupCharacterOverrideRepository 多人角色覆写仓储(G-OVERRIDE-1A) */
+  private readonly groupCharacterOverrideRepository: GroupCharacterOverrideRepository;
+  /** GroupCharacterOverrideService 多人角色覆写业务服务(G-OVERRIDE-1A) */
+  private readonly groupCharacterOverrideService: GroupCharacterOverrideService;
 
   /** G-CONTEXT-INSPECTOR-1: Prompt 诊断快照内存存储 */
   private readonly groupPromptInspectionStore: GroupPromptInspectionStore;
@@ -756,6 +762,8 @@ export class AppServices {
       this.messageSwipeRepository,
       this.memoryPersistenceService
     );
+    // G-OVERRIDE-1A: 角色覆写仓储(提前创建,供 ChatPersistenceOperations 和 GroupPromptAssembler 共用)
+    this.groupCharacterOverrideRepository = new GroupCharacterOverrideRepository(this.dbHelper);
     this.chatPersistenceOperations = new ChatPersistenceOperations(
       this.dbHelper,
       this.chatRepository,
@@ -770,7 +778,10 @@ export class AppServices {
       new GroupCharacterMemoryRepository(this.dbHelper),
       // G-MEMORY-AUTO-1B: 注入 GroupCharacterRelationshipMemoryRepository,使删除群聊时
       // 同事务级联清理 group_character_relationship_memories。Repository 仅依赖 DbHelper。
-      new GroupCharacterRelationshipMemoryRepository(this.dbHelper)
+      new GroupCharacterRelationshipMemoryRepository(this.dbHelper),
+      // G-OVERRIDE-1A: 注入 GroupCharacterOverrideRepository,使删除群聊时同事务级联清理
+      // group_character_overrides。Repository 仅依赖 DbHelper。
+      this.groupCharacterOverrideRepository
     );
     // v8: MemoryService(依赖 ModelService + MemoryPersistenceService)
     this.memoryService = new MemoryService(
@@ -831,6 +842,8 @@ export class AppServices {
     // G-RUNTIME-1B: 多人聊天运行时(严格顺序流式生成)
     // 复用已创建的 roundCoordinator / messageService / modelService
     // 以及 promptBuilder / historyTrimmer / tokenCounter / lorebookService / characterService / promptPresetService
+    // G-OVERRIDE-1A: 角色覆写服务(仓储已在 chatPersistenceOperations 处创建)
+    this.groupCharacterOverrideService = new GroupCharacterOverrideService(this.groupCharacterOverrideRepository);
     this.groupPromptAssembler = new GroupPromptAssembler(
       this.promptBuilder,
       this.historyTrimmer,
@@ -838,7 +851,8 @@ export class AppServices {
       this.lorebookService,
       this.characterService,
       this.promptPresetService,
-      this.modelService
+      this.modelService,
+      this.groupCharacterOverrideService
     );
     // G-CONTEXT-INSPECTOR-1 / G-CONTEXT-PERSIST-1: Prompt 诊断快照存储(内存 + AppPreferences)
     this.groupPromptInspectionStore = new GroupPromptInspectionStore(this.appPreferences);
@@ -1379,6 +1393,13 @@ export class AppServices {
    */
   static getGroupCharacterRelationshipSummaryService(): GroupCharacterRelationshipSummaryService {
     return AppServices.getInstance().groupCharacterRelationshipSummaryService;
+  }
+
+  /**
+   * 获取 GroupCharacterOverrideService 实例(G-OVERRIDE-1A 多人角色覆写服务)。
+   */
+  static getGroupCharacterOverrideService(): GroupCharacterOverrideService {
+    return AppServices.getInstance().groupCharacterOverrideService;
   }
 
   /**

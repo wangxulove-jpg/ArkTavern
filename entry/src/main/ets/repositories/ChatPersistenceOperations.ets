@@ -41,6 +41,7 @@ import { MessageSwipeRepository } from './MessageSwipeRepository';
 import { ChatParticipantRepository } from './ChatParticipantRepository';
 import { GroupCharacterMemoryRepository } from './groupchat/GroupCharacterMemoryRepository';
 import { GroupCharacterRelationshipMemoryRepository } from './groupchat/GroupCharacterRelationshipMemoryRepository';
+import { GroupCharacterOverrideRepository } from './groupchat/GroupCharacterOverrideRepository';
 import { ConversationBranchPersistenceService } from '../services/ConversationBranchPersistenceService';
 import { MemoryPersistenceService } from '../services/MemoryPersistenceService';
 import { DatabaseError } from '../models/DatabaseError';
@@ -56,6 +57,7 @@ export class ChatPersistenceOperations {
   private readonly participantRepository: ChatParticipantRepository | null;
   private readonly groupCharacterMemoryRepository: GroupCharacterMemoryRepository | null;
   private readonly groupCharacterRelationshipMemoryRepository: GroupCharacterRelationshipMemoryRepository | null;
+  private readonly groupCharacterOverrideRepository: GroupCharacterOverrideRepository | null;
 
   constructor(
     dbHelper: DbHelper,
@@ -66,7 +68,8 @@ export class ChatPersistenceOperations {
     memoryPersistenceService: MemoryPersistenceService | null = null,
     participantRepository: ChatParticipantRepository | null = null,
     groupCharacterMemoryRepository: GroupCharacterMemoryRepository | null = null,
-    groupCharacterRelationshipMemoryRepository: GroupCharacterRelationshipMemoryRepository | null = null
+    groupCharacterRelationshipMemoryRepository: GroupCharacterRelationshipMemoryRepository | null = null,
+    groupCharacterOverrideRepository: GroupCharacterOverrideRepository | null = null
   ) {
     this.dbHelper = dbHelper;
     this.chatRepository = chatRepository;
@@ -77,6 +80,7 @@ export class ChatPersistenceOperations {
     this.participantRepository = participantRepository;
     this.groupCharacterMemoryRepository = groupCharacterMemoryRepository;
     this.groupCharacterRelationshipMemoryRepository = groupCharacterRelationshipMemoryRepository;
+    this.groupCharacterOverrideRepository = groupCharacterOverrideRepository;
   }
 
   /**
@@ -131,6 +135,10 @@ export class ChatPersistenceOperations {
           // 10. 删除 group_character_relationship_memories(G-MEMORY-AUTO-1B,幂等,单聊无行也安全)
           if (this.groupCharacterRelationshipMemoryRepository !== null) {
             await this.groupCharacterRelationshipMemoryRepository.deleteByGroupWithStore(store, chatId);
+          }
+          // 11. 删除 group_character_overrides(G-OVERRIDE-1A,幂等,单聊无行也安全)
+          if (this.groupCharacterOverrideRepository !== null) {
+            await this.groupCharacterOverrideRepository.deleteByGroupWithStore(store, chatId);
           }
           // 11. 删除 chat_participants(G-DATA-1A,幂等,单聊无行也安全)
           if (this.participantRepository !== null) {
