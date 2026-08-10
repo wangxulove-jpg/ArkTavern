@@ -149,6 +149,8 @@ export class WorldSceneChatViewModel implements WorldRuntimeObserver {
   roundStatus: WorldRoundUiStatus = WorldRoundUiStatus.Idle;
   lastInspection: WorldRoundInspection | null = null;
 
+  onStateChanged?: () => void;
+
   private expectedSceneId: string = '';
   private expectedSessionId: string = '';
   private expectedWorldId: string = '';
@@ -644,6 +646,7 @@ export class WorldSceneChatViewModel implements WorldRuntimeObserver {
     this.streamingMessageId = messageId;
     this.streamingContent = content;
     this.isGenerating = true;
+    if (this.onStateChanged) { this.onStateChanged(); }
   }
 
   onStreamingCompleted(sessionId: string, messageId: string, content: string, operationId: number): void {
@@ -660,6 +663,7 @@ export class WorldSceneChatViewModel implements WorldRuntimeObserver {
       this.streamingContent = '';
       this.currentOperationId = -1;
     }
+    if (this.onStateChanged) { this.onStateChanged(); }
     this.loadSnapshot(this.expectedSceneId);
   }
 
@@ -677,6 +681,7 @@ export class WorldSceneChatViewModel implements WorldRuntimeObserver {
       this.streamingContent = '';
       this.currentOperationId = -1;
     }
+    if (this.onStateChanged) { this.onStateChanged(); }
     this.loadSnapshot(this.expectedSceneId);
   }
 
@@ -694,6 +699,7 @@ export class WorldSceneChatViewModel implements WorldRuntimeObserver {
       this.streamingContent = '';
       this.currentOperationId = -1;
     }
+    if (this.onStateChanged) { this.onStateChanged(); }
     this.loadSnapshot(this.expectedSceneId);
   }
 
@@ -722,6 +728,7 @@ export class WorldSceneChatViewModel implements WorldRuntimeObserver {
         'running'
       );
     }
+    if (this.onStateChanged) { this.onStateChanged(); }
   }
 
   onRoundStarted(
@@ -742,6 +749,9 @@ export class WorldSceneChatViewModel implements WorldRuntimeObserver {
         0, totalSpeakers, '', generationBatchId, 'running'
       );
     }
+    this.loadSnapshot(this.expectedSceneId).then((): void => {
+      if (this.onStateChanged) { this.onStateChanged(); }
+    });
   }
 
   onRoundCompleted(
@@ -767,6 +777,7 @@ export class WorldSceneChatViewModel implements WorldRuntimeObserver {
         '', generationBatchId, 'completed'
       );
     }
+    if (this.onStateChanged) { this.onStateChanged(); }
     this.loadSnapshot(this.expectedSceneId);
   }
 
@@ -795,6 +806,7 @@ export class WorldSceneChatViewModel implements WorldRuntimeObserver {
         failedCharacterInstanceId, generationBatchId, 'failed'
       );
     }
+    if (this.onStateChanged) { this.onStateChanged(); }
     this.loadSnapshot(this.expectedSceneId);
   }
 
@@ -823,6 +835,7 @@ export class WorldSceneChatViewModel implements WorldRuntimeObserver {
         cancelledCharacterInstanceId, generationBatchId, 'cancelled'
       );
     }
+    if (this.onStateChanged) { this.onStateChanged(); }
     this.loadSnapshot(this.expectedSceneId);
   }
 

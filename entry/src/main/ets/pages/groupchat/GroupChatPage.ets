@@ -2359,6 +2359,55 @@ this.syncFromViewModel();
           }
           .width('100%')
           .margin({ top: 4 })
+
+          Divider()
+            .color(ThemePalette.dividerColor(this.effectiveTheme))
+            .margin({ top: 12, bottom: 8 })
+
+          // ===== 字体大小 =====
+          Row() {
+            Text('字体大小')
+              .fontSize($r('app.float.app_font_caption'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+            Blank()
+            Text(this.chatTextStyle !== null ? this.chatTextStyle!.fontSize.toString() + 'fp' : '16fp')
+              .fontSize($r('app.float.app_font_caption'))
+              .fontWeight(FontWeight.Medium)
+              .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Center)
+          .margin({ bottom: 8 })
+
+          Slider({
+            value: this.chatTextStyle !== null ? this.chatTextStyle!.fontSize : 16,
+            min: 12,
+            max: 24,
+            step: 1,
+            style: SliderStyle.OutSet
+          })
+            .blockColor(ThemePalette.accentColor(this.effectiveTheme))
+            .trackColor(ThemePalette.surface2Color(this.effectiveTheme))
+            .selectedColor(ThemePalette.accentColor(this.effectiveTheme))
+            .width('100%')
+            .onChange((value: number, mode: SliderChangeMode) => {
+              const fontSize: number = Math.round(value);
+              if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+                this.applyFontSize(fontSize);
+              }
+            })
+
+          Row() {
+            Text('12fp')
+              .fontSize(11)
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+            Blank()
+            Text('24fp')
+              .fontSize(11)
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+          }
+          .width('100%')
+          .margin({ top: 4 })
         }
         .padding(16)
         .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
@@ -2835,6 +2884,14 @@ this.syncFromViewModel();
     router.pushUrl({
       url: 'pages/ChatBackgroundSettingsPage',
       params: { chatId: this.chatId }
+    });
+  }
+
+  /** 应用字体大小设置(实时更新 ChatTextStyle) */
+  private applyFontSize(fontSize: number): void {
+    const settings = AppServices.getInstance().chatTextStyleSettings;
+    settings.update({ fontSize: fontSize }).then((): void => {
+      this.chatTextStyle = settings.get();
     });
   }
 }

@@ -1,4 +1,4 @@
-import { router } from '@kit.ArkUI';
+import { router, window, display } from '@kit.ArkUI';
 import { AppServices } from '../../services/AppServices';
 import {
   WorldSceneChatViewModel,
@@ -73,6 +73,10 @@ struct WorldSceneChatPage {
 
   @State private characterSheetInstanceId: string = '';
 
+  @State keyboardHeight: number = 0;
+  private keyboardHeightChangeHandler: ((height: number) => void) | null = null;
+  private mainWindow: window.Window | null = null;
+
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navBarHeight') navBarHeight: number = 0;
   @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
@@ -103,9 +107,11 @@ struct WorldSceneChatPage {
       );
       this.viewModel.setSceneId(sceneId);
       this.viewModel.setSessionId(sessionId);
+      this.viewModel.onStateChanged = (): void => { this.syncFromViewModel(); };
       this.isInitializing = false;
       this.chatTextStyle = AppServices.getInstance().chatTextStyleSettings.get();
       this.bubbleOpacity = await loadBubbleOpacity();
+      this.registerKeyboardListener();
       await this.loadSnapshot();
       this.loadChatBackground();
     } catch (e) {
@@ -130,6 +136,7 @@ struct WorldSceneChatPage {
 
   aboutToDisappear(): void {
     if (this.viewModel !== null) { this.viewModel.dispose(); }
+    this.unregisterKeyboardListener();
   }
 
   private async loadSnapshot(): Promise<void> {
@@ -179,9 +186,11 @@ struct WorldSceneChatPage {
         if (this.chatBgConfig !== null && this.chatBgConfig!.enabled && this.chatBgConfig!.imageUri.length > 0) {
           Image(this.chatBgConfig!.imageUri).width('100%').height('100%').objectFit(ImageFit.Cover)
             .blur(this.chatBgConfig!.blur).hitTestBehavior(HitTestMode.Transparent)
+            .expandSafeArea([SafeAreaType.KEYBOARD], [SafeAreaEdge.BOTTOM])
           Column().width('100%').height('100%')
             .backgroundColor('rgba(0,0,0,' + (this.chatBgConfig!.dim / 100).toString() + ')')
             .hitTestBehavior(HitTestMode.Transparent)
+            .expandSafeArea([SafeAreaType.KEYBOARD], [SafeAreaEdge.BOTTOM])
         }
         this.chatLayout()
         this.topBarLayer()
@@ -222,7 +231,25 @@ struct WorldSceneChatPage {
                 streamingContent: m.id === this.streamingMessageId ? this.streamingContent : '' })
             }.margin({ left: 16, right: 16 })
           }, (m: ChatMessageUiModel) => m.id + '_' + m.messageStatus)
-          ListItem() { Column().width('100%').height(80 + this.navBarHeight) }
+
+          if (this.isGenerating || this.isSending) {
+            ListItem() {
+              Row() {
+                if (this.streamingContent.length > 0 && this.streamingMessageId.length > 0) {
+                  Text('正在生成...').fontSize(11).fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+                    .fontStyle(FontStyle.Italic)
+                } else {
+                  Text('角色思考中...').fontSize(11).fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+                    .fontStyle(FontStyle.Italic)
+                }
+              }.width('100%').justifyContent(FlexAlign.Center).padding({ left: 16, right: 16, top: 8, bottom: 8 })
+            }
+          }
+
+          ListItem() {
+            Column().width('100%')
+              .height(this.keyboardHeight > 0 ? 80 + this.keyboardHeight : 80 + this.navBarHeight)
+          }
         }
         .width('100%').layoutWeight(1)
         .padding({ top: this.statusBarHeight + 60, bottom: 0 })
@@ -235,12 +262,14 @@ struct WorldSceneChatPage {
         }.width('100%').layoutWeight(1).justifyContent(FlexAlign.Center).alignItems(HorizontalAlign.Center)
       }
     }.width('100%').height('100%')
+    .expandSafeArea([SafeAreaType.KEYBOARD], [SafeAreaEdge.BOTTOM])
   }
 
   @Builder topBarLayer(): void {
     Column() {
       this.topBarContent()
     }.width('100%').height('100%').justifyContent(FlexAlign.Start).hitTestBehavior(HitTestMode.Transparent)
+    .expandSafeArea([SafeAreaType.KEYBOARD], [SafeAreaEdge.BOTTOM])
   }
 
   @Builder topBarContent(): void {
@@ -353,7 +382,7 @@ struct WorldSceneChatPage {
           .border({ width: 0.5, color: ThemePalette.surface2Color(this.effectiveTheme) })
           .padding({ left: 16, right: 8, top: 6, bottom: 6 }).margin({ left: 12, right: 12 }).alignItems(VerticalAlign.Center)
       }
-    }.width('100%').padding({ bottom: this.navBarHeight + 12 })
+    }.width('100%').padding({ bottom: this.keyboardHeight > 0 ? 12 : this.navBarHeight + 12 })
   }
 
   @Builder appearancePanel(): void {
@@ -371,7 +400,21 @@ struct WorldSceneChatPage {
           Text('深').fontSize(11).fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme)).margin({ left: 8 })
         }.width('100%').padding({ left: 24, right: 24, bottom: 4 })
         Text((Math.round(this.bubbleOpacity * 100)).toString() + '%').fontSize(11)
-          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme)).width('100%').textAlign(TextAlign.Center).margin({ bottom: 8 })
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme)).width('100%').textAlign(TextAlign.Center).margin({ bottom: 16 })
+
+        Text('字体大小').fontSize(13).fontWeight(FontWeight.Medium).fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+          .width('100%').textAlign(TextAlign.Center).padding({ bottom: 8 })
+        Row() {
+          Text('小').fontSize(11).fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme)).margin({ right: 8 })
+          Slider({ value: this.chatTextStyle !== null ? this.chatTextStyle!.fontSize : 16, min: 12, max: 24, step: 1, style: SliderStyle.InSet })
+            .blockColor(ThemePalette.accentColor(this.effectiveTheme)).trackColor(ThemePalette.surface2Color(this.effectiveTheme))
+            .selectedColor(ThemePalette.accentColor(this.effectiveTheme)).layoutWeight(1)
+            .onChange((value: number) => { this.applyFontSize(value); })
+          Text('大').fontSize(11).fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme)).margin({ left: 8 })
+        }.width('100%').padding({ left: 24, right: 24, bottom: 4 })
+        Text((this.chatTextStyle !== null ? this.chatTextStyle!.fontSize : 16).toString() + 'fp').fontSize(11)
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme)).width('100%').textAlign(TextAlign.Center).margin({ bottom: 16 })
+
         Row() {
           Button('保存').fontSize(13).fontColor($r('app.color.app_on_accent')).backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
             .borderRadius(16).height(36).layoutWeight(1).margin({ right: 8 })
@@ -435,14 +478,59 @@ struct WorldSceneChatPage {
     }.width('100%').padding({ left: 16, right: 16 }).alignItems(HorizontalAlign.Start)
   }
 
-  private async sendUserMessage(): Promise<void> {
+  private sendUserMessage(): void {
     if (this.viewModel === null || this.detail === null) { return; }
     const content: string = this.inputContent.trim();
     if (content.length === 0) { this.actionError = '消息不能为空'; return; }
     this.actionError = ''; this.runtimeError = ''; this.inputContent = '';
-    const errorMsg: string = await this.viewModel.sendMessage(content);
-    if (errorMsg.length > 0) { this.actionError = errorMsg; }
+
+    const optimisticMsg: ChatMessageUiModel = {
+      id: 'opt_' + Date.now().toString(),
+      sequenceNumber: this.detail.messages.length + 1,
+      senderType: WorldSceneMessageSenderType.User,
+      senderDisplayName: '你',
+      senderInstanceId: '',
+      senderAvatarUri: '',
+      senderFallbackName: '你',
+      content: content,
+      visibility: WorldSceneMessageVisibility.Public,
+      messageStatus: 'sending',
+      recipientNames: [],
+      witnessNames: [],
+      replyTargetNames: [],
+      createdAt: Date.now(),
+      senderRemoved: false
+    };
+    this.detail = {
+      sceneId: this.detail.sceneId,
+      sceneName: this.detail.sceneName,
+      worldId: this.detail.worldId,
+      worldName: this.detail.worldName,
+      worldStatus: this.detail.worldStatus,
+      locationId: this.detail.locationId,
+      locationName: this.detail.locationName,
+      locationStatus: this.detail.locationStatus,
+      sceneStatus: this.detail.sceneStatus,
+      sessionId: this.detail.sessionId,
+      sessionStatus: this.detail.sessionStatus,
+      sessionSequenceNumber: this.detail.sessionSequenceNumber,
+      sessionParticipantSnapshot: this.detail.sessionParticipantSnapshot,
+      playerDisplayNameSnapshot: this.detail.playerDisplayNameSnapshot,
+      startedAt: this.detail.startedAt,
+      endedAt: this.detail.endedAt,
+      participantCount: this.detail.participantCount,
+      characters: this.detail.characters,
+      messages: [...this.detail.messages, optimisticMsg]
+    };
+
+    this.viewModel.sendMessage(content).then((errorMsg: string): void => {
+      if (errorMsg.length > 0) { this.actionError = errorMsg; }
+      this.syncFromViewModel();
+    });
     this.syncFromViewModel();
+    setTimeout((): void => {
+      try { this.scroller.scrollEdge(Edge.Bottom); } catch (_e) { /* ignore */ }
+    }, 100);
   }
   private stopGeneration(): void { if (this.viewModel !== null) { this.viewModel.stopGeneration(); this.syncFromViewModel(); } }
   private async retryFailed(messageId: string): Promise<void> {
@@ -498,5 +586,46 @@ struct WorldSceneChatPage {
     if (service === null) { return; }
     service.getConfig(sessionId).then((cfg: ChatBackgroundConfig): void => { this.chatBgConfig = cfg; })
       .catch((): void => { this.chatBgConfig = null; });
+  }
+
+  private applyFontSize(value: number): void {
+    const fontSize: number = Math.round(value);
+    const settings = AppServices.getInstance().chatTextStyleSettings;
+    settings.update({ fontSize: fontSize }).then((): void => {
+      this.chatTextStyle = settings.get();
+    });
+  }
+
+  private registerKeyboardListener(): void {
+    try {
+      window.getLastWindow(getContext(this))
+        .then((win: window.Window): void => {
+          this.mainWindow = win;
+          this.keyboardHeightChangeHandler = (height: number): void => {
+            const densityPixels: number = display.getDefaultDisplaySync().densityPixels;
+            const density: number = densityPixels > 0 ? densityPixels : 3.0;
+            this.keyboardHeight = height > 0 ? height / density : 0;
+            if (height > 0) {
+              setTimeout((): void => {
+                try { this.scroller.scrollEdge(Edge.Bottom); } catch (_e) { /* ignore */ }
+              }, 80);
+            }
+          };
+          win.on('keyboardHeightChange', this.keyboardHeightChangeHandler);
+        })
+        .catch((e: Error): void => {
+          Logger.warn(LOG_TAG, 'getLastWindow failed: ' + e.message);
+        });
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'registerKeyboardListener failed: ' + (e as Error).message);
+    }
+  }
+
+  private unregisterKeyboardListener(): void {
+    if (this.mainWindow !== null && this.keyboardHeightChangeHandler !== null) {
+      try { this.mainWindow.off('keyboardHeightChange', this.keyboardHeightChangeHandler); } catch (_e) { /* ignore */ }
+      this.keyboardHeightChangeHandler = null;
+      this.keyboardHeight = 0;
+    }
   }
 }
