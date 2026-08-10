@@ -16,12 +16,14 @@ import {
   WorldSceneManageLoadState,
   WorldSceneManageUiModel,
   HistorySceneCardUiModel,
-  StartSceneResult
+  StartSceneResult,
+  ActiveLocationOption
 } from '../../viewmodels/world/WorldSceneManageViewModel';
 import {
   PENDING_WORLD_ID_KEY,
   PENDING_WORLD_SCENE_ID_KEY,
   PENDING_WORLD_SCENE_CHAT_ID_KEY,
+  PENDING_WORLD_SESSION_ID_KEY,
   WORLD_DETAIL_REFRESH_TOKEN_KEY,
   formatWorldTimestamp
 } from '../../viewmodels/world/WorldUiModels';
@@ -50,6 +52,9 @@ struct WorldSceneManagePage {
   @State private detail: WorldSceneManageUiModel | null = null;
   @State private worldStatus: WorldStatus = WorldStatus.Active;
   @State private actionError: string = '';
+
+  @State private newSceneSheetVisible: boolean = false;
+  @State private availableLocations: ActiveLocationOption[] = [];
 
   @State private searchText: string = '';
   @State private currentFilter: HistoryFilter = 'all';
@@ -87,7 +92,9 @@ struct WorldSceneManagePage {
         AppServices.getWorldLocationRepository(),
         AppServices.getWorldSceneRepository(),
         AppServices.getWorldSceneMessageRepository(),
-        AppServices.getWorldSceneService()
+        AppServices.getWorldSceneService(),
+        AppServices.getWorldConversationSessionService(),
+        AppServices.getWorldCharacterInstanceRepository()
       );
       this.viewModel.setWorldId(worldId);
       this.isInitializing = false;
@@ -171,6 +178,14 @@ struct WorldSceneManagePage {
     .height('100%')
     .backgroundColor(ThemePalette.pageBgColor(this.effectiveTheme))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+    .bindSheet(this.newSceneSheetVisible, this.newSceneSheet, {
+      height: SheetSize.FIT_CONTENT,
+      dragBar: true,
+      backgroundColor: ThemePalette.worldSurfaceColor(this.effectiveTheme),
+      onDisappear: () => {
+        this.newSceneSheetVisible = false;
+      }
+    })
   }
 
   @Builder
@@ -205,7 +220,7 @@ struct WorldSceneManagePage {
           .height(32)
           .padding({ left: 12, right: 12 })
           .onClick(() => {
-            router.back();
+            this.createNewScene();
           })
       }
     }
@@ -508,11 +523,87 @@ struct WorldSceneManagePage {
     }
   }
 
-  private openSceneChat(sceneId: string): void {
+  @Builder
+  newSceneSheet(): void {
+    Column() {
+      Text('选择地点开始新场景')
+        .fontSize($r('app.float.world_font_title'))
+        .fontWeight(FontWeight.Bold)
+        .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+        .width('100%')
+        .padding({ top: 12, bottom: 8 })
+
+      if (this.availableLocations.length === 0) {
+        Text('没有可用地点')
+          .fontSize($r('app.float.world_font_body'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+          .margin({ top: 8, bottom: 16 })
+      } else {
+        ForEach(this.availableLocations, (loc: ActiveLocationOption) => {
+          Button(loc.name)
+            .fontSize(14)
+            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+            .borderRadius(8)
+            .height(40)
+            .width('100%')
+            .margin({ bottom: 8 })
+            .onClick(() => {
+              this.newSceneSheetVisible = false;
+              this.handleCreateNewScene(loc.id);
+            })
+        }, (loc: ActiveLocationOption) => loc.id)
+      }
+
+      Button($r('app.string.world_cancel'))
+        .fontSize(14)
+        .backgroundColor(Color.Transparent)
+        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+        .borderRadius(8)
+        .height(40)
+        .width('100%')
+        .margin({ top: 8 })
+        .onClick(() => {
+          this.newSceneSheetVisible = false;
+        })
+
+      Column().width('100%').height(this.navBarHeight + 8)
+    }
+    .width('100%')
+    .padding({ left: 16, right: 16 })
+    .alignItems(HorizontalAlign.Start)
+  }
+
+  private async createNewScene(): Promise<void> {
+    if (this.viewModel === null) {
+      return;
+    }
+    this.actionError = '';
+    this.availableLocations = await this.viewModel.listActiveLocations();
+    this.newSceneSheetVisible = true;
+  }
+
+  private async handleCreateNewScene(locationId: string): Promise<void> {
+    if (this.viewModel === null) {
+      return;
+    }
+    this.actionError = '';
+    const result: StartSceneResult = await this.viewModel.startScene(locationId);
+    if (result.success) {
+      this.openSceneChat(result.sceneId, result.sessionId);
+    } else {
+      this.actionError = result.errorMessage;
+    }
+    this.syncFromViewModel();
+  }
+
+  private openSceneChat(sceneId: string, sessionId?: string): void {
     if (sceneId.length === 0 || this.viewModel === null) {
       return;
     }
+    const sid: string = sessionId !== undefined ? sessionId : sceneId;
     AppStorage.setOrCreate<string>(PENDING_WORLD_SCENE_CHAT_ID_KEY, sceneId);
+    AppStorage.setOrCreate<string>(PENDING_WORLD_SESSION_ID_KEY, sid);
     router.pushUrl({ url: 'pages/world/WorldSceneChatPage' });
   }
 
@@ -533,7 +624,7 @@ struct WorldSceneManagePage {
     this.actionError = '';
     const result: StartSceneResult = await this.viewModel.startScene(sc.locationId);
     if (result.success) {
-      this.openSceneChat(result.sceneId);
+      this.openSceneChat(result.sceneId, result.sessionId);
     } else {
       this.actionError = result.errorMessage;
     }

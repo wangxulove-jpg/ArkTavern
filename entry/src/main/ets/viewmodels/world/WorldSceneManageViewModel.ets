@@ -16,11 +16,16 @@ import { WorldRepository } from '../../repositories/world/WorldRepository';
 import { WorldLocationRepository } from '../../repositories/world/WorldLocationRepository';
 import { WorldSceneRepository } from '../../repositories/world/WorldSceneRepository';
 import { WorldSceneMessageRepository } from '../../repositories/world/WorldSceneMessageRepository';
+import { WorldCharacterInstanceRepository } from '../../repositories/world/WorldCharacterInstanceRepository';
 import { WorldSceneService } from '../../services/world/WorldSceneService';
+import { WorldConversationSessionService } from '../../services/world/WorldConversationSessionService';
 import { Logger } from '../../utils/Logger';
 import { World, WorldStatus } from '../../models/world/World';
 import { WorldLocation } from '../../models/world/WorldLocation';
+import { WorldLocationStatus } from '../../models/world/WorldLocation';
 import { WorldScene, WorldSceneStatus } from '../../models/world/WorldScene';
+import { WorldConversationSession } from '../../models/world/WorldConversationSession';
+import { WorldCharacterInstance } from '../../models/world/WorldCharacterInstance';
 import { DatabaseError } from '../../models/DatabaseError';
 import { mapWorldSceneErrorToMessage } from './WorldSceneErrorMapper';
 import { mapWorldStateErrorToMessage } from './WorldStateErrorMapper';
@@ -67,6 +72,12 @@ export interface StartSceneResult {
   readonly success: boolean;
   readonly errorMessage: string;
   readonly sceneId: string;
+  readonly sessionId: string;
+}
+
+export interface ActiveLocationOption {
+  id: string;
+  name: string;
 }
 
 export class WorldSceneManageViewModel {
@@ -75,6 +86,8 @@ export class WorldSceneManageViewModel {
   private readonly sceneRepo: WorldSceneRepository;
   private readonly messageRepo: WorldSceneMessageRepository;
   private readonly sceneService: WorldSceneService;
+  private readonly sessionService: WorldConversationSessionService;
+  private readonly instanceRepo: WorldCharacterInstanceRepository;
 
   state: WorldSceneManageLoadState = WorldSceneManageLoadState.Loading;
   errorMessage: string = '';
@@ -93,13 +106,17 @@ export class WorldSceneManageViewModel {
     locationRepo: WorldLocationRepository,
     sceneRepo: WorldSceneRepository,
     messageRepo: WorldSceneMessageRepository,
-    sceneService: WorldSceneService
+    sceneService: WorldSceneService,
+    sessionService: WorldConversationSessionService,
+    instanceRepo: WorldCharacterInstanceRepository
   ) {
     this.worldRepo = worldRepo;
     this.locationRepo = locationRepo;
     this.sceneRepo = sceneRepo;
     this.messageRepo = messageRepo;
     this.sceneService = sceneService;
+    this.sessionService = sessionService;
+    this.instanceRepo = instanceRepo;
     this.instanceShortId = WorldSceneManageViewModel.generateShortId();
   }
 
@@ -232,10 +249,12 @@ export class WorldSceneManageViewModel {
 
   async startScene(locationId: string): Promise<StartSceneResult> {
     if (this.isStarting) {
-      return { success: false, errorMessage: '正在处理,请稍候', sceneId: '' } as StartSceneResult;
+      const emptyResult: StartSceneResult = { success: false, errorMessage: '正在处理,请稍候', sceneId: '', sessionId: '' };
+      return emptyResult;
     }
     if (this.expectedWorldId.length === 0) {
-      return { success: false, errorMessage: '世界未加载', sceneId: '' } as StartSceneResult;
+      const emptyResult: StartSceneResult = { success: false, errorMessage: '世界未加载', sceneId: '', sessionId: '' };
+      return emptyResult;
     }
     this.isStarting = true;
     this.operationId = this.operationId + 1;
@@ -243,23 +262,61 @@ export class WorldSceneManageViewModel {
     try {
       const scene: WorldScene = await this.sceneService.startScene(this.expectedWorldId, locationId);
       if (opId !== this.operationId || this.disposed) {
-        return { success: false, errorMessage: '操作已过期', sceneId: '' } as StartSceneResult;
+        const emptyResult: StartSceneResult = { success: false, errorMessage: '操作已过期', sceneId: '', sessionId: '' };
+        return emptyResult;
+      }
+      const instances: WorldCharacterInstance[] =
+        await this.instanceRepo.listByLocation(this.expectedWorldId, locationId);
+      if (opId !== this.operationId || this.disposed) {
+        const emptyResult: StartSceneResult = { success: false, errorMessage: '操作已过期', sceneId: '', sessionId: '' };
+        return emptyResult;
+      }
+      const participantIds: string[] = [];
+      for (const inst of instances) {
+        if (inst.isActive) {
+          participantIds.push(inst.id);
+        }
+      }
+      const session: WorldConversationSession =
+        await this.sessionService.startSession({
+          worldId: this.expectedWorldId,
+          sceneId: scene.id,
+          participantCharacterInstanceIds: participantIds
+        });
+      if (opId !== this.operationId || this.disposed) {
+        const emptyResult: StartSceneResult = { success: false, errorMessage: '操作已过期', sceneId: '', sessionId: '' };
+        return emptyResult;
       }
       this.bumpRefreshToken();
       await this.loadSnapshot(this.expectedWorldId);
-      return { success: true, errorMessage: '', sceneId: scene.id } as StartSceneResult;
+      const result: StartSceneResult = { success: true, errorMessage: '', sceneId: scene.id, sessionId: session.id };
+      return result;
     } catch (e) {
       if (opId !== this.operationId || this.disposed) {
-        return { success: false, errorMessage: '操作已过期', sceneId: '' } as StartSceneResult;
+        const emptyResult: StartSceneResult = { success: false, errorMessage: '操作已过期', sceneId: '', sessionId: '' };
+        return emptyResult;
       }
       const msg: string = this.resolveErrorMessage(e);
       Logger.warn(LOG_TAG, 'startScene failed: ' + this.safeErrorCategory(e));
-      return { success: false, errorMessage: msg, sceneId: '' } as StartSceneResult;
+      const errorResult: StartSceneResult = { success: false, errorMessage: msg, sceneId: '', sessionId: '' };
+      return errorResult;
     } finally {
       if (opId === this.operationId) {
         this.isStarting = false;
       }
     }
+  }
+
+  async listActiveLocations(): Promise<ActiveLocationOption[]> {
+    const locations: WorldLocation[] = await this.safeListLocations(this.expectedWorldId);
+    const options: ActiveLocationOption[] = [];
+    for (let i: number = 0; i < locations.length; i++) {
+      if (locations[i].status === WorldLocationStatus.Active) {
+        const option: ActiveLocationOption = { id: locations[i].id, name: locations[i].name };
+        options.push(option);
+      }
+    }
+    return options;
   }
 
   dispose(): void {
