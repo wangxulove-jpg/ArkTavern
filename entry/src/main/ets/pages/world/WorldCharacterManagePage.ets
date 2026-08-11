@@ -17,7 +17,8 @@ import {
   WorldCharacterManageLoadState,
   WorldCharacterInstanceManageUiModel,
   CandidateCharacterUiModel,
-  ActiveLocationOptionUiModel
+  ActiveLocationOptionUiModel,
+  SingleChatOptionUiModel
 } from '../../viewmodels/world/WorldCharacterManageViewModel';
 import {
   PENDING_WORLD_ID_KEY,
@@ -71,6 +72,18 @@ struct WorldCharacterManagePage {
   /** Unplace confirm */
   @State private unplacingInstanceId: string = '';
 
+  /** 导入聊天记录弹窗 */
+  @State private importDialogVisible: boolean = false;
+  @State private candidateChats: SingleChatOptionUiModel[] = [];
+  @State private importCharacterId: string = '';
+  @State private importCharacterName: string = '';
+  @State private isImporting: boolean = false;
+  @State private importProgressLabel: string = '';
+  @State private importError: string = '';
+  @State private importSucceeded: boolean = false;
+  @State private importResultLocationName: string = '';
+  @State private importResultMessageCount: number = 0;
+
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navigationBarHeight') navBarHeight: number = 0;
   @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
@@ -94,6 +107,9 @@ struct WorldCharacterManagePage {
         AppServices.getWorldStateService(),
         AppServices.getWorldLocationRepository(),
         AppServices.getWorldCharacterInstanceRepository(),
+        AppServices.getChatRepository(),
+        AppServices.getMessageRepository(),
+        AppServices.getWorldChatImportService(),
         AppServices.getCharacterService(),
         worldId
       );
@@ -150,6 +166,10 @@ struct WorldCharacterManagePage {
     this.isDeleting = this.viewModel.isDeleting;
     this.hasLocations = this.viewModel.hasLocations;
     this.unplacedCount = this.viewModel.unplacedCount;
+    this.isImporting = this.viewModel.isImporting;
+    this.importProgressLabel = this.viewModel.importProgressLabel;
+    this.importError = this.viewModel.importError;
+    this.importSucceeded = this.viewModel.importSucceeded;
     this.updateFilteredLists();
   }
 
@@ -387,6 +407,9 @@ struct WorldCharacterManagePage {
     if (this.addingCharacterId.length > 0) {
       this.addPlacementOverlay();
     }
+    if (this.importDialogVisible) {
+      this.importChatDialog();
+    }
   }
 
   @Builder
@@ -621,14 +644,30 @@ struct WorldCharacterManagePage {
         .alignItems(HorizontalAlign.Start)
         .margin({ left: 12 })
 
-        WorldPrimaryButton({
-          label: '加入世界',
-          isEnabled: !this.isSaving && !this.isDeleting,
-          onButtonClick: (): void => {
-            this.addingCharacterId = c.id;
-            this.addPlacementMode = '';
-          }
-        })
+        Column() {
+          WorldPrimaryButton({
+            label: '加入世界',
+            fullWidth: true,
+            isEnabled: !this.isSaving && !this.isDeleting,
+            onButtonClick: (): void => {
+              this.addingCharacterId = c.id;
+              this.addPlacementMode = '';
+            }
+          })
+          WorldSecondaryButton({
+            label: '导入聊天',
+            fullWidth: true,
+            buttonHeight: 34,
+            isEnabled: !this.isSaving && !this.isDeleting && !this.isImporting,
+            onButtonClick: (): void => {
+              this.openImportDialog(c.id, c.name);
+            }
+          })
+            .margin({ top: 6 })
+        }
+        .width(108)
+        .alignItems(HorizontalAlign.Center)
+        .margin({ left: 8 })
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
@@ -847,6 +886,214 @@ struct WorldCharacterManagePage {
     .onClick(() => {
       this.addingCharacterId = '';
       this.addPlacementMode = '';
+    })
+  }
+
+  private async openImportDialog(characterId: string, characterName: string): Promise<void> {
+    if (this.viewModel === null) {
+      return;
+    }
+    this.importCharacterId = characterId;
+    this.importCharacterName = characterName;
+    this.importError = '';
+    this.importSucceeded = false;
+    this.importResultLocationName = '';
+    this.importResultMessageCount = 0;
+    this.importDialogVisible = true;
+    await this.viewModel.loadChatsForCandidate(characterId);
+    this.candidateChats = this.viewModel.candidateChats;
+    this.importError = this.viewModel.importError;
+  }
+
+  private async startImport(chatId: string): Promise<void> {
+    if (this.viewModel === null) {
+      return;
+    }
+    const errorMsg: string = await this.viewModel.importChatRecords(this.importCharacterId, chatId);
+    this.syncFromViewModel();
+    if (errorMsg.length > 0) {
+      this.importError = errorMsg;
+    } else if (this.viewModel.lastImportResult !== null) {
+      this.importResultLocationName = this.viewModel.lastImportResult.locationName;
+      this.importResultMessageCount = this.viewModel.lastImportResult.importedMessageCount;
+      this.importSucceeded = true;
+      this.importError = '';
+    }
+  }
+
+  private closeImportDialog(): void {
+    this.importDialogVisible = false;
+    if (this.viewModel !== null) {
+      this.viewModel.resetImportState();
+    }
+    this.candidateChats = [];
+    this.importCharacterId = '';
+    this.importCharacterName = '';
+    this.importError = '';
+    this.importSucceeded = false;
+    this.importProgressLabel = '';
+    this.importResultLocationName = '';
+    this.importResultMessageCount = 0;
+  }
+
+  @Builder
+  importChatDialog(): void {
+    Column() {
+      Column() {
+        Text('导入聊天记录')
+          .fontSize(17)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+
+        if (this.importCharacterName.length > 0) {
+          Text(this.importCharacterName)
+            .fontSize(13)
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+            .margin({ top: 2 })
+        }
+
+        Text('AI 将分析角色卡与聊天记录,自动创建地点并导入对话历史。')
+          .fontSize(12)
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+          .margin({ top: 6 })
+          .textAlign(TextAlign.Center)
+
+        Divider().color(ThemePalette.worldBorderColor(this.effectiveTheme)).margin({ top: 12, bottom: 12 })
+
+        if (this.isImporting) {
+          Column() {
+            LoadingProgress().width(28).height(28).color(ThemePalette.accentColor(this.effectiveTheme))
+            Text(this.importProgressLabel.length > 0 ? this.importProgressLabel : '正在导入...')
+              .fontSize(13)
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+              .margin({ top: 10 })
+          }
+          .width('100%')
+          .alignItems(HorizontalAlign.Center)
+          .padding({ top: 8, bottom: 8 })
+        } else if (this.importSucceeded) {
+          Text('导入成功!')
+            .fontSize(15)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(ThemePalette.accentColor(this.effectiveTheme))
+            .width('100%')
+          Text('已创建地点「' + this.importResultLocationName + '」,导入 ' +
+            this.importResultMessageCount.toString() + ' 条消息。角色已加入世界。')
+            .fontSize(13)
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+            .width('100%')
+            .margin({ top: 6 })
+            .lineHeight(20)
+          WorldPrimaryButton({
+            label: '完成',
+            fullWidth: true,
+            onButtonClick: (): void => {
+              this.closeImportDialog();
+            }
+          })
+            .margin({ top: 14 })
+        } else if (this.importError.length > 0) {
+          Text(this.importError)
+            .fontSize(13)
+            .fontColor($r('app.color.world_error'))
+            .width('100%')
+            .margin({ bottom: 8 })
+          Row() {
+            WorldSecondaryButton({
+              label: '关闭',
+              fullWidth: true,
+              onButtonClick: (): void => {
+                this.closeImportDialog();
+              }
+            })
+              .layoutWeight(1)
+          }
+          .width('100%')
+        } else if (this.candidateChats.length === 0) {
+          Text('该角色没有可导入的单聊记录。')
+            .fontSize(13)
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+            .width('100%')
+            .textAlign(TextAlign.Center)
+            .margin({ top: 8, bottom: 8 })
+          WorldSecondaryButton({
+            label: '关闭',
+            fullWidth: true,
+            onButtonClick: (): void => {
+              this.closeImportDialog();
+            }
+          })
+        } else {
+          Text('选择要导入的单聊会话:')
+            .fontSize(13)
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+            .width('100%')
+            .margin({ bottom: 8 })
+
+          Scroll() {
+            Column() {
+              ForEach(this.candidateChats, (chat: SingleChatOptionUiModel) => {
+                Column() {
+                  Text(chat.title)
+                    .fontSize(14)
+                    .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+                    .maxLines(1)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                    .width('100%')
+                  Row() {
+                    Text(chat.messageCount.toString() + ' 条消息')
+                      .fontSize(11)
+                      .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+                    if (chat.lastMessageAtLabel.length > 0) {
+                      Text(' · ' + chat.lastMessageAtLabel)
+                        .fontSize(11)
+                        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+                        .margin({ left: 4 })
+                    }
+                  }
+                  .width('100%')
+                  .margin({ top: 2 })
+                }
+                .width('100%')
+                .padding(12)
+                .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
+                .borderRadius(8)
+                .margin({ bottom: 8 })
+                .onClick(() => {
+                  this.startImport(chat.chatId);
+                })
+              }, (chat: SingleChatOptionUiModel) => chat.chatId)
+            }
+            .width('100%')
+          }
+          .scrollable(ScrollDirection.Vertical)
+          .scrollBar(BarState.Off)
+          .width('100%')
+          .height(220)
+
+          WorldSecondaryButton({
+            label: '取消',
+            fullWidth: true,
+            onButtonClick: (): void => {
+              this.closeImportDialog();
+            }
+          })
+            .margin({ top: 4 })
+        }
+      }
+      .width('82%')
+      .padding(20)
+      .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
+      .borderRadius(16)
+      .alignItems(HorizontalAlign.Start)
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+    .backgroundColor($r('app.color.world_scrim'))
+    .onClick(() => {
+      this.closeImportDialog();
     })
   }
 

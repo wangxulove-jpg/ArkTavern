@@ -154,10 +154,9 @@ export class WorldSceneLauncherViewModel {
       const canContinueSession: boolean = hasActiveSession
         && snapshot.existingActiveSession !== null
         && snapshot.existingActiveSession.status === WorldConversationSessionStatus.Active;
-      const canLaunchNewSession: boolean = hasActiveScene
-        && !hasActiveSession
-        && !isSceneEnded
-        && snapshot.eligibleParticipants.length > 0;
+      // 多场景并行:只要地点有可参与角色即可新建独立场景,即使已有进行中会话。
+      const canLaunchNewSession: boolean =
+        snapshot.eligibleParticipants.length > 0;
 
       const uiModel: LauncherUiModel = {
         worldId: snapshot.worldId,
@@ -227,10 +226,7 @@ export class WorldSceneLauncherViewModel {
         selected: this.selectedIds.indexOf(p.instanceId) >= 0
       });
     }
-    const canLaunch: boolean = this.selectedIds.length > 0
-      && this.detail.hasActiveScene
-      && !this.detail.hasActiveSession
-      && !this.detail.isSceneEnded;
+    const canLaunch: boolean = this.selectedIds.length > 0;
     this.detail = {
       worldId: this.detail.worldId,
       locationId: this.detail.locationId,
@@ -315,6 +311,48 @@ export class WorldSceneLauncherViewModel {
 
   selectedCount(): number {
     return this.selectedIds.length;
+  }
+
+  /** 直接以指定角色开启 1:1 单人会话(地点已有 Active 会话时走 continue 逻辑由调用方控制)。 */
+  async launchSoloSession(instanceId: string): Promise<LauncherLaunchResult> {
+    if (this.isLaunching) {
+      Logger.warn(LOG_TAG, 'launchSoloSession skipped: isLaunching');
+      return { success: false, sceneId: '', sessionId: '', errorMessage: '正在处理,请稍候' } as LauncherLaunchResult;
+    }
+    if (this.detail === null) {
+      return { success: false, sceneId: '', sessionId: '', errorMessage: '数据未加载' } as LauncherLaunchResult;
+    }
+    if (instanceId.length === 0) {
+      return { success: false, sceneId: '', sessionId: '', errorMessage: '请选择角色' } as LauncherLaunchResult;
+    }
+    if (this.rawSnapshot === null) {
+      return { success: false, sceneId: '', sessionId: '', errorMessage: '数据未加载' } as LauncherLaunchResult;
+    }
+
+    this.isLaunching = true;
+    try {
+      const target: WorldSceneLaunchTarget = {
+        worldId: this.detail.worldId,
+        locationId: this.detail.locationId,
+        participantCharacterInstanceIds: [instanceId]
+      };
+      const result: WorldSceneLaunchResult = await this.launchService.launchSceneSession(target);
+      Logger.info(LOG_TAG, 'launchSoloSession ok: sceneShortId=' + this.shortId(result.scene.id)
+        + ', sessionShortId=' + this.shortId(result.session.id));
+      return {
+        success: true,
+        sceneId: result.scene.id,
+        sessionId: result.session.id,
+        errorMessage: ''
+      } as LauncherLaunchResult;
+    } catch (e) {
+      const msg: string = this.resolveErrorMessage(e);
+      Logger.warn(LOG_TAG, 'launchSoloSession failed: ' + this.safeErrorCategory(e)
+        + ', worldShortId=' + this.shortId(this.detail.worldId));
+      return { success: false, sceneId: '', sessionId: '', errorMessage: msg } as LauncherLaunchResult;
+    } finally {
+      this.isLaunching = false;
+    }
   }
 
   private async resolveAvatarUri(characterInstanceId: string): Promise<string> {

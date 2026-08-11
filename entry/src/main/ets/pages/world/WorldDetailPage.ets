@@ -965,7 +965,7 @@ struct WorldDetailPage {
 
         if (detail.canContinueSession) {
           Row() {
-            Text('当前有进行中的会话')
+            Text('当前有进行中的会话,可继续或另开新会话')
               .fontSize($r('app.float.world_font_caption'))
               .fontColor(ThemePalette.accentColor(this.effectiveTheme))
               .layoutWeight(1)
@@ -984,7 +984,7 @@ struct WorldDetailPage {
             .margin({ top: 12 })
         } else if (detail.hasActiveScene && detail.isSceneEnded) {
           Row() {
-            Text('该地点场景已结束')
+            Text('该地点场景已结束,可选择角色开启新会话')
               .fontSize($r('app.float.world_font_caption'))
               .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
               .layoutWeight(1)
@@ -999,7 +999,7 @@ struct WorldDetailPage {
             .width('100%')
         } else if (detail.hasActiveSession) {
           Row() {
-            Text('会话已结束,可选择角色开启新会话')
+            Text('该地点有已结束会话,可选择角色开启新会话')
               .fontSize($r('app.float.world_font_caption'))
               .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
               .layoutWeight(1)
@@ -1049,8 +1049,15 @@ struct WorldDetailPage {
                     .maxLines(1)
                     .textOverflow({ overflow: TextOverflow.Ellipsis })
                     .margin({ top: 2 })
+                  Text('单聊')
+                    .fontSize(9)
+                    .fontColor(ThemePalette.accentColor(this.effectiveTheme))
+                    .margin({ top: 2 })
+                    .onClick(() => {
+                      this.onSoloChatClick(p.instanceId);
+                    })
                 }
-                .width(48)
+                .width(52)
                 .margin({ right: 8 })
                 .alignItems(HorizontalAlign.Center)
                 .onClick(() => {
@@ -1065,7 +1072,7 @@ struct WorldDetailPage {
           .scrollable(ScrollDirection.Horizontal)
           .scrollBar(BarState.Off)
           .width('100%')
-          .height(64)
+          .height(84)
           .margin({ top: 4 })
         }
 
@@ -1080,7 +1087,7 @@ struct WorldDetailPage {
             .borderRadius($r('app.float.world_radius_chip'))
         }
 
-        if (detail.canLaunchNewSession && !detail.canContinueSession) {
+        if (detail.canLaunchNewSession) {
           Row() {
             WorldSecondaryButton({
               label: $r('app.string.world_location_sheet_view_history'),
@@ -1106,7 +1113,7 @@ struct WorldDetailPage {
           .width('100%')
           .margin({ top: 16 })
           .alignItems(VerticalAlign.Center)
-        } else if (!detail.canContinueSession) {
+        } else {
           WorldSecondaryButton({
             label: $r('app.string.world_location_sheet_view_history'),
             fullWidth: true,
@@ -1241,6 +1248,21 @@ struct WorldDetailPage {
     }
     this.launcherActionError = '';
     const result = await this.launcherViewModel.launchNewSession();
+    if (result.success) {
+      this.bumpSceneTokens();
+      this.navigateToSceneChat(result.sceneId, result.sessionId);
+    } else {
+      this.launcherActionError = result.errorMessage;
+    }
+  }
+
+  /** 与指定角色开启 1:1 单人会话。 */
+  private async onSoloChatClick(instanceId: string): Promise<void> {
+    if (this.launcherViewModel === null || instanceId.length === 0) {
+      return;
+    }
+    this.launcherActionError = '';
+    const result = await this.launcherViewModel.launchSoloSession(instanceId);
     if (result.success) {
       this.bumpSceneTokens();
       this.navigateToSceneChat(result.sceneId, result.sessionId);

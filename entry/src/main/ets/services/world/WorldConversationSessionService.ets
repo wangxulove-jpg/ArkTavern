@@ -86,7 +86,8 @@ export class WorldConversationSessionService {
   async startSessionWithStore(
     store: relationalStore.RdbStore,
     options: StartSessionOptions,
-    trimmedIds: string[]
+    trimmedIds: string[],
+    sceneOverride?: WorldScene
   ): Promise<WorldConversationSession> {
     if (options.worldId === '') {
       throw WorldConversationSessionError.worldNotFound();
@@ -106,7 +107,10 @@ export class WorldConversationSessionService {
       throw WorldConversationSessionError.worldNotActive();
     }
 
-    const scene: WorldScene | null = await this.sceneRepo.getByIdWithStore(store, options.sceneId);
+    // 同事务内新建场景时,RDB 查询可能看不到尚未提交的 insert,
+    // 因此允许调用方直接传入已创建的场景对象,避免重查。
+    const scene: WorldScene | null =
+      sceneOverride !== undefined ? sceneOverride : await this.sceneRepo.getByIdWithStore(store, options.sceneId);
     if (scene === null) {
       throw WorldConversationSessionError.sceneNotFound();
     }

@@ -24,6 +24,8 @@ import { WorldSceneMessageRepository } from '../../repositories/world/WorldScene
 import { WorldConversationSessionRepository } from '../../repositories/world/WorldConversationSessionRepository';
 import { CharacterService } from '../../services/CharacterService';
 import { WorldSceneService } from '../../services/world/WorldSceneService';
+import { WorldConversationSessionService } from '../../services/world/WorldConversationSessionService';
+import { WorldSessionPostProcessingOrchestrator } from '../../services/world/WorldSessionPostProcessingOrchestrator';
 import { Logger } from '../../utils/Logger';
 import { World, WorldStatus } from '../../models/world/World';
 import { WorldLocation, WorldLocationStatus } from '../../models/world/WorldLocation';
@@ -131,6 +133,12 @@ export interface SaveMessageResult {
   readonly errorMessage: string;
 }
 
+/** 结束场景前结束全部 Active 会话的结果(触发后处理管线用) */
+interface SceneEndSessionsResult {
+  readonly worldId: string;
+  readonly sessionIds: string[];
+}
+
 export class WorldSceneDetailViewModel {
   private readonly worldRepo: WorldRepository;
   private readonly locationRepo: WorldLocationRepository;
@@ -140,6 +148,8 @@ export class WorldSceneDetailViewModel {
   private readonly sessionRepo: WorldConversationSessionRepository;
   private readonly characterService: CharacterService;
   private readonly sceneService: WorldSceneService;
+  private readonly sessionService: WorldConversationSessionService;
+  private readonly postProcessingOrchestrator: WorldSessionPostProcessingOrchestrator;
 
   state: WorldSceneDetailLoadState = WorldSceneDetailLoadState.Loading;
   errorMessage: string = '';
@@ -161,7 +171,9 @@ export class WorldSceneDetailViewModel {
     messageRepo: WorldSceneMessageRepository,
     sessionRepo: WorldConversationSessionRepository,
     characterService: CharacterService,
-    sceneService: WorldSceneService
+    sceneService: WorldSceneService,
+    sessionService: WorldConversationSessionService,
+    postProcessingOrchestrator: WorldSessionPostProcessingOrchestrator
   ) {
     this.worldRepo = worldRepo;
     this.locationRepo = locationRepo;
@@ -171,6 +183,8 @@ export class WorldSceneDetailViewModel {
     this.sessionRepo = sessionRepo;
     this.characterService = characterService;
     this.sceneService = sceneService;
+    this.sessionService = sessionService;
+    this.postProcessingOrchestrator = postProcessingOrchestrator;
     this.instanceShortId = WorldSceneDetailViewModel.generateShortId();
   }
 
@@ -420,12 +434,17 @@ export class WorldSceneDetailViewModel {
     this.operationId = this.operationId + 1;
     const opId: number = this.operationId;
     try {
+      const endResult: SceneEndSessionsResult = await this.endActiveSessionsForScene(this.expectedSceneId);
       await this.sceneService.endScene(this.expectedSceneId);
       if (opId !== this.operationId || this.disposed) {
         return { success: false, errorMessage: '操作已过期' };
       }
       this.bumpRefreshTokens();
       await this.loadSnapshot(this.expectedSceneId);
+      for (let i = 0; i < endResult.sessionIds.length; i++) {
+        this.postProcessingOrchestrator.startEndedSessionProcessing(
+          endResult.worldId, this.expectedSceneId, endResult.sessionIds[i]);
+      }
       return { success: true, errorMessage: '' };
     } catch (e) {
       if (opId !== this.operationId || this.disposed) {
@@ -595,6 +614,25 @@ export class WorldSceneDetailViewModel {
       Logger.warn(LOG_TAG, 'listBySceneId(sessions) failed: ' + this.safeErrorCategory(e));
       return [];
     }
+  }
+
+  /** 结束该场景下全部 Active 会话,返回 worldId 与已结束的 sessionId 列表。 */
+  private async endActiveSessionsForScene(sceneId: string): Promise<SceneEndSessionsResult> {
+    const scene: WorldScene | null = await this.sceneRepo.getById(sceneId);
+    const worldId: string = scene !== null ? scene.worldId : '';
+    const sessions: WorldConversationSession[] = await this.safeListSessions(sceneId);
+    const sessionIds: string[] = [];
+    for (let i = 0; i < sessions.length; i++) {
+      if (sessions[i].status !== WorldConversationSessionStatus.Active) {
+        continue;
+      }
+      if (worldId.length === 0) {
+        continue;
+      }
+      await this.sessionService.endSession({ worldId: worldId, sessionId: sessions[i].id });
+      sessionIds.push(sessions[i].id);
+    }
+    return { worldId: worldId, sessionIds: sessionIds };
   }
 
   private async safeGetInstance(instanceId: string): Promise<WorldCharacterInstance | null> {

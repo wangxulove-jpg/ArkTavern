@@ -6,6 +6,8 @@ import { WorldSceneMessageRepository } from '../../repositories/world/WorldScene
 import { WorldConversationSessionRepository } from '../../repositories/world/WorldConversationSessionRepository';
 import { CharacterService } from '../../services/CharacterService';
 import { WorldSceneService } from '../../services/world/WorldSceneService';
+import { WorldConversationSessionService } from '../../services/world/WorldConversationSessionService';
+import { WorldSessionPostProcessingOrchestrator } from '../../services/world/WorldSessionPostProcessingOrchestrator';
 import {
   WorldSceneRuntimeService,
   WorldRuntimeObserver,
@@ -130,6 +132,8 @@ export class WorldSceneChatViewModel implements WorldRuntimeObserver {
   private readonly sessionRepo: WorldConversationSessionRepository;
   private readonly characterService: CharacterService;
   private readonly sceneService: WorldSceneService;
+  private readonly sessionService: WorldConversationSessionService;
+  private readonly postProcessingOrchestrator: WorldSessionPostProcessingOrchestrator;
   private readonly runtimeService: WorldSceneRuntimeService;
 
   state: WorldSceneChatLoadState = WorldSceneChatLoadState.Loading;
@@ -169,6 +173,8 @@ export class WorldSceneChatViewModel implements WorldRuntimeObserver {
     sessionRepo: WorldConversationSessionRepository,
     characterService: CharacterService,
     sceneService: WorldSceneService,
+    sessionService: WorldConversationSessionService,
+    postProcessingOrchestrator: WorldSessionPostProcessingOrchestrator,
     runtimeService: WorldSceneRuntimeService
   ) {
     this.worldRepo = worldRepo;
@@ -179,6 +185,8 @@ export class WorldSceneChatViewModel implements WorldRuntimeObserver {
     this.sessionRepo = sessionRepo;
     this.characterService = characterService;
     this.sceneService = sceneService;
+    this.sessionService = sessionService;
+    this.postProcessingOrchestrator = postProcessingOrchestrator;
     this.runtimeService = runtimeService;
     this.instanceShortId = WorldSceneChatViewModel.generateShortId();
     this.runtimeService.addObserver(this);
@@ -626,10 +634,19 @@ export class WorldSceneChatViewModel implements WorldRuntimeObserver {
       return '生成中不能结束场景,请先停止';
     }
     this.operationId = this.operationId + 1;
+    const worldId: string = this.expectedWorldId;
+    const sceneId: string = this.expectedSceneId;
+    const sessionId: string = this.expectedSessionId;
     try {
-      await this.sceneService.endScene(this.expectedSceneId);
+      if (sessionId.length > 0) {
+        await this.sessionService.endSession({ worldId: worldId, sessionId: sessionId });
+      }
+      await this.sceneService.endScene(sceneId);
       this.bumpRefreshTokens();
-      await this.loadSnapshot(this.expectedSceneId);
+      await this.loadSnapshot(sceneId);
+      if (sessionId.length > 0) {
+        this.postProcessingOrchestrator.startEndedSessionProcessing(worldId, sceneId, sessionId);
+      }
       return '';
     } catch (e) {
       return this.resolveErrorMessage(e);

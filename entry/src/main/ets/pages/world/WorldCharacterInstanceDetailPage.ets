@@ -25,6 +25,8 @@ import {
   PENDING_WORLD_ID_KEY,
   PENDING_WORLD_MEMORY_WORLD_ID_KEY,
   PENDING_WORLD_MEMORY_CHARACTER_INSTANCE_ID_KEY,
+  PENDING_WORLD_SCENE_CHAT_ID_KEY,
+  PENDING_WORLD_SESSION_ID_KEY,
   WORLD_DETAIL_REFRESH_TOKEN_KEY,
   formatWorldTimestamp
 } from '../../viewmodels/world/WorldUiModels';
@@ -59,6 +61,7 @@ struct WorldCharacterInstanceDetailPage {
   @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
 
   @State private sceneLauncherVisible: boolean = false;
+  @State private soloTalkError: string = '';
   @State private locationSelectVisible: boolean = false;
   @State private locationSelectMode: string = '';
   @State private unplaceConfirmVisible: boolean = false;
@@ -640,10 +643,21 @@ struct WorldCharacterInstanceDetailPage {
 
             Divider().color(ThemePalette.worldBorderColor(this.effectiveTheme)).margin({ top: 12, bottom: 8 })
 
-            this.sceneLauncherAction($r('app.string.world_scene_launcher_solo_talk'), true, (): void => {})
+            this.sceneLauncherAction($r('app.string.world_scene_launcher_solo_talk'), false,
+              (): void => {
+                this.handleSoloTalk();
+              })
             this.sceneLauncherAction($r('app.string.world_scene_launcher_group_talk'), true, (): void => {})
             this.sceneLauncherAction($r('app.string.world_scene_launcher_select_participants'), true, (): void => {})
             this.sceneLauncherAction($r('app.string.world_scene_launcher_continue_last'), true, (): void => {})
+
+            if (this.soloTalkError.length > 0) {
+              Text(this.soloTalkError)
+                .fontSize($r('app.float.world_font_caption'))
+                .fontColor($r('app.color.world_error'))
+                .width('100%')
+                .margin({ top: 8 })
+            }
           }
           .width('100%')
           .padding({ left: 16, right: 16, bottom: this.navBarHeight + 16 })
@@ -942,6 +956,40 @@ struct WorldCharacterInstanceDetailPage {
     AppStorage.setOrCreate<string>(PENDING_WORLD_ID_KEY, this.detail.worldId);
     this.sceneLauncherVisible = false;
     router.pushUrl({ url: 'pages/world/WorldSceneManagePage' });
+  }
+
+  /** 与该角色在当前地点开启 1:1 单人会话。 */
+  private async handleSoloTalk(): Promise<void> {
+    if (this.viewModel === null || this.detail === null) {
+      return;
+    }
+    const detail: WorldCharacterInstanceDetailUiModel = this.detail;
+    if (detail.currentLocationId.length === 0) {
+      this.soloTalkError = '该角色尚未放置到地点,无法开始对话';
+      return;
+    }
+    if (!detail.isActive) {
+      this.soloTalkError = '该角色已撤下,无法开始对话';
+      return;
+    }
+    this.soloTalkError = '';
+    try {
+      const launchService = AppServices.getWorldSceneLaunchService();
+      const result = await launchService.launchSceneSession({
+        worldId: detail.worldId,
+        locationId: detail.currentLocationId,
+        participantCharacterInstanceIds: [detail.instanceId]
+      });
+      this.sceneLauncherVisible = false;
+      this.soloTalkError = '';
+      AppStorage.setOrCreate<string>(PENDING_WORLD_SCENE_CHAT_ID_KEY, result.scene.id);
+      AppStorage.setOrCreate<string>(PENDING_WORLD_SESSION_ID_KEY, result.session.id);
+      this.triggerWorldDetailRefresh();
+      router.pushUrl({ url: 'pages/world/WorldSceneChatPage' });
+    } catch (e) {
+      const msg: string = (e as Error).message ?? '';
+      this.soloTalkError = msg.length > 0 ? msg : '启动对话失败,请重试';
+    }
   }
 
   private openOriginalCharacterCard(characterId: string): void {

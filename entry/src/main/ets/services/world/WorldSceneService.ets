@@ -139,10 +139,10 @@ export class WorldSceneService {
 
   /**
    * 开始场景。
-   * 事务内:World Active → Location 存在且属于该 World 且 Active → 同 World+Location 无 Active Scene →
+   * 事务内:World Active → Location 存在且属于该 World 且 Active →
    * 创建 Active Scene → 插入 SceneStarted 事件。
    * 不要求地点必须有角色,不自动创建欢迎消息 / 旁白 / 角色消息。
-   * 同一地点已有 Active Scene 时拒绝,不自动结束旧场景。
+   * 允许同一地点同时存在多个 Active 场景(多场景并行),每个场景独立会话。
    */
   async startScene(worldId: string, locationId: string): Promise<WorldScene> {
     if (worldId === '') {
@@ -197,12 +197,6 @@ export class WorldSceneService {
     }
     if (location.status !== WorldLocationStatus.Active) {
       throw WorldSceneError.locationArchived();
-    }
-
-    const existingActive: WorldScene | null =
-      await this.sceneRepo.findActiveByWorldAndLocationWithStore(store, worldId, locationId);
-    if (existingActive !== null) {
-      throw WorldSceneError.sceneAlreadyActive();
     }
 
     const now: number = nowMillis();

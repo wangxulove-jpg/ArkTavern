@@ -210,21 +210,29 @@ export class WorldSceneLaunchService {
       throw WorldSceneLaunchError.locationArchived();
     }
 
-    let scene: WorldScene | null =
-      await this.sceneRepo.findActiveByWorldAndLocationWithStore(store, target.worldId, target.locationId);
+    // 支持多场景并行:
+    // - 显式指定 previousSessionId 时复用该会话所属场景(续写);
+    // - 否则总是创建新的独立场景+会话,即使同地点已有其他 Active 场景。
+    let scene: WorldScene | null = null;
     let isNewScene: boolean = false;
-
-    if (scene === null) {
-      scene = await this.sceneService.startSceneWithStore(store, target.worldId, target.locationId);
-      isNewScene = true;
-    } else {
-      if (scene.status === WorldSceneStatus.Ended) {
-        throw WorldSceneLaunchError.sceneAlreadyEnded();
+    if (target.previousSessionId !== undefined && target.previousSessionId !== '') {
+      const prevSession: WorldConversationSession | null =
+        await this.sessionRepo.getByIdWithStore(store, target.previousSessionId);
+      if (prevSession !== null) {
+        scene = await this.sceneRepo.getByIdWithStore(store, prevSession.sceneId);
       }
     }
+    if (scene === null || scene.status === WorldSceneStatus.Ended) {
+      scene = await this.sceneService.startSceneWithStore(store, target.worldId, target.locationId);
+      isNewScene = true;
+    }
 
-    const activeSession: WorldConversationSession | null =
-      await this.sessionService.getActiveSessionWithStore(store, target.worldId, scene.id);
+    // 新建场景时场景刚在当前事务插入,RDB 重查可能不可见,直接跳过 Active 会话检查。
+    let activeSession: WorldConversationSession | null = null;
+    if (!isNewScene) {
+      activeSession =
+        await this.sessionService.getActiveSessionWithStore(store, target.worldId, scene.id);
+    }
     if (activeSession !== null) {
       return {
         scene: scene,
@@ -241,7 +249,9 @@ export class WorldSceneLaunchService {
       previousSessionId: target.previousSessionId
     };
     const session: WorldConversationSession =
-      await this.sessionService.startSessionWithStore(store, sessionOptions, trimmedIds);
+      isNewScene
+        ? await this.sessionService.startSessionWithStore(store, sessionOptions, trimmedIds, scene)
+        : await this.sessionService.startSessionWithStore(store, sessionOptions, trimmedIds);
 
     return {
       scene: scene,

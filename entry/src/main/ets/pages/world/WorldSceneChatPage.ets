@@ -103,6 +103,7 @@ struct WorldSceneChatPage {
         AppServices.getWorldCharacterInstanceRepository(), AppServices.getWorldSceneRepository(),
         AppServices.getWorldSceneMessageRepository(), AppServices.getWorldConversationSessionRepository(),
         AppServices.getCharacterService(), AppServices.getWorldSceneService(),
+        AppServices.getWorldConversationSessionService(), AppServices.getWorldSessionPostProcessingOrchestrator(),
         AppServices.getWorldSceneRuntimeService()
       );
       this.viewModel.setSceneId(sceneId);

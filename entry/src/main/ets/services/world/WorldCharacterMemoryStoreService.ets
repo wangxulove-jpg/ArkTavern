@@ -3,6 +3,7 @@ import { DbHelper } from '../../database/DbHelper';
 import { WorldCharacterMemoryEntryRepository } from '../../repositories/world/WorldCharacterMemoryEntryRepository';
 import { WorldConversationSessionRepository } from '../../repositories/world/WorldConversationSessionRepository';
 import { WorldSceneMessageRepository } from '../../repositories/world/WorldSceneMessageRepository';
+import { WorldSceneRepository } from '../../repositories/world/WorldSceneRepository';
 import { WorldCharacterInstanceRepository } from '../../repositories/world/WorldCharacterInstanceRepository';
 import {
   WorldCharacterMemoryEntry,
@@ -22,6 +23,7 @@ import {
   deserializeParticipantSnapshots
 } from '../../models/world/WorldConversationSession';
 import { WorldSceneMessage, WorldSceneMessageVisibility, WorldSceneMessageStatus } from '../../models/world/WorldSceneMessage';
+import { WorldScene } from '../../models/world/WorldScene';
 import { WorldCharacterInstance } from '../../models/world/WorldCharacterInstance';
 import { DatabaseError } from '../../models/DatabaseError';
 import { generateUuid } from '../../utils/Uuid';
@@ -30,6 +32,7 @@ export class WorldCharacterMemoryStoreService {
   private readonly memoryRepo: WorldCharacterMemoryEntryRepository;
   private readonly sessionRepo: WorldConversationSessionRepository;
   private readonly sceneMessageRepo: WorldSceneMessageRepository;
+  private readonly sceneRepo: WorldSceneRepository;
   private readonly characterInstanceRepo: WorldCharacterInstanceRepository;
   private readonly dbHelper: DbHelper;
 
@@ -37,12 +40,14 @@ export class WorldCharacterMemoryStoreService {
     memoryRepo: WorldCharacterMemoryEntryRepository,
     sessionRepo: WorldConversationSessionRepository,
     sceneMessageRepo: WorldSceneMessageRepository,
+    sceneRepo: WorldSceneRepository,
     characterInstanceRepo: WorldCharacterInstanceRepository,
     dbHelper: DbHelper
   ) {
     this.memoryRepo = memoryRepo;
     this.sessionRepo = sessionRepo;
     this.sceneMessageRepo = sceneMessageRepo;
+    this.sceneRepo = sceneRepo;
     this.characterInstanceRepo = characterInstanceRepo;
     this.dbHelper = dbHelper;
   }
@@ -75,6 +80,14 @@ export class WorldCharacterMemoryStoreService {
       throw new WorldCharacterMemoryEntryError(
         WorldCharacterMemoryErrorKind.SessionNotEnded,
         'session not ended'
+      );
+    }
+    const scene: WorldScene | null =
+      await this.sceneRepo.getById(session.sceneId);
+    if (scene === null) {
+      throw new WorldCharacterMemoryEntryError(
+        WorldCharacterMemoryErrorKind.InvalidSource,
+        'scene not found'
       );
     }
     const owner: WorldCharacterInstance | null =
@@ -149,7 +162,7 @@ export class WorldCharacterMemoryStoreService {
       worldId: session.worldId,
       sceneId: session.sceneId,
       sessionId: sessionId,
-      locationId: owner.currentLocationId !== undefined ? owner.currentLocationId : '',
+      locationId: scene.locationId,
       ownerCharacterInstanceId: ownerCharacterInstanceId,
       ownerDisplayNameSnapshot: ownerDisplayName,
       playerDisplayNameSnapshot: session.playerDisplayNameSnapshot,

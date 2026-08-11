@@ -98,7 +98,9 @@ struct WorldSceneDetailPage {
         AppServices.getWorldSceneMessageRepository(),
         AppServices.getWorldConversationSessionRepository(),
         AppServices.getCharacterService(),
-        AppServices.getWorldSceneService()
+        AppServices.getWorldSceneService(),
+        AppServices.getWorldConversationSessionService(),
+        AppServices.getWorldSessionPostProcessingOrchestrator()
       );
       this.viewModel.setSceneId(sceneId);
       this.isInitializing = false;

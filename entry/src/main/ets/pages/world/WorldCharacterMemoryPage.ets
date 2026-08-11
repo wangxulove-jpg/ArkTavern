@@ -9,9 +9,8 @@ import {
   MemoryLocationOptionUiModel,
   MemoryCharacterHeaderUiModel,
   CharacterSwitcherItemUiModel,
-  ActivitySceneUiModel,
-  ActivityMessageUiModel,
-  ActivityMoveUiModel,
+  ActivityTimelineItemUiModel,
+  AutoMemoryUiModel,
   DiagnosticSummaryUiModel,
   DiagnosticIssueUiModel,
   DiagnosticRiskLevel,
@@ -71,9 +70,10 @@ struct WorldCharacterMemoryPage {
   @State private selectedTab: ArchiveTab = ArchiveTab.Memory;
   @State private filter: WorldCharacterMemoryListFilter = WorldCharacterMemoryListFilter.Active;
 
-  @State private activityScenes: ActivitySceneUiModel[] = [];
-  @State private activityMessages: ActivityMessageUiModel[] = [];
-  @State private activityMoves: ActivityMoveUiModel[] = [];
+  @State private timeline: ActivityTimelineItemUiModel[] = [];
+  @State private autoMemories: AutoMemoryUiModel[] = [];
+  @State private expandedTimelineIds: string[] = [];
+  @State private expandedAutoMemoryIds: string[] = [];
   @State private diagnostic: DiagnosticSummaryUiModel | null = null;
 
   @State private formMode: MemoryFormMode = MemoryFormMode.None;
@@ -116,7 +116,8 @@ struct WorldCharacterMemoryPage {
         AppServices.getWorldSceneMessageRepository(),
         AppServices.getWorldEventRepository(),
         AppServices.getCharacterService(),
-        AppServices.getWorldCharacterMemoryService()
+        AppServices.getWorldCharacterMemoryService(),
+        AppServices.getWorldCharacterMemoryStoreService()
       );
       this.viewModel.setTarget(worldId, instanceId);
       this.isInitializing = false;
@@ -184,9 +185,8 @@ struct WorldCharacterMemoryPage {
       this.characterCardMissing = false;
       this.currentLocationLabel = '';
       this.switcherItems = [];
-      this.activityScenes = [];
-      this.activityMessages = [];
-      this.activityMoves = [];
+      this.timeline = [];
+      this.autoMemories = [];
       this.diagnostic = null;
       return;
     }
@@ -200,9 +200,8 @@ struct WorldCharacterMemoryPage {
     this.characterCardMissing = snapshot.header.characterCardMissing;
     this.currentLocationLabel = this.resolveCurrentLocationLabel(snapshot.header);
     this.switcherItems = snapshot.characterSwitcherItems;
-    this.activityScenes = snapshot.activityScenes;
-    this.activityMessages = snapshot.activityMessages;
-    this.activityMoves = snapshot.activityMoves;
+    this.timeline = snapshot.timeline;
+    this.autoMemories = snapshot.autoMemories;
     this.diagnostic = snapshot.diagnostic;
   }
 
@@ -550,6 +549,7 @@ struct WorldCharacterMemoryPage {
 
   @Builder
   memoryTab(): void {
+    this.autoMemorySection()
     this.filterBar()
 
     if (this.actionError.length > 0) {
@@ -577,6 +577,107 @@ struct WorldCharacterMemoryPage {
       ForEach(this.memories, (m: MemoryItemUiModel) => {
         this.memoryCard(m)
       }, (m: MemoryItemUiModel) => m.id)
+    }
+  }
+
+  @Builder
+  autoMemorySection(): void {
+    if (this.autoMemories.length > 0) {
+      Column() {
+        WorldSectionHeader({ title: '世界AI整理的记忆' })
+        Text('场景结束后由世界AI自动生成,基于该角色可见的对话证据。')
+          .fontSize($r('app.float.world_font_micro'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+          .width('100%')
+          .margin({ top: 2, bottom: 6 })
+
+        ForEach(this.autoMemories, (m: AutoMemoryUiModel) => {
+          this.autoMemoryCard(m)
+        }, (m: AutoMemoryUiModel) => m.memoryId + '|' + (this.isAutoMemoryExpanded(m.memoryId) ? '1' : '0'))
+
+        Divider().color(ThemePalette.worldBorderColor(this.effectiveTheme)).margin({ top: 8, bottom: 12 })
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Start)
+    }
+  }
+
+  @Builder
+  autoMemoryCard(m: AutoMemoryUiModel): void {
+    Column() {
+      WorldSurfaceCard({}) {
+        Column() {
+          Row() {
+            Text('v' + m.version.toString())
+              .fontSize($r('app.float.world_font_micro'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+            Text('可信度 ' + Math.round(m.confidence * 100).toString() + '%')
+              .fontSize($r('app.float.world_font_micro'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+              .margin({ left: 6 })
+            Text(m.sourceLocationName)
+              .fontSize($r('app.float.world_font_micro'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+              .margin({ left: 6 })
+              .layoutWeight(1)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+            Text(m.statusLabel)
+              .fontSize($r('app.float.world_font_micro'))
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Center)
+
+          if (this.isAutoMemoryExpanded(m.memoryId)) {
+            Text(m.memoryText)
+              .fontSize($r('app.float.world_font_caption'))
+              .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+              .width('100%')
+              .margin({ top: 4 })
+          } else {
+            Text(m.memoryText.length > 80 ? m.memoryText.substring(0, 80) + '…' : m.memoryText)
+              .fontSize($r('app.float.world_font_caption'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+              .width('100%')
+              .margin({ top: 4 })
+              .maxLines(3)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
+
+          Text(this.isAutoMemoryExpanded(m.memoryId) ? '收起 ▲' : '展开 ▼')
+            .fontSize($r('app.float.world_font_micro'))
+            .fontColor(ThemePalette.accentColor(this.effectiveTheme))
+            .margin({ top: 4 })
+            .onClick(() => {
+              this.toggleAutoMemoryExpanded(m.memoryId);
+            })
+        }
+        .width('100%')
+        .padding(14)
+        .alignItems(HorizontalAlign.Start)
+      }
+    }
+    .width('100%')
+    .margin({ top: 6 })
+  }
+
+  private isAutoMemoryExpanded(id: string): boolean {
+    return this.expandedAutoMemoryIds.indexOf(id) >= 0;
+  }
+
+  private toggleAutoMemoryExpanded(id: string): void {
+    if (this.isAutoMemoryExpanded(id)) {
+      const next: string[] = this.expandedAutoMemoryIds.slice();
+      const idx: number = next.indexOf(id);
+      if (idx >= 0) {
+        next.splice(idx, 1);
+      }
+      this.expandedAutoMemoryIds = next;
+    } else {
+      const next: string[] = this.expandedAutoMemoryIds.slice();
+      next.push(id);
+      this.expandedAutoMemoryIds = next;
     }
   }
 
@@ -778,144 +879,92 @@ struct WorldCharacterMemoryPage {
 
   @Builder
   activityTab(): void {
-    WorldSectionHeader({ title: $r('app.string.world_archive_activity_scenes') })
-
-    if (this.activityScenes.length === 0) {
-      Text('该角色尚未参与任何场景')
-        .fontSize($r('app.float.world_font_body'))
-        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
-        .margin({ top: 12 })
+    if (this.timeline.length === 0) {
+      Column() {
+        Text('该角色暂无活动记录')
+          .fontSize($r('app.float.world_font_body'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+          .margin({ top: 24 })
+        Text('发言、移动、参与场景的记录会按时间汇总在这里。')
+          .fontSize($r('app.float.world_font_caption'))
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+          .margin({ top: 6 })
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Center)
     } else {
-      ForEach(this.activityScenes, (scene: ActivitySceneUiModel) => {
-        this.activitySceneCard(scene)
-      }, (scene: ActivitySceneUiModel) => scene.sceneId)
-    }
-
-    WorldSectionHeader({ title: $r('app.string.world_archive_activity_messages') })
-      .margin({ top: 16 })
-
-    if (this.activityMessages.length === 0) {
-      Text('该角色尚未发送任何消息')
-        .fontSize($r('app.float.world_font_body'))
-        .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
-        .margin({ top: 12 })
-    } else {
-      ForEach(this.activityMessages.slice(0, 20), (msg: ActivityMessageUiModel) => {
-        this.activityMessageCard(msg)
-      }, (msg: ActivityMessageUiModel) => msg.messageId)
-    }
-
-    WorldSectionHeader({ title: $r('app.string.world_archive_activity_moves') })
-      .margin({ top: 16 })
-
-    if (this.activityMoves.length === 0) {
-      Text($r('app.string.world_archive_no_move_history'))
-        .fontSize($r('app.float.world_font_caption'))
-        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
-        .margin({ top: 8 })
-    } else {
-      ForEach(this.activityMoves, (move: ActivityMoveUiModel) => {
-        this.activityMoveCard(move)
-      }, (move: ActivityMoveUiModel) => move.eventId)
+      ForEach(this.timeline, (item: ActivityTimelineItemUiModel) => {
+        this.timelineItemCard(item)
+      }, (item: ActivityTimelineItemUiModel) => item.id + '|' + (this.isTimelineExpanded(item.id) ? '1' : '0'))
     }
   }
 
   @Builder
-  activitySceneCard(scene: ActivitySceneUiModel): void {
+  timelineItemCard(item: ActivityTimelineItemUiModel): void {
     WorldSurfaceCard({}) {
       Column() {
         Row() {
-          Text(scene.locationMissing ? '地点已删除' : scene.locationName)
-            .fontSize($r('app.float.world_font_body'))
-            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
-            .layoutWeight(1)
+          Text(item.occurredAtLabel)
+            .fontSize($r('app.float.world_font_micro'))
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+          Text(item.locationName)
+            .fontSize($r('app.float.world_font_micro'))
+            .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+            .margin({ left: 8 })
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-          WorldStatusChip({
-            label: scene.statusLabel,
-            isActive: scene.status === WorldSceneStatus.Active
-          })
-        }
-        .width('100%')
-        .alignItems(VerticalAlign.Center)
-
-        Row() {
-          Text(scene.startedAtLabel)
-            .fontSize($r('app.float.world_font_micro'))
-            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
-          if (scene.endedAtLabel.length > 0) {
-            Text(' → ' + scene.endedAtLabel)
+            .layoutWeight(1)
+          if (item.visibilityLabel.length > 0) {
+            Text(item.visibilityLabel)
               .fontSize($r('app.float.world_font_micro'))
               .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
-          }
-        }
-        .margin({ top: 4 })
-
-        Row() {
-          Text('消息 ' + scene.messageCount.toString())
-            .fontSize($r('app.float.world_font_micro'))
-            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
-          Text('参与 ' + scene.participantCount.toString())
-            .fontSize($r('app.float.world_font_micro'))
-            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
-            .margin({ left: 8 })
-          if (scene.characterSpoke) {
-            Text('已发言')
-              .fontSize($r('app.float.world_font_micro'))
-              .fontColor(ThemePalette.accentColor(this.effectiveTheme))
               .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
               .borderRadius(3)
               .padding({ left: 4, right: 4, top: 1, bottom: 1 })
-              .margin({ left: 8 })
           }
-        }
-        .margin({ top: 4 })
-      }
-      .width('100%')
-      .padding(14)
-      .alignItems(HorizontalAlign.Start)
-    }
-  }
-
-  @Builder
-  activityMessageCard(msg: ActivityMessageUiModel): void {
-    WorldSurfaceCard({}) {
-      Column() {
-        Row() {
-          Text(msg.locationMissing ? '地点已删除' : msg.locationName)
-            .fontSize($r('app.float.world_font_micro'))
-            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
-          Text(msg.sentAtLabel)
-            .fontSize($r('app.float.world_font_micro'))
-            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
-            .margin({ left: 8 })
-          Text(msg.visibilityLabel)
-            .fontSize($r('app.float.world_font_micro'))
-            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
-            .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
-            .borderRadius(3)
-            .padding({ left: 4, right: 4, top: 1, bottom: 1 })
-            .margin({ left: 8 })
         }
         .width('100%')
         .alignItems(VerticalAlign.Center)
 
-        Text(msg.contentPreview)
+        Text(item.headline)
           .fontSize($r('app.float.world_font_caption'))
-          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+          .fontWeight(FontWeight.Medium)
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
           .width('100%')
-          .margin({ top: 6 })
-          .maxLines(3)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .margin({ top: 4 })
 
-        if (msg.coParticipantNames.length > 0) {
-          Text('同场: ' + msg.coParticipantNames.join(', '))
+        if (item.coParticipantNames.length > 0) {
+          Text('在场: ' + item.coParticipantNames.join('、'))
             .fontSize($r('app.float.world_font_micro'))
             .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
-            .margin({ top: 4 })
+            .margin({ top: 2 })
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+
+        if (item.fullContent.length > 0) {
+          if (this.isTimelineExpanded(item.id)) {
+            Text(item.fullContent)
+              .fontSize($r('app.float.world_font_caption'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+              .width('100%')
+              .margin({ top: 6 })
+          } else {
+            Text(item.contentPreview)
+              .fontSize($r('app.float.world_font_caption'))
+              .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+              .width('100%')
+              .margin({ top: 6 })
+              .maxLines(3)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
+          Text(this.isTimelineExpanded(item.id) ? '收起 ▲' : '展开 ▼')
+            .fontSize($r('app.float.world_font_micro'))
+            .fontColor(ThemePalette.accentColor(this.effectiveTheme))
+            .margin({ top: 4 })
+            .onClick(() => {
+              this.toggleTimelineExpanded(item.id);
+            })
         }
       }
       .width('100%')
@@ -924,35 +973,22 @@ struct WorldCharacterMemoryPage {
     }
   }
 
-  @Builder
-  activityMoveCard(move: ActivityMoveUiModel): void {
-    WorldSurfaceCard({}) {
-      Row() {
-        Text(move.fromLocationMissing ? '未知' : move.fromLocationName)
-          .fontSize($r('app.float.world_font_caption'))
-          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
+  private isTimelineExpanded(id: string): boolean {
+    return this.expandedTimelineIds.indexOf(id) >= 0;
+  }
 
-        Text(' → ')
-          .fontSize($r('app.float.world_font_caption'))
-          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
-
-        Text(move.toLocationMissing ? '未知' : move.toLocationName)
-          .fontSize($r('app.float.world_font_caption'))
-          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .layoutWeight(1)
-
-        Text(move.occurredAtLabel)
-          .fontSize($r('app.float.world_font_micro'))
-          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
-          .margin({ left: 8 })
+  private toggleTimelineExpanded(id: string): void {
+    if (this.isTimelineExpanded(id)) {
+      const next: string[] = this.expandedTimelineIds.slice();
+      const idx: number = next.indexOf(id);
+      if (idx >= 0) {
+        next.splice(idx, 1);
       }
-      .width('100%')
-      .padding(14)
-      .alignItems(VerticalAlign.Center)
+      this.expandedTimelineIds = next;
+    } else {
+      const next: string[] = this.expandedTimelineIds.slice();
+      next.push(id);
+      this.expandedTimelineIds = next;
     }
   }
 

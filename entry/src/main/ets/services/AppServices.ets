@@ -140,6 +140,8 @@ import { WorldSceneMessageService } from './world/WorldSceneMessageService';
 import { WorldRuntimeRegistry } from './world/WorldRuntimeRegistry';
 import { WorldScenePromptAssembler } from './world/WorldScenePromptAssembler';
 import { WorldSceneRuntimeService } from './world/WorldSceneRuntimeService';
+import { WorldChatImportPromptAssembler } from './world/WorldChatImportPromptAssembler';
+import { WorldChatImportService } from './world/WorldChatImportService';
 import { Logger } from '../utils/Logger';
 
 const LOG_TAG: string = 'AppServices';
@@ -321,6 +323,8 @@ export class AppServices {
   private readonly worldMapInteractionService: WorldMapInteractionService;
   /** WorldSceneLaunchService 场景启动业务服务(W2B1,Scene+Session 原子创建) */
   private readonly worldSceneLaunchService: WorldSceneLaunchService;
+  /** WorldChatImportService 单聊导入世界服务(角色卡+聊天记录导入世界模式) */
+  private readonly worldChatImportService: WorldChatImportService;
   /** WorldSceneMessageService 世界场景消息业务服务(W3A1,Runtime唯一正式消息写入入口) */
   private readonly worldSceneMessageService: WorldSceneMessageService;
   /** WorldRuntimeRegistry 世界运行时操作注册表(W3A1,单例,运行中操作管理) */
@@ -621,6 +625,7 @@ export class AppServices {
       this.worldCharacterMemoryEntryRepository,
       this.worldConversationSessionRepository,
       this.worldSceneMessageRepository,
+      this.worldSceneRepository,
       this.worldCharacterInstanceRepository,
       this.dbHelper
     );
@@ -748,6 +753,18 @@ export class AppServices {
     // 持久化层组合:全部 Repository 共享同一 DbHelper 实例
     this.chatRepository = new ChatRepository(this.dbHelper);
     this.messageRepository = new MessageRepository(this.dbHelper);
+    // 单聊导入世界服务(角色卡+聊天记录 → AI分析 → 创建地点/场景/导入消息)
+    this.worldChatImportService = new WorldChatImportService(
+      this.worldStateService,
+      this.worldSceneService,
+      this.worldConversationSessionService,
+      this.worldCharacterMemoryService,
+      this.characterService,
+      this.chatRepository,
+      this.messageRepository,
+      this.modelService,
+      new WorldChatImportPromptAssembler()
+    );
     this.messageSwipeRepository = new MessageSwipeRepository(this.dbHelper);
     // T-6.4A: ConversationBranch 服务(单例,共享同一 DbHelper)
     this.conversationBranchRepository = new ConversationBranchRepository(this.dbHelper);
@@ -1571,6 +1588,18 @@ export class AppServices {
 
   static getWorldSceneLaunchService(): WorldSceneLaunchService {
     return AppServices.getInstance().worldSceneLaunchService;
+  }
+
+  static getWorldChatImportService(): WorldChatImportService {
+    return AppServices.getInstance().worldChatImportService;
+  }
+
+  static getChatRepository(): ChatRepository {
+    return AppServices.getInstance().chatRepository;
+  }
+
+  static getMessageRepository(): MessageRepository {
+    return AppServices.getInstance().messageRepository;
   }
 
   static getWorldSceneMessageService(): WorldSceneMessageService {

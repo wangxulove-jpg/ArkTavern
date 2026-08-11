@@ -16,14 +16,19 @@
  */
 
 import { WorldStateService } from '../../services/world/WorldStateService';
+import { WorldChatImportService, WorldChatImportError, WorldChatImportResult } from '../../services/world/WorldChatImportService';
 import { WorldLocationRepository } from '../../repositories/world/WorldLocationRepository';
 import { WorldCharacterInstanceRepository } from '../../repositories/world/WorldCharacterInstanceRepository';
+import { ChatRepository } from '../../repositories/ChatRepository';
+import { MessageRepository } from '../../repositories/MessageRepository';
 import { CharacterService } from '../../services/CharacterService';
 import { Character } from '../../models/Character';
+import { Chat } from '../../models/Chat';
 import { WorldLocation, WorldLocationStatus } from '../../models/world/WorldLocation';
 import { WorldCharacterInstance } from '../../models/world/WorldCharacterInstance';
 import { Logger } from '../../utils/Logger';
 import { mapWorldStateErrorToMessage } from './WorldStateErrorMapper';
+import { formatWorldTimestamp } from './WorldUiModels';
 
 const LOG_TAG: string = 'WorldCharacterManageViewModel';
 
@@ -63,10 +68,21 @@ export interface ActiveLocationOptionUiModel {
   readonly name: string;
 }
 
+/** 可导入的单聊会话选项 */
+export interface SingleChatOptionUiModel {
+  readonly chatId: string;
+  readonly title: string;
+  readonly lastMessageAtLabel: string;
+  readonly messageCount: number;
+}
+
 export class WorldCharacterManageViewModel {
   private readonly stateService: WorldStateService;
   private readonly locationRepository: WorldLocationRepository;
   private readonly instanceRepository: WorldCharacterInstanceRepository;
+  private readonly chatRepository: ChatRepository;
+  private readonly chatImportService: WorldChatImportService;
+  private readonly messageRepository: MessageRepository;
   private readonly characterService: CharacterService;
 
   private boundWorldId: string;
@@ -90,6 +106,15 @@ export class WorldCharacterManageViewModel {
   /** 删除中状态 */
   isDeleting: boolean = false;
 
+  /** 导入聊天相关状态 */
+  candidateChats: SingleChatOptionUiModel[] = [];
+  importCharacterId: string = '';
+  isImporting: boolean = false;
+  importProgressLabel: string = '';
+  importError: string = '';
+  importSucceeded: boolean = false;
+  lastImportResult: WorldChatImportResult | null = null;
+
   /** 操作 ID(防重复 / 拒绝迟到结果) */
   private loadOperationId: number = 0;
   /** 页面是否已销毁(aboutToDisappear 时置 true,onPageShow/refreshToken 时通过 activate 恢复) */
@@ -101,12 +126,18 @@ export class WorldCharacterManageViewModel {
     stateService: WorldStateService,
     locationRepository: WorldLocationRepository,
     instanceRepository: WorldCharacterInstanceRepository,
+    chatRepository: ChatRepository,
+    messageRepository: MessageRepository,
+    chatImportService: WorldChatImportService,
     characterService: CharacterService,
     worldId: string
   ) {
     this.stateService = stateService;
     this.locationRepository = locationRepository;
     this.instanceRepository = instanceRepository;
+    this.chatRepository = chatRepository;
+    this.messageRepository = messageRepository;
+    this.chatImportService = chatImportService;
     this.characterService = characterService;
     this.boundWorldId = worldId;
     this.instanceShortId = WorldCharacterManageViewModel.generateShortId();
@@ -474,6 +505,93 @@ export class WorldCharacterManageViewModel {
   /** 清除错误消息 */
   clearError(): void {
     this.errorMessage = '';
+  }
+
+  /** 加载某角色可导入的单聊会话列表 */
+  async loadChatsForCandidate(characterId: string): Promise<void> {
+    this.candidateChats = [];
+    this.importError = '';
+    this.importSucceeded = false;
+    this.importCharacterId = characterId;
+    if (characterId.length === 0) {
+      return;
+    }
+    try {
+      const chats: Chat[] = await this.chatImportService.listImportableChats(characterId);
+      const items: SingleChatOptionUiModel[] = [];
+      for (let i = 0; i < chats.length; i++) {
+        let count: number = 0;
+        try {
+          count = await this.messageRepository.countByChatId(chats[i].id);
+        } catch (_e) {
+          count = 0;
+        }
+        items.push({
+          chatId: chats[i].id,
+          title: chats[i].title.length > 0 ? chats[i].title : '(未命名会话)',
+          lastMessageAtLabel: chats[i].lastMessageAt > 0
+            ? formatWorldTimestamp(chats[i].lastMessageAt) : '',
+          messageCount: count
+        });
+      }
+      this.candidateChats = items;
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'loadChatsForCandidate failed: ' + this.safeErrorCategory(e));
+      this.importError = '加载聊天记录失败';
+    }
+  }
+
+  /** 执行单聊导入(角色卡+聊天记录 → AI分析 → 创建地点/导入消息)。返回错误消息,空串表示成功。 */
+  async importChatRecords(characterId: string, chatId: string): Promise<string> {
+    if (this.isImporting || this.isSaving || this.isDeleting) {
+      return '正在处理,请稍候';
+    }
+    this.isImporting = true;
+    this.importError = '';
+    this.importSucceeded = false;
+    this.lastImportResult = null;
+    this.importProgressLabel = 'AI 正在分析角色卡与聊天记录...';
+    try {
+      const result: WorldChatImportResult =
+        await this.chatImportService.importChat(this.boundWorldId, characterId, chatId);
+      if (this.disposed) {
+        return '';
+      }
+      this.importProgressLabel = '导入完成';
+      this.importSucceeded = true;
+      this.lastImportResult = result;
+      await this.loadSnapshot();
+      return '';
+    } catch (e) {
+      if (this.disposed) {
+        return '';
+      }
+      const msg: string = this.resolveImportError(e);
+      this.importError = msg;
+      this.importProgressLabel = '';
+      return msg;
+    } finally {
+      if (!this.disposed) {
+        this.isImporting = false;
+      }
+    }
+  }
+
+  /** 关闭导入弹窗,重置导入状态 */
+  resetImportState(): void {
+    this.importCharacterId = '';
+    this.candidateChats = [];
+    this.importError = '';
+    this.importSucceeded = false;
+    this.importProgressLabel = '';
+    this.lastImportResult = null;
+  }
+
+  private resolveImportError(e: Object): string {
+    if (e instanceof WorldChatImportError) {
+      return e.message;
+    }
+    return mapWorldStateErrorToMessage(e);
   }
 
   /** 标记页面已销毁(返回页面后需通过 activate 恢复) */

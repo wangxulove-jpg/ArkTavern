@@ -11,12 +11,17 @@ import {
   CreateManualWorldMemoryInput,
   UpdateWorldMemoryInput
 } from '../../services/world/WorldCharacterMemoryService';
+import { WorldCharacterMemoryStoreService } from '../../services/world/WorldCharacterMemoryStoreService';
+import {
+  WorldCharacterMemoryEntry,
+  WorldCharacterMemoryEntryStatus
+} from '../../models/world/WorldCharacterMemoryEntry';
 import { Logger } from '../../utils/Logger';
 import { World } from '../../models/world/World';
 import { WorldLocation } from '../../models/world/WorldLocation';
 import { WorldCharacterInstance } from '../../models/world/WorldCharacterInstance';
 import { WorldScene, WorldSceneStatus } from '../../models/world/WorldScene';
-import { WorldSceneMessage, WorldSceneMessageSenderType } from '../../models/world/WorldSceneMessage';
+import { WorldSceneMessage, WorldSceneMessageSenderType, WorldSceneMessageStatus } from '../../models/world/WorldSceneMessage';
 import { WorldEvent, WorldEventType } from '../../models/world/WorldEvent';
 import { Character } from '../../models/Character';
 import {
@@ -153,6 +158,40 @@ export interface ActivityMoveUiModel {
   readonly occurredAtLabel: string;
 }
 
+/** 活动时间线条目类型 */
+export type ActivityTimelineKind = 'message' | 'move' | 'scene';
+
+/** 活动时间线条目(合并发言/移动/场景生命周期,按时间倒序) */
+export interface ActivityTimelineItemUiModel {
+  readonly id: string;
+  readonly kind: ActivityTimelineKind;
+  readonly occurredAt: number;
+  readonly occurredAtLabel: string;
+  readonly locationName: string;
+  readonly locationMissing: boolean;
+  /** 摘要行:如「发言 · 小草」「移动到「港口」」「场景开始」 */
+  readonly headline: string;
+  /** 在场人物(消息类) */
+  readonly coParticipantNames: string[];
+  /** 内容预览(消息类) */
+  readonly contentPreview: string;
+  /** 完整内容(消息类,点击展开) */
+  readonly fullContent: string;
+  readonly visibilityLabel: string;
+}
+
+/** 世界AI整理的自动记忆条目(WorldCharacterMemoryEntry) */
+export interface AutoMemoryUiModel {
+  readonly memoryId: string;
+  readonly version: number;
+  readonly confidence: number;
+  readonly memoryText: string;
+  readonly sourceLocationName: string;
+  readonly sourceLocationMissing: boolean;
+  readonly createdAtLabel: string;
+  readonly statusLabel: string;
+}
+
 export enum DiagnosticRiskLevel {
   Info = 'info',
   Notice = 'notice',
@@ -187,11 +226,10 @@ export interface DiagnosticSummaryUiModel {
 export interface WorldCharacterMemorySnapshotUiModel {
   readonly header: MemoryCharacterHeaderUiModel;
   readonly memories: MemoryItemUiModel[];
+  readonly autoMemories: AutoMemoryUiModel[];
   readonly locationOptions: MemoryLocationOptionUiModel[];
   readonly characterSwitcherItems: CharacterSwitcherItemUiModel[];
-  readonly activityScenes: ActivitySceneUiModel[];
-  readonly activityMessages: ActivityMessageUiModel[];
-  readonly activityMoves: ActivityMoveUiModel[];
+  readonly timeline: ActivityTimelineItemUiModel[];
   readonly diagnostic: DiagnosticSummaryUiModel;
 }
 
@@ -226,6 +264,7 @@ export class WorldCharacterMemoryViewModel {
   private readonly eventRepo: WorldEventRepository;
   private readonly characterService: CharacterService;
   private readonly memoryService: WorldCharacterMemoryService;
+  private readonly memoryStoreService: WorldCharacterMemoryStoreService;
 
   state: WorldCharacterMemoryLoadState = WorldCharacterMemoryLoadState.Loading;
   errorMessage: string = '';
@@ -248,7 +287,8 @@ export class WorldCharacterMemoryViewModel {
     messageRepo: WorldSceneMessageRepository,
     eventRepo: WorldEventRepository,
     characterService: CharacterService,
-    memoryService: WorldCharacterMemoryService
+    memoryService: WorldCharacterMemoryService,
+    memoryStoreService: WorldCharacterMemoryStoreService
   ) {
     this.worldRepo = worldRepo;
     this.locationRepo = locationRepo;
@@ -258,6 +298,7 @@ export class WorldCharacterMemoryViewModel {
     this.eventRepo = eventRepo;
     this.characterService = characterService;
     this.memoryService = memoryService;
+    this.memoryStoreService = memoryStoreService;
     this.instanceShortId = WorldCharacterMemoryViewModel.generateShortId();
   }
 
@@ -472,119 +513,117 @@ export class WorldCharacterMemoryViewModel {
         sceneCache.set(worldScenes[i].id, worldScenes[i]);
       }
 
-      const activityScenes: ActivitySceneUiModel[] = [];
+      // ===== 统一活动时间线(发言 / 移动 / 场景生命周期,按时间倒序) =====
+      const timeline: ActivityTimelineItemUiModel[] = [];
       const relevantSceneIds: Set<string> = new Set<string>();
+
+      // 1. 场景生命周期条目
       for (let i = 0; i < worldScenes.length; i++) {
         const scene: WorldScene = worldScenes[i];
         try {
           const msgs: WorldSceneMessage[] = await this.messageRepo.listByScene(scene.id);
-          let charSpoke: boolean = false;
-          let participantIds: Set<string> = new Set<string>();
+          let charConnected: boolean = false;
           for (let j = 0; j < msgs.length; j++) {
-            if (msgs[j].senderCharacterInstanceId === characterInstanceId) {
-              charSpoke = true;
-            }
-            if (msgs[j].participantCharacterInstanceIds !== undefined) {
-              for (let k = 0; k < msgs[j].participantCharacterInstanceIds!.length; k++) {
-                participantIds.add(msgs[j].participantCharacterInstanceIds![k]);
-              }
+            if (this.isMessageConnectedToCharacter(msgs[j], characterInstanceId)) {
+              charConnected = true;
+              break;
             }
           }
-          if (charSpoke || participantIds.has(characterInstanceId)) {
-            relevantSceneIds.add(scene.id);
-            const locInfo: WorldLocation | undefined = locationMap.get(scene.locationId);
-            const endedAtVal: number = scene.endedAt !== undefined ? scene.endedAt : 0;
-            activityScenes.push({
-              sceneId: scene.id,
-              locationName: locInfo !== undefined ? locInfo.name : '',
-              locationMissing: locInfo === undefined,
-              startedAt: scene.startedAt,
-              startedAtLabel: formatWorldTimestamp(scene.startedAt),
-              endedAt: endedAtVal,
-              endedAtLabel: endedAtVal > 0 ? formatWorldTimestamp(endedAtVal) : '',
-              status: scene.status,
-              statusLabel: scene.status === WorldSceneStatus.Active ? '进行中' : '已结束',
-              messageCount: msgs.length,
-              participantCount: participantIds.size,
-              characterSpoke: charSpoke
+          if (!charConnected) {
+            continue;
+          }
+          relevantSceneIds.add(scene.id);
+          const locInfo: WorldLocation | undefined = locationMap.get(scene.locationId);
+          const locName: string = locInfo !== undefined ? locInfo.name : '(地点已删除)';
+          const locMissing: boolean = locInfo === undefined;
+          timeline.push({
+            id: 'scene-start-' + scene.id,
+            kind: 'scene',
+            occurredAt: scene.startedAt,
+            occurredAtLabel: formatWorldTimestamp(scene.startedAt),
+            locationName: locName,
+            locationMissing: locMissing,
+            headline: '场景开始',
+            coParticipantNames: [],
+            contentPreview: '',
+            fullContent: '',
+            visibilityLabel: ''
+          });
+          const endedAtVal: number = scene.endedAt !== undefined ? scene.endedAt : 0;
+          if (endedAtVal > 0) {
+            timeline.push({
+              id: 'scene-end-' + scene.id,
+              kind: 'scene',
+              occurredAt: endedAtVal,
+              occurredAtLabel: formatWorldTimestamp(endedAtVal),
+              locationName: locName,
+              locationMissing: locMissing,
+              headline: '场景结束',
+              coParticipantNames: [],
+              contentPreview: '',
+              fullContent: '',
+              visibilityLabel: ''
             });
-            if (scene.updatedAt > lastActivityTime) {
-              lastActivityTime = scene.updatedAt;
-            }
+          }
+          if (scene.updatedAt > lastActivityTime) {
+            lastActivityTime = scene.updatedAt;
           }
         } catch (e) {
           continue;
         }
       }
-      activityScenes.sort((a: ActivitySceneUiModel, b: ActivitySceneUiModel) => {
-        return b.startedAt - a.startedAt;
-      });
       if (operationId !== this.loadOperationId || this.disposed) {
         return;
       }
 
-      const activityMessages: ActivityMessageUiModel[] = [];
-      for (let i = 0; i < activityScenes.length && i < 20; i++) {
-        const ascene: ActivitySceneUiModel = activityScenes[i];
+      // 2. 消息条目(该角色发言 / 在场 / 旁白可见)
+      const relevantSceneIdList: string[] = Array.from(relevantSceneIds);
+      for (let i = 0; i < relevantSceneIdList.length; i++) {
         try {
-          const msgs: WorldSceneMessage[] = await this.messageRepo.listByScene(ascene.sceneId);
+          const msgs: WorldSceneMessage[] = await this.messageRepo.listByScene(relevantSceneIdList[i]);
+          const scene: WorldScene | undefined = sceneCache.get(relevantSceneIdList[i]);
           for (let j = 0; j < msgs.length; j++) {
-            if (msgs[j].senderCharacterInstanceId === characterInstanceId) {
-              const locInfo: WorldLocation | undefined = locationMap.get(ascene.sceneId.length > 0
-                ? (sceneCache.has(ascene.sceneId)
-                  ? sceneCache.get(ascene.sceneId)!.locationId
-                  : '')
-                : '');
-              const locName: string = locInfo !== undefined ? locInfo.name : ascene.locationName;
-              const locMissing: boolean = locInfo === undefined && ascene.locationMissing;
-              const coNames: string[] = [];
-              if (msgs[j].participantCharacterInstanceIds !== undefined) {
-                for (let k = 0; k < msgs[j].participantCharacterInstanceIds!.length; k++) {
-                  const pid: string = msgs[j].participantCharacterInstanceIds![k];
-                  if (pid !== characterInstanceId) {
-                    const pInst: WorldCharacterInstance | undefined =
-                      worldInstances.find((inst: WorldCharacterInstance) => inst.id === pid);
-                    if (pInst !== undefined) {
-                      const pChar: Character | null | undefined =
-                        instanceCharacterCache.get(pInst.characterId);
-                      coNames.push(pChar !== null && pChar !== undefined
-                        ? pChar.name : pInst.displayNameSnapshot);
-                    }
-                  }
-                }
-              }
-              const preview: string = msgs[j].content.length > 80
-                ? msgs[j].content.substring(0, 80) + '…'
-                : msgs[j].content;
-              activityMessages.push({
-                messageId: msgs[j].id,
-                sceneId: ascene.sceneId,
-                locationName: locName,
-                locationMissing: locMissing,
-                sentAt: msgs[j].createdAt,
-                sentAtLabel: formatWorldTimestamp(msgs[j].createdAt),
-                contentPreview: preview,
-                visibility: msgs[j].visibility,
-                visibilityLabel: this.visibilityLabel(msgs[j].visibility),
-                coParticipantNames: coNames
-              });
-              if (msgs[j].createdAt > lastActivityTime) {
-                lastActivityTime = msgs[j].createdAt;
-              }
+            const msg: WorldSceneMessage = msgs[j];
+            const role: string = this.roleLabelForMessage(msg, characterInstanceId);
+            if (role === '') {
+              continue;
+            }
+            const locId: string = scene !== undefined ? scene.locationId : '';
+            const locInfo: WorldLocation | undefined = locId !== '' ? locationMap.get(locId) : undefined;
+            const locName: string = locInfo !== undefined ? locInfo.name : '(地点已删除)';
+            const locMissing: boolean = locInfo === undefined;
+            const senderName: string = this.senderNameForMessage(msg, characterInstanceId,
+              worldInstances, instanceCharacterCache);
+            const coNames: string[] = this.coParticipantNames(msg, characterInstanceId,
+              worldInstances, instanceCharacterCache);
+            const content: string = msg.content;
+            const preview: string = content.length > 60 ? content.substring(0, 60) + '…' : content;
+            timeline.push({
+              id: msg.id,
+              kind: 'message',
+              occurredAt: msg.createdAt,
+              occurredAtLabel: formatWorldTimestamp(msg.createdAt),
+              locationName: locName,
+              locationMissing: locMissing,
+              headline: role + (senderName.length > 0 ? ' · ' + senderName : ''),
+              coParticipantNames: coNames,
+              contentPreview: preview,
+              fullContent: content,
+              visibilityLabel: this.visibilityLabel(msg.visibility)
+            });
+            if (msg.createdAt > lastActivityTime) {
+              lastActivityTime = msg.createdAt;
             }
           }
         } catch (e) {
           continue;
         }
       }
-      activityMessages.sort((a: ActivityMessageUiModel, b: ActivityMessageUiModel) => {
-        return b.sentAt - a.sentAt;
-      });
       if (operationId !== this.loadOperationId || this.disposed) {
         return;
       }
 
-      const activityMoves: ActivityMoveUiModel[] = [];
+      // 3. 移动条目
       try {
         const events: WorldEvent[] = await this.eventRepo.listByWorld(worldId);
         for (let i = 0; i < events.length; i++) {
@@ -596,27 +635,53 @@ export class WorldCharacterMemoryViewModel {
             const toLoc: WorldLocation | undefined =
               events[i].targetLocationId !== undefined
                 ? locationMap.get(events[i].targetLocationId!) : undefined;
-            activityMoves.push({
-              eventId: events[i].id,
-              fromLocationName: fromLoc !== undefined ? fromLoc.name : '',
-              fromLocationMissing: fromLoc === undefined
-                && events[i].sourceLocationId !== undefined,
-              toLocationName: toLoc !== undefined ? toLoc.name : '',
-              toLocationMissing: toLoc === undefined
-                && events[i].targetLocationId !== undefined,
+            const toName: string = toLoc !== undefined ? toLoc.name : '(未知)';
+            timeline.push({
+              id: 'move-' + events[i].id,
+              kind: 'move',
               occurredAt: events[i].occurredAt,
-              occurredAtLabel: formatWorldTimestamp(events[i].occurredAt)
+              occurredAtLabel: formatWorldTimestamp(events[i].occurredAt),
+              locationName: toName,
+              locationMissing: toLoc === undefined,
+              headline: '移动到「' + toName + '」',
+              coParticipantNames: [],
+              contentPreview: '',
+              fullContent: '',
+              visibilityLabel: ''
             });
           }
         }
       } catch (e) {
         // ignored
       }
-      activityMoves.sort((a: ActivityMoveUiModel, b: ActivityMoveUiModel) => {
+      timeline.sort((a: ActivityTimelineItemUiModel, b: ActivityTimelineItemUiModel) => {
         return b.occurredAt - a.occurredAt;
       });
       if (operationId !== this.loadOperationId || this.disposed) {
         return;
+      }
+
+      // 4. 世界AI整理的自动记忆条目
+      let autoMemories: AutoMemoryUiModel[] = [];
+      try {
+        const entries: WorldCharacterMemoryEntry[] =
+          await this.memoryStoreService.listActiveMemoriesForOwner(worldId, characterInstanceId);
+        for (let i = 0; i < entries.length; i++) {
+          const entry: WorldCharacterMemoryEntry = entries[i];
+          const locInfo: WorldLocation | undefined = locationMap.get(entry.sourceLocationId);
+          autoMemories.push({
+            memoryId: entry.id,
+            version: entry.version,
+            confidence: entry.confidence,
+            memoryText: entry.memoryText,
+            sourceLocationName: locInfo !== undefined ? locInfo.name : '(地点已删除)',
+            sourceLocationMissing: locInfo === undefined,
+            createdAtLabel: formatWorldTimestamp(entry.createdAt),
+            statusLabel: entry.status === WorldCharacterMemoryEntryStatus.Active ? '活跃' : entry.status
+          });
+        }
+      } catch (e) {
+        autoMemories = [];
       }
 
       const diagnostic: DiagnosticSummaryUiModel =
@@ -659,11 +724,10 @@ export class WorldCharacterMemoryViewModel {
       const snapshot: WorldCharacterMemorySnapshotUiModel = {
         header: header,
         memories: memoryItems,
+        autoMemories: autoMemories,
         locationOptions: locationOptions,
         characterSwitcherItems: switcherItems,
-        activityScenes: activityScenes,
-        activityMessages: activityMessages,
-        activityMoves: activityMoves,
+        timeline: timeline,
         diagnostic: diagnostic
       };
 
@@ -1075,6 +1139,121 @@ export class WorldCharacterMemoryViewModel {
       return '旁白';
     }
     return v;
+  }
+
+  /** 消息是否与角色相关(发言 / 参与 / 目击) */
+  private isMessageConnectedToCharacter(
+    msg: WorldSceneMessage,
+    characterInstanceId: string
+  ): boolean {
+    if (msg.status !== WorldSceneMessageStatus.Completed) {
+      return false;
+    }
+    if (msg.content.trim().length === 0) {
+      return false;
+    }
+    if (msg.senderCharacterInstanceId === characterInstanceId) {
+      return true;
+    }
+    if (msg.participantCharacterInstanceIds !== undefined
+      && msg.participantCharacterInstanceIds.indexOf(characterInstanceId) >= 0) {
+      return true;
+    }
+    if (msg.witnessCharacterInstanceIds !== undefined
+      && msg.witnessCharacterInstanceIds.indexOf(characterInstanceId) >= 0) {
+      return true;
+    }
+    return false;
+  }
+
+  /** 角色在该消息中的角色标签('' 表示无关;'发言' / '对话' / '旁白' / '在场') */
+  private roleLabelForMessage(
+    msg: WorldSceneMessage,
+    characterInstanceId: string
+  ): string {
+    if (!this.isMessageConnectedToCharacter(msg, characterInstanceId)) {
+      return '';
+    }
+    if (msg.senderType === WorldSceneMessageSenderType.Narrator) {
+      return '旁白';
+    }
+    if (msg.senderCharacterInstanceId === characterInstanceId) {
+      return '发言';
+    }
+    if (msg.senderType === WorldSceneMessageSenderType.User) {
+      return '对话';
+    }
+    return '在场';
+  }
+
+  /** 消息发送者显示名(发言/对话时的说话人) */
+  private senderNameForMessage(
+    msg: WorldSceneMessage,
+    characterInstanceId: string,
+    worldInstances: WorldCharacterInstance[],
+    instanceCharacterCache: Map<string, Character | null>
+  ): string {
+    if (msg.senderType === WorldSceneMessageSenderType.User) {
+      return '玩家';
+    }
+    if (msg.senderType === WorldSceneMessageSenderType.Narrator) {
+      return '旁白';
+    }
+    if (msg.senderCharacterInstanceId === undefined) {
+      return '';
+    }
+    const senderId: string = msg.senderCharacterInstanceId;
+    if (senderId === characterInstanceId) {
+      return '本人';
+    }
+    for (let i = 0; i < worldInstances.length; i++) {
+      if (worldInstances[i].id === senderId) {
+        const pChar: Character | null | undefined = instanceCharacterCache.get(worldInstances[i].characterId);
+        return pChar !== null && pChar !== undefined
+          ? pChar.name : worldInstances[i].displayNameSnapshot;
+      }
+    }
+    return '';
+  }
+
+  /** 与该消息相关的在场角色名(排除自己) */
+  private coParticipantNames(
+    msg: WorldSceneMessage,
+    characterInstanceId: string,
+    worldInstances: WorldCharacterInstance[],
+    instanceCharacterCache: Map<string, Character | null>
+  ): string[] {
+    const result: string[] = [];
+    const seen: Set<string> = new Set<string>();
+    const idsToScan: string[] = [];
+    if (msg.participantCharacterInstanceIds !== undefined) {
+      for (let i = 0; i < msg.participantCharacterInstanceIds.length; i++) {
+        idsToScan.push(msg.participantCharacterInstanceIds[i]);
+      }
+    }
+    if (msg.witnessCharacterInstanceIds !== undefined) {
+      for (let i = 0; i < msg.witnessCharacterInstanceIds.length; i++) {
+        idsToScan.push(msg.witnessCharacterInstanceIds[i]);
+      }
+    }
+    if (msg.senderType === WorldSceneMessageSenderType.Character
+      && msg.senderCharacterInstanceId !== undefined) {
+      idsToScan.push(msg.senderCharacterInstanceId);
+    }
+    for (let i = 0; i < idsToScan.length; i++) {
+      const pid: string = idsToScan[i];
+      if (pid === characterInstanceId || seen.has(pid)) {
+        continue;
+      }
+      seen.add(pid);
+      const pInst: WorldCharacterInstance | undefined =
+        worldInstances.find((inst: WorldCharacterInstance) => inst.id === pid);
+      if (pInst !== undefined) {
+        const pChar: Character | null | undefined = instanceCharacterCache.get(pInst.characterId);
+        result.push(pChar !== null && pChar !== undefined ? pChar.name : pInst.displayNameSnapshot);
+      }
+    }
+    return result;
   }
 
   private resolveErrorMessage(e: Object): string {
