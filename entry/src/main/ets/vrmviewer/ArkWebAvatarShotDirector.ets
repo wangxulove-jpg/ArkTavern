@@ -1,3 +1,4 @@
+import { Logger } from '../utils/Logger';
 /**
  * ArkWebAvatarShotDirector — Avatar 镜头导演 (Phase 4B-2)
  *
@@ -30,8 +31,6 @@ import {
   resolveTargetShot
 } from './ArkWebAvatarShotDirectorTypes';
 import { ArkWebAvatarPerformanceCommand } from './ArkWebAvatarPerformanceTypes';
-
-const LOG_TAG: string = 'ShotDirector';
 
 /**
  * 表情恢复定时器默认时长上限 (毫秒)。
@@ -114,7 +113,7 @@ export class ArkWebAvatarShotDirector {
       return;
     }
     this.controlMode = mode;
-    console.info(LOG_TAG, `setControlMode: ${mode}`);
+    Logger.debug(`setControlMode: ${mode}`);
   }
 
   /**
@@ -144,7 +143,7 @@ export class ArkWebAvatarShotDirector {
       return;
     }
     this.localFallbackShotPreservation = enabled;
-    console.info(LOG_TAG, `setLocalFallbackShotPreservation: ${enabled}`);
+    Logger.debug(`setLocalFallbackShotPreservation: ${enabled}`);
   }
 
   /**
@@ -188,8 +187,7 @@ export class ArkWebAvatarShotDirector {
     // Phase 4B-2R2: 手动模式下不切换镜头, 直接允许演出继续
     // Phase 4D-1: 本地兜底模式下也不切换镜头 (DIALOGUE_LOCAL_FALLBACK 保持当前镜头)
     if (this.shouldPreserveShot()) {
-      console.info(LOG_TAG,
-        `prepareForCommand: preserve shot (manual=${this.isManualMode()}` +
+      Logger.debug(`prepareForCommand: preserve shot (manual=${this.isManualMode()}` +
         ` fallback=${this.localFallbackShotPreservation}), command=${command.commandId}`);
       // 仅 expression-only 命令仍设置恢复定时器 (用于表情状态恢复, 不切换镜头)
       if (command.motionType === 'none' && command.expressionId.length > 0) {
@@ -227,7 +225,7 @@ export class ArkWebAvatarShotDirector {
     }
     this.clearExpressionReturnTimer();
     if (this.shouldPreserveShot()) {
-      console.info(LOG_TAG, `onPerformanceStopped: preserve shot, reason=${reason}`);
+      Logger.debug(`onPerformanceStopped: preserve shot, reason=${reason}`);
       return;
     }
     await this.transitionToFullBody(`STOP:${reason}`);
@@ -247,7 +245,7 @@ export class ArkWebAvatarShotDirector {
     }
     this.clearExpressionReturnTimer();
     if (this.shouldPreserveShot()) {
-      console.info(LOG_TAG, `onPerformanceFailed: preserve shot, reason=${reason}`);
+      Logger.debug(`onPerformanceFailed: preserve shot, reason=${reason}`);
       return;
     }
     await this.transitionToFullBody(`FAILED:${reason}`);
@@ -334,7 +332,7 @@ export class ArkWebAvatarShotDirector {
     // 取消正在进行的过渡 (不等待 Promise, 页面正在销毁)
     this.runtime.cancelCameraTransition('DISPOSED').catch((): void => {});
     this.state = 'DISPOSED';
-    console.info(LOG_TAG, 'dispose');
+    Logger.debug('dispose');
   }
 
   /**
@@ -407,7 +405,7 @@ export class ArkWebAvatarShotDirector {
     try {
       await this.runtime.cancelCameraTransition(`NEW_SHOT:${reason}`);
     } catch (e) {
-      console.warn(LOG_TAG, 'cancelCameraTransition threw: ' +
+      Logger.warn('cancelCameraTransition threw: ' +
         (e instanceof Error ? e.message : String(e)));
     }
 
@@ -448,7 +446,7 @@ export class ArkWebAvatarShotDirector {
     // 成功: 提交新镜头
     this.currentShot = targetShot;
     this.state = targetShot === 'FULL_BODY' ? 'FULL_BODY' : 'FACE_RESET_VIEW';
-    console.info(LOG_TAG, `transition ok: ${targetShot}, reason=${reason}`);
+    Logger.debug(`transition ok: ${targetShot}, reason=${reason}`);
     return true;
   }
 
@@ -489,7 +487,7 @@ export class ArkWebAvatarShotDirector {
     try {
       await this.runtime.cancelCameraTransition(`NEW_SHOT:${reason}`);
     } catch (e) {
-      console.warn(LOG_TAG, 'cancelCameraTransition threw: ' +
+      Logger.warn('cancelCameraTransition threw: ' +
         (e instanceof Error ? e.message : String(e)));
     }
 
@@ -519,7 +517,7 @@ export class ArkWebAvatarShotDirector {
 
     this.currentShot = 'FULL_BODY';
     this.state = 'FULL_BODY';
-    console.info(LOG_TAG, `executeFullBody ok, reason=${reason}`);
+    Logger.debug(`executeFullBody ok, reason=${reason}`);
     return true;
   }
 
@@ -560,7 +558,7 @@ export class ArkWebAvatarShotDirector {
     try {
       await this.runtime.cancelCameraTransition(`NEW_SHOT:${reason}`);
     } catch (e) {
-      console.warn(LOG_TAG, 'cancelCameraTransition threw: ' +
+      Logger.warn('cancelCameraTransition threw: ' +
         (e instanceof Error ? e.message : String(e)));
     }
 
@@ -594,7 +592,7 @@ export class ArkWebAvatarShotDirector {
 
     this.currentShot = targetShot;
     this.state = targetShot === 'FULL_BODY' ? 'FULL_BODY' : 'FACE_RESET_VIEW';
-    console.info(LOG_TAG, `executeShot ok: ${targetShot}, reason=${reason}`);
+    Logger.debug(`executeShot ok: ${targetShot}, reason=${reason}`);
     return true;
   }
 
@@ -613,8 +611,7 @@ export class ArkWebAvatarShotDirector {
     const safeDuration: number = Math.max(100, Math.min(durationMs, EXPRESSION_RETURN_TIMER_MAX_MS));
     this.expressionReturnCommandId = commandId;
     const generation: number = this.shotGeneration;
-    console.info(LOG_TAG,
-      `scheduleExpressionReturn: commandId=${commandId} duration=${safeDuration}ms gen=${generation}`);
+    Logger.debug(`scheduleExpressionReturn: commandId=${commandId} duration=${safeDuration}ms gen=${generation}`);
     this.expressionReturnTimer = setTimeout((): void => {
       this.onExpressionReturnTimerFired(generation, commandId);
     }, safeDuration);
@@ -634,20 +631,18 @@ export class ArkWebAvatarShotDirector {
       return;
     }
     if (generation !== this.shotGeneration) {
-      console.info(LOG_TAG,
-        `expression return timer stale: gen=${generation} current=${this.shotGeneration} commandId=${commandId}`);
+      Logger.debug(`expression return timer stale: gen=${generation} current=${this.shotGeneration} commandId=${commandId}`);
       return;
     }
-    console.info(LOG_TAG, `expression return: commandId=${commandId}`);
+    Logger.debug(`expression return: commandId=${commandId}`);
     // Phase 4B-2R2: 手动模式下保持当前镜头
     if (this.isManualMode()) {
-      console.info(LOG_TAG,
-        `expression return: manual mode ${this.controlMode}, keep shot, commandId=${commandId}`);
+      Logger.debug(`expression return: manual mode ${this.controlMode}, keep shot, commandId=${commandId}`);
       return;
     }
     // AUTO 模式: 平滑恢复 FULL_BODY
     this.transitionToFullBody('EXPRESSION_COMPLETED').catch((e: Object): void => {
-      console.warn(LOG_TAG, 'expression return transitionToFullBody threw: ' +
+      Logger.warn('expression return transitionToFullBody threw: ' +
         (e instanceof Error ? e.message : String(e)));
     });
   }
@@ -669,6 +664,6 @@ export class ArkWebAvatarShotDirector {
   private recordError(code: string, message: string): void {
     this.lastErrorCode = code;
     this.lastErrorMessage = message;
-    console.warn(LOG_TAG, `error: ${code} - ${message}`);
+    Logger.warn(`error: ${code} - ${message}`);
   }
 }

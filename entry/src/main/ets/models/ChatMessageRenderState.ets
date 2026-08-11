@@ -1,3 +1,4 @@
+import { Logger } from '../utils/Logger';
 /**
  * ChatMessageRenderState 消息渲染状态(单角色聊天专用)
  *
@@ -85,7 +86,7 @@ export class ChatMessageRenderState {
       if (this.status === ChatMessageStatus.Failed
         || this.status === ChatMessageStatus.Completed
         || this.status === ChatMessageStatus.Cancelled) {
-        console.warn(`[RenderState] invariant violation mid=${this.messageId.slice(0,8)} status=${String(this.status)} isStreaming=true`);
+        Logger.warn(`[RenderState] invariant violation mid=${this.messageId.slice(0,8)} status=${String(this.status)} isStreaming=true`);
       }
     }
   }

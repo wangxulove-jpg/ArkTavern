@@ -1,3 +1,4 @@
+import { Logger } from '../utils/Logger';
 /**
  * ArkWebPersistentModelStore — 持久化模型存储 (Phase 3B)
  *
@@ -270,13 +271,13 @@ export class ArkWebPersistentModelStore {
       const commitOk: boolean = await this.assetLibrary.upsertModelAndSetActive(asset);
       if (!commitOk) {
         // AssetLibrary 写入失败: 删除新模型文件,保留旧清单
-        console.warn(`[ArkWebPersistentModelStore] AssetLibrary commit failed, deleting new model file: ${modelId}`);
+        Logger.warn(`[ArkWebPersistentModelStore] AssetLibrary commit failed, deleting new model file: ${modelId}`);
         await this.safeUnlink(finalPath);
         this.lastError = 'AssetLibrary commit failed (model file deleted)';
         return null;
       }
 
-      console.info(`[ArkWebPersistentModelStore] importModel ok modelId=${modelId} size=${sourceSize} ext=${extension}`);
+      Logger.debug(`[ArkWebPersistentModelStore] importModel ok modelId=${modelId} size=${sourceSize} ext=${extension}`);
       return asset;
     } finally {
       // 确保所有文件描述符关闭
@@ -367,7 +368,7 @@ export class ArkWebPersistentModelStore {
 
     // 复用 importModel 流程 (sourceUri = legacyCachePath)
     // 注: fileIo.open 接受文件路径作为 URI
-    console.info(`[ArkWebPersistentModelStore] migrateFromLegacyCache: ${legacyCachePath} size=${actualSize}`);
+    Logger.debug(`[ArkWebPersistentModelStore] migrateFromLegacyCache: ${legacyCachePath} size=${actualSize}`);
     return this.importModel(legacyCachePath, displayName, extension);
   }
 

@@ -1,3 +1,4 @@
+import { Logger } from '../utils/Logger';
 /**
  * ArkWebFileImportController — 模型文件导入控制器(Phase 1D-1)
  *
@@ -216,39 +217,39 @@ export class ArkWebFileImportController {
    */
   restoreCurrentFile(file: ImportedModelFile): boolean {
     if (this.disposed) {
-      console.warn('[ArkWebFileImportController] restoreCurrentFile rejected: disposed');
+      Logger.warn('[ArkWebFileImportController] restoreCurrentFile rejected: disposed');
       return false;
     }
     if (this.operationInProgress) {
-      console.warn('[ArkWebFileImportController] restoreCurrentFile rejected: operation in progress');
+      Logger.warn('[ArkWebFileImportController] restoreCurrentFile rejected: operation in progress');
       return false;
     }
 
     // 验证 file 字段
     if (file === null || file === undefined) {
-      console.warn('[ArkWebFileImportController] restoreCurrentFile rejected: file is null');
+      Logger.warn('[ArkWebFileImportController] restoreCurrentFile rejected: file is null');
       return false;
     }
     if (file.extension !== 'vrm' && file.extension !== 'glb' && file.extension !== 'gltf') {
-      console.warn(`[ArkWebFileImportController] restoreCurrentFile rejected: invalid extension=${file.extension}`);
+      Logger.warn(`[ArkWebFileImportController] restoreCurrentFile rejected: invalid extension=${file.extension}`);
       return false;
     }
     if (file.cachePath.length === 0) {
-      console.warn('[ArkWebFileImportController] restoreCurrentFile rejected: cachePath empty');
+      Logger.warn('[ArkWebFileImportController] restoreCurrentFile rejected: cachePath empty');
       return false;
     }
     if (file.cachePath.includes('..')) {
-      console.warn('[ArkWebFileImportController] restoreCurrentFile rejected: cachePath contains ..');
+      Logger.warn('[ArkWebFileImportController] restoreCurrentFile rejected: cachePath contains ..');
       return false;
     }
     // cachePath 必须位于 <cacheDir>/vrm-imports/ 下
     const expectedDir: string = `${this.context.cacheDir}/${CACHE_SUBDIR}`;
     if (!file.cachePath.startsWith(expectedDir + '/')) {
-      console.warn('[ArkWebFileImportController] restoreCurrentFile rejected: cachePath not under import directory');
+      Logger.warn('[ArkWebFileImportController] restoreCurrentFile rejected: cachePath not under import directory');
       return false;
     }
     if (file.size <= 0) {
-      console.warn(`[ArkWebFileImportController] restoreCurrentFile rejected: size=${file.size}`);
+      Logger.warn(`[ArkWebFileImportController] restoreCurrentFile rejected: size=${file.size}`);
       return false;
     }
 
@@ -256,7 +257,7 @@ export class ArkWebFileImportController {
     this.currentFile = file;
     this.lastError = '';
     this.setState(ModelImportState.READY);
-    console.info(`[ArkWebFileImportController] restoreCurrentFile ok id=${file.id} size=${file.size} ext=${file.extension}`);
+    Logger.debug(`[ArkWebFileImportController] restoreCurrentFile ok id=${file.id} size=${file.size} ext=${file.extension}`);
     return true;
   }
 
@@ -463,7 +464,7 @@ export class ArkWebFileImportController {
         await fileIo.mkdir(cacheDir, true);
       } catch (e) {
         // 目录可能已存在,忽略错误
-        console.info('[ArkWebFileImportController] mkdir (may already exist): ' +
+        Logger.debug('[ArkWebFileImportController] mkdir (may already exist): ' +
           (e instanceof Error ? e.message : String(e)));
       }
 
@@ -662,7 +663,7 @@ export class ArkWebFileImportController {
 
       return { state: state, uris: uris };
     } catch (e) {
-      console.warn('[ArkWebFileImportController] precheckGltf failed: ' +
+      Logger.warn('[ArkWebFileImportController] precheckGltf failed: ' +
         (e instanceof Error ? e.message : String(e)));
       return { state: GltfDependencyState.INVALID_JSON, uris: [] };
     } finally {
@@ -693,13 +694,13 @@ export class ArkWebFileImportController {
   /** 设置状态。 */
   private setState(state: ModelImportState): void {
     this.state = state;
-    console.info(`[ArkWebFileImportController] state=${state}`);
+    Logger.debug(`[ArkWebFileImportController] state=${state}`);
   }
 
   /** 记录失败。 */
   private fail(code: string, message: string): void {
     this.lastError = `${code}: ${message}`;
-    console.warn(`[ArkWebFileImportController] FAIL: ${this.lastError}`);
+    Logger.warn(`[ArkWebFileImportController] FAIL: ${this.lastError}`);
     this.setState(ModelImportState.FAILED);
   }
 }

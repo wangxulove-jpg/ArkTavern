@@ -1,3 +1,4 @@
+import { Logger } from '../utils/Logger';
 /**
  * ArkWebAvatarAssetLibrary — 持久化资产清单 (Phase 3B)
  *
@@ -213,7 +214,7 @@ export class ArkWebAvatarAssetLibrary {
       return true;
     }
 
-    console.info(`[ArkWebAvatarAssetLibrary] doEnsureInit: assetsRootDir=${this.assetsRootDir}`);
+    Logger.debug(`[ArkWebAvatarAssetLibrary] doEnsureInit: assetsRootDir=${this.assetsRootDir}`);
 
     // 1. 创建资产根目录
     //    使用 ensureDirExists: 直接 mkdir(recursive=true), 忽略 "File exists"。
@@ -260,7 +261,7 @@ export class ArkWebAvatarAssetLibrary {
       if (readResult.success && readResult.data !== null) {
         this.inMemoryData = readResult.data;
       } else {
-        console.warn(`[ArkWebAvatarAssetLibrary] library corrupt: ${readResult.errorCode} ${readResult.errorMessage}`);
+        Logger.warn(`[ArkWebAvatarAssetLibrary] library corrupt: ${readResult.errorCode} ${readResult.errorMessage}`);
         // 重命名损坏清单
         const corruptPath: string = `${this.assetsRootDir}/library.json.corrupt.${Date.now()}`;
         let renameOk: boolean = false;
@@ -269,11 +270,11 @@ export class ArkWebAvatarAssetLibrary {
           renameOk = true;
         } catch (e) {
           const msg: string = e instanceof Error ? e.message : String(e);
-          console.warn(`[ArkWebAvatarAssetLibrary] corrupt rename failed: ${msg}`);
+          Logger.warn(`[ArkWebAvatarAssetLibrary] corrupt rename failed: ${msg}`);
         }
         if (!renameOk) {
           // 重命名失败:不创建新清单,返回失败
-          console.error('[ArkWebAvatarAssetLibrary] corrupt rename failed, cannot recover');
+          Logger.error('[ArkWebAvatarAssetLibrary] corrupt rename failed, cannot recover');
           return false;
         }
         // 创建空清单
@@ -283,7 +284,7 @@ export class ArkWebAvatarAssetLibrary {
           return false;
         }
         this.inMemoryData = emptyData;
-        console.info('[ArkWebAvatarAssetLibrary] created empty library after corrupt rename');
+        Logger.debug('[ArkWebAvatarAssetLibrary] created empty library after corrupt rename');
       }
     }
 
@@ -362,7 +363,7 @@ export class ArkWebAvatarAssetLibrary {
     }
     // 安全校验 relativePath
     if (!this.isRelativePathSafe(asset.relativePath)) {
-      console.warn(`[ArkWebAvatarAssetLibrary] unsafe relativePath: ${asset.relativePath}`);
+      Logger.warn(`[ArkWebAvatarAssetLibrary] unsafe relativePath: ${asset.relativePath}`);
       return false;
     }
 
@@ -402,7 +403,7 @@ export class ArkWebAvatarAssetLibrary {
       return false;
     }
     this.inMemoryData = newData;
-    console.info(`[ArkWebAvatarAssetLibrary] upsertModel ok modelId=${asset.modelId} active=true`);
+    Logger.debug(`[ArkWebAvatarAssetLibrary] upsertModel ok modelId=${asset.modelId} active=true`);
     return true;
   }
 
@@ -433,7 +434,7 @@ export class ArkWebAvatarAssetLibrary {
         }
       }
       if (!found) {
-        console.warn(`[ArkWebAvatarAssetLibrary] setActiveModel: modelId not found: ${modelId}`);
+        Logger.warn(`[ArkWebAvatarAssetLibrary] setActiveModel: modelId not found: ${modelId}`);
         return false;
       }
     }
@@ -452,7 +453,7 @@ export class ArkWebAvatarAssetLibrary {
       return false;
     }
     this.inMemoryData = newData;
-    console.info(`[ArkWebAvatarAssetLibrary] setActiveModel ok modelId=${modelId}`);
+    Logger.debug(`[ArkWebAvatarAssetLibrary] setActiveModel ok modelId=${modelId}`);
     return true;
   }
 
@@ -512,7 +513,7 @@ export class ArkWebAvatarAssetLibrary {
     }
     // 安全校验 relativePath
     if (!this.isAnimationRelativePathSafe(asset.relativePath)) {
-      console.warn(`[ArkWebAvatarAssetLibrary] unsafe animation relativePath: ${asset.relativePath}`);
+      Logger.warn(`[ArkWebAvatarAssetLibrary] unsafe animation relativePath: ${asset.relativePath}`);
       return false;
     }
 
@@ -524,7 +525,7 @@ export class ArkWebAvatarAssetLibrary {
     // 检查重复 (actionId 不允许重复)
     for (let i = 0; i < data.animations.length; i++) {
       if (data.animations[i].actionId === asset.actionId) {
-        console.warn(`[ArkWebAvatarAssetLibrary] appendAnimation: actionId already exists: ${asset.actionId}`);
+        Logger.warn(`[ArkWebAvatarAssetLibrary] appendAnimation: actionId already exists: ${asset.actionId}`);
         return false;
       }
     }
@@ -546,7 +547,7 @@ export class ArkWebAvatarAssetLibrary {
       return false;
     }
     this.inMemoryData = newData;
-    console.info(`[ArkWebAvatarAssetLibrary] appendAnimation ok actionId=${asset.actionId} count=${newAnimations.length}`);
+    Logger.debug(`[ArkWebAvatarAssetLibrary] appendAnimation ok actionId=${asset.actionId} count=${newAnimations.length}`);
     return true;
   }
 
@@ -569,7 +570,7 @@ export class ArkWebAvatarAssetLibrary {
     }
     const trimmed: string = newDisplayName.trim();
     if (trimmed.length === 0 || trimmed.length > 64) {
-      console.warn(`[ArkWebAvatarAssetLibrary] renameAnimation invalid name length=${trimmed.length}`);
+      Logger.warn(`[ArkWebAvatarAssetLibrary] renameAnimation invalid name length=${trimmed.length}`);
       return null;
     }
     const data: ArkWebAvatarAssetLibraryData | null = await this.readLibrary();
@@ -584,7 +585,7 @@ export class ArkWebAvatarAssetLibrary {
       }
     }
     if (foundIdx < 0) {
-      console.warn(`[ArkWebAvatarAssetLibrary] renameAnimation: actionId not found: ${actionId}`);
+      Logger.warn(`[ArkWebAvatarAssetLibrary] renameAnimation: actionId not found: ${actionId}`);
       return null;
     }
     const oldAsset: ArkWebAvatarAnimationAsset = data.animations[foundIdx];
@@ -614,7 +615,7 @@ export class ArkWebAvatarAssetLibrary {
       return null;
     }
     this.inMemoryData = newData;
-    console.info(`[ArkWebAvatarAssetLibrary] renameAnimation ok actionId=${actionId}`);
+    Logger.debug(`[ArkWebAvatarAssetLibrary] renameAnimation ok actionId=${actionId}`);
     return updatedAsset;
   }
 
@@ -644,7 +645,7 @@ export class ArkWebAvatarAssetLibrary {
       }
     }
     if (foundIdx < 0) {
-      console.warn(`[ArkWebAvatarAssetLibrary] removeAnimationRecord: actionId not found: ${actionId}`);
+      Logger.warn(`[ArkWebAvatarAssetLibrary] removeAnimationRecord: actionId not found: ${actionId}`);
       return false;
     }
     const newAnimations: ArkWebAvatarAnimationAsset[] = data.animations.slice();
@@ -666,7 +667,7 @@ export class ArkWebAvatarAssetLibrary {
       return false;
     }
     this.inMemoryData = newData;
-    console.info(`[ArkWebAvatarAssetLibrary] removeAnimationRecord ok actionId=${actionId}`);
+    Logger.debug(`[ArkWebAvatarAssetLibrary] removeAnimationRecord ok actionId=${actionId}`);
     return true;
   }
 
@@ -696,7 +697,7 @@ export class ArkWebAvatarAssetLibrary {
         }
       }
       if (!found) {
-        console.warn(`[ArkWebAvatarAssetLibrary] setDefaultIdleAction: actionId not found: ${actionId}`);
+        Logger.warn(`[ArkWebAvatarAssetLibrary] setDefaultIdleAction: actionId not found: ${actionId}`);
         return false;
       }
     }
@@ -718,7 +719,7 @@ export class ArkWebAvatarAssetLibrary {
       return false;
     }
     this.inMemoryData = newData;
-    console.info(`[ArkWebAvatarAssetLibrary] setDefaultIdleAction ok actionId=${actionId}`);
+    Logger.debug(`[ArkWebAvatarAssetLibrary] setDefaultIdleAction ok actionId=${actionId}`);
     return true;
   }
 
@@ -793,7 +794,7 @@ export class ArkWebAvatarAssetLibrary {
     }
     // 安全校验 relativePath
     if (!this.isPoseRelativePathSafe(asset.relativePath)) {
-      console.warn(`[ArkWebAvatarAssetLibrary] unsafe pose relativePath: ${asset.relativePath}`);
+      Logger.warn(`[ArkWebAvatarAssetLibrary] unsafe pose relativePath: ${asset.relativePath}`);
       return false;
     }
 
@@ -805,7 +806,7 @@ export class ArkWebAvatarAssetLibrary {
     // 检查重复 (poseId 不允许重复)
     for (let i = 0; i < data.poses.length; i++) {
       if (data.poses[i].poseId === asset.poseId) {
-        console.warn(`[ArkWebAvatarAssetLibrary] appendPose: poseId already exists: ${asset.poseId}`);
+        Logger.warn(`[ArkWebAvatarAssetLibrary] appendPose: poseId already exists: ${asset.poseId}`);
         return false;
       }
     }
@@ -827,7 +828,7 @@ export class ArkWebAvatarAssetLibrary {
       return false;
     }
     this.inMemoryData = newData;
-    console.info(`[ArkWebAvatarAssetLibrary] appendPose ok poseId=${asset.poseId} count=${newPoses.length}`);
+    Logger.debug(`[ArkWebAvatarAssetLibrary] appendPose ok poseId=${asset.poseId} count=${newPoses.length}`);
     return true;
   }
 
@@ -892,7 +893,7 @@ export class ArkWebAvatarAssetLibrary {
         }
       }
       if (!found) {
-        console.warn(`[ArkWebAvatarAssetLibrary] setDefaultPose: poseId not found: ${poseId}`);
+        Logger.warn(`[ArkWebAvatarAssetLibrary] setDefaultPose: poseId not found: ${poseId}`);
         return false;
       }
     }
@@ -914,7 +915,7 @@ export class ArkWebAvatarAssetLibrary {
       return false;
     }
     this.inMemoryData = newData;
-    console.info(`[ArkWebAvatarAssetLibrary] setDefaultPose ok poseId=${poseId}`);
+    Logger.debug(`[ArkWebAvatarAssetLibrary] setDefaultPose ok poseId=${poseId}`);
     return true;
   }
 
@@ -975,11 +976,11 @@ export class ArkWebAvatarAssetLibrary {
       return false;
     }
     if (!ArkWebExpressionAliasBusinessId.isValid(expressionId)) {
-      console.warn(`[ArkWebAvatarAssetLibrary] setExpressionAlias invalid expressionId: ${expressionId}`);
+      Logger.warn(`[ArkWebAvatarAssetLibrary] setExpressionAlias invalid expressionId: ${expressionId}`);
       return false;
     }
     if (typeof expressionName !== 'string' || expressionName.length === 0) {
-      console.warn(`[ArkWebAvatarAssetLibrary] setExpressionAlias invalid expressionName`);
+      Logger.warn(`[ArkWebAvatarAssetLibrary] setExpressionAlias invalid expressionName`);
       return false;
     }
     const data: ArkWebAvatarAssetLibraryData | null = await this.readLibrary();
@@ -994,7 +995,7 @@ export class ArkWebAvatarAssetLibrary {
       }
     }
     if (foundIdx < 0) {
-      console.warn(`[ArkWebAvatarAssetLibrary] setExpressionAlias modelId not found: ${modelId}`);
+      Logger.warn(`[ArkWebAvatarAssetLibrary] setExpressionAlias modelId not found: ${modelId}`);
       return false;
     }
     const oldModel: ArkWebAvatarModelAsset = data.models[foundIdx];
@@ -1033,7 +1034,7 @@ export class ArkWebAvatarAssetLibrary {
       return false;
     }
     this.inMemoryData = newData;
-    console.info(`[ArkWebAvatarAssetLibrary] setExpressionAlias ok modelId=${modelId} id=${expressionId} name=${expressionName}`);
+    Logger.debug(`[ArkWebAvatarAssetLibrary] setExpressionAlias ok modelId=${modelId} id=${expressionId} name=${expressionName}`);
     return true;
   }
 
@@ -1047,7 +1048,7 @@ export class ArkWebAvatarAssetLibrary {
       return false;
     }
     if (!ArkWebExpressionAliasBusinessId.isValid(expressionId)) {
-      console.warn(`[ArkWebAvatarAssetLibrary] clearExpressionAlias invalid expressionId: ${expressionId}`);
+      Logger.warn(`[ArkWebAvatarAssetLibrary] clearExpressionAlias invalid expressionId: ${expressionId}`);
       return false;
     }
     const data: ArkWebAvatarAssetLibraryData | null = await this.readLibrary();
@@ -1062,7 +1063,7 @@ export class ArkWebAvatarAssetLibrary {
       }
     }
     if (foundIdx < 0) {
-      console.warn(`[ArkWebAvatarAssetLibrary] clearExpressionAlias modelId not found: ${modelId}`);
+      Logger.warn(`[ArkWebAvatarAssetLibrary] clearExpressionAlias modelId not found: ${modelId}`);
       return false;
     }
     const oldModel: ArkWebAvatarModelAsset = data.models[foundIdx];
@@ -1104,7 +1105,7 @@ export class ArkWebAvatarAssetLibrary {
       return false;
     }
     this.inMemoryData = newData;
-    console.info(`[ArkWebAvatarAssetLibrary] clearExpressionAlias ok modelId=${modelId} id=${expressionId}`);
+    Logger.debug(`[ArkWebAvatarAssetLibrary] clearExpressionAlias ok modelId=${modelId} id=${expressionId}`);
     return true;
   }
 
@@ -1219,12 +1220,12 @@ export class ArkWebAvatarAssetLibrary {
       json = JSON.stringify(data);
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
-      console.warn(`[ArkWebAvatarAssetLibrary] serialize failed: ${msg}`);
+      Logger.warn(`[ArkWebAvatarAssetLibrary] serialize failed: ${msg}`);
       return false;
     }
     // 2. 验证非空
     if (json.length === 0) {
-      console.warn('[ArkWebAvatarAssetLibrary] serialized json is empty');
+      Logger.warn('[ArkWebAvatarAssetLibrary] serialized json is empty');
       return false;
     }
 
@@ -1246,7 +1247,7 @@ export class ArkWebAvatarAssetLibrary {
       const bytes: Uint8Array = this.encodeUtf8(json);
       const written: number = await fileIo.write(file.fd, bytes.buffer, { length: bytes.byteLength });
       if (written !== bytes.byteLength) {
-        console.warn(`[ArkWebAvatarAssetLibrary] write mismatch: expected ${bytes.byteLength}, got ${written}`);
+        Logger.warn(`[ArkWebAvatarAssetLibrary] write mismatch: expected ${bytes.byteLength}, got ${written}`);
         await this.closeFile(file);
         file = null;
         await this.safeUnlink(this.libraryPartFilePath);
@@ -1254,7 +1255,7 @@ export class ArkWebAvatarAssetLibrary {
       }
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
-      console.warn(`[ArkWebAvatarAssetLibrary] write .part failed: ${msg} path=${this.libraryPartFilePath}`);
+      Logger.warn(`[ArkWebAvatarAssetLibrary] write .part failed: ${msg} path=${this.libraryPartFilePath}`);
       if (file !== null) {
         await this.closeFile(file);
         file = null;
@@ -1271,13 +1272,13 @@ export class ArkWebAvatarAssetLibrary {
     try {
       const stat: fileIo.Stat = await fileIo.stat(this.libraryPartFilePath);
       if (stat.size <= 0) {
-        console.warn(`[ArkWebAvatarAssetLibrary] .part size=${stat.size}`);
+        Logger.warn(`[ArkWebAvatarAssetLibrary] .part size=${stat.size}`);
         await this.safeUnlink(this.libraryPartFilePath);
         return false;
       }
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
-      console.warn(`[ArkWebAvatarAssetLibrary] .part stat failed: ${msg}`);
+      Logger.warn(`[ArkWebAvatarAssetLibrary] .part stat failed: ${msg}`);
       await this.safeUnlink(this.libraryPartFilePath);
       return false;
     }
@@ -1287,7 +1288,7 @@ export class ArkWebAvatarAssetLibrary {
       await fileIo.rename(this.libraryPartFilePath, this.libraryFilePath);
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
-      console.warn(`[ArkWebAvatarAssetLibrary] rename failed: ${msg}`);
+      Logger.warn(`[ArkWebAvatarAssetLibrary] rename failed: ${msg}`);
       await this.safeUnlink(this.libraryPartFilePath);
       return false;
     }
@@ -1308,7 +1309,7 @@ export class ArkWebAvatarAssetLibrary {
     }
     const schemaVersion: number = schemaVersionObj as number;
     if (schemaVersion !== ASSET_LIBRARY_SCHEMA_VERSION) {
-      console.warn(`[ArkWebAvatarAssetLibrary] schemaVersion ${schemaVersion} unsupported`);
+      Logger.warn(`[ArkWebAvatarAssetLibrary] schemaVersion ${schemaVersion} unsupported`);
       return null;
     }
     // activeModelId
@@ -1691,14 +1692,14 @@ export class ArkWebAvatarAssetLibrary {
     // 1. 直接 mkdir, 忽略 "File exists" (目录已存在是正常情况)
     try {
       await fileIo.mkdir(dirPath, true);
-      console.info(`[ArkWebAvatarAssetLibrary] mkdir ${label} ok: ${dirPath}`);
+      Logger.debug(`[ArkWebAvatarAssetLibrary] mkdir ${label} ok: ${dirPath}`);
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
       // "File exists" 是预期行为 (目录已存在), 不视为错误
       if (msg.indexOf('exist') >= 0 || msg.indexOf('File exists') >= 0) {
-        console.info(`[ArkWebAvatarAssetLibrary] mkdir ${label} (already exists): ${dirPath}`);
+        Logger.debug(`[ArkWebAvatarAssetLibrary] mkdir ${label} (already exists): ${dirPath}`);
       } else {
-        console.warn(`[ArkWebAvatarAssetLibrary] mkdir ${label} failed: ${msg} path=${dirPath}`);
+        Logger.warn(`[ArkWebAvatarAssetLibrary] mkdir ${label} failed: ${msg} path=${dirPath}`);
         // 不直接 return false, 继续用 stat 验证 (mkdir 可能实际成功了但抛了警告)
       }
     }
@@ -1708,11 +1709,11 @@ export class ArkWebAvatarAssetLibrary {
     //    且 mkdir(recursive=true) 成功后必为目录, 无需额外校验。
     try {
       const stat: fileIo.Stat = await fileIo.stat(dirPath);
-      console.info(`[ArkWebAvatarAssetLibrary] stat ${label} ok: size=${stat.size} path=${dirPath}`);
+      Logger.debug(`[ArkWebAvatarAssetLibrary] stat ${label} ok: size=${stat.size} path=${dirPath}`);
       return true;
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
-      console.warn(`[ArkWebAvatarAssetLibrary] stat ${label} failed after mkdir: ${msg} path=${dirPath}`);
+      Logger.warn(`[ArkWebAvatarAssetLibrary] stat ${label} failed after mkdir: ${msg} path=${dirPath}`);
       return false;
     }
   }

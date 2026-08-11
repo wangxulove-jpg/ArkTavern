@@ -1,3 +1,4 @@
+import { Logger } from '../utils/Logger';
 /**
  * ArkWebAvatarDialogueSessionState — Avatar 对话演出会话状态管理 (Phase 4C-2)
  *
@@ -35,8 +36,6 @@ import {
   ArkWebAvatarDialoguePerformanceRecord,
   ArkWebAvatarDialogueStateSnapshot
 } from './ArkWebAvatarDialogueSessionStateTypes';
-
-const LOG_TAG: string = 'AvatarDialogueSessionState';
 
 /**
  * Avatar 对话演出会话状态。
@@ -146,8 +145,7 @@ export class ArkWebAvatarDialogueSessionState {
 
     // 手动 AI 面板操作不计入自动演出节奏
     if (record.source === ArkWebAvatarDialoguePerformanceSourceConst.CHAT_AI_PANEL) {
-      console.info(LOG_TAG,
-        `recordPerformance: skip rhythm update for CHAT_AI_PANEL source, toolCallId=${record.toolCallId}`);
+      Logger.debug(`recordPerformance: skip rhythm update for CHAT_AI_PANEL source, toolCallId=${record.toolCallId}`);
       return;
     }
 
@@ -193,8 +191,7 @@ export class ArkWebAvatarDialogueSessionState {
       this.currentExpressionId = '';
     }
     // stop 不写入 recentPerformances, 不影响 consecutivePerformanceTurns
-    console.info(LOG_TAG,
-      `recordStop: success=${success} source=${source}`);
+    Logger.debug(`recordStop: success=${success} source=${source}`);
   }
 
   // ===== 当前状态更新 =====
@@ -457,6 +454,6 @@ export class ArkWebAvatarDialogueSessionState {
     this.currentMotionType = 'none';
     this.currentMotionId = '';
     this.currentExpressionId = '';
-    console.info(LOG_TAG, 'dispose, session state cleared');
+    Logger.debug('dispose, session state cleared');
   }
 }

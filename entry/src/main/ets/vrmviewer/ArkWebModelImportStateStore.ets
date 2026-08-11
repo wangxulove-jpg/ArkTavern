@@ -1,3 +1,4 @@
+import { Logger } from '../utils/Logger';
 /**
  * ArkWebModelImportStateStore — 导入模型元数据持久化(Phase 1D-2C-1)
  *
@@ -214,11 +215,11 @@ export class ArkWebModelImportStateStore {
       await prefs.put(ArkWebModelImportStateStore.STORAGE_KEY, json);
       await prefs.flush();
       // 只记录 id / size / extension,不记录 cachePath
-      console.info(`[ArkWebModelImportStateStore] save ok id=${file.id} size=${file.size} ext=${file.extension}`);
+      Logger.debug(`[ArkWebModelImportStateStore] save ok id=${file.id} size=${file.size} ext=${file.extension}`);
       return true;
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
-      console.warn(`[ArkWebModelImportStateStore] save failed: ${msg}`);
+      Logger.warn(`[ArkWebModelImportStateStore] save failed: ${msg}`);
       return false;
     }
   }
@@ -264,7 +265,7 @@ export class ArkWebModelImportStateStore {
       json = value;
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
-      console.warn(`[ArkWebModelImportStateStore] restore prefs read failed: ${msg}`);
+      Logger.warn(`[ArkWebModelImportStateStore] restore prefs read failed: ${msg}`);
       return {
         file: null,
         errorCode: ImportStateRestoreError.PREFS_READ_FAILED,
@@ -279,7 +280,7 @@ export class ArkWebModelImportStateStore {
       parsed = this.coerceToPersisted(obj);
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
-      console.warn(`[ArkWebModelImportStateStore] restore json parse failed: ${msg}`);
+      Logger.warn(`[ArkWebModelImportStateStore] restore json parse failed: ${msg}`);
       await this.clearInternal();
       return {
         file: null,
@@ -293,7 +294,7 @@ export class ArkWebModelImportStateStore {
     if (validationResult.file === null) {
       // 验证失败:清除损坏记录
       await this.clearInternal();
-      console.warn(`[ArkWebModelImportStateStore] restore validation failed: ${validationResult.errorCode}`);
+      Logger.warn(`[ArkWebModelImportStateStore] restore validation failed: ${validationResult.errorCode}`);
     }
     return validationResult;
   }
@@ -494,7 +495,7 @@ export class ArkWebModelImportStateStore {
     };
 
     // 只记录 id / size / extension,不记录 cachePath
-    console.info(`[ArkWebModelImportStateStore] restore ok id=${file.id} size=${file.size} ext=${file.extension}`);
+    Logger.debug(`[ArkWebModelImportStateStore] restore ok id=${file.id} size=${file.size} ext=${file.extension}`);
 
     return {
       file: file,
@@ -553,10 +554,10 @@ export class ArkWebModelImportStateStore {
       const prefs: preferences.Preferences = await this.ensureInitialized();
       await prefs.delete(ArkWebModelImportStateStore.STORAGE_KEY);
       await prefs.flush();
-      console.info('[ArkWebModelImportStateStore] clear ok');
+      Logger.debug('[ArkWebModelImportStateStore] clear ok');
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
-      console.warn(`[ArkWebModelImportStateStore] clear failed: ${msg}`);
+      Logger.warn(`[ArkWebModelImportStateStore] clear failed: ${msg}`);
     }
   }
 }

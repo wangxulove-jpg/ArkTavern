@@ -1,3 +1,4 @@
+import { Logger } from '../utils/Logger';
 /**
  * ArkWebVrmViewerController — ArkWeb VRM Viewer 主控制器
  *
@@ -145,16 +146,16 @@ export class ArkWebVrmViewerController implements ArkWebViewerBridgeListener {
    */
   async resetCamera(): Promise<string> {
     if (this.disposed) {
-      console.warn('[ArkWebVrmViewerController] resetCamera ignored: disposed');
+      Logger.warn('[ArkWebVrmViewerController] resetCamera ignored: disposed');
       return '';
     }
     try {
       const resultJson: string = await this.jsCaller.resetCamera();
-      console.info('[ArkWebVrmViewerController] resetCamera result: ' + resultJson);
+      Logger.debug('[ArkWebVrmViewerController] resetCamera result: ' + resultJson);
       return resultJson;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      console.warn('[ArkWebVrmViewerController] resetCamera failed: ' + msg);
+      Logger.warn('[ArkWebVrmViewerController] resetCamera failed: ' + msg);
       return '';
     }
   }
@@ -168,16 +169,16 @@ export class ArkWebVrmViewerController implements ArkWebViewerBridgeListener {
    */
   async focusCameraOnCurrentModel(): Promise<string> {
     if (this.disposed) {
-      console.warn('[ArkWebVrmViewerController] focusCameraOnCurrentModel ignored: disposed');
+      Logger.warn('[ArkWebVrmViewerController] focusCameraOnCurrentModel ignored: disposed');
       return '';
     }
     try {
       const resultJson: string = await this.jsCaller.focusCameraOnCurrentModel();
-      console.info('[ArkWebVrmViewerController] focusCameraOnCurrentModel result: ' + resultJson);
+      Logger.debug('[ArkWebVrmViewerController] focusCameraOnCurrentModel result: ' + resultJson);
       return resultJson;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      console.warn('[ArkWebVrmViewerController] focusCameraOnCurrentModel failed: ' + msg);
+      Logger.warn('[ArkWebVrmViewerController] focusCameraOnCurrentModel failed: ' + msg);
       return '';
     }
   }
@@ -189,16 +190,16 @@ export class ArkWebVrmViewerController implements ArkWebViewerBridgeListener {
    */
   async getCameraState(): Promise<string> {
     if (this.disposed) {
-      console.warn('[ArkWebVrmViewerController] getCameraState ignored: disposed');
+      Logger.warn('[ArkWebVrmViewerController] getCameraState ignored: disposed');
       return '';
     }
     try {
       const resultJson: string = await this.jsCaller.getCameraState();
-      console.info('[ArkWebVrmViewerController] getCameraState result: ' + resultJson);
+      Logger.debug('[ArkWebVrmViewerController] getCameraState result: ' + resultJson);
       return resultJson;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      console.warn('[ArkWebVrmViewerController] getCameraState failed: ' + msg);
+      Logger.warn('[ArkWebVrmViewerController] getCameraState failed: ' + msg);
       return '';
     }
   }
@@ -323,7 +324,7 @@ export class ArkWebVrmViewerController implements ArkWebViewerBridgeListener {
     preserveControlsEnabled: boolean = true
   ): Promise<string> {
     if (this.disposed) {
-      console.warn('[ArkWebVrmViewerController] smoothResetCamera ignored: disposed');
+      Logger.warn('[ArkWebVrmViewerController] smoothResetCamera ignored: disposed');
       const disposedError: ArkWebBridgeErrorPayload = { code: 'DISPOSED', message: 'controller disposed' };
       const disposedResponse: ArkWebBridgeFailedResponse = { success: false, error: disposedError };
       return JSON.stringify(disposedResponse);
@@ -331,11 +332,11 @@ export class ArkWebVrmViewerController implements ArkWebViewerBridgeListener {
     try {
       const optionsJson: string = buildSmoothResetOptionsJson(durationSeconds, preserveControlsEnabled);
       const resultJson: string = await this.jsCaller.smoothResetCamera(optionsJson);
-      console.info('[ArkWebVrmViewerController] smoothResetCamera result: ' + resultJson);
+      Logger.debug('[ArkWebVrmViewerController] smoothResetCamera result: ' + resultJson);
       return resultJson;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      console.warn('[ArkWebVrmViewerController] smoothResetCamera failed: ' + msg);
+      Logger.warn('[ArkWebVrmViewerController] smoothResetCamera failed: ' + msg);
       const failedError: ArkWebBridgeErrorPayload = { code: 'SMOOTH_RESET_FAILED', message: msg };
       const failedResponse: ArkWebBridgeFailedResponse = { success: false, error: failedError };
       return JSON.stringify(failedResponse);
@@ -352,7 +353,7 @@ export class ArkWebVrmViewerController implements ArkWebViewerBridgeListener {
    */
   async getCameraTransitionState(): Promise<string> {
     if (this.disposed) {
-      console.warn('[ArkWebVrmViewerController] getCameraTransitionState ignored: disposed');
+      Logger.warn('[ArkWebVrmViewerController] getCameraTransitionState ignored: disposed');
       const idleTransition: ArkWebCameraTransitionStateResponse = {
         success: false,
         transition: {
@@ -374,7 +375,7 @@ export class ArkWebVrmViewerController implements ArkWebViewerBridgeListener {
       return resultJson;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      console.warn('[ArkWebVrmViewerController] getCameraTransitionState failed: ' + msg);
+      Logger.warn('[ArkWebVrmViewerController] getCameraTransitionState failed: ' + msg);
       const queryError: ArkWebBridgeErrorPayload = { code: 'TRANSITION_STATE_QUERY_FAILED', message: msg };
       const queryResponse: ArkWebBridgeFailedResponse = { success: false, error: queryError };
       return JSON.stringify(queryResponse);
@@ -392,7 +393,7 @@ export class ArkWebVrmViewerController implements ArkWebViewerBridgeListener {
    */
   async cancelCameraTransition(reason: string): Promise<string> {
     if (this.disposed) {
-      console.warn('[ArkWebVrmViewerController] cancelCameraTransition ignored: disposed');
+      Logger.warn('[ArkWebVrmViewerController] cancelCameraTransition ignored: disposed');
       const disposedError: ArkWebBridgeErrorPayload = { code: 'DISPOSED', message: 'controller disposed' };
       const disposedResponse: ArkWebBridgeFailedResponse = { success: false, error: disposedError };
       return JSON.stringify(disposedResponse);
@@ -400,11 +401,11 @@ export class ArkWebVrmViewerController implements ArkWebViewerBridgeListener {
     try {
       const safeReason: string = typeof reason === 'string' && reason.length > 0 ? reason : 'UNKNOWN';
       const resultJson: string = await this.jsCaller.cancelCameraTransition(safeReason);
-      console.info('[ArkWebVrmViewerController] cancelCameraTransition result: ' + resultJson);
+      Logger.debug('[ArkWebVrmViewerController] cancelCameraTransition result: ' + resultJson);
       return resultJson;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      console.warn('[ArkWebVrmViewerController] cancelCameraTransition failed: ' + msg);
+      Logger.warn('[ArkWebVrmViewerController] cancelCameraTransition failed: ' + msg);
       const cancelError: ArkWebBridgeErrorPayload = { code: 'CANCEL_TRANSITION_FAILED', message: msg };
       const cancelResponse: ArkWebBridgeFailedResponse = { success: false, error: cancelError };
       return JSON.stringify(cancelResponse);
@@ -428,7 +429,7 @@ export class ArkWebVrmViewerController implements ArkWebViewerBridgeListener {
       await this.jsCaller.resizeViewer(width, height);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      console.warn('[ArkWebVrmViewerController] resizeViewer failed: ' + msg);
+      Logger.warn('[ArkWebVrmViewerController] resizeViewer failed: ' + msg);
     }
   }
 
@@ -1587,9 +1588,9 @@ export class ArkWebVrmViewerController implements ArkWebViewerBridgeListener {
     try {
       // 开启 Web 调试(便于 hdc 连接时调试,生产可关闭)
       webview.WebviewController.setWebDebuggingAccess(true);
-      console.info('[ArkWebVrmViewerController] Web controller attached, debugging access enabled');
+      Logger.debug('[ArkWebVrmViewerController] Web controller attached, debugging access enabled');
     } catch (e) {
-      console.warn('[ArkWebVrmViewerController] setWebDebuggingAccess failed: ' + (e instanceof Error ? e.message : String(e)));
+      Logger.warn('[ArkWebVrmViewerController] setWebDebuggingAccess failed: ' + (e instanceof Error ? e.message : String(e)));
     }
   }
 
@@ -1611,7 +1612,7 @@ export class ArkWebVrmViewerController implements ArkWebViewerBridgeListener {
     if (this.disposed) {
       return;
     }
-    console.info('[ArkWebVrmViewerController] Web page loaded, registering bridge');
+    Logger.debug('[ArkWebVrmViewerController] Web page loaded, registering bridge');
 
     try {
       // 1. 注册 Native Bridge
@@ -1622,7 +1623,7 @@ export class ArkWebVrmViewerController implements ArkWebViewerBridgeListener {
         ArkWebViewerConfig.BRIDGE_METHODS_NATIVE.slice()
       );
       this.nativeBridge.markRegistered();
-      console.info('[ArkWebVrmViewerController] Native bridge registered as window.' + ArkWebViewerConfig.BRIDGE_NAME_NATIVE);
+      Logger.debug('[ArkWebVrmViewerController] Native bridge registered as window.' + ArkWebViewerConfig.BRIDGE_NAME_NATIVE);
 
       // 2. 绑定 JsCaller(使用闭包捕获 runJavaScript)
       this.jsCaller.bind((script: string): Promise<string> => {
@@ -1632,7 +1633,7 @@ export class ArkWebVrmViewerController implements ArkWebViewerBridgeListener {
       // 3. Phase 1D-2C-2A: 防止重复初始化
       //    onPageEnd 在页面实例内只触发一次 initializeViewer 请求
       if (this.initializeRequestedFromPageEnd) {
-        console.info(`[ArkWebVrmViewerController] initializeViewer already requested (state=${this.state}), skip`);
+        Logger.debug(`[ArkWebVrmViewerController] initializeViewer already requested (state=${this.state}), skip`);
         return;
       }
       this.initializeRequestedFromPageEnd = true;
@@ -1646,7 +1647,7 @@ export class ArkWebVrmViewerController implements ArkWebViewerBridgeListener {
 
       // 6. 调用 Web 端 initializeViewer(同步返回 JSON 字符串)
       const resultJson: string = await this.jsCaller.initializeViewer();
-      console.info('[ArkWebVrmViewerController] initializeViewer result: ' + resultJson);
+      Logger.debug('[ArkWebVrmViewerController] initializeViewer result: ' + resultJson);
 
       // 7. Phase 1D-2C-2A: 解析返回结果(支持 INITIALIZING / READY / FAILED)
       const parsed: InitResultParseOutcome = this.parseInitResultJson(resultJson);
@@ -1654,7 +1655,7 @@ export class ArkWebVrmViewerController implements ArkWebViewerBridgeListener {
       if (parsed.kind === 'INITIALIZING') {
         // success=true,state=INITIALIZING → 保持 INITIALIZING,等待 onViewerReady/onViewerError
         this.clearInitTimeout();
-        console.info('[ArkWebVrmViewerController] initializeViewer returned INITIALIZING, waiting for callback');
+        Logger.debug('[ArkWebVrmViewerController] initializeViewer returned INITIALIZING, waiting for callback');
         // 状态保持 INITIALIZING,不修改 detail(避免覆盖更具体的进度)
         return;
       }
@@ -1662,7 +1663,7 @@ export class ArkWebVrmViewerController implements ArkWebViewerBridgeListener {
       if (parsed.kind === 'READY') {
         // success=true,state=READY → 直接推进到 READY(理论罕见,Web 端通常异步)
         this.clearInitTimeout();
-        console.info('[ArkWebVrmViewerController] initializeViewer returned READY directly');
+        Logger.debug('[ArkWebVrmViewerController] initializeViewer returned READY directly');
         this.onViewerReady();
         return;
       }
@@ -1673,7 +1674,7 @@ export class ArkWebVrmViewerController implements ArkWebViewerBridgeListener {
     } catch (e) {
       this.clearInitTimeout();
       const msg = e instanceof Error ? e.message : String(e);
-      console.error('[ArkWebVrmViewerController] onPageEnd failed: ' + msg);
+      Logger.error('[ArkWebVrmViewerController] onPageEnd failed: ' + msg);
       const fail: InitResultParseOutcome = {
         kind: 'FAILED',
         code: ArkWebViewerErrorCode.INIT_FAILED,
@@ -1703,11 +1704,11 @@ export class ArkWebVrmViewerController implements ArkWebViewerBridgeListener {
    */
   async retryInitializeViewer(): Promise<void> {
     if (this.disposed) {
-      console.warn('[ArkWebVrmViewerController] retryInitializeViewer ignored: disposed');
+      Logger.warn('[ArkWebVrmViewerController] retryInitializeViewer ignored: disposed');
       return;
     }
     if (this.state !== ArkWebViewerState.FAILED) {
-      console.warn(`[ArkWebVrmViewerController] retryInitializeViewer ignored: state=${this.state} (requires FAILED)`);
+      Logger.warn(`[ArkWebVrmViewerController] retryInitializeViewer ignored: state=${this.state} (requires FAILED)`);
       return;
     }
 
@@ -1726,19 +1727,19 @@ export class ArkWebVrmViewerController implements ArkWebViewerBridgeListener {
 
     try {
       const resultJson: string = await this.jsCaller.retryInitializeViewer();
-      console.info('[ArkWebVrmViewerController] retryInitializeViewer result: ' + resultJson);
+      Logger.debug('[ArkWebVrmViewerController] retryInitializeViewer result: ' + resultJson);
 
       const parsed: InitResultParseOutcome = this.parseInitResultJson(resultJson);
 
       if (parsed.kind === 'INITIALIZING') {
         this.clearInitTimeout();
-        console.info('[ArkWebVrmViewerController] retryInitializeViewer returned INITIALIZING, waiting for callback');
+        Logger.debug('[ArkWebVrmViewerController] retryInitializeViewer returned INITIALIZING, waiting for callback');
         return;
       }
 
       if (parsed.kind === 'READY') {
         this.clearInitTimeout();
-        console.info('[ArkWebVrmViewerController] retryInitializeViewer returned READY directly');
+        Logger.debug('[ArkWebVrmViewerController] retryInitializeViewer returned READY directly');
         this.onViewerReady();
         return;
       }
@@ -1748,7 +1749,7 @@ export class ArkWebVrmViewerController implements ArkWebViewerBridgeListener {
     } catch (e) {
       this.clearInitTimeout();
       const msg = e instanceof Error ? e.message : String(e);
-      console.error('[ArkWebVrmViewerController] retryInitializeViewer failed: ' + msg);
+      Logger.error('[ArkWebVrmViewerController] retryInitializeViewer failed: ' + msg);
       const fail: InitResultParseOutcome = {
         kind: 'FAILED',
         code: ArkWebViewerErrorCode.INIT_FAILED,
@@ -1766,16 +1767,16 @@ export class ArkWebVrmViewerController implements ArkWebViewerBridgeListener {
     if (this.disposed) {
       return;
     }
-    console.info('[ArkWebVrmViewerController] destroy() called');
+    Logger.debug('[ArkWebVrmViewerController] destroy() called');
     this.setState(ArkWebViewerState.DISPOSING, '正在销毁 Viewer');
 
     this.clearInitTimeout();
 
     // 通知 Web 端 dispose(异步,不等待)
     this.jsCaller.disposeViewer().then((_result: string) => {
-      console.info('[ArkWebVrmViewerController] Web side disposed');
+      Logger.debug('[ArkWebVrmViewerController] Web side disposed');
     }).catch((e: Object) => {
-      console.warn('[ArkWebVrmViewerController] Web side dispose failed: ' + (e instanceof Error ? e.message : String(e)));
+      Logger.warn('[ArkWebVrmViewerController] Web side dispose failed: ' + (e instanceof Error ? e.message : String(e)));
     });
 
     this.jsCaller.unbind();
@@ -1801,7 +1802,7 @@ export class ArkWebVrmViewerController implements ArkWebViewerBridgeListener {
     if (this.disposed) {
       return;
     }
-    console.warn(`[ArkWebVrmViewerController] viewer error: code=${code}, phase=${phase}, msg=${message}`);
+    Logger.warn(`[ArkWebVrmViewerController] viewer error: code=${code}, phase=${phase}, msg=${message}`);
     this.lastErrorCode = code;
     this.lastErrorMessage = message;
     this.setState(ArkWebViewerState.FAILED, `错误: ${message}`);
@@ -1830,7 +1831,7 @@ export class ArkWebVrmViewerController implements ArkWebViewerBridgeListener {
     this.state = state;
     this.detail = detail;
     if (stateChanged) {
-      console.info(`[ArkWebVrmViewerController] state=${state}, detail=${detail}`);
+      Logger.debug(`[ArkWebVrmViewerController] state=${state}, detail=${detail}`);
     }
     if (this.listener !== null) {
       this.listener.onStateChanged(state, detail);
@@ -1841,7 +1842,7 @@ export class ArkWebVrmViewerController implements ArkWebViewerBridgeListener {
     this.clearInitTimeout();
     this.initTimerId = setTimeout(() => {
       if (this.state === ArkWebViewerState.INITIALIZING) {
-        console.warn('[ArkWebVrmViewerController] initializeViewer timeout');
+        Logger.warn('[ArkWebVrmViewerController] initializeViewer timeout');
         this.onViewerError(
           ArkWebViewerErrorCode.VIEWER_READY_TIMEOUT,
           'Viewer 初始化超时',

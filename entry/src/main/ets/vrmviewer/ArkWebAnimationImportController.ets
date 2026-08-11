@@ -1,3 +1,4 @@
+import { Logger } from '../utils/Logger';
 /**
  * ArkWebAnimationImportController — VRMA 动画文件导入控制器 (Phase 3A)
  *
@@ -437,7 +438,7 @@ export class ArkWebAnimationImportController {
       try {
         await fileIo.mkdir(cacheDir, true);
       } catch (e) {
-        console.info('[ArkWebAnimationImportController] mkdir (may already exist): ' +
+        Logger.debug('[ArkWebAnimationImportController] mkdir (may already exist): ' +
           (e instanceof Error ? e.message : String(e)));
       }
 
@@ -553,13 +554,13 @@ export class ArkWebAnimationImportController {
   /** 设置状态。 */
   private setState(state: AnimationImportState): void {
     this.state = state;
-    console.info(`[ArkWebAnimationImportController] state=${state}`);
+    Logger.debug(`[ArkWebAnimationImportController] state=${state}`);
   }
 
   /** 记录失败。 */
   private fail(code: string, message: string): void {
     this.lastError = `${code}: ${message}`;
-    console.warn(`[ArkWebAnimationImportController] FAIL: ${this.lastError}`);
+    Logger.warn(`[ArkWebAnimationImportController] FAIL: ${this.lastError}`);
     this.setState(AnimationImportState.FAILED);
   }
 }

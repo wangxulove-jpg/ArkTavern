@@ -1,3 +1,4 @@
+import { Logger } from '../utils/Logger';
 /**
  * ChatMessageBubble 聊天消息气泡
  *
@@ -126,7 +127,7 @@ export struct ChatMessageBubble {
     const isStreaming: boolean = this.renderState.isStreaming;
     if ((s === ChatMessageStatus.Failed || s === ChatMessageStatus.Completed || s === ChatMessageStatus.Cancelled)
       && isStreaming) {
-      console.warn(`[Bubble] inconsistency mid=${this.renderState.messageId.slice(0,8)} status=${String(s)} isStreaming=true`);
+      Logger.warn(`[Bubble] inconsistency mid=${this.renderState.messageId.slice(0,8)} status=${String(s)} isStreaming=true`);
     }
   }
 

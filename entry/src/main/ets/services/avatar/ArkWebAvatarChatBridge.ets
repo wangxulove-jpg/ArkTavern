@@ -1,3 +1,4 @@
+import { Logger } from '../../utils/Logger';
 /**
  * ArkWebAvatarChatBridge — Avatar ↔ 聊天应用级桥接器 (Phase 4A-2)
  *
@@ -40,8 +41,6 @@ import {
   ArkWebAvatarChatBridgeErrorCode,
   ARKWEB_AVATAR_CHAT_QUEUE_LIMIT
 } from './ArkWebAvatarChatBridgeTypes';
-
-const LOG_TAG: string = 'AvatarChatBridge';
 
 /**
  * Avatar endpoint 注册项。
@@ -125,7 +124,7 @@ export class ArkWebAvatarChatBridge {
     }
     this.chatEndpointIds.add(endpointId);
     this.refreshState();
-    console.info(LOG_TAG, `registerChatEndpoint id=${endpointId} state=${this.currentState}`);
+    Logger.debug(`registerChatEndpoint id=${endpointId} state=${this.currentState}`);
   }
 
   /**
@@ -139,7 +138,7 @@ export class ArkWebAvatarChatBridge {
     }
     this.chatEndpointIds.delete(endpointId);
     this.refreshState();
-    console.info(LOG_TAG, `unregisterChatEndpoint id=${endpointId} state=${this.currentState}`);
+    Logger.debug(`unregisterChatEndpoint id=${endpointId} state=${this.currentState}`);
   }
 
   /**
@@ -169,10 +168,10 @@ export class ArkWebAvatarChatBridge {
     }
     this.avatarEndpoint = { endpointId, handler };
     this.refreshState();
-    console.info(LOG_TAG, `registerAvatarEndpoint id=${endpointId} state=${this.currentState}`);
+    Logger.debug(`registerAvatarEndpoint id=${endpointId} state=${this.currentState}`);
     // 注册后立即消费 pending 队列 (不阻塞注册流程)
     this.consumePending().catch((e: Object): void => {
-      console.warn(LOG_TAG, 'consumePending on register threw: ' +
+      Logger.warn('consumePending on register threw: ' +
         (e instanceof Error ? e.message : String(e)));
     });
   }
@@ -189,7 +188,7 @@ export class ArkWebAvatarChatBridge {
     if (this.avatarEndpoint !== null && this.avatarEndpoint.endpointId === endpointId) {
       this.avatarEndpoint = null;
       this.refreshState();
-      console.info(LOG_TAG, `unregisterAvatarEndpoint id=${endpointId} state=${this.currentState}`);
+      Logger.debug(`unregisterAvatarEndpoint id=${endpointId} state=${this.currentState}`);
     }
   }
 
@@ -235,7 +234,7 @@ export class ArkWebAvatarChatBridge {
     // 无 Avatar endpoint → 入队
     if (this.avatarEndpoint === null) {
       this.enqueuePending(result);
-      console.info(LOG_TAG, `publishFinalResult turnId=${result.turnId} queued` +
+      Logger.debug(`publishFinalResult turnId=${result.turnId} queued` +
         ` pending=${this.pendingResults.length}`);
       return true;
     }
@@ -296,7 +295,7 @@ export class ArkWebAvatarChatBridge {
     this.pendingResults = [];
     this.publishedTurnIds.clear();
     this.currentState = ArkWebAvatarChatBridgeState.DISPOSED;
-    console.info(LOG_TAG, 'Bridge disposed');
+    Logger.debug('Bridge disposed');
   }
 
   // ===== 内部方法 =====
@@ -420,7 +419,7 @@ export class ArkWebAvatarChatBridge {
   private recordError(code: string, message: string): void {
     this.lastErrorCode = code;
     this.lastErrorMessage = message;
-    console.warn(LOG_TAG, `error code=${code} msg=${message}`);
+    Logger.warn(`error code=${code} msg=${message}`);
   }
 
   /** 清除错误。 */

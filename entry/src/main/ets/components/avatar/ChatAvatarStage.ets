@@ -1,3 +1,4 @@
+import { Logger } from '../../utils/Logger';
 /**
  * ChatAvatarStage — 单人聊天页面透明 Avatar Stage 组件 (Phase 4B-1)
  *
@@ -34,8 +35,6 @@ import {
 import {
   ArkWebChatAvatarStageController
 } from '../../vrmviewer/ArkWebChatAvatarStageController';
-
-const LOG_TAG: string = 'ChatAvatarStage';
 
 /**
  * 尺寸变化触发 refitFullBody 的阈值 (vp)。
@@ -87,7 +86,7 @@ export struct ChatAvatarStage {
         this.onControllerReady!(this.controller);
       }
     } catch (e) {
-      console.warn(LOG_TAG, 'aboutToAppear create controller failed: ' +
+      Logger.warn('aboutToAppear create controller failed: ' +
         (e instanceof Error ? e.message : String(e)));
     }
   }
@@ -114,7 +113,7 @@ export struct ChatAvatarStage {
       // Phase 4B-2: 切回可见时通知 ShotDirector 恢复 FULL_BODY
       // (ShotDirector 内部会触发 refitFullBody, 不恢复隐藏前的脸部镜头)
       this.controller!.onStageVisible().catch((e: Object): void => {
-        console.warn(LOG_TAG, 'onStageVisible failed: ' +
+        Logger.warn('onStageVisible failed: ' +
           (e instanceof Error ? e.message : String(e)));
       });
     }
@@ -171,7 +170,7 @@ export struct ChatAvatarStage {
             return null;
           })
           .onErrorReceive((_e) => {
-            console.warn(LOG_TAG, 'Web page load error');
+            Logger.warn('Web page load error');
           })
       }
       .width('100%')

@@ -460,7 +460,7 @@ export function buildRequestBody(request: ChatRequest, forceStream: boolean = fa
   const toolChoice: string = (request.toolChoice === 'required') ? 'required' : 'auto';
   // Phase 4D-8 诊断日志: 确认 tool_choice 实际值
   const toolCount: number = toolsPayload !== undefined ? toolsPayload.length : 0;
-  console.info('OpenAIProvider | buildRequestBody: hasTools=' + hasTools
+  Logger.debug('OpenAIProvider | buildRequestBody: hasTools=' + hasTools
     + ' toolCount=' + toolCount
     + ' request.toolChoice=' + (request.toolChoice !== undefined ? request.toolChoice : 'undefined')
     + ' effective tool_choice=' + toolChoice);

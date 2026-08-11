@@ -1,3 +1,4 @@
+import { Logger } from '../utils/Logger';
 /**
  * ArkWebVrmViewerBridge — JavaScript → ArkTS 回调桥
  *
@@ -81,10 +82,10 @@ export class ArkWebVrmViewerNativeBridge {
   /** JavaScript 端调用 window.arkTavernNative.onViewerReady() */
   onViewerReady(): void {
     if (this.disposed) {
-      console.warn('[ArkWebVrmViewerBridge] onViewerReady ignored: disposed');
+      Logger.warn('[ArkWebVrmViewerBridge] onViewerReady ignored: disposed');
       return;
     }
-    console.info('[ArkWebVrmViewerBridge] onViewerReady');
+    Logger.debug('[ArkWebVrmViewerBridge] onViewerReady');
     const l = this.listener;
     if (l !== null) {
       l.onViewerReady();
@@ -94,10 +95,10 @@ export class ArkWebVrmViewerNativeBridge {
   /** JavaScript 端调用 window.arkTavernNative.onViewerError(errorJson) */
   onViewerError(errorJson: string): void {
     if (this.disposed) {
-      console.warn('[ArkWebVrmViewerBridge] onViewerError ignored: disposed');
+      Logger.warn('[ArkWebVrmViewerBridge] onViewerError ignored: disposed');
       return;
     }
-    console.warn('[ArkWebVrmViewerBridge] onViewerError: ' + errorJson);
+    Logger.warn('[ArkWebVrmViewerBridge] onViewerError: ' + errorJson);
     const err = parseViewerError(errorJson);
     const l = this.listener;
     if (l !== null) {
@@ -108,10 +109,10 @@ export class ArkWebVrmViewerNativeBridge {
   /** JavaScript 端调用 window.arkTavernNative.onModelStateChanged(state) */
   onModelStateChanged(state: string): void {
     if (this.disposed) {
-      console.warn('[ArkWebVrmViewerBridge] onModelStateChanged ignored: disposed');
+      Logger.warn('[ArkWebVrmViewerBridge] onModelStateChanged ignored: disposed');
       return;
     }
-    console.info('[ArkWebVrmViewerBridge] onModelStateChanged: ' + state);
+    Logger.debug('[ArkWebVrmViewerBridge] onModelStateChanged: ' + state);
     const l = this.listener;
     if (l !== null) {
       l.onModelStateChanged(this.parseModelState(state));
@@ -121,10 +122,10 @@ export class ArkWebVrmViewerNativeBridge {
   /** JavaScript 端调用 window.arkTavernNative.onAnimationStateChanged(state) */
   onAnimationStateChanged(state: string): void {
     if (this.disposed) {
-      console.warn('[ArkWebVrmViewerBridge] onAnimationStateChanged ignored: disposed');
+      Logger.warn('[ArkWebVrmViewerBridge] onAnimationStateChanged ignored: disposed');
       return;
     }
-    console.info('[ArkWebVrmViewerBridge] onAnimationStateChanged: ' + state);
+    Logger.debug('[ArkWebVrmViewerBridge] onAnimationStateChanged: ' + state);
     const l = this.listener;
     if (l !== null) {
       l.onAnimationStateChanged(this.parseAnimationState(state));

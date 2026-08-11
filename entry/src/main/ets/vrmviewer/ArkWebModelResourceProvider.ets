@@ -1,3 +1,4 @@
+import { Logger } from '../utils/Logger';
 /**
  * ArkWebModelResourceProvider — 缓存模型资源提供者(Phase 1D-2A + 1D-2B-1)
  *
@@ -184,7 +185,7 @@ export class ArkWebModelResourceProvider {
     } catch (e) {
       // 回调失败仅日志,不影响 Provider 主流程
       const msg: string = e instanceof Error ? e.message : String(e);
-      console.warn(`[ArkWebModelResourceProvider] onDiagnostic callback failed: ${msg}`);
+      Logger.warn(`[ArkWebModelResourceProvider] onDiagnostic callback failed: ${msg}`);
     }
   }
 
@@ -263,7 +264,7 @@ export class ArkWebModelResourceProvider {
     this.currentResource = internalResource;
     this.state = ModelResourceState.READY;
 
-    console.info(
+    Logger.debug(
       `[ArkWebModelResourceProvider] registerFile: id=${opaqueId}, size=${file.size}, mimeType=${file.mimeType}`
     );
 
@@ -357,7 +358,7 @@ export class ArkWebModelResourceProvider {
     this.currentResource = internalResource;
     this.state = ModelResourceState.READY;
 
-    console.info(
+    Logger.debug(
       `[ArkWebModelResourceProvider] registerPersistentAsset: id=${opaqueId}, size=${asset.byteLength}, mimeType=${asset.mimeType}`
     );
 
@@ -392,7 +393,7 @@ export class ArkWebModelResourceProvider {
       return;
     }
     if (this.currentResource !== null) {
-      console.info(
+      Logger.debug(
         `[ArkWebModelResourceProvider] unregister: id=${this.currentResource.publicResource.id}`
       );
     }
@@ -620,7 +621,7 @@ export class ArkWebModelResourceProvider {
 
       // 构造 HEAD 响应(无 body)
       const response: WebResourceResponse = this.createHeadResponse(resource);
-      console.info(
+      Logger.debug(
         `[ArkWebModelResourceProvider] HEAD: id=${publicResource.id}, size=${publicResource.size}`
       );
       // Phase 1D-2C-1: 上报 PROVIDER_RESPONSE 200
@@ -640,7 +641,7 @@ export class ArkWebModelResourceProvider {
       };
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
-      console.error(`[ArkWebModelResourceProvider] HEAD stat failed: ${msg}`);
+      Logger.error(`[ArkWebModelResourceProvider] HEAD stat failed: ${msg}`);
       const response: WebResourceResponse = this.createErrorResponse(
         500,
         'Internal Server Error',
@@ -700,7 +701,7 @@ export class ArkWebModelResourceProvider {
       response.setResponseData(file.fd);
       fdTransferred = true;
 
-      console.info(
+      Logger.debug(
         `[ArkWebModelResourceProvider] GET: id=${publicResource.id}, fd=${file.fd}, size=${publicResource.size}`
       );
       // Phase 1D-2C-1: 上报 PROVIDER_RESPONSE 200
@@ -721,7 +722,7 @@ export class ArkWebModelResourceProvider {
       };
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
-      console.error(`[ArkWebModelResourceProvider] GET failed: ${msg}`);
+      Logger.error(`[ArkWebModelResourceProvider] GET failed: ${msg}`);
 
       // 构造 500 错误响应(避免 Web 端无响应)
       const errorResponse: WebResourceResponse = this.createErrorResponse(
@@ -884,7 +885,7 @@ export class ArkWebModelResourceProvider {
     this.disposed = true;
     this.state = ModelResourceState.DISPOSED;
     if (this.currentResource !== null) {
-      console.info(
+      Logger.debug(
         `[ArkWebModelResourceProvider] dispose: id=${this.currentResource.publicResource.id}`
       );
     }

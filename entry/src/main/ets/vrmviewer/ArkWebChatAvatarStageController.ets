@@ -1,3 +1,4 @@
+import { Logger } from '../utils/Logger';
 /**
  * ArkWebChatAvatarStageController — 单人聊天页面透明 Avatar Stage 控制器 (Phase 4B-1R)
  *
@@ -117,8 +118,6 @@ import {
   ArkWebAvatarShotRuntime,
   ArkWebAvatarShotRuntimeSnapshot
 } from './ArkWebAvatarShotDirectorTypes';
-
-const LOG_TAG: string = 'ChatAvatarStage';
 
 /**
  * Stage 运行状态 (Phase 4B-1R §第一项)。
@@ -662,7 +661,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
     // MODEL_READY 时尺寸变化触发重新构图 (component 层已做阈值过滤)
     if (this.currentStageState === 'MODEL_READY' && !this.disposed) {
       this.fitFullBodyInternal().catch((e: Object): void => {
-        console.warn(LOG_TAG, 'refit on size change failed: ' +
+        Logger.warn('refit on size change failed: ' +
           (e instanceof Error ? e.message : String(e)));
       });
     }
@@ -683,10 +682,10 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
       return;
     }
     if (this.modelRestoreInProgress) {
-      console.warn(LOG_TAG, 'reloadActiveModel: restore in progress, skip');
+      Logger.warn('reloadActiveModel: restore in progress, skip');
       return;
     }
-    console.info(LOG_TAG, 'reloadActiveModel: generation++');
+    Logger.debug('reloadActiveModel: generation++');
     this.modelRestoreGeneration++;
     this.restoreStarted = false;
     this.restoreScheduled = false;
@@ -806,7 +805,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
             if (ok && self.shotDirector !== null) {
               self.shotDirector.onPerformanceStopped('PERFORMANCE_STOPPED')
                 .catch((e: Object): void => {
-                  console.warn(LOG_TAG, 'shotDirector.onPerformanceStopped threw: ' +
+                  Logger.warn('shotDirector.onPerformanceStopped threw: ' +
                     (e instanceof Error ? e.message : String(e)));
                 });
             }
@@ -823,7 +822,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
             : Promise.resolve(true);
           return preparePromise.then((prepareOk: boolean): Promise<boolean> => {
             if (!prepareOk) {
-              console.warn(LOG_TAG, 'shotDirector.prepareForCommand failed, skip performance');
+              Logger.warn('shotDirector.prepareForCommand failed, skip performance');
               return Promise.resolve(false);
             }
             return self.performanceController!.executeCommand(cmd).then(
@@ -832,7 +831,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
                 if (!result.success && self.shotDirector !== null) {
                   self.shotDirector.onPerformanceFailed('PERFORMANCE_EXECUTE_FAILED')
                     .catch((e: Object): void => {
-                      console.warn(LOG_TAG, 'shotDirector.onPerformanceFailed threw: ' +
+                      Logger.warn('shotDirector.onPerformanceFailed threw: ' +
                         (e instanceof Error ? e.message : String(e)));
                     });
                 }
@@ -869,7 +868,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
     this.registerAvatarEndpoint();
 
     this.initCompleted = true;
-    console.info(LOG_TAG, 'init completed');
+    Logger.debug('init completed');
     // AssetLibrary 不在此处 ensureInitialized, 留待 startActiveModelRestore
   }
 
@@ -911,8 +910,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
       if (result.response !== null) {
         return result.response;
       }
-      console.warn(LOG_TAG,
-        `model resource handleRequest returned null: ${result.errorCode} ${result.errorMessage}`);
+      Logger.warn(`model resource handleRequest returned null: ${result.errorCode} ${result.errorMessage}`);
       return null;
     }
     // Phase 4B-2R2: 动画资源拦截 (独立于模型 Provider)
@@ -921,8 +919,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
       if (animResult.response !== null) {
         return animResult.response;
       }
-      console.warn(LOG_TAG,
-        `animation resource handleRequest returned null: ${animResult.errorCode} ${animResult.errorMessage}`);
+      Logger.warn(`animation resource handleRequest returned null: ${animResult.errorCode} ${animResult.errorMessage}`);
       return null;
     }
     return null;
@@ -985,14 +982,14 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
         const pendingCount: number = ArkWebAvatarChatBridge.getInstance().getPendingCount();
         this.lastPublishErrorCode = `BRIDGE_REJECTED(state=${bridgeState},pending=${pendingCount})`;
         this.lastPublishErrorMessage = `publishFinalResult returned false, turnId=${turnId}`;
-        console.warn(LOG_TAG, `publishPerformanceFromPanel rejected: turnId=${turnId} state=${bridgeState}`);
+        Logger.warn(`publishPerformanceFromPanel rejected: turnId=${turnId} state=${bridgeState}`);
       }
       return ok;
     } catch (e) {
       this.lastPublishResult = 'THREW';
       this.lastPublishErrorCode = 'PUBLISH_THREW';
       this.lastPublishErrorMessage = e instanceof Error ? e.message : String(e);
-      console.warn(LOG_TAG, 'publishPerformanceFromPanel threw: ' +
+      Logger.warn('publishPerformanceFromPanel threw: ' +
         (e instanceof Error ? e.message : String(e)));
       return false;
     }
@@ -1052,8 +1049,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
           const resolver = this.pendingPanelPerformanceResolvers.get(turnId);
           if (resolver !== undefined) {
             this.pendingPanelPerformanceResolvers.delete(turnId);
-            console.warn(LOG_TAG,
-              `publishPerformanceFromPanelAndWait timeout: turnId=${turnId}`);
+            Logger.warn(`publishPerformanceFromPanelAndWait timeout: turnId=${turnId}`);
             resolve({
               accepted: true,
               executed: false,
@@ -1170,7 +1166,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
     try {
       await this.dialogueLifecycle.cancelCurrent('chat_ai_panel_stop');
     } catch (e) {
-      console.warn(LOG_TAG, 'cancelPerformance threw: ' +
+      Logger.warn('cancelPerformance threw: ' +
         (e instanceof Error ? e.message : String(e)));
     }
   }
@@ -1191,7 +1187,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
       this.cachedCapabilitySnapshot = snapshot;
       return snapshot;
     } catch (e) {
-      console.warn(LOG_TAG, 'getCapabilitySnapshot threw: ' +
+      Logger.warn('getCapabilitySnapshot threw: ' +
         (e instanceof Error ? e.message : String(e)));
       return null;
     }
@@ -1222,7 +1218,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
     // 手动脸部模式下跳过全身构图, 避免键盘弹出触发镜头切换
     if (this.shotDirector !== null &&
       this.shotDirector.getControlMode() === 'MANUAL_FACE_RESET_VIEW') {
-      console.info(LOG_TAG, 'refitFullBody skipped: MANUAL_FACE_RESET_VIEW mode');
+      Logger.debug('refitFullBody skipped: MANUAL_FACE_RESET_VIEW mode');
       return;
     }
     await this.fitFullBodyInternal();
@@ -1256,7 +1252,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
     this.animationLoadPromise = null;
     this.animationLoadActionId = '';
     this.loadedActionId = '';
-    console.info(LOG_TAG, 'dispose');
+    Logger.debug('dispose');
 
     // Phase 4B-2R2: 清理 pending panel performance resolvers (不阻塞销毁)
     this.clearPendingPanelPerformanceResolvers();
@@ -1269,7 +1265,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
       try {
         this.dialogueLifecycle.dispose();
       } catch (e) {
-        console.warn(LOG_TAG, 'dialogueLifecycle.dispose threw: ' +
+        Logger.warn('dialogueLifecycle.dispose threw: ' +
           (e instanceof Error ? e.message : String(e)));
       }
       this.dialogueLifecycle = null;
@@ -1278,7 +1274,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
       try {
         this.performanceController.dispose();
       } catch (e) {
-        console.warn(LOG_TAG, 'performanceController.dispose threw: ' +
+        Logger.warn('performanceController.dispose threw: ' +
           (e instanceof Error ? e.message : String(e)));
       }
       this.performanceController = null;
@@ -1310,7 +1306,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
     try {
       this.arkWebController.destroy();
     } catch (e) {
-      console.warn(LOG_TAG, 'arkWebController.destroy threw: ' +
+      Logger.warn('arkWebController.destroy threw: ' +
         (e instanceof Error ? e.message : String(e)));
     }
 
@@ -1332,7 +1328,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
       return;
     }
     this.viewerStateStr = String(state);
-    console.info(LOG_TAG, `Viewer state changed: ${state} detail=${detail}`);
+    Logger.debug(`Viewer state changed: ${state} detail=${detail}`);
     if (state === ArkWebViewerState.READY) {
       if (this.viewerReadyReceived) {
         return;
@@ -1340,7 +1336,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
       this.viewerReadyReceived = true;
       this.setStageState('VIEWER_READY', 'Viewer 就绪');
       this.onViewerReady().catch((e: Object): void => {
-        console.warn(LOG_TAG, 'onViewerReady threw: ' +
+        Logger.warn('onViewerReady threw: ' +
           (e instanceof Error ? e.message : String(e)));
       });
     } else if (state === ArkWebViewerState.FAILED) {
@@ -1354,7 +1350,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
   }
 
   onError(code: string, message: string): void {
-    console.warn(LOG_TAG, `Viewer error: code=${code} msg=${message}`);
+    Logger.warn(`Viewer error: code=${code} msg=${message}`);
   }
 
   // ===== 内部方法 =====
@@ -1375,7 +1371,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
       return;
     }
     if (!this.initCompleted) {
-      console.warn(LOG_TAG, 'onViewerReady: init not completed yet, skip');
+      Logger.warn('onViewerReady: init not completed yet, skip');
       return;
     }
 
@@ -1406,7 +1402,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
         return;
       }
       this.chatStageProfileApplied = true;
-      console.info(LOG_TAG, 'CHAT_STAGE profile applied');
+      Logger.debug('CHAT_STAGE profile applied');
     }
 
     // 2. 确认 getRenderProfile() === CHAT_STAGE
@@ -1438,7 +1434,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
 
     // 3. 启动模型自动恢复 (内部会 ensureInitialized AssetLibrary)
     this.startActiveModelRestore().catch((e: Object): void => {
-      console.warn(LOG_TAG, 'startActiveModelRestore threw: ' +
+      Logger.warn('startActiveModelRestore threw: ' +
         (e instanceof Error ? e.message : String(e)));
     });
   }
@@ -1461,24 +1457,24 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
       return;
     }
     if (this.restoreStarted) {
-      console.info(LOG_TAG, 'startActiveModelRestore: already started, skip');
+      Logger.debug('startActiveModelRestore: already started, skip');
       return;
     }
     if (this.restoreScheduled) {
       return;
     }
     if (!this.initCompleted) {
-      console.warn(LOG_TAG, 'startActiveModelRestore: init not completed');
+      Logger.warn('startActiveModelRestore: init not completed');
       return;
     }
     if (this.arkWebController.getState() !== ArkWebViewerState.READY) {
-      console.warn(LOG_TAG, 'startActiveModelRestore: viewer not ready');
+      Logger.warn('startActiveModelRestore: viewer not ready');
       this.lastErrorCode = ArkWebChatAvatarStageErrorCode.CHAT_STAGE_VIEWER_NOT_READY;
       this.lastErrorMessage = `viewer state=${this.arkWebController.getState()}`;
       return;
     }
     if (!this.chatStageProfileApplied) {
-      console.warn(LOG_TAG, 'startActiveModelRestore: profile not applied');
+      Logger.warn('startActiveModelRestore: profile not applied');
       this.lastErrorCode = ArkWebChatAvatarStageErrorCode.CHAT_STAGE_PROFILE_FAILED;
       this.lastErrorMessage = 'CHAT_STAGE profile not applied';
       return;
@@ -1537,7 +1533,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
         if (this.eventListener !== null) {
           this.eventListener.onModelNameChanged('');
         }
-        console.info(LOG_TAG, 'no active model, entering EMPTY state');
+        Logger.debug('no active model, entering EMPTY state');
         return;
       }
 
@@ -1546,7 +1542,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
       if (this.eventListener !== null) {
         this.eventListener.onModelNameChanged(this.activeModelDisplayName);
       }
-      console.info(LOG_TAG, `active model found: id=${activeAsset.modelId} name=${activeAsset.displayName}`);
+      Logger.debug(`active model found: id=${activeAsset.modelId} name=${activeAsset.displayName}`);
 
       // 3. 验证 + 注册 + prepare + probe + load + READY 等待
       this.setStageState('MODEL_RESOLVING', '验证并注册模型资源');
@@ -1561,7 +1557,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
         this.lastErrorCode = '';
         this.lastErrorMessage = '';
         this.setStageState('MODEL_READY', '模型就绪');
-        console.info(LOG_TAG, 'active model restored successfully');
+        Logger.debug('active model restored successfully');
 
         // Phase 4B-2R §第二项: 模型 READY 后先恢复默认姿势, 再记录稳定全身参考 Bounds
         // 顺序: 读取 defaultPoseId → 恢复默认姿势 → 等待应用完成 → 记录参考状态 → fitAvatarFullBody
@@ -1586,12 +1582,12 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
         if (this.stageWidth > 0 && this.stageHeight > 0) {
           await this.fitFullBodyInternal();
         } else {
-          console.warn(LOG_TAG, 'fitAvatarFullBody skipped: size invalid, will retry on onAreaChange');
+          Logger.warn('fitAvatarFullBody skipped: size invalid, will retry on onAreaChange');
         }
         // Phase 4B-2: 通知 ShotDirector 模型 READY (执行 FULL_BODY 构图)
         if (this.shotDirector !== null) {
           this.shotDirector.onModelReady().catch((e: Object): void => {
-            console.warn(LOG_TAG, 'shotDirector.onModelReady threw: ' +
+            Logger.warn('shotDirector.onModelReady threw: ' +
               (e instanceof Error ? e.message : String(e)));
           });
         }
@@ -1677,7 +1673,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
     }
     this.preparedResource = resource;
     this.resourceRegistered = true;
-    console.info(LOG_TAG, `persistent asset registered: url=${resource.resourceUrl}`);
+    Logger.debug(`persistent asset registered: url=${resource.resourceUrl}`);
 
     // 3. prepareModelResource (将资源元数据同步到 Web 端 keeper) + 回读
     const preparePayload: Record<string, Object> = {
@@ -1756,7 +1752,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
       this.lastErrorMessage = `getPreparedModelResource result invalid: ${readbackJson}`;
       return false;
     }
-    console.info(LOG_TAG, 'prepareModelResource verified (keeper saved)');
+    Logger.debug('prepareModelResource verified (keeper saved)');
 
     // 4. probePreparedModelResource + 轮询 VERIFIED
     this.setStageState('MODEL_RESOLVING', '资源探测中');
@@ -1793,7 +1789,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
       this.setStageState('FAILED', '资源探测未通过');
       return false;
     }
-    console.info(LOG_TAG, 'probe verified');
+    Logger.debug('probe verified');
 
     // 5. loadPreparedModelResource (触发实际加载)
     this.setStageState('MODEL_LOADING', '模型加载中');
@@ -1831,7 +1827,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
       this.setStageState('FAILED', '模型 READY 等待超时');
       return false;
     }
-    console.info(LOG_TAG, 'model load READY confirmed via polling');
+    Logger.debug('model load READY confirmed via polling');
     return true;
   }
 
@@ -1999,7 +1995,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
       }
       const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
       if (obj['success'] === true) {
-        console.info(LOG_TAG, 'fitAvatarFullBody ok (fillRatio=' + this.currentFillRatio + ')');
+        Logger.debug('fitAvatarFullBody ok (fillRatio=' + this.currentFillRatio + ')');
         // 清除 fit 失败错误
         if (this.lastErrorCode === ArkWebChatAvatarStageErrorCode.CHAT_STAGE_FULL_BODY_FIT_FAILED) {
           this.lastErrorCode = '';
@@ -2008,7 +2004,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
       } else {
         this.lastErrorCode = ArkWebChatAvatarStageErrorCode.CHAT_STAGE_FULL_BODY_FIT_FAILED;
         this.lastErrorMessage = `fitAvatarFullBody failed: ${resultJson}`;
-        console.warn(LOG_TAG, 'fitAvatarFullBody failed: ' + resultJson);
+        Logger.warn('fitAvatarFullBody failed: ' + resultJson);
       }
     } catch (e) {
       if (this.disposed) {
@@ -2017,7 +2013,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
       this.lastErrorCode = ArkWebChatAvatarStageErrorCode.CHAT_STAGE_FULL_BODY_FIT_FAILED;
       this.lastErrorMessage = 'fitAvatarFullBody threw: ' +
         (e instanceof Error ? e.message : String(e));
-      console.warn(LOG_TAG, 'fitAvatarFullBody threw: ' +
+      Logger.warn('fitAvatarFullBody threw: ' +
         (e instanceof Error ? e.message : String(e)));
     }
   }
@@ -2041,21 +2037,21 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
     }
     try {
       // 使用 currentFillRatio 保持与用户滑动条设置一致, 避免切换镜头时模型变小
-      console.info(LOG_TAG, 'shotTransitionToFullBody: fillRatio=' + this.currentFillRatio);
+      Logger.debug('shotTransitionToFullBody: fillRatio=' + this.currentFillRatio);
       const resultJson: string = await this.arkWebController.fitAvatarFullBody(this.currentFillRatio);
       if (this.disposed) {
         return false;
       }
       const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
       const ok: boolean = obj['success'] === true;
-      console.info(LOG_TAG, 'shotTransitionToFullBody: result ok=' + ok + ' fillRatio=' + this.currentFillRatio);
+      Logger.debug('shotTransitionToFullBody: result ok=' + ok + ' fillRatio=' + this.currentFillRatio);
       // Phase 4B-2R2: 应用当前缩放倍率 (保持用户设置, 不重置)
       if (ok && Math.abs(this.cameraZoomMultiplier - 1.0) > 0.001) {
         await this.applyCameraZoomInternal('SHOT_FULL_BODY');
       }
       return ok;
     } catch (e) {
-      console.warn(LOG_TAG, 'shotTransitionToFullBody threw: ' +
+      Logger.warn('shotTransitionToFullBody threw: ' +
         (e instanceof Error ? e.message : String(e)));
       return false;
     }
@@ -2090,7 +2086,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
       }
       return ok;
     } catch (e) {
-      console.warn(LOG_TAG, 'shotTransitionToResetView threw: ' +
+      Logger.warn('shotTransitionToResetView threw: ' +
         (e instanceof Error ? e.message : String(e)));
       return false;
     }
@@ -2120,10 +2116,10 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
       const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
       const ok: boolean = obj['success'] === true;
       if (!ok) {
-        console.warn(LOG_TAG, `applyCameraZoomInternal(${reason}) failed: ${resultJson}`);
+        Logger.warn(`applyCameraZoomInternal(${reason}) failed: ${resultJson}`);
       }
     } catch (e) {
-      console.warn(LOG_TAG, `applyCameraZoomInternal(${reason}) threw: ` +
+      Logger.warn(`applyCameraZoomInternal(${reason}) threw: ` +
         (e instanceof Error ? e.message : String(e)));
     }
   }
@@ -2145,7 +2141,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
       const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
       return obj['success'] === true;
     } catch (e) {
-      console.warn(LOG_TAG, 'shotCancelCameraTransition threw: ' +
+      Logger.warn('shotCancelCameraTransition threw: ' +
         (e instanceof Error ? e.message : String(e)));
       return false;
     }
@@ -2182,17 +2178,17 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
     }
     if (this.assetLibrary === null || this.persistentAnimationStore === null
         || this.animationResourceProvider === null) {
-      console.warn(LOG_TAG, 'loadAnimationByActionId: deps null');
+      Logger.warn('loadAnimationByActionId: deps null');
       return false;
     }
     if (this.arkWebController.getState() !== ArkWebViewerState.READY) {
-      console.warn(LOG_TAG, 'loadAnimationByActionId: viewer not READY');
+      Logger.warn('loadAnimationByActionId: viewer not READY');
       return false;
     }
 
     // Phase 4B-2R2: 已加载同一动作且 Web state === READY → 直接返回 true (无需再次加载)
     if (this.loadedActionId === actionId && this.debugAnimationStateStr === 'READY') {
-      console.info(LOG_TAG, `loadAnimationByActionId: already loaded and READY: ${actionId}`);
+      Logger.debug(`loadAnimationByActionId: already loaded and READY: ${actionId}`);
       return true;
     }
 
@@ -2205,21 +2201,20 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
         }
         this.parseAnimationDebugState(refreshJson);
       } catch (e) {
-        console.warn(LOG_TAG, 'loadAnimationByActionId: refresh state failed: ' +
+        Logger.warn('loadAnimationByActionId: refresh state failed: ' +
           (e instanceof Error ? e.message : String(e)));
       }
       // 读取刷新后的最新状态到本地变量, 避免 ArkTS 在 if 块内将字段类型收窄为 'LOADING' 字面量
       const refreshedState: string = this.debugAnimationStateStr;
       // 刷新后若已 READY 且是同一 action → 直接返回 true
       if (refreshedState === 'READY' && this.loadedActionId === actionId) {
-        console.info(LOG_TAG, `loadAnimationByActionId: refreshed to READY: ${actionId}`);
+        Logger.debug(`loadAnimationByActionId: refreshed to READY: ${actionId}`);
         return true;
       }
       // 刷新后若已 FAILED → 清理 Promise, 允许重新加载
       if (refreshedState === 'FAILED' || refreshedState === 'NOT_REQUESTED'
           || refreshedState === 'IDLE' || refreshedState === 'STOPPED') {
-        console.info(LOG_TAG,
-          `loadAnimationByActionId: recovered from stale LOADING, now ${refreshedState}`);
+        Logger.debug(`loadAnimationByActionId: recovered from stale LOADING, now ${refreshedState}`);
         this.animationLoadPromise = null;
         this.animationLoadActionId = '';
       }
@@ -2227,7 +2222,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
 
     // Phase 4B-2R2: 同 action 正在加载 → 复用同一个 Promise
     if (this.animationLoadPromise !== null && this.animationLoadActionId === actionId) {
-      console.info(LOG_TAG, `loadAnimationByActionId: reuse pending promise for ${actionId}`);
+      Logger.debug(`loadAnimationByActionId: reuse pending promise for ${actionId}`);
       return await this.animationLoadPromise;
     }
 
@@ -2244,8 +2239,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
       const ok: boolean = await loadPromise;
       // generation 检查: 旧加载结果不得覆盖新状态
       if (myGeneration !== this.animationLoadGeneration) {
-        console.info(LOG_TAG,
-          `loadAnimationByActionId: stale generation ${myGeneration}, current ${this.animationLoadGeneration}, discard`);
+        Logger.debug(`loadAnimationByActionId: stale generation ${myGeneration}, current ${this.animationLoadGeneration}, discard`);
         return false;
       }
       if (ok) {
@@ -2259,7 +2253,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
       if (myGeneration === this.animationLoadGeneration) {
         this.debugAnimationStateStr = 'FAILED';
       }
-      console.warn(LOG_TAG, 'loadAnimationByActionId threw: ' +
+      Logger.warn('loadAnimationByActionId threw: ' +
         (e instanceof Error ? e.message : String(e)));
       return false;
     } finally {
@@ -2282,7 +2276,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
     const asset: ArkWebAvatarAnimationAsset | null =
       await this.assetLibrary!.findAnimation(actionId);
     if (asset === null) {
-      console.warn(LOG_TAG, `executeAnimationLoad: animation not found: ${actionId}`);
+      Logger.warn(`executeAnimationLoad: animation not found: ${actionId}`);
       this.animationLoadErrorCode = 'ANIMATION_ACTION_NOT_FOUND';
       return false;
     }
@@ -2290,7 +2284,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
     // 2. 解析绝对路径
     const absolutePath: string = this.persistentAnimationStore!.resolveAbsolutePath(asset.relativePath);
     if (absolutePath.length === 0) {
-      console.warn(LOG_TAG, `executeAnimationLoad: unsafe path: ${asset.relativePath}`);
+      Logger.warn(`executeAnimationLoad: unsafe path: ${asset.relativePath}`);
       this.animationLoadErrorCode = 'ANIMATION_PATH_RESOLVE_FAILED';
       return false;
     }
@@ -2300,7 +2294,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
     try {
       publicResource = this.animationResourceProvider!.registerPersistentAsset(asset, absolutePath);
     } catch (e) {
-      console.warn(LOG_TAG, 'executeAnimationLoad: provider register failed: ' +
+      Logger.warn('executeAnimationLoad: provider register failed: ' +
         (e instanceof Error ? e.message : String(e)));
       this.animationLoadErrorCode = 'ANIMATION_PROVIDER_REGISTER_FAILED';
       return false;
@@ -2320,7 +2314,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
       const resultJson: string = await this.arkWebController.loadAnimationResource(resourceJson);
       // generation 检查
       if (generation !== this.animationLoadGeneration) {
-        console.info(LOG_TAG, 'executeAnimationLoad: stale generation, discard');
+        Logger.debug('executeAnimationLoad: stale generation, discard');
         this.animationLoadErrorCode = 'ANIMATION_LOAD_STALE';
         return false;
       }
@@ -2332,17 +2326,17 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
         const errObj = parsed['error'] as Record<string, Object>;
         const errorCode: string = errObj ? (errObj['code'] as string) || 'UNKNOWN' : 'UNKNOWN';
         const msg: string = errObj ? (errObj['message'] as string) || '' : '';
-        console.warn(LOG_TAG, `executeAnimationLoad: load failed: ${errorCode} ${msg}`);
+        Logger.warn(`executeAnimationLoad: load failed: ${errorCode} ${msg}`);
         this.debugAnimationStateStr = 'FAILED';
         this.animationLoadErrorCode = 'ANIMATION_LOAD_REQUEST_FAILED';
         return false;
       }
       this.debugAnimationStateStr = 'LOADING';
       this.animationLoadErrorCode = '';
-      console.info(LOG_TAG, `executeAnimationLoad ok: ${actionId} gen=${generation}`);
+      Logger.debug(`executeAnimationLoad ok: ${actionId} gen=${generation}`);
       return true;
     } catch (e) {
-      console.warn(LOG_TAG, 'executeAnimationLoad threw: ' +
+      Logger.warn('executeAnimationLoad threw: ' +
         (e instanceof Error ? e.message : String(e)));
       this.debugAnimationStateStr = 'FAILED';
       this.animationLoadErrorCode = 'ANIMATION_LOAD_REQUEST_FAILED';
@@ -2390,7 +2384,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
       await this.delay(ANIMATION_READY_POLL_INTERVAL_MS);
     }
     // Phase 4B-2R2: 超时后状态设为 FAILED (不得永久停留在 LOADING)
-    console.warn(LOG_TAG, `waitForAnimationReady timeout (${timeoutMs}ms), set FAILED`);
+    Logger.warn(`waitForAnimationReady timeout (${timeoutMs}ms), set FAILED`);
     this.debugAnimationStateStr = 'FAILED';
     this.animationLoadErrorCode = 'ANIMATION_READY_TIMEOUT';
     return false;
@@ -2416,7 +2410,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
       const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
       return obj['success'] === true;
     } catch (e) {
-      console.warn(LOG_TAG, 'resetPoseInternal failed: ' +
+      Logger.warn('resetPoseInternal failed: ' +
         (e instanceof Error ? e.message : String(e)));
       return false;
     }
@@ -2441,7 +2435,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
     try {
       const poseJson: string = await this.persistentPoseStore.readPoseDataAsJson(poseId);
       if (poseJson.length === 0) {
-        console.warn(LOG_TAG, `applyPoseByIdInternal: poseJson empty: ${poseId}`);
+        Logger.warn(`applyPoseByIdInternal: poseJson empty: ${poseId}`);
         return false;
       }
       const resultJson: string = await this.arkWebController.applyPose(poseJson);
@@ -2451,7 +2445,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
       const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
       return obj['success'] === true;
     } catch (e) {
-      console.warn(LOG_TAG, 'applyPoseByIdInternal failed: ' +
+      Logger.warn('applyPoseByIdInternal failed: ' +
         (e instanceof Error ? e.message : String(e)));
       return false;
     }
@@ -2478,11 +2472,11 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
       const ok: boolean = await this.applyPoseByIdInternal(defaultPoseId);
       if (ok) {
         this.defaultPoseRestored = true;
-        console.info(LOG_TAG, `restoreDefaultPose ok: poseId=${defaultPoseId}`);
+        Logger.debug(`restoreDefaultPose ok: poseId=${defaultPoseId}`);
       }
       return ok;
     } catch (e) {
-      console.warn(LOG_TAG, 'restoreDefaultPose failed, fallback to resetPose: ' +
+      Logger.warn('restoreDefaultPose failed, fallback to resetPose: ' +
         (e instanceof Error ? e.message : String(e)));
       return await this.resetPoseInternal();
     }
@@ -2508,7 +2502,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
       const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
       return obj['success'] === true;
     } catch (e) {
-      console.warn(LOG_TAG, 'stopAnimation failed: ' +
+      Logger.warn('stopAnimation failed: ' +
         (e instanceof Error ? e.message : String(e)));
       return false;
     }
@@ -2530,7 +2524,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
       this.debugAnimationStateStr = (debugState['state'] as string) || 'UNINITIALIZED';
       this.animationRuntimeState = this.debugAnimationStateStr;
     } catch (e) {
-      console.warn(LOG_TAG, 'parseAnimationDebugState failed: ' +
+      Logger.warn('parseAnimationDebugState failed: ' +
         (e instanceof Error ? e.message : String(e)));
     }
   }
@@ -2562,7 +2556,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
       }
       this.poseRuntimeState = (debugState['state'] as string) || 'IDLE';
     } catch (e) {
-      console.warn(LOG_TAG, 'refreshPoseDebugState failed: ' +
+      Logger.warn('refreshPoseDebugState failed: ' +
         (e instanceof Error ? e.message : String(e)));
     }
   }
@@ -2592,7 +2586,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
       }
       this.expressionRuntimeState = (debugState['state'] as string) || 'IDLE';
     } catch (e) {
-      console.warn(LOG_TAG, 'refreshExpressionDebugState failed: ' +
+      Logger.warn('refreshExpressionDebugState failed: ' +
         (e instanceof Error ? e.message : String(e)));
     }
   }
@@ -2624,11 +2618,10 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
         }
       }
       this.expressionAliasMap = result;
-      console.info(LOG_TAG,
-        `loadExpressionAliasMap: ${Object.keys(result).length} aliases for model=${this.activeModelId}`);
+      Logger.debug(`loadExpressionAliasMap: ${Object.keys(result).length} aliases for model=${this.activeModelId}`);
     } catch (e) {
       this.expressionAliasMap = {} as Record<string, string>;
-      console.warn(LOG_TAG, 'loadExpressionAliasMap failed: ' +
+      Logger.warn('loadExpressionAliasMap failed: ' +
         (e instanceof Error ? e.message : String(e)));
     }
   }
@@ -2743,16 +2736,16 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
       }
       const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
       if (obj['success'] === true) {
-        console.info(LOG_TAG, 'adjustModelFillRatio ok (fillRatio=' + this.currentFillRatio + ')');
+        Logger.debug('adjustModelFillRatio ok (fillRatio=' + this.currentFillRatio + ')');
         // Phase 4B-2R2: 重新构图后应用当前缩放倍率 (保持用户设置)
         if (Math.abs(this.cameraZoomMultiplier - 1.0) > 0.001) {
           await this.applyCameraZoomInternal('ADJUST_FILL_RATIO');
         }
       } else {
-        console.warn(LOG_TAG, 'adjustModelFillRatio failed: ' + resultJson);
+        Logger.warn('adjustModelFillRatio failed: ' + resultJson);
       }
     } catch (e) {
-      console.warn(LOG_TAG, 'adjustModelFillRatio threw: ' +
+      Logger.warn('adjustModelFillRatio threw: ' +
         (e instanceof Error ? e.message : String(e)));
     }
   }
@@ -2776,7 +2769,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
       Math.min(CHAT_CAMERA_ZOOM_MULTIPLIER_MAX, multiplier)
     );
     this.cameraZoomMultiplier = safeMultiplier;
-    console.info(LOG_TAG, `setCameraZoomMultiplier: ${safeMultiplier}`);
+    Logger.debug(`setCameraZoomMultiplier: ${safeMultiplier}`);
     await this.applyCameraZoomInternal('SET_ZOOM');
   }
 
@@ -2854,9 +2847,9 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
           await self.onBridgeFinalResult(result);
         }
       );
-      console.info(LOG_TAG, `registerAvatarEndpoint id=${this.avatarEndpointId}`);
+      Logger.debug(`registerAvatarEndpoint id=${this.avatarEndpointId}`);
     } catch (e) {
-      console.warn(LOG_TAG, 'registerAvatarEndpoint failed: ' +
+      Logger.warn('registerAvatarEndpoint failed: ' +
         (e instanceof Error ? e.message : String(e)));
     }
   }
@@ -2868,9 +2861,9 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
     }
     try {
       ArkWebAvatarChatBridge.getInstance().unregisterAvatarEndpoint(this.avatarEndpointId);
-      console.info(LOG_TAG, `unregisterAvatarEndpoint id=${this.avatarEndpointId}`);
+      Logger.debug(`unregisterAvatarEndpoint id=${this.avatarEndpointId}`);
     } catch (e) {
-      console.warn(LOG_TAG, 'unregisterAvatarEndpoint failed: ' +
+      Logger.warn('unregisterAvatarEndpoint failed: ' +
         (e instanceof Error ? e.message : String(e)));
     }
     this.avatarEndpointId = '';
@@ -2888,7 +2881,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
    */
   private async onBridgeFinalResult(result: ArkWebAvatarChatFinalResult): Promise<void> {
     if (this.disposed || this.dialogueLifecycle === null) {
-      console.warn(LOG_TAG, `onBridgeFinalResult skipped: disposed=${this.disposed}`);
+      Logger.warn(`onBridgeFinalResult skipped: disposed=${this.disposed}`);
       // Phase 4B-2R2: 即使 disposed 也要 resolve pending result
       this.resolvePendingPanelPerformance(result.turnId, false,
         'CHAT_STAGE_DISPOSED', 'stage disposed or lifecycle null');
@@ -2921,7 +2914,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
       executed = false;
       errorCode = 'ON_BRIDGE_FINAL_THREW';
       errorMessage = e instanceof Error ? e.message : String(e);
-      console.warn(LOG_TAG, 'onBridgeFinalResult threw: ' + errorMessage);
+      Logger.warn('onBridgeFinalResult threw: ' + errorMessage);
     } finally {
       // Phase 4D-1: 无论成功失败, 重置镜头保持标志 (不跨 Turn 持久化)
       if (isLocalFallback && this.shotDirector !== null) {
@@ -2955,19 +2948,19 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
         this.parseAnimationDebugState(animJson);
       }
     } catch (e) {
-      console.warn(LOG_TAG, 'refreshRuntimeDebugStates anim failed: ' +
+      Logger.warn('refreshRuntimeDebugStates anim failed: ' +
         (e instanceof Error ? e.message : String(e)));
     }
     try {
       await this.refreshPoseDebugState();
     } catch (e) {
-      console.warn(LOG_TAG, 'refreshRuntimeDebugStates pose failed: ' +
+      Logger.warn('refreshRuntimeDebugStates pose failed: ' +
         (e instanceof Error ? e.message : String(e)));
     }
     try {
       await this.refreshExpressionDebugState();
     } catch (e) {
-      console.warn(LOG_TAG, 'refreshRuntimeDebugStates expr failed: ' +
+      Logger.warn('refreshRuntimeDebugStates expr failed: ' +
         (e instanceof Error ? e.message : String(e)));
     }
   }
@@ -3045,7 +3038,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
         this.expressionRuntimeState = 'APPLYING';
       }
     } catch (e) {
-      console.warn(LOG_TAG, 'updateTrackingFromHint parse failed: ' +
+      Logger.warn('updateTrackingFromHint parse failed: ' +
         (e instanceof Error ? e.message : String(e)));
     }
   }
@@ -3110,7 +3103,7 @@ export class ArkWebChatAvatarStageController implements ArkWebViewerEventListene
     this.currentStageState = state;
     this.currentDetail = detail;
     if (stateChanged) {
-      console.info(LOG_TAG, `stageState=${state} detail=${detail}`);
+      Logger.debug(`stageState=${state} detail=${detail}`);
     }
     if (this.eventListener !== null) {
       this.eventListener.onStateChanged(state, detail);

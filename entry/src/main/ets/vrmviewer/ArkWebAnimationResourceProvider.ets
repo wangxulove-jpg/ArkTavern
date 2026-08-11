@@ -1,3 +1,4 @@
+import { Logger } from '../utils/Logger';
 /**
  * ArkWebAnimationResourceProvider — VRMA 动画缓存资源提供者 (Phase 3A)
  *
@@ -175,7 +176,7 @@ export class ArkWebAnimationResourceProvider {
       return;
     }
     this.persistentRootDir = normalizePath(assetsRootDir);
-    console.info(`[ArkWebAnimationResourceProvider] persistentRootDir=${this.persistentRootDir}`);
+    Logger.debug(`[ArkWebAnimationResourceProvider] persistentRootDir=${this.persistentRootDir}`);
   }
 
   /**
@@ -250,7 +251,7 @@ export class ArkWebAnimationResourceProvider {
     this.currentResource = internalResource;
     this.state = AnimationResourceState.READY;
 
-    console.info(
+    Logger.debug(
       `[ArkWebAnimationResourceProvider] registerFile: resourceId=${file.resourceId}, size=${file.size}, mimeType=${file.mimeType}`
     );
 
@@ -334,7 +335,7 @@ export class ArkWebAnimationResourceProvider {
     this.currentResource = internalResource;
     this.state = AnimationResourceState.READY;
 
-    console.info(
+    Logger.debug(
       `[ArkWebAnimationResourceProvider] registerPersistentAsset: resourceId=${asset.resourceId}, size=${asset.byteLength}`
     );
 
@@ -352,7 +353,7 @@ export class ArkWebAnimationResourceProvider {
       return;
     }
     if (this.currentResource !== null) {
-      console.info(
+      Logger.debug(
         `[ArkWebAnimationResourceProvider] unregister: resourceId=${this.currentResource.publicResource.resourceId}`
       );
     }
@@ -525,7 +526,7 @@ export class ArkWebAnimationResourceProvider {
       }
 
       const response: WebResourceResponse = this.createHeadResponse(resource);
-      console.info(
+      Logger.debug(
         `[ArkWebAnimationResourceProvider] HEAD: resourceId=${publicResource.resourceId}, size=${publicResource.size}`
       );
       return {
@@ -535,7 +536,7 @@ export class ArkWebAnimationResourceProvider {
       };
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
-      console.error(`[ArkWebAnimationResourceProvider] HEAD stat failed: ${msg}`);
+      Logger.error(`[ArkWebAnimationResourceProvider] HEAD stat failed: ${msg}`);
       const response: WebResourceResponse = this.createErrorResponse(
         500,
         'Internal Server Error',
@@ -570,7 +571,7 @@ export class ArkWebAnimationResourceProvider {
       response.setResponseData(file.fd);
       fdTransferred = true;
 
-      console.info(
+      Logger.debug(
         `[ArkWebAnimationResourceProvider] GET: resourceId=${publicResource.resourceId}, fd=${file.fd}, size=${publicResource.size}`
       );
 
@@ -581,7 +582,7 @@ export class ArkWebAnimationResourceProvider {
       };
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
-      console.error(`[ArkWebAnimationResourceProvider] GET failed: ${msg}`);
+      Logger.error(`[ArkWebAnimationResourceProvider] GET failed: ${msg}`);
 
       const errorResponse: WebResourceResponse = this.createErrorResponse(
         500,
@@ -699,7 +700,7 @@ export class ArkWebAnimationResourceProvider {
     this.disposed = true;
     this.state = AnimationResourceState.DISPOSED;
     if (this.currentResource !== null) {
-      console.info(
+      Logger.debug(
         `[ArkWebAnimationResourceProvider] dispose: resourceId=${this.currentResource.publicResource.resourceId}`
       );
     }

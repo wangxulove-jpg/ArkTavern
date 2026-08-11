@@ -1,3 +1,4 @@
+import { Logger } from '../utils/Logger';
 /**
  * ArkWebDialoguePerformanceLifecycleController — 对话演出生命周期控制器 (Phase 3F-3)
  *
@@ -232,7 +233,7 @@ export class ArkWebDialoguePerformanceLifecycleController {
         await this.runtime.stopPerformance();
       } catch (e) {
         // 停止失败不影响后续流程
-        console.warn('[DialogueLifecycle] stopPerformance threw: ' +
+        Logger.warn('[DialogueLifecycle] stopPerformance threw: ' +
           (e instanceof Error ? e.message : String(e)));
       }
       if (this.disposed || this.lifecycleGeneration !== myGeneration) {
@@ -356,12 +357,12 @@ export class ArkWebDialoguePerformanceLifecycleController {
       try {
         await this.runtime.stopPerformance();
       } catch (e) {
-        console.warn('[DialogueLifecycle] cancelCurrent stopPerformance threw: ' +
+        Logger.warn('[DialogueLifecycle] cancelCurrent stopPerformance threw: ' +
           (e instanceof Error ? e.message : String(e)));
       }
     }
     this.currentState = ArkWebDialogueLifecycleState.CANCELLED;
-    console.info('[DialogueLifecycle] cancelCurrent reason=' + reason);
+    Logger.debug('[DialogueLifecycle] cancelCurrent reason=' + reason);
   }
 
   /**

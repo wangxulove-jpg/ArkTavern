@@ -1,3 +1,4 @@
+import { Logger } from '../utils/Logger';
 /**
  * VrmViewerPage VRM 查看器页面(Phase 1D-2A: 缓存模型向 ArkWeb 暴露与传输协议)
  *
@@ -960,9 +961,9 @@ struct VrmViewerPage {
     // 之前在 onControllerAttached 中调用太晚,导致 webPageSnapshot 返回 status=false
     try {
       webview.WebviewController.enableWholeWebPageDrawing();
-      console.info('[VrmViewerPage] enableWholeWebPageDrawing called in aboutToAppear');
+      Logger.debug('[VrmViewerPage] enableWholeWebPageDrawing called in aboutToAppear');
     } catch (e) {
-      console.warn('[VrmViewerPage] enableWholeWebPageDrawing failed: ' +
+      Logger.warn('[VrmViewerPage] enableWholeWebPageDrawing failed: ' +
         (e instanceof Error ? e.message : String(e)));
     }
     // Phase 2B: 重新进入页面时重置 Camera Transition Debug 状态到 IDLE
@@ -978,7 +979,7 @@ struct VrmViewerPage {
       if (state === ArkWebViewerState.READY && this.pendingRestoredFile !== null) {
         const restoredFile: ImportedModelFile | null = this.pendingRestoredFile;
         this.pendingRestoredFile = null;
-        console.info('[VrmViewerPage] Viewer READY, processing pending restored file');
+        Logger.debug('[VrmViewerPage] Viewer READY, processing pending restored file');
         this.processRestoredFile(restoredFile);
       }
       // Phase 1D-2C-2E-1:Viewer 刚 READY 且已有 current ImportedModelFile 但 WebPrepared 未 READY
@@ -993,7 +994,7 @@ struct VrmViewerPage {
           !this.prepareInProgress &&
           !this.loadInProgress) {
         const currentResource: WebModelResource = this.preparedResource;
-        console.info('[VrmViewerPage] Viewer READY, retry prepare for current resource');
+        Logger.debug('[VrmViewerPage] Viewer READY, retry prepare for current resource');
         this.ensurePreparedModelResource(currentResource, false).then((ok: boolean) => {
           if (ok) {
             this.tryAutoProbeResource();
@@ -1047,15 +1048,15 @@ struct VrmViewerPage {
         if (ok) {
           this.assetLibraryState = 'READY';
           this.assetLibraryVersion = ASSET_LIBRARY_SCHEMA_VERSION;
-          console.info('[VrmViewerPage] AssetLibrary initialized');
+          Logger.debug('[VrmViewerPage] AssetLibrary initialized');
         } else {
           this.assetLibraryState = 'FAILED';
-          console.warn('[VrmViewerPage] AssetLibrary ensureInitialized failed');
+          Logger.warn('[VrmViewerPage] AssetLibrary ensureInitialized failed');
         }
       }).catch((e: Object) => {
         const msg: string = e instanceof Error ? e.message : String(e);
         this.assetLibraryState = 'FAILED';
-        console.warn(`[VrmViewerPage] AssetLibrary init exception: ${msg}`);
+        Logger.warn(`[VrmViewerPage] AssetLibrary init exception: ${msg}`);
       });
     }
     if (this.persistentModelStore === null && this.assetLibrary !== null) {
@@ -1176,7 +1177,7 @@ struct VrmViewerPage {
       );
       this.refreshAvatarBridgeState();
     } catch (e) {
-      console.warn('[VrmViewerPage] registerAvatarEndpoint failed: ' +
+      Logger.warn('[VrmViewerPage] registerAvatarEndpoint failed: ' +
         (e instanceof Error ? e.message : String(e)));
     }
 
@@ -1269,7 +1270,7 @@ struct VrmViewerPage {
       const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
       return obj['success'] === true;
     } catch (e) {
-      console.warn('[PerformanceRuntime] resetPoseInternal failed: ' +
+      Logger.warn('[PerformanceRuntime] resetPoseInternal failed: ' +
         (e instanceof Error ? e.message : String(e)));
       return false;
     }
@@ -1287,14 +1288,14 @@ struct VrmViewerPage {
     try {
       const poseJson: string = await this.persistentPoseStore.readPoseDataAsJson(poseId);
       if (poseJson.length === 0) {
-        console.warn(`[PerformanceRuntime] applyPoseByIdInternal: poseJson empty: ${poseId}`);
+        Logger.warn(`[PerformanceRuntime] applyPoseByIdInternal: poseJson empty: ${poseId}`);
         return false;
       }
       const resultJson: string = await this.arkWebController.applyPose(poseJson);
       const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
       return obj['success'] === true;
     } catch (e) {
-      console.warn('[PerformanceRuntime] applyPoseByIdInternal failed: ' +
+      Logger.warn('[PerformanceRuntime] applyPoseByIdInternal failed: ' +
         (e instanceof Error ? e.message : String(e)));
       return false;
     }
@@ -1396,15 +1397,15 @@ struct VrmViewerPage {
     //                正在进行的加载结果会因代次检查被忽略)
     // Phase 1D-2B-2:4. clearPreparedModelLoadResult(异步,不等待)
     this.arkWebController.clearPreparedModelLoadResult().then((_r: string) => {
-      console.info('[VrmViewerPage] clearPreparedModelLoadResult done on dispose');
+      Logger.debug('[VrmViewerPage] clearPreparedModelLoadResult done on dispose');
     }).catch((e: Object) => {
-      console.warn('[VrmViewerPage] clearPreparedModelLoadResult failed: ' + (e instanceof Error ? e.message : String(e)));
+      Logger.warn('[VrmViewerPage] clearPreparedModelLoadResult failed: ' + (e instanceof Error ? e.message : String(e)));
     });
     // Phase 1D-2B-1:5. clearModelResourceProbe(异步,不等待)
     this.arkWebController.clearModelResourceProbe().then((_r: string) => {
-      console.info('[VrmViewerPage] clearModelResourceProbe done on dispose');
+      Logger.debug('[VrmViewerPage] clearModelResourceProbe done on dispose');
     }).catch((e: Object) => {
-      console.warn('[VrmViewerPage] clearModelResourceProbe failed: ' + (e instanceof Error ? e.message : String(e)));
+      Logger.warn('[VrmViewerPage] clearModelResourceProbe failed: ' + (e instanceof Error ? e.message : String(e)));
     });
     // Phase 1D-2A:6. 再销毁资源 Provider(停止响应拦截请求)
     if (this.resourceProvider !== null) {
@@ -1529,7 +1530,7 @@ struct VrmViewerPage {
       try {
         ArkWebAvatarChatBridge.getInstance().unregisterAvatarEndpoint(this.avatarEndpointId);
       } catch (e) {
-        console.warn('[VrmViewerPage] unregisterAvatarEndpoint failed: ' +
+        Logger.warn('[VrmViewerPage] unregisterAvatarEndpoint failed: ' +
           (e instanceof Error ? e.message : String(e)));
       }
       this.avatarEndpointId = '';
@@ -1686,13 +1687,13 @@ struct VrmViewerPage {
       try {
         const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
         if (!obj['success']) {
-          console.warn('[VrmViewerPage] suppressCameraControls failed: ' + resultJson);
+          Logger.warn('[VrmViewerPage] suppressCameraControls failed: ' + resultJson);
         }
       } catch (e) {
         // 忽略解析错误
       }
     }).catch((e: Object) => {
-      console.warn('[VrmViewerPage] suppressCameraControls exception: ' + (e instanceof Error ? e.message : String(e)));
+      Logger.warn('[VrmViewerPage] suppressCameraControls exception: ' + (e instanceof Error ? e.message : String(e)));
     });
   }
 
@@ -1715,13 +1716,13 @@ struct VrmViewerPage {
       try {
         const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
         if (!obj['success']) {
-          console.warn('[VrmViewerPage] restoreCameraControls failed: ' + resultJson);
+          Logger.warn('[VrmViewerPage] restoreCameraControls failed: ' + resultJson);
         }
       } catch (e) {
         // 忽略解析错误
       }
     }).catch((e: Object) => {
-      console.warn('[VrmViewerPage] restoreCameraControls exception: ' + (e instanceof Error ? e.message : String(e)));
+      Logger.warn('[VrmViewerPage] restoreCameraControls exception: ' + (e instanceof Error ? e.message : String(e)));
     });
   }
 
@@ -1810,17 +1811,17 @@ struct VrmViewerPage {
   private async enterDemoMode(): Promise<void> {
     // 1. 条件校验
     if (this.presentationMode === PresentationMode.DEMO) {
-      console.info('[VrmViewerPage] enterDemoMode skipped: already DEMO');
+      Logger.debug('[VrmViewerPage] enterDemoMode skipped: already DEMO');
       return;
     }
     if (this.presentationTransitioning) {
-      console.info('[VrmViewerPage] enterDemoMode skipped: transition in progress');
+      Logger.debug('[VrmViewerPage] enterDemoMode skipped: transition in progress');
       return;
     }
     if (this.viewerState !== ArkWebViewerState.READY) {
       this.presentationWarning = ArkWebPresentationErrorCode.VIEWER_NOT_READY +
         ': viewer state is ' + this.viewerState;
-      console.warn('[VrmViewerPage] enterDemoMode rejected: viewer not READY');
+      Logger.warn('[VrmViewerPage] enterDemoMode rejected: viewer not READY');
       return;
     }
 
@@ -1855,13 +1856,13 @@ struct VrmViewerPage {
           this.presentationWarning =
             ArkWebPresentationErrorCode.CAMERA_CONTROLS_WARNING +
             ': setCameraControlsEnabled(true) failed';
-          console.warn('[VrmViewerPage] enterDemoMode camera controls warning: ' + resultJson);
+          Logger.warn('[VrmViewerPage] enterDemoMode camera controls warning: ' + resultJson);
         }
       } catch (e) {
         this.presentationWarning =
           ArkWebPresentationErrorCode.CAMERA_CONTROLS_WARNING +
           ': result parse failed';
-        console.warn('[VrmViewerPage] enterDemoMode camera controls parse warning');
+        Logger.warn('[VrmViewerPage] enterDemoMode camera controls parse warning');
       }
     }).catch((e: Object) => {
       if (gen !== this.presentationGeneration) {
@@ -1870,13 +1871,13 @@ struct VrmViewerPage {
       this.presentationWarning =
         ArkWebPresentationErrorCode.CAMERA_CONTROLS_WARNING +
         ': ' + (e instanceof Error ? e.message : String(e));
-      console.warn('[VrmViewerPage] enterDemoMode camera controls exception');
+      Logger.warn('[VrmViewerPage] enterDemoMode camera controls exception');
     });
 
     // 6. 切换到 DEMO
     this.presentationMode = PresentationMode.DEMO;
     this.presentationTransitioning = false;
-    console.info('[VrmViewerPage] enterDemoMode done (gen=' + gen + ')');
+    Logger.debug('[VrmViewerPage] enterDemoMode done (gen=' + gen + ')');
   }
 
   /**
@@ -1888,11 +1889,11 @@ struct VrmViewerPage {
   private async exitDemoMode(): Promise<void> {
     // 1. 条件校验
     if (this.presentationMode === PresentationMode.NORMAL) {
-      console.info('[VrmViewerPage] exitDemoMode skipped: already NORMAL');
+      Logger.debug('[VrmViewerPage] exitDemoMode skipped: already NORMAL');
       return;
     }
     if (this.presentationTransitioning) {
-      console.info('[VrmViewerPage] exitDemoMode skipped: transition in progress');
+      Logger.debug('[VrmViewerPage] exitDemoMode skipped: transition in progress');
       return;
     }
 
@@ -1925,7 +1926,7 @@ struct VrmViewerPage {
 
     // 7. 清除切换中标志
     this.presentationTransitioning = false;
-    console.info('[VrmViewerPage] exitDemoMode done (gen=' + gen + ')');
+    Logger.debug('[VrmViewerPage] exitDemoMode done (gen=' + gen + ')');
   }
 
   /**
@@ -1965,7 +1966,7 @@ struct VrmViewerPage {
       }
       this.activeTab = this.indexToViewerTab(this.selectedTabBeforeDemo);
 
-      console.info('[VrmViewerPage] onBackPress: exited DEMO mode');
+      Logger.debug('[VrmViewerPage] onBackPress: exited DEMO mode');
       return true; // 消费返回事件,不离开页面
     }
     // NORMAL 模式:保持原有返回行为(路由返回)
@@ -1997,15 +1998,15 @@ struct VrmViewerPage {
             this.showGrid = gridVisible;
             this.lightIntensity = Math.round(lightIntensity * 25.0);
             this.pendingLightIntensity = lightIntensity;
-            console.info('[VrmViewerPage] Initial scene settings synced: bg=' + bgColor +
+            Logger.debug('[VrmViewerPage] Initial scene settings synced: bg=' + bgColor +
               ' grid=' + gridVisible + ' light=' + lightIntensity);
           }
         }
       } catch (e) {
-        console.warn('[VrmViewerPage] syncInitialSceneSettings parse failed: ' + (e instanceof Error ? e.message : String(e)));
+        Logger.warn('[VrmViewerPage] syncInitialSceneSettings parse failed: ' + (e instanceof Error ? e.message : String(e)));
       }
     }).catch((e: Object) => {
-      console.warn('[VrmViewerPage] syncInitialSceneSettings exception: ' + (e instanceof Error ? e.message : String(e)));
+      Logger.warn('[VrmViewerPage] syncInitialSceneSettings exception: ' + (e instanceof Error ? e.message : String(e)));
     });
   }
 
@@ -2019,7 +2020,7 @@ struct VrmViewerPage {
     this.arkWebController.getSceneState().then((resultJson: string) => {
       this.parseDebugSceneState(resultJson);
     }).catch((e: Object) => {
-      console.warn('[VrmViewerPage] refreshDebugSceneState exception: ' + (e instanceof Error ? e.message : String(e)));
+      Logger.warn('[VrmViewerPage] refreshDebugSceneState exception: ' + (e instanceof Error ? e.message : String(e)));
     });
   }
 
@@ -2070,7 +2071,7 @@ struct VrmViewerPage {
         this.sceneLightIntensity = lightIntensity as number;
       }
     } catch (e) {
-      console.warn('[VrmViewerPage] parseDebugSceneState failed: ' + (e instanceof Error ? e.message : String(e)));
+      Logger.warn('[VrmViewerPage] parseDebugSceneState failed: ' + (e instanceof Error ? e.message : String(e)));
     }
   }
 
@@ -2086,13 +2087,13 @@ struct VrmViewerPage {
     this.arkWebController.getAnimationDebugState().then((resultJson: string) => {
       this.parseAnimationDebugState(resultJson);
     }).catch((e: Object) => {
-      console.warn('[VrmViewerPage] refreshAnimationDebugState exception: ' + (e instanceof Error ? e.message : String(e)));
+      Logger.warn('[VrmViewerPage] refreshAnimationDebugState exception: ' + (e instanceof Error ? e.message : String(e)));
     });
     // Phase 3A 依赖补齐: 同时查询依赖状态
     this.arkWebController.getAnimationDependencyState().then((resultJson: string) => {
       this.parseAnimationDependencyState(resultJson);
     }).catch((e: Object) => {
-      console.warn('[VrmViewerPage] getAnimationDependencyState exception: ' + (e instanceof Error ? e.message : String(e)));
+      Logger.warn('[VrmViewerPage] getAnimationDependencyState exception: ' + (e instanceof Error ? e.message : String(e)));
     });
   }
 
@@ -2164,7 +2165,7 @@ struct VrmViewerPage {
         }
       }
     }).catch((e: Object) => {
-      console.warn('[VrmViewerPage] refreshAvailableExpressions exception: ' +
+      Logger.warn('[VrmViewerPage] refreshAvailableExpressions exception: ' +
         (e instanceof Error ? e.message : String(e)));
       this.expressionErrorCode = 'EXPRESSION_LIST_QUERY_FAILED';
       this.expressionErrorMessage = e instanceof Error ? e.message : String(e);
@@ -2186,7 +2187,7 @@ struct VrmViewerPage {
       this.appliedExpressionName = payload.currentExpressionName;
       this.appliedExpressionWeight = payload.currentExpressionWeight;
     }).catch((e: Object) => {
-      console.warn('[VrmViewerPage] refreshExpressionState exception: ' +
+      Logger.warn('[VrmViewerPage] refreshExpressionState exception: ' +
         (e instanceof Error ? e.message : String(e)));
     });
   }
@@ -2234,7 +2235,7 @@ struct VrmViewerPage {
         weight: this.selectedExpressionWeight
       };
       const paramsJson: string = JSON.stringify(params);
-      console.info(`[ExpressionUI] onSetExpressionClick: name=${this.selectedExpressionName}, weight=${this.selectedExpressionWeight}`);
+      Logger.debug(`[ExpressionUI] onSetExpressionClick: name=${this.selectedExpressionName}, weight=${this.selectedExpressionWeight}`);
       const resultJson: string = await this.arkWebController.setExpression(paramsJson);
       const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
       if (obj['success'] === true) {
@@ -2289,7 +2290,7 @@ struct VrmViewerPage {
     this.expressionErrorCode = '';
     this.expressionErrorMessage = '';
     try {
-      console.info(`[ExpressionUI] onResetExpressionClick: clearing ${this.appliedExpressionName}`);
+      Logger.debug(`[ExpressionUI] onResetExpressionClick: clearing ${this.appliedExpressionName}`);
       const resultJson: string = await this.arkWebController.resetExpression();
       const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
       if (obj['success'] === true) {
@@ -2329,11 +2330,11 @@ struct VrmViewerPage {
    */
   private loadExpressionAliasMap(): void {
     if (this.assetLibrary === null) {
-      console.warn('[ExpressionAlias] assetLibrary not initialized');
+      Logger.warn('[ExpressionAlias] assetLibrary not initialized');
       return;
     }
     if (this.activeModelId.length === 0) {
-      console.warn('[ExpressionAlias] activeModelId empty, skip load');
+      Logger.warn('[ExpressionAlias] activeModelId empty, skip load');
       return;
     }
     const lib: ArkWebAvatarAssetLibrary = this.assetLibrary;
@@ -2353,13 +2354,13 @@ struct VrmViewerPage {
       this.expressionAliasMap = result;
       this.expressionAliasErrorCode = '';
       this.expressionAliasErrorMessage = '';
-      console.info(`[ExpressionAlias] loaded ${Object.keys(result).length} aliases for model=${modelId}`);
+      Logger.debug(`[ExpressionAlias] loaded ${Object.keys(result).length} aliases for model=${modelId}`);
     }).catch((e: Object) => {
       const msg: string = e instanceof Error ? e.message : String(e);
       this.expressionAliasMap = {};
       this.expressionAliasErrorCode = ExpressionAliasErrorCode.EXPRESSION_ALIAS_WRITE_FAILED;
       this.expressionAliasErrorMessage = `读取别名映射失败: ${msg}`;
-      console.warn('[ExpressionAlias] loadExpressionAliasMap failed: ' + msg);
+      Logger.warn('[ExpressionAlias] loadExpressionAliasMap failed: ' + msg);
     });
   }
 
@@ -2530,7 +2531,7 @@ struct VrmViewerPage {
         restorePolicy: this.temporaryExpressionRestorePolicy
       };
       const paramsJson: string = JSON.stringify(params);
-      console.info(`[TemporaryExpression] play: name=${name}, weight=${weight}, duration=${this.temporaryExpressionDurationMs}, policy=${this.temporaryExpressionRestorePolicy}`);
+      Logger.debug(`[TemporaryExpression] play: name=${name}, weight=${weight}, duration=${this.temporaryExpressionDurationMs}, policy=${this.temporaryExpressionRestorePolicy}`);
       const resultJson: string = await this.arkWebController.setTemporaryExpression(paramsJson);
       const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
       if (obj['success'] === true) {
@@ -2584,7 +2585,7 @@ struct VrmViewerPage {
     this.temporaryExpressionErrorCode = '';
     this.temporaryExpressionErrorMessage = '';
     try {
-      console.info('[TemporaryExpression] cancel');
+      Logger.debug('[TemporaryExpression] cancel');
       const resultJson: string = await this.arkWebController.cancelTemporaryExpression();
       const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
       if (obj['success'] === true) {
@@ -2627,7 +2628,7 @@ struct VrmViewerPage {
       this.temporaryExpressionTimerActive = state.temporaryExpiresAt > 0;
       this.temporaryExpressionGeneration = state.temporaryGeneration;
     }).catch((e: Object) => {
-      console.warn('[VrmViewerPage] refreshTemporaryExpressionState exception: ' +
+      Logger.warn('[VrmViewerPage] refreshTemporaryExpressionState exception: ' +
         (e instanceof Error ? e.message : String(e)));
     });
   }
@@ -2652,7 +2653,7 @@ struct VrmViewerPage {
       this.debugAnimationClipFactoryAvailable = depState['clipFactoryAvailable'] === true;
       this.debugAnimationRuntimeNetworkRequired = depState['runtimeNetworkRequired'] === true;
     } catch (e) {
-      console.warn('[VrmViewerPage] parseAnimationDependencyState parse failed: ' + (e instanceof Error ? e.message : String(e)));
+      Logger.warn('[VrmViewerPage] parseAnimationDependencyState parse failed: ' + (e instanceof Error ? e.message : String(e)));
     }
   }
 
@@ -2684,7 +2685,7 @@ struct VrmViewerPage {
       this.debugAnimationErrorCode = (debugState['errorCode'] as string) || '';
       this.debugAnimationErrorMessage = (debugState['errorMessage'] as string) || '';
     } catch (e) {
-      console.warn('[VrmViewerPage] parseAnimationDebugState failed: ' + (e instanceof Error ? e.message : String(e)));
+      Logger.warn('[VrmViewerPage] parseAnimationDebugState failed: ' + (e instanceof Error ? e.message : String(e)));
     }
   }
 
@@ -2817,10 +2818,10 @@ struct VrmViewerPage {
       this.animationAssets = animations;
       // 同步默认待机标记 (仅元数据, 不触发加载)
       this.defaultIdleActionId = await this.assetLibrary.getDefaultIdleActionId();
-      console.info(`[VrmViewerPage] loaded ${animations.length} animation assets from library`);
+      Logger.debug(`[VrmViewerPage] loaded ${animations.length} animation assets from library`);
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
-      console.warn(`[VrmViewerPage] loadAnimationAssetsFromLibrary failed: ${msg}`);
+      Logger.warn(`[VrmViewerPage] loadAnimationAssetsFromLibrary failed: ${msg}`);
     }
   }
 
@@ -2845,10 +2846,10 @@ struct VrmViewerPage {
       // Phase 3D-3: 同步默认姿势标记 (仅元数据, 不触发自动应用, 由模型 READY 回调统一编排)
       this.defaultPoseId = await this.assetLibrary.getDefaultPoseId();
       this.refreshDefaultPoseDisplayName();
-      console.info(`[VrmViewerPage] loaded ${poses.length} pose assets from library, defaultPoseId=${this.defaultPoseId}`);
+      Logger.debug(`[VrmViewerPage] loaded ${poses.length} pose assets from library, defaultPoseId=${this.defaultPoseId}`);
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
-      console.warn(`[VrmViewerPage] loadPoseAssetsFromLibrary failed: ${msg}`);
+      Logger.warn(`[VrmViewerPage] loadPoseAssetsFromLibrary failed: ${msg}`);
     }
   }
 
@@ -3151,44 +3152,44 @@ struct VrmViewerPage {
   private async scheduleDefaultPoseRestore(): Promise<void> {
     // 1. 页面未销毁
     if (this.defaultPoseRestoreDisposed) {
-      console.info('[VrmViewerPage] scheduleDefaultPoseRestore: disposed, skip');
+      Logger.debug('[VrmViewerPage] scheduleDefaultPoseRestore: disposed, skip');
       return;
     }
     // 2. Viewer READY
     if (this.viewerState !== ArkWebViewerState.READY) {
-      console.info(`[VrmViewerPage] scheduleDefaultPoseRestore: viewer not ready (${this.viewerState}), skip`);
+      Logger.debug(`[VrmViewerPage] scheduleDefaultPoseRestore: viewer not ready (${this.viewerState}), skip`);
       return;
     }
     // 3. ModelState READY
     if (this.debugModelState !== 'READY') {
-      console.info(`[VrmViewerPage] scheduleDefaultPoseRestore: model not ready (${this.debugModelState}), skip`);
+      Logger.debug(`[VrmViewerPage] scheduleDefaultPoseRestore: model not ready (${this.debugModelState}), skip`);
       return;
     }
     // 4. active model 已完成加载 (loadState === 'READY')
     if (this.loadState !== 'READY') {
-      console.info(`[VrmViewerPage] scheduleDefaultPoseRestore: loadState=${this.loadState}, skip`);
+      Logger.debug(`[VrmViewerPage] scheduleDefaultPoseRestore: loadState=${this.loadState}, skip`);
       return;
     }
     // 5. AssetLibrary READY
     if (this.assetLibrary === null || this.assetLibrary.isDisposed()) {
-      console.info('[VrmViewerPage] scheduleDefaultPoseRestore: assetLibrary null, skip');
+      Logger.debug('[VrmViewerPage] scheduleDefaultPoseRestore: assetLibrary null, skip');
       return;
     }
     // 6. 当前没有姿势导入或姿势应用任务
     if (this.poseImporting || this.poseApplying) {
-      console.info(`[VrmViewerPage] scheduleDefaultPoseRestore: poseImporting=${this.poseImporting}, poseApplying=${this.poseApplying}, skip`);
+      Logger.debug(`[VrmViewerPage] scheduleDefaultPoseRestore: poseImporting=${this.poseImporting}, poseApplying=${this.poseApplying}, skip`);
       return;
     }
     // 7. 并发保护
     if (this.defaultPoseRestoreInProgress) {
-      console.info('[VrmViewerPage] scheduleDefaultPoseRestore: in progress, skip');
+      Logger.debug('[VrmViewerPage] scheduleDefaultPoseRestore: in progress, skip');
       return;
     }
     // 8. 同一模型 generation 最多自动应用一次
     const currentModelGen: number = this.modelRestoreGeneration;
     if (this.defaultPoseRestoreModelGeneration === currentModelGen
         && this.lastRestoredDefaultPoseId.length > 0) {
-      console.info(`[VrmViewerPage] scheduleDefaultPoseRestore: already restored for modelGen=${currentModelGen}, skip`);
+      Logger.debug(`[VrmViewerPage] scheduleDefaultPoseRestore: already restored for modelGen=${currentModelGen}, skip`);
       return;
     }
 
@@ -3209,7 +3210,7 @@ struct VrmViewerPage {
       // defaultPoseId 为空: 进入 EMPTY 状态 (非错误)
       if (poseId.length === 0) {
         this.defaultPoseRestoreState = DefaultPoseRestoreState.EMPTY;
-        console.info('[VrmViewerPage] scheduleDefaultPoseRestore: defaultPoseId empty, EMPTY state');
+        Logger.debug('[VrmViewerPage] scheduleDefaultPoseRestore: defaultPoseId empty, EMPTY state');
         return;
       }
       // 同步 @State (确保 UI 显示与持久数据一致)
@@ -3280,7 +3281,7 @@ struct VrmViewerPage {
       this.defaultPoseRestoreState = DefaultPoseRestoreState.READY;
       this.defaultPoseRestoreModelGeneration = currentModelGen;
       this.lastRestoredDefaultPoseId = poseId;
-      console.info(`[VrmViewerPage] scheduleDefaultPoseRestore ok: poseId=${poseId}, modelGen=${currentModelGen}`);
+      Logger.debug(`[VrmViewerPage] scheduleDefaultPoseRestore ok: poseId=${poseId}, modelGen=${currentModelGen}`);
       // 非阻塞提示 (只显示一次)
       promptAction.showToast({
         message: `已自动应用默认姿势: ${this.appliedPoseDisplayName}`
@@ -3307,7 +3308,7 @@ struct VrmViewerPage {
     this.defaultPoseRestoreState = DefaultPoseRestoreState.FAILED;
     this.defaultPoseRestoreErrorCode = code;
     this.defaultPoseRestoreErrorMessage = message;
-    console.warn(`[VrmViewerPage] defaultPoseRestore failed: ${code} ${message}`);
+    Logger.warn(`[VrmViewerPage] defaultPoseRestore failed: ${code} ${message}`);
     // 非阻塞提示 (只显示一次)
     promptAction.showToast({
       message: `默认姿势恢复失败: ${code}`
@@ -3429,7 +3430,7 @@ struct VrmViewerPage {
     this.selectedActionId = actionId;
     this.animationLibraryErrorCode = '';
     this.animationLibraryErrorMessage = '';
-    console.info(`[VrmViewerPage] loadAnimationByActionId ok: ${actionId}`);
+    Logger.debug(`[VrmViewerPage] loadAnimationByActionId ok: ${actionId}`);
     return true;
   }
 
@@ -3454,7 +3455,7 @@ struct VrmViewerPage {
         await this.arkWebController.stopAnimation('');
         await this.arkWebController.resetPose();
       } catch (e) {
-        console.warn('[VrmViewerPage] stopAndReset on same action click failed: ' +
+        Logger.warn('[VrmViewerPage] stopAndReset on same action click failed: ' +
           (e instanceof Error ? e.message : String(e)));
       }
       this.selectedActionId = '';
@@ -3670,7 +3671,7 @@ struct VrmViewerPage {
     try {
       return JSON.parse(resultJson) as Record<string, Object>;
     } catch (e) {
-      console.warn('[VrmViewerPage] parseAnimationLoadResponse failed: ' +
+      Logger.warn('[VrmViewerPage] parseAnimationLoadResponse failed: ' +
         (e instanceof Error ? e.message : String(e)));
       return null;
     }
@@ -3689,7 +3690,7 @@ struct VrmViewerPage {
       this.animationLoadPollCount++;
       if (this.animationLoadPollCount > this.ANIMATION_LOAD_POLL_MAX_COUNT) {
         // 超时 (30s)
-        console.warn('[VrmViewerPage] animation load poll timeout');
+        Logger.warn('[VrmViewerPage] animation load poll timeout');
         this.stopAnimationLoadPolling();
         this.animationActionError = '动画加载超时 (30s)';
         return;
@@ -3928,7 +3929,7 @@ struct VrmViewerPage {
         }
       }
     }).catch((e: Object) => {
-      console.warn('[VrmViewerPage] refreshCameraDebugState exception: ' + (e instanceof Error ? e.message : String(e)));
+      Logger.warn('[VrmViewerPage] refreshCameraDebugState exception: ' + (e instanceof Error ? e.message : String(e)));
     });
   }
 
@@ -3952,13 +3953,13 @@ struct VrmViewerPage {
           const actualColor = (obj['color'] as string) || color;
           this.backgroundOption = actualColor;
           this.sceneBackgroundColor = actualColor;
-          console.info('[VrmViewerPage] Background color set to ' + actualColor);
+          Logger.debug('[VrmViewerPage] Background color set to ' + actualColor);
         } else {
           // 失败时恢复之前选中颜色
           this.backgroundOption = previousColor;
           const errorObj = obj['error'] as Record<string, Object>;
           const code = errorObj ? (errorObj['code'] as string) : 'UNKNOWN';
-          console.warn('[VrmViewerPage] setSceneBackgroundColor failed: ' + code);
+          Logger.warn('[VrmViewerPage] setSceneBackgroundColor failed: ' + code);
           promptAction.showToast({
             message: `背景颜色设置失败: ${code}`,
             duration: 2000
@@ -3966,11 +3967,11 @@ struct VrmViewerPage {
         }
       } catch (e) {
         this.backgroundOption = previousColor;
-        console.warn('[VrmViewerPage] setSceneBackgroundColor parse failed');
+        Logger.warn('[VrmViewerPage] setSceneBackgroundColor parse failed');
       }
     }).catch((e: Object) => {
       this.backgroundOption = previousColor;
-      console.warn('[VrmViewerPage] setSceneBackgroundColor exception: ' + (e instanceof Error ? e.message : String(e)));
+      Logger.warn('[VrmViewerPage] setSceneBackgroundColor exception: ' + (e instanceof Error ? e.message : String(e)));
     });
   }
 
@@ -3987,13 +3988,13 @@ struct VrmViewerPage {
           const actualVisible = obj['visible'] === true;
           this.showGrid = actualVisible;
           this.sceneGridVisible = actualVisible;
-          console.info('[VrmViewerPage] Grid visible set to ' + actualVisible);
+          Logger.debug('[VrmViewerPage] Grid visible set to ' + actualVisible);
         } else {
           // 失败时恢复 Switch
           this.showGrid = !visible;
           const errorObj = obj['error'] as Record<string, Object>;
           const code = errorObj ? (errorObj['code'] as string) : 'UNKNOWN';
-          console.warn('[VrmViewerPage] setSceneGridVisible failed: ' + code);
+          Logger.warn('[VrmViewerPage] setSceneGridVisible failed: ' + code);
           promptAction.showToast({
             message: `网格设置失败: ${code}`,
             duration: 2000
@@ -4001,11 +4002,11 @@ struct VrmViewerPage {
         }
       } catch (e) {
         this.showGrid = !visible;
-        console.warn('[VrmViewerPage] setSceneGridVisible parse failed');
+        Logger.warn('[VrmViewerPage] setSceneGridVisible parse failed');
       }
     }).catch((e: Object) => {
       this.showGrid = !visible;
-      console.warn('[VrmViewerPage] setSceneGridVisible exception: ' + (e instanceof Error ? e.message : String(e)));
+      Logger.warn('[VrmViewerPage] setSceneGridVisible exception: ' + (e instanceof Error ? e.message : String(e)));
     });
   }
 
@@ -4082,13 +4083,13 @@ struct VrmViewerPage {
         } else {
           const errorObj = obj['error'] as Record<string, Object>;
           const code = errorObj ? (errorObj['code'] as string) : 'UNKNOWN';
-          console.warn('[VrmViewerPage] setSceneLightIntensity failed: ' + code);
+          Logger.warn('[VrmViewerPage] setSceneLightIntensity failed: ' + code);
         }
       } catch (e) {
-        console.warn('[VrmViewerPage] setSceneLightIntensity parse failed');
+        Logger.warn('[VrmViewerPage] setSceneLightIntensity parse failed');
       }
     }).catch((e: Object) => {
-      console.warn('[VrmViewerPage] setSceneLightIntensity exception: ' + (e instanceof Error ? e.message : String(e)));
+      Logger.warn('[VrmViewerPage] setSceneLightIntensity exception: ' + (e instanceof Error ? e.message : String(e)));
     });
   }
 
@@ -4109,12 +4110,12 @@ struct VrmViewerPage {
    */
   private startEnvironmentInitialization(): void {
     if (this.environmentPollInProgress) {
-      console.info('[VrmViewerPage] Environment initialization already in progress, skip');
+      Logger.debug('[VrmViewerPage] Environment initialization already in progress, skip');
       return;
     }
     this.environmentPollInProgress = true;
     this.environmentState = 'INITIALIZING';
-    console.info('[VrmViewerPage] Starting environment initialization');
+    Logger.debug('[VrmViewerPage] Starting environment initialization');
 
     this.arkWebController.initializeEnvironment().then((resultJson: string) => {
       // 解析立即返回结果(可能直接 READY 或 INITIALIZING)
@@ -4143,19 +4144,19 @@ struct VrmViewerPage {
           }
         }
       } catch (e) {
-        console.warn('[VrmViewerPage] initializeEnvironment parse failed: ' + (e instanceof Error ? e.message : String(e)));
+        Logger.warn('[VrmViewerPage] initializeEnvironment parse failed: ' + (e instanceof Error ? e.message : String(e)));
       }
 
       if (immediateReady) {
         this.environmentPollInProgress = false;
-        console.info('[VrmViewerPage] Environment initialized immediately (READY)');
+        Logger.debug('[VrmViewerPage] Environment initialized immediately (READY)');
         this.refreshEnvironmentSettings();
         return;
       }
       if (immediateFailed) {
         this.environmentPollInProgress = false;
         this.environmentState = 'FAILED';
-        console.warn('[VrmViewerPage] Environment initialization failed immediately');
+        Logger.warn('[VrmViewerPage] Environment initialization failed immediately');
         return;
       }
       // INITIALIZING:启动轮询
@@ -4165,7 +4166,7 @@ struct VrmViewerPage {
       this.environmentState = 'FAILED';
       this.environmentErrorCode = 'ENVIRONMENT_INIT_EXCEPTION';
       this.environmentErrorMessage = e instanceof Error ? e.message : String(e);
-      console.warn('[VrmViewerPage] initializeEnvironment exception: ' + this.environmentErrorMessage);
+      Logger.warn('[VrmViewerPage] initializeEnvironment exception: ' + this.environmentErrorMessage);
     });
   }
 
@@ -4210,7 +4211,7 @@ struct VrmViewerPage {
       this.environmentState = 'FAILED';
       this.environmentErrorCode = 'ENVIRONMENT_INIT_TIMEOUT';
       this.environmentErrorMessage = 'Environment initialization timed out after 5000ms';
-      console.warn('[VrmViewerPage] Environment polling timed out');
+      Logger.warn('[VrmViewerPage] Environment polling timed out');
       return;
     }
 
@@ -4224,7 +4225,7 @@ struct VrmViewerPage {
             const currentState: string = (settingsObj['state'] as string) || 'INITIALIZING';
             if (currentState === 'READY' || currentState === 'FAILED' || currentState === 'DISPOSED') {
               this.environmentPollInProgress = false;
-              console.info('[VrmViewerPage] Environment polling stopped, state=' + currentState);
+              Logger.debug('[VrmViewerPage] Environment polling stopped, state=' + currentState);
               return;
             }
           }
@@ -4290,10 +4291,10 @@ struct VrmViewerPage {
           }
         }
       } catch (e) {
-        console.warn('[VrmViewerPage] refreshEnvironmentSettings parse failed');
+        Logger.warn('[VrmViewerPage] refreshEnvironmentSettings parse failed');
       }
     }).catch((e: Object) => {
-      console.warn('[VrmViewerPage] refreshEnvironmentSettings exception: ' + (e instanceof Error ? e.message : String(e)));
+      Logger.warn('[VrmViewerPage] refreshEnvironmentSettings exception: ' + (e instanceof Error ? e.message : String(e)));
     });
   }
 
@@ -4321,14 +4322,14 @@ struct VrmViewerPage {
           if (settingsObj) {
             this.applyEnvironmentSettings(settingsObj);
           }
-          console.info('[VrmViewerPage] Environment enabled set to ' + actualEnabled);
+          Logger.debug('[VrmViewerPage] Environment enabled set to ' + actualEnabled);
         } else {
           // 失败时恢复 Switch
           this.environmentEnabled = previousEnabled;
           const errorObj = obj['error'] as Record<string, Object>;
           const code = errorObj ? (errorObj['code'] as string) : 'UNKNOWN';
           const message = errorObj ? (errorObj['message'] as string) : '';
-          console.warn('[VrmViewerPage] setEnvironmentEnabled failed: ' + code);
+          Logger.warn('[VrmViewerPage] setEnvironmentEnabled failed: ' + code);
           promptAction.showToast({
             message: `环境光照设置失败: ${code}${message.length > 0 ? ' - ' + message : ''}`,
             duration: 2000
@@ -4336,11 +4337,11 @@ struct VrmViewerPage {
         }
       } catch (e) {
         this.environmentEnabled = previousEnabled;
-        console.warn('[VrmViewerPage] setEnvironmentEnabled parse failed');
+        Logger.warn('[VrmViewerPage] setEnvironmentEnabled parse failed');
       }
     }).catch((e: Object) => {
       this.environmentEnabled = previousEnabled;
-      console.warn('[VrmViewerPage] setEnvironmentEnabled exception: ' + (e instanceof Error ? e.message : String(e)));
+      Logger.warn('[VrmViewerPage] setEnvironmentEnabled exception: ' + (e instanceof Error ? e.message : String(e)));
     });
   }
 
@@ -4365,14 +4366,14 @@ struct VrmViewerPage {
           if (settingsObj) {
             this.applyEnvironmentSettings(settingsObj);
           }
-          console.info('[VrmViewerPage] Skybox visible set to ' + actualVisible);
+          Logger.debug('[VrmViewerPage] Skybox visible set to ' + actualVisible);
         } else {
           // 失败时恢复 Switch
           this.skyboxVisible = previousVisible;
           const errorObj = obj['error'] as Record<string, Object>;
           const code = errorObj ? (errorObj['code'] as string) : 'UNKNOWN';
           const message = errorObj ? (errorObj['message'] as string) : '';
-          console.warn('[VrmViewerPage] setSkyboxVisible failed: ' + code);
+          Logger.warn('[VrmViewerPage] setSkyboxVisible failed: ' + code);
           promptAction.showToast({
             message: `天空盒设置失败: ${code}${message.length > 0 ? ' - ' + message : ''}`,
             duration: 2000
@@ -4380,11 +4381,11 @@ struct VrmViewerPage {
         }
       } catch (e) {
         this.skyboxVisible = previousVisible;
-        console.warn('[VrmViewerPage] setSkyboxVisible parse failed');
+        Logger.warn('[VrmViewerPage] setSkyboxVisible parse failed');
       }
     }).catch((e: Object) => {
       this.skyboxVisible = previousVisible;
-      console.warn('[VrmViewerPage] setSkyboxVisible exception: ' + (e instanceof Error ? e.message : String(e)));
+      Logger.warn('[VrmViewerPage] setSkyboxVisible exception: ' + (e instanceof Error ? e.message : String(e)));
     });
   }
 
@@ -4460,13 +4461,13 @@ struct VrmViewerPage {
         } else {
           const errorObj = obj['error'] as Record<string, Object>;
           const code = errorObj ? (errorObj['code'] as string) : 'UNKNOWN';
-          console.warn('[VrmViewerPage] setEnvironmentIntensity failed: ' + code);
+          Logger.warn('[VrmViewerPage] setEnvironmentIntensity failed: ' + code);
         }
       } catch (e) {
-        console.warn('[VrmViewerPage] setEnvironmentIntensity parse failed');
+        Logger.warn('[VrmViewerPage] setEnvironmentIntensity parse failed');
       }
     }).catch((e: Object) => {
-      console.warn('[VrmViewerPage] setEnvironmentIntensity exception: ' + (e instanceof Error ? e.message : String(e)));
+      Logger.warn('[VrmViewerPage] setEnvironmentIntensity exception: ' + (e instanceof Error ? e.message : String(e)));
     });
   }
 
@@ -4633,7 +4634,7 @@ struct VrmViewerPage {
     // 超时检查
     const elapsedMs: number = Date.now() - this.cameraTransitionPollStartedAt;
     if (elapsedMs >= ARKWEB_CAMERA_TRANSITION_POLL_TIMEOUT_MS) {
-      console.warn('[VrmViewerPage] camera transition poll timeout, stopping');
+      Logger.warn('[VrmViewerPage] camera transition poll timeout, stopping');
       this.stopCameraTransitionPolling();
       this.resetButtonDisabled = false;
       return;
@@ -4881,7 +4882,7 @@ struct VrmViewerPage {
   private async persistAndRegisterImportedModel(file: ImportedModelFile): Promise<void> {
     if (this.persistentModelStore === null || this.resourceProvider === null || this.assetLibrary === null) {
       // Phase 3B 未初始化,回退到 Phase 1D-2A 的 cacheDir 路径
-      console.warn('[VrmViewerPage] Phase 3B store not ready, fallback to registerImportedResource');
+      Logger.warn('[VrmViewerPage] Phase 3B store not ready, fallback to registerImportedResource');
       await this.registerImportedResource(file);
       return;
     }
@@ -4911,7 +4912,7 @@ struct VrmViewerPage {
     this.modelRestoreErrorMessage = '';
     // Phase 3D-3: 新模型导入 → generation++ 允许对新模型重新应用一次默认姿势
     this.modelRestoreGeneration++;
-    console.info(`[VrmViewerPage] model persisted: id=${asset.modelId} size=${asset.byteLength}`);
+    Logger.debug(`[VrmViewerPage] model persisted: id=${asset.modelId} size=${asset.byteLength}`);
 
     // 2. 注册到 Provider (使用 filesDir 绝对路径)
     const absolutePath: string = this.persistentModelStore.resolveAbsolutePath(asset.relativePath);
@@ -4930,7 +4931,7 @@ struct VrmViewerPage {
       this.preparedResource = resource;
       this.resourceState = this.resourceProvider.getState();
       this.resourceLastError = '';
-      console.info(`[VrmViewerPage] persistent resource ready: url=${resource.resourceUrl}`);
+      Logger.debug(`[VrmViewerPage] persistent resource ready: url=${resource.resourceUrl}`);
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
       this.preparedResource = null;
@@ -4942,12 +4943,12 @@ struct VrmViewerPage {
 
     // 3. ensurePreparedModelResource (Viewer 未 READY 时静默失败,等待 READY 后重试)
     if (this.viewerState !== ArkWebViewerState.READY) {
-      console.info('[VrmViewerPage] Viewer not ready, prepare will retry on READY');
+      Logger.debug('[VrmViewerPage] Viewer not ready, prepare will retry on READY');
       return;
     }
     const prepared: boolean = await this.ensurePreparedModelResource(resource, false);
     if (!prepared) {
-      console.warn(`[VrmViewerPage] import ensurePreparedModelResource failed: ${this.webPreparedErrorCode}`);
+      Logger.warn(`[VrmViewerPage] import ensurePreparedModelResource failed: ${this.webPreparedErrorCode}`);
       return;
     }
 
@@ -4955,12 +4956,12 @@ struct VrmViewerPage {
     this.tryAutoProbeResource();
     const probeOk: boolean = await this.waitForProbeVerified(4500);
     if (!probeOk) {
-      console.warn(`[VrmViewerPage] import probe not verified: ${this.probeErrorCode}`);
+      Logger.warn(`[VrmViewerPage] import probe not verified: ${this.probeErrorCode}`);
       return;
     }
     const loadOk: boolean = await this.autoLoadCurrentModel();
     if (!loadOk) {
-      console.warn(`[VrmViewerPage] import auto load failed: ${this.loadErrorCode}`);
+      Logger.warn(`[VrmViewerPage] import auto load failed: ${this.loadErrorCode}`);
       promptAction.showToast({ message: '模型加载失败,可点击"重新加载"重试' });
     }
   }
@@ -4997,13 +4998,13 @@ struct VrmViewerPage {
       this.preparedResource = resource;
       this.resourceState = this.resourceProvider.getState();
       this.resourceLastError = '';
-      console.info(`[VrmViewerPage] resource ready: url=${resource.resourceUrl}`);
+      Logger.debug(`[VrmViewerPage] resource ready: url=${resource.resourceUrl}`);
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
       this.preparedResource = null;
       this.resourceState = this.resourceProvider.getState();
       this.resourceLastError = msg;
-      console.error(`[VrmViewerPage] registerResource failed: ${msg}`);
+      Logger.error(`[VrmViewerPage] registerResource failed: ${msg}`);
       return;
     }
 
@@ -5011,7 +5012,7 @@ struct VrmViewerPage {
     // 失败时 webPreparedState = FAILED,不启动 probe,保留缓存和 Native Resource
     const prepared: boolean = await this.ensurePreparedModelResource(resource, false);
     if (!prepared) {
-      console.warn(`[VrmViewerPage] import ensurePreparedModelResource failed: ${this.webPreparedErrorCode}`);
+      Logger.warn(`[VrmViewerPage] import ensurePreparedModelResource failed: ${this.webPreparedErrorCode}`);
       return;
     }
     // Phase 1D-2C-1:资源准备完成后尝试自动探测(满足条件时执行一次)
@@ -5063,7 +5064,7 @@ struct VrmViewerPage {
       this.webPreparedState = WebPreparedResourceState.FAILED;
       this.webPreparedErrorCode = WebPreparedResourceErrorCode.VIEWER_NOT_READY;
       this.webPreparedErrorMessage = 'Viewer 未就绪';
-      console.warn(`[VrmViewerPage] ensurePreparedModelResource rejected: viewerState=${this.viewerState}`);
+      Logger.warn(`[VrmViewerPage] ensurePreparedModelResource rejected: viewerState=${this.viewerState}`);
       return false;
     }
     // 2. 检查 resourceProvider state === READY
@@ -5071,7 +5072,7 @@ struct VrmViewerPage {
       this.webPreparedState = WebPreparedResourceState.FAILED;
       this.webPreparedErrorCode = WebPreparedResourceErrorCode.NATIVE_RESOURCE_NOT_READY;
       this.webPreparedErrorMessage = 'Native 资源未就绪';
-      console.warn(`[VrmViewerPage] ensurePreparedModelResource rejected: resourceState=${this.resourceState}`);
+      Logger.warn(`[VrmViewerPage] ensurePreparedModelResource rejected: resourceState=${this.resourceState}`);
       return false;
     }
     // 3. 检查 resource 非 null
@@ -5079,7 +5080,7 @@ struct VrmViewerPage {
       this.webPreparedState = WebPreparedResourceState.FAILED;
       this.webPreparedErrorCode = WebPreparedResourceErrorCode.RESOURCE_NULL;
       this.webPreparedErrorMessage = '资源元数据为空';
-      console.warn('[VrmViewerPage] ensurePreparedModelResource rejected: resource null');
+      Logger.warn('[VrmViewerPage] ensurePreparedModelResource rejected: resource null');
       return false;
     }
     // 4. 检查没有用户模型加载操作
@@ -5087,7 +5088,7 @@ struct VrmViewerPage {
       this.webPreparedState = WebPreparedResourceState.FAILED;
       this.webPreparedErrorCode = WebPreparedResourceErrorCode.MODEL_LOAD_IN_PROGRESS;
       this.webPreparedErrorMessage = '用户模型加载中';
-      console.warn('[VrmViewerPage] ensurePreparedModelResource rejected: loadInProgress');
+      Logger.warn('[VrmViewerPage] ensurePreparedModelResource rejected: loadInProgress');
       return false;
     }
     // 检查 prepare 进行中(allowRetry 时跳过,手动验证按钮可重试)
@@ -5095,7 +5096,7 @@ struct VrmViewerPage {
       this.webPreparedState = WebPreparedResourceState.FAILED;
       this.webPreparedErrorCode = WebPreparedResourceErrorCode.RESOURCE_PREPARE_IN_PROGRESS;
       this.webPreparedErrorMessage = '资源准备进行中';
-      console.warn('[VrmViewerPage] ensurePreparedModelResource rejected: prepareInProgress');
+      Logger.warn('[VrmViewerPage] ensurePreparedModelResource rejected: prepareInProgress');
       return false;
     }
 
@@ -5133,7 +5134,7 @@ struct VrmViewerPage {
         this.webPreparedState = WebPreparedResourceState.FAILED;
         this.webPreparedErrorCode = WebPreparedResourceErrorCode.RESOURCE_PREPARE_RESULT_INVALID;
         this.webPreparedErrorMessage = `prepareModelResource 返回非 JSON: ${prepareResult}`;
-        console.error(`[VrmViewerPage] prepareModelResource result invalid: ${prepareResult}`);
+        Logger.error(`[VrmViewerPage] prepareModelResource result invalid: ${prepareResult}`);
         return false;
       }
 
@@ -5149,7 +5150,7 @@ struct VrmViewerPage {
         } else {
           this.webPreparedErrorMessage = `keeper 拒绝: ${prepareResult}`;
         }
-        console.warn(`[VrmViewerPage] prepareModelResource rejected: ${this.webPreparedErrorMessage}`);
+        Logger.warn(`[VrmViewerPage] prepareModelResource rejected: ${this.webPreparedErrorMessage}`);
         return false;
       }
 
@@ -5159,7 +5160,7 @@ struct VrmViewerPage {
         this.webPreparedState = WebPreparedResourceState.FAILED;
         this.webPreparedErrorCode = WebPreparedResourceErrorCode.RESOURCE_PREPARE_RESULT_INVALID;
         this.webPreparedErrorMessage = `state 非 RESOURCE_READY: ${returnedState}`;
-        console.warn(`[VrmViewerPage] prepareModelResource state invalid: ${returnedState}`);
+        Logger.warn(`[VrmViewerPage] prepareModelResource state invalid: ${returnedState}`);
         return false;
       }
 
@@ -5174,7 +5175,7 @@ struct VrmViewerPage {
         this.webPreparedState = WebPreparedResourceState.FAILED;
         this.webPreparedErrorCode = WebPreparedResourceErrorCode.RESOURCE_PREPARE_READBACK_INVALID;
         this.webPreparedErrorMessage = `getPreparedModelResource 返回非 JSON: ${getResult}`;
-        console.error(`[VrmViewerPage] getPreparedModelResource result invalid: ${getResult}`);
+        Logger.error(`[VrmViewerPage] getPreparedModelResource result invalid: ${getResult}`);
         return false;
       }
 
@@ -5182,7 +5183,7 @@ struct VrmViewerPage {
         this.webPreparedState = WebPreparedResourceState.FAILED;
         this.webPreparedErrorCode = WebPreparedResourceErrorCode.RESOURCE_PREPARE_READBACK_INVALID;
         this.webPreparedErrorMessage = `getPreparedModelResource success=false: ${getResult}`;
-        console.warn(`[VrmViewerPage] getPreparedModelResource success=false: ${getResult}`);
+        Logger.warn(`[VrmViewerPage] getPreparedModelResource success=false: ${getResult}`);
         return false;
       }
 
@@ -5192,7 +5193,7 @@ struct VrmViewerPage {
         this.webPreparedState = WebPreparedResourceState.FAILED;
         this.webPreparedErrorCode = WebPreparedResourceErrorCode.RESOURCE_PREPARE_READBACK_EMPTY;
         this.webPreparedErrorMessage = '回读资源为 null(keeper 未保存)';
-        console.warn('[VrmViewerPage] getPreparedModelResource readback resource null');
+        Logger.warn('[VrmViewerPage] getPreparedModelResource readback resource null');
         return false;
       }
 
@@ -5203,7 +5204,7 @@ struct VrmViewerPage {
         this.webPreparedState = WebPreparedResourceState.FAILED;
         this.webPreparedErrorCode = WebPreparedResourceErrorCode.RESOURCE_PREPARE_READBACK_MISMATCH;
         this.webPreparedErrorMessage = `resourceUrl 非受控 URL: ${resource.resourceUrl}`;
-        console.warn(`[VrmViewerPage] resourceUrl not controlled: ${resource.resourceUrl}`);
+        Logger.warn(`[VrmViewerPage] resourceUrl not controlled: ${resource.resourceUrl}`);
         return false;
       }
       const opaqueId: string | null = extractOpaqueIdFromUrl(resource.resourceUrl);
@@ -5211,7 +5212,7 @@ struct VrmViewerPage {
         this.webPreparedState = WebPreparedResourceState.FAILED;
         this.webPreparedErrorCode = WebPreparedResourceErrorCode.RESOURCE_PREPARE_READBACK_MISMATCH;
         this.webPreparedErrorMessage = `opaque ID 为空: ${resource.resourceUrl}`;
-        console.warn(`[VrmViewerPage] opaque id empty: ${resource.resourceUrl}`);
+        Logger.warn(`[VrmViewerPage] opaque id empty: ${resource.resourceUrl}`);
         return false;
       }
 
@@ -5238,7 +5239,7 @@ struct VrmViewerPage {
           `size=${readbackSize === resource.size ? 'ok' : 'X'}, ` +
           `ext=${readbackExtension === resource.extension ? 'ok' : 'X'}, ` +
           `dep=${readbackGltfDep === resource.gltfDependencyState ? 'ok' : 'X'}`;
-        console.warn(`[VrmViewerPage] readback mismatch: ${this.webPreparedErrorMessage}`);
+        Logger.warn(`[VrmViewerPage] readback mismatch: ${this.webPreparedErrorMessage}`);
         return false;
       }
 
@@ -5248,7 +5249,7 @@ struct VrmViewerPage {
         this.webPreparedErrorCode = WebPreparedResourceErrorCode.RESOURCE_PREPARE_STALE;
         this.webPreparedErrorMessage =
           `generation 过期: current=${currentGeneration}, latest=${this.prepareGeneration}`;
-        console.warn(`[VrmViewerPage] prepare generation stale: ${this.webPreparedErrorMessage}`);
+        Logger.warn(`[VrmViewerPage] prepare generation stale: ${this.webPreparedErrorMessage}`);
         return false;
       }
 
@@ -5258,7 +5259,7 @@ struct VrmViewerPage {
       this.webPreparedErrorMessage = '';
       // 17. 保存 lastPreparedResourceUrl
       this.lastPreparedResourceUrl = resource.resourceUrl;
-      console.info(`[VrmViewerPage] ensurePreparedModelResource ok: url=${resource.resourceUrl}`);
+      Logger.debug(`[VrmViewerPage] ensurePreparedModelResource ok: url=${resource.resourceUrl}`);
       // 18. 返回 true
       return true;
     } catch (e) {
@@ -5266,7 +5267,7 @@ struct VrmViewerPage {
       this.webPreparedState = WebPreparedResourceState.FAILED;
       this.webPreparedErrorCode = WebPreparedResourceErrorCode.RESOURCE_PREPARE_CALL_FAILED;
       this.webPreparedErrorMessage = `prepare 调用异常: ${msg}`;
-      console.error(`[VrmViewerPage] ensurePreparedModelResource exception: ${msg}`);
+      Logger.error(`[VrmViewerPage] ensurePreparedModelResource exception: ${msg}`);
       return false;
     } finally {
       this.prepareInProgress = false;
@@ -5317,7 +5318,7 @@ struct VrmViewerPage {
       const result: ImportStateRestoreResult = await this.importStateStore.restore();
       // 代次检查:若期间发起新恢复或已 dispose,放弃此次结果
       if (generation !== this.restoreGeneration) {
-        console.info('[VrmViewerPage] restore result stale, ignored');
+        Logger.debug('[VrmViewerPage] restore result stale, ignored');
         return;
       }
 
@@ -5327,7 +5328,7 @@ struct VrmViewerPage {
           this.restoreErrorCode = result.errorCode;
           this.restoreErrorMessage = result.errorMessage;
           this.restoreHint = '上次导入文件已失效';
-          console.warn(`[VrmViewerPage] restore failed: ${result.errorCode} ${result.errorMessage}`);
+          Logger.warn(`[VrmViewerPage] restore failed: ${result.errorCode} ${result.errorMessage}`);
         } else {
           // 无记录,正常情况
           this.restoreHint = '';
@@ -5338,7 +5339,7 @@ struct VrmViewerPage {
       // 恢复成功:注入到 ImportController
       const file: ImportedModelFile = result.file;
       if (this.importController === null) {
-        console.warn('[VrmViewerPage] importController null during restore');
+        Logger.warn('[VrmViewerPage] importController null during restore');
         return;
       }
       const restoreOk: boolean = this.importController.restoreCurrentFile(file);
@@ -5355,7 +5356,7 @@ struct VrmViewerPage {
       this.importLastError = this.importController.getLastError();
       this.restoreHint = '已恢复上次导入模型,正在重新验证';
 
-      console.info(`[VrmViewerPage] restore ok id=${file.id} size=${file.size} ext=${file.extension}`);
+      Logger.debug(`[VrmViewerPage] restore ok id=${file.id} size=${file.size} ext=${file.extension}`);
 
       // 检查 Viewer 是否 READY
       if (this.viewerState === ArkWebViewerState.READY) {
@@ -5365,14 +5366,14 @@ struct VrmViewerPage {
       } else {
         // Viewer 未就绪,暂存等待 onViewerReady
         this.pendingRestoredFile = file;
-        console.info('[VrmViewerPage] Viewer not ready, pending restored file');
+        Logger.debug('[VrmViewerPage] Viewer not ready, pending restored file');
       }
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
       this.restoreErrorCode = 'RESTORE_EXCEPTION';
       this.restoreErrorMessage = msg;
       this.restoreHint = '恢复异常,请重新导入';
-      console.error(`[VrmViewerPage] restore exception: ${msg}`);
+      Logger.error(`[VrmViewerPage] restore exception: ${msg}`);
     } finally {
       this.restoreInProgress = false;
     }
@@ -5409,14 +5410,14 @@ struct VrmViewerPage {
       this.preparedResource = resource;
       this.resourceState = this.resourceProvider.getState();
       this.resourceLastError = '';
-      console.info(`[VrmViewerPage] restored resource ready: url=${resource.resourceUrl}`);
+      Logger.debug(`[VrmViewerPage] restored resource ready: url=${resource.resourceUrl}`);
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
       this.preparedResource = null;
       this.resourceState = this.resourceProvider.getState();
       this.resourceLastError = msg;
       this.restoreHint = `资源准备失败: ${msg}`;
-      console.error(`[VrmViewerPage] processRestoredFile register failed: ${msg}`);
+      Logger.error(`[VrmViewerPage] processRestoredFile register failed: ${msg}`);
       return;
     }
 
@@ -5424,7 +5425,7 @@ struct VrmViewerPage {
     // 不得因为页面已经恢复资源 URL,就跳过 prepareModelResource()
     const prepared: boolean = await this.ensurePreparedModelResource(resource, false);
     if (!prepared) {
-      console.warn(`[VrmViewerPage] restore ensurePreparedModelResource failed: ${this.webPreparedErrorCode}`);
+      Logger.warn(`[VrmViewerPage] restore ensurePreparedModelResource failed: ${this.webPreparedErrorCode}`);
       this.restoreHint = `资源同步失败: ${this.webPreparedErrorMessage}`;
       return;
     }
@@ -5458,21 +5459,21 @@ struct VrmViewerPage {
   private async startActiveModelRestore(): Promise<void> {
     // 1. 单次触发保护
     if (this.restoreDisposed) {
-      console.info('[VrmViewerPage] startActiveModelRestore: disposed, skip');
+      Logger.debug('[VrmViewerPage] startActiveModelRestore: disposed, skip');
       return;
     }
     if (this.restoreStarted) {
-      console.info('[VrmViewerPage] startActiveModelRestore: already started, skip');
+      Logger.debug('[VrmViewerPage] startActiveModelRestore: already started, skip');
       return;
     }
     // 2. Viewer 必须为 READY
     if (this.viewerState !== ArkWebViewerState.READY) {
-      console.info(`[VrmViewerPage] startActiveModelRestore: viewer not ready (${this.viewerState}), skip`);
+      Logger.debug(`[VrmViewerPage] startActiveModelRestore: viewer not ready (${this.viewerState}), skip`);
       return;
     }
     // 3. 并发保护
     if (this.modelRestoreInProgress) {
-      console.info('[VrmViewerPage] startActiveModelRestore: in progress, skip');
+      Logger.debug('[VrmViewerPage] startActiveModelRestore: in progress, skip');
       return;
     }
 
@@ -5507,7 +5508,7 @@ struct VrmViewerPage {
 
       if (activeAsset === null) {
         // 无 active model,尝试旧缓存迁移
-        console.info('[VrmViewerPage] no active model, try legacy migration');
+        Logger.debug('[VrmViewerPage] no active model, try legacy migration');
         this.modelRestoreState = ArkWebModelRestoreState.MIGRATING;
         const migrated: boolean = await this.tryLegacyCacheMigration();
         if (generation !== this.modelRestoreGeneration || this.restoreDisposed) {
@@ -5519,7 +5520,7 @@ struct VrmViewerPage {
           this.activeModelId = '';
           this.activeModelDisplayName = '';
           this.activeModelByteLength = 0;
-          console.info('[VrmViewerPage] no model to restore, entering EMPTY state');
+          Logger.debug('[VrmViewerPage] no model to restore, entering EMPTY state');
         }
         return;
       }
@@ -5528,7 +5529,7 @@ struct VrmViewerPage {
       this.activeModelId = activeAsset.modelId;
       this.activeModelDisplayName = activeAsset.displayName;
       this.activeModelByteLength = activeAsset.byteLength;
-      console.info(`[VrmViewerPage] active model found: id=${activeAsset.modelId} name=${activeAsset.displayName}`);
+      Logger.debug(`[VrmViewerPage] active model found: id=${activeAsset.modelId} name=${activeAsset.displayName}`);
 
       const loaded: boolean = await this.validateRegisterAndLoadPersistentAsset(activeAsset, generation);
       if (generation !== this.modelRestoreGeneration || this.restoreDisposed) {
@@ -5536,7 +5537,7 @@ struct VrmViewerPage {
       }
       if (loaded) {
         this.modelRestoreState = ArkWebModelRestoreState.READY;
-        console.info('[VrmViewerPage] active model restored successfully');
+        Logger.debug('[VrmViewerPage] active model restored successfully');
       }
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
@@ -5563,13 +5564,13 @@ struct VrmViewerPage {
       if (result.file === null) {
         // 无记录或损坏记录
         if (result.errorCode.length > 0) {
-          console.warn(`[VrmViewerPage] legacy StateStore restore failed: ${result.errorCode} ${result.errorMessage}`);
+          Logger.warn(`[VrmViewerPage] legacy StateStore restore failed: ${result.errorCode} ${result.errorMessage}`);
         }
         return false;
       }
 
       const file: ImportedModelFile = result.file;
-      console.info(`[VrmViewerPage] legacy cache found: ${file.displayName} size=${file.size}, migrating`);
+      Logger.debug(`[VrmViewerPage] legacy cache found: ${file.displayName} size=${file.size}, migrating`);
 
       // 迁移到 filesDir 持久目录
       const asset: ArkWebAvatarModelAsset | null = await this.persistentModelStore.migrateFromLegacyCache(
@@ -5580,7 +5581,7 @@ struct VrmViewerPage {
       );
       if (asset === null) {
         const err: string = this.persistentModelStore.getLastError();
-        console.warn(`[VrmViewerPage] legacy migrate failed: ${err}`);
+        Logger.warn(`[VrmViewerPage] legacy migrate failed: ${err}`);
         // 迁移失败不删除旧缓存
         this.failModelRestore(ModelRestoreErrorCode.MODEL_RESTORE_LOAD_FAILED, `migrate failed: ${err}`);
         return false;
@@ -5591,14 +5592,14 @@ struct VrmViewerPage {
       this.activeModelId = asset.modelId;
       this.activeModelDisplayName = asset.displayName;
       this.activeModelByteLength = asset.byteLength;
-      console.info(`[VrmViewerPage] legacy migration ok: id=${asset.modelId}`);
+      Logger.debug(`[VrmViewerPage] legacy migration ok: id=${asset.modelId}`);
 
       const generation: number = this.modelRestoreGeneration;
       const loaded: boolean = await this.validateRegisterAndLoadPersistentAsset(asset, generation);
       return loaded;
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
-      console.warn(`[VrmViewerPage] tryLegacyCacheMigration exception: ${msg}`);
+      Logger.warn(`[VrmViewerPage] tryLegacyCacheMigration exception: ${msg}`);
       return false;
     }
   }
@@ -5665,7 +5666,7 @@ struct VrmViewerPage {
     this.preparedResource = resource;
     this.resourceState = this.resourceProvider.getState();
     this.resourceLastError = '';
-    console.info(`[VrmViewerPage] persistent asset registered: url=${resource.resourceUrl}`);
+    Logger.debug(`[VrmViewerPage] persistent asset registered: url=${resource.resourceUrl}`);
 
     // 3. LOADING: ensurePreparedModelResource + probe + load
     this.modelRestoreState = ArkWebModelRestoreState.LOADING;
@@ -5873,7 +5874,7 @@ struct VrmViewerPage {
     this.modelRestoreState = ArkWebModelRestoreState.FAILED;
     this.modelRestoreErrorCode = code;
     this.modelRestoreErrorMessage = message;
-    console.warn(`[VrmViewerPage] model restore failed: ${code} ${message}`);
+    Logger.warn(`[VrmViewerPage] model restore failed: ${code} ${message}`);
   }
 
   /**
@@ -5906,12 +5907,12 @@ struct VrmViewerPage {
     try {
       const ok: boolean = await this.importStateStore.save(file);
       if (!ok) {
-        console.warn('[VrmViewerPage] import state save failed (cache still usable)');
+        Logger.warn('[VrmViewerPage] import state save failed (cache still usable)');
         promptAction.showToast({ message: '模型已导入,但重进恢复信息保存失败' });
       }
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
-      console.warn(`[VrmViewerPage] saveImportStateToStore exception: ${msg}`);
+      Logger.warn(`[VrmViewerPage] saveImportStateToStore exception: ${msg}`);
     }
   }
 
@@ -5971,7 +5972,7 @@ struct VrmViewerPage {
     // 8. lastPreparedResourceUrl === preparedResource.resourceUrl(一致性校验)
     const resourceUrl: string = this.preparedResource.resourceUrl;
     if (resourceUrl !== this.lastPreparedResourceUrl) {
-      console.warn(`[VrmViewerPage] auto probe skipped: url mismatch prepared=${resourceUrl} lastPrepared=${this.lastPreparedResourceUrl}`);
+      Logger.warn(`[VrmViewerPage] auto probe skipped: url mismatch prepared=${resourceUrl} lastPrepared=${this.lastPreparedResourceUrl}`);
       return;
     }
     // 同一 URL 只自动探测一次
@@ -5989,7 +5990,7 @@ struct VrmViewerPage {
 
     this.autoProbeGeneration++;
     this.lastAutoProbedResourceUrl = resourceUrl;
-    console.info(`[VrmViewerPage] auto probe started: url=${resourceUrl}`);
+    Logger.debug(`[VrmViewerPage] auto probe started: url=${resourceUrl}`);
     // 直接调用 onProbeResourceButton 的逻辑,但不显示 toast(避免打扰用户)
     this.executeAutoProbe();
   }
@@ -6019,7 +6020,7 @@ struct VrmViewerPage {
 
     try {
       const startResult: string = await this.arkWebController.probePreparedModelResource();
-      console.info(`[VrmViewerPage] auto probePreparedModelResource result: ${startResult}`);
+      Logger.debug(`[VrmViewerPage] auto probePreparedModelResource result: ${startResult}`);
       if (startResult.indexOf('"success":true') < 0 && startResult.indexOf('"success": true') < 0) {
         // 启动失败
         this.probeState = ModelResourceProbeState.FAILED;
@@ -6028,7 +6029,7 @@ struct VrmViewerPage {
         this.probeErrorMessage = errorMatch !== null && errorMatch.length >= 2 ? errorMatch[1] : startResult;
         this.probeVerifiedAt = Date.now();
         this.probeInProgress = false;
-        console.warn(`[VrmViewerPage] auto probe start failed: ${this.probeErrorMessage}`);
+        Logger.warn(`[VrmViewerPage] auto probe start failed: ${this.probeErrorMessage}`);
         return;
       }
       // 启动轮询
@@ -6040,7 +6041,7 @@ struct VrmViewerPage {
       this.probeErrorMessage = msg;
       this.probeVerifiedAt = Date.now();
       this.probeInProgress = false;
-      console.warn(`[VrmViewerPage] auto probe exception: ${msg}`);
+      Logger.warn(`[VrmViewerPage] auto probe exception: ${msg}`);
     }
   }
 
@@ -6056,7 +6057,7 @@ struct VrmViewerPage {
       this.applyRuntimeDiagnostic(resultJson);
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
-      console.warn(`[VrmViewerPage] refreshRuntimeDiagnostic failed: ${msg}`);
+      Logger.warn(`[VrmViewerPage] refreshRuntimeDiagnostic failed: ${msg}`);
     }
   }
 
@@ -6089,7 +6090,7 @@ struct VrmViewerPage {
       };
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
-      console.warn(`[VrmViewerPage] applyRuntimeDiagnostic parse failed: ${msg}`);
+      Logger.warn(`[VrmViewerPage] applyRuntimeDiagnostic parse failed: ${msg}`);
     }
   }
 
@@ -6159,10 +6160,10 @@ struct VrmViewerPage {
     try {
       await this.arkWebController.clearVrmRuntimeDiagnostic();
       this.runtimeDiagnostic = null;
-      console.info('[VrmViewerPage] runtime diagnostic cleared');
+      Logger.debug('[VrmViewerPage] runtime diagnostic cleared');
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
-      console.warn(`[VrmViewerPage] clear diagnostic failed: ${msg}`);
+      Logger.warn(`[VrmViewerPage] clear diagnostic failed: ${msg}`);
     }
   }
 
@@ -6183,11 +6184,11 @@ struct VrmViewerPage {
    */
   private async onRetryViewerButton(): Promise<void> {
     if (this.retryInProgress) {
-      console.warn('[VrmViewerPage] retry already in progress, ignore');
+      Logger.warn('[VrmViewerPage] retry already in progress, ignore');
       return;
     }
     if (this.viewerState !== ArkWebViewerState.FAILED) {
-      console.warn(`[VrmViewerPage] retry ignored: viewerState=${this.viewerState} (requires FAILED)`);
+      Logger.warn(`[VrmViewerPage] retry ignored: viewerState=${this.viewerState} (requires FAILED)`);
       return;
     }
     this.retryInProgress = true;
@@ -6196,10 +6197,10 @@ struct VrmViewerPage {
     this.lastError = '';
     try {
       await this.arkWebController.retryInitializeViewer();
-      console.info('[VrmViewerPage] retryInitializeViewer dispatched');
+      Logger.debug('[VrmViewerPage] retryInitializeViewer dispatched');
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
-      console.error(`[VrmViewerPage] retryInitializeViewer failed: ${msg}`);
+      Logger.error(`[VrmViewerPage] retryInitializeViewer failed: ${msg}`);
       this.lastErrorCode = 'RETRY_FAILED';
       this.lastError = `重试失败: ${msg}`;
     } finally {
@@ -6243,27 +6244,27 @@ struct VrmViewerPage {
     this.resetLoadState();
     // Phase 1D-2B-2:2. 清除 Web 端加载协调器状态(异步,不等待)
     this.arkWebController.clearPreparedModelLoadResult().then((result: string) => {
-      console.info(`[VrmViewerPage] clearPreparedModelLoadResult result: ${result}`);
+      Logger.debug(`[VrmViewerPage] clearPreparedModelLoadResult result: ${result}`);
     }).catch((e: Object) => {
       const msg: string = e instanceof Error ? e.message : String(e);
-      console.warn(`[VrmViewerPage] clearPreparedModelLoadResult failed: ${msg}`);
+      Logger.warn(`[VrmViewerPage] clearPreparedModelLoadResult failed: ${msg}`);
     });
     // Phase 1D-2B-1:1. 停止探测轮询 + 重置探测状态
     this.stopProbePolling();
     this.resetProbeState();
     // Phase 1D-2B-1:2. 清除 Web 端探测状态(异步,不等待)
     this.arkWebController.clearModelResourceProbe().then((result: string) => {
-      console.info(`[VrmViewerPage] clearModelResourceProbe result: ${result}`);
+      Logger.debug(`[VrmViewerPage] clearModelResourceProbe result: ${result}`);
     }).catch((e: Object) => {
       const msg: string = e instanceof Error ? e.message : String(e);
-      console.warn(`[VrmViewerPage] clearModelResourceProbe failed: ${msg}`);
+      Logger.warn(`[VrmViewerPage] clearModelResourceProbe failed: ${msg}`);
     });
     // Phase 1D-2B-1:3. 清除 Web 端 keeper 资源元数据(异步,不等待)
     this.arkWebController.clearPreparedModelResource().then((result: string) => {
-      console.info(`[VrmViewerPage] clearPreparedModelResource result: ${result}`);
+      Logger.debug(`[VrmViewerPage] clearPreparedModelResource result: ${result}`);
     }).catch((e: Object) => {
       const msg: string = e instanceof Error ? e.message : String(e);
-      console.warn(`[VrmViewerPage] clearPreparedModelResource failed: ${msg}`);
+      Logger.warn(`[VrmViewerPage] clearPreparedModelResource failed: ${msg}`);
     });
     // Phase 1D-2B-1:4. 注销资源(避免缓存文件已删除但 Provider 仍尝试读取)
     if (this.resourceProvider !== null) {
@@ -6291,10 +6292,10 @@ struct VrmViewerPage {
     this.resetWebPreparedState();
     // Phase 1D-2C-1:8. 清除 Web 端运行时诊断(异步,不等待)
     this.arkWebController.clearVrmRuntimeDiagnostic().then((result: string) => {
-      console.info(`[VrmViewerPage] clearVrmRuntimeDiagnostic result: ${result}`);
+      Logger.debug(`[VrmViewerPage] clearVrmRuntimeDiagnostic result: ${result}`);
     }).catch((e: Object) => {
       const msg: string = e instanceof Error ? e.message : String(e);
-      console.warn(`[VrmViewerPage] clearVrmRuntimeDiagnostic failed: ${msg}`);
+      Logger.warn(`[VrmViewerPage] clearVrmRuntimeDiagnostic failed: ${msg}`);
     });
     promptAction.showToast({ message: '已清除缓存文件' });
   }
@@ -6343,7 +6344,7 @@ struct VrmViewerPage {
     // 这样手动验证按钮同时具备:重新准备资源 + 重新执行 HEAD 探测 的恢复能力
     // 不要求 WebPrepared 预先 READY,否则准备失败后用户无法重试
     if (this.webPreparedState !== WebPreparedResourceState.READY) {
-      console.info('[VrmViewerPage] manual probe: WebPrepared not READY, retry prepare');
+      Logger.debug('[VrmViewerPage] manual probe: WebPrepared not READY, retry prepare');
       const resource: WebModelResource = this.preparedResource;
       const prepared: boolean = await this.ensurePreparedModelResource(resource, true);
       if (!prepared) {
@@ -6363,7 +6364,7 @@ struct VrmViewerPage {
     try {
       // 1. 启动探测(同步返回 PROBING)
       const startResult: string = await this.arkWebController.probePreparedModelResource();
-      console.info(`[VrmViewerPage] probePreparedModelResource result: ${startResult}`);
+      Logger.debug(`[VrmViewerPage] probePreparedModelResource result: ${startResult}`);
       // 简单字符串匹配检查启动是否成功
       if (startResult.indexOf('"success":true') < 0 && startResult.indexOf('"success": true') < 0) {
         // 启动失败
@@ -6486,7 +6487,7 @@ struct VrmViewerPage {
       this.refreshRuntimeDiagnostic();
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
-      console.error(`[VrmViewerPage] parse probe result failed: ${msg}, raw=${resultJson}`);
+      Logger.error(`[VrmViewerPage] parse probe result failed: ${msg}, raw=${resultJson}`);
       // 解析失败视为错误
       this.probeState = ModelResourceProbeState.FAILED;
       this.probeErrorCode = 'PROBE_RESULT_PARSE_FAILED';
@@ -6674,7 +6675,7 @@ struct VrmViewerPage {
     try {
       // 1. 启动加载(同步返回 LOADING 或 FAILED 结果)
       const startResult: string = await this.arkWebController.loadPreparedModelResource();
-      console.info(`[VrmViewerPage] loadPreparedModelResource result: ${startResult}`);
+      Logger.debug(`[VrmViewerPage] loadPreparedModelResource result: ${startResult}`);
       // 简单字符串匹配检查启动是否成功
       if (startResult.indexOf('"success":true') < 0 && startResult.indexOf('"success": true') < 0) {
         // 启动失败:解析错误信息
@@ -6800,7 +6801,7 @@ struct VrmViewerPage {
       this.refreshRuntimeDiagnostic();
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
-      console.error(`[VrmViewerPage] parse load result failed: ${msg}, raw=${resultJson}`);
+      Logger.error(`[VrmViewerPage] parse load result failed: ${msg}, raw=${resultJson}`);
       // 解析失败视为错误
       this.loadState = 'FAILED';
       this.loadErrorCode = 'LOAD_RESULT_PARSE_FAILED';
@@ -7179,7 +7180,7 @@ struct VrmViewerPage {
             if (modelResult.response !== null) {
               return modelResult.response;
             }
-            console.warn(`[VrmViewerPage] model resource handleRequest returned null: ${modelResult.errorCode} ${modelResult.errorMessage}`);
+            Logger.warn(`[VrmViewerPage] model resource handleRequest returned null: ${modelResult.errorCode} ${modelResult.errorMessage}`);
             return null;
           }
 
@@ -7189,7 +7190,7 @@ struct VrmViewerPage {
             if (animResult.response !== null) {
               return animResult.response;
             }
-            console.warn(`[VrmViewerPage] animation resource handleRequest returned null: ${animResult.errorCode} ${animResult.errorMessage}`);
+            Logger.warn(`[VrmViewerPage] animation resource handleRequest returned null: ${animResult.errorCode} ${animResult.errorMessage}`);
             return null;
           }
 
@@ -8868,7 +8869,7 @@ struct VrmViewerPage {
             this.debugAnimationLoop = isOn;
             if (this.viewerState === ArkWebViewerState.READY) {
               this.arkWebController.setAnimationLoop(isOn).catch((e: Object) => {
-                console.warn('[VrmViewerPage] setAnimationLoop failed: ' +
+                Logger.warn('[VrmViewerPage] setAnimationLoop failed: ' +
                   (e instanceof Error ? e.message : String(e)));
               });
             }
@@ -10374,7 +10375,7 @@ struct VrmViewerPage {
     this.performanceLastErrorCode = '';
     this.performanceLastErrorMessage = '';
     try {
-      console.info(`[Performance] execute: cmd=${commandId}, motionType=${cmd.motionType}, motionId=${motionId}, exp=${cmd.expressionId}, duration=${cmd.durationMs}, returnPolicy=${cmd.returnPolicy}`);
+      Logger.debug(`[Performance] execute: cmd=${commandId}, motionType=${cmd.motionType}, motionId=${motionId}, exp=${cmd.expressionId}, duration=${cmd.durationMs}, returnPolicy=${cmd.returnPolicy}`);
       const result: ArkWebPerformanceResult =
         await this.performanceController.executeCommand(cmd);
       this.syncPerformanceDebugState();
@@ -10611,7 +10612,6 @@ struct VrmViewerPage {
       returnPolicy: this.performanceTestReturnPolicy
     };
     const rawJson: string = JSON.stringify(hint);
-    console.info(`[DialogueMapper] test hint: ${rawJson}`);
     await this.executeDialoguePerformanceHintJson(rawJson);
   }
 
@@ -11671,7 +11671,6 @@ struct VrmViewerPage {
     // Phase 4A-2: turnId 仍用 ai_test_<timestamp> 形式 (手动测试用, 与真实聊天 turnId 区分)
     const turnId: string = `ai_test_${Date.now()}`;
 
-    console.info(`[AiTab] test hint: ${rawJson}`);
     this.aiTestExecuting = true;
     this.aiLastTurnId = turnId;
     this.aiLastCommandId = '';

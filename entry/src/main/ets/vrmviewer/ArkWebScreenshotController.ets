@@ -1,3 +1,4 @@
+import { Logger } from '../utils/Logger';
 /**
  * ArkWebScreenshotController — 3D 视口截图控制器(Phase 2A-3A)
  *
@@ -231,7 +232,7 @@ export class ArkWebScreenshotController {
         imgHeight = imageInfo.size.height;
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        console.warn('[ArkWebScreenshotController] getImageInfo failed: ' + msg);
+        Logger.warn('[ArkWebScreenshotController] getImageInfo failed: ' + msg);
         // 不致命,继续用 0 作为尺寸
       }
 
@@ -265,7 +266,7 @@ export class ArkWebScreenshotController {
         await fileIo.mkdir(screenshotDir, true);
       } catch (e) {
         // 目录可能已存在,忽略错误
-        console.info('[ArkWebScreenshotController] mkdir (may already exist): ' +
+        Logger.debug('[ArkWebScreenshotController] mkdir (may already exist): ' +
           (e instanceof Error ? e.message : String(e)));
       }
 
@@ -285,7 +286,7 @@ export class ArkWebScreenshotController {
           try {
             await fileIo.close(targetFile);
           } catch (e) {
-            console.warn('[ArkWebScreenshotController] close .part failed: ' +
+            Logger.warn('[ArkWebScreenshotController] close .part failed: ' +
               (e instanceof Error ? e.message : String(e)));
           }
         }
@@ -335,12 +336,12 @@ export class ArkWebScreenshotController {
       this.lastResult = result;
       this.state = ScreenshotState.READY;
       this.activeCapture = false;
-      console.info('[ArkWebScreenshotController] screenshot saved: ' + fileName +
+      Logger.debug('[ArkWebScreenshotController] screenshot saved: ' + fileName +
         ` (${imgWidth}x${imgHeight}, ${pngBuffer.byteLength} bytes)`);
       return result;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      console.error('[ArkWebScreenshotController] capture failed: ' + msg);
+      Logger.error('[ArkWebScreenshotController] capture failed: ' + msg);
       // 清理 .part 临时文件
       if (partPath) {
         try {
@@ -359,7 +360,7 @@ export class ArkWebScreenshotController {
         try {
           await pixelMap.release();
         } catch (e) {
-          console.warn('[ArkWebScreenshotController] pixelMap.release failed: ' +
+          Logger.warn('[ArkWebScreenshotController] pixelMap.release failed: ' +
             (e instanceof Error ? e.message : String(e)));
         }
       }
@@ -367,7 +368,7 @@ export class ArkWebScreenshotController {
         try {
           imagePacker.release();
         } catch (e) {
-          console.warn('[ArkWebScreenshotController] imagePacker.release failed: ' +
+          Logger.warn('[ArkWebScreenshotController] imagePacker.release failed: ' +
             (e instanceof Error ? e.message : String(e)));
         }
       }
@@ -453,7 +454,7 @@ export class ArkWebScreenshotController {
     this.lastResult = result;
     this.state = ScreenshotState.FAILED;
     this.activeCapture = false;
-    console.warn(`[ArkWebScreenshotController] screenshot failed: ${errorCode} - ${errorMessage}`);
+    Logger.warn(`[ArkWebScreenshotController] screenshot failed: ${errorCode} - ${errorMessage}`);
     return result;
   }
 
@@ -468,7 +469,7 @@ export class ArkWebScreenshotController {
     if (this.disposed) {
       return;
     }
-    console.info('[ArkWebScreenshotController] dispose() called');
+    Logger.debug('[ArkWebScreenshotController] dispose() called');
     this.disposed = true;
     this.captureGeneration++;
     this.activeCapture = false;

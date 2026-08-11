@@ -1,3 +1,4 @@
+import { Logger } from '../utils/Logger';
 /**
  * ArkWebAvatarPerformanceController — 统一角色演出控制器 (Phase 3F-1)
  *
@@ -262,7 +263,7 @@ export class ArkWebAvatarPerformanceController {
         this.lastErrorCode = PerformanceErrorCode.EXPRESSION_APPLY_FAILED;
         this.lastErrorMessage = `setTemporaryExpressionByAlias failed: ${cmd.expressionId}`;
         // 不进入 FAILED 状态, 继续进入 ACTIVE (动作已成功)
-        console.warn(`[Performance] expression apply failed but motion kept: ${cmd.expressionId}`);
+        Logger.warn(`[Performance] expression apply failed but motion kept: ${cmd.expressionId}`);
       }
     }
 
@@ -355,13 +356,13 @@ export class ArkWebAvatarPerformanceController {
       try {
         this.runtime.cancelTemporaryExpression().catch((_e: Object) => {});
       } catch (e) {
-        console.warn('[Performance] dispose cancelTemporaryExpression threw: ' +
+        Logger.warn('[Performance] dispose cancelTemporaryExpression threw: ' +
           (e instanceof Error ? e.message : String(e)));
       }
       try {
         this.runtime.stopAnimation().catch((_e: Object) => {});
       } catch (e) {
-        console.warn('[Performance] dispose stopAnimation threw: ' +
+        Logger.warn('[Performance] dispose stopAnimation threw: ' +
           (e instanceof Error ? e.message : String(e)));
       }
     }
@@ -384,13 +385,13 @@ export class ArkWebAvatarPerformanceController {
       try {
         this.runtime.cancelTemporaryExpression().catch((_e: Object) => {});
       } catch (e) {
-        console.warn('[Performance] beginNewCommand cancelTemporaryExpression threw: ' +
+        Logger.warn('[Performance] beginNewCommand cancelTemporaryExpression threw: ' +
           (e instanceof Error ? e.message : String(e)));
       }
       try {
         this.runtime.stopAnimation().catch((_e: Object) => {});
       } catch (e) {
-        console.warn('[Performance] beginNewCommand stopAnimation threw: ' +
+        Logger.warn('[Performance] beginNewCommand stopAnimation threw: ' +
           (e instanceof Error ? e.message : String(e)));
       }
     }

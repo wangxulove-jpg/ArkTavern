@@ -1,3 +1,4 @@
+import { Logger } from '../utils/Logger';
 /**
  * ArkWebVrmViewerPagePerformanceRuntime — VrmViewerPage 演出运行时实现 (Phase 3F-1)
  *
@@ -71,7 +72,7 @@ export class ArkWebVrmViewerPagePerformanceRuntime implements ArkWebAvatarPerfor
       const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
       return obj['success'] === true;
     } catch (e) {
-      console.warn('[PerformanceRuntime] stopAnimation failed: ' +
+      Logger.warn('[PerformanceRuntime] stopAnimation failed: ' +
         (e instanceof Error ? e.message : String(e)));
       return false;
     }
@@ -81,7 +82,7 @@ export class ArkWebVrmViewerPagePerformanceRuntime implements ArkWebAvatarPerfor
     // 复用 loadAnimationByActionId (内部完成 Provider 注册 + loadAnimationResource)
     const loaded: boolean = await this.deps.loadAnimationByActionId(actionId);
     if (!loaded) {
-      console.warn(`[PerformanceRuntime] playAnimationById: loadAnimationByActionId returned false: ${actionId}`);
+      Logger.warn(`[PerformanceRuntime] playAnimationById: loadAnimationByActionId returned false: ${actionId}`);
       return false;
     }
     // loadAnimationResource 是异步加载: Web 端状态会从 LOADING → READY。
@@ -90,33 +91,33 @@ export class ArkWebVrmViewerPagePerformanceRuntime implements ArkWebAvatarPerfor
     // playAnimation 而失败 (ANIMATION_NOT_READY)。
     // 修复: 始终进入 waitForAnimationReady, 它内部会调用 getAnimationDebugState()
     // 刷新到最新状态, 然后才检查 READY。
-    console.info(`[PerformanceRuntime] playAnimationById: waiting READY after load: ${actionId}`);
+    Logger.debug(`[PerformanceRuntime] playAnimationById: waiting READY after load: ${actionId}`);
     await this.deps.waitForAnimationReady(30000);
     const stateAfterWait: string = this.deps.getDebugAnimationState();
     if (stateAfterWait !== 'READY') {
-      console.warn(`[PerformanceRuntime] playAnimationById: animation not READY after wait (state=${stateAfterWait}): ${actionId}`);
+      Logger.warn(`[PerformanceRuntime] playAnimationById: animation not READY after wait (state=${stateAfterWait}): ${actionId}`);
       return false;
     }
     const controller: ArkWebVrmViewerController | null = this.deps.getArkWebController();
     if (controller === null) {
-      console.warn(`[PerformanceRuntime] playAnimationById: arkWebController is null: ${actionId}`);
+      Logger.warn(`[PerformanceRuntime] playAnimationById: arkWebController is null: ${actionId}`);
       return false;
     }
     try {
       const resultJson: string = await controller.playAnimation();
-      console.info(`[PerformanceRuntime] playAnimationById: playAnimation response: ${resultJson}`);
+      Logger.debug(`[PerformanceRuntime] playAnimationById: playAnimation response: ${resultJson}`);
       const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
       const success: boolean = obj['success'] === true;
       if (!success) {
         const errObj = obj['error'] as Record<string, Object>;
         const errCode: string = errObj ? (errObj['code'] as string) || 'UNKNOWN' : 'UNKNOWN';
         const errMsg: string = errObj ? (errObj['message'] as string) || '' : '';
-        console.warn(`[PerformanceRuntime] playAnimationById: playAnimation returned success=false: code=${errCode}, msg=${errMsg}, actionId=${actionId}`);
+        Logger.warn(`[PerformanceRuntime] playAnimationById: playAnimation returned success=false: code=${errCode}, msg=${errMsg}, actionId=${actionId}`);
       }
       return success;
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
-      console.warn(`[PerformanceRuntime] playAnimationById: playAnimation threw: ${msg}, actionId=${actionId}`);
+      Logger.warn(`[PerformanceRuntime] playAnimationById: playAnimation threw: ${msg}, actionId=${actionId}`);
       return false;
     }
   }
@@ -135,7 +136,7 @@ export class ArkWebVrmViewerPagePerformanceRuntime implements ArkWebAvatarPerfor
       const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
       return obj['success'] === true;
     } catch (e) {
-      console.warn('[PerformanceRuntime] resetPose failed: ' +
+      Logger.warn('[PerformanceRuntime] resetPose failed: ' +
         (e instanceof Error ? e.message : String(e)));
       return false;
     }
@@ -154,7 +155,7 @@ export class ArkWebVrmViewerPagePerformanceRuntime implements ArkWebAvatarPerfor
       }
       return await this.deps.applyPoseByIdInternal(defaultPoseId);
     } catch (e) {
-      console.warn('[PerformanceRuntime] restoreDefaultPose failed, fallback to resetPose: ' +
+      Logger.warn('[PerformanceRuntime] restoreDefaultPose failed, fallback to resetPose: ' +
         (e instanceof Error ? e.message : String(e)));
       return await this.deps.resetPoseInternal();
     }
@@ -184,7 +185,7 @@ export class ArkWebVrmViewerPagePerformanceRuntime implements ArkWebAvatarPerfor
       const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
       return obj['success'] === true;
     } catch (e) {
-      console.warn('[PerformanceRuntime] setTemporaryExpressionByAlias failed: ' +
+      Logger.warn('[PerformanceRuntime] setTemporaryExpressionByAlias failed: ' +
         (e instanceof Error ? e.message : String(e)));
       return false;
     }
@@ -200,7 +201,7 @@ export class ArkWebVrmViewerPagePerformanceRuntime implements ArkWebAvatarPerfor
       const obj: Record<string, Object> = JSON.parse(resultJson) as Record<string, Object>;
       return obj['success'] === true;
     } catch (e) {
-      console.warn('[PerformanceRuntime] cancelTemporaryExpression failed: ' +
+      Logger.warn('[PerformanceRuntime] cancelTemporaryExpression failed: ' +
         (e instanceof Error ? e.message : String(e)));
       return false;
     }

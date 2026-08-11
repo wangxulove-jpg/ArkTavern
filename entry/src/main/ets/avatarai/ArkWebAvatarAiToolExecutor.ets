@@ -1,3 +1,4 @@
+import { Logger } from '../utils/Logger';
 /**
  * ArkWebAvatarAiToolExecutor — Avatar AI 工具执行器 (Phase 4A-3)
  *
@@ -51,8 +52,6 @@ import {
 import { ArkWebAvatarDialogueSessionState } from './ArkWebAvatarDialogueSessionState';
 import { ArkWebAvatarDialogueRhythmPolicy } from './ArkWebAvatarDialogueRhythmPolicy';
 import { ArkWebAvatarDialoguePerformanceSourceConst } from './ArkWebAvatarDialogueSessionStateTypes';
-
-const LOG_TAG: string = 'AvatarAiToolExecutor';
 
 /**
  * Tool Executor 依赖的运行时回调 (由 ChatPage 注入, 避免直接依赖 ChatAvatarStageController)。
@@ -212,8 +211,7 @@ export class ArkWebAvatarAiToolExecutor {
     const cached: ArkWebChatToolExecutionResult | null = this.findCachedResult(
       context.chatTurnId, call.toolCallId);
     if (cached !== null) {
-      console.info(LOG_TAG,
-        `duplicate tool call ignored: turn=${context.chatTurnId} id=${call.toolCallId}`);
+      Logger.debug(`duplicate tool call ignored: turn=${context.chatTurnId} id=${call.toolCallId}`);
       return cached;
     }
 
@@ -424,8 +422,7 @@ export class ArkWebAvatarAiToolExecutor {
           commandId: '',
           noOp: true
         };
-        console.info(LOG_TAG,
-          `executePerform no-op: ${decision.noOpReason} toolCallId=${call.toolCallId}`);
+        Logger.debug(`executePerform no-op: ${decision.noOpReason} toolCallId=${call.toolCallId}`);
         return {
           toolCallId: call.toolCallId,
           name: call.name,
@@ -585,8 +582,7 @@ export class ArkWebAvatarAiToolExecutor {
         try {
           this.sessionState.recordStop(true, ArkWebAvatarDialoguePerformanceSourceConst.AI_TOOL_CALL);
         } catch (e2) {
-          console.warn(LOG_TAG,
-            `recordStop threw: ${e2 instanceof Error ? e2.message : String(e2)}`);
+          Logger.warn(`recordStop threw: ${e2 instanceof Error ? e2.message : String(e2)}`);
         }
       }
       const resultJson: ArkWebAvatarStopResultJson = {

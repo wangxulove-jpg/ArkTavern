@@ -1,3 +1,4 @@
+import { Logger } from '../utils/Logger';
 /**
  * ArkWebPersistentAnimationStore — 持久化动画存储 (Phase 3C-1)
  *
@@ -280,7 +281,7 @@ export class ArkWebPersistentAnimationStore {
       }
 
       this.lastError = '';
-      console.info(
+      Logger.debug(
         `[ArkWebPersistentAnimationStore] importAnimation ok: actionId=${actionId}, size=${sourceSize}`
       );
       return asset;
@@ -387,13 +388,13 @@ export class ArkWebPersistentAnimationStore {
     } catch (e) {
       // 清单已更新, 文件残留 .deleting 不影响数据一致性, 仅记录警告
       const msg: string = e instanceof Error ? e.message : String(e);
-      console.warn(`[ArkWebPersistentAnimationStore] deleteAnimation cleanup failed: ${msg}`);
+      Logger.warn(`[ArkWebPersistentAnimationStore] deleteAnimation cleanup failed: ${msg}`);
       this.lastError = AnimationManagementErrorCode.ANIMATION_DELETE_CLEANUP_FAILED;
       // 仍视为删除成功 (清单已更新, 文件残留)
     }
 
     this.lastError = '';
-    console.info(`[ArkWebPersistentAnimationStore] deleteAnimation ok actionId=${actionId}`);
+    Logger.debug(`[ArkWebPersistentAnimationStore] deleteAnimation ok actionId=${actionId}`);
     return true;
   }
 

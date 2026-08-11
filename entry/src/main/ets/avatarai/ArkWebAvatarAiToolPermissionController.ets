@@ -1,3 +1,4 @@
+import { Logger } from '../utils/Logger';
 /**
  * ArkWebAvatarAiToolPermissionController — Avatar AI 工具权限控制器 (Phase 4A-3)
  *
@@ -32,8 +33,6 @@ import {
   ArkWebAvatarAiToolPermissionModeConst,
   DEFAULT_AVATAR_TOOL_PERMISSION
 } from './ArkWebAvatarAiToolTypes';
-
-const LOG_TAG: string = 'AvatarAiToolPermission';
 
 /**
  * Avatar AI 工具权限控制器。
@@ -86,7 +85,7 @@ export class ArkWebAvatarAiToolPermissionController {
     if (mode !== ArkWebAvatarAiToolPermissionModeConst.DENY
       && mode !== ArkWebAvatarAiToolPermissionModeConst.READ_ONLY
       && mode !== ArkWebAvatarAiToolPermissionModeConst.CONTROL_THIS_CHAT) {
-      console.warn(LOG_TAG, `setPermissionMode invalid mode: ${mode}, ignored`);
+      Logger.warn(`setPermissionMode invalid mode: ${mode}, ignored`);
       return;
     }
 
@@ -95,7 +94,7 @@ export class ArkWebAvatarAiToolPermissionController {
     }
 
     this.currentMode = mode;
-    console.info(LOG_TAG, `permission changed: ${oldMode} → ${mode}`);
+    Logger.debug(`permission changed: ${oldMode} → ${mode}`);
 
     // 权限降级 (CONTROL_THIS_CHAT → DENY/READ_ONLY) 时触发回调
     const isDowngrade: boolean =
@@ -106,7 +105,7 @@ export class ArkWebAvatarAiToolPermissionController {
       try {
         onDowngrade();
       } catch (e) {
-        console.warn(LOG_TAG, 'onDowngrade threw: ' +
+        Logger.warn('onDowngrade threw: ' +
           (e instanceof Error ? e.message : String(e)));
       }
     }
@@ -116,7 +115,7 @@ export class ArkWebAvatarAiToolPermissionController {
       try {
         this.modeChangeListener(mode);
       } catch (e) {
-        console.warn(LOG_TAG, 'modeChangeListener threw: ' +
+        Logger.warn('modeChangeListener threw: ' +
           (e instanceof Error ? e.message : String(e)));
       }
     }
@@ -197,6 +196,6 @@ export class ArkWebAvatarAiToolPermissionController {
     this.disposed = true;
     this.currentMode = ArkWebAvatarAiToolPermissionModeConst.DENY;
     this.modeChangeListener = null;
-    console.info(LOG_TAG, 'dispose, permission reset to DENY');
+    Logger.debug('dispose, permission reset to DENY');
   }
 }

@@ -1,3 +1,4 @@
+import { Logger } from '../utils/Logger';
 /**
  * ArkWebPersistentPoseStore — 持久化姿势存储 (Phase 3D-1)
  *
@@ -184,7 +185,7 @@ export class ArkWebPersistentPoseStore {
     // 页面 aboutToAppear 的 ensureInitialized 是 fire-and-forget, 此处补一次 await 防竞态。
     // ensureInitialized 幂等且有并发保护 (复用 initPromise), 重复调用安全。
     const dirOk: boolean = await this.assetLibrary.ensureInitialized();
-    console.warn(`[PoseStore] importPose: ensureInitialized=${dirOk}, posesDir=${this.posesDir}`);
+    Logger.warn(`[PoseStore] importPose: ensureInitialized=${dirOk}, posesDir=${this.posesDir}`);
     if (!dirOk) {
       this.lastError = `${PersistentPoseErrorCode.POSE_TARGET_CREATE_FAILED}: posesDir unavailable`;
       return null;
@@ -195,16 +196,16 @@ export class ArkWebPersistentPoseStore {
     // 但旧版本可能抛 "File exists", 用 try/catch 忽略该错误。
     try {
       await fileIo.mkdir(this.posesDir, true);
-      console.warn(`[PoseStore] importPose: mkdir posesDir OK (forced)`);
+      Logger.warn(`[PoseStore] importPose: mkdir posesDir OK (forced)`);
     } catch (e) {
       const msg: string = e instanceof Error ? e.message : String(e);
       // "File exists" 视为成功,其他错误才真正失败
       if (!/exists|Exist/i.test(msg)) {
-        console.warn(`[PoseStore] importPose: mkdir posesDir FAILED: ${msg}`);
+        Logger.warn(`[PoseStore] importPose: mkdir posesDir FAILED: ${msg}`);
         this.lastError = `${PersistentPoseErrorCode.POSE_TARGET_CREATE_FAILED}: mkdir posesDir failed: ${msg}`;
         return null;
       }
-      console.warn(`[PoseStore] importPose: mkdir posesDir returned exists, continue`);
+      Logger.warn(`[PoseStore] importPose: mkdir posesDir returned exists, continue`);
     }
 
     const poseId: string = this.generatePoseId();
@@ -245,7 +246,7 @@ export class ArkWebPersistentPoseStore {
       }
 
       // 4. 创建 .part 文件
-      console.warn(`[PoseStore] importPose: creating partFile=${partPath}`);
+      Logger.warn(`[PoseStore] importPose: creating partFile=${partPath}`);
       try {
         targetFile = await fileIo.open(
           partPath,
@@ -253,7 +254,7 @@ export class ArkWebPersistentPoseStore {
         );
       } catch (e) {
         const msg: string = e instanceof Error ? e.message : String(e);
-        console.warn(`[PoseStore] importPose: partFile CREATE FAILED: ${msg}, posesDir=${this.posesDir}`);
+        Logger.warn(`[PoseStore] importPose: partFile CREATE FAILED: ${msg}, posesDir=${this.posesDir}`);
         this.lastError = `${PersistentPoseErrorCode.POSE_TARGET_CREATE_FAILED}: ${msg}`;
         return null;
       }
@@ -345,7 +346,7 @@ export class ArkWebPersistentPoseStore {
       }
 
       this.lastError = '';
-      console.info(
+      Logger.debug(
         `[ArkWebPersistentPoseStore] importPose ok: poseId=${poseId}, size=${sourceSize}`
       );
       return asset;
