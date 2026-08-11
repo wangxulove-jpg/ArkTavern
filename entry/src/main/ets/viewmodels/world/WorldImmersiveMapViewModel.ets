@@ -12,12 +12,21 @@
  * 依赖方向:
  * Page → ViewModel → Service(只读+放置写入) / WorldImmersiveMapLayout(纯逻辑)
  *
+ * @Observed 装饰:使页面能观察 viewport/mapLayout/placements/background
+ * 等字段赋值并触发重绘(节点跟随视口平移/缩放的关键)。
+ *
  * 不直接依赖 @ohos.net.http / @ohos.security.asset / Repository。
  */
 
 import { WorldMapInteractionService, MapSnapshotResult, SavePlacementResult } from '../../services/world/WorldMapInteractionService';
 import { WorldCharacterMovementService, TravelOption } from '../../services/world/WorldCharacterMovementService';
 import { WorldLocationMapPlacement } from '../../models/world/WorldLocationMapPlacement';
+import { WorldMapBackground } from '../../models/world/WorldMapBackground';
+import {
+  ImportBackgroundResult,
+  RotateBackgroundResult,
+  RemoveBackgroundResult
+} from '../../services/world/WorldMapBackgroundService';
 import { World, WorldStatus } from '../../models/world/World';
 import { WorldLocation, WorldLocationStatus } from '../../models/world/WorldLocation';
 import { WorldLocationEdge } from '../../models/world/WorldLocationEdge';
@@ -69,6 +78,13 @@ export interface MapInteractionPort {
   saveLocationPlacement(worldId: string, locationId: string, positionX: number, positionY: number, positionZ: number): Promise<SavePlacementResult>;
 }
 
+export interface MapBackgroundPort {
+  loadBackground(worldId: string): Promise<WorldMapBackground | null>;
+  importBackground(worldId: string, sourceUri: string): Promise<ImportBackgroundResult>;
+  rotateBackground(worldId: string, deltaRadians: number): Promise<RotateBackgroundResult>;
+  removeBackground(worldId: string): Promise<RemoveBackgroundResult>;
+}
+
 export interface MapMovementPort {
   travelCharacter(instanceId: string, targetLocationId: string): Promise<void>;
   listTravelOptions(instanceId: string): Promise<TravelOption[]>;
@@ -76,9 +92,11 @@ export interface MapMovementPort {
 
 export const TRAVEL_ANIMATION_DURATION_MS: number = 800;
 
+@Observed
 export class WorldImmersiveMapViewModel {
   private readonly interactionService: MapInteractionPort;
   private readonly movementService: MapMovementPort | null;
+  private readonly backgroundService: MapBackgroundPort | null;
 
   state: MapLoadState = MapLoadState.Loading;
   errorMessage: string = '';
@@ -87,6 +105,7 @@ export class WorldImmersiveMapViewModel {
   edges: WorldEdgeUiModel[] = [];
   characters: WorldCharacterInstanceUiModel[] = [];
   placements: WorldLocationMapPlacement[] = [];
+  background: WorldMapBackground | null = null;
   viewport: ImmersiveMapViewport = createDefaultViewport();
   selectedLocationId: string = '';
   editMode: MapEditMode = MapEditMode.Browse;
@@ -97,15 +116,24 @@ export class WorldImmersiveMapViewModel {
   travellingToLocationId: string = '';
   travelAnimationProgress: number = 0;
 
+  private containerWidth: number = 0;
+  private containerHeight: number = 0;
+  private backgroundInitialized: boolean = false;
+
   private expectedWorldId: string = '';
   private loadOperationId: number = 0;
   private disposed: boolean = false;
   private dragOriginalPlacement: WorldLocationMapPlacement | null = null;
   readonly instanceShortId: string;
 
-  constructor(interactionService: MapInteractionPort, movementService?: MapMovementPort) {
+  constructor(
+    interactionService: MapInteractionPort,
+    movementService?: MapMovementPort,
+    backgroundService?: MapBackgroundPort
+  ) {
     this.interactionService = interactionService;
     this.movementService = movementService ?? null;
+    this.backgroundService = backgroundService ?? null;
     this.instanceShortId = WorldImmersiveMapViewModel.generateShortId();
   }
 
@@ -154,7 +182,23 @@ export class WorldImmersiveMapViewModel {
       this.locations = this.mapLocationsToUi(snapshot.locations);
       this.edges = this.mapEdgesToUi(snapshot.edges, snapshot.locations);
       this.characters = this.mapInstancesToUi(snapshot.instances, snapshot.characterMap, snapshot.locations);
-      this.recomputeLayout();
+      if (this.backgroundService !== null) {
+        const bg: WorldMapBackground | null = await this.backgroundService.loadBackground(worldId);
+        if (operationId !== this.loadOperationId || this.disposed) {
+          return;
+        }
+        this.background = bg;
+      } else {
+        this.background = null;
+      }
+      if (this.background !== null && !this.backgroundInitialized && this.containerWidth > 0 && this.containerHeight > 0) {
+        this.backgroundInitialized = true;
+        this.centerOnBackground();
+      } else if (this.background === null) {
+        this.backgroundInitialized = false;
+      } else {
+        this.recomputeLayout();
+      }
       if (operationId !== this.loadOperationId || this.disposed) {
         return;
       }
@@ -163,7 +207,8 @@ export class WorldImmersiveMapViewModel {
         + ', operation=' + operationId.toString()
         + ', locations=' + this.locations.length.toString()
         + ', placements=' + this.placements.length.toString()
-        + ', characters=' + this.characters.length.toString());
+        + ', characters=' + this.characters.length.toString()
+        + ', background=' + (this.background !== null ? '1' : '0'));
     } catch (e) {
       if (operationId !== this.loadOperationId || this.disposed) {
         return;
@@ -203,9 +248,106 @@ export class WorldImmersiveMapViewModel {
   }
 
   resetViewport(): void {
+    if (this.background !== null && this.containerWidth > 0 && this.containerHeight > 0) {
+      this.centerOnBackground();
+      this.selectedLocationId = '';
+      return;
+    }
     this.viewport = createDefaultViewport();
     this.selectedLocationId = '';
     this.recomputeLayout();
+  }
+
+  /** 记录地图容器尺寸(用于背景图居中) */
+  setContainerSize(width: number, height: number): void {
+    this.containerWidth = width;
+    this.containerHeight = height;
+    if (this.background !== null && !this.backgroundInitialized && width > 0 && height > 0) {
+      this.backgroundInitialized = true;
+      this.centerOnBackground();
+    }
+  }
+
+  /** 将视口对准背景图中心并适配(图片模式默认视角) */
+  centerOnBackground(): void {
+    if (this.background === null || this.containerWidth <= 0 || this.containerHeight <= 0) {
+      this.viewport = createDefaultViewport();
+      this.recomputeLayout();
+      return;
+    }
+    const center: number[] = this.backgroundCenter();
+    const bgW: number = this.background.imageWidth * this.background.fitScale;
+    const bgH: number = this.background.imageHeight * this.background.fitScale;
+    const fitZoom: number = clampZoom(
+      Math.min((this.containerWidth - 16) / bgW, (this.containerHeight - 16) / bgH)
+    );
+    this.viewport = {
+      offsetX: this.containerWidth / 2 - center[0] * fitZoom,
+      offsetY: this.containerHeight / 2 - center[1] * fitZoom,
+      zoom: fitZoom
+    };
+    this.recomputeLayout();
+  }
+
+  /** 旋转背景图(每次 deltaDeg 度),同步转换所有地点坐标 */
+  async rotateBackgroundBy(deltaDeg: number): Promise<string> {
+    if (this.backgroundService === null || this.world === null) {
+      return '服务未初始化';
+    }
+    const deltaRadians: number = deltaDeg * Math.PI / 180;
+    const result: RotateBackgroundResult =
+      await this.backgroundService.rotateBackground(this.world.id, deltaRadians);
+    if (result.success && result.background !== null) {
+      this.background = result.background;
+      this.placements = result.placements;
+      this.recomputeLayout();
+      Logger.info(LOG_TAG, 'rotateBackgroundBy: bg.rotation=' + this.background.rotation.toFixed(3)
+        + ', placements=' + this.placements.length.toString()
+        + ', firstX=' + (this.placements.length > 0 ? this.placements[0].positionX.toFixed(1) : 'n/a')
+        + ', firstY=' + (this.placements.length > 0 ? this.placements[0].positionY.toFixed(1) : 'n/a')
+        + ', mapLayout=' + (this.mapLayout !== null ? this.mapLayout.nodes.length.toString() : 'null'));
+      return '';
+    }
+    return result.errorMessage;
+  }
+
+  /** 导入背景图(从相册 URI) */
+  async importBackground(sourceUri: string): Promise<string> {
+    if (this.backgroundService === null || this.world === null) {
+      return '服务未初始化';
+    }
+    const result: ImportBackgroundResult =
+      await this.backgroundService.importBackground(this.world.id, sourceUri);
+    if (result.success && result.background !== null) {
+      this.background = result.background;
+      this.placements = result.placements;
+      this.recomputeLayout();
+      return '';
+    }
+    return result.errorMessage;
+  }
+
+  /** 移除背景图 */
+  async removeBackground(): Promise<string> {
+    if (this.backgroundService === null || this.world === null) {
+      return '服务未初始化';
+    }
+    const result: RemoveBackgroundResult =
+      await this.backgroundService.removeBackground(this.world.id);
+    if (result.success) {
+      this.background = null;
+      this.recomputeLayout();
+      return '';
+    }
+    return result.errorMessage;
+  }
+
+  private backgroundCenter(): number[] {
+    const bg: WorldMapBackground | null = this.background;
+    if (bg === null) {
+      return [0, 0];
+    }
+    return [bg.imageWidth * bg.fitScale / 2, bg.imageHeight * bg.fitScale / 2];
   }
 
   panBy(dx: number, dy: number): void {
@@ -215,6 +357,10 @@ export class WorldImmersiveMapViewModel {
       zoom: this.viewport.zoom
     };
     this.recomputeLayout();
+    Logger.info(LOG_TAG, 'panBy: dx=' + dx.toFixed(0) + ', dy=' + dy.toFixed(0)
+      + ', offset=(' + this.viewport.offsetX.toFixed(0) + ',' + this.viewport.offsetY.toFixed(0) + ')'
+      + ', zoom=' + this.viewport.zoom.toFixed(3)
+      + ', mapLayout=' + (this.mapLayout !== null ? this.mapLayout.nodes.length.toString() : 'null'));
   }
 
   focusOnLocation(locationId: string, containerWidth: number, containerHeight: number): void {
@@ -358,7 +504,8 @@ export class WorldImmersiveMapViewModel {
       this.edges,
       this.placements,
       this.characters,
-      this.viewport
+      this.viewport,
+      this.background
     );
   }
 

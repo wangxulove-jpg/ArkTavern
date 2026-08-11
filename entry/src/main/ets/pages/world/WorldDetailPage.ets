@@ -14,7 +14,8 @@
  * 保留全部路由逻辑、弹窗逻辑、数据加载逻辑、刷新令牌机制。
  */
 
-import { router } from '@kit.ArkUI';
+import { router, promptAction } from '@kit.ArkUI';
+import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { AppServices } from '../../services/AppServices';
 import { WorldDetailViewModel } from '../../viewmodels/world/WorldDetailViewModel';
 import { WorldStateService } from '../../services/world/WorldStateService';
@@ -123,6 +124,11 @@ struct WorldDetailPage {
   @State private travelOperating: boolean = false;
   @State private travelError: string = '';
 
+  @State private mapContainerWidth: number = 0;
+  @State private mapContainerHeight: number = 0;
+  @State private importingBackground: boolean = false;
+  @State private mapViewVersion: number = 0;
+
   private stateService: WorldStateService | null = null;
   private movementService: WorldCharacterMovementService | null = null;
 
@@ -150,9 +156,11 @@ struct WorldDetailPage {
         AppServices.getCharacterService()
       );
 
+      const bgService = AppServices.getWorldMapBackgroundService();
       this.mapViewModel = new WorldImmersiveMapViewModel(
         AppServices.getWorldMapInteractionService(),
-        new MapMovementPortAdapter(AppServices.getWorldCharacterMovementService())
+        new MapMovementPortAdapter(AppServices.getWorldCharacterMovementService()),
+        bgService !== null ? bgService : undefined
       );
 
       this.stateService = AppServices.getWorldStateService();
@@ -348,6 +356,16 @@ struct WorldDetailPage {
             this.mapViewModel.setEditMode(this.isEditMode ? MapEditMode.Edit : MapEditMode.Browse);
           }
         })
+        this.moreMenuItem(this.mapViewModel !== null && this.mapViewModel.background !== null
+          ? '更换地图图片' : '导入地图图片', false, (): void => {
+          this.moreMenuVisible = false;
+          this.pickAndImportBackground();
+        })
+        this.moreMenuItem('移除地图图片',
+          this.mapViewModel === null || this.mapViewModel.background === null, (): void => {
+            this.moreMenuVisible = false;
+            this.removeMapBackground();
+          })
         this.moreMenuItem($r('app.string.world_ui_more_location_manage'), false, (): void => {
           this.moreMenuVisible = false;
           this.openLocationCreate();
@@ -559,13 +577,26 @@ struct WorldDetailPage {
         edges: this.mapViewModel !== null ? this.mapViewModel.edges : [],
         characters: this.mapViewModel !== null ? this.mapViewModel.characters : [],
         placements: this.mapViewModel !== null ? this.mapViewModel.placements : [],
+        mapBackground: this.mapViewModel !== null ? this.mapViewModel.background : null,
         selectedLocationId: this.selectedLocationId,
         isEditMode: this.isEditMode,
         worldStatus: this.detail !== null ? this.detail.world.status : WorldStatus.Archived,
         viewport: this.mapViewModel !== null ? this.mapViewModel.viewport : { offsetX: 0, offsetY: 0, zoom: 1.0 },
         billboardData: this.billboardData,
+        mapViewVersion: this.mapViewVersion,
         onLocationTap: (locationId: string): void => {
           this.onLocationTapped(locationId);
+        },
+        onLocationLongPress: (locationId: string): void => {
+          if (this.mapViewModel !== null) {
+            this.mapViewModel.beginDrag(locationId);
+          }
+        },
+        onLocationDragPreview: (locationId: string, worldX: number, worldY: number): void => {
+          if (this.mapViewModel !== null) {
+            this.mapViewModel.updateDragPosition(locationId, worldX, worldY);
+            this.mapViewVersion++;
+          }
         },
         onLocationDragEnd: (locationId: string, worldX: number, worldY: number): void => {
           this.onLocationDragEnd(locationId, worldX, worldY);
@@ -593,6 +624,12 @@ struct WorldDetailPage {
           if (this.mapViewModel !== null) {
             this.mapViewModel.panBy(dx, dy);
           }
+        },
+        onRotateLeft: (): void => {
+          this.rotateMapBackground(-15);
+        },
+        onRotateRight: (): void => {
+          this.rotateMapBackground(15);
         },
         onAddCharacter: (): void => {
           this.addMenuVisible = true;
@@ -642,6 +679,17 @@ struct WorldDetailPage {
     }
     .width('100%')
     .layoutWeight(1)
+    .onAreaChange((_oldValue: Area, newValue: Area): void => {
+      const w: number = Number(newValue.width);
+      const h: number = Number(newValue.height);
+      if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) {
+        this.mapContainerWidth = w;
+        this.mapContainerHeight = h;
+        if (this.mapViewModel !== null) {
+          this.mapViewModel.setContainerSize(w, h);
+        }
+      }
+    })
   }
 
   @Builder
@@ -1151,11 +1199,72 @@ struct WorldDetailPage {
     }
     this.dragError = '';
     const error: string = await this.mapViewModel.endDrag(locationId, worldX, worldY);
+    this.mapViewVersion++;
     if (error.length > 0) {
       this.dragError = error;
       setTimeout((): void => {
         this.dragError = '';
       }, 3000);
+    }
+  }
+
+  private async pickAndImportBackground(): Promise<void> {
+    if (this.mapViewModel === null || this.importingBackground) {
+      return;
+    }
+    this.importingBackground = true;
+    try {
+      const photoPicker = new photoAccessHelper.PhotoViewPicker();
+      const selectOption = new photoAccessHelper.PhotoSelectOptions();
+      selectOption.MIMEType = photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE;
+      selectOption.maxSelectNumber = 1;
+      const result = await photoPicker.select(selectOption);
+      if (!result || !result.photoUris || result.photoUris.length === 0) {
+        return;
+      }
+      const error: string = await this.mapViewModel.importBackground(result.photoUris[0]);
+      if (error.length > 0) {
+        promptAction.showToast({ message: error });
+        return;
+      }
+      this.mapViewModel.centerOnBackground();
+      this.mapViewVersion++;
+      promptAction.showToast({ message: '背景图导入成功' });
+    } catch (e) {
+      Logger.error(LOG_TAG, 'pickAndImportBackground failed: ' + (e as Error).message);
+      promptAction.showToast({ message: '导入失败: ' + (e as Error).message });
+    } finally {
+      this.importingBackground = false;
+    }
+  }
+
+  private async removeMapBackground(): Promise<void> {
+    if (this.mapViewModel === null) {
+      return;
+    }
+    try {
+      const error: string = await this.mapViewModel.removeBackground();
+      if (error.length > 0) {
+        promptAction.showToast({ message: error });
+        return;
+      }
+      this.mapViewModel.resetViewport();
+      this.mapViewVersion++;
+      promptAction.showToast({ message: '已移除背景图' });
+    } catch (e) {
+      Logger.error(LOG_TAG, 'removeMapBackground failed: ' + (e as Error).message);
+      promptAction.showToast({ message: '移除失败' });
+    }
+  }
+
+  private async rotateMapBackground(deltaDeg: number): Promise<void> {
+    if (this.mapViewModel === null) {
+      return;
+    }
+    const error: string = await this.mapViewModel.rotateBackgroundBy(deltaDeg);
+    this.mapViewVersion++;
+    if (error.length > 0) {
+      promptAction.showToast({ message: error });
     }
   }
 

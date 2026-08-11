@@ -90,9 +90,9 @@ struct WorldInspectorPage {
 
   async aboutToAppear(): Promise<void> {
     const tabs: InspectorTabItem[] = [
-      { tab: InspectorTab.Pipeline, label: 'Pipeline' },
-      { tab: InspectorTab.Context, label: 'Context' },
-      { tab: InspectorTab.Dossier, label: 'Dossier' }
+      { tab: InspectorTab.Pipeline, label: '处理管线' },
+      { tab: InspectorTab.Context, label: '上下文' },
+      { tab: InspectorTab.Dossier, label: '角色档案' }
     ];
     this.tabItems = tabs;
     try {
@@ -272,7 +272,7 @@ struct WorldInspectorPage {
         .onClick((): void => {
           router.back();
         })
-      Text('World Inspector')
+      Text('世界检查器')
         .fontSize(WorldMetrics.FONT_TITLE)
         .fontWeight(FontWeight.Bold)
         .fontColor(WorldColors.TEXT_PRIMARY)
@@ -313,7 +313,7 @@ struct WorldInspectorPage {
     Scroll() {
       Column() {
         if (this.pipelineRuns.length === 0) {
-          Text('No Post-Process Run')
+          Text('暂无后处理任务')
             .fontSize(WorldMetrics.FONT_BODY)
             .fontColor(WorldColors.TEXT_TERTIARY)
             .width('100%')
@@ -348,18 +348,18 @@ struct WorldInspectorPage {
           .fontSize(WorldMetrics.FONT_CAPTION)
           .fontColor(WorldColors.TEXT_TERTIARY)
           .margin({ left: 8 })
-        Text('v' + item.run.pipelineVersion)
+        Text('版本' + item.run.pipelineVersion)
           .fontSize(WorldMetrics.FONT_CAPTION)
           .fontColor(WorldColors.TEXT_TERTIARY)
           .margin({ left: 8 })
       }
       .width('100%')
       Row() {
-        Text('session: ' + this.shortId(item.run.sessionId))
+        Text('会话: ' + this.shortId(item.run.sessionId))
           .fontSize(WorldMetrics.FONT_CAPTION)
           .fontColor(WorldColors.TEXT_SECONDARY)
           .layoutWeight(1)
-        Text('rev=' + item.run.revision.toString() + ' attempts=' + item.run.attemptCount.toString())
+        Text('修订=' + item.run.revision.toString() + ' 尝试=' + item.run.attemptCount.toString())
           .fontSize(WorldMetrics.FONT_CAPTION)
           .fontColor(WorldColors.TEXT_TERTIARY)
       }
@@ -370,7 +370,7 @@ struct WorldInspectorPage {
         this.pipelineExpandedDetail(item)
       }
 
-      Text(this.expandedRunIndex === index ? 'Collapse' : 'Expand')
+      Text(this.expandedRunIndex === index ? '收起' : '展开')
         .fontSize(WorldMetrics.FONT_CAPTION)
         .fontColor(WorldColors.GOLD)
         .margin({ top: 8 })
@@ -388,25 +388,25 @@ struct WorldInspectorPage {
   @Builder
   pipelineExpandedDetail(item: InspectorPipelineRun): void {
     Column() {
-      this.pipelineStepRow('Summary', item.state.summary.status, item.state.summary.resultCode, item.state.summary.errorKind)
+      this.pipelineStepRow('摘要', item.state.summary.status, item.state.summary.resultCode, item.state.summary.errorKind)
 
       ForEach(item.state.memories, (mem: WorldSessionPostProcessOwnerState, memIndex: number): void => {
-        this.pipelineStepRow('Memory ' + this.shortId(mem.ownerCharacterInstanceId), mem.status, mem.resultCode, mem.errorKind)
+        this.pipelineStepRow('记忆 ' + this.shortId(mem.ownerCharacterInstanceId), mem.status, mem.resultCode, mem.errorKind)
       }, (mem: WorldSessionPostProcessOwnerState, memIndex: number): string => {
         return mem.ownerCharacterInstanceId;
       })
 
-      this.pipelineStepRow('Event', item.state.eventExtraction.status, item.state.eventExtraction.resultCode, item.state.eventExtraction.errorKind)
-      this.pipelineStepRow('KnownEvent', item.state.knownEvents.status, item.state.knownEvents.resultCode, item.state.knownEvents.errorKind)
+      this.pipelineStepRow('事件', item.state.eventExtraction.status, item.state.eventExtraction.resultCode, item.state.eventExtraction.errorKind)
+      this.pipelineStepRow('已知事件', item.state.knownEvents.status, item.state.knownEvents.resultCode, item.state.knownEvents.errorKind)
 
       ForEach(item.state.relationships, (rel: WorldSessionPostProcessRelationshipPairState, relIndex: number): void => {
-        this.pipelineStepRow('Rel ' + this.shortId(rel.ownerCharacterInstanceId) + ' -> ' + this.shortId(rel.targetCharacterInstanceId), rel.status, rel.resultCode, rel.errorKind)
+        this.pipelineStepRow('关系 ' + this.shortId(rel.ownerCharacterInstanceId) + ' → ' + this.shortId(rel.targetCharacterInstanceId), rel.status, rel.resultCode, rel.errorKind)
       }, (rel: WorldSessionPostProcessRelationshipPairState, relIndex: number): string => {
         return rel.ownerCharacterInstanceId + ':' + rel.targetCharacterInstanceId;
       })
 
       if (item.run.completedAt !== undefined) {
-        Text('completed: ' + formatWorldTimestamp(item.run.completedAt))
+        Text('完成于: ' + formatWorldTimestamp(item.run.completedAt))
           .fontSize(WorldMetrics.FONT_CAPTION)
           .fontColor(WorldColors.TEXT_TERTIARY)
           .margin({ top: 8 })
@@ -442,7 +442,7 @@ struct WorldInspectorPage {
           .margin({ left: 4 })
       }
       if (errorKind !== undefined) {
-        Text('err:' + errorKind)
+        Text('错误:' + errorKind)
           .fontSize(WorldMetrics.FONT_CAPTION)
           .fontColor(WorldColors.ERROR)
           .margin({ left: 4 })
@@ -457,25 +457,25 @@ struct WorldInspectorPage {
     Scroll() {
       Column() {
         if (this.activeSessionInfo === null) {
-          Text('No active session available for runtime context inspection.')
+          Text('没有可用于运行时上下文检查的活动会话。')
             .fontSize(WorldMetrics.FONT_BODY)
             .fontColor(WorldColors.TEXT_TERTIARY)
             .width('100%')
             .textAlign(TextAlign.Center)
             .padding(32)
         } else {
-          Text('Session: ' + this.shortId(this.activeSessionInfo.session.id) + ' (seq ' + this.activeSessionInfo.session.sequenceNumber.toString() + ')')
+          Text('会话: ' + this.shortId(this.activeSessionInfo.session.id) + ' (序号 ' + this.activeSessionInfo.session.sequenceNumber.toString() + ')')
             .fontSize(WorldMetrics.FONT_CAPTION)
             .fontColor(WorldColors.TEXT_SECONDARY)
             .width('100%')
             .padding({ bottom: 8 })
 
           if (this.activeSessionInfo.participants.length === 0) {
-            Text('No participants')
+            Text('无参与者')
               .fontSize(WorldMetrics.FONT_CAPTION)
               .fontColor(WorldColors.TEXT_TERTIARY)
           } else {
-            Text('Select Speaker:')
+            Text('选择发言角色:')
               .fontSize(WorldMetrics.FONT_CAPTION)
               .fontColor(WorldColors.TEXT_TERTIARY)
               .width('100%')
@@ -528,7 +528,7 @@ struct WorldInspectorPage {
   @Builder
   contextErrorDetail(): void {
     Row() {
-      Text('ContextUnavailable')
+      Text('上下文不可用')
         .fontSize(WorldMetrics.FONT_BODY)
         .fontColor(WorldColors.ERROR)
       Text(this.contextErrorCategory)
@@ -546,14 +546,14 @@ struct WorldInspectorPage {
   speakerContextDetail(): void {
     Column() {
       Row() {
-        Text('Summary: ' + (this.speakerSnapshot !== null ? this.speakerSnapshot.summaries.length.toString() : '0'))
+        Text('摘要: ' + (this.speakerSnapshot !== null ? this.speakerSnapshot.summaries.length.toString() : '0'))
           .fontSize(WorldMetrics.FONT_CAPTION)
           .fontColor(WorldColors.TEXT_SECONDARY)
-        Text('(omitted: ' + (this.speakerSnapshot !== null ? this.speakerSnapshot.omittedSummaryCount.toString() : '0') + ')')
+        Text('(省略: ' + (this.speakerSnapshot !== null ? this.speakerSnapshot.omittedSummaryCount.toString() : '0') + ')')
           .fontSize(WorldMetrics.FONT_CAPTION)
           .fontColor(WorldColors.TEXT_TERTIARY)
           .margin({ left: 6 })
-        Text('RUNTIME-INJECTED')
+        Text('运行时注入')
           .fontSize(10)
           .fontColor(WorldColors.SUCCESS)
           .margin({ left: 6 })
@@ -570,14 +570,14 @@ struct WorldInspectorPage {
       }
 
       Row() {
-        Text('Memory: ' + (this.speakerSnapshot !== null ? this.speakerSnapshot.memories.length.toString() : '0'))
+        Text('记忆: ' + (this.speakerSnapshot !== null ? this.speakerSnapshot.memories.length.toString() : '0'))
           .fontSize(WorldMetrics.FONT_CAPTION)
           .fontColor(WorldColors.TEXT_SECONDARY)
-        Text('(omitted: ' + (this.speakerSnapshot !== null ? this.speakerSnapshot.omittedMemoryCount.toString() : '0') + ')')
+        Text('(省略: ' + (this.speakerSnapshot !== null ? this.speakerSnapshot.omittedMemoryCount.toString() : '0') + ')')
           .fontSize(WorldMetrics.FONT_CAPTION)
           .fontColor(WorldColors.TEXT_TERTIARY)
           .margin({ left: 6 })
-        Text('RUNTIME-INJECTED')
+        Text('运行时注入')
           .fontSize(10)
           .fontColor(WorldColors.SUCCESS)
           .margin({ left: 6 })
@@ -593,7 +593,7 @@ struct WorldInspectorPage {
         })
       }
 
-      Text('Display chars: ' + this.speakerDisplayChars.toString() + ' (not token count)')
+      Text('显示字符数: ' + this.speakerDisplayChars.toString() + ' (非 Token 数)')
         .fontSize(WorldMetrics.FONT_CAPTION)
         .fontColor(WorldColors.TEXT_TERTIARY)
         .margin({ top: 8 })
@@ -606,7 +606,7 @@ struct WorldInspectorPage {
   contextSummaryItem(s: WorldCrossSessionSummaryContextItem): void {
     Column() {
       Row() {
-        Text('session ' + s.sourceSessionSequenceNumber.toString())
+        Text('会话 ' + s.sourceSessionSequenceNumber.toString())
           .fontSize(WorldMetrics.FONT_CAPTION)
           .fontColor(WorldColors.TEXT_SECONDARY)
         Text(this.shortId(s.sourceSessionId))
@@ -634,10 +634,10 @@ struct WorldInspectorPage {
   contextMemoryItem(m: WorldCrossSessionMemoryContextItem): void {
     Column() {
       Row() {
-        Text('session: ' + this.shortId(m.sourceSessionId))
+        Text('会话: ' + this.shortId(m.sourceSessionId))
           .fontSize(WorldMetrics.FONT_CAPTION)
           .fontColor(WorldColors.TEXT_SECONDARY)
-        Text('conf=' + m.confidence.toFixed(2))
+        Text('可信度=' + m.confidence.toFixed(2))
           .fontSize(WorldMetrics.FONT_CAPTION)
           .fontColor(WorldColors.TEXT_TERTIARY)
           .margin({ left: 6 })
@@ -661,11 +661,11 @@ struct WorldInspectorPage {
   @Builder
   promptOrderHint(): void {
     Column() {
-      Text('Prompt Order (current):')
+      Text('提示词顺序(当前):')
         .fontSize(WorldMetrics.FONT_CAPTION)
         .fontColor(WorldColors.TEXT_TERTIARY)
         .margin({ top: 16 })
-      Text('World Context -> Player Identity -> Preset/Lorebook/Character -> Dialogue Examples -> Memory -> Cross-session Context -> Current Conversation -> World Constraints -> Post-History')
+      Text('世界设定 → 玩家身份 → 预设/世界书/角色卡 → 对话示例 → 记忆 → 跨会话上下文 → 当前对话 → 世界约束 → 历史后指令')
         .fontSize(10)
         .fontColor(WorldColors.TEXT_TERTIARY)
         .margin({ top: 2 })
@@ -678,14 +678,14 @@ struct WorldInspectorPage {
     Scroll() {
       Column() {
         if (this.dossierInstances.length === 0) {
-          Text('No character instances')
+          Text('无角色实例')
             .fontSize(WorldMetrics.FONT_BODY)
             .fontColor(WorldColors.TEXT_TERTIARY)
             .width('100%')
             .textAlign(TextAlign.Center)
             .padding(32)
         } else {
-          Text('Select Character:')
+          Text('选择角色:')
             .fontSize(WorldMetrics.FONT_CAPTION)
             .fontColor(WorldColors.TEXT_TERTIARY)
             .width('100%')
@@ -747,7 +747,7 @@ struct WorldInspectorPage {
   @Builder
   dossierLocationSection(): void {
     Column() {
-      Text('Current Location')
+      Text('当前位置')
         .fontSize(WorldMetrics.FONT_SECTION)
         .fontColor(WorldColors.GOLD)
         .fontWeight(FontWeight.Medium)
@@ -755,11 +755,11 @@ struct WorldInspectorPage {
 
       if (this.dossierResult !== null) {
         Row() {
-          Text('locationId: ')
+          Text('地点ID: ')
             .fontSize(WorldMetrics.FONT_CAPTION)
             .fontColor(WorldColors.TEXT_TERTIARY)
           Text(this.dossierResult.instance.currentLocationId !== undefined
-            ? this.shortId(this.dossierResult.instance.currentLocationId) : '(unplaced)')
+            ? this.shortId(this.dossierResult.instance.currentLocationId) : '(未放置)')
             .fontSize(WorldMetrics.FONT_CAPTION)
             .fontColor(WorldColors.TEXT_PRIMARY)
           if (this.dossierResult.currentLocation !== null) {
@@ -783,7 +783,7 @@ struct WorldInspectorPage {
   dossierMemorySection(): void {
     Column() {
       Row() {
-        Text('Memory')
+        Text('记忆')
           .fontSize(WorldMetrics.FONT_SECTION)
           .fontColor(WorldColors.GOLD)
           .fontWeight(FontWeight.Medium)
@@ -791,7 +791,7 @@ struct WorldInspectorPage {
           .fontSize(WorldMetrics.FONT_CAPTION)
           .fontColor(WorldColors.TEXT_TERTIARY)
           .margin({ left: 4 })
-        Text('RUNTIME-INJECTED')
+        Text('运行时注入')
           .fontSize(10)
           .fontColor(WorldColors.SUCCESS)
           .margin({ left: 6 })
@@ -799,7 +799,7 @@ struct WorldInspectorPage {
       .width('100%')
 
       if (this.dossierResult !== null && this.dossierResult.memories.length === 0) {
-        Text('No active memories')
+        Text('无活跃记忆')
           .fontSize(WorldMetrics.FONT_CAPTION)
           .fontColor(WorldColors.TEXT_TERTIARY)
           .width('100%')
@@ -826,15 +826,15 @@ struct WorldInspectorPage {
         Text(this.shortId(mem.id))
           .fontSize(WorldMetrics.FONT_CAPTION)
           .fontColor(WorldColors.TEXT_TERTIARY)
-        Text('v' + mem.version.toString())
+        Text('版本' + mem.version.toString())
           .fontSize(WorldMetrics.FONT_CAPTION)
           .fontColor(WorldColors.TEXT_TERTIARY)
           .margin({ left: 4 })
-        Text('conf=' + mem.confidence.toFixed(2))
+        Text('可信度=' + mem.confidence.toFixed(2))
           .fontSize(WorldMetrics.FONT_CAPTION)
           .fontColor(WorldColors.TEXT_TERTIARY)
           .margin({ left: 4 })
-        Text('session: ' + this.shortId(mem.sourceSessionId))
+        Text('会话: ' + this.shortId(mem.sourceSessionId))
           .fontSize(WorldMetrics.FONT_CAPTION)
           .fontColor(WorldColors.TEXT_SECONDARY)
           .margin({ left: 4 })
@@ -848,10 +848,10 @@ struct WorldInspectorPage {
           .width('100%')
           .margin({ top: 4 })
         Row() {
-          Text('sourceLocation: ' + this.shortId(mem.sourceLocationId))
+          Text('来源地点: ' + this.shortId(mem.sourceLocationId))
             .fontSize(WorldMetrics.FONT_CAPTION)
             .fontColor(WorldColors.TEXT_TERTIARY)
-          Text('status: ' + mem.status)
+          Text('状态: ' + mem.status)
             .fontSize(WorldMetrics.FONT_CAPTION)
             .fontColor(WorldColors.TEXT_TERTIARY)
             .margin({ left: 6 })
@@ -868,7 +868,7 @@ struct WorldInspectorPage {
           .margin({ top: 2 })
       }
 
-      Text(this.expandedMemoryIndex === mi ? 'Collapse' : 'Expand')
+      Text(this.expandedMemoryIndex === mi ? '收起' : '展开')
         .fontSize(10)
         .fontColor(WorldColors.GOLD)
         .margin({ top: 2 })
@@ -887,7 +887,7 @@ struct WorldInspectorPage {
   dossierKnownEventSection(): void {
     Column() {
       Row() {
-        Text('KnownEvent')
+        Text('已知事件')
           .fontSize(WorldMetrics.FONT_SECTION)
           .fontColor(WorldColors.GOLD)
           .fontWeight(FontWeight.Medium)
@@ -895,7 +895,7 @@ struct WorldInspectorPage {
           .fontSize(WorldMetrics.FONT_CAPTION)
           .fontColor(WorldColors.TEXT_TERTIARY)
           .margin({ left: 4 })
-        Text('STORED ONLY')
+        Text('仅存储')
           .fontSize(10)
           .fontColor(WorldColors.WARNING)
           .margin({ left: 6 })
@@ -903,7 +903,7 @@ struct WorldInspectorPage {
       .width('100%')
 
       if (this.dossierResult !== null && this.dossierResult.knownEvents.length === 0) {
-        Text('No active known events')
+        Text('无活跃已知事件')
           .fontSize(WorldMetrics.FONT_CAPTION)
           .fontColor(WorldColors.TEXT_TERTIARY)
           .width('100%')
@@ -927,14 +927,14 @@ struct WorldInspectorPage {
   dossierKnownEventItem(ke: WorldKnownEventEntry, ki: number): void {
     Column() {
       Row() {
-        Text('eventId: ' + this.shortId(ke.eventId))
+        Text('事件ID: ' + this.shortId(ke.eventId))
           .fontSize(WorldMetrics.FONT_CAPTION)
           .fontColor(WorldColors.TEXT_SECONDARY)
-        Text('source: ' + ke.knowledgeSourceKind)
+        Text('来源: ' + ke.knowledgeSourceKind)
           .fontSize(WorldMetrics.FONT_CAPTION)
           .fontColor(WorldColors.TEXT_TERTIARY)
           .margin({ left: 6 })
-        Text('session: ' + this.shortId(ke.sourceSessionId))
+        Text('会话: ' + this.shortId(ke.sourceSessionId))
           .fontSize(WorldMetrics.FONT_CAPTION)
           .fontColor(WorldColors.TEXT_TERTIARY)
           .margin({ left: 6 })
@@ -952,7 +952,7 @@ struct WorldInspectorPage {
   dossierRelationshipSection(): void {
     Column() {
       Row() {
-        Text('Relationship')
+        Text('关系')
           .fontSize(WorldMetrics.FONT_SECTION)
           .fontColor(WorldColors.GOLD)
           .fontWeight(FontWeight.Medium)
@@ -960,7 +960,7 @@ struct WorldInspectorPage {
           .fontSize(WorldMetrics.FONT_CAPTION)
           .fontColor(WorldColors.TEXT_TERTIARY)
           .margin({ left: 4 })
-        Text('STORED ONLY')
+        Text('仅存储')
           .fontSize(10)
           .fontColor(WorldColors.WARNING)
           .margin({ left: 6 })
@@ -968,7 +968,7 @@ struct WorldInspectorPage {
       .width('100%')
 
       if (this.dossierResult !== null && this.dossierResult.relationships.length === 0) {
-        Text('No active relationships')
+        Text('无活跃关系')
           .fontSize(WorldMetrics.FONT_CAPTION)
           .fontColor(WorldColors.TEXT_TERTIARY)
           .width('100%')
@@ -992,14 +992,14 @@ struct WorldInspectorPage {
   dossierRelationshipItem(rel: WorldDirectionalRelationshipEntry, ri: number): void {
     Column() {
       Row() {
-        Text(rel.ownerDisplayNameSnapshot + ' -> ' + rel.targetDisplayNameSnapshot)
+        Text(rel.ownerDisplayNameSnapshot + ' → ' + rel.targetDisplayNameSnapshot)
           .fontSize(WorldMetrics.FONT_CAPTION)
           .fontColor(WorldColors.TEXT_SECONDARY)
-        Text('v' + rel.version.toString())
+        Text('版本' + rel.version.toString())
           .fontSize(WorldMetrics.FONT_CAPTION)
           .fontColor(WorldColors.TEXT_TERTIARY)
           .margin({ left: 4 })
-        Text('conf=' + rel.confidence.toFixed(2))
+        Text('可信度=' + rel.confidence.toFixed(2))
           .fontSize(WorldMetrics.FONT_CAPTION)
           .fontColor(WorldColors.TEXT_TERTIARY)
           .margin({ left: 4 })
@@ -1013,10 +1013,10 @@ struct WorldInspectorPage {
           .width('100%')
           .margin({ top: 4 })
         Row() {
-          Text('sourceSession: ' + this.shortId(rel.sourceSessionId))
+          Text('来源会话: ' + this.shortId(rel.sourceSessionId))
             .fontSize(WorldMetrics.FONT_CAPTION)
             .fontColor(WorldColors.TEXT_TERTIARY)
-          Text('sourceLocation: ' + this.shortId(rel.sourceLocationId))
+          Text('来源地点: ' + this.shortId(rel.sourceLocationId))
             .fontSize(WorldMetrics.FONT_CAPTION)
             .fontColor(WorldColors.TEXT_TERTIARY)
             .margin({ left: 6 })
@@ -1033,7 +1033,7 @@ struct WorldInspectorPage {
           .margin({ top: 2 })
       }
 
-      Text(this.expandedRelationshipIndex === ri ? 'Collapse' : 'Expand')
+      Text(this.expandedRelationshipIndex === ri ? '收起' : '展开')
         .fontSize(10)
         .fontColor(WorldColors.GOLD)
         .margin({ top: 2 })
@@ -1052,7 +1052,7 @@ struct WorldInspectorPage {
   dossierEventSection(): void {
     Column() {
       Row() {
-        Text('WorldEvent')
+        Text('世界事件')
           .fontSize(WorldMetrics.FONT_SECTION)
           .fontColor(WorldColors.GOLD)
           .fontWeight(FontWeight.Medium)
@@ -1060,7 +1060,7 @@ struct WorldInspectorPage {
           .fontSize(WorldMetrics.FONT_CAPTION)
           .fontColor(WorldColors.TEXT_TERTIARY)
           .margin({ left: 4 })
-        Text('NOT RUNTIME-INJECTED')
+        Text('未注入运行时')
           .fontSize(10)
           .fontColor(WorldColors.WARNING)
           .margin({ left: 6 })
@@ -1068,7 +1068,7 @@ struct WorldInspectorPage {
       .width('100%')
 
       if (this.dossierEventEntries.length === 0) {
-        Text('No events for current session')
+        Text('当前会话无事件')
           .fontSize(WorldMetrics.FONT_CAPTION)
           .fontColor(WorldColors.TEXT_TERTIARY)
           .width('100%')
@@ -1110,16 +1110,16 @@ struct WorldInspectorPage {
 
   private runStatusBadge(status: WorldSessionPostProcessRunStatus): string {
     if (status === WorldSessionPostProcessRunStatus.Pending) {
-      return 'Pending';
+      return '待处理';
     }
     if (status === WorldSessionPostProcessRunStatus.Running) {
-      return 'Running';
+      return '运行中';
     }
     if (status === WorldSessionPostProcessRunStatus.Completed) {
-      return 'Completed';
+      return '已完成';
     }
     if (status === WorldSessionPostProcessRunStatus.CompletedWithErrors) {
-      return 'CompletedWithErrors';
+      return '完成但有错误';
     }
     return status;
   }
@@ -1152,18 +1152,18 @@ struct WorldInspectorPage {
 
   private stepStatusBadge(status: WorldSessionPostProcessStepStatus): string {
     if (status === WorldSessionPostProcessStepStatus.Succeeded) {
-      return 'OK';
+      return '成功';
     }
     if (status === WorldSessionPostProcessStepStatus.Skipped) {
-      return 'Skip';
+      return '跳过';
     }
     if (status === WorldSessionPostProcessStepStatus.Failed) {
-      return 'Fail';
+      return '失败';
     }
     if (status === WorldSessionPostProcessStepStatus.Running) {
-      return 'Run';
+      return '运行中';
     }
-    return 'Wait';
+    return '等待';
   }
 
   private stepStatusColor(status: WorldSessionPostProcessStepStatus): string {
@@ -1184,34 +1184,34 @@ struct WorldInspectorPage {
 
   private resultCodeBadge(code: WorldSessionPostProcessResultCode): string {
     if (code === WorldSessionPostProcessResultCode.Generated) {
-      return 'Generated';
+      return '已生成';
     }
     if (code === WorldSessionPostProcessResultCode.Existing) {
-      return 'Existing';
+      return '已存在';
     }
     if (code === WorldSessionPostProcessResultCode.NoPublicContent) {
-      return 'NoPublicContent';
+      return '无公开内容';
     }
     if (code === WorldSessionPostProcessResultCode.NoVisibleEvidence) {
-      return 'NoVisibleEvidence';
+      return '无可见证据';
     }
     if (code === WorldSessionPostProcessResultCode.ZeroEvents) {
-      return 'ZeroEvents';
+      return '零事件';
     }
     if (code === WorldSessionPostProcessResultCode.Derived) {
-      return 'Derived';
+      return '已派生';
     }
     if (code === WorldSessionPostProcessResultCode.ZeroKnownEvents) {
-      return 'ZeroKnownEvents';
+      return '零已知事件';
     }
     if (code === WorldSessionPostProcessResultCode.NoChange) {
-      return 'NoChange';
+      return '无变化';
     }
     if (code === WorldSessionPostProcessResultCode.SkippedDependency) {
-      return 'SkippedDependency';
+      return '依赖跳过';
     }
     if (code === WorldSessionPostProcessResultCode.BatchTooLarge) {
-      return 'BatchTooLarge';
+      return '批次过大';
     }
     return code;
   }

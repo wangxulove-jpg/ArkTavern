@@ -77,6 +77,7 @@ struct WorldCharacterMemoryPage {
   @State private diagnostic: DiagnosticSummaryUiModel | null = null;
 
   @State private formMode: MemoryFormMode = MemoryFormMode.None;
+  @State private formSheetVisible: boolean = false;
   @State private editingMemoryId: string = '';
   @State private formContent: string = '';
   @State private formType: WorldCharacterMemoryType = WorldCharacterMemoryType.Episodic;
@@ -206,52 +207,35 @@ struct WorldCharacterMemoryPage {
   }
 
   build(): void {
-    Column() {
-      this.headerArea()
-      if (this.isInitializing) {
-        this.loadingView()
-      } else if (this.loadState === WorldCharacterMemoryLoadState.Loading) {
-        this.loadingView()
-      } else if (this.loadState === WorldCharacterMemoryLoadState.NotFound) {
-        this.notFoundView()
-      } else if (this.loadState === WorldCharacterMemoryLoadState.Error) {
-        this.errorView(this.errorMessage.length > 0 ? this.errorMessage : '记忆数据加载失败,请重试')
-      } else {
-        this.contentView()
+    Stack() {
+      Column() {
+        this.headerArea()
+        if (this.isInitializing) {
+          this.loadingView()
+        } else if (this.loadState === WorldCharacterMemoryLoadState.Loading) {
+          this.loadingView()
+        } else if (this.loadState === WorldCharacterMemoryLoadState.NotFound) {
+          this.notFoundView()
+        } else if (this.loadState === WorldCharacterMemoryLoadState.Error) {
+          this.errorView(this.errorMessage.length > 0 ? this.errorMessage : '记忆数据加载失败,请重试')
+        } else {
+          this.contentView()
+        }
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor(ThemePalette.pageBgColor(this.effectiveTheme))
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+
+      if (this.formSheetVisible) {
+        this.formOverlay()
+      }
+      if (this.deletingMemoryId.length > 0) {
+        this.deleteConfirmOverlay()
       }
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(ThemePalette.pageBgColor(this.effectiveTheme))
-    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-    .bindSheet(this.formMode === MemoryFormMode.Create, this.createFormSheet, {
-      height: SheetSize.FIT_CONTENT,
-      dragBar: true,
-      backgroundColor: ThemePalette.worldSurfaceColor(this.effectiveTheme),
-      onDisappear: () => {
-        if (this.formMode === MemoryFormMode.Create) {
-          this.formMode = MemoryFormMode.None;
-        }
-      }
-    })
-    .bindSheet(this.formMode === MemoryFormMode.Edit, this.editFormSheet, {
-      height: SheetSize.FIT_CONTENT,
-      dragBar: true,
-      backgroundColor: ThemePalette.worldSurfaceColor(this.effectiveTheme),
-      onDisappear: () => {
-        if (this.formMode === MemoryFormMode.Edit) {
-          this.formMode = MemoryFormMode.None;
-        }
-      }
-    })
-    .bindSheet(this.deletingMemoryId.length > 0, this.deleteConfirmSheet, {
-      height: SheetSize.FIT_CONTENT,
-      dragBar: true,
-      backgroundColor: ThemePalette.worldSurfaceColor(this.effectiveTheme),
-      onDisappear: () => {
-        this.deletingMemoryId = '';
-      }
-    })
   }
 
   @Builder
@@ -1195,13 +1179,50 @@ struct WorldCharacterMemoryPage {
   }
 
   @Builder
-  createFormSheet(): void {
-    this.memoryFormSheet(false)
+  formOverlay(): void {
+    Column() {
+      Column() {
+        Scroll() {
+          Column() {
+            this.memoryFormSheet(this.formMode === MemoryFormMode.Edit)
+          }
+          .width('100%')
+        }
+        .width('100%')
+        .height('100%')
+        .scrollBar(BarState.Off)
+      }
+      .width('100%')
+      .height('82%')
+      .backgroundColor(ThemePalette.worldSurfaceColor(this.effectiveTheme))
+      .borderRadius({ topLeft: $r('app.float.world_radius_card'), topRight: $r('app.float.world_radius_card') })
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.End)
+    .backgroundColor($r('app.color.world_scrim'))
+    .onClick(() => {
+      this.formSheetVisible = false;
+      this.formMode = MemoryFormMode.None;
+    })
   }
 
   @Builder
-  editFormSheet(): void {
-    this.memoryFormSheet(true)
+  deleteConfirmOverlay(): void {
+    Column() {
+      Column() {
+        this.deleteConfirmSheet()
+      }
+      .width('100%')
+      .layoutWeight(1)
+      .justifyContent(FlexAlign.Center)
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor($r('app.color.world_scrim'))
+    .onClick(() => {
+      this.deletingMemoryId = '';
+    })
   }
 
   @Builder
@@ -1399,7 +1420,7 @@ struct WorldCharacterMemoryPage {
           .height(36)
           .layoutWeight(1)
           .margin({ right: 8 })
-          .onClick(() => { this.formMode = MemoryFormMode.None; })
+          .onClick(() => { this.formSheetVisible = false; })
         Button(isEdit
           ? $r('app.string.world_memory_save')
           : $r('app.string.world_memory_create'))
@@ -1493,6 +1514,7 @@ struct WorldCharacterMemoryPage {
     this.formLocationId = '';
     this.formOccurredAt = 0;
     this.formMode = MemoryFormMode.Create;
+    this.formSheetVisible = true;
   }
 
   private openEditForm(m: MemoryItemUiModel): void {
@@ -1504,6 +1526,7 @@ struct WorldCharacterMemoryPage {
     this.formLocationId = m.sourceLocationId;
     this.formOccurredAt = m.occurredAt;
     this.formMode = MemoryFormMode.Edit;
+    this.formSheetVisible = true;
   }
 
   private openEvidence(memoryId: string): void {
@@ -1540,7 +1563,7 @@ struct WorldCharacterMemoryPage {
       };
       const result = await this.viewModel.updateMemory(input);
       if (result.success) {
-        this.formMode = MemoryFormMode.None;
+        this.formSheetVisible = false;
         await this.loadSnapshot();
       } else {
         this.actionError = result.errorMessage;
@@ -1555,7 +1578,7 @@ struct WorldCharacterMemoryPage {
       };
       const result = await this.viewModel.createMemory(input);
       if (result.success) {
-        this.formMode = MemoryFormMode.None;
+        this.formSheetVisible = false;
         await this.loadSnapshot();
       } else {
         this.actionError = result.errorMessage;

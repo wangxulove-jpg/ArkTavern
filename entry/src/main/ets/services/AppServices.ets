@@ -106,6 +106,7 @@ import { WorldPlayerProfileRepository } from '../repositories/world/WorldPlayerP
 import { WorldConversationSessionRepository } from '../repositories/world/WorldConversationSessionRepository';
 import { WorldSessionSummaryRepository } from '../repositories/world/WorldSessionSummaryRepository';
 import { WorldLocationMapPlacementRepository } from '../repositories/world/WorldLocationMapPlacementRepository';
+import { WorldMapBackgroundRepository } from '../repositories/world/WorldMapBackgroundRepository';
 import { WorldCharacterLocationHistoryRepository } from '../repositories/world/WorldCharacterLocationHistoryRepository';
 import { WorldStateService } from './world/WorldStateService';
 import { WorldSceneService } from './world/WorldSceneService';
@@ -135,6 +136,7 @@ import { WorldSessionSummaryPromptAssembler } from './world/WorldSessionSummaryP
 import { WorldSessionSummaryGenerationService } from './world/WorldSessionSummaryGenerationService';
 import { WorldCrossSessionContextService } from './world/WorldCrossSessionContextService';
 import { WorldMapInteractionService } from './world/WorldMapInteractionService';
+import { WorldMapBackgroundService } from './world/WorldMapBackgroundService';
 import { WorldSceneLaunchService } from './world/WorldSceneLaunchService';
 import { WorldSceneMessageService } from './world/WorldSceneMessageService';
 import { WorldRuntimeRegistry } from './world/WorldRuntimeRegistry';
@@ -319,8 +321,12 @@ export class AppServices {
   private readonly worldPerceptionService: WorldPerceptionService;
   /** WorldConversationSessionService 世界会话生命周期服务(W1B2,会话唯一正式写入口) */
   private readonly worldConversationSessionService: WorldConversationSessionService;
+  /** WorldMapBackgroundRepository 世界地图背景图仓储(W2A3-WORLD-MAP-BACKGROUND) */
+  private readonly worldMapBackgroundRepository: WorldMapBackgroundRepository;
   /** WorldMapInteractionService 地图交互业务服务(W1D,地图快照加载+放置保存) */
   private readonly worldMapInteractionService: WorldMapInteractionService;
+  /** WorldMapBackgroundService 地图背景图业务服务(W2A3,图片导入/旋转/移除) */
+  private worldMapBackgroundService: WorldMapBackgroundService | null = null;
   /** WorldSceneLaunchService 场景启动业务服务(W2B1,Scene+Session 原子创建) */
   private readonly worldSceneLaunchService: WorldSceneLaunchService;
   /** WorldChatImportService 单聊导入世界服务(角色卡+聊天记录导入世界模式) */
@@ -415,6 +421,8 @@ export class AppServices {
     this.worldSessionSummaryRepository = new WorldSessionSummaryRepository(this.dbHelper);
     // W1C-WORLD-MAP-CONTRACT: 世界地点地图放置仓储,仅依赖 DbHelper,不依赖任何 Service。
     this.worldLocationMapPlacementRepository = new WorldLocationMapPlacementRepository(this.dbHelper);
+    // W2A3: 世界地图背景图仓储,仅依赖 DbHelper,不依赖任何 Service。
+    this.worldMapBackgroundRepository = new WorldMapBackgroundRepository(this.dbHelper);
     // W4A: 世界角色地点历史仓储,仅依赖 DbHelper,不依赖任何 Service。
     this.worldCharacterLocationHistoryRepository = new WorldCharacterLocationHistoryRepository(this.dbHelper);
     // W6A1: 世界事件提取运行与条目仓储,仅依赖 DbHelper,不依赖任何 Service。
@@ -992,6 +1000,18 @@ export class AppServices {
         }
         // 创建 ContextBudgetService(只需 appPreferences)
         services.contextBudgetService = new ContextBudgetService(services.appPreferences);
+        // W2A3: 创建 WorldMapBackgroundService(需要 appContext 写入沙箱图片文件)
+        if (services.appContext !== null) {
+          services.worldMapBackgroundService = new WorldMapBackgroundService(
+            services.appContext,
+            services.worldRepository,
+            services.worldLocationMapPlacementRepository,
+            services.worldMapBackgroundRepository,
+            services.dbHelper
+          );
+        } else {
+          Logger.warn(LOG_TAG, 'appContext is null, worldMapBackgroundService not created');
+        }
         // 创建 MarketImportService(需要 appContext 写入临时 PNG 文件)
         if (services.appContext !== null) {
           services.marketImportService = new MarketImportService(
@@ -1584,6 +1604,10 @@ export class AppServices {
 
   static getWorldMapInteractionService(): WorldMapInteractionService {
     return AppServices.getInstance().worldMapInteractionService;
+  }
+
+  static getWorldMapBackgroundService(): WorldMapBackgroundService | null {
+    return AppServices.getInstance().worldMapBackgroundService;
   }
 
   static getWorldSceneLaunchService(): WorldSceneLaunchService {

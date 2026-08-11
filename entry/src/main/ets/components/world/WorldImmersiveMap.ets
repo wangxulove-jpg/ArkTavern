@@ -20,9 +20,11 @@ import {
   ImmersiveMapViewport,
   BillboardLayout,
   screenToWorld,
+  worldToScreen,
   BILLBOARD_MAX_VISIBLE
 } from '../../viewmodels/world/WorldImmersiveMapLayout';
 import { WorldLocationMapPlacement } from '../../models/world/WorldLocationMapPlacement';
+import { WorldMapBackground, backgroundWorldWidth, backgroundWorldHeight, backgroundCenterX, backgroundCenterY } from '../../models/world/WorldMapBackground';
 import { WorldLocationUiModel, WorldEdgeUiModel, WorldCharacterInstanceUiModel } from '../../viewmodels/world/WorldUiModels';
 import { WorldMapLocationNode } from './WorldMapLocationNode';
 import { WorldMapCharacterBillboard, BillboardCharacterSlotData } from './WorldMapCharacterBillboard';
@@ -30,6 +32,7 @@ import { WorldMapToolbar } from './WorldMapToolbar';
 import { WorldEmptyState } from './WorldEmptyState';
 import { WorldStatus } from '../../models/world/World';
 import { WorldLocationStatus } from '../../models/world/WorldLocation';
+import { Logger } from '../../utils/Logger';
 
 export interface NodeBillboardData {
   readonly locationId: string;
@@ -44,19 +47,34 @@ export struct WorldImmersiveMap {
   @Prop edges: WorldEdgeUiModel[] = [];
   @Prop characters: WorldCharacterInstanceUiModel[] = [];
   @Prop placements: WorldLocationMapPlacement[] = [];
+  @Prop mapBackground: WorldMapBackground | null = null;
   @Prop selectedLocationId: string = '';
   @Prop isEditMode: boolean = false;
   @Prop worldStatus: WorldStatus = WorldStatus.Active;
   @Prop viewport: ImmersiveMapViewport = { offsetX: 0, offsetY: 0, zoom: 1.0 };
   @Prop billboardData: NodeBillboardData[] = [];
+  /** 数据刷新令牌:父页面在放置/背景等数据变化后递增,触发本组件重渲染 */
+  @Prop @Watch('onVersionChange') mapViewVersion: number = 0;
+
+  onVersionChange(): void {
+    Logger.info('MapView', 'version changed: ' + this.mapViewVersion.toString()
+      + ', mapLayout=' + (this.mapLayout !== null ? this.mapLayout.nodes.length.toString() : 'null')
+      + ', bg=' + (this.mapBackground !== null ? this.mapBackground.rotation.toFixed(3) : 'null')
+      + ', node0world=(' + (this.mapLayout !== null && this.mapLayout.nodes.length > 0
+        ? this.mapLayout.nodes[0].worldX.toFixed(1) + ',' + this.mapLayout.nodes[0].worldY.toFixed(1) : 'n/a') + ')');
+  }
 
   onLocationTap: (locationId: string) => void = (_locationId: string): void => {};
+  onLocationLongPress: (locationId: string) => void = (_locationId: string): void => {};
+  onLocationDragPreview: (locationId: string, worldX: number, worldY: number) => void = (_id: string, _x: number, _y: number): void => {};
   onLocationDragEnd: (locationId: string, worldX: number, worldY: number) => void = (_id: string, _x: number, _y: number): void => {};
   onZoomIn: () => void = (): void => {};
   onZoomOut: () => void = (): void => {};
   onReset: () => void = (): void => {};
   onLocate: () => void = (): void => {};
   onPan: (dx: number, dy: number) => void = (_dx: number, _dy: number): void => {};
+  onRotateLeft: () => void = (): void => {};
+  onRotateRight: () => void = (): void => {};
   onAddCharacter: () => void = (): void => {};
   onCharacterTap: (instanceId: string) => void = (_instanceId: string): void => {};
   onTravelTo: (instanceId: string, targetLocationId: string) => void = (_instanceId: string, _targetId: string): void => {};
@@ -78,6 +96,7 @@ export struct WorldImmersiveMap {
 
       Row() {
         WorldMapToolbar({
+          hasBackground: this.mapBackground !== null,
           onLocate: (): void => {
             this.onLocate();
           },
@@ -89,6 +108,12 @@ export struct WorldImmersiveMap {
           },
           onReset: (): void => {
             this.onReset();
+          },
+          onRotateLeft: (): void => {
+            this.onRotateLeft();
+          },
+          onRotateRight: (): void => {
+            this.onRotateRight();
           }
         })
           .width('100%')
@@ -153,6 +178,10 @@ export struct WorldImmersiveMap {
   @Builder
   mapCanvas(layout: ImmersiveMapLayout): void {
     Stack({ alignContent: Alignment.TopStart }) {
+      if (this.mapBackground !== null) {
+        this.renderBackgroundImage(this.mapBackground!, layout)
+      }
+
       Stack({ alignContent: Alignment.TopStart }) {
         ForEach(layout.edges, (edge: MapEdgeScreenLayout) => {
           this.edgeLine(edge)
@@ -166,6 +195,7 @@ export struct WorldImmersiveMap {
         ForEach(layout.nodes, (node: MapNodeScreenLayout) => {
           MapNodeWithBillboard({
             node: node,
+            viewport: this.viewport,
             locationName: this.resolveLocationName(node.locationId),
             locationStatus: this.resolveLocationStatus(node.locationId),
             characterCount: this.countCharactersAt(node.locationId),
@@ -175,6 +205,10 @@ export struct WorldImmersiveMap {
             isEditMode: this.isEditMode,
             onLocationTap: (locationId: string): void => {
               this.onLocationTap(locationId);
+            },
+            onLocationLongPress: (locationId: string): void => {
+              this.dragLocationId = locationId;
+              this.isDragging = false;
             },
             onCharacterTap: (instanceId: string): void => {
               this.onCharacterTap(instanceId);
@@ -204,6 +238,12 @@ export struct WorldImmersiveMap {
             const dy: number = event.offsetY - this.dragStartY;
             if (this.isEditMode && this.dragLocationId.length > 0) {
               this.isDragging = true;
+              const fx: number = event.fingerList.length > 0 ? event.fingerList[0].localX : 0;
+              const fy: number = event.fingerList.length > 0 ? event.fingerList[0].localY : 0;
+              const world: number[] = screenToWorld(fx, fy, this.viewport);
+              this.onLocationDragPreview(this.dragLocationId, world[0], world[1]);
+              this.dragStartX = event.offsetX;
+              this.dragStartY = event.offsetY;
             } else {
               this.onPan(dx, dy);
               this.dragStartX = event.offsetX;
@@ -212,9 +252,9 @@ export struct WorldImmersiveMap {
           })
           .onActionEnd((event: GestureEvent): void => {
             if (this.isDragging && this.dragLocationId.length > 0 && this.mapLayout !== null) {
-              const world: number[] = screenToWorld(
-                event.offsetX, event.offsetY, this.viewport
-              );
+              const fx: number = event.fingerList.length > 0 ? event.fingerList[0].localX : 0;
+              const fy: number = event.fingerList.length > 0 ? event.fingerList[0].localY : 0;
+              const world: number[] = screenToWorld(fx, fy, this.viewport);
               this.onLocationDragEnd(this.dragLocationId, world[0], world[1]);
             }
             this.dragLocationId = '';
@@ -233,15 +273,46 @@ export struct WorldImmersiveMap {
   }
 
   @Builder
+  renderBackgroundImage(background: WorldMapBackground, layout: ImmersiveMapLayout): void {
+    Image(background.imageUri)
+      .width(this.backgroundScreenW(background))
+      .height(this.backgroundScreenH(background))
+      .objectFit(ImageFit.Fill)
+      .rotate({ angle: this.backgroundRotationDeg(background), centerX: '50%', centerY: '50%' })
+      .position({ x: this.backgroundScreenX(background), y: this.backgroundScreenY(background) })
+      .hitTestBehavior(HitTestMode.Transparent)
+      .key('mapBackground')
+  }
+
+  private backgroundScreenW(background: WorldMapBackground): number {
+    return backgroundWorldWidth(background) * this.viewport.zoom;
+  }
+
+  private backgroundScreenH(background: WorldMapBackground): number {
+    return backgroundWorldHeight(background) * this.viewport.zoom;
+  }
+
+  private backgroundRotationDeg(background: WorldMapBackground): number {
+    return background.rotation * 180 / Math.PI;
+  }
+
+  private backgroundScreenX(background: WorldMapBackground): number {
+    const centerScreen: number[] = worldToScreen(backgroundCenterX(background), backgroundCenterY(background), this.viewport);
+    return centerScreen[0] - this.backgroundScreenW(background) / 2;
+  }
+
+  private backgroundScreenY(background: WorldMapBackground): number {
+    const centerScreen: number[] = worldToScreen(backgroundCenterX(background), backgroundCenterY(background), this.viewport);
+    return centerScreen[1] - this.backgroundScreenH(background) / 2;
+  }
+
+  @Builder
   edgeLine(edge: MapEdgeScreenLayout): void {
     Polyline()
-      .width(Math.abs(edge.toScreenX - edge.fromScreenX) + 4)
-      .height(Math.abs(edge.toScreenY - edge.fromScreenY) + 4)
-      .position({
-        x: Math.min(edge.fromScreenX, edge.toScreenX) - 2,
-        y: Math.min(edge.fromScreenY, edge.toScreenY) - 2
-      })
-      .points(this.computeEdgePoints(edge))
+      .width(this.edgeWidth(edge))
+      .height(this.edgeHeight(edge))
+      .position(this.edgePosition(edge))
+      .points(this.edgePoints(edge))
       .fillOpacity(0)
       .stroke($r('app.color.world_edge'))
       .strokeWidth(1.5)
@@ -251,15 +322,50 @@ export struct WorldImmersiveMap {
       .opacity(edge.isEnabled ? 0.85 : 0.45)
   }
 
-  private computeEdgePoints(edge: MapEdgeScreenLayout): number[][] {
-    const polyLeft: number = Math.min(edge.fromScreenX, edge.toScreenX) - 2;
-    const polyTop: number = Math.min(edge.fromScreenY, edge.toScreenY) - 2;
-    const midY: number = (edge.fromScreenY + edge.toScreenY) / 2;
+  private edgeFromScreen(edge: MapEdgeScreenLayout): number[] {
+    return worldToScreen(edge.fromWorldX, edge.fromWorldY, this.viewport);
+  }
+
+  private edgeToScreen(edge: MapEdgeScreenLayout): number[] {
+    return worldToScreen(edge.toWorldX, edge.toWorldY, this.viewport);
+  }
+
+  private edgeWidth(edge: MapEdgeScreenLayout): number {
+    const from: number[] = this.edgeFromScreen(edge);
+    const to: number[] = this.edgeToScreen(edge);
+    return Math.abs(to[0] - from[0]) + 4;
+  }
+
+  private edgeHeight(edge: MapEdgeScreenLayout): number {
+    const from: number[] = this.edgeFromScreen(edge);
+    const to: number[] = this.edgeToScreen(edge);
+    return Math.abs(to[1] - from[1]) + 4;
+  }
+
+  private edgePosition(edge: MapEdgeScreenLayout): Position {
+    const from: number[] = this.edgeFromScreen(edge);
+    const to: number[] = this.edgeToScreen(edge);
+    return {
+      x: Math.min(from[0], to[0]) - 2,
+      y: Math.min(from[1], to[1]) - 2
+    };
+  }
+
+  private edgePoints(edge: MapEdgeScreenLayout): number[][] {
+    const from: number[] = this.edgeFromScreen(edge);
+    const to: number[] = this.edgeToScreen(edge);
+    const fromX: number = from[0];
+    const fromY: number = from[1];
+    const toX: number = to[0];
+    const toY: number = to[1];
+    const polyLeft: number = Math.min(fromX, toX) - 2;
+    const polyTop: number = Math.min(fromY, toY) - 2;
+    const midY: number = (fromY + toY) / 2;
     return [
-      [edge.fromScreenX - polyLeft, edge.fromScreenY - polyTop],
-      [edge.fromScreenX - polyLeft, midY - polyTop],
-      [edge.toScreenX - polyLeft, midY - polyTop],
-      [edge.toScreenX - polyLeft, edge.toScreenY - polyTop]
+      [fromX - polyLeft, fromY - polyTop],
+      [fromX - polyLeft, midY - polyTop],
+      [toX - polyLeft, midY - polyTop],
+      [toX - polyLeft, toY - polyTop]
     ];
   }
 
@@ -312,7 +418,8 @@ export struct WorldImmersiveMap {
 
 @Component
 struct MapNodeWithBillboard {
-  @Prop node: MapNodeScreenLayout = { locationId: '', screenX: 0, screenY: 0, visualFactor: { scale: 1, opacity: 1, zIndex: 0 }, placement: null };
+  @Prop node: MapNodeScreenLayout = { locationId: '', worldX: 0, worldY: 0, screenX: 0, screenY: 0, visualFactor: { scale: 1, opacity: 1, zIndex: 0 }, placement: null };
+  @Prop viewport: ImmersiveMapViewport = { offsetX: 0, offsetY: 0, zoom: 1.0 };
   @Prop locationName: string = '';
   @Prop locationStatus: WorldLocationStatus = WorldLocationStatus.Active;
   @Prop characterCount: number = 0;
@@ -321,6 +428,7 @@ struct MapNodeWithBillboard {
   @Prop billboardOverflow: number = 0;
   @Prop isEditMode: boolean = false;
   onLocationTap: (locationId: string) => void = (_id: string): void => {};
+  onLocationLongPress: (locationId: string) => void = (_id: string): void => {};
   onCharacterTap: (instanceId: string) => void = (_id: string): void => {};
   onOverflowTap: () => void = (): void => {};
 
@@ -336,6 +444,9 @@ struct MapNodeWithBillboard {
         visualOpacity: this.node.visualFactor.opacity,
         onTap: (locationId: string): void => {
           this.onLocationTap(locationId);
+        },
+        onLongPress: (locationId: string): void => {
+          this.onLocationLongPress(locationId);
         }
       })
 
@@ -352,7 +463,12 @@ struct MapNodeWithBillboard {
         })
       }
     }
-    .position({ x: this.node.screenX - 60, y: this.node.screenY - 20 })
+    .position(this.nodePosition())
     .zIndex(this.node.visualFactor.zIndex)
+  }
+
+  private nodePosition(): Position {
+    const screen: number[] = worldToScreen(this.node.worldX, this.node.worldY, this.viewport);
+    return { x: screen[0] - 60, y: screen[1] - 20 };
   }
 }

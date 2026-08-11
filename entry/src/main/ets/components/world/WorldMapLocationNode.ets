@@ -6,6 +6,7 @@
  * - 地点名称
  * - 角色数量徽标
  * - 选中金色光晕
+ * - 长按触发 onLongPress(编辑模式下进入地点拖拽)
  *
  * 纯 UI 组件,不依赖 Repository / Service / AppServices / 数据库。
  */
@@ -23,6 +24,7 @@ export struct WorldMapLocationNode {
   @Prop visualScale: number = 1.0;
   @Prop visualOpacity: number = 1.0;
   onTap: (locationId: string) => void = (_locationId: string): void => {};
+  onLongPress: (locationId: string) => void = (_locationId: string): void => {};
 
   build(): void {
     Column() {
@@ -69,6 +71,12 @@ export struct WorldMapLocationNode {
     .onClick(() => {
       this.onTap(this.locationId);
     })
+    .gesture(
+      LongPressGesture({ repeat: false, duration: 500 })
+        .onAction((): void => {
+          this.onLongPress(this.locationId);
+        })
+    )
     .key('mapNode.' + this.locationId)
   }
 }

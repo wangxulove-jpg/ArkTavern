@@ -14,6 +14,7 @@
 
 import { WorldLocationUiModel, WorldEdgeUiModel, WorldCharacterInstanceUiModel } from './WorldUiModels';
 import { WorldLocationMapPlacement } from '../../models/world/WorldLocationMapPlacement';
+import { WorldMapBackground, backgroundWorldWidth, backgroundWorldHeight, rotatePointAroundCenter } from '../../models/world/WorldMapBackground';
 import { WorldLocationNodeLayout, WorldLocationEdgeLayout, computeWorldLocationGraphLayout } from './WorldLocationGraphLayout';
 
 const MIN_ZOOM: number = 0.65;
@@ -44,7 +45,13 @@ export interface BoundedVisualFactor {
 
 export interface MapNodeScreenLayout {
   readonly locationId: string;
+  /** 世界 X 坐标(渲染时由组件结合当前 viewport 实时换算,避免视口变化不同步) */
+  readonly worldX: number;
+  /** 世界 Y 坐标 */
+  readonly worldY: number;
+  /** 预计算屏幕 X(仅用于画布尺寸估算) */
   readonly screenX: number;
+  /** 预计算屏幕 Y(仅用于画布尺寸估算) */
   readonly screenY: number;
   readonly visualFactor: BoundedVisualFactor;
   readonly placement: WorldLocationMapPlacement | null;
@@ -52,10 +59,10 @@ export interface MapNodeScreenLayout {
 
 export interface MapEdgeScreenLayout {
   readonly edgeId: string;
-  readonly fromScreenX: number;
-  readonly fromScreenY: number;
-  readonly toScreenX: number;
-  readonly toScreenY: number;
+  readonly fromWorldX: number;
+  readonly fromWorldY: number;
+  readonly toWorldX: number;
+  readonly toWorldY: number;
   readonly isBidirectional: boolean;
   readonly isEnabled: boolean;
 }
@@ -253,10 +260,11 @@ export function computeImmersiveMapLayout(
   edges: WorldEdgeUiModel[],
   placements: WorldLocationMapPlacement[],
   characters: WorldCharacterInstanceUiModel[],
-  viewport: ImmersiveMapViewport
+  viewport: ImmersiveMapViewport,
+  background: WorldMapBackground | null = null
 ): ImmersiveMapLayout {
   const graphLayout: WorldLocationNodeLayout[] = [];
-  if (placements.length === 0) {
+  if (placements.length === 0 && background === null) {
     const fullLayout = computeWorldLocationGraphLayout(locations, edges);
     for (let i: number = 0; i < fullLayout.nodes.length; i++) {
       graphLayout.push(fullLayout.nodes[i]);
@@ -282,6 +290,20 @@ export function computeImmersiveMapLayout(
   let canvasWidth: number = 0;
   let canvasHeight: number = 0;
 
+  if (background !== null) {
+    const bgWorldW: number = backgroundWorldWidth(background) * viewport.zoom;
+    const bgWorldH: number = backgroundWorldHeight(background) * viewport.zoom;
+    if (bgWorldW > canvasWidth) {
+      canvasWidth = bgWorldW;
+    }
+    if (bgWorldH > canvasHeight) {
+      canvasHeight = bgWorldH;
+    }
+  }
+
+  const imageFallbackCount: number = background !== null ? locations.length : 0;
+  const imageCols: number = imageFallbackCount > 0 ? Math.max(1, Math.ceil(Math.sqrt(imageFallbackCount))) : 1;
+
   for (let i: number = 0; i < locations.length; i++) {
     const loc: WorldLocationUiModel = locations[i];
     const placement: WorldLocationMapPlacement | undefined = placementMap.get(loc.id);
@@ -292,6 +314,27 @@ export function computeImmersiveMapLayout(
       worldX = placement.positionX;
       worldY = placement.positionY;
       positionZ = placement.positionZ;
+    } else if (background !== null) {
+      // 图片模式下无放置的地点:在图片内网格排布,并随背景旋转保持相对位置
+      const bgWorldW: number = backgroundWorldWidth(background);
+      const bgWorldH: number = backgroundWorldHeight(background);
+      const pad: number = 40;
+      const cols: number = Math.max(1, Math.min(imageCols, locations.length));
+      const gridCols: number = cols;
+      const col: number = i % gridCols;
+      const row: number = Math.floor(i / gridCols);
+      const usableW: number = Math.max(1, bgWorldW - pad * 2);
+      const usableH: number = Math.max(1, bgWorldH - pad * 2);
+      const colCount: number = gridCols;
+      const rowCount: number = Math.max(1, Math.ceil(locations.length / gridCols));
+      const gridX: number = pad + (colCount === 1 ? usableW / 2 : (col / (colCount - 1)) * usableW);
+      const gridY: number = pad + (rowCount === 1 ? usableH / 2 : (row / (rowCount - 1)) * usableH);
+      const rotated: number[] = rotatePointAroundCenter(
+        gridX, gridY, bgWorldW / 2, bgWorldH / 2, background.rotation
+      );
+      worldX = rotated[0];
+      worldY = rotated[1];
+      positionZ = 0;
     } else {
       const graphNode: WorldLocationNodeLayout | undefined = nodeMap.get(loc.id);
       if (graphNode !== undefined) {
@@ -308,6 +351,8 @@ export function computeImmersiveMapLayout(
     const vf: BoundedVisualFactor = boundedVisualFactor(positionZ);
     nodeScreenLayouts.push({
       locationId: loc.id,
+      worldX: worldX,
+      worldY: worldY,
       screenX: screen[0],
       screenY: screen[1],
       visualFactor: vf,
@@ -341,10 +386,10 @@ export function computeImmersiveMapLayout(
     }
     edgeScreenLayouts.push({
       edgeId: edge.id,
-      fromScreenX: fromNode.screenX,
-      fromScreenY: fromNode.screenY + NODE_VISUAL_HEIGHT * fromNode.visualFactor.scale / 2,
-      toScreenX: toNode.screenX,
-      toScreenY: toNode.screenY - NODE_VISUAL_HEIGHT * toNode.visualFactor.scale / 2,
+      fromWorldX: fromNode.worldX,
+      fromWorldY: fromNode.worldY + NODE_VISUAL_HEIGHT * fromNode.visualFactor.scale / 2,
+      toWorldX: toNode.worldX,
+      toWorldY: toNode.worldY - NODE_VISUAL_HEIGHT * toNode.visualFactor.scale / 2,
       isBidirectional: edge.isBidirectional,
       isEnabled: edge.isEnabled
     });

@@ -6,7 +6,7 @@
  */
 
 export const DATABASE_NAME: string = 'arktavern.db';
-export const DATABASE_VERSION: number = 32;
+export const DATABASE_VERSION: number = 33;
 
 export const TABLE_CHARACTERS: string = 'characters';
 export const TABLE_CHATS: string = 'chats';
@@ -754,3 +754,19 @@ export const INDEX_GROUP_CHARACTER_OVERRIDES_GROUP_CHARACTER: string = 'idx_grou
 export const CREATE_INDEX_GROUP_CHARACTER_OVERRIDES_GROUP_CHARACTER: string =
   `CREATE UNIQUE INDEX IF NOT EXISTS ${INDEX_GROUP_CHARACTER_OVERRIDES_GROUP_CHARACTER} ` +
   `ON ${TABLE_GROUP_CHARACTER_OVERRIDES}(${COLUMN_GROUP_CONVERSATION_ID}, ${COLUMN_CHARACTER_ID})`;
+
+// ===== v33: 世界地图背景图(W2A3-WORLD-MAP-BACKGROUND) =====
+export const TABLE_WORLD_MAP_BACKGROUNDS: string = 'world_map_backgrounds';
+
+/** world_map_backgrounds.world_id 列名(UNIQUE,一个世界一张背景图) */
+export const COLUMN_WORLD_ID_WMB: string = 'world_id';
+/** world_map_backgrounds.image_uri 列名(沙箱文件 URI,file://...) */
+export const COLUMN_IMAGE_URI_WMB: string = 'image_uri';
+/** world_map_backgrounds.image_width 列名(图片原始宽度,像素) */
+export const COLUMN_IMAGE_WIDTH_WMB: string = 'image_width';
+/** world_map_backgrounds.image_height 列名(图片原始高度,像素) */
+export const COLUMN_IMAGE_HEIGHT_WMB: string = 'image_height';
+/** world_map_backgrounds.rotation 列名(图片旋转弧度,围绕图片中心) */
+export const COLUMN_ROTATION_WMB: string = 'rotation';
+/** world_map_backgrounds.fit_scale 列名(图片像素→世界单位缩放因子) */
+export const COLUMN_FIT_SCALE_WMB: string = 'fit_scale';
