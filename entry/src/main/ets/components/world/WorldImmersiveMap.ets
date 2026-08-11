@@ -32,7 +32,6 @@ import { WorldMapToolbar } from './WorldMapToolbar';
 import { WorldEmptyState } from './WorldEmptyState';
 import { WorldStatus } from '../../models/world/World';
 import { WorldLocationStatus } from '../../models/world/WorldLocation';
-import { Logger } from '../../utils/Logger';
 
 export interface NodeBillboardData {
   readonly locationId: string;
@@ -53,19 +52,9 @@ export struct WorldImmersiveMap {
   @Prop worldStatus: WorldStatus = WorldStatus.Active;
   @Prop viewport: ImmersiveMapViewport = { offsetX: 0, offsetY: 0, zoom: 1.0 };
   @Prop billboardData: NodeBillboardData[] = [];
-  /** 数据刷新令牌:父页面在放置/背景等数据变化后递增,触发本组件重渲染 */
-  @Prop @Watch('onVersionChange') mapViewVersion: number = 0;
-
-  onVersionChange(): void {
-    Logger.info('MapView', 'version changed: ' + this.mapViewVersion.toString()
-      + ', mapLayout=' + (this.mapLayout !== null ? this.mapLayout.nodes.length.toString() : 'null')
-      + ', bg=' + (this.mapBackground !== null ? this.mapBackground.rotation.toFixed(3) : 'null')
-      + ', node0world=(' + (this.mapLayout !== null && this.mapLayout.nodes.length > 0
-        ? this.mapLayout.nodes[0].worldX.toFixed(1) + ',' + this.mapLayout.nodes[0].worldY.toFixed(1) : 'n/a') + ')');
-  }
 
   onLocationTap: (locationId: string) => void = (_locationId: string): void => {};
-  onLocationLongPress: (locationId: string) => void = (_locationId: string): void => {};
+  onLocationDragStart: (locationId: string) => void = (_locationId: string): void => {};
   onLocationDragPreview: (locationId: string, worldX: number, worldY: number) => void = (_id: string, _x: number, _y: number): void => {};
   onLocationDragEnd: (locationId: string, worldX: number, worldY: number) => void = (_id: string, _x: number, _y: number): void => {};
   onZoomIn: () => void = (): void => {};
@@ -73,6 +62,7 @@ export struct WorldImmersiveMap {
   onReset: () => void = (): void => {};
   onLocate: () => void = (): void => {};
   onPan: (dx: number, dy: number) => void = (_dx: number, _dy: number): void => {};
+  onPinchZoom: (targetZoom: number, centerScreenX: number, centerScreenY: number) => void = (_z: number, _x: number, _y: number): void => {};
   onRotateLeft: () => void = (): void => {};
   onRotateRight: () => void = (): void => {};
   onAddCharacter: () => void = (): void => {};
@@ -85,13 +75,14 @@ export struct WorldImmersiveMap {
   private dragStartX: number = 0;
   private dragStartY: number = 0;
   private isDragging: boolean = false;
+  private pinchStartZoom: number = 1.0;
 
   build(): void {
     Stack({ alignContent: Alignment.TopStart }) {
       if (this.locations.length === 0) {
         this.emptyStateView()
       } else if (this.mapLayout !== null) {
-        this.mapCanvas(this.mapLayout!)
+        this.mapCanvas()
       }
 
       Row() {
@@ -176,110 +167,85 @@ export struct WorldImmersiveMap {
   }
 
   @Builder
-  mapCanvas(layout: ImmersiveMapLayout): void {
+  mapCanvas(): void {
     Stack({ alignContent: Alignment.TopStart }) {
       if (this.mapBackground !== null) {
-        this.renderBackgroundImage(this.mapBackground!, layout)
+        this.renderBackgroundImage()
       }
 
       Stack({ alignContent: Alignment.TopStart }) {
-        ForEach(layout.edges, (edge: MapEdgeScreenLayout) => {
+        ForEach(this.mapLayout!.edges, (edge: MapEdgeScreenLayout) => {
           this.edgeLine(edge)
-        }, (edge: MapEdgeScreenLayout) => edge.edgeId)
+        }, (edge: MapEdgeScreenLayout) => edge.edgeId
+          + '|' + edge.fromWorldX.toFixed(1) + '|' + edge.fromWorldY.toFixed(1)
+          + '|' + edge.toWorldX.toFixed(1) + '|' + edge.toWorldY.toFixed(1)
+          + '|' + this.viewport.offsetX.toFixed(1) + '|' + this.viewport.offsetY.toFixed(1)
+          + '|' + this.viewport.zoom.toFixed(3))
       }
-      .width(layout.canvasWidth)
-      .height(layout.canvasHeight)
+      .width(this.mapLayout!.canvasWidth)
+      .height(this.mapLayout!.canvasHeight)
       .hitTestBehavior(HitTestMode.Transparent)
 
       Stack({ alignContent: Alignment.TopStart }) {
-        ForEach(layout.nodes, (node: MapNodeScreenLayout) => {
-          MapNodeWithBillboard({
-            node: node,
-            viewport: this.viewport,
-            locationName: this.resolveLocationName(node.locationId),
-            locationStatus: this.resolveLocationStatus(node.locationId),
-            characterCount: this.countCharactersAt(node.locationId),
-            isSelected: this.selectedLocationId === node.locationId,
-            billboardSlots: this.getBillboardSlots(node.locationId),
-            billboardOverflow: this.getBillboardOverflow(node.locationId),
-            isEditMode: this.isEditMode,
-            onLocationTap: (locationId: string): void => {
-              this.onLocationTap(locationId);
-            },
-            onLocationLongPress: (locationId: string): void => {
-              this.dragLocationId = locationId;
-              this.isDragging = false;
-            },
-            onCharacterTap: (instanceId: string): void => {
-              this.onCharacterTap(instanceId);
-            },
-            onOverflowTap: (): void => {
-              this.onOverflowTap();
-            }
-          })
-        }, (node: MapNodeScreenLayout) => node.locationId + '|' + (this.selectedLocationId === node.locationId ? '1' : '0'))
+        ForEach(this.mapLayout!.nodes, (node: MapNodeScreenLayout) => {
+          this.mapNodeWithBillboard(node)
+        }, (node: MapNodeScreenLayout) => node.locationId
+          + '|' + node.worldX.toFixed(1) + '|' + node.worldY.toFixed(1)
+          + '|' + this.viewport.offsetX.toFixed(1) + '|' + this.viewport.offsetY.toFixed(1)
+          + '|' + this.viewport.zoom.toFixed(3)
+          + '|' + (this.selectedLocationId === node.locationId ? '1' : '0'))
       }
-      .width(layout.canvasWidth)
-      .height(layout.canvasHeight)
+      .width(this.mapLayout!.canvasWidth)
+      .height(this.mapLayout!.canvasHeight)
     }
-    .width(layout.canvasWidth)
-    .height(layout.canvasHeight)
+    .width(this.mapLayout!.canvasWidth)
+    .height(this.mapLayout!.canvasHeight)
     .clip(true)
     .gesture(
       GestureGroup(GestureMode.Exclusive,
+        GestureGroup(GestureMode.Sequence,
+          LongPressGesture({ repeat: false, duration: 300 })
+            .onAction((event: GestureEvent): void => {
+              this.handleCanvasLongPress(event);
+            }),
+          PanGesture({ fingers: 1, distance: 1 })
+            .onActionUpdate((event: GestureEvent): void => {
+              this.handleDragUpdate(event);
+            })
+            .onActionEnd((event: GestureEvent): void => {
+              this.handleDragEnd(event);
+            })
+        ),
         PanGesture({ fingers: 1, distance: 5 })
           .onActionStart((event: GestureEvent): void => {
-            this.isDragging = false;
             this.dragStartX = event.offsetX;
             this.dragStartY = event.offsetY;
           })
           .onActionUpdate((event: GestureEvent): void => {
-            const dx: number = event.offsetX - this.dragStartX;
-            const dy: number = event.offsetY - this.dragStartY;
-            if (this.isEditMode && this.dragLocationId.length > 0) {
-              this.isDragging = true;
-              const fx: number = event.fingerList.length > 0 ? event.fingerList[0].localX : 0;
-              const fy: number = event.fingerList.length > 0 ? event.fingerList[0].localY : 0;
-              const world: number[] = screenToWorld(fx, fy, this.viewport);
-              this.onLocationDragPreview(this.dragLocationId, world[0], world[1]);
-              this.dragStartX = event.offsetX;
-              this.dragStartY = event.offsetY;
-            } else {
-              this.onPan(dx, dy);
-              this.dragStartX = event.offsetX;
-              this.dragStartY = event.offsetY;
-            }
-          })
-          .onActionEnd((event: GestureEvent): void => {
-            if (this.isDragging && this.dragLocationId.length > 0 && this.mapLayout !== null) {
-              const fx: number = event.fingerList.length > 0 ? event.fingerList[0].localX : 0;
-              const fy: number = event.fingerList.length > 0 ? event.fingerList[0].localY : 0;
-              const world: number[] = screenToWorld(fx, fy, this.viewport);
-              this.onLocationDragEnd(this.dragLocationId, world[0], world[1]);
-            }
-            this.dragLocationId = '';
-            this.isDragging = false;
+            this.handlePan(event);
           }),
         PinchGesture({ fingers: 2 })
-          .onActionEnd((event: GestureEvent): void => {
-            if (event.scale > 1.0) {
-              this.onZoomIn();
-            } else {
-              this.onZoomOut();
-            }
+          .onActionStart((): void => {
+            this.pinchStartZoom = this.viewport.zoom;
+          })
+          .onActionUpdate((event: GestureEvent): void => {
+            const targetZoom: number = this.pinchStartZoom * event.scale;
+            this.onPinchZoom(targetZoom, event.pinchCenterX, event.pinchCenterY);
+          })
+          .onActionEnd((): void => {
           })
       )
     )
   }
 
   @Builder
-  renderBackgroundImage(background: WorldMapBackground, layout: ImmersiveMapLayout): void {
-    Image(background.imageUri)
-      .width(this.backgroundScreenW(background))
-      .height(this.backgroundScreenH(background))
+  renderBackgroundImage(): void {
+    Image(this.mapBackground!.imageUri)
+      .width(this.backgroundScreenW(this.mapBackground!))
+      .height(this.backgroundScreenH(this.mapBackground!))
       .objectFit(ImageFit.Fill)
-      .rotate({ angle: this.backgroundRotationDeg(background), centerX: '50%', centerY: '50%' })
-      .position({ x: this.backgroundScreenX(background), y: this.backgroundScreenY(background) })
+      .rotate({ angle: this.backgroundRotationDeg(this.mapBackground!), centerX: '50%', centerY: '50%' })
+      .position({ x: this.backgroundScreenX(this.mapBackground!), y: this.backgroundScreenY(this.mapBackground!) })
       .hitTestBehavior(HitTestMode.Transparent)
       .key('mapBackground')
   }
@@ -414,46 +380,27 @@ export struct WorldImmersiveMap {
     }
     return 0;
   }
-}
 
-@Component
-struct MapNodeWithBillboard {
-  @Prop node: MapNodeScreenLayout = { locationId: '', worldX: 0, worldY: 0, screenX: 0, screenY: 0, visualFactor: { scale: 1, opacity: 1, zIndex: 0 }, placement: null };
-  @Prop viewport: ImmersiveMapViewport = { offsetX: 0, offsetY: 0, zoom: 1.0 };
-  @Prop locationName: string = '';
-  @Prop locationStatus: WorldLocationStatus = WorldLocationStatus.Active;
-  @Prop characterCount: number = 0;
-  @Prop isSelected: boolean = false;
-  @Prop billboardSlots: BillboardCharacterSlotData[] = [];
-  @Prop billboardOverflow: number = 0;
-  @Prop isEditMode: boolean = false;
-  onLocationTap: (locationId: string) => void = (_id: string): void => {};
-  onLocationLongPress: (locationId: string) => void = (_id: string): void => {};
-  onCharacterTap: (instanceId: string) => void = (_id: string): void => {};
-  onOverflowTap: () => void = (): void => {};
-
-  build(): void {
+  @Builder
+  mapNodeWithBillboard(node: MapNodeScreenLayout): void {
     Column() {
       WorldMapLocationNode({
-        locationId: this.node.locationId,
-        name: this.locationName,
-        status: this.locationStatus,
-        characterCount: this.characterCount,
-        isSelected: this.isSelected,
-        visualScale: this.node.visualFactor.scale,
-        visualOpacity: this.node.visualFactor.opacity,
+        locationId: node.locationId,
+        name: this.resolveLocationName(node.locationId),
+        status: this.resolveLocationStatus(node.locationId),
+        characterCount: this.countCharactersAt(node.locationId),
+        isSelected: this.selectedLocationId === node.locationId,
+        visualScale: node.visualFactor.scale,
+        visualOpacity: node.visualFactor.opacity,
         onTap: (locationId: string): void => {
           this.onLocationTap(locationId);
-        },
-        onLongPress: (locationId: string): void => {
-          this.onLocationLongPress(locationId);
         }
       })
 
-      if (this.billboardSlots.length > 0 || this.billboardOverflow > 0) {
+      if (this.getBillboardSlots(node.locationId).length > 0 || this.getBillboardOverflow(node.locationId) > 0) {
         WorldMapCharacterBillboard({
-          slots: this.billboardSlots,
-          overflowCount: this.billboardOverflow,
+          slots: this.getBillboardSlots(node.locationId),
+          overflowCount: this.getBillboardOverflow(node.locationId),
           onCharacterTap: (instanceId: string): void => {
             this.onCharacterTap(instanceId);
           },
@@ -463,12 +410,68 @@ struct MapNodeWithBillboard {
         })
       }
     }
-    .position(this.nodePosition())
-    .zIndex(this.node.visualFactor.zIndex)
+    .position(this.nodeScreenPosition(node))
+    .zIndex(node.visualFactor.zIndex)
   }
 
-  private nodePosition(): Position {
-    const screen: number[] = worldToScreen(this.node.worldX, this.node.worldY, this.viewport);
+  private nodeScreenPosition(node: MapNodeScreenLayout): Position {
+    const screen: number[] = worldToScreen(node.worldX, node.worldY, this.viewport);
     return { x: screen[0] - 60, y: screen[1] - 20 };
+  }
+
+  private handleCanvasLongPress(event: GestureEvent): void {
+    const fx: number = event.fingerList.length > 0 ? event.fingerList[0].localX : -1;
+    const fy: number = event.fingerList.length > 0 ? event.fingerList[0].localY : -1;
+    const hitId: string = this.findNodeAt(fx, fy);
+    if (hitId.length > 0) {
+      this.dragLocationId = hitId;
+      this.isDragging = false;
+      this.onLocationDragStart(hitId);
+    }
+  }
+
+  private findNodeAt(localX: number, localY: number): string {
+    if (this.mapLayout === null || localX < 0 || localY < 0) {
+      return '';
+    }
+    const nodes: MapNodeScreenLayout[] = this.mapLayout.nodes;
+    for (let i: number = 0; i < nodes.length; i++) {
+      const screen: number[] = worldToScreen(nodes[i].worldX, nodes[i].worldY, this.viewport);
+      if (Math.abs(localX - screen[0]) < 80 && Math.abs(localY - screen[1]) < 50) {
+        return nodes[i].locationId;
+      }
+    }
+    return '';
+  }
+
+  private handleDragUpdate(event: GestureEvent): void {
+    if (this.dragLocationId.length === 0) {
+      return;
+    }
+    this.isDragging = true;
+    const fx: number = event.fingerList.length > 0 ? event.fingerList[0].localX : 0;
+    const fy: number = event.fingerList.length > 0 ? event.fingerList[0].localY : 0;
+    const world: number[] = screenToWorld(fx, fy, this.viewport);
+    this.onLocationDragPreview(this.dragLocationId, world[0], world[1]);
+  }
+
+  private handleDragEnd(event: GestureEvent): void {
+    if (this.dragLocationId.length === 0) {
+      return;
+    }
+    const fx: number = event.fingerList.length > 0 ? event.fingerList[0].localX : 0;
+    const fy: number = event.fingerList.length > 0 ? event.fingerList[0].localY : 0;
+    const world: number[] = screenToWorld(fx, fy, this.viewport);
+    this.onLocationDragEnd(this.dragLocationId, world[0], world[1]);
+    this.dragLocationId = '';
+    this.isDragging = false;
+  }
+
+  private handlePan(event: GestureEvent): void {
+    const dx: number = event.offsetX - this.dragStartX;
+    const dy: number = event.offsetY - this.dragStartY;
+    this.onPan(dx, dy);
+    this.dragStartX = event.offsetX;
+    this.dragStartY = event.offsetY;
   }
 }

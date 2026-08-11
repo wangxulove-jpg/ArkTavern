@@ -17,8 +17,8 @@ import { WorldLocationMapPlacement } from '../../models/world/WorldLocationMapPl
 import { WorldMapBackground, backgroundWorldWidth, backgroundWorldHeight, rotatePointAroundCenter } from '../../models/world/WorldMapBackground';
 import { WorldLocationNodeLayout, WorldLocationEdgeLayout, computeWorldLocationGraphLayout } from './WorldLocationGraphLayout';
 
-const MIN_ZOOM: number = 0.65;
-const MAX_ZOOM: number = 1.80;
+const MIN_ZOOM: number = 0.5;
+const MAX_ZOOM: number = 4.0;
 const DEFAULT_ZOOM: number = 1.0;
 const NODE_VISUAL_WIDTH: number = 140;
 const NODE_VISUAL_HEIGHT: number = 80;

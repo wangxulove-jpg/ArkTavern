@@ -52,6 +52,8 @@ import {
   MapMovementPort
 } from '../../viewmodels/world/WorldImmersiveMapViewModel';
 import { ImmersiveMapLayout, ImmersiveMapViewport, BILLBOARD_MAX_VISIBLE } from '../../viewmodels/world/WorldImmersiveMapLayout';
+import { WorldLocationMapPlacement } from '../../models/world/WorldLocationMapPlacement';
+import { WorldMapBackground } from '../../models/world/WorldMapBackground';
 import { WorldStatus } from '../../models/world/World';
 import { WorldLocationStatus } from '../../models/world/WorldLocation';
 import { WorldSceneStatus } from '../../models/world/WorldScene';
@@ -127,7 +129,12 @@ struct WorldDetailPage {
   @State private mapContainerWidth: number = 0;
   @State private mapContainerHeight: number = 0;
   @State private importingBackground: boolean = false;
-  @State private mapViewVersion: number = 0;
+  // 地图渲染镜像:ViewModel 数据变化后由 syncMapView() 显式同步,
+  // 直接驱动 ArkUI 重渲染,不依赖 @Observed/@Builder 自动跟踪。
+  @State private mapViewport: ImmersiveMapViewport = { offsetX: 0, offsetY: 0, zoom: 1.0 };
+  @State private mapLayoutState: ImmersiveMapLayout | null = null;
+  @State private mapPlacements: WorldLocationMapPlacement[] = [];
+  @State private mapBackgroundState: WorldMapBackground | null = null;
 
   private stateService: WorldStateService | null = null;
   private movementService: WorldCharacterMovementService | null = null;
@@ -241,6 +248,7 @@ struct WorldDetailPage {
     }
     if (this.mapViewModel !== null) {
       await this.mapViewModel.loadSnapshot(worldId);
+      this.syncMapView();
     }
     this.recomputeBillboardData();
   }
@@ -572,22 +580,21 @@ struct WorldDetailPage {
   immersiveMapView(): void {
     Stack({ alignContent: Alignment.BottomStart }) {
       WorldImmersiveMap({
-        mapLayout: this.mapViewModel !== null ? this.mapViewModel.mapLayout : null,
+        mapLayout: this.mapLayoutState,
         locations: this.mapViewModel !== null ? this.mapViewModel.locations : [],
         edges: this.mapViewModel !== null ? this.mapViewModel.edges : [],
         characters: this.mapViewModel !== null ? this.mapViewModel.characters : [],
-        placements: this.mapViewModel !== null ? this.mapViewModel.placements : [],
-        mapBackground: this.mapViewModel !== null ? this.mapViewModel.background : null,
+        placements: this.mapPlacements,
+        mapBackground: this.mapBackgroundState,
         selectedLocationId: this.selectedLocationId,
         isEditMode: this.isEditMode,
         worldStatus: this.detail !== null ? this.detail.world.status : WorldStatus.Archived,
-        viewport: this.mapViewModel !== null ? this.mapViewModel.viewport : { offsetX: 0, offsetY: 0, zoom: 1.0 },
+        viewport: this.mapViewport,
         billboardData: this.billboardData,
-        mapViewVersion: this.mapViewVersion,
         onLocationTap: (locationId: string): void => {
           this.onLocationTapped(locationId);
         },
-        onLocationLongPress: (locationId: string): void => {
+        onLocationDragStart: (locationId: string): void => {
           if (this.mapViewModel !== null) {
             this.mapViewModel.beginDrag(locationId);
           }
@@ -595,7 +602,7 @@ struct WorldDetailPage {
         onLocationDragPreview: (locationId: string, worldX: number, worldY: number): void => {
           if (this.mapViewModel !== null) {
             this.mapViewModel.updateDragPosition(locationId, worldX, worldY);
-            this.mapViewVersion++;
+            this.syncMapView();
           }
         },
         onLocationDragEnd: (locationId: string, worldX: number, worldY: number): void => {
@@ -604,16 +611,19 @@ struct WorldDetailPage {
         onZoomIn: (): void => {
           if (this.mapViewModel !== null) {
             this.mapViewModel.zoomIn();
+            this.syncMapView();
           }
         },
         onZoomOut: (): void => {
           if (this.mapViewModel !== null) {
             this.mapViewModel.zoomOut();
+            this.syncMapView();
           }
         },
         onReset: (): void => {
           if (this.mapViewModel !== null) {
             this.mapViewModel.resetViewport();
+            this.syncMapView();
           }
           this.selectedLocationId = '';
         },
@@ -623,6 +633,13 @@ struct WorldDetailPage {
         onPan: (dx: number, dy: number): void => {
           if (this.mapViewModel !== null) {
             this.mapViewModel.panBy(dx, dy);
+            this.syncMapView();
+          }
+        },
+        onPinchZoom: (targetZoom: number, centerScreenX: number, centerScreenY: number): void => {
+          if (this.mapViewModel !== null) {
+            this.mapViewModel.pinchZoom(targetZoom, centerScreenX, centerScreenY);
+            this.syncMapView();
           }
         },
         onRotateLeft: (): void => {
@@ -1199,7 +1216,7 @@ struct WorldDetailPage {
     }
     this.dragError = '';
     const error: string = await this.mapViewModel.endDrag(locationId, worldX, worldY);
-    this.mapViewVersion++;
+    this.syncMapView();
     if (error.length > 0) {
       this.dragError = error;
       setTimeout((): void => {
@@ -1228,7 +1245,7 @@ struct WorldDetailPage {
         return;
       }
       this.mapViewModel.centerOnBackground();
-      this.mapViewVersion++;
+      this.syncMapView();
       promptAction.showToast({ message: '背景图导入成功' });
     } catch (e) {
       Logger.error(LOG_TAG, 'pickAndImportBackground failed: ' + (e as Error).message);
@@ -1249,7 +1266,7 @@ struct WorldDetailPage {
         return;
       }
       this.mapViewModel.resetViewport();
-      this.mapViewVersion++;
+      this.syncMapView();
       promptAction.showToast({ message: '已移除背景图' });
     } catch (e) {
       Logger.error(LOG_TAG, 'removeMapBackground failed: ' + (e as Error).message);
@@ -1262,10 +1279,24 @@ struct WorldDetailPage {
       return;
     }
     const error: string = await this.mapViewModel.rotateBackgroundBy(deltaDeg);
-    this.mapViewVersion++;
+    this.syncMapView();
     if (error.length > 0) {
       promptAction.showToast({ message: error });
     }
+  }
+
+  /**
+   * 将 ViewModel 的地图渲染数据镜像到页面 @State,显式驱动 ArkUI 重渲染。
+   * 所有地图数据/视口变化后必须调用。
+   */
+  private syncMapView(): void {
+    if (this.mapViewModel === null) {
+      return;
+    }
+    this.mapViewport = this.mapViewModel.viewport;
+    this.mapLayoutState = this.mapViewModel.mapLayout;
+    this.mapPlacements = this.mapViewModel.placements;
+    this.mapBackgroundState = this.mapViewModel.background;
   }
 
   private onCharacterTapped(instanceId: string): void {

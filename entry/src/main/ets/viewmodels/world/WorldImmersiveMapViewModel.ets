@@ -247,6 +247,19 @@ export class WorldImmersiveMapViewModel {
     this.recomputeLayout();
   }
 
+  /** 双指捏合缩放:以屏幕点 (centerScreenX, centerScreenY) 为锚连续缩放 */
+  pinchZoom(targetZoom: number, centerScreenX: number, centerScreenY: number): void {
+    const clamped: number = clampZoom(targetZoom);
+    const worldX: number = (centerScreenX - this.viewport.offsetX) / this.viewport.zoom;
+    const worldY: number = (centerScreenY - this.viewport.offsetY) / this.viewport.zoom;
+    this.viewport = {
+      offsetX: centerScreenX - worldX * clamped,
+      offsetY: centerScreenY - worldY * clamped,
+      zoom: clamped
+    };
+    this.recomputeLayout();
+  }
+
   resetViewport(): void {
     if (this.background !== null && this.containerWidth > 0 && this.containerHeight > 0) {
       this.centerOnBackground();
@@ -305,7 +318,7 @@ export class WorldImmersiveMapViewModel {
         + ', placements=' + this.placements.length.toString()
         + ', firstX=' + (this.placements.length > 0 ? this.placements[0].positionX.toFixed(1) : 'n/a')
         + ', firstY=' + (this.placements.length > 0 ? this.placements[0].positionY.toFixed(1) : 'n/a')
-        + ', mapLayout=' + (this.mapLayout !== null ? this.mapLayout.nodes.length.toString() : 'null'));
+        + ', layout=' + (this.mapLayout !== null ? this.mapLayout.nodes.length.toString() : 'null'));
       return '';
     }
     return result.errorMessage;
@@ -357,10 +370,6 @@ export class WorldImmersiveMapViewModel {
       zoom: this.viewport.zoom
     };
     this.recomputeLayout();
-    Logger.info(LOG_TAG, 'panBy: dx=' + dx.toFixed(0) + ', dy=' + dy.toFixed(0)
-      + ', offset=(' + this.viewport.offsetX.toFixed(0) + ',' + this.viewport.offsetY.toFixed(0) + ')'
-      + ', zoom=' + this.viewport.zoom.toFixed(3)
-      + ', mapLayout=' + (this.mapLayout !== null ? this.mapLayout.nodes.length.toString() : 'null'));
   }
 
   focusOnLocation(locationId: string, containerWidth: number, containerHeight: number): void {
