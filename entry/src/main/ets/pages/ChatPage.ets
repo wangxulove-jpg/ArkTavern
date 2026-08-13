@@ -36,6 +36,7 @@ import { ChatMessageDataSource } from '../components/ChatMessageDataSource';
 import { ChatMessageActionSheet, MessageAction } from '../components/ChatMessageActionSheet';
 import { ChatMoreMenuSheet } from '../components/ChatMoreMenuSheet';
 import { CharacterImageView } from '../components/CharacterImageView';
+import { ColorWheelPicker } from '../components/ColorWheelPicker';
 import { promptAction, router, window, mediaquery, display } from '@kit.ArkUI';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { common } from '@kit.AbilityKit';
@@ -46,13 +47,16 @@ import { ChatTextStyle } from '../utils/ChatTextStyleSettings';
 import {
   ChatTextColorMode,
   ChatMarkdownColorTheme,
-  DEFAULT_ASSISTANT_TEXT_COLOR,
-  DEFAULT_MARKDOWN_ACCENT_COLOR,
+  DEFAULT_BODY_TEXT_COLOR,
+  DEFAULT_EMPHASIS_TEXT_COLOR,
+  DEFAULT_DIALOGUE_TEXT_COLOR,
+  DEFAULT_ACTION_TEXT_COLOR,
+  DEFAULT_CODE_TEXT_COLOR,
+  DEFAULT_LINK_TEXT_COLOR,
+  DEFAULT_QUOTE_TEXT_COLOR,
   DEFAULT_USER_TEXT_COLOR,
-  DEFAULT_SECONDARY_TEXT_COLOR,
   getLightColorTheme,
   getDarkColorTheme,
-  getCustomColorTheme,
   isValidHexColor,
   normalizeHexColor
 } from '../utils/ChatTextColorTheme';
@@ -100,6 +104,11 @@ import { LastAvatarToolCallSummary } from '../avatarai/ArkWebAvatarAiToolTypes';
 import { ThemePalette } from '../theme/ThemePalette';
 
 const LOG_TAG: string = 'ChatPage';
+
+/** 自定义配色目标字段(语义化:正文/加粗斜体/对白/动作/代码/链接/引用/用户) */
+type CustomColorTarget =
+  | 'body' | 'emphasis' | 'dialogue' | 'action'
+  | 'code' | 'link' | 'quote' | 'user';
 
 /**
  * ChatAvatarStage 事件监听器实现 (ArkTS 不允许对象字面量实现接口, 必须用类)。
@@ -211,20 +220,35 @@ struct ChatPage {
    */
   @State chatTextColorMode: string = ChatTextColorMode.AUTO;
 
-  /** 自定义模式下助手正文颜色(#RRGGBB,默认 DARK 模式色值) */
-  @State chatAssistantTextColor: string = DEFAULT_ASSISTANT_TEXT_COLOR;
+  /** 自定义模式下普通正文颜色(#RRGGBB) */
+  @State chatBodyTextColor: string = DEFAULT_BODY_TEXT_COLOR;
 
-  /** 自定义模式下 Markdown 强调色(#RRGGBB,默认品牌蓝) */
-  @State chatMarkdownAccentColor: string = DEFAULT_MARKDOWN_ACCENT_COLOR;
+  /** 自定义模式下加粗/斜体颜色(#RRGGBB) */
+  @State chatEmphasisColor: string = DEFAULT_EMPHASIS_TEXT_COLOR;
 
-  /** 自定义模式下用户消息文字颜色(#RRGGBB,默认白色) */
+  /** 自定义模式下对白颜色(#RRGGBB) */
+  @State chatDialogueColor: string = DEFAULT_DIALOGUE_TEXT_COLOR;
+
+  /** 自定义模式下动作/旁白颜色(#RRGGBB) */
+  @State chatActionColor: string = DEFAULT_ACTION_TEXT_COLOR;
+
+  /** 自定义模式下代码颜色(#RRGGBB) */
+  @State chatCodeColor: string = DEFAULT_CODE_TEXT_COLOR;
+
+  /** 自定义模式下链接颜色(#RRGGBB) */
+  @State chatLinkColor: string = DEFAULT_LINK_TEXT_COLOR;
+
+  /** 自定义模式下引用块颜色(#RRGGBB) */
+  @State chatQuoteColor: string = DEFAULT_QUOTE_TEXT_COLOR;
+
+  /** 自定义模式下用户消息文字颜色(#RRGGBB) */
   @State chatUserTextColor: string = DEFAULT_USER_TEXT_COLOR;
-
-  /** 自定义模式下次级文字颜色(#RRGGBB,默认深灰) */
-  @State chatSecondaryTextColor: string = DEFAULT_SECONDARY_TEXT_COLOR;
 
   /** 显示设置面板可见性(轻量卡片,非 Dialog) */
   @State chatAppearancePanelVisible: boolean = false;
+
+  /** 色盘选择器当前编辑的目标字段(null 表示关闭) */
+  @State colorPickerTarget: CustomColorTarget | null = null;
 
   /** 当前是否为深色模式(用于动态计算气泡背景 RGB) */
   @State isDarkMode: boolean = false;
@@ -240,6 +264,9 @@ struct ChatPage {
 
   /** VRM 模型显示开关持久化 Preferences key (全局保持用户选择, 跨会话生效) */
   private static readonly PREF_KEY_CHAT_AVATAR_VISIBLE: string = 'chat_avatar_visible';
+
+  /** VRM 模型总开关持久化 Preferences key (关闭后聊天页不再创建模型, 避免后台占用) */
+  private static readonly PREF_KEY_CHAT_AVATAR_ENABLED: string = 'chat_avatar_enabled';
 
   /** 聊天内容显示范围比例持久化 (0.5~1.0, 默认 1.0) */
   private static readonly PREF_KEY_CONTENT_HEIGHT_RATIO: string = 'chat_content_height_ratio';
@@ -263,6 +290,12 @@ struct ChatPage {
   @State avatarStageController: ArkWebChatAvatarStageController | null = null;
   /** Phase 4B-1: 模型显示开关 (false 时隐藏 Stage 但不销毁模型) */
   @State chatAvatarVisible: boolean = true;
+  /**
+   * Phase 4B-1: VRM 模型总开关 (全局, 由设置 Tab 的 VRM 查看器控制)。
+   * false 时聊天页完全不创建 Avatar Stage(不加载 Web / 模型), 避免后台占用性能。
+   * 通过 AppStorage 与设置页实时同步。
+   */
+  @StorageProp('chatAvatarEnabled') @Watch('onChatAvatarEnabledChanged') chatAvatarEnabled: boolean = true;
   /** Phase 4B-1: AI 面板可见性 (右上角 AI 按钮切换) */
   @State aiPanelVisible: boolean = false;
   /** Phase 4B-1: AI 能力快照 (动作/姿势/表情列表, 供 AI 面板展示) */
@@ -458,6 +491,7 @@ struct ChatPage {
     this.loadPersistedBubbleOpacity();
     this.loadPersistedTextColor();
     this.loadPersistedChatAvatarVisible();
+    this.loadPersistedChatAvatarEnabled();
     this.loadPersistedContentHeightRatio();
     this.loadPersistedAvatarOffset();
     this.loadPersistedCameraZoom();
@@ -565,6 +599,67 @@ struct ChatPage {
         });
     } catch (_e) {
       // AppServices 未初始化时静默忽略
+    }
+  }
+
+  /**
+   * 从 Preferences 加载 VRM 模型总开关,并同步到 AppStorage。
+   *
+   * 存储值 'false' 表示用户曾在设置 Tab 的 VRM 查看器关闭模型总开关。
+   * 同步到 AppStorage 后, 通过 @StorageProp('chatAvatarEnabled') 响应式生效,
+   * 使聊天页在总开关关闭时完全不创建 Avatar Stage。
+   */
+  private loadPersistedChatAvatarEnabled(): void {
+    try {
+      const prefs = AppServices.getAppPreferences();
+      if (!prefs.isInitialized()) {
+        return;
+      }
+      prefs.getString(ChatPage.PREF_KEY_CHAT_AVATAR_ENABLED, 'true')
+        .then((value: string): void => {
+          const enabled: boolean = value !== 'false';
+          AppStorage.setOrCreate<boolean>('chatAvatarEnabled', enabled);
+        })
+        .catch((_e: Object): void => {
+          // 读取失败静默使用默认值 true
+        });
+    } catch (_e) {
+      // AppServices 未初始化时静默使用默认值 true
+    }
+  }
+
+  /**
+   * 将 VRM 模型总开关持久化到 Preferences(由设置页 VRM 查看器调用)。
+   */
+  private persistChatAvatarEnabled(enabled: boolean): void {
+    try {
+      const prefs = AppServices.getAppPreferences();
+      if (!prefs.isInitialized()) {
+        return;
+      }
+      prefs.putString(ChatPage.PREF_KEY_CHAT_AVATAR_ENABLED, enabled ? 'true' : 'false')
+        .catch((_e: Object): void => {
+          // 写入失败静默忽略
+        });
+    } catch (_e) {
+      // AppServices 未初始化时静默忽略
+    }
+  }
+
+  /**
+   * @Watch 回调:VRM 模型总开关变化时同步清理 Stage 引用。
+   * 关闭时 ChatAvatarStage 组件被移出组件树(其 aboutToDisappear 会 dispose 模型),
+   * 这里清空控制器引用, 避免 AI 面板等逻辑访问已销毁的控制器。
+   */
+  onChatAvatarEnabledChanged(): void {
+    if (!this.chatAvatarEnabled) {
+      this.avatarStageController = null;
+      this.aiCapabilitySnapshot = null;
+      this.avatarStageSnapshot = null;
+      this.avatarShotSnapshot = null;
+      this.avatarStageState = 'CREATED';
+      this.avatarModelDisplayName = '';
+      this.aiPanelVisible = false;
     }
   }
 
@@ -708,15 +803,16 @@ struct ChatPage {
 
   /**
    * 从 Preferences 读取持久化的字体配色。
-   *
-   * 存储 JSON 格式:
-   *   { "mode": "AUTO|LIGHT|DARK|CUSTOM",
-   *     "body": "#RRGGBB", "accent": "#RRGGBB",
-   *     "user": "#RRGGBB", "secondary": "#RRGGBB" }
-   *
-   * 读取失败或未初始化时静默使用默认值。
-   * 非法字段回退为对应默认值,确保渲染安全。
-   */
+    *
+    * 存储 JSON 格式:
+    *   { "mode": "AUTO|LIGHT|DARK|CUSTOM",
+    *     "body": "#RRGGBB", "emphasis": "#RRGGBB", "dialogue": "#RRGGBB",
+    *     "action": "#RRGGBB", "code": "#RRGGBB", "link": "#RRGGBB",
+    *     "quote": "#RRGGBB", "user": "#RRGGBB" }
+    *
+    * 读取失败或未初始化时静默使用默认值。
+    * 非法字段回退为对应默认值,确保渲染安全。
+    */
   private loadPersistedTextColor(): void {
     try {
       const prefs = AppServices.getAppPreferences();
@@ -733,22 +829,14 @@ struct ChatPage {
           if (typeof mode === 'string') {
             this.chatTextColorMode = mode;
           }
-          const body: Object | undefined = obj['body'];
-          if (typeof body === 'string' && isValidHexColor(body)) {
-            this.chatAssistantTextColor = body.toUpperCase();
-          }
-          const accent: Object | undefined = obj['accent'];
-          if (typeof accent === 'string' && isValidHexColor(accent)) {
-            this.chatMarkdownAccentColor = accent.toUpperCase();
-          }
-          const user: Object | undefined = obj['user'];
-          if (typeof user === 'string' && isValidHexColor(user)) {
-            this.chatUserTextColor = user.toUpperCase();
-          }
-          const secondary: Object | undefined = obj['secondary'];
-          if (typeof secondary === 'string' && isValidHexColor(secondary)) {
-            this.chatSecondaryTextColor = secondary.toUpperCase();
-          }
+          this.chatBodyTextColor = this.readColorField(obj, 'body', DEFAULT_BODY_TEXT_COLOR);
+          this.chatEmphasisColor = this.readColorField(obj, 'emphasis', DEFAULT_EMPHASIS_TEXT_COLOR);
+          this.chatDialogueColor = this.readColorField(obj, 'dialogue', DEFAULT_DIALOGUE_TEXT_COLOR);
+          this.chatActionColor = this.readColorField(obj, 'action', DEFAULT_ACTION_TEXT_COLOR);
+          this.chatCodeColor = this.readColorField(obj, 'code', DEFAULT_CODE_TEXT_COLOR);
+          this.chatLinkColor = this.readColorField(obj, 'link', DEFAULT_LINK_TEXT_COLOR);
+          this.chatQuoteColor = this.readColorField(obj, 'quote', DEFAULT_QUOTE_TEXT_COLOR);
+          this.chatUserTextColor = this.readColorField(obj, 'user', DEFAULT_USER_TEXT_COLOR);
         })
         .catch((_e: Object): void => {
           // 读取失败静默使用默认值
@@ -758,10 +846,19 @@ struct ChatPage {
     }
   }
 
+  /** 从持久化 JSON 对象读取单个颜色字段,非法时回退默认值。 */
+  private readColorField(obj: Record<string, Object>, key: string, fallback: string): string {
+    const value: Object | undefined = obj[key];
+    if (typeof value === 'string' && isValidHexColor(value)) {
+      return value.toUpperCase();
+    }
+    return fallback;
+  }
+
   /**
    * 将当前字体配色持久化到 Preferences。
    *
-   * 包含模式 + 4 个自定义颜色值,即使从 CUSTOM 切回 AUTO 也写入当前状态,
+   * 包含模式 + 8 个语义化颜色值,即使从 CUSTOM 切回 AUTO 也写入当前状态,
    * 确保下次进入页面时恢复用户最后的配置。
    * 写入失败静默忽略(不影响 UI 交互)。
    */
@@ -773,10 +870,14 @@ struct ChatPage {
       }
       const obj: Record<string, string> = {
         'mode': this.chatTextColorMode,
-        'body': this.chatAssistantTextColor,
-        'accent': this.chatMarkdownAccentColor,
-        'user': this.chatUserTextColor,
-        'secondary': this.chatSecondaryTextColor
+        'body': this.chatBodyTextColor,
+        'emphasis': this.chatEmphasisColor,
+        'dialogue': this.chatDialogueColor,
+        'action': this.chatActionColor,
+        'code': this.chatCodeColor,
+        'link': this.chatLinkColor,
+        'quote': this.chatQuoteColor,
+        'user': this.chatUserTextColor
       };
       prefs.putString(ChatPage.PREF_KEY_TEXT_COLOR, JSON.stringify(obj))
         .catch((_e: Object): void => {
@@ -1673,44 +1774,47 @@ struct ChatPage {
         // - 不响应触摸 (hitTestBehavior=Transparent), 让触摸穿透到下层消息列表
         // - visible=false 时隐藏 Stage 但不销毁模型 (visibility=Hidden 保留布局)
         // - 控制器由组件内部创建, 通过 onControllerReady 回调暴露给 ChatPage
-        ChatAvatarStage({
-          visible: this.chatAvatarVisible,
-          onControllerReady: (controller: ArkWebChatAvatarStageController): void => {
-            this.avatarStageController = controller;
-            // 设置事件监听器, 接收状态变化和模型名变化
-            const self: ChatPage = this;
-            const listener: ChatAvatarStageListenerImpl = new ChatAvatarStageListenerImpl();
-            listener.onStateChangedFn = (state: ArkWebChatAvatarStageState, _detail: string): void => {
-              self.avatarStageState = state;
-              self.avatarStageSnapshot = controller.getRuntimeSnapshot();
-              self.avatarShotSnapshot = controller.getShotRuntimeSnapshot();
-              // 模型就绪后刷新能力快照
-              if (state === 'MODEL_READY') {
-                self.refreshAiCapabilitySnapshot();
-                // Phase 4A-3R: 模型就绪后刷新 Provider 信息和 Avatar Tool Calling 状态
-                self.refreshProviderInfoSnapshot();
-                // 模型就绪后应用持久化的相机缩放倍率
-                if (self.avatarCameraZoomMultiplier !== 1.0) {
-                  controller.setCameraZoomMultiplier(self.avatarCameraZoomMultiplier).catch((e: Object): void => {
-                    Logger.warn(LOG_TAG, 'apply persisted camera zoom failed: ' +
-                      (e instanceof Error ? e.message : String(e)));
-                  });
+        // - 总开关 chatAvatarEnabled=false 时完全不创建 Stage, 避免后台占用性能
+        if (this.chatAvatarEnabled) {
+          ChatAvatarStage({
+            visible: this.chatAvatarVisible,
+            onControllerReady: (controller: ArkWebChatAvatarStageController): void => {
+              this.avatarStageController = controller;
+              // 设置事件监听器, 接收状态变化和模型名变化
+              const self: ChatPage = this;
+              const listener: ChatAvatarStageListenerImpl = new ChatAvatarStageListenerImpl();
+              listener.onStateChangedFn = (state: ArkWebChatAvatarStageState, _detail: string): void => {
+                self.avatarStageState = state;
+                self.avatarStageSnapshot = controller.getRuntimeSnapshot();
+                self.avatarShotSnapshot = controller.getShotRuntimeSnapshot();
+                // 模型就绪后刷新能力快照
+                if (state === 'MODEL_READY') {
+                  self.refreshAiCapabilitySnapshot();
+                  // Phase 4A-3R: 模型就绪后刷新 Provider 信息和 Avatar Tool Calling 状态
+                  self.refreshProviderInfoSnapshot();
+                  // 模型就绪后应用持久化的相机缩放倍率
+                  if (self.avatarCameraZoomMultiplier !== 1.0) {
+                    controller.setCameraZoomMultiplier(self.avatarCameraZoomMultiplier).catch((e: Object): void => {
+                      Logger.warn(LOG_TAG, 'apply persisted camera zoom failed: ' +
+                        (e instanceof Error ? e.message : String(e)));
+                    });
+                  }
                 }
-              }
-            };
-            listener.onModelNameChangedFn = (displayName: string): void => {
-              self.avatarModelDisplayName = displayName;
-              self.avatarStageSnapshot = controller.getRuntimeSnapshot();
-            };
-            controller.setEventListener(listener);
-            // 初始快照
-            this.avatarStageSnapshot = controller.getRuntimeSnapshot();
-            // Phase 4A-3R: 控制器就绪后连接 Avatar Tool Integration
-            this.connectAvatarToolIntegration();
-          }
-        })
-        .offset({ x: this.avatarOffsetX, y: this.avatarOffsetY })
-        .expandSafeArea([SafeAreaType.KEYBOARD], [SafeAreaEdge.BOTTOM])
+              };
+              listener.onModelNameChangedFn = (displayName: string): void => {
+                self.avatarModelDisplayName = displayName;
+                self.avatarStageSnapshot = controller.getRuntimeSnapshot();
+              };
+              controller.setEventListener(listener);
+              // 初始快照
+              this.avatarStageSnapshot = controller.getRuntimeSnapshot();
+              // Phase 4A-3R: 控制器就绪后连接 Avatar Tool Integration
+              this.connectAvatarToolIntegration();
+            }
+          })
+          .offset({ x: this.avatarOffsetX, y: this.avatarOffsetY })
+          .expandSafeArea([SafeAreaType.KEYBOARD], [SafeAreaEdge.BOTTOM])
+        }
 
         // ===== 底层:消息列表 + 浮动按钮 =====
         // Stack 整体离屏合成, 让顶部擦除遮罩能通过 DST_IN 擦除消息
@@ -2008,6 +2112,9 @@ struct ChatPage {
         if (this.showForkModePicker) {
           this.forkModePickerDialog()
         }
+
+        // 色盘选择器覆盖层(自定义 Markdown 文字颜色)
+        this.colorPickerOverlay()
       }
       .width('100%')
       .height('100%')
@@ -3945,17 +4052,29 @@ struct ChatPage {
                 .width('100%')
                 .margin({ bottom: 8 })
 
-              // 正文颜色
-              this.colorSwatchRow('正文颜色', 'body')
+              // 普通正文
+              this.colorSwatchRow('普通正文', 'body')
 
-              // Markdown 强调色
-              this.colorSwatchRow('Markdown 强调色', 'accent')
+              // 加粗/斜体
+              this.colorSwatchRow('**加粗** / *斜体*', 'emphasis')
 
-              // 次级文字颜色
-              this.colorSwatchRow('次级文字', 'secondary')
+              // 对白 “”
+              this.colorSwatchRow('“对白”', 'dialogue')
+
+              // 动作/旁白 ()
+              this.colorSwatchRow('(动作)', 'action')
+
+              // 行内代码
+              this.colorSwatchRow('`代码`', 'code')
+
+              // 链接
+              this.colorSwatchRow('[链接](url)', 'link')
+
+              // 引用
+              this.colorSwatchRow('> 引用', 'quote')
 
               // 用户消息文字
-              this.colorSwatchRow('用户消息文字', 'user')
+              this.colorSwatchRow('用户消息', 'user')
             }
 
             Divider()
@@ -4018,26 +4137,112 @@ struct ChatPage {
   }
 
   /**
+   * 色盘选择器覆盖层(全屏遮罩 + 居中卡片)。
+   *
+   * - 遮罩与卡片为兄弟节点,避免卡片内拖动/点击冒泡到遮罩导致误关闭
+   * - ColorWheelPicker 实时回调 setCustomColor,拖动即预览、关闭即生效
+   */
+  @Builder
+  colorPickerOverlay() {
+    if (this.colorPickerTarget !== null) {
+      Stack() {
+        // 遮罩层(点击关闭)
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor('rgba(0,0,0,0.5)')
+          .onClick(() => {
+            this.closeColorPicker();
+          })
+
+        // 卡片
+        Column() {
+          Row() {
+            Text('选择颜色')
+              .fontSize(16)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+            Blank()
+            Stack() {
+              SymbolGlyph($r('sys.symbol.xmark'))
+                .fontSize(14)
+                .fontColor([ThemePalette.textSecondaryColor(this.effectiveTheme)])
+            }
+            .width(28)
+            .height(28)
+            .borderRadius(14)
+            .onClick(() => {
+              this.closeColorPicker();
+            })
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Center)
+          .margin({ bottom: 14 })
+
+          ColorWheelPicker({
+            color: this.getCustomColorByTarget(this.colorPickerTarget!),
+            onChange: (c: string): void => {
+              this.setCustomColorLive(this.colorPickerTarget!, c);
+            }
+          })
+
+          Button('完成')
+            .type(ButtonType.Normal)
+            .fontSize(15)
+            .fontColor($r('app.color.app_on_accent'))
+            .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
+            .borderRadius(12)
+            .height(40)
+            .width('100%')
+            .margin({ top: 16 })
+            .onClick(() => {
+              this.closeColorPicker();
+            })
+        }
+        .width('84%')
+        .padding(20)
+        .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
+        .borderRadius(20)
+        .shadow({ radius: 20, color: 'rgba(0,0,0,0.3)', offsetX: 0, offsetY: 8 })
+      }
+      .width('100%')
+      .height('100%')
+    }
+  }
+
+  /**
    * 根据 target 获取当前自定义颜色(响应式访问 @State)。
    *
    * 此方法在 @Builder colorSwatchRow 内部调用,
-   * 方法体内访问的 @State 变量(chatAssistantTextColor 等)会被 ArkUI 依赖收集,
+   * 方法体内访问的 @State 变量(chatBodyTextColor 等)会被 ArkUI 依赖收集,
    * 任一变化时触发 Builder 重新执行,确保色块选中标记和预览圆点立即更新。
    *
    * 不能通过 @Builder 参数传递 currentColor:参数在调用时求值后被固定,
    * 不响应式追踪 @State 变化,会导致点击预设色块后选中标记不刷新。
    */
-  private getCustomColorByTarget(target: 'body' | 'accent' | 'user' | 'secondary'): string {
+  private getCustomColorByTarget(target: CustomColorTarget): string {
     if (target === 'body') {
-      return this.chatAssistantTextColor;
+      return this.chatBodyTextColor;
     }
-    if (target === 'accent') {
-      return this.chatMarkdownAccentColor;
+    if (target === 'emphasis') {
+      return this.chatEmphasisColor;
     }
-    if (target === 'user') {
-      return this.chatUserTextColor;
+    if (target === 'dialogue') {
+      return this.chatDialogueColor;
     }
-    return this.chatSecondaryTextColor;
+    if (target === 'action') {
+      return this.chatActionColor;
+    }
+    if (target === 'code') {
+      return this.chatCodeColor;
+    }
+    if (target === 'link') {
+      return this.chatLinkColor;
+    }
+    if (target === 'quote') {
+      return this.chatQuoteColor;
+    }
+    return this.chatUserTextColor;
   }
 
   /**
@@ -4049,7 +4254,7 @@ struct ChatPage {
    * 不通过参数传入,确保 @State 变化时选中标记和预览圆点立即更新。
    */
   @Builder
-  colorSwatchRow(label: string, target: 'body' | 'accent' | 'user' | 'secondary') {
+  colorSwatchRow(label: string, target: CustomColorTarget) {
     Column() {
       Row() {
         Text(label)
@@ -4073,11 +4278,10 @@ struct ChatPage {
         ForEach(this.presetSwatches, (swatch: string) => {
           Stack() {
             if (this.getCustomColorByTarget(target).toUpperCase() === swatch.toUpperCase()) {
-              // 选中标记:勾选
+              // 选中标记:勾选(按亮度自动选择深/浅勾色)
               Text('✓')
                 .fontSize(12)
-                .fontColor(swatch.toUpperCase() === '#FFFFFF' || swatch.toUpperCase() === '#E5E7EB' || swatch.toUpperCase() === '#90CAF9' || swatch.toUpperCase() === '#FFC107'
-                  ? '#171717' : '#FFFFFF')
+                .fontColor(this.isLightColor(swatch) ? '#171717' : '#FFFFFF')
                 .fontWeight(FontWeight.Bold)
             }
           }
@@ -4099,25 +4303,19 @@ struct ChatPage {
       }
       .width('100%')
 
-      // Hex 输入框
-      Row() {
-        TextInput({ text: this.getCustomColorByTarget(target), placeholder: '#RRGGBB' })
-          .fontSize($r('app.float.app_font_caption'))
-          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
-          .backgroundColor(ThemePalette.surface2Color(this.effectiveTheme))
-          .borderRadius(8)
-          .height(32)
-          .layoutWeight(1)
-          .onChange((value: string) => {
-            // 实时校验:合法时立即提交,非法值不提交
-            const normalized: string | null = normalizeHexColor(value);
-            if (normalized !== null) {
-              this.setCustomColor(target, normalized);
-            }
-          })
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Center)
+      // 色盘选择(打开 HSV 色盘,无需手动输入 RGB / Hex 数字)
+      Button('色盘选择')
+        .type(ButtonType.Normal)
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor(ThemePalette.accentColor(this.effectiveTheme))
+        .backgroundColor(Color.Transparent)
+        .border({ width: 1, color: ThemePalette.accentColor(this.effectiveTheme) })
+        .borderRadius(8)
+        .height(30)
+        .width('100%')
+        .onClick(() => {
+          this.colorPickerTarget = target;
+        })
     }
     .width('100%')
     .margin({ bottom: 10 })
@@ -4130,36 +4328,59 @@ struct ChatPage {
   @Builder
   fontColorPreviewArea() {
     Column({ space: 6 }) {
-      // 正文预览
+      // 普通正文
       Row() {
-        Text('正文预览')
+        Text('普通正文示例文字')
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor(this.getPreviewBodyColor())
+          .fontColor(this.getPreviewColor('body'))
       }
       .width('100%')
 
-      // 强调文字(模拟 Markdown 加粗)
+      // 加粗/斜体
       Row() {
-        Text('强调文字')
+        Text('**加粗** *斜体*')
           .fontSize($r('app.float.app_font_caption'))
-          .fontWeight(FontWeight.Bold)
-          .fontColor(this.getPreviewAccentColor())
+          .fontColor(this.getPreviewColor('emphasis'))
       }
       .width('100%')
 
-      // 链接文字
+      // 对白
+      Row() {
+        Text('“这是对白内容”')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor(this.getPreviewColor('dialogue'))
+      }
+      .width('100%')
+
+      // 动作/旁白
+      Row() {
+        Text('(这是动作/旁白)')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor(this.getPreviewColor('action'))
+      }
+      .width('100%')
+
+      // 行内代码
+      Row() {
+        Text('`代码内容`')
+          .fontSize($r('app.float.app_font_caption'))
+          .fontColor(this.getPreviewColor('code'))
+      }
+      .width('100%')
+
+      // 链接
       Row() {
         Text('链接文字')
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor(this.getPreviewAccentColor())
+          .fontColor(this.getPreviewColor('link'))
       }
       .width('100%')
 
-      // 次级文字(旁白/引用)
+      // 引用
       Row() {
-        Text('次级文字(旁白)')
+        Text('> 引用内容')
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor(this.getPreviewSecondaryColor())
+          .fontColor(this.getPreviewColor('quote'))
       }
       .width('100%')
 
@@ -4167,7 +4388,7 @@ struct ChatPage {
       Row() {
         Text('用户消息')
           .fontSize($r('app.float.app_font_caption'))
-          .fontColor(this.getPreviewUserColor())
+          .fontColor(this.getPreviewColor('user'))
           .padding({ left: 10, right: 10, top: 4, bottom: 4 })
           .backgroundColor(this.computeUserBubbleColor())
           .borderRadius(10)
@@ -4224,71 +4445,38 @@ struct ChatPage {
   }
 
   /**
-   * 获取预览区域正文颜色。
-   * AUTO 模式使用默认色值,DARK/CUSTOM 使用对应主题色值。
+   * 获取预览区域指定语义类型的颜色。
+   * - CUSTOM / LIGHT / DARK:使用 getCurrentColorTheme 对应的主题字段
+   * - AUTO:使用默认深色主题作为预览基准
    */
-  private getPreviewBodyColor(): string {
-    if (this.chatTextColorMode === ChatTextColorMode.LIGHT) {
-      return '#FFFFFF';
+  private getPreviewColor(target: CustomColorTarget): string {
+    const theme: ChatMarkdownColorTheme | null = this.getCurrentColorTheme();
+    if (theme !== null) {
+      return this.themeField(theme, target);
     }
-    if (this.chatTextColorMode === ChatTextColorMode.DARK) {
-      return DEFAULT_ASSISTANT_TEXT_COLOR;
-    }
-    if (this.chatTextColorMode === ChatTextColorMode.CUSTOM) {
-      return isValidHexColor(this.chatAssistantTextColor)
-        ? this.chatAssistantTextColor.toUpperCase()
-        : DEFAULT_ASSISTANT_TEXT_COLOR;
-    }
-    // AUTO:使用默认深色正文(预览固定展示)
-    return DEFAULT_ASSISTANT_TEXT_COLOR;
+    return this.themeField(getDarkColorTheme(), target);
   }
 
-  /** 获取预览区域强调色 */
-  private getPreviewAccentColor(): string {
-    if (this.chatTextColorMode === ChatTextColorMode.LIGHT) {
-      return '#90CAF9';
+  /** 按 target 读取主题对象中对应的语义颜色字段。 */
+  private themeField(theme: ChatMarkdownColorTheme, target: CustomColorTarget): string {
+    switch (target) {
+      case 'body':
+        return theme.bodyColor;
+      case 'emphasis':
+        return theme.emphasisColor;
+      case 'dialogue':
+        return theme.dialogueColor;
+      case 'action':
+        return theme.actionColor;
+      case 'code':
+        return theme.codeColor;
+      case 'link':
+        return theme.linkColor;
+      case 'quote':
+        return theme.quoteColor;
+      default:
+        return theme.userColor;
     }
-    if (this.chatTextColorMode === ChatTextColorMode.DARK) {
-      return DEFAULT_MARKDOWN_ACCENT_COLOR;
-    }
-    if (this.chatTextColorMode === ChatTextColorMode.CUSTOM) {
-      return isValidHexColor(this.chatMarkdownAccentColor)
-        ? this.chatMarkdownAccentColor.toUpperCase()
-        : DEFAULT_MARKDOWN_ACCENT_COLOR;
-    }
-    return DEFAULT_MARKDOWN_ACCENT_COLOR;
-  }
-
-  /** 获取预览区域次级文字颜色 */
-  private getPreviewSecondaryColor(): string {
-    if (this.chatTextColorMode === ChatTextColorMode.LIGHT) {
-      return '#E5E7EB';
-    }
-    if (this.chatTextColorMode === ChatTextColorMode.DARK) {
-      return DEFAULT_SECONDARY_TEXT_COLOR;
-    }
-    if (this.chatTextColorMode === ChatTextColorMode.CUSTOM) {
-      return isValidHexColor(this.chatSecondaryTextColor)
-        ? this.chatSecondaryTextColor.toUpperCase()
-        : DEFAULT_SECONDARY_TEXT_COLOR;
-    }
-    return DEFAULT_SECONDARY_TEXT_COLOR;
-  }
-
-  /** 获取预览区域用户消息颜色 */
-  private getPreviewUserColor(): string {
-    if (this.chatTextColorMode === ChatTextColorMode.LIGHT) {
-      return '#FFFFFF';
-    }
-    if (this.chatTextColorMode === ChatTextColorMode.DARK) {
-      return DEFAULT_USER_TEXT_COLOR;
-    }
-    if (this.chatTextColorMode === ChatTextColorMode.CUSTOM) {
-      return isValidHexColor(this.chatUserTextColor)
-        ? this.chatUserTextColor.toUpperCase()
-        : DEFAULT_USER_TEXT_COLOR;
-    }
-    return DEFAULT_USER_TEXT_COLOR;
   }
 
   // ===== 消息列表 =====
@@ -5685,7 +5873,7 @@ struct ChatPage {
    * - AUTO:返回 null(使用默认资源颜色)
    * - LIGHT:返回预设浅色主题
    * - DARK:返回预设深色主题
-   * - CUSTOM:使用用户选择的 4 个颜色值构造主题
+   * - CUSTOM:使用用户选择的 8 个语义化颜色值构造主题
    *
    * 返回 null 时,ChatRichText 保持原有解析与颜色行为,不做任何覆盖。
    */
@@ -5697,12 +5885,17 @@ struct ChatPage {
       return getDarkColorTheme();
     }
     if (this.chatTextColorMode === ChatTextColorMode.CUSTOM) {
-      return getCustomColorTheme(
-        this.chatAssistantTextColor,
-        this.chatSecondaryTextColor,
-        this.chatMarkdownAccentColor,
-        this.chatUserTextColor
-      );
+      const theme: ChatMarkdownColorTheme = {
+        bodyColor: this.chatBodyTextColor,
+        emphasisColor: this.chatEmphasisColor,
+        dialogueColor: this.chatDialogueColor,
+        actionColor: this.chatActionColor,
+        codeColor: this.chatCodeColor,
+        linkColor: this.chatLinkColor,
+        quoteColor: this.chatQuoteColor,
+        userColor: this.chatUserTextColor
+      };
+      return theme;
     }
     // AUTO 或未知模式
     return null;
@@ -5724,21 +5917,51 @@ struct ChatPage {
    * 自动转为大写,禁止 Alpha 与 CSS 函数。
    * 持久化到 Preferences,跨页面生命周期保持。
    */
-  private setCustomColor(target: 'body' | 'accent' | 'user' | 'secondary', color: string): void {
+  private setCustomColor(target: CustomColorTarget, color: string): void {
+    this.applyCustomColor(target, color);
+    this.persistTextColor();
+  }
+
+  /**
+   * 仅更新内存中的自定义颜色,不持久化。
+   * 用于色盘拖动时的实时预览,避免高频写 Preferences 导致卡顿。
+   * 关闭色盘时再统一持久化。
+   */
+  private setCustomColorLive(target: CustomColorTarget, color: string): void {
+    this.applyCustomColor(target, color);
+  }
+
+  /** 应用自定义颜色值(校验 + 归一化 + 写入对应 @State)。 */
+  private applyCustomColor(target: CustomColorTarget, color: string): void {
     const normalized: string | null = normalizeHexColor(color);
     if (normalized === null) {
       return;
     }
     if (target === 'body') {
-      this.chatAssistantTextColor = normalized;
-    } else if (target === 'accent') {
-      this.chatMarkdownAccentColor = normalized;
+      this.chatBodyTextColor = normalized;
+    } else if (target === 'emphasis') {
+      this.chatEmphasisColor = normalized;
+    } else if (target === 'dialogue') {
+      this.chatDialogueColor = normalized;
+    } else if (target === 'action') {
+      this.chatActionColor = normalized;
+    } else if (target === 'code') {
+      this.chatCodeColor = normalized;
+    } else if (target === 'link') {
+      this.chatLinkColor = normalized;
+    } else if (target === 'quote') {
+      this.chatQuoteColor = normalized;
     } else if (target === 'user') {
       this.chatUserTextColor = normalized;
-    } else if (target === 'secondary') {
-      this.chatSecondaryTextColor = normalized;
     }
-    this.persistTextColor();
+  }
+
+  /** 关闭色盘选择器,并持久化当前配色。 */
+  private closeColorPicker(): void {
+    if (this.colorPickerTarget !== null) {
+      this.colorPickerTarget = null;
+      this.persistTextColor();
+    }
   }
 
   /**
@@ -5749,10 +5972,14 @@ struct ChatPage {
    */
   private resetChatTextColor(): void {
     this.chatTextColorMode = ChatTextColorMode.AUTO;
-    this.chatAssistantTextColor = DEFAULT_ASSISTANT_TEXT_COLOR;
-    this.chatMarkdownAccentColor = DEFAULT_MARKDOWN_ACCENT_COLOR;
+    this.chatBodyTextColor = DEFAULT_BODY_TEXT_COLOR;
+    this.chatEmphasisColor = DEFAULT_EMPHASIS_TEXT_COLOR;
+    this.chatDialogueColor = DEFAULT_DIALOGUE_TEXT_COLOR;
+    this.chatActionColor = DEFAULT_ACTION_TEXT_COLOR;
+    this.chatCodeColor = DEFAULT_CODE_TEXT_COLOR;
+    this.chatLinkColor = DEFAULT_LINK_TEXT_COLOR;
+    this.chatQuoteColor = DEFAULT_QUOTE_TEXT_COLOR;
     this.chatUserTextColor = DEFAULT_USER_TEXT_COLOR;
-    this.chatSecondaryTextColor = DEFAULT_SECONDARY_TEXT_COLOR;
     this.persistTextColor();
   }
 
@@ -5767,10 +5994,14 @@ struct ChatPage {
   /** 判断字体配色是否处于默认状态(用于"恢复默认"按钮 enabled 状态) */
   private isChatTextColorDefault(): boolean {
     return this.chatTextColorMode === ChatTextColorMode.AUTO
-      && this.chatAssistantTextColor === DEFAULT_ASSISTANT_TEXT_COLOR
-      && this.chatMarkdownAccentColor === DEFAULT_MARKDOWN_ACCENT_COLOR
-      && this.chatUserTextColor === DEFAULT_USER_TEXT_COLOR
-      && this.chatSecondaryTextColor === DEFAULT_SECONDARY_TEXT_COLOR;
+      && this.chatBodyTextColor === DEFAULT_BODY_TEXT_COLOR
+      && this.chatEmphasisColor === DEFAULT_EMPHASIS_TEXT_COLOR
+      && this.chatDialogueColor === DEFAULT_DIALOGUE_TEXT_COLOR
+      && this.chatActionColor === DEFAULT_ACTION_TEXT_COLOR
+      && this.chatCodeColor === DEFAULT_CODE_TEXT_COLOR
+      && this.chatLinkColor === DEFAULT_LINK_TEXT_COLOR
+      && this.chatQuoteColor === DEFAULT_QUOTE_TEXT_COLOR
+      && this.chatUserTextColor === DEFAULT_USER_TEXT_COLOR;
   }
 
   /** 获取模式按钮显示文本 */
@@ -5788,13 +6019,36 @@ struct ChatPage {
   }
 
   /**
-   * 预设色块列表(白色/浅灰/深灰/黑色/品牌蓝/浅蓝/暖黄色)。
-   * 用于自定义模式下的颜色选择,避免引入未经验证的 ColorPicker API。
+   * 预设色块列表(中性色 + 常用和谐色,取自 Tailwind 色板)。
+   * 覆盖黑白灰 + 蓝/青/青绿/绿/黄绿/琥珀/橙/红/粉/紫,便于对白/动作/代码等语义类型快速取色。
    */
   private readonly presetSwatches: string[] = [
-    '#FFFFFF', '#E5E7EB', '#4B5563', '#171717',
-    '#1976D2', '#90CAF9', '#FFC107'
+    '#FFFFFF', '#E5E7EB', '#9CA3AF', '#4B5563', '#1F2937', '#111827',
+    '#3B82F6', '#60A5FA', '#06B6D4', '#14B8A6', '#10B981', '#34D399',
+    '#84CC16', '#F59E0B', '#F97316', '#EF4444', '#EC4899', '#8B5CF6', '#A78BFA'
   ];
+
+  /**
+   * 判断色块是否为浅色(用于自动选择勾选标记的深/浅颜色)。
+   * 基于相对亮度(0.299R + 0.587G + 0.114B),阈值 150。
+   */
+  private isLightColor(hex: string): boolean {
+    let h: string = hex;
+    if (h.length > 0 && h.charAt(0) === '#') {
+      h = h.substring(1);
+    }
+    if (h.length !== 6) {
+      return false;
+    }
+    const r: number = parseInt(h.substring(0, 2), 16);
+    const g: number = parseInt(h.substring(2, 4), 16);
+    const b: number = parseInt(h.substring(4, 6), 16);
+    if (isNaN(r) || isNaN(g) || isNaN(b)) {
+      return false;
+    }
+    const luminance: number = 0.299 * r + 0.587 * g + 0.114 * b;
+    return luminance > 150;
+  }
 
   /**
    * 重新生成按钮背景色:RGB 保持 surface_2 浅色/深色值,Alpha = chatBubbleOpacity。

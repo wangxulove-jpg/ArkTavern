@@ -46,6 +46,7 @@ import { Logger } from '../utils/Logger';
 import { router, promptAction } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { webview } from '@kit.ArkWeb';
+import { AppServices } from '../services/AppServices';
 import {
   ArkWebViewerConfig,
   ArkWebViewerState,
@@ -266,6 +267,11 @@ struct VrmViewerPage {
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
   @StorageProp('effectiveTheme') effectiveTheme: string = 'dark';
+  /**
+   * VRM 模型总开关(全局)。false 时单人聊天页不创建 Avatar Stage, 避免后台占用性能。
+   * 通过 AppStorage 与聊天页实时同步, 并持久化到 Preferences。
+   */
+  @StorageProp('chatAvatarEnabled') @Watch('onChatAvatarEnabledChanged') chatAvatarEnabled: boolean = true;
 
   // ===== UI 状态 =====
   // Phase 2H: 演示模式状态
@@ -969,6 +975,9 @@ struct VrmViewerPage {
     // Phase 2B: 重新进入页面时重置 Camera Transition Debug 状态到 IDLE
     this.resetCameraTransitionDebugState();
 
+    // VRM 模型总开关:从 Preferences 加载并同步到 AppStorage
+    this.loadChatAvatarEnabled();
+
     // 注入闭包:Controller 回调 → 更新 @State
     this.eventListener.onStateChangedFn = (state: ArkWebViewerState, detail: string) => {
       this.viewerState = state;
@@ -1333,6 +1342,57 @@ struct VrmViewerPage {
 
   aboutToDisappear(): void {
     this.disposeViewer();
+  }
+
+  /** VRM 模型总开关 Preferences key(与 ChatPage 共用) */
+  private static readonly CHAT_AVATAR_ENABLED_KEY: string = 'chat_avatar_enabled';
+
+  /**
+   * 从 Preferences 加载 VRM 模型总开关并同步到 AppStorage。
+   * 存储值 'false' 表示用户已关闭模型总开关。
+   */
+  private loadChatAvatarEnabled(): void {
+    try {
+      const prefs = AppServices.getAppPreferences();
+      if (!prefs.isInitialized()) {
+        return;
+      }
+      prefs.getString(VrmViewerPage.CHAT_AVATAR_ENABLED_KEY, 'true')
+        .then((value: string): void => {
+          const enabled: boolean = value !== 'false';
+          AppStorage.setOrCreate<boolean>('chatAvatarEnabled', enabled);
+        })
+        .catch((_e: Object): void => {
+          // 读取失败静默使用默认值 true
+        });
+    } catch (_e) {
+      // AppServices 未初始化时静默使用默认值 true
+    }
+  }
+
+  /**
+   * 持久化 VRM 模型总开关。
+   */
+  private persistChatAvatarEnabled(enabled: boolean): void {
+    try {
+      const prefs = AppServices.getAppPreferences();
+      if (!prefs.isInitialized()) {
+        return;
+      }
+      prefs.putString(VrmViewerPage.CHAT_AVATAR_ENABLED_KEY, enabled ? 'true' : 'false')
+        .catch((_e: Object): void => {
+          // 写入失败静默忽略
+        });
+    } catch (_e) {
+      // AppServices 未初始化时静默忽略
+    }
+  }
+
+  /**
+   * @Watch 回调:总开关通过 AppStorage 变化时(本页切换或聊天页加载)持久化。
+   */
+  onChatAvatarEnabledChanged(): void {
+    this.persistChatAvatarEnabled(this.chatAvatarEnabled);
   }
 
   /**
@@ -7428,6 +7488,23 @@ struct VrmViewerPage {
         this.QuickButton('重置', () => { this.onResetButton(); }, this.resetButtonDisabled)
         this.QuickButton('截图', () => { this.onScreenshotButton(); })
         this.QuickButton('设置', () => { this.showPlaceholderToast(); })
+
+        // VRM 模型总开关(控制聊天页是否显示/运行模型, 关闭后不占用后台性能)
+        Column() {
+          Toggle({ type: ToggleType.Switch, isOn: this.chatAvatarEnabled })
+            .selectedColor('#5B7CFA')
+            .scale({ x: 0.7, y: 0.7 })
+            .onChange((isOn: boolean) => {
+              AppStorage.setOrCreate<boolean>('chatAvatarEnabled', isOn);
+            })
+          Text('聊天模型')
+            .fontSize(9)
+            .fontColor('#FFFFFF')
+            .margin({ top: 2 })
+        }
+        .width(44)
+        .margin({ top: 6 })
+        .alignItems(HorizontalAlign.Center)
       }
       .backgroundColor('#99000000')
       .borderRadius($r('app.float.app_radius_md'))

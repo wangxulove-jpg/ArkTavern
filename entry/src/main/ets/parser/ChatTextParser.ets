@@ -399,6 +399,8 @@ function parseInlineMarkdown(
   // 对白识别(在代码还原后做,避免代码内容被误判)
   if (options.enableDialogue) {
     segments = applyDialogue(segments);
+    // 括号动作/旁白识别 (…)、（…）
+    segments = applyParenthetical(segments);
   }
 
   // 合并连续相同样式
@@ -531,14 +533,14 @@ function applyStrikethrough(segments: ChatTextSegment[]): ChatTextSegment[] {
 
 /**
  * 识别角色对白。
- * 支持:"对白" 「对白」 『对白』 "对白"
+ * 支持:"对白" “对白” 「对白」 『对白』
  * 不识别:代码片段内的引号、未闭合引号、英文缩写撇号
  */
 function applyDialogue(segments: ChatTextSegment[]): ChatTextSegment[] {
   const result: ChatTextSegment[] = [];
-  // 匹配成对引号:"..." 「...」 『...』 "..."
+  // 匹配成对引号:"..." “...” 「...」 『...』
   // 不匹配跨行的(已按行处理)
-  const dialoguePattern: RegExp = /["「『"]([^"」』"\n]+)["」』"]/g;
+  const dialoguePattern: RegExp = /["“「『]([^"”」』\n]+)["”」』]/g;
 
   for (let i = 0; i < segments.length; i++) {
     const seg: ChatTextSegment = segments[i];
@@ -554,6 +556,32 @@ function applyDialogue(segments: ChatTextSegment[]): ChatTextSegment[] {
     const parts: ChatTextSegment[] = splitByPattern(seg.text, dialoguePattern, (match: RegExpExecArray): ChatTextSegment => {
       const dialogueText: string = match[0]; // 包含引号
       return createSegment(dialogueText, 'dialogue', 'dialogue', { dialogue: true });
+    });
+    for (let j = 0; j < parts.length; j++) {
+      result.push(parts[j]);
+    }
+  }
+  return result;
+}
+
+/**
+ * 识别括号包裹的动作/旁白 (…)、（…）。
+ * 括号整体作为动作片段(保留括号),赋予 action 颜色。
+ * 只处理 normal 片段,跳过代码/链接/引用/对白等已格式化片段。
+ */
+function applyParenthetical(segments: ChatTextSegment[]): ChatTextSegment[] {
+  const result: ChatTextSegment[] = [];
+  // 匹配成对括号(半角/全角),不匹配跨行、不匹配嵌套
+  const parentheticalPattern: RegExp = /[\(（][^\(\)（）\n]+[\)）]/g;
+
+  for (let i = 0; i < segments.length; i++) {
+    const seg: ChatTextSegment = segments[i];
+    if (seg.styleType !== 'normal') {
+      result.push(seg);
+      continue;
+    }
+    const parts: ChatTextSegment[] = splitByPattern(seg.text, parentheticalPattern, (match: RegExpExecArray): ChatTextSegment => {
+      return createSegment(match[0], 'action', 'action', { narrator: true });
     });
     for (let j = 0; j < parts.length; j++) {
       result.push(parts[j]);

@@ -5,7 +5,7 @@
  * - 接收原始文本和发送者信息,解析为富文本片段并渲染
  * - 支持 Markdown 子集(加粗/斜体/删除线/代码/链接/引用/列表)
  * - 支持角色对白差异化配色
- * - 支持流式渲染(节流刷新,不再叠加逐字打字机)
+ * - 支持流式渲染(流式期间以打字机逐字揭示 + 节流解析)
  * - 支持长按复制原始文本
  * - 支持字体大小/行间距缩放
  *
@@ -74,13 +74,19 @@ export struct ChatRichText {
   /** 当前解析的片段(状态) */
   @State private segments: ChatTextSegment[] = [];
 
-  // ===== 流式解析节流 =====
-  /** 节流定时器 ID(-1 表示无 pending 解析) */
-  private parseTimerId: number = -1;
-  /** 上次解析时间戳(ms) */
-  private lastParseTime: number = 0;
-  /** 节流间隔(ms):流式期间约 50ms 解析一次,平衡流畅度与性能 */
-  private static readonly STREAM_PARSE_INTERVAL_MS: number = 50;
+  // ===== 流式打字机状态 =====
+  /** 是否处于打字机揭示中(流式或排空期间为 true,完整显示为 false) */
+  private typing: boolean = false;
+  /** 打字机揭示定时器 ID(-1 表示无 pending) */
+  private revealTimerId: number = -1;
+  /** 已揭示的字符数(流式期间随打字机增长) */
+  private revealedLength: number = 0;
+  /** 当前揭示的文本(流式期间为 content 的前缀,非流式等于 content) */
+  private displayedContent: string = '';
+  /** 打字机 tick 间隔(ms) */
+  private static readonly TYPEWRITER_INTERVAL_MS: number = 30;
+  /** 每次 tick 揭示的字符数(约 100 字/秒) */
+  private static readonly TYPEWRITER_CHARS_PER_TICK: number = 3;
 
   /** 解析缓存(LRU,key = content hash + 设置指纹 + senderCharacterId) */
   private static cache: Map<string, CacheEntry> = new Map<string, CacheEntry>();
@@ -88,23 +94,37 @@ export struct ChatRichText {
   private static readonly CACHE_MAX_SIZE: number = 200;
 
   aboutToAppear(): void {
-    // 流式和非流式都直接解析完整 content(不再使用打字机逐字显示)
-    this.doParse();
+    if (this.isStreaming) {
+      // 流式期间首次挂载:从 0 开始打字机揭示,避免一次性显示已缓冲的整段内容
+      this.typing = true;
+      this.revealedLength = 0;
+      this.displayedContent = '';
+      this.doParse();
+      this.ensureTypewriterRunning();
+    } else {
+      // 非流式(历史消息/已完成):直接显示完整内容
+      this.typing = false;
+      this.displayedContent = this.content;
+      this.revealedLength = this.content.length;
+      this.doParse();
+    }
   }
 
   aboutToDisappear(): void {
-    this.clearParseTimer();
+    this.clearTypewriter();
   }
 
   /**
    * @Watch 回调:content 变化时重新解析。
-   * 流式期间节流解析(约 50ms 一次),非流式立即解析。
+   * 打字机揭示期间继续揭示;完整显示状态则直接更新为完整内容。
    */
   private onContentChange(): void {
-    if (this.isStreaming) {
-      this.scheduleStreamParse();
+    if (this.typing) {
+      this.ensureTypewriterRunning();
     } else {
-      this.clearParseTimer();
+      this.clearTypewriter();
+      this.displayedContent = this.content;
+      this.revealedLength = this.content.length;
       this.doParse();
     }
   }
@@ -134,63 +154,93 @@ export struct ChatRichText {
 
   /**
    * @Watch 回调:isStreaming 变化时重新解析。
-   * 生成完成(isStreaming: true → false)时立即完整解析,确保最终内容正确。
+   * 生成完成(isStreaming: true → false)时保持 typing 状态,让打字机继续排空剩余内容,
+   * 避免流式期间积压的文本在完成瞬间一次性跳出,保持逐字打字效果。
+   * 开始流式(false → true)时重置揭示进度并启动打字机。
    */
   private onStreamingChange(): void {
     if (!this.isStreaming) {
-      this.clearParseTimer();
+      // 保持 typing = true:若打字机仍在排空则继续;若已揭示完,typewriterTick 会立即结束并显示完整内容
+      this.ensureTypewriterRunning();
+    } else {
+      this.typing = true;
+      this.clearTypewriter();
+      this.revealedLength = 0;
+      this.displayedContent = '';
       this.doParse();
+      this.ensureTypewriterRunning();
     }
   }
 
-  // ===== 流式解析节流实现 =====
+  // ===== 流式打字机实现 =====
 
   /**
-   * 清除节流定时器。
+   * 清除打字机定时器。
    */
-  private clearParseTimer(): void {
-    if (this.parseTimerId !== -1) {
-      clearTimeout(this.parseTimerId);
-      this.parseTimerId = -1;
+  private clearTypewriter(): void {
+    if (this.revealTimerId !== -1) {
+      clearTimeout(this.revealTimerId);
+      this.revealTimerId = -1;
     }
   }
 
   /**
-   * 调度流式解析(leading + trailing throttle)。
-   * - 首次(距上次 >= STREAM_PARSE_INTERVAL_MS)立即解析
-   * - 后续在间隔内的调用合并为一次延迟解析
+   * 确保打字机揭示定时器在运行(幂等)。
    */
-  private scheduleStreamParse(): void {
-    if (this.parseTimerId !== -1) {
-      // 已有 pending 解析,本次调用被合并
+  private ensureTypewriterRunning(): void {
+    if (this.revealTimerId !== -1) {
       return;
     }
-    const now: number = Date.now();
-    const elapsed: number = now - this.lastParseTime;
-    if (elapsed >= ChatRichText.STREAM_PARSE_INTERVAL_MS) {
+    this.typewriterTick();
+  }
+
+  /**
+   * 打字机单次 tick:揭示一段字符并重新解析。
+   * - 已揭示到当前完整内容:若流式已结束则结束打字机状态(typing=false),否则等待下一次 content 增长
+   * - 尚未揭示完:调度下一次 tick
+   */
+  private typewriterTick(): void {
+    this.revealTimerId = -1;
+    const target: number = this.content.length;
+    if (this.revealedLength >= target) {
+      this.displayedContent = this.content;
+      if (!this.isStreaming) {
+        this.typing = false;
+      }
       this.doParse();
-    } else {
-      const delay: number = ChatRichText.STREAM_PARSE_INTERVAL_MS - elapsed;
-      this.parseTimerId = setTimeout((): void => {
-        this.parseTimerId = -1;
-        this.doParse();
-      }, delay);
+      return;
+    }
+    this.revealedLength = Math.min(
+      this.revealedLength + ChatRichText.TYPEWRITER_CHARS_PER_TICK,
+      target
+    );
+    this.displayedContent = this.content.substring(0, this.revealedLength);
+    this.doParse();
+    if (this.revealedLength < target) {
+      this.revealTimerId = setTimeout((): void => {
+        this.typewriterTick();
+      }, ChatRichText.TYPEWRITER_INTERVAL_MS);
+    } else if (!this.isStreaming) {
+      // 揭示到完整内容且流式已结束,结束打字机状态
+      this.typing = false;
     }
   }
 
   /**
    * 执行解析。
    *
-   * 流式和非流式都解析完整 content(SSE 已具备逐步显示效果,不再叠加打字机)。
+   * 解析当前已揭示文本(displayedContent):
+   * - 流式/排空期间为 content 的前缀(随打字机逐字增长)
+   * - 完整内容时恒等于 content
    * 未闭合 Markdown 由 ChatTextParser 安全降级为普通文本。
    *
    * 缓存策略:
-   * - 非流式:使用 LRU 缓存复用,避免历史消息重复解析
-   * - 流式:跳过缓存(中间状态不需要缓存),直接解析
+   * - 揭示未完成(revealedLength < content.length):跳过缓存,直接解析
+   * - 完整内容:使用 LRU 缓存复用,避免历史消息重复解析
    */
   private doParse(): void {
-    this.lastParseTime = Date.now();
-    if (this.content.length === 0) {
+    const text: string = this.displayedContent;
+    if (text.length === 0) {
       this.segments = [];
       return;
     }
@@ -210,14 +260,14 @@ export struct ChatRichText {
       enableDialogue: settings.enableDialogue
     };
 
-    // 流式期间:跳过缓存,直接解析当前完整 content
-    if (this.isStreaming) {
-      this.segments = parseChatText(this.content, options);
+    // 打字机揭示中(流式或排空):跳过缓存,直接解析当前已揭示文本
+    if (this.typing) {
+      this.segments = parseChatText(text, options);
       return;
     }
 
-    // 非流式:使用 LRU 缓存复用
-    const contentHash: number = hashString(this.content);
+    // 完整内容:使用 LRU 缓存复用
+    const contentHash: number = hashString(text);
     const cacheKey: string = this.buildCacheKey(contentHash, settings);
     const cached: CacheEntry | undefined = ChatRichText.cache.get(cacheKey);
     if (cached !== undefined && cached.contentHash === contentHash) {
@@ -229,7 +279,7 @@ export struct ChatRichText {
     }
 
     // 解析并写入缓存
-    const parsed: ChatTextSegment[] = parseChatText(this.content, options);
+    const parsed: ChatTextSegment[] = parseChatText(text, options);
     this.evictCacheIfNeeded();
     ChatRichText.cache.set(cacheKey, {
       segments: parsed,
@@ -265,8 +315,9 @@ export struct ChatRichText {
     if (t === null) {
       return 'auto';
     }
-    return t.bodyColor + '|' + t.secondaryColor + '|' + t.accentColor + '|'
-      + t.linkColor + '|' + t.codeColor + '|' + t.quoteColor + '|' + t.userColor;
+    return t.bodyColor + '|' + t.emphasisColor + '|' + t.dialogueColor + '|'
+      + t.actionColor + '|' + t.codeColor + '|' + t.linkColor + '|'
+      + t.quoteColor + '|' + t.userColor;
   }
 
   /**
@@ -335,20 +386,21 @@ export struct ChatRichText {
       }
     }
 
-    // LIGHT / DARK / CUSTOM 模式:按 colorRole 映射到主题字段
+    // LIGHT / DARK / CUSTOM 模式:按 colorRole 映射到语义化主题字段
     const theme: ChatMarkdownColorTheme = this.colorTheme;
     switch (seg.colorRole) {
       case 'emphasis':
-        return theme.accentColor;
       case 'secondary':
-        return theme.secondaryColor;
+        // 加粗/斜体/删除线归入强调色
+        return theme.emphasisColor;
       case 'dialogue':
-        // 对白在主题模式下使用正文色(无独立对白字段)
-        return theme.bodyColor;
+      case 'character':
+        // 对白/角色对白使用独立对白色
+        return theme.dialogueColor;
       case 'narrator':
       case 'action':
-        // 旁白/动作归入次级文字
-        return theme.secondaryColor;
+        // 动作/旁白使用独立动作色
+        return theme.actionColor;
       case 'code':
         return theme.codeColor;
       case 'link':
@@ -356,16 +408,11 @@ export struct ChatRichText {
       case 'quote':
         return theme.quoteColor;
       case 'system':
-        // 系统消息在主题模式下使用次级文字色
-        return theme.secondaryColor;
-      case 'character':
         return theme.bodyColor;
       default:
         // 根据 senderType 选择默认色
         if (this.senderType === 'user') {
           return theme.userColor;
-        } else if (this.senderType === 'system') {
-          return theme.secondaryColor;
         }
         return theme.bodyColor;
     }

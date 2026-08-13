@@ -3,7 +3,7 @@
  *
  * 职责:
  * - 定义字体配色模式(AUTO / LIGHT / DARK / CUSTOM)
- * - 定义 Markdown 渲染器颜色主题接口
+ * - 定义 Markdown 渲染器颜色主题接口(语义化字段)
  * - 提供预设主题(LIGHT / DARK)与默认颜色值
  *
  * 设计约束:
@@ -13,9 +13,19 @@
  * - 不修改 Markdown 解析行为、节点结构、字体粗细、链接行为或换行逻辑
  * - 与气泡不透明度(chatBubbleOpacity)完全独立
  *
+ * 语义化字段(与 ChatTextParser 的 colorRole 对应):
+ * - bodyColor:     普通正文(default)
+ * - emphasisColor: 加粗/斜体/删除线(emphasis + secondary)
+ * - dialogueColor: 对白“”(dialogue + character)
+ * - actionColor:   动作/旁白()(action + narrator)
+ * - codeColor:     行内代码(code)
+ * - linkColor:     链接(link)
+ * - quoteColor:    引用块(quote)
+ * - userColor:     用户消息(default + user)
+ *
  * 不负责:
  * - 颜色选择 UI(由 ChatPage 显示设置面板提供)
- * - 持久化(本阶段仅页面生命周期内保存)
+ * - 持久化(由 ChatPage 负责)
  * - 气泡背景透明度(由 ChatMessageBubble 通过 bubbleOpacity 控制)
  */
 
@@ -40,46 +50,57 @@ export class ChatTextColorMode {
  * 不改变解析、节点结构、字体粗细、链接行为或换行逻辑。
  *
  * 颜色值格式:#RRGGBB(禁止 #AARRGGBB / rgba alpha < 1)。
- * bodyColor 用于普通正文、列表正文、普通段落。
- * secondaryColor 用于旁白、引用、辅助说明、次级文字。
- * accentColor 用于强调文字、Markdown 链接、标题、当前显示为蓝色的语义文本。
- * linkColor 用于链接(若与 accentColor 不同)。
- * codeColor 用于行内代码。
- * quoteColor 用于引用块。
- * userColor 用于用户消息正文。
  */
 export interface ChatMarkdownColorTheme {
-  /** 助手普通正文颜色 */
+  /** 普通正文颜色 */
   readonly bodyColor: string;
-  /** 次级文字颜色(旁白/引用/辅助说明) */
-  readonly secondaryColor: string;
-  /** Markdown 强调色(强调/链接/标题) */
-  readonly accentColor: string;
-  /** 链接颜色(若与 accentColor 相同可传同一值) */
-  readonly linkColor: string;
+  /** 加粗/斜体/删除线颜色 */
+  readonly emphasisColor: string;
+  /** 对白颜色(“”) */
+  readonly dialogueColor: string;
+  /** 动作/旁白颜色(()) */
+  readonly actionColor: string;
   /** 行内代码颜色 */
   readonly codeColor: string;
+  /** 链接颜色 */
+  readonly linkColor: string;
   /** 引用块颜色 */
   readonly quoteColor: string;
-  /** 用户消息正文颜色 */
+  /** 用户消息文字颜色 */
   readonly userColor: string;
 }
 
-/** 默认助手正文颜色(DARK 模式色值) */
-export const DEFAULT_ASSISTANT_TEXT_COLOR: string = '#171717';
-/** 默认 Markdown 强调色(品牌蓝) */
-export const DEFAULT_MARKDOWN_ACCENT_COLOR: string = '#1976D2';
+/** 默认正文颜色(DARK 模式色值) */
+export const DEFAULT_BODY_TEXT_COLOR: string = '#171717';
+/** 默认加粗/斜体颜色 */
+export const DEFAULT_EMPHASIS_TEXT_COLOR: string = '#0D0D0D';
+/** 默认对白颜色(蓝) */
+export const DEFAULT_DIALOGUE_TEXT_COLOR: string = '#1565C0';
+/** 默认动作/旁白颜色(灰蓝) */
+export const DEFAULT_ACTION_TEXT_COLOR: string = '#607D8B';
+/** 默认行内代码颜色(粉) */
+export const DEFAULT_CODE_TEXT_COLOR: string = '#C2185B';
+/** 默认链接颜色(蓝) */
+export const DEFAULT_LINK_TEXT_COLOR: string = '#1976D2';
+/** 默认引用块颜色(灰) */
+export const DEFAULT_QUOTE_TEXT_COLOR: string = '#555555';
 /** 默认用户消息文字颜色 */
 export const DEFAULT_USER_TEXT_COLOR: string = '#FFFFFF';
-/** 默认次级文字颜色 */
-export const DEFAULT_SECONDARY_TEXT_COLOR: string = '#4B5563';
 
 /** LIGHT 模式正文颜色 */
-export const LIGHT_ASSISTANT_TEXT_COLOR: string = '#FFFFFF';
-/** LIGHT 模式次级文字颜色 */
-export const LIGHT_SECONDARY_TEXT_COLOR: string = '#E5E7EB';
-/** LIGHT 模式 Markdown 强调色(浅蓝) */
-export const LIGHT_MARKDOWN_ACCENT_COLOR: string = '#90CAF9';
+export const LIGHT_BODY_TEXT_COLOR: string = '#FFFFFF';
+/** LIGHT 模式加粗/斜体颜色 */
+export const LIGHT_EMPHASIS_TEXT_COLOR: string = '#FFFFFF';
+/** LIGHT 模式对白颜色(浅蓝) */
+export const LIGHT_DIALOGUE_TEXT_COLOR: string = '#82B1FF';
+/** LIGHT 模式动作/旁白颜色(浅灰蓝) */
+export const LIGHT_ACTION_TEXT_COLOR: string = '#90A4AE';
+/** LIGHT 模式行内代码颜色(浅粉) */
+export const LIGHT_CODE_TEXT_COLOR: string = '#F48FB1';
+/** LIGHT 模式链接颜色(浅蓝) */
+export const LIGHT_LINK_TEXT_COLOR: string = '#90CAF9';
+/** LIGHT 模式引用块颜色(浅灰) */
+export const LIGHT_QUOTE_TEXT_COLOR: string = '#E5E7EB';
 /** LIGHT 模式用户消息文字颜色 */
 export const LIGHT_USER_TEXT_COLOR: string = '#FFFFFF';
 
@@ -110,12 +131,13 @@ export function normalizeHexColor(color: string): string | null {
  */
 export function getLightColorTheme(): ChatMarkdownColorTheme {
   return {
-    bodyColor: LIGHT_ASSISTANT_TEXT_COLOR,
-    secondaryColor: LIGHT_SECONDARY_TEXT_COLOR,
-    accentColor: LIGHT_MARKDOWN_ACCENT_COLOR,
-    linkColor: LIGHT_MARKDOWN_ACCENT_COLOR,
-    codeColor: LIGHT_ASSISTANT_TEXT_COLOR,
-    quoteColor: LIGHT_SECONDARY_TEXT_COLOR,
+    bodyColor: LIGHT_BODY_TEXT_COLOR,
+    emphasisColor: LIGHT_EMPHASIS_TEXT_COLOR,
+    dialogueColor: LIGHT_DIALOGUE_TEXT_COLOR,
+    actionColor: LIGHT_ACTION_TEXT_COLOR,
+    codeColor: LIGHT_CODE_TEXT_COLOR,
+    linkColor: LIGHT_LINK_TEXT_COLOR,
+    quoteColor: LIGHT_QUOTE_TEXT_COLOR,
     userColor: LIGHT_USER_TEXT_COLOR
   };
 }
@@ -125,34 +147,13 @@ export function getLightColorTheme(): ChatMarkdownColorTheme {
  */
 export function getDarkColorTheme(): ChatMarkdownColorTheme {
   return {
-    bodyColor: DEFAULT_ASSISTANT_TEXT_COLOR,
-    secondaryColor: DEFAULT_SECONDARY_TEXT_COLOR,
-    accentColor: DEFAULT_MARKDOWN_ACCENT_COLOR,
-    linkColor: DEFAULT_MARKDOWN_ACCENT_COLOR,
-    codeColor: DEFAULT_ASSISTANT_TEXT_COLOR,
-    quoteColor: DEFAULT_SECONDARY_TEXT_COLOR,
+    bodyColor: DEFAULT_BODY_TEXT_COLOR,
+    emphasisColor: DEFAULT_EMPHASIS_TEXT_COLOR,
+    dialogueColor: DEFAULT_DIALOGUE_TEXT_COLOR,
+    actionColor: DEFAULT_ACTION_TEXT_COLOR,
+    codeColor: DEFAULT_CODE_TEXT_COLOR,
+    linkColor: DEFAULT_LINK_TEXT_COLOR,
+    quoteColor: DEFAULT_QUOTE_TEXT_COLOR,
     userColor: DEFAULT_USER_TEXT_COLOR
-  };
-}
-
-/**
- * 构造 CUSTOM 模式主题(使用用户选择的颜色值)。
- * 传入的颜色值应已通过 isValidHexColor 校验。
- * 非法值回退为对应默认值,避免渲染异常。
- */
-export function getCustomColorTheme(
-  bodyColor: string,
-  secondaryColor: string,
-  accentColor: string,
-  userColor: string
-): ChatMarkdownColorTheme {
-  return {
-    bodyColor: isValidHexColor(bodyColor) ? bodyColor.toUpperCase() : DEFAULT_ASSISTANT_TEXT_COLOR,
-    secondaryColor: isValidHexColor(secondaryColor) ? secondaryColor.toUpperCase() : DEFAULT_SECONDARY_TEXT_COLOR,
-    accentColor: isValidHexColor(accentColor) ? accentColor.toUpperCase() : DEFAULT_MARKDOWN_ACCENT_COLOR,
-    linkColor: isValidHexColor(accentColor) ? accentColor.toUpperCase() : DEFAULT_MARKDOWN_ACCENT_COLOR,
-    codeColor: isValidHexColor(bodyColor) ? bodyColor.toUpperCase() : DEFAULT_ASSISTANT_TEXT_COLOR,
-    quoteColor: isValidHexColor(secondaryColor) ? secondaryColor.toUpperCase() : DEFAULT_SECONDARY_TEXT_COLOR,
-    userColor: isValidHexColor(userColor) ? userColor.toUpperCase() : DEFAULT_USER_TEXT_COLOR
   };
 }
