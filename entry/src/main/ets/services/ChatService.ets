@@ -68,7 +68,7 @@ import {
   isStreamTerminalState
 } from '../models/ChatStreamTypes';
 import { NetworkError } from '../models/NetworkError';
-import { Character } from '../models/Character';
+import { Character, buildCharacterSystemContent } from '../models/Character';
 import { Lorebook } from '../models/Lorebook';
 import { MacroContext } from '../models/MacroContext';
 import { ProviderConfig } from '../models/ProviderConfig';
@@ -82,6 +82,15 @@ import { ContextHistorySelection } from '../models/ContextHistorySelection';
 import { HistoryTrimResult } from '../models/HistoryTrimResult';
 import { PersistedChatSession } from '../models/PersistedChatSession';
 import { Chat } from '../models/Chat';
+import {
+  ChatStatusState,
+  ChatStatusEntry,
+  createEmptyChatStatusState,
+  createChatStatusEntry,
+  serializeChatStatusState,
+  parseChatStatusState
+} from '../models/ChatStatusState';
+import { extractStatusBlock } from '../parser/ChatStatusBlockParser';
 import {
   PromptPresetRequestSnapshot,
   EffectiveGenerationSettings,
@@ -238,6 +247,17 @@ export interface ChatServiceCallbacks {
     nativeAvatarToolAttempted: boolean,
     nativeAvatarToolExecuted: boolean
   ) => void;
+  /**
+   * 角色状态变更回调(CHAT-STATUS-1A,可选)。
+   *
+   * 触发时机:
+   * - 会话初始化 / 切换 / 新建后加载到状态
+   * - AI 回复完成后合并更新状态
+   * - 用户通过 updateStatusState 增删改锁字段后
+   *
+   * 用途: ChatViewModel 实现此回调,把最新状态同步到 ChatPage 顶部状态卡片。
+   */
+  onStatusChanged?: (state: ChatStatusState) => void;
 }
 
 /**
@@ -392,6 +412,22 @@ const DEFAULT_OPTIONS: ChatRequestOptions = {
 };
 
 /**
+ * CHAT-STATUS-1A: 按字段名在条目列表中查找(精确匹配)。
+ * @returns 找到的条目,未找到返回 null
+ */
+function findStatusEntryByName(
+  entries: ChatStatusEntry[],
+  name: string
+): ChatStatusEntry | null {
+  for (let i = 0; i < entries.length; i++) {
+    if (entries[i].name === name) {
+      return entries[i];
+    }
+  }
+  return null;
+}
+
+/**
  * 聊天服务。
  * 生命周期跟随 ChatPage,dispose 后不可复用。
  */
@@ -467,6 +503,12 @@ export class ChatService {
   private currentChatId: string | undefined = undefined;
   /** 当前会话 Chat 对象(用于读取 userNameOverride 等字段) */
   private currentChat: Chat | null = null;
+  /** 当前会话的角色状态(CHAT-STATUS-1A,随会话切换加载,AI 回复后合并更新) */
+  private currentStatusState: ChatStatusState = createEmptyChatStatusState();
+  /** CHAT-STATUS-1A: 是否请求下一次回复重新生成/优化字段(点击"AI 生成"按钮设置) */
+  private statusFieldGenerationRequested: boolean = false;
+  /** CHAT-STATUS-1A: 是否正在执行一次性的字段生成请求(防止并发) */
+  private statusGenerationInProgress: boolean = false;
   /** 当前会话的最大 sequenceNumber(空会话为 0) */
   private currentSequenceNumber: number = 0;
   /** 会话是否已初始化 */
@@ -1220,6 +1262,8 @@ export class ChatService {
         this.currentChat = session.chat;
         this.messages = session.messages.slice();
         this.currentSequenceNumber = session.maxSequenceNumber;
+        // CHAT-STATUS-1A: 加载该会话的角色状态
+        this.syncStatusStateFromCurrentChat();
       } else {
         // 创建新会话
         await this.createNewSession(characterId);
@@ -1313,6 +1357,8 @@ export class ChatService {
       this.messages = [];
       this.currentSequenceNumber = 0;
     }
+    // CHAT-STATUS-1A: 新会话无状态配置,重置为空态
+    this.syncStatusStateFromCurrentChat();
   }
 
   /**
@@ -2109,6 +2155,8 @@ export class ChatService {
       this.swipeSummaries = await this.swipePersistenceService.listSwipeSummariesByChatId(this.currentChatId);
     }
     this.updateLastAssistantMessageId();
+    // CHAT-STATUS-1A: 切换会话后加载该会话的角色状态
+    this.syncStatusStateFromCurrentChat();
     // T-6.4B-1: 切换会话后刷新 Branch 状态
     await this.refreshBranchState();
   }
@@ -2118,6 +2166,315 @@ export class ChatService {
    */
   getMessages(): ChatMessage[] {
     return this.messages.slice();
+  }
+
+  // ===== CHAT-STATUS-1A: 角色状态 =====
+
+  /**
+   * 获取当前会话的角色状态(只读)。
+   */
+  getChatStatusState(): ChatStatusState {
+    return this.currentStatusState;
+  }
+
+  /**
+   * CHAT-STATUS-1A: 请求下一次回复重新生成/优化角色状态字段。
+   * 由"AI 生成"按钮调用,在下一轮 buildStatusInstruction 时生效,回复完成后复位。
+   */
+  requestStatusFieldGeneration(): void {
+    this.statusFieldGenerationRequested = true;
+  }
+
+  /**
+   * 整态替换角色状态(字段增删改锁等操作后由 ViewModel 调用)。
+   * 校验、持久化并通知 UI。
+   */
+  updateStatusState(next: ChatStatusState): void {
+    this.currentStatusState = next;
+    this.persistStatusConfig();
+    this.emitStatusChanged(this.lastCallbacks);
+  }
+
+  /**
+   * 从当前会话的 statusConfigJson 同步内存状态。
+   * 会话初始化 / 切换 / 新建后调用。
+   */
+  private syncStatusStateFromCurrentChat(): void {
+    if (this.currentChat !== null) {
+      this.currentStatusState = parseChatStatusState(this.currentChat.statusConfigJson);
+    } else {
+      this.currentStatusState = createEmptyChatStatusState();
+    }
+  }
+
+  /**
+   * 合并 AI 本轮输出的状态字段(纯计算,不修改状态)。
+   * - 已存在字段:更新值,保留 fromUser/locked
+   * - 新字段:追加(fromUser=false, locked=false)
+   * - 未输出且 locked 的旧字段:保留
+   * - 未输出且未锁定的旧字段:删除(允许 AI 优化删减字段)
+   */
+  private computeMergedStatus(parsedEntries: ChatStatusEntry[]): ChatStatusState {
+    const oldEntries: ChatStatusEntry[] = this.currentStatusState.entries;
+    const nextEntries: ChatStatusEntry[] = [];
+    const matchedNames: string[] = [];
+    for (let i = 0; i < oldEntries.length; i++) {
+      const old: ChatStatusEntry = oldEntries[i];
+      const match: ChatStatusEntry | null = findStatusEntryByName(parsedEntries, old.name);
+      if (match !== null) {
+        nextEntries.push(createChatStatusEntry(old.name, match.value, old.fromUser, old.locked));
+        matchedNames.push(old.name);
+      } else if (old.locked) {
+        nextEntries.push(createChatStatusEntry(old.name, old.value, old.fromUser, old.locked));
+      }
+      // 未锁定且本轮未输出的字段:删除
+    }
+    for (let i = 0; i < parsedEntries.length; i++) {
+      const p: ChatStatusEntry = parsedEntries[i];
+      if (matchedNames.indexOf(p.name) < 0) {
+        nextEntries.push(createChatStatusEntry(p.name, p.value, false, false));
+      }
+    }
+    return { entries: nextEntries };
+  }
+
+  /**
+   * 合并 AI 本轮输出的状态字段并持久化、通知 UI(流式回复完成路径)。
+   */
+  private applyStatusUpdate(
+    parsedEntries: ChatStatusEntry[],
+    callbacks: ChatServiceCallbacks
+  ): void {
+    this.currentStatusState = this.computeMergedStatus(parsedEntries);
+    // 消耗一次性"重新生成字段"请求
+    this.statusFieldGenerationRequested = false;
+    this.persistStatusConfig();
+    this.emitStatusChanged(callbacks);
+  }
+
+  /**
+   * CHAT-STATUS-1A: 立即生成/优化角色状态字段(点击"AI 生成"按钮,独立的一次性请求)。
+   *
+   * - 不经过正常聊天消息流,不写入聊天历史
+   * - 用角色信息 + 状态生成指令构造一次短请求,流式完成后解析状态块并合并
+   * - 返回合并后的状态;失败返回 null(不修改现有状态)
+   *
+   * @returns 合并后的状态,失败返回 null
+   */
+  async generateStatusFieldsNow(): Promise<ChatStatusState | null> {
+    if (this.disposed) {
+      return null;
+    }
+    if (this.isBusy()) {
+      return null;
+    }
+    if (this.statusGenerationInProgress) {
+      return null;
+    }
+    if (this.character === null) {
+      return null;
+    }
+    if (this.modelService === null) {
+      return null;
+    }
+    this.statusGenerationInProgress = true;
+    try {
+      const messages: ChatMessage[] = [];
+      const systemContent: string = buildCharacterSystemContent(this.character);
+      if (systemContent.length > 0) {
+        messages.push(createChatMessage(generateUuid(), ChatRole.System, systemContent, Date.now()));
+      }
+      // 强制使用"重新生成"指令(优先于状态维护指令)
+      const wasRequested: boolean = this.statusFieldGenerationRequested;
+      this.statusFieldGenerationRequested = true;
+      const instruction: string = this.buildStatusInstruction();
+      this.statusFieldGenerationRequested = wasRequested;
+      if (instruction.length > 0) {
+        messages.push(createChatMessage(generateUuid(), ChatRole.System, instruction, Date.now()));
+      }
+      // 附上最近的对话上下文,让字段贴合当前剧情
+      this.appendRecentContextForStatus(messages);
+      messages.push(createChatMessage(generateUuid(), ChatRole.User, '请根据角色信息与对话内容生成角色状态。', Date.now()));
+
+      const options: ChatRequestOptions = {
+        temperature: 0.6,
+        topP: 1.0,
+        maxTokens: 512,
+        stream: true,
+        responseFormatJson: true
+      };
+
+      return await new Promise<ChatStatusState | null>((resolve: Function): void => {
+        let settled: boolean = false;
+        const finish = (result: ChatStatusState | null): void => {
+          if (!settled) {
+            settled = true;
+            resolve(result);
+          }
+        };
+        const callbacks: ChatStreamCallbacks = {
+          onDelta: (_delta: ChatDelta): void => {
+            // 用 onComplete 的 result.content 做最终解析,忽略中间 delta
+          },
+          onComplete: (result: ChatStreamResult): void => {
+            const extraction = extractStatusBlock(result.content);
+            if (extraction.parsedEntries.length === 0) {
+              Logger.warn(LOG_TAG, 'generateStatusFieldsNow: no valid status block parsed, content=' +
+                result.content.substring(0, 200));
+              finish(null);
+              return;
+            }
+            this.currentStatusState = this.computeMergedStatus(extraction.parsedEntries);
+            this.statusFieldGenerationRequested = false;
+            this.persistStatusConfig();
+            finish(this.currentStatusState);
+          },
+          onError: (e: NetworkError): void => {
+            Logger.warn(LOG_TAG, 'generateStatusFieldsNow: stream error=' +
+              (e.message !== undefined ? e.message : String(e)));
+            finish(null);
+          }
+        };
+        try {
+          this.modelService!.streamCurrentChat(messages, options, callbacks);
+        } catch (e) {
+          finish(null);
+        }
+      });
+    } finally {
+      this.statusGenerationInProgress = false;
+    }
+  }
+
+  /**
+   * CHAT-STATUS-1A: 把最近的用户/助手对话按正序追加到消息列表末尾(供状态生成使用)。
+   * 最多取最近 6 条非空对话,跳过 System 消息。
+   */
+  private appendRecentContextForStatus(messages: ChatMessage[]): void {
+    const MAX_RECENT: number = 6;
+    const recent: ChatMessage[] = [];
+    for (let i = this.messages.length - 1; i >= 0 && recent.length < MAX_RECENT; i--) {
+      const m: ChatMessage = this.messages[i];
+      if ((m.role === ChatRole.User || m.role === ChatRole.Assistant) && m.content.length > 0) {
+        recent.push(m);
+      }
+    }
+    for (let i = recent.length - 1; i >= 0; i--) {
+      messages.push(createChatMessage(generateUuid(), recent[i].role, recent[i].content, Date.now()));
+    }
+  }
+
+  /**
+   * 持久化当前状态到当前会话(fire-and-forget)。
+   */
+  private persistStatusConfig(): void {
+    if (this.persistenceService === null || this.currentChatId === undefined) {
+      return;
+    }
+    const chatId: string = this.currentChatId;
+    const json: string = serializeChatStatusState(this.currentStatusState);
+    this.persistenceService.updateChatStatusConfig(chatId, json).then((updated: Chat): void => {
+      this.currentChat = updated;
+    }).catch((e: Object): void => {
+      Logger.warn(LOG_TAG, 'persistStatusConfig failed: '
+        + (e instanceof Error ? e.message : String(e)));
+    });
+  }
+
+  /**
+   * 通知角色状态变更。
+   */
+  private emitStatusChanged(callbacks: ChatServiceCallbacks | null): void {
+    if (callbacks === null || callbacks.onStatusChanged === undefined) {
+      return;
+    }
+    try {
+      callbacks.onStatusChanged(this.currentStatusState);
+    } catch (e) {
+      Logger.warn(LOG_TAG, 'onStatusChanged threw: '
+        + (e instanceof Error ? e.message : String(e)));
+    }
+  }
+
+  /**
+   * CHAT-STATUS-1A: 注入角色状态输出指令 system message。
+   * 仅当存在用户字段时注入,位置复刻 injectAvatarDialogueStrategy(最后一个 system 之后)。
+   */
+  private injectStatusInstruction(messages: ChatMessage[]): ChatMessage[] {
+    const instruction: string = this.buildStatusInstruction();
+    if (instruction.length === 0) {
+      return messages;
+    }
+    const statusMessage: ChatMessage = createChatMessage(
+      generateUuid(), ChatRole.System, instruction, Date.now()
+    );
+    let lastSystemIndex: number = -1;
+    for (let i = 0; i < messages.length; i++) {
+      if (messages[i].role === ChatRole.System) {
+        lastSystemIndex = i;
+      }
+    }
+    const result: ChatMessage[] = [];
+    if (lastSystemIndex === -1) {
+      result.push(statusMessage);
+      for (let i = 0; i < messages.length; i++) {
+        result.push(messages[i]);
+      }
+    } else {
+      for (let i = 0; i <= lastSystemIndex; i++) {
+        result.push(messages[i]);
+      }
+      result.push(statusMessage);
+      for (let i = lastSystemIndex + 1; i < messages.length; i++) {
+        result.push(messages[i]);
+      }
+    }
+    return result;
+  }
+
+  /**
+   * 构建状态输出指令文本。
+   * - 请求重新生成:让 AI 重新生成/优化字段
+   * - 无字段:让 AI 根据角色信息生成字段
+   * - 有字段:保留更新其值,并可优化/新增字段
+   */
+  private buildStatusInstruction(): string {
+    const names: string[] = [];
+    const entries: ChatStatusEntry[] = this.currentStatusState.entries;
+    for (let i = 0; i < entries.length; i++) {
+      if (entries[i].name.length > 0) {
+        names.push(entries[i].name);
+      }
+    }
+    if (this.statusFieldGenerationRequested) {
+      return '【角色状态输出规则】\n' +
+        '请仔细阅读角色设定(描述/性格/场景),推断出最能体现该角色当前状态的具体维度。\n' +
+        '只输出一个 JSON 对象,不要输出任何其他文字或解释:\n' +
+        '{"字段名":"值"}\n' +
+        '- 字段名必须贴合该角色的身份、处境与剧情,禁止套用 服装/地点/金币/心情 等通用模板,除非与角色真实相关\n' +
+        '- 字段数量 3~6 个\n' +
+        '- 值用简短中文短语,基于角色设定与当前对话合理推断';
+    }
+    if (names.length === 0) {
+      return '【角色状态输出规则】\n' +
+        '请仔细阅读角色设定(描述/性格/场景),推断出最能体现该角色当前状态的具体维度。在回复正文之后,单独输出一行 JSON 状态块,格式严格如下(正文中不要提及状态块):\n' +
+        '<|status|>\n' +
+        '{"字段名":"值"}\n' +
+        '<|/status|>\n' +
+        '- 字段名必须贴合该角色的身份、处境与剧情,禁止套用 服装/地点/金币/心情 等通用模板,除非与角色真实相关\n' +
+        '- 字段数量 3~6 个\n' +
+        '- 值用简短中文短语,基于角色设定与当前对话合理推断';
+    }
+    const fieldsText: string = names.join('、');
+    return '【角色状态输出规则】\n' +
+      '在回复正文之后,单独输出一行 JSON 状态块,格式严格如下(正文中不要提及状态块):\n' +
+      '<|status|>\n' +
+      '{"字段名":"值"}\n' +
+      '<|/status|>\n' +
+      '- 保留并更新这些字段:' + fieldsText + ';若剧情发展需要,可增删字段以贴合角色当前处境(总数 3~6 个)\n' +
+      '- 字段名应贴合角色设定与剧情,不要套用通用模板\n' +
+      '- 值用简短中文短语,基于角色设定与当前对话合理推断\n' +
+      '- 每轮都要重新输出,反映最新进展';
   }
 
   /**
@@ -2998,8 +3355,13 @@ export class ChatService {
     if (this.disposed) {
       return;
     }
+    // CHAT-STATUS-1A: 从完整回复中提取并剥离状态块,合并更新角色状态
+    const extraction = extractStatusBlock(result.content);
+    if (extraction.parsedEntries.length > 0) {
+      this.applyStatusUpdate(extraction.parsedEntries, callbacks);
+    }
     const finalStatus: ChatMessageStatus = this.finalizeAssistant(
-      assistantId, result.content, ChatMessageStatus.Completed, undefined, callbacks
+      assistantId, extraction.cleanContent, ChatMessageStatus.Completed, undefined, callbacks
     );
     this.currentAssistantId = null;
 
@@ -3319,7 +3681,9 @@ export class ChatService {
     // - 只在 Avatar Tool Calling 可用时注入
     // - 不修改角色卡 / 世界书 / 预设 / 用户消息 / 助手消息
     // - 不持久化, 只参与当前请求
-    const finalMessages: ChatMessage[] = this.injectAvatarDialogueStrategy(result.messages);
+    const withStrategy: ChatMessage[] = this.injectAvatarDialogueStrategy(result.messages);
+    // CHAT-STATUS-1A: 注入角色状态输出指令(仅当存在用户字段时)
+    const finalMessages: ChatMessage[] = this.injectStatusInstruction(withStrategy);
     return finalMessages;
   }
 

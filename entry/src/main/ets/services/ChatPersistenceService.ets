@@ -418,6 +418,30 @@ export class ChatPersistenceService {
   }
 
   /**
+   * 更新会话的角色状态配置 JSON(CHAT-STATUS-1A,v34 引入)。
+   * - 序列化后的 ChatStatusState 字符串,写入 chat.status_config_json 列
+   * - 不修改消息/角色/其它字段
+   *
+   * @param chatId 会话 id
+   * @param statusConfigJson 序列化后的状态配置 JSON(空字符串表示清空)
+   * @returns 更新后的 Chat
+   * @throws Error 会话不存在
+   */
+  async updateChatStatusConfig(chatId: string, statusConfigJson: string): Promise<Chat> {
+    const existing: Chat | null = await this.chatRepository.getById(chatId);
+    if (existing === null) {
+      throw new Error('会话不存在或已删除');
+    }
+    if (existing.statusConfigJson === statusConfigJson) {
+      // 值未变化,直接返回(避免无意义写入)
+      return existing;
+    }
+    const updated: Chat = updateChat(existing, { statusConfigJson: statusConfigJson });
+    await this.chatRepository.update(updated);
+    return updated;
+  }
+
+  /**
    * 创建新会话(不删除旧会话)。
    * 用于 T-4.5 多会话新建。
    *

@@ -30,6 +30,7 @@ import {
   COLUMN_SORT_ORDER,
   COLUMN_CHAT_USER_NAME_OVERRIDE,
   COLUMN_CONVERSATION_MODE,
+  COLUMN_CHAT_STATUS_CONFIG_JSON,
   CONVERSATION_MODE_SINGLE,
   CONVERSATION_MODE_GROUP
 } from '../database/DatabaseConstants';
@@ -72,6 +73,7 @@ function chatToBucket(chat: Chat): relationalStore.ValuesBucket {
   bucket[COLUMN_SORT_ORDER] = chat.sortOrder;
   bucket[COLUMN_CHAT_USER_NAME_OVERRIDE] = chat.userNameOverride;
   bucket[COLUMN_CONVERSATION_MODE] = conversationModeToString(chat.conversationMode);
+  bucket[COLUMN_CHAT_STATUS_CONFIG_JSON] = chat.statusConfigJson;
   return bucket;
 }
 
@@ -100,6 +102,10 @@ function chatFromRow(rs: relationalStore.ResultSet): Chat {
     ? (rs.isColumnNull(convModeCol) ? null : rs.getString(convModeCol))
     : null;
   const conversationMode: ConversationMode = parseConversationMode(convModeRaw);
+  const statusConfigJsonCol: number = rs.getColumnIndex(COLUMN_CHAT_STATUS_CONFIG_JSON);
+  const statusConfigJson: string = statusConfigJsonCol >= 0
+    ? safeString(rs, statusConfigJsonCol)
+    : '';
   return {
     id: id,
     characterId: characterId,
@@ -110,7 +116,8 @@ function chatFromRow(rs: relationalStore.ResultSet): Chat {
     isArchived: isArchived,
     userNameOverride: userNameOverride,
     sortOrder: sortOrder,
-    conversationMode: conversationMode
+    conversationMode: conversationMode,
+    statusConfigJson: statusConfigJson
   };
 }
 
@@ -246,6 +253,7 @@ export class ChatRepository {
     bucket[COLUMN_IS_ARCHIVED] = chat.isArchived ? 1 : 0;
     bucket[COLUMN_CHAT_USER_NAME_OVERRIDE] = chat.userNameOverride;
     bucket[COLUMN_CONVERSATION_MODE] = conversationModeToString(chat.conversationMode);
+    bucket[COLUMN_CHAT_STATUS_CONFIG_JSON] = chat.statusConfigJson;
 
     const predicates: relationalStore.RdbPredicates =
       new relationalStore.RdbPredicates(TABLE_CHATS);

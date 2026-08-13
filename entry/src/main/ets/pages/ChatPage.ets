@@ -26,6 +26,11 @@ import { AvatarToolCallingStatus } from '../services/ChatService';
 import { ArkWebAvatarDialogueStrategyStatus } from '../avatarai/ArkWebAvatarDialogueStrategyTypes';
 import { ChatMessage, ChatMessageStatus } from '../models/ChatMessage';
 import { ChatRole } from '../models/ChatRole';
+import {
+  ChatStatusState,
+  ChatStatusEntry,
+  createEmptyChatStatusState
+} from '../models/ChatStatusState';
 import { ChatMessageSource } from '../models/ChatMessageSource';
 import { ChatMessageRenderState } from '../models/ChatMessageRenderState';
 import { MessageSwipeSummary, MAX_SWIPE_CANDIDATES } from '../models/MessageSwipe';
@@ -247,6 +252,17 @@ struct ChatPage {
   /** 显示设置面板可见性(轻量卡片,非 Dialog) */
   @State chatAppearancePanelVisible: boolean = false;
 
+  /** CHAT-STATUS-1A: 角色状态卡片可见性 */
+  @State statusPanelVisible: boolean = false;
+  /** CHAT-STATUS-1A: 当前角色状态(由 viewModel.onStatusUpdate 同步) */
+  @State statusState: ChatStatusState = createEmptyChatStatusState();
+  /** CHAT-STATUS-1A: 正在编辑值的字段名(空字符串表示未编辑) */
+  @State statusEditingName: string = '';
+  /** CHAT-STATUS-1A: 正在编辑的字段值草稿 */
+  @State statusValueDraft: string = '';
+  /** CHAT-STATUS-1A: 是否正在执行一次性的字段生成请求 */
+  @State statusGenLoading: boolean = false;
+
   /** 色盘选择器当前编辑的目标字段(null 表示关闭) */
   @State colorPickerTarget: CustomColorTarget | null = null;
 
@@ -452,6 +468,10 @@ struct ChatPage {
         // (Tool Call 在 onComplete 中执行, 完成后触发新一轮消息更新, 此时摘要已写入)
         this.refreshAvatarToolCallingStatus();
       }
+    };
+    // CHAT-STATUS-1A: 同步角色状态到顶部状态卡片
+    vm.onStatusUpdate = (state: ChatStatusState): void => {
+      this.statusState = state;
     };
     this.viewModel = vm;
 
@@ -967,6 +987,9 @@ struct ChatPage {
     }
     // 关闭显示设置面板
     this.chatAppearancePanelVisible = false;
+    // CHAT-STATUS-1A: 关闭角色状态卡片
+    this.statusPanelVisible = false;
+    this.statusEditingName = '';
     // Phase 4C-2: 清理本地节奏状态显示
     this.avatarRhythmStatusText = '';
     this.avatarRhythmPolicyVersion = '';
@@ -1967,6 +1990,9 @@ struct ChatPage {
         Column() {
           this.topBar()
 
+          // CHAT-STATUS-1A: 角色状态卡片
+          this.statusCard()
+
           // 显示设置面板(气泡不透明度)
           this.chatAppearancePanel()
 
@@ -2200,6 +2226,24 @@ struct ChatPage {
         }
       })
 
+      // CHAT-STATUS-1A: 状态按钮(打开/关闭角色状态卡片)
+      Stack() {
+        Text('状态')
+          .fontSize(13)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+      }
+      .width(40)
+      .height(40)
+      .margin({ right: 4 })
+      .borderRadius($r('app.float.app_radius_sm'))
+      .backgroundColor(this.statusPanelVisible
+        ? ThemePalette.surface2Color(this.effectiveTheme) : Color.Transparent)
+      .onClick(() => {
+        this.statusPanelVisible = !this.statusPanelVisible;
+      })
+      .key('chat.status.toggle')
+
       // 更多按钮(纯图标,无背景无边框)
       Stack() {
         SymbolGlyph($r('sys.symbol.more'))
@@ -2219,6 +2263,161 @@ struct ChatPage {
     .padding({ left: 4, right: 4, top: this.statusBarHeight + 4, bottom: 4 })
     .alignItems(VerticalAlign.Center)
     // 背景层分离:顶栏不设 backgroundColor,透出 Index 根背景,避免形成与状态栏区域的色差。
+  }
+
+  // ===== CHAT-STATUS-1A: 角色状态卡片 =====
+
+  @Builder
+  statusCard() {
+    if (this.statusPanelVisible) {
+      Column() {
+        Row() {
+          Text('角色状态')
+            .fontSize(15)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+          Blank()
+          if (this.statusGenLoading) {
+            Text('生成中…')
+              .fontSize(11)
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+              .opacity(0.7)
+              .margin({ right: 8 })
+          } else if (this.viewModel !== null && this.viewModel!.isGenerating) {
+            Text('更新中…')
+              .fontSize(11)
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+              .opacity(0.7)
+              .margin({ right: 8 })
+          }
+          Text('AI 生成')
+            .fontSize(11)
+            .fontColor(this.statusGenLoading
+              ? ThemePalette.textTertiaryColor(this.effectiveTheme)
+              : ThemePalette.textTertiaryColor(this.effectiveTheme))
+            .opacity(this.statusGenLoading ? 0.35 : 0.6)
+            .onClick(() => {
+              if (this.viewModel !== null && !this.statusGenLoading) {
+                this.statusGenLoading = true;
+                this.viewModel!.generateStatusFields().then((ok: boolean): void => {
+                  this.statusGenLoading = false;
+                  if (!ok) {
+                    promptAction.showToast({ message: '状态生成失败，请重试', duration: 2000 });
+                  }
+                }).catch((): void => {
+                  this.statusGenLoading = false;
+                });
+              }
+            })
+            .key('chat.status.generate')
+        }
+        .width('100%')
+
+        if (this.statusState.entries.length === 0) {
+          Text('暂无状态，点击「AI 生成」根据角色信息生成')
+            .fontSize(13)
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+            .width('100%')
+            .padding({ top: 12, bottom: 12 })
+        } else {
+          ForEach(this.statusState.entries, (entry: ChatStatusEntry) => {
+            this.statusEntryRow(entry)
+          }, (entry: ChatStatusEntry) =>
+            entry.name + '|' + entry.value + '|' + (entry.locked ? '1' : '0'))
+        }
+      }
+      .width('92%')
+      .padding({ left: 14, right: 14, top: 12, bottom: 12 })
+      .borderRadius(20)
+      .border({ width: 0.5, color: ThemePalette.surface2Color(this.effectiveTheme) })
+      .backgroundBlurStyle(BlurStyle.Regular, {
+        policy: BlurStyleActivePolicy.ALWAYS_ACTIVE
+      })
+      .margin({ top: 4 })
+    }
+  }
+
+  @Builder
+  statusEntryRow(entry: ChatStatusEntry) {
+    Column() {
+      Row() {
+        Text(entry.name)
+          .fontSize(12)
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+          .opacity(0.85)
+        Blank()
+        Text(entry.locked ? '已锁定' : '锁定')
+          .fontSize(11)
+          .fontColor(entry.locked
+            ? ThemePalette.textPrimaryColor(this.effectiveTheme)
+            : ThemePalette.textTertiaryColor(this.effectiveTheme))
+          .opacity(entry.locked ? 1 : 0.55)
+          .onClick(() => {
+            if (this.viewModel !== null) {
+              this.viewModel!.setStatusFieldLocked(entry.name, !entry.locked);
+            }
+          })
+          .key('chat.status.lock.' + entry.name)
+        Text('删除')
+          .fontSize(11)
+          .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+          .opacity(0.55)
+          .margin({ left: 14 })
+          .onClick(() => {
+            if (this.viewModel !== null) {
+              this.viewModel!.removeStatusField(entry.name);
+            }
+          })
+          .key('chat.status.delete.' + entry.name)
+      }
+      .width('100%')
+
+      if (this.statusEditingName === entry.name) {
+        Row() {
+          TextInput({ placeholder: '输入值', text: this.statusValueDraft })
+            .layoutWeight(1)
+            .height(30)
+            .fontSize(13)
+            .onChange((value: string) => {
+              this.statusValueDraft = value;
+            })
+          Text('保存')
+            .fontSize(12)
+            .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+            .margin({ left: 12 })
+            .onClick(() => {
+              if (this.viewModel !== null) {
+                this.viewModel!.setStatusFieldValue(entry.name, this.statusValueDraft);
+              }
+              this.statusEditingName = '';
+              this.statusValueDraft = '';
+            })
+          Text('取消')
+            .fontSize(12)
+            .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+            .margin({ left: 12 })
+            .onClick(() => {
+              this.statusEditingName = '';
+              this.statusValueDraft = '';
+            })
+        }
+        .width('100%')
+        .margin({ top: 4 })
+      } else {
+        Text(entry.value.length > 0 ? entry.value : '—')
+          .fontSize(14)
+          .fontColor(ThemePalette.textPrimaryColor(this.effectiveTheme))
+          .width('100%')
+          .textAlign(TextAlign.Start)
+          .padding({ top: 2 })
+          .onClick(() => {
+            this.statusEditingName = entry.name;
+            this.statusValueDraft = entry.value;
+          })
+      }
+    }
+    .width('100%')
+    .padding({ top: 6, bottom: 6 })
   }
 
   // ===== Phase 4B-1: AI 控制面板 (紧凑半透明浮层) =====

@@ -22,6 +22,12 @@ import { ModelService } from '../services/ModelService';
 import { ChatMessage, ChatMessageStatus } from '../models/ChatMessage';
 import { ChatRole } from '../models/ChatRole';
 import { Chat } from '../models/Chat';
+import {
+  ChatStatusState,
+  ChatStatusEntry,
+  createEmptyChatStatusState,
+  createChatStatusEntry
+} from '../models/ChatStatusState';
 import { ProviderConfig } from '../models/ProviderConfig';
 import { Character } from '../models/Character';
 import { CharacterService } from '../services/CharacterService';
@@ -89,6 +95,8 @@ class CapabilitySnapshotProviderAdapter implements ArkWebAvatarCapabilitySnapsho
 @Observed
 export class ChatViewModel {
   messages: ChatMessage[] = [];
+  /** 当前会话角色状态(CHAT-STATUS-1A) */
+  statusState: ChatStatusState = createEmptyChatStatusState();
   inputText: string = '';
   isGenerating: boolean = false;
   statusMessage: string = '';
@@ -175,6 +183,12 @@ export class ChatViewModel {
    * 确保 ForEach 能检测到数据源引用变化并重新渲染。
    */
   onMessagesUpdate?: (messages: ChatMessage[]) => void;
+
+  /**
+   * CHAT-STATUS-1A: 角色状态更新回调。
+   * ChatPage 绑定此回调,把最新状态同步到独立 @State 变量以驱动状态卡片刷新。
+   */
+  onStatusUpdate?: (state: ChatStatusState) => void;
 
   constructor(
     chatService: ChatService,
@@ -305,6 +319,7 @@ export class ChatViewModel {
       if (this.onMessagesUpdate !== undefined) {
         this.onMessagesUpdate([...this.messages]);
       }
+      this.syncStatusState();
       this.isSessionReady = true;
       this.canRegenerate = this.chatService.canRegenerate();
       // T-6.4B-1: 同步 Branch 状态(branches / activeBranchId / recordCounts)
@@ -554,6 +569,7 @@ export class ChatViewModel {
       }
       this.canRegenerate = this.chatService.canRegenerate();
       this.syncBranchState();
+      this.syncStatusState();
       this.errorMessage = '';
       this.statusMessage = '';
       await this.refreshSessions();
@@ -587,6 +603,7 @@ export class ChatViewModel {
       }
       this.canRegenerate = this.chatService.canRegenerate();
       this.syncBranchState();
+      this.syncStatusState();
       this.errorMessage = '';
       this.statusMessage = '';
       this.showSessionList = false;
@@ -639,6 +656,7 @@ export class ChatViewModel {
       }
       this.canRegenerate = this.chatService.canRegenerate();
       this.syncBranchState();
+      this.syncStatusState();
       this.errorMessage = '';
       this.statusMessage = '';
       this.pendingDeleteChatId = '';
@@ -735,6 +753,17 @@ export class ChatViewModel {
     this.branches = this.chatService.getBranches();
     this.activeBranchId = this.chatService.getActiveBranchId();
     this.recordCounts = this.chatService.getRecordCounts();
+  }
+
+  /**
+   * CHAT-STATUS-1A: 从 ChatService 同步当前会话角色状态到 ViewModel 并通知 UI。
+   * 会话初始化 / 新建 / 切换 / 删除后调用。
+   */
+  private syncStatusState(): void {
+    this.statusState = this.chatService.getChatStatusState();
+    if (this.onStatusUpdate !== undefined) {
+      this.onStatusUpdate(this.statusState);
+    }
   }
 
   /**
@@ -1038,6 +1067,119 @@ export class ChatViewModel {
    */
   async updateUserNameOverride(override: string | null): Promise<void> {
     await this.chatService.updateCurrentChatUserNameOverride(override);
+  }
+
+  // ===== CHAT-STATUS-1A: 角色状态字段操作 =====
+
+  /**
+   * 请求下一次回复重新生成/优化角色状态字段(由"AI 生成"按钮调用)。
+   */
+  requestStatusFieldGeneration(): void {
+    this.chatService.requestStatusFieldGeneration();
+  }
+
+  /**
+   * CHAT-STATUS-1A: 立即生成/优化角色状态字段(独立一次性请求,不写入聊天历史)。
+   * @returns 是否成功生成并更新了状态
+   */
+  async generateStatusFields(): Promise<boolean> {
+    if (this.disposed) {
+      return false;
+    }
+    const result: ChatStatusState | null = await this.chatService.generateStatusFieldsNow();
+    if (result === null) {
+      return false;
+    }
+    this.statusState = result;
+    if (this.onStatusUpdate !== undefined) {
+      this.onStatusUpdate(result);
+    }
+    return true;
+  }
+
+  /**
+   * 手动添加状态字段(用户字段,fromUser=true, 默认未锁定)。
+   * 同名已存在时忽略。
+   */
+  addStatusField(name: string): void {
+    const trimmed: string = name.trim();
+    if (trimmed.length === 0) {
+      return;
+    }
+    const entries: ChatStatusEntry[] = this.statusState.entries.slice();
+    for (let i = 0; i < entries.length; i++) {
+      if (entries[i].name === trimmed) {
+        return;
+      }
+    }
+    entries.push(createChatStatusEntry(trimmed, '', true, false));
+    this.chatService.updateStatusState({ entries: entries });
+    this.syncStatusState();
+  }
+
+  /** 删除指定状态字段。 */
+  removeStatusField(name: string): void {
+    const next: ChatStatusEntry[] = [];
+    const entries: ChatStatusEntry[] = this.statusState.entries;
+    for (let i = 0; i < entries.length; i++) {
+      if (entries[i].name !== name) {
+        next.push(entries[i]);
+      }
+    }
+    this.chatService.updateStatusState({ entries: next });
+    this.syncStatusState();
+  }
+
+  /** 重命名状态字段。 */
+  renameStatusField(oldName: string, newName: string): void {
+    const trimmed: string = newName.trim();
+    if (trimmed.length === 0 || trimmed === oldName) {
+      return;
+    }
+    const next: ChatStatusEntry[] = [];
+    const entries: ChatStatusEntry[] = this.statusState.entries;
+    for (let i = 0; i < entries.length; i++) {
+      const e: ChatStatusEntry = entries[i];
+      if (e.name === oldName) {
+        next.push(createChatStatusEntry(trimmed, e.value, e.fromUser, e.locked));
+      } else {
+        next.push(e);
+      }
+    }
+    this.chatService.updateStatusState({ entries: next });
+    this.syncStatusState();
+  }
+
+  /** 设置字段锁定状态(锁定后 AI 未输出也保留)。 */
+  setStatusFieldLocked(name: string, locked: boolean): void {
+    const next: ChatStatusEntry[] = [];
+    const entries: ChatStatusEntry[] = this.statusState.entries;
+    for (let i = 0; i < entries.length; i++) {
+      const e: ChatStatusEntry = entries[i];
+      if (e.name === name) {
+        next.push(createChatStatusEntry(e.name, e.value, e.fromUser, locked));
+      } else {
+        next.push(e);
+      }
+    }
+    this.chatService.updateStatusState({ entries: next });
+    this.syncStatusState();
+  }
+
+  /** 手动修改字段值。 */
+  setStatusFieldValue(name: string, value: string): void {
+    const next: ChatStatusEntry[] = [];
+    const entries: ChatStatusEntry[] = this.statusState.entries;
+    for (let i = 0; i < entries.length; i++) {
+      const e: ChatStatusEntry = entries[i];
+      if (e.name === name) {
+        next.push(createChatStatusEntry(e.name, value, e.fromUser, e.locked));
+      } else {
+        next.push(e);
+      }
+    }
+    this.chatService.updateStatusState({ entries: next });
+    this.syncStatusState();
   }
 
   /**
@@ -1482,6 +1624,16 @@ export class ChatViewModel {
         }
         this.errorMessage = this.toUserError(message);
         this.statusMessage = '';
+      },
+      // CHAT-STATUS-1A: 角色状态变更(会话加载 / AI 合并更新 / 字段操作)
+      onStatusChanged: (state: ChatStatusState): void => {
+        if (this.disposed) {
+          return;
+        }
+        this.statusState = state;
+        if (this.onStatusUpdate !== undefined) {
+          this.onStatusUpdate(state);
+        }
       },
       // Phase 4A-2: 助手最终消息完成 → 发布到 ArkWebAvatarChatBridge
       // - turnId 使用真实 assistantMessageId (符合"来自真实消息 ID"约束)

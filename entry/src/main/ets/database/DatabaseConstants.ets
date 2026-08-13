@@ -6,7 +6,7 @@
  */
 
 export const DATABASE_NAME: string = 'arktavern.db';
-export const DATABASE_VERSION: number = 33;
+export const DATABASE_VERSION: number = 34;
 
 export const TABLE_CHARACTERS: string = 'characters';
 export const TABLE_CHATS: string = 'chats';
@@ -44,6 +44,8 @@ export const COLUMN_SORT_ORDER: string = 'sort_order';
 export const COLUMN_USER_NAME: string = 'user_name';
 /** 对话级用户称呼覆盖(v9 引入,优先级高于角色 user_name 与全局设置) */
 export const COLUMN_CHAT_USER_NAME_OVERRIDE: string = 'user_name_override';
+/** 角色状态配置 JSON(v34 引入,存 ChatStatusState 序列化字符串) */
+export const COLUMN_CHAT_STATUS_CONFIG_JSON: string = 'status_config_json';
 
 export const COLUMN_CHARACTER_ID: string = 'character_id';
 export const COLUMN_TITLE: string = 'title';

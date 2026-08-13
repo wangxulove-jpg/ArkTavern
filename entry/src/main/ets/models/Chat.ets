@@ -36,6 +36,11 @@ export interface Chat {
    * - 现有 Chat 创建调用未显式传入 mode 时默认 Single
    */
   readonly conversationMode: ConversationMode;
+  /**
+   * 角色状态配置 JSON(每会话持久化,v34 引入)。
+   * 存 ChatStatusState 的序列化字符串,仅单人聊天使用;留空表示无状态配置。
+   */
+  readonly statusConfigJson: string;
 }
 
 export interface CreateChatOptions {
@@ -46,6 +51,7 @@ export interface CreateChatOptions {
   readonly userNameOverride?: string;
   readonly sortOrder?: number;
   readonly conversationMode?: ConversationMode;
+  readonly statusConfigJson?: string;
 }
 
 export interface ChatUpdates {
@@ -57,6 +63,7 @@ export interface ChatUpdates {
   readonly userNameOverride?: string | null;
   readonly sortOrder?: number;
   readonly conversationMode?: ConversationMode;
+  readonly statusConfigJson?: string;
 }
 
 export function createChat(options?: CreateChatOptions): Chat {
@@ -88,6 +95,10 @@ export function createChat(options?: CreateChatOptions): Chat {
     options !== undefined && options.conversationMode !== undefined
       ? options.conversationMode
       : ConversationMode.Single;
+  const statusConfigJson: string =
+    options !== undefined && options.statusConfigJson !== undefined
+      ? options.statusConfigJson
+      : '';
   return {
     id: id,
     characterId: characterId,
@@ -98,7 +109,8 @@ export function createChat(options?: CreateChatOptions): Chat {
     isArchived: false,
     userNameOverride: userNameOverride,
     sortOrder: sortOrder,
-    conversationMode: conversationMode
+    conversationMode: conversationMode,
+    statusConfigJson: statusConfigJson
   };
 }
 
@@ -124,6 +136,8 @@ export function updateChat(chat: Chat, updates: ChatUpdates): Chat {
     updates.sortOrder !== undefined ? updates.sortOrder : chat.sortOrder;
   const conversationMode: ConversationMode =
     updates.conversationMode !== undefined ? updates.conversationMode : chat.conversationMode;
+  const statusConfigJson: string =
+    updates.statusConfigJson !== undefined ? updates.statusConfigJson : chat.statusConfigJson;
   return {
     id: chat.id,
     characterId: characterId,
@@ -134,6 +148,7 @@ export function updateChat(chat: Chat, updates: ChatUpdates): Chat {
     isArchived: isArchived,
     userNameOverride: userNameOverride,
     sortOrder: sortOrder,
-    conversationMode: conversationMode
+    conversationMode: conversationMode,
+    statusConfigJson: statusConfigJson
   };
 }

@@ -135,6 +135,7 @@ import {
   INDEX_CHAT_MEMORIES_BRANCH_TYPE,
   COLUMN_USER_NAME,
   COLUMN_CHAT_USER_NAME_OVERRIDE,
+  COLUMN_CHAT_STATUS_CONFIG_JSON,
   COLUMN_SENDER_TYPE,
   COLUMN_SENDER_CHARACTER_ID,
   COLUMN_SCENE_ID,
@@ -491,7 +492,8 @@ const CREATE_CHATS_TABLE: string =
   `${COLUMN_IS_ARCHIVED} INTEGER NOT NULL DEFAULT 0, ` +
   `${COLUMN_SORT_ORDER} INTEGER NOT NULL DEFAULT 0, ` +
   `${COLUMN_CHAT_USER_NAME_OVERRIDE} TEXT NOT NULL DEFAULT '', ` +
-  `${COLUMN_CONVERSATION_MODE} TEXT NOT NULL DEFAULT '${CONVERSATION_MODE_SINGLE}'` +
+  `${COLUMN_CONVERSATION_MODE} TEXT NOT NULL DEFAULT '${CONVERSATION_MODE_SINGLE}', ` +
+  `${COLUMN_CHAT_STATUS_CONFIG_JSON} TEXT NOT NULL DEFAULT ''` +
   `)`;
 
 // ===== v13: chat_participants 表(G-DATA-1A 多人聊天参与者) =====
@@ -2269,6 +2271,23 @@ export const V33_SCHEMA_STATEMENTS: string[] = [
   ...V32_TO_V33_DDL_STATEMENTS
 ];
 
+// ===== v34: 聊天角色状态配置(CHAT-STATUS-1A) =====
+
+const ALTER_CHATS_ADD_STATUS_CONFIG_JSON: string =
+  `ALTER TABLE ${TABLE_CHATS} ADD COLUMN ${COLUMN_CHAT_STATUS_CONFIG_JSON} TEXT NOT NULL DEFAULT ''`;
+
+/**
+ * v33→v34 迁移 SQL(仅 ALTER)。
+ * 新安装时 CREATE_CHATS_TABLE 已包含该列,故 V34_SCHEMA_STATEMENTS 不含此 ALTER。
+ */
+export const V33_TO_V34_DDL_STATEMENTS: string[] = [
+  ALTER_CHATS_ADD_STATUS_CONFIG_JSON
+];
+
+export const V34_SCHEMA_STATEMENTS: string[] = [
+  ...V33_SCHEMA_STATEMENTS
+];
+
 export function getSchemaStatements(version: number): string[] {
   if (version === 1) {
     return [...VERSION_1_STATEMENTS];
@@ -2368,6 +2387,9 @@ export function getSchemaStatements(version: number): string[] {
   }
   if (version === 33) {
     return [...V33_SCHEMA_STATEMENTS];
+  }
+  if (version === 34) {
+    return [...V34_SCHEMA_STATEMENTS];
   }
   return [];
 }
