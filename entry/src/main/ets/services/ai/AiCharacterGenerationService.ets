@@ -982,7 +982,7 @@ function buildSystemPrompt(input: AiCharacterInput): string {
     + '\n  "spec": "chara_card_v2",'
     + '\n  "spec_version": "2.0",'
     + '\n  "data": {'
-    + '\n    "name": "角色名称(非空字符串)",'
+    + '\n    "name": "角色名称(必须是一个自然、具体、贴切的名字,如人物本名或昵称)",'
     + '\n    "description": "角色身份、经历、外貌和行为习惯的描述",'
     + '\n    "personality": "性格描述(不能只是关键词堆积,应清晰说明角色说话方式和性格特点)",'
     + '\n    "scenario": "场景设定,说明角色与用户如何相遇(不替用户决定行为)",'
@@ -994,7 +994,7 @@ function buildSystemPrompt(input: AiCharacterInput): string {
     + '\n    "alternate_greetings": ["备用开场白(多个开场白之间应有明显差异)"],'
     + '\n    "character_book": {"name": "角色世界书名", "description": "世界书描述", "scan_depth": 100, '
     + '"token_budget": 500, "recursive_scanning": false, "extensions": {}, "entries": ['
-    + '\n      {"keys": ["关键词"], "secondary_keys": [], "content": "条目内容", '
+    + '\n      {"name": "条目名称(简述该条目主题)", "keys": ["关键词"], "secondary_keys": [], "content": "条目内容", '
     + '"enabled": true, "insertion_order": 100, "case_sensitive": false, '
     + '"constant": false, "selective": true, "position": "before_char", "extensions": {}}'
     + '\n    ]},'
@@ -1005,6 +1005,7 @@ function buildSystemPrompt(input: AiCharacterInput): string {
     + '\n  }'
     + '\n}'
     + '\n\n角色卡内容要求:'
+    + '\n- name 必须是一个自然、贴切、有辨识度的角色名字(如人物本名、昵称或代号),禁止使用占位符(如 Entry、Character、未命名、数字编号等)'
     + '\n- 保持角色设定统一,不矛盾'
     + '\n- 清晰描述角色身份、经历、外貌和行为习惯'
     + '\n- 性格不能只是关键词堆积,应说明角色说话方式和性格特点'
@@ -1017,6 +1018,7 @@ function buildSystemPrompt(input: AiCharacterInput): string {
     + '\n- Post-History Instructions 应简洁'
     + '\n- 标签保持简短'
     + '\n- 世界书只包含与角色和设定直接相关的信息,不要伪造无关条目'
+    + '\n- 每个世界书条目都应有一个简洁的名称(name),概括该条目主题,不要留空或用 Entry、数字编号等占位符'
     + '\n- 如果用户未开启生成世界书,character_book 应为 {"name": "", "description": "", "scan_depth": 100, "token_budget": 500, "recursive_scanning": false, "extensions": {}, "entries": []}'
     + '\n- 如果用户未开启生成多个开场白,alternate_greetings 应为空数组 []'
     + '\n- 如果用户未开启生成对话示例,mes_example 应为空字符串 ""';
@@ -1039,7 +1041,7 @@ function buildUserPrompt(input: AiCharacterInput): string {
     parts.push(input.name.trim());
   } else {
     parts.push('\n【角色名称】');
-    parts.push('请根据创意自动生成合适的角色名称');
+    parts.push('请根据创意自动生成一个自然、贴切、有辨识度的角色名字(如人物本名、昵称或代号),禁止使用 Entry、Character、未命名、数字编号等占位符');
   }
 
   // 世界观(可选)

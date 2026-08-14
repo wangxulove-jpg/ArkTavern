@@ -20,6 +20,7 @@ import { PromptBuilder, PromptBuildContext } from '../../services/PromptBuilder'
 import { LorebookService } from '../../services/LorebookService';
 import { Lorebook } from '../../models/Lorebook';
 import { PromptPresetService } from '../../services/PromptPresetService';
+import { PromptPreset } from '../../models/PromptPreset';
 import { ModelService } from '../../services/ModelService';
 import { ProviderConfig } from '../../models/ProviderConfig';
 import { TokenCounter } from '../../services/TokenCounter';
@@ -158,8 +159,15 @@ export class WorldScenePromptAssembler {
       .withMesExample(input.speakerCharacter.mesExample)
       .build();
 
-    const preset = await this.presetService.getCurrentPreset();
-    const presetSystemPrompt: string = preset !== null ? (preset.systemPrompt ?? '') : '';
+    const presets: PromptPreset[] = await this.presetService.getSelectedPresets();
+    const presetPromptParts: string[] = [];
+    for (let i = 0; i < presets.length; i++) {
+      const sp: string = presets[i].systemPrompt.trim();
+      if (sp.length > 0) {
+        presetPromptParts.push(sp);
+      }
+    }
+    const presetSystemPrompt: string = presetPromptParts.join('\n\n');
 
     let lorebook: Lorebook | undefined = undefined;
     try {
@@ -188,14 +196,25 @@ export class WorldScenePromptAssembler {
       throw WorldRuntimeError.modelRequestFailed('未配置 Provider');
     }
 
-    const effectiveTemp: number | undefined = preset !== null && preset !== undefined && preset.temperature !== undefined
-      ? preset.temperature : providerConfig.temperature;
-    const effectiveTopP: number | undefined = preset !== null && preset !== undefined && preset.topP !== undefined
-      ? preset.topP : providerConfig.topP;
-    const effectiveMaxTokens: number | undefined = preset !== null && preset !== undefined && preset.maxOutputTokens !== undefined
-      ? preset.maxOutputTokens : providerConfig.maxTokens;
-    const effectiveContextWindow: number | undefined = preset !== null && preset !== undefined && preset.contextWindow !== undefined
-      ? preset.contextWindow : providerConfig.contextWindow;
+    let effectiveTemp: number | undefined = providerConfig.temperature;
+    let effectiveTopP: number | undefined = providerConfig.topP;
+    let effectiveMaxTokens: number | undefined = providerConfig.maxTokens;
+    let effectiveContextWindow: number | undefined = providerConfig.contextWindow;
+    for (let i = 0; i < presets.length; i++) {
+      const p: PromptPreset = presets[i];
+      if (p.temperature !== undefined) {
+        effectiveTemp = p.temperature;
+      }
+      if (p.topP !== undefined) {
+        effectiveTopP = p.topP;
+      }
+      if (p.maxOutputTokens !== undefined) {
+        effectiveMaxTokens = p.maxOutputTokens;
+      }
+      if (p.contextWindow !== undefined) {
+        effectiveContextWindow = p.contextWindow;
+      }
+    }
 
     const contextWindow: number = effectiveContextWindow ?? 4096;
 

@@ -5,7 +5,7 @@
  * 每次调用 create 返回独立实例,避免共享状态。
  *
  * 当前正式支持:
- * - OpenAICompatible / OpenAI / DeepSeek / OpenRouter → OpenAIProvider
+ * - OpenAICompatible / OpenAI / DeepSeek / MiMo / OpenRouter → OpenAIProvider
  * - Claude / Gemini → UnsupportedProvider
  *
  * 设计原则:
@@ -82,6 +82,7 @@ export function isOpenAICompatibleType(type: ProviderType): boolean {
   return type === ProviderType.OpenAICompatible
     || type === ProviderType.OpenAI
     || type === ProviderType.DeepSeek
+    || type === ProviderType.MiMo
     || type === ProviderType.OpenRouter;
 }
 

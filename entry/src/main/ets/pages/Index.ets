@@ -22,10 +22,13 @@ import { HdsTabs, HdsTabsController, hdsMaterial } from '@kit.UIDesignKit';
 import { SymbolGlyphModifier, router } from '@kit.ArkUI';
 import { AppServices } from '../services/AppServices';
 import { ThemePalette } from '../theme/ThemePalette';
+import { Logger } from '../utils/Logger';
 import { CharacterRootView } from './tabs/CharacterRootView';
 import { ChatSessionRootView } from './tabs/ChatSessionRootView';
 import { MarketPage } from './tabs/MarketPage';
 import { SettingsRootView } from './tabs/SettingsRootView';
+
+const LOG_TAG: string = 'Index';
 
 @Entry
 @Component
@@ -44,6 +47,21 @@ struct Index {
     } catch (e) {
       // 各 RootView 会处理自己的初始化错误,此处仅确保 AppServices 启动
     }
+  }
+
+  /**
+   * 从二级页面(角色编辑/导入、聊天等)router.back() 返回时触发。
+   *
+   * 说明:各 TabContent 内嵌的 RootView 是非 @Entry 组件,没有 onPageShow;
+   * 而 @StorageProp @Watch 在页面被覆盖(router.pushUrl 盖住)时部分场景不可靠。
+   * 因此在本页面级 onPageShow 兜底递增刷新信号,触发各 Tab 列表重新加载。
+   */
+  onPageShow(): void {
+    Logger.info(LOG_TAG, 'onPageShow fired');
+    const charVersion: number = AppStorage.get<number>('characterListVersion') ?? 0;
+    AppStorage.setOrCreate<number>('characterListVersion', charVersion + 1);
+    const chatVersion: number = AppStorage.get<number>('chatListVersion') ?? 0;
+    AppStorage.setOrCreate<number>('chatListVersion', chatVersion + 1);
   }
 
   /** Tab 内容背景色:Tavern 使用酒馆棕,其余走资源限定符 */

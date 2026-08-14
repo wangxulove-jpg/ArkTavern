@@ -40,6 +40,24 @@ const DEEPSEEK_V4_FLASH_CAPABILITY: ModelCapability = {
 };
 
 /**
+ * 小米 MiMo-V2.5-Pro 能力(1M 上下文,最大输出 128K,支持深度思考)。
+ */
+const MIMO_V25_PRO_CAPABILITY: ModelCapability = {
+  contextWindow: 1000000,
+  maxOutputTokensLimit: 128000,
+  supportsThinkingMode: true
+};
+
+/**
+ * 小米 MiMo-V2.5 多模态能力(1M 上下文,最大输出按 V2.5 系列 128K)。
+ */
+const MIMO_V25_CAPABILITY: ModelCapability = {
+  contextWindow: 1000000,
+  maxOutputTokensLimit: 128000,
+  supportsThinkingMode: true
+};
+
+/**
  * 根据模型名返回能力描述。
  * 未知模型返回 null。
  */
@@ -64,6 +82,13 @@ export function getModelCapability(modelName: string): ModelCapability | null {
   if (lower === 'deepseek-reasoner') {
     // 按 DeepSeek-V4-Flash 思考模式处理
     return DEEPSEEK_V4_FLASH_CAPABILITY;
+  }
+  // 小米 MiMo V2.5 系列(1M 上下文,最大输出 128K)
+  if (lower === 'mimo-v2.5-pro') {
+    return MIMO_V25_PRO_CAPABILITY;
+  }
+  if (lower === 'mimo-v2.5') {
+    return MIMO_V25_CAPABILITY;
   }
   return null;
 }

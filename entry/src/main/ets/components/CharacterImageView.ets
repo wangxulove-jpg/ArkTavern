@@ -21,9 +21,9 @@ import { ThemePalette } from '../theme/ThemePalette';
 @Component
 export struct CharacterImageView {
   /** 图片本地 URI(file://...),为空时显示占位 */
-  imageUri: string = '';
+  @Prop @Watch('onImageUriChanged') imageUri: string = '';
   /** 角色名称,用于首字占位和 accessibility */
-  fallbackName: string = '';
+  @Prop fallbackName: string = '';
   /** 组件宽度(使用 imgWidth 避免与 CustomComponent.width 冲突) */
   imgWidth: Length = 80;
   /** 组件高度(使用 imgHeight 避免与 CustomComponent.height 冲突) */
@@ -44,19 +44,28 @@ export struct CharacterImageView {
     this.loadFailed = false;
   }
 
+  /** 图片 URI 变化时重置加载失败状态,使新图片能重新加载 */
+  private onImageUriChanged(): void {
+    this.loadFailed = false;
+  }
+
   build(): void {
     Stack() {
       // 有 URI 且未失败时尝试显示图片
       if (this.imageUri.length > 0 && !this.loadFailed) {
-        Image(this.imageUri)
-          .width(this.imgWidth)
-          .height(this.imgHeight)
-          .objectFit(this.objectFit)
-          .borderRadius(this.imgBorderRadius)
-          .clip(true)
-          .onError(() => {
-            this.loadFailed = true;
-          })
+        // 用 ForEach + 唯一 key(URI)强制 Image 在图片地址变化时重建,
+        // 避免组件复用导致 ArkUI Image 不重新加载本地文件(显示旧图缓存)。
+        ForEach([this.imageUri], (uri: string): void => {
+          Image(uri)
+            .width(this.imgWidth)
+            .height(this.imgHeight)
+            .objectFit(this.objectFit)
+            .borderRadius(this.imgBorderRadius)
+            .clip(true)
+            .onError(() => {
+              this.loadFailed = true;
+            })
+        }, (uri: string): string => uri)
       }
 
       // URI 为空或加载失败时显示首字占位

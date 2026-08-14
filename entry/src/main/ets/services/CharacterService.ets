@@ -730,7 +730,7 @@ export class CharacterService {
       const entry: ParsedCharacterBookEntry = parsed.characterBook.entries[i];
       const position: LorebookPosition = mapCharacterBookPosition(entry.position);
       const lorebookEntry: LorebookEntry = createLorebookEntry(
-        entry.name.length > 0 ? entry.name : (entry.comment.length > 0 ? entry.comment : 'Entry ' + String(i + 1)),
+        resolveBookEntryName(entry, i),
         entry.keys,
         entry.secondaryKeys,
         entry.content,
@@ -818,6 +818,24 @@ function mapCharacterBookPosition(position: string): LorebookPosition {
     return LorebookPosition.AfterCharacter;
   }
   return LorebookPosition.BeforeCharacter;
+}
+
+/**
+ * 解析世界书条目的显示名称。
+ * 优先级:name > comment > 首个关键词 > 兜底"条目 N"。
+ * 避免 AI 生成的世界书条目无名称时全部落到"Entry N"。
+ */
+function resolveBookEntryName(entry: ParsedCharacterBookEntry, index: number): string {
+  if (entry.name.trim().length > 0) {
+    return entry.name;
+  }
+  if (entry.comment.trim().length > 0) {
+    return entry.comment;
+  }
+  if (entry.keys.length > 0 && entry.keys[0].trim().length > 0) {
+    return entry.keys[0];
+  }
+  return '条目 ' + String(index + 1);
 }
 
 /**

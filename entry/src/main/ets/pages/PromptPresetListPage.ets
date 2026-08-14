@@ -82,12 +82,12 @@ struct PromptPresetListPage {
 
         Blank()
 
-        Button('清除当前')
+        Button('清除选择')
           .fontSize(12)
           .backgroundColor(Color.Transparent)
           .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
           .onClick(() => {
-            this.viewModel.clearCurrent();
+            this.viewModel.clearAll();
           })
       }
       .width('100%')
@@ -95,17 +95,17 @@ struct PromptPresetListPage {
       .alignItems(VerticalAlign.Center)
       .backgroundColor(ThemePalette.surface1Color(this.effectiveTheme))
 
-      // 当前预设状态区(标签:次级文字,值:主文字,不再用 disabled 灰色)
+      // 已选预设状态区(标签:次级文字,值:主文字)
       Row() {
-        Text('当前预设：')
+        Text('已选预设：')
           .fontSize(13)
           .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
-        Text(this.viewModel.currentPresetId.length > 0
-          ? '已启用'
-          : '未使用')
+        Text(this.viewModel.getSelectedCount() > 0
+          ? this.viewModel.getSelectedCount().toString() + ' 个'
+          : '未选择')
           .fontSize(13)
           .fontWeight(FontWeight.Medium)
-          .fontColor(this.viewModel.currentPresetId.length > 0
+          .fontColor(this.viewModel.getSelectedCount() > 0
             ? ThemePalette.accentColor(this.effectiveTheme)
             : ThemePalette.textPrimaryColor(this.effectiveTheme))
       }
@@ -213,17 +213,6 @@ struct PromptPresetListPage {
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .layoutWeight(1)
-
-            if (this.viewModel.isCurrentPreset(preset.id)) {
-              // 当前预设标记:品牌色背景 + 不透明白色文字
-              Text('当前')
-                .fontSize(10)
-                .fontColor($r('app.color.app_on_accent'))
-                .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
-                .borderRadius(4)
-                .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-                .margin({ left: 8 })
-            }
           }
           .width('100%')
           .alignItems(VerticalAlign.Center)
@@ -247,15 +236,19 @@ struct PromptPresetListPage {
 
         // 操作按钮
         Row() {
-          Button('设为当前')
+          Button(this.viewModel.isSelected(preset.id) ? '已选' : '选择')
             .fontSize(12)
-            .backgroundColor(ThemePalette.accentColor(this.effectiveTheme))
-            .fontColor($r('app.color.app_on_accent'))
+            .backgroundColor(this.viewModel.isSelected(preset.id)
+              ? ThemePalette.accentColor(this.effectiveTheme)
+              : ThemePalette.surface2Color(this.effectiveTheme))
+            .fontColor(this.viewModel.isSelected(preset.id)
+              ? $r('app.color.app_on_accent')
+              : ThemePalette.textPrimaryColor(this.effectiveTheme))
             .borderRadius(6)
             .height(28)
             .padding({ left: 10, right: 10 })
             .onClick(() => {
-              this.viewModel.setCurrent(preset.id);
+              this.viewModel.toggle(preset.id);
             })
 
           Button('编辑')

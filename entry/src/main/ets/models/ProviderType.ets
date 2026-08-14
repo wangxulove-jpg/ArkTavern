@@ -20,6 +20,8 @@ export enum ProviderType {
   OpenAI = 'OpenAI',
   /** DeepSeek */
   DeepSeek = 'DeepSeek',
+  /** 小米 MiMo */
+  MiMo = 'MiMo',
   /** OpenRouter */
   OpenRouter = 'OpenRouter',
   /** Anthropic Claude */

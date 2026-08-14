@@ -530,8 +530,12 @@ export class ChatViewModel {
       return;
     }
     try {
-      const preset: PromptPreset | null = await this.promptPresetService.getCurrentPreset();
-      this.currentPresetName = preset !== null ? preset.name : '';
+      const presets: PromptPreset[] = await this.promptPresetService.getSelectedPresets();
+      const names: string[] = [];
+      for (let i = 0; i < presets.length; i++) {
+        names.push(presets[i].name);
+      }
+      this.currentPresetName = names.join('、');
     } catch (e) {
       this.currentPresetName = '';
       Logger.warn(LOG_TAG, 'refresh preset name failed: ' + String(e));

@@ -108,6 +108,7 @@ export function isValidProviderTypeValue(value: string): boolean {
   return value === ProviderType.OpenAICompatible ||
     value === ProviderType.OpenAI ||
     value === ProviderType.DeepSeek ||
+    value === ProviderType.MiMo ||
     value === ProviderType.OpenRouter ||
     value === ProviderType.Claude ||
     value === ProviderType.Gemini;
@@ -122,6 +123,8 @@ function parseProviderType(value: string): ProviderType {
       return ProviderType.OpenAI;
     case ProviderType.DeepSeek:
       return ProviderType.DeepSeek;
+    case ProviderType.MiMo:
+      return ProviderType.MiMo;
     case ProviderType.OpenRouter:
       return ProviderType.OpenRouter;
     case ProviderType.Claude:

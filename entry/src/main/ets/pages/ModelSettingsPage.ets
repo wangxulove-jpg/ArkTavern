@@ -350,6 +350,8 @@ struct ModelSettingsPage {
     switch (type) {
       case ProviderType.DeepSeek:
         return 'DeepSeek';
+      case ProviderType.MiMo:
+        return 'MiMo';
       case ProviderType.OpenAICompatible:
         return 'OpenAI Compatible';
       case ProviderType.OpenAI:

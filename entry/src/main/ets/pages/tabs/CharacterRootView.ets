@@ -29,6 +29,9 @@ import { router, promptAction } from '@kit.ArkUI';
 import { picker } from '@kit.CoreFileKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { ThemePalette } from '../../theme/ThemePalette';
+import { Logger } from '../../utils/Logger';
+
+const LOG_TAG: string = 'CharacterRootView';
 
 /** 角色编辑页路由参数,携带 characterId */
 interface CharacterEditNavParam {
@@ -48,6 +51,17 @@ interface SwipeGridCellParams {
 @Component
 export struct CharacterRootView {
   @State viewModel: CharacterListViewModel | null = null;
+  /**
+   * 组件本地角色列表(@State 直接装饰数组,赋值新数组即触发 ForEach 重渲染)。
+   * 说明:@State 装饰 `ViewModel | null` 联合类型时,对 @Observed 实例属性的观察不可靠,
+   * 因此显式维护本地 characters 数组,在每次 load 后同步(与 ChatSessionRootView 一致)。
+   */
+  @State characters: Character[] = [];
+  /**
+   * 列表刷新计数:每次 reload 后递增并拼进 ForEach key,
+   * 强制 ForEach 用新 key 重建所有列表项,避免组件复用导致图片/文本不刷新。
+   */
+  @State refreshKey: number = 0;
   @State isInitializing: boolean = true;
   @State initError: string = '';
   /** 删除二次确认的目标角色(null 时确认弹窗不显示) */
@@ -83,6 +97,8 @@ export struct CharacterRootView {
       const vm: CharacterListViewModel = new CharacterListViewModel(charService);
       this.viewModel = vm;
       await vm.load();
+      this.characters = vm.characters;
+      this.refreshKey++;
       this.isInitializing = false;
     } catch (e) {
       this.isInitializing = false;
@@ -92,26 +108,39 @@ export struct CharacterRootView {
 
   /** characterListVersion 变化时刷新列表(从编辑页/导入页返回后自动刷新) */
   private onListVersionChange(): void {
+    Logger.info(LOG_TAG, 'onListVersionChange fired, version=' + this.characterListVersion.toString());
     if (this.isInitializing) {
       return;
     }
     if (this.viewModel === null || !AppServices.isStarted()) {
       return;
     }
-    this.viewModel!.load().catch((): void => {});
+    this.viewModel!.load()
+      .then((): void => {
+        this.characters = this.viewModel!.characters;
+        this.refreshKey++;
+        Logger.info(LOG_TAG, 'onListVersionChange reload done, count=' + this.characters.length.toString()
+          + ' refreshKey=' + this.refreshKey.toString());
+      })
+      .catch((): void => {});
+  }
+
+  /** 同步 viewModel.characters 到本地 @State characters(触发 ForEach 重渲染) */
+  private syncCharacters(): void {
+    if (this.viewModel !== null) {
+      this.characters = this.viewModel!.characters;
+      this.refreshKey++;
+    }
   }
 
   /** 本地搜索过滤(匹配 name/description/personality/tags,大小写不敏感) */
   private filteredCharacters(): Character[] {
-    if (this.viewModel === null) {
-      return [];
-    }
     const keyword: string = this.searchText.trim().toLowerCase();
     if (keyword.length === 0) {
-      return this.viewModel!.characters;
+      return this.characters;
     }
     const result: Character[] = [];
-    const all: Character[] = this.viewModel!.characters;
+    const all: Character[] = this.characters;
     for (let i = 0; i < all.length; i++) {
       const c: Character = all[i];
       if (c.name.toLowerCase().indexOf(keyword) >= 0
@@ -187,6 +216,7 @@ export struct CharacterRootView {
     const id: string = this.deleteTarget.id;
     this.deleteTarget = null;
     await this.viewModel!.deleteCharacter(id);
+    this.syncCharacters();
   }
 
   /** 取消删除 */
@@ -342,7 +372,7 @@ export struct CharacterRootView {
           this.loadingView()
         } else if (this.initError.length > 0) {
           this.errorView()
-        } else if (this.viewModel === null || this.viewModel!.characters.length === 0) {
+        } else if (this.viewModel === null || this.characters.length === 0) {
           this.emptyStateView()
         } else {
           this.characterList()
@@ -485,7 +515,7 @@ export struct CharacterRootView {
               }
             }
           })
-        }, (char: Character) => char.id)
+        }, (char: Character) => char.id + '_' + this.refreshKey.toString())
 
         // 末尾空白 ListItem:让内容总高度始终超出视口,确保即使内容少也能上下滚动(spring 回弹)。
         ListItem() {
@@ -529,7 +559,11 @@ export struct CharacterRootView {
             bgColor: ThemePalette.surface2Color(this.effectiveTheme),
             fgColor: ThemePalette.textPrimaryColor(this.effectiveTheme),
             disabled: index === 0,
-            action: (): void => { this.viewModel!.moveUp(char.id); }
+            action: (): void => {
+              this.viewModel!.moveUp(char.id).then((): void => {
+                this.syncCharacters();
+              }).catch((): void => {});
+            }
           })
           this.gridCell({
             icon: $r('sys.symbol.plus'),
@@ -558,8 +592,12 @@ export struct CharacterRootView {
             label: $r('app.string.card_action_move_down'),
             bgColor: ThemePalette.surface2Color(this.effectiveTheme),
             fgColor: ThemePalette.textPrimaryColor(this.effectiveTheme),
-            disabled: index === this.viewModel!.characters.length - 1,
-            action: (): void => { this.viewModel!.moveDown(char.id); }
+            disabled: index === this.characters.length - 1,
+            action: (): void => {
+              this.viewModel!.moveDown(char.id).then((): void => {
+                this.syncCharacters();
+              }).catch((): void => {});
+            }
           })
           this.gridCell({
             icon: $r('sys.symbol.share'),

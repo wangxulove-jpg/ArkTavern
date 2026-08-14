@@ -242,6 +242,7 @@ struct PromptPresetEditPage {
       this.toggleField(
         '覆盖 Temperature',
         '0 ~ 2',
+        '采样随机性:越高回复越多样、越有创意,越低越稳定、越确定。',
         this.formState.overrideTemperature,
         this.formState.temperatureInput,
         (isOn: boolean) => {
@@ -267,6 +268,7 @@ struct PromptPresetEditPage {
       this.toggleField(
         '覆盖 Top P',
         '0 ~ 1',
+        '核采样:只从概率累计到该值的候选词中采样,越低越保守集中,越高越多样。',
         this.formState.overrideTopP,
         this.formState.topPInput,
         (isOn: boolean) => {
@@ -292,6 +294,7 @@ struct PromptPresetEditPage {
       this.toggleField(
         '覆盖最大输出 Token',
         '正整数',
+        '',
         this.formState.overrideMaxOutputTokens,
         this.formState.maxOutputTokensInput,
         (isOn: boolean) => {
@@ -317,6 +320,7 @@ struct PromptPresetEditPage {
       this.toggleField(
         '覆盖上下文窗口',
         '512 ~ 1000000',
+        '',
         this.formState.overrideContextWindow,
         this.formState.contextWindowInput,
         (isOn: boolean) => {
@@ -435,6 +439,7 @@ struct PromptPresetEditPage {
   toggleField(
     label: string,
     hint: string,
+    description: string,
     enabled: boolean,
     inputValue: string,
     onToggle: (isOn: boolean) => void,
@@ -450,6 +455,12 @@ struct PromptPresetEditPage {
             Text(hint)
               .fontSize(11)
               .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+              .margin({ top: 2 })
+          }
+          if (description.length > 0) {
+            Text(description)
+              .fontSize(11)
+              .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
               .margin({ top: 2 })
           }
         }

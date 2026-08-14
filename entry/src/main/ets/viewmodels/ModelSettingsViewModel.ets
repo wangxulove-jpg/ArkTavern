@@ -394,6 +394,7 @@ export class ModelSettingsViewModel {
     return type === ProviderType.OpenAICompatible
       || type === ProviderType.OpenAI
       || type === ProviderType.DeepSeek
+      || type === ProviderType.MiMo
       || type === ProviderType.OpenRouter;
   }
 

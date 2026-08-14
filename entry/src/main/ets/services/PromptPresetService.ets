@@ -3,9 +3,9 @@
  *
  * 职责:
  * - PromptPreset 的 CRUD 业务编排
- * - 当前 Preset 选择管理
- * - 删除当前 Preset 时清空选择
- * - 不存在的当前 Preset 自动清空
+ * - 已选 Preset 集合管理(多选)
+ * - 删除 Preset 时自动从已选集合移除
+ * - 不存在的已选 Preset 自动剔除
  *
  * 不负责:
  * - ChatService / PromptBuilder / Provider 请求参数接入(T-6.1B)
@@ -82,42 +82,72 @@ export class PromptPresetService {
     }
     await this.repository.remove(id);
 
-    // 如果删除的是当前 Preset,清空选择
-    const currentId: string | null = await this.selectionStore.getCurrentPresetId();
-    if (currentId === id) {
-      await this.selectionStore.setCurrentPresetId(null);
-    }
+    // 从已选集合中移除被删除的 Preset
+    await this.removeSelectedPresetId(id);
   }
 
-  async getCurrentPresetId(): Promise<string | null> {
-    return await this.selectionStore.getCurrentPresetId();
+  async getSelectedPresetIds(): Promise<string[]> {
+    return await this.selectionStore.getSelectedPresetIds();
   }
 
-  async getCurrentPreset(): Promise<PromptPreset | null> {
-    const id: string | null = await this.selectionStore.getCurrentPresetId();
-    if (id === null) {
-      return null;
+  async getSelectedPresets(): Promise<PromptPreset[]> {
+    const ids: string[] = await this.selectionStore.getSelectedPresetIds();
+    const result: PromptPreset[] = [];
+    const validIds: string[] = [];
+    for (let i = 0; i < ids.length; i++) {
+      const id: string = ids[i];
+      const preset: PromptPreset | null = await this.repository.getById(id);
+      if (preset !== null) {
+        result.push(preset);
+        validIds.push(id);
+      }
     }
-    const preset: PromptPreset | null = await this.repository.getById(id);
-    if (preset === null) {
-      // 当前 ID 指向不存在的 Preset,清空选择
-      await this.selectionStore.setCurrentPresetId(null);
-      Logger.warn(LOG_TAG, 'current selection cleared (preset not found)');
-      return null;
+    // 清理失效的已选 ID(不存在则剔除)
+    if (validIds.length !== ids.length) {
+      await this.selectionStore.setSelectedPresetIds(validIds);
+      Logger.warn(LOG_TAG, 'selection cleaned (some preset not found)');
     }
-    return preset;
+    return result;
   }
 
-  async setCurrentPresetId(id: string | null): Promise<void> {
-    if (id === null) {
-      await this.selectionStore.setCurrentPresetId(null);
-      return;
+  async setSelectedPresetIds(ids: string[]): Promise<void> {
+    const validIds: string[] = [];
+    for (let i = 0; i < ids.length; i++) {
+      const exists: boolean = await this.repository.exists(ids[i]);
+      if (exists) {
+        validIds.push(ids[i]);
+      }
     }
-    // 验证 Preset 存在
+    await this.selectionStore.setSelectedPresetIds(validIds);
+  }
+
+  async addSelectedPresetId(id: string): Promise<void> {
     const exists: boolean = await this.repository.exists(id);
     if (!exists) {
-      throw DatabaseError.notFound('preset.setCurrent');
+      throw DatabaseError.notFound('preset.addSelected');
     }
-    await this.selectionStore.setCurrentPresetId(id);
+    const ids: string[] = await this.selectionStore.getSelectedPresetIds();
+    let already: boolean = false;
+    for (let i = 0; i < ids.length; i++) {
+      if (ids[i] === id) {
+        already = true;
+        break;
+      }
+    }
+    if (!already) {
+      ids.push(id);
+      await this.selectionStore.setSelectedPresetIds(ids);
+    }
+  }
+
+  async removeSelectedPresetId(id: string): Promise<void> {
+    const ids: string[] = await this.selectionStore.getSelectedPresetIds();
+    const next: string[] = [];
+    for (let i = 0; i < ids.length; i++) {
+      if (ids[i] !== id) {
+        next.push(ids[i]);
+      }
+    }
+    await this.selectionStore.setSelectedPresetIds(next);
   }
 }

@@ -295,7 +295,7 @@ export class PromptPresetEditViewModel {
           maxOutputTokens: maxOutputTokens,
           contextWindow: contextWindow
         });
-        await this.presetService.setCurrentPresetId(created.id);
+        await this.presetService.addSelectedPresetId(created.id);
       }
       return true;
     } catch (e) {

@@ -136,6 +136,15 @@ export function validateV2CharacterCard(
       { field: 'data.name', code: 'empty', message: '角色名称(name)不能为空' }
     ]);
   }
+  if (isPlaceholderName(name)) {
+    return fail([
+      {
+        field: 'data.name',
+        code: 'placeholder_name',
+        message: '角色名称(name)不能是占位符(如 Entry、Character、未命名、数字编号),请生成一个自然、贴切的名字'
+      }
+    ]);
+  }
 
   // 5. 字符串字段类型校验 + 长度限制
   const description: string = getLimitedStringField(data, 'description', errors, 'data.description');
@@ -235,6 +244,27 @@ export function validateV2CharacterCard(
 
 function fail(errors: AiValidationError[]): V2ValidationResult {
   return { ok: false, card: null, errors: errors };
+}
+
+/**
+ * 判断角色名称是否为占位符(如 Entry1、Character、未命名、数字编号)。
+ * 用于在 AI 生成时拦截无意义的占位名称,触发重新生成。
+ */
+function isPlaceholderName(name: string): boolean {
+  const patterns: RegExp[] = [
+    new RegExp('^entry[\\s0-9-_]*$', 'i'),
+    new RegExp('^character[\\s0-9-_]*$', 'i'),
+    new RegExp('^unnamed[\\s0-9-_]*$', 'i'),
+    new RegExp('^placeholder[\\s0-9-_]*$', 'i'),
+    new RegExp('^未命名[\\s0-9-_]*$'),
+    new RegExp('^未知角色[\\s0-9-_]*$')
+  ];
+  for (let i = 0; i < patterns.length; i++) {
+    if (patterns[i].test(name)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function getStringField(obj: Record<string, Object>, key: string, defaultValue: string): string {

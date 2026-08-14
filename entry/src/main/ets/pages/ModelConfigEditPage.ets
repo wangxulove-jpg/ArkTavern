@@ -20,17 +20,20 @@
 import { ModelSettingsViewModel } from '../viewmodels/ModelSettingsViewModel';
 import { ProviderType } from '../models/ProviderType';
 import { ModelOption } from '../models/ProviderPreset';
+import { getModelCapability, ModelCapability } from '../models/ModelCapabilities';
 import { router } from '@kit.ArkUI';
 import { ThemePalette } from '../theme/ThemePalette';
 
 interface ProviderOption {
   readonly type: ProviderType;
   readonly displayName: string;
+  readonly description: string;
 }
 
 const PROVIDER_OPTIONS: ProviderOption[] = [
-  { type: ProviderType.OpenAICompatible, displayName: 'OpenAI Compatible' },
-  { type: ProviderType.DeepSeek, displayName: 'DeepSeek' }
+  { type: ProviderType.DeepSeek, displayName: 'DeepSeek', description: 'DeepSeek V4 系列,官方 API' },
+  { type: ProviderType.MiMo, displayName: 'MiMo', description: '小米 MiMo V2.5 系列,官方 API' },
+  { type: ProviderType.OpenAICompatible, displayName: 'OpenAI Compatible', description: '通用 OpenAI 兼容接口,自定义 Base URL 与模型' }
 ];
 
 const MAX_NAME_LENGTH: number = 32;
@@ -387,6 +390,7 @@ struct ModelConfigEditPage {
         // Temperature(需要小数,使用 Normal 输入类型并在 onChange 校验)
         FormSection() {
           this.fieldLabelWithHint($r('app.string.model_settings_temperature'), $r('app.string.model_settings_temperature_range'))
+          this.fieldDesc($r('app.string.model_settings_temperature_desc'))
           TextInput({ text: this.viewModel!.temperature.toString() })
             .type(InputType.Normal)
             .width('100%')
@@ -407,6 +411,7 @@ struct ModelConfigEditPage {
         // Top P(需要小数,使用 Normal 输入类型)
         FormSection() {
           this.fieldLabelWithHint($r('app.string.model_settings_top_p'), $r('app.string.model_settings_top_p_range'))
+          this.fieldDesc($r('app.string.model_settings_top_p_desc'))
           TextInput({ text: this.viewModel!.topP.toString() })
             .type(InputType.Normal)
             .width('100%')
@@ -539,13 +544,18 @@ struct ModelConfigEditPage {
         ForEach(PROVIDER_OPTIONS, (option: ProviderOption) => {
           ListItem() {
             Row() {
-              Column() {
+              Column({ space: 2 }) {
                 Text(option.displayName)
                   .fontSize($r('app.float.app_font_body'))
                   .fontColor(this.viewModel!.providerType === option.type
                     ? ThemePalette.accentColor(this.effectiveTheme) : ThemePalette.textPrimaryColor(this.effectiveTheme))
                   .fontWeight(this.viewModel!.providerType === option.type
                     ? FontWeight.Medium : FontWeight.Normal)
+                Text(option.description)
+                  .fontSize($r('app.float.app_font_caption'))
+                  .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+                  .maxLines(2)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
               }
               .alignItems(HorizontalAlign.Start)
               .layoutWeight(1)
@@ -557,8 +567,7 @@ struct ModelConfigEditPage {
               }
             }
             .width('100%')
-            .height(56)
-            .padding({ left: 16, right: 16 })
+            .padding({ left: 16, right: 16, top: 12, bottom: 12 })
             .backgroundColor(this.viewModel!.providerType === option.type
               ? $r('app.color.app_accent_surface') : ThemePalette.surface1Color(this.effectiveTheme))
             .borderRadius($r('app.float.app_radius_sm'))
@@ -605,7 +614,7 @@ struct ModelConfigEditPage {
           ForEach(this.viewModel!.activePreset.availableModels, (model: ModelOption, index: number) => {
             ListItem() {
               Row() {
-                Column() {
+                Column({ space: 2 }) {
                   Text(model.displayName)
                     .fontSize($r('app.float.app_font_body'))
                     .fontColor(index === this.viewModel!.selectedModelIndex
@@ -616,6 +625,12 @@ struct ModelConfigEditPage {
                     Text(model.description)
                       .fontSize($r('app.float.app_font_caption'))
                       .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+                      .margin({ top: 2 })
+                  }
+                  if (this.modelCapabilityLabel(model.id).length > 0) {
+                    Text(this.modelCapabilityLabel(model.id))
+                      .fontSize($r('app.float.app_font_caption'))
+                      .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
                       .margin({ top: 2 })
                   }
                 }
@@ -673,6 +688,14 @@ struct ModelConfigEditPage {
         .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
     }
     .margin({ bottom: 6 })
+  }
+
+  @Builder
+  fieldDesc(desc: Resource) {
+    Text(desc)
+      .fontSize($r('app.float.app_font_caption'))
+      .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+      .margin({ bottom: 8 })
   }
 
   @Builder
@@ -774,6 +797,34 @@ struct ModelConfigEditPage {
       return this.viewModel!.activePreset.availableModels[this.viewModel!.selectedModelIndex].displayName;
     }
     return this.viewModel!.modelName;
+  }
+
+  private modelCapabilityLabel(modelId: string): string {
+    const capability: ModelCapability | null = getModelCapability(modelId);
+    if (capability === null) {
+      return '';
+    }
+    return '上下文 ' + this.formatTokenCount(capability.contextWindow)
+      + ' · 输出上限 ' + this.formatTokenCount(capability.maxOutputTokensLimit);
+  }
+
+  private formatTokenCount(tokens: number): string {
+    if (tokens >= 1000000) {
+      const m: number = tokens / 1000000;
+      return this.trimNumber(m) + 'M';
+    }
+    if (tokens >= 1000) {
+      const k: number = tokens / 1000;
+      return this.trimNumber(k) + 'K';
+    }
+    return tokens.toString();
+  }
+
+  private trimNumber(n: number): string {
+    if (Number.isInteger(n)) {
+      return n.toString();
+    }
+    return n.toFixed(1);
   }
 
   private isFormReady(): boolean {

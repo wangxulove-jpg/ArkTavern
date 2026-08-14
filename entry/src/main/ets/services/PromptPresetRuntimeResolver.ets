@@ -7,14 +7,14 @@
  *
  * 优先级(从高到低):
  * 1. Runtime Override(单次请求显式覆盖)
- * 2. Prompt Preset 中已定义的字段
+ * 2. 已选 Prompt Preset 中定义的字段(多个 Preset 按选择顺序,后选覆盖先选)
  * 3. 当前 Model/Provider 配置中已定义的字段
  *
  * 要求:
  * - 每个字段独立计算
  * - 0 是 temperature 和 topP 的合法值
  * - 使用显式 undefined 判断,不能用真假判断
- * - 不修改 base、preset 或 runtimeOverrides
+ * - 不修改 base、presets 或 runtimeOverrides
  * - 返回新对象
  */
 
@@ -56,18 +56,19 @@ export interface PromptPresetRequestSnapshot {
 /**
  * 按优先级合并生成参数。
  *
- * 优先级: runtimeOverrides > preset > base
+ * 优先级: runtimeOverrides > presets > base
+ * 多个 Preset 按数组顺序依次覆盖,后选 Preset 的字段覆盖先选。
  * 每个字段独立计算,undefined 表示不覆盖。
- * 不修改 base、preset 或 runtimeOverrides。
+ * 不修改 base、presets 或 runtimeOverrides。
  *
  * @param base 模型/Provider 配置的基准值
- * @param preset 当前 PromptPreset(可选)
+ * @param presets 已选 PromptPreset 列表(可选)
  * @param runtimeOverrides 单次请求显式覆盖(可选)
  * @returns 合并后的 EffectiveGenerationSettings
  */
 export function resolveEffectiveGenerationSettings(
   base: EffectiveGenerationSettings,
-  preset?: PromptPreset,
+  presets?: PromptPreset[],
   runtimeOverrides?: RuntimeGenerationOverrides
 ): EffectiveGenerationSettings {
   let temperature: number | undefined = base.temperature;
@@ -75,19 +76,22 @@ export function resolveEffectiveGenerationSettings(
   let maxOutputTokens: number | undefined = base.maxOutputTokens;
   let contextWindow: number | undefined = base.contextWindow;
 
-  // Preset 覆盖(已定义的字段)
-  if (preset !== undefined && preset !== null) {
-    if (preset.temperature !== undefined) {
-      temperature = preset.temperature;
-    }
-    if (preset.topP !== undefined) {
-      topP = preset.topP;
-    }
-    if (preset.maxOutputTokens !== undefined) {
-      maxOutputTokens = preset.maxOutputTokens;
-    }
-    if (preset.contextWindow !== undefined) {
-      contextWindow = preset.contextWindow;
+  // Presets 覆盖(已定义的字段,按选择顺序后选覆盖先选)
+  if (presets !== undefined && presets !== null) {
+    for (let i = 0; i < presets.length; i++) {
+      const preset: PromptPreset = presets[i];
+      if (preset.temperature !== undefined) {
+        temperature = preset.temperature;
+      }
+      if (preset.topP !== undefined) {
+        topP = preset.topP;
+      }
+      if (preset.maxOutputTokens !== undefined) {
+        maxOutputTokens = preset.maxOutputTokens;
+      }
+      if (preset.contextWindow !== undefined) {
+        contextWindow = preset.contextWindow;
+      }
     }
   }
 
@@ -184,19 +188,27 @@ export function createSnapshotWithoutPreset(
 }
 
 /**
- * 从 Preset 和合并后的参数创建请求快照。
- * @param preset 当前 Preset
+ * 从多个已选 Preset 和合并后的参数创建请求快照。
+ * 多个 Preset 的 systemPrompt 按选择顺序以空行拼接。
+ * @param presets 已选 Preset 列表
  * @param settings 合并后的生成参数
  * @returns 快照
  */
-export function createSnapshotWithPreset(
-  preset: PromptPreset,
+export function createSnapshotWithPresets(
+  presets: PromptPreset[],
   settings: EffectiveGenerationSettings
 ): PromptPresetRequestSnapshot {
-  const systemPrompt: string = preset.systemPrompt.trim();
+  const parts: string[] = [];
+  for (let i = 0; i < presets.length; i++) {
+    const sp: string = presets[i].systemPrompt.trim();
+    if (sp.length > 0) {
+      parts.push(sp);
+    }
+  }
+  const combined: string = parts.join('\n\n');
   return {
-    presetId: preset.id,
-    presetSystemPrompt: systemPrompt.length > 0 ? preset.systemPrompt : undefined,
+    presetId: undefined,
+    presetSystemPrompt: combined.length > 0 ? combined : undefined,
     generationSettings: settings
   };
 }

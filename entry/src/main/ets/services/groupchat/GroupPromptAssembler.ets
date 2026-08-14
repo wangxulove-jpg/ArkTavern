@@ -266,19 +266,24 @@ export class GroupPromptAssembler {
       }
     }
 
-    // 4. 加载 PromptPreset systemPrompt
+    // 4. 加载 PromptPreset systemPrompt(多选,按选择顺序拼接)
     let presetSystemPrompt: string = '';
-    let preset: PromptPreset | null = null;
+    let presets: PromptPreset[] = [];
     if (this.promptPresetService !== null) {
       try {
-        preset = await this.promptPresetService.getCurrentPreset();
-        if (preset !== null) {
-          presetSystemPrompt = preset.systemPrompt;
-        }
+        presets = await this.promptPresetService.getSelectedPresets();
       } catch (e) {
         Logger.warn(LOG_TAG, 'load current preset failed: ' + String(e));
       }
     }
+    const presetPromptParts: string[] = [];
+    for (let i = 0; i < presets.length; i++) {
+      const sp: string = presets[i].systemPrompt.trim();
+      if (sp.length > 0) {
+        presetPromptParts.push(sp);
+      }
+    }
+    presetSystemPrompt = presetPromptParts.join('\n\n');
 
     // 5. 加载模型配置作为 base(用于合并生成参数)
     let base: EffectiveGenerationSettings = {};
@@ -296,7 +301,7 @@ export class GroupPromptAssembler {
       Logger.warn(LOG_TAG, 'load current config failed: ' + String(e));
     }
     const effectiveSettings: EffectiveGenerationSettings =
-      resolveEffectiveGenerationSettings(base, preset !== null ? preset : undefined);
+      resolveEffectiveGenerationSettings(base, presets);
 
     // 6. 转换历史消息(AI 消息加 [角色·名]: 前缀,用户消息加 [用户·名]:)
     const characterMap: Map<string, Character | null> = await this.loadCharacterMap(

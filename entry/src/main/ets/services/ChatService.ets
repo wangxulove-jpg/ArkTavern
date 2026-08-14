@@ -96,7 +96,7 @@ import {
   EffectiveGenerationSettings,
   resolveEffectiveGenerationSettings,
   createSnapshotWithoutPreset,
-  createSnapshotWithPreset
+  createSnapshotWithPresets
 } from './PromptPresetRuntimeResolver';
 import { PromptPreset } from '../models/PromptPreset';
 import { generateUuid } from '../utils/Uuid';
@@ -3477,9 +3477,9 @@ export class ChatService {
       );
     }
 
-    let preset: PromptPreset | null = null;
+    let presets: PromptPreset[] = [];
     try {
-      preset = await this.promptPresetService.getCurrentPreset();
+      presets = await this.promptPresetService.getSelectedPresets();
     } catch (e) {
       // Repository 读取失败:阻止请求
       throw new Error('无法读取当前提示词预设，请重试');
@@ -3487,22 +3487,10 @@ export class ChatService {
 
     // Phase 4D-9: 预设加载诊断日志
     // 用于验证用户在设置 tab 选择的预设是否真正被加载到请求中
-    if (preset === null) {
-      Logger.info(LOG_TAG, 'createPresetRequestSnapshot: no current preset (user cleared or never set)');
-    } else {
-      const promptPreview: string = preset.systemPrompt.length > 60
-        ? preset.systemPrompt.substring(0, 60) + '...(truncated)'
-        : preset.systemPrompt;
-      Logger.info(LOG_TAG, `createPresetRequestSnapshot: preset loaded id=${preset.id}` +
-        ` name=${preset.name}` +
-        ` systemPromptLen=${preset.systemPrompt.length}` +
-        ` promptPreview=${promptPreview}` +
-        ` temp=${preset.temperature !== undefined ? preset.temperature.toString() : 'undefined'}` +
-        ` topP=${preset.topP !== undefined ? preset.topP.toString() : 'undefined'}` +
-        ` maxTokens=${preset.maxOutputTokens !== undefined ? preset.maxOutputTokens.toString() : 'undefined'}`);
-    }
+    Logger.info(LOG_TAG, 'createPresetRequestSnapshot: selected preset count='
+      + presets.length.toString());
 
-    if (preset === null) {
+    if (presets.length === 0) {
       return createSnapshotWithoutPreset(
         resolveEffectiveGenerationSettings(base)
       );
@@ -3511,13 +3499,13 @@ export class ChatService {
     // 3. 合并参数
     let settings: EffectiveGenerationSettings;
     try {
-      settings = resolveEffectiveGenerationSettings(base, preset);
+      settings = resolveEffectiveGenerationSettings(base, presets);
     } catch (e) {
       // 数据损坏:阻止请求
       throw new Error('无法读取当前提示词预设，请重试');
     }
 
-    return createSnapshotWithPreset(preset, settings);
+    return createSnapshotWithPresets(presets, settings);
   }
 
   /**

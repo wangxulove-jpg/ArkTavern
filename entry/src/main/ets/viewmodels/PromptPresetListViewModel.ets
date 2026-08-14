@@ -14,7 +14,7 @@ const LOG_TAG: string = 'PromptPresetListViewModel';
 @Observed
 export class PromptPresetListViewModel {
   presets: PromptPreset[] = [];
-  currentPresetId: string = '';
+  selectedPresetIds: string[] = [];
   isLoading: boolean = false;
   isOperating: boolean = false;
   errorMessage: string = '';
@@ -45,8 +45,7 @@ export class PromptPresetListViewModel {
     this.errorMessage = '';
     try {
       this.presets = await this.presetService.list();
-      const currentId: string | null = await this.presetService.getCurrentPresetId();
-      this.currentPresetId = currentId !== null ? currentId : '';
+      this.selectedPresetIds = await this.presetService.getSelectedPresetIds();
     } catch (e) {
       this.errorMessage = '加载预设列表失败';
       Logger.error(LOG_TAG, 'refresh failed: ' + String(e));
@@ -55,35 +54,39 @@ export class PromptPresetListViewModel {
     }
   }
 
-  async setCurrent(id: string): Promise<void> {
+  async toggle(id: string): Promise<void> {
     if (this.disposed || this.isOperating) {
       return;
     }
     this.isOperating = true;
     this.errorMessage = '';
     try {
-      await this.presetService.setCurrentPresetId(id);
-      this.currentPresetId = id;
+      if (this.isSelected(id)) {
+        await this.presetService.removeSelectedPresetId(id);
+      } else {
+        await this.presetService.addSelectedPresetId(id);
+      }
+      this.selectedPresetIds = await this.presetService.getSelectedPresetIds();
     } catch (e) {
-      this.errorMessage = '设置预设失败';
-      Logger.error(LOG_TAG, 'setCurrent failed: ' + String(e));
+      this.errorMessage = '切换预设失败';
+      Logger.error(LOG_TAG, 'toggle failed: ' + String(e));
     } finally {
       this.isOperating = false;
     }
   }
 
-  async clearCurrent(): Promise<void> {
+  async clearAll(): Promise<void> {
     if (this.disposed || this.isOperating) {
       return;
     }
     this.isOperating = true;
     this.errorMessage = '';
     try {
-      await this.presetService.setCurrentPresetId(null);
-      this.currentPresetId = '';
+      await this.presetService.setSelectedPresetIds([]);
+      this.selectedPresetIds = [];
     } catch (e) {
       this.errorMessage = '清除预设失败';
-      Logger.error(LOG_TAG, 'clearCurrent failed: ' + String(e));
+      Logger.error(LOG_TAG, 'clearAll failed: ' + String(e));
     } finally {
       this.isOperating = false;
     }
@@ -141,8 +144,12 @@ export class PromptPresetListViewModel {
     return parts.join(' · ');
   }
 
-  isCurrentPreset(id: string): boolean {
-    return this.currentPresetId === id;
+  isSelected(id: string): boolean {
+    return this.selectedPresetIds.indexOf(id) >= 0;
+  }
+
+  getSelectedCount(): number {
+    return this.selectedPresetIds.length;
   }
 
   dispose(): void {

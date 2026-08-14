@@ -181,6 +181,14 @@
       "value": "Top P"
     },
     {
+      "name": "model_settings_temperature_desc",
+      "value": "采样随机性:越高回复越多样、越有创意,越低越稳定、越确定。"
+    },
+    {
+      "name": "model_settings_top_p_desc",
+      "value": "核采样:只从概率累计到该值的候选词中采样,越低越保守集中,越高越多样。"
+    },
+    {
       "name": "model_settings_max_tokens",
       "value": "Max Tokens"
     },
