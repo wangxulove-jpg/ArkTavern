@@ -33,10 +33,12 @@ export interface MarketQuery {
   readonly hideNsfw: boolean;
   /** 是否隐藏已导入角色(默认 false) */
   readonly hideImported: boolean;
-  /** 分页起始偏移(0-based) */
+  /** 分页起始偏移(0-based,兼容保留;Chub 实际用 cursor 分页) */
   readonly page: number;
   /** 每页条数 */
   readonly pageSize: number;
+  /** 分页游标(空字符串表示第一页,由上次响应返回) */
+  readonly cursor: string;
 }
 
 /**
@@ -56,7 +58,8 @@ export function createDefaultMarketQuery(): MarketQuery {
     hideNsfw: true,
     hideImported: false,
     page: 0,
-    pageSize: DEFAULT_MARKET_PAGE_SIZE
+    pageSize: DEFAULT_MARKET_PAGE_SIZE,
+    cursor: ''
   };
 }
 
@@ -66,8 +69,8 @@ export function createDefaultMarketQuery(): MarketQuery {
 export interface MarketPageResult {
   /** 当前页角色列表 */
   readonly items: import('../models/MarketCharacter').MarketCharacter[];
-  /** 下一页页码(-1 表示无更多数据) */
-  readonly nextPage: number;
+  /** 下一页游标(空字符串表示无更多数据) */
+  readonly nextCursor: string;
   /** 当前页码 */
   readonly page: number;
 }
@@ -78,11 +81,11 @@ export interface MarketPageResult {
 export function createMarketPageResult(
   items: import('../models/MarketCharacter').MarketCharacter[],
   page: number,
-  nextPage: number
+  nextCursor: string
 ): MarketPageResult {
   return {
     items: items,
     page: page,
-    nextPage: nextPage
+    nextCursor: nextCursor
   };
 }

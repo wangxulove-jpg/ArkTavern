@@ -77,6 +77,9 @@ export class MarketViewModel {
   /** 搜索历史(用于搜索框下拉提示) */
   searchHistory: string[] = [];
 
+  /** UI 状态变化回调(由页面绑定,绕开 @Observed 联合类型观察不可靠的问题) */
+  onStateChanged: (() => void) | null = null;
+
   // ===== 内部状态 =====
   private marketService: MarketService;
   /** 翻译服务(可选,未注入时翻译功能不可用) */
@@ -85,8 +88,8 @@ export class MarketViewModel {
   private operationId: number = 0;
   /** 防抖定时器 ID,-1 表示无定时器 */
   private debounceTimerId: number = -1;
-  /** 当前已加载的页码 */
-  private currentPage: number = 0;
+  /** 下一页游标(空字符串表示无更多数据,由 Chub 响应返回) */
+  private nextCursor: string = '';
   /** 翻译任务 generationId,在 refresh/loadMore/筛选切换时递增,
    *  旧翻译回调到达时若 genId 不匹配则丢弃,避免写入陈旧结果 */
   private translationGenerationId: number = 0;
@@ -136,13 +139,13 @@ export class MarketViewModel {
     }
     this.refreshing = true;
     this.errorMessage = '';
-    this.currentPage = 0;
+    this.nextCursor = '';
     this.hasMore = true;
     this.cancelDebounce();
     // 清空内存翻译(避免显示陈旧翻译)
     this.translations = new Map<string, MarketTranslationResult>();
     try {
-      const query: MarketQuery = this.buildQuery(0);
+      const query: MarketQuery = this.buildQuery('');
       const result: MarketPageResult = await this.marketService.searchCharacters(query);
       if (opId !== this.operationId) {
         return;
@@ -156,8 +159,8 @@ export class MarketViewModel {
       let finalItems: MarketCharacter[] = this.applyLocalFilters(result.items, newMap);
       this.importedMap = newMap;
       this.items = finalItems;
-      this.currentPage = result.page;
-      this.hasMore = result.nextPage >= 0;
+      this.nextCursor = result.nextCursor;
+      this.hasMore = result.nextCursor.length > 0;
       // 仅中文筛选开启时,可能本地过滤后不足一页,需要补足
       if (this.chineseOnly && this.hasMore && finalItems.length < DEFAULT_MARKET_PAGE_SIZE) {
         await this.fillMoreToReach(opId, DEFAULT_MARKET_PAGE_SIZE);
@@ -176,6 +179,7 @@ export class MarketViewModel {
     } finally {
       if (opId === this.operationId) {
         this.refreshing = false;
+        this.notifyStateChanged();
       }
     }
   }
@@ -197,7 +201,7 @@ export class MarketViewModel {
       const targetBatchSize: number = DEFAULT_MARKET_PAGE_SIZE;
       const accumulated: MarketCharacter[] = [];
       const accumulatedImportedMap: Map<string, string> = new Map<string, string>();
-      let lastPage: number = this.currentPage;
+      let cursor: string = this.nextCursor;
       let stillHasMore: boolean = true;
 
       // 循环拉取直到满足目标数量或远程无更多数据
@@ -205,8 +209,7 @@ export class MarketViewModel {
         if (opId !== this.operationId) {
           return;
         }
-        const nextPage: number = lastPage + 1;
-        const query: MarketQuery = this.buildQuery(nextPage);
+        const query: MarketQuery = this.buildQuery(cursor);
         const result: MarketPageResult = await this.marketService.searchCharacters(query);
         if (opId !== this.operationId) {
           return;
@@ -245,8 +248,8 @@ export class MarketViewModel {
           accumulated.push(filtered[i]);
         }
 
-        lastPage = result.page;
-        stillHasMore = result.nextPage >= 0;
+        cursor = result.nextCursor;
+        stillHasMore = result.nextCursor.length > 0;
 
         // 防止死循环:本次远程返回空数据时停止
         if (result.items.length === 0) {
@@ -292,7 +295,7 @@ export class MarketViewModel {
         this.items = mergedItems;
       }
       this.importedMap = mergedMap;
-      this.currentPage = lastPage;
+      this.nextCursor = cursor;
       this.hasMore = stillHasMore;
       // 翻译触发(新加载的条目)
       if (genId === this.translationGenerationId) {
@@ -307,6 +310,7 @@ export class MarketViewModel {
     } finally {
       if (opId === this.operationId) {
         this.loadingMore = false;
+        this.notifyStateChanged();
       }
     }
   }
@@ -317,14 +321,13 @@ export class MarketViewModel {
    * 仅用于 chineseOnly 模式下本地过滤后不足一页的情况。
    */
   private async fillMoreToReach(opId: number, targetCount: number): Promise<void> {
-    let lastPage: number = this.currentPage;
+    let cursor: string = this.nextCursor;
     let stillHasMore: boolean = this.hasMore;
     while (this.items.length < targetCount && stillHasMore) {
       if (opId !== this.operationId) {
         return;
       }
-      const nextPage: number = lastPage + 1;
-      const query: MarketQuery = this.buildQuery(nextPage);
+      const query: MarketQuery = this.buildQuery(cursor);
       const result: MarketPageResult = await this.marketService.searchCharacters(query);
       if (opId !== this.operationId) {
         return;
@@ -368,14 +371,14 @@ export class MarketViewModel {
         }
         this.items = mergedItems;
       }
-      lastPage = result.page;
-      stillHasMore = result.nextPage >= 0;
+      cursor = result.nextCursor;
+      stillHasMore = result.nextCursor.length > 0;
       if (result.items.length === 0) {
         stillHasMore = false;
         break;
       }
     }
-    this.currentPage = lastPage;
+    this.nextCursor = cursor;
     this.hasMore = stillHasMore;
   }
 
@@ -387,6 +390,7 @@ export class MarketViewModel {
    */
   onSearchInput(value: string): void {
     this.searchInput = value;
+    this.notifyStateChanged();
     this.cancelDebounce();
     this.debounceTimerId = setTimeout((): void => {
       void this.applySearch();
@@ -429,6 +433,7 @@ export class MarketViewModel {
   async clearSearch(): Promise<void> {
     this.searchInput = '';
     this.appliedSearch = '';
+    this.notifyStateChanged();
     this.cancelDebounce();
     await this.refresh();
   }
@@ -443,6 +448,7 @@ export class MarketViewModel {
       return;
     }
     this.sort = value;
+    this.notifyStateChanged();
     try {
       await this.marketService.setSort(value);
     } catch (e) {
@@ -463,6 +469,7 @@ export class MarketViewModel {
       // 用户尝试显示 NSFW,需要二次确认
       this.pendingNsfwValue = value;
       this.showNsfwConfirm = true;
+      this.notifyStateChanged();
       return;
     }
     // 隐藏 NSFW 不需要确认
@@ -474,6 +481,7 @@ export class MarketViewModel {
    */
   async confirmShowNsfw(): Promise<void> {
     this.showNsfwConfirm = false;
+    this.notifyStateChanged();
     await this.applyHideNsfw(this.pendingNsfwValue);
   }
 
@@ -483,6 +491,7 @@ export class MarketViewModel {
   cancelShowNsfw(): void {
     this.showNsfwConfirm = false;
     this.pendingNsfwValue = true;
+    this.notifyStateChanged();
   }
 
   /**
@@ -493,6 +502,7 @@ export class MarketViewModel {
       return;
     }
     this.hideImported = value;
+    this.notifyStateChanged();
     try {
       await this.marketService.setHideImported(value);
     } catch (e) {
@@ -511,6 +521,7 @@ export class MarketViewModel {
       return;
     }
     this.chineseOnly = value;
+    this.notifyStateChanged();
     try {
       await this.marketService.setChineseOnly(value);
     } catch (e) {
@@ -527,6 +538,7 @@ export class MarketViewModel {
       return;
     }
     this.tag = value;
+    this.notifyStateChanged();
     await this.refresh();
   }
 
@@ -538,6 +550,7 @@ export class MarketViewModel {
       return;
     }
     this.creator = value;
+    this.notifyStateChanged();
     await this.refresh();
   }
 
@@ -554,6 +567,7 @@ export class MarketViewModel {
       Logger.warn(LOG_TAG, 'setProvider failed: ' + String(e));
     }
     this.providerId = id;
+    this.notifyStateChanged();
     await this.refresh();
   }
 
@@ -571,6 +585,7 @@ export class MarketViewModel {
     if (value) {
       // 开启前弹出隐私提示
       this.showTranslatePrivacy = true;
+      this.notifyStateChanged();
       return;
     }
     // 关闭不需要确认
@@ -582,6 +597,7 @@ export class MarketViewModel {
    */
   async confirmEnableTranslate(): Promise<void> {
     this.showTranslatePrivacy = false;
+    this.notifyStateChanged();
     await this.applyTranslateEnabled(true);
   }
 
@@ -590,6 +606,7 @@ export class MarketViewModel {
    */
   cancelEnableTranslate(): void {
     this.showTranslatePrivacy = false;
+    this.notifyStateChanged();
   }
 
   /**
@@ -597,6 +614,7 @@ export class MarketViewModel {
    */
   private async applyTranslateEnabled(value: boolean): Promise<void> {
     this.translateEnabled = value;
+    this.notifyStateChanged();
     if (this.translationService !== null) {
       try {
         await this.translationService.setTranslateEnabled(value);
@@ -694,6 +712,7 @@ export class MarketViewModel {
     });
     newMap.set(remoteId, translation);
     this.translations = newMap;
+    this.notifyStateChanged();
   }
 
   // ===== 已导入状态 =====
@@ -731,6 +750,7 @@ export class MarketViewModel {
     });
     newMap.set(key, localId);
     this.importedMap = newMap;
+    this.notifyStateChanged();
   }
 
   // ===== 搜索历史 =====
@@ -791,6 +811,7 @@ export class MarketViewModel {
    */
   private async applyHideNsfw(value: boolean): Promise<void> {
     this.hideNsfw = value;
+    this.notifyStateChanged();
     try {
       await this.marketService.setHideNsfw(value);
     } catch (e) {
@@ -810,9 +831,20 @@ export class MarketViewModel {
   }
 
   /**
-   * 构造查询参数。
+   * 通知页面 UI 状态已变化(由页面通过 onStateChanged 回调同步本地 @State)。
+   * 绕开 @Observed 类在 `@State XxxViewModel | null` 联合类型下属性观察不可靠的问题。
    */
-  private buildQuery(page: number): MarketQuery {
+  private notifyStateChanged(): void {
+    if (this.onStateChanged !== null) {
+      this.onStateChanged();
+    }
+  }
+
+  /**
+   * 构造查询参数。
+   * @param cursor 下一页游标(空字符串表示第一页)
+   */
+  private buildQuery(cursor: string): MarketQuery {
     return {
       search: this.appliedSearch,
       sort: this.sort,
@@ -820,8 +852,9 @@ export class MarketViewModel {
       creator: this.creator,
       hideNsfw: this.hideNsfw,
       hideImported: this.hideImported,
-      page: page,
-      pageSize: DEFAULT_MARKET_PAGE_SIZE
+      page: 0,
+      pageSize: DEFAULT_MARKET_PAGE_SIZE,
+      cursor: cursor
     };
   }
 

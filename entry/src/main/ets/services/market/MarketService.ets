@@ -106,7 +106,8 @@ export class MarketService {
       hideNsfw: hideNsfw,
       hideImported: hideImported,
       page: base.page,
-      pageSize: base.pageSize
+      pageSize: base.pageSize,
+      cursor: base.cursor
     };
   }
 

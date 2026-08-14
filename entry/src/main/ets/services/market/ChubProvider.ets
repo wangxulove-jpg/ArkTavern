@@ -4,9 +4,14 @@
  * 基于 Chub 官方 Swagger(gateway.chub.ai/openapi.json)修正后的实现。
  *
  * 端点(均为 HTTPS,不需要 API Key):
- * - 列表/搜索:POST https://gateway.chub.ai/search
- *   body: { search, sort, first, last, searchtag, nsfw, nsfl, explore }
- *   返回: { data: { count, nodes: [...] } }(nodes 中每项含 fullPath/id/name/topics/
+ * - 列表/搜索:GET https://gateway.chub.ai/search
+ *   2026 变更:所有参数放入 query string(旧 POST body 格式已被服务端忽略)。
+ *   query: { search, sort, tags, nsfw, nsfl, explore, first, cursor }
+ *   sort 新枚举值:download_count / id / rating / rating_count / last_activity_at /
+ *     trending_downloads / n_favorites / created_at / star_count / name / timeline / random 等
+ *   tags 为标签名(替代旧 searchtag),first 为每页条数(GraphQL 风格,非偏移),
+ *   cursor 为分页游标(响应返回,空表示第一页)
+ *   返回: { data: { count, nodes: [...], page, cursor } }(nodes 中每项含 fullPath/id/name/topics/
  *          avatar_url/max_res_url/starCount/lastActivityAt/projectSpace 等字段)
  * - 详情:GET https://gateway.chub.ai/api/characters/{fullPath}?full=true
  *   其中 {fullPath} = "creator/project-slug"
@@ -21,9 +26,11 @@
  *
  * 重大修正(对比上一版):
  * - BASE_URL: api.chub.ai → gateway.chub.ai
- * - SEARCH_PATH: /search/characters → /search
+ * - 搜索改为 GET query string(2026 API 变更,旧 POST body 被忽略)
+ * - 排序枚举改为新值(旧 recommended/latest/top 被忽略)
+ * - searchtag → tags,分页 first/last 偏移 → first 页大小 + cursor 游标
  * - DETAIL_PATH: /api/characters/{remoteId} → /api/characters/{fullPath}?full=true
- * - 搜索响应: nodes → data.nodes,page.next → 通过 data.count 判断
+ * - 搜索响应: nodes → data.nodes,page.next → 通过 data.cursor 判断
  * - 列表字段: path → fullPath, tags → topics, download_count → starCount,
  *   updated_at → lastActivityAt(ISO 字符串), nsfw → nsfw_image, format → primaryFormat
  * - 详情字段: mes_example → example_dialogs, character_book → embedded_lorebook
@@ -97,28 +104,17 @@ export class ChubProvider implements MarketProvider {
   /**
    * 搜索角色卡。
    * 空搜索词时返回推荐列表(sort 字段决定排序)。
+   *
+   * 2026 API 变更:所有参数改为 URL query string,
+   * 排序用新枚举值,tag 用 tags,分页改用 cursor(不再用 first/last 偏移)。
    */
   async searchCharacters(query: MarketQuery): Promise<MarketPageResult> {
-    const first: number = query.page * query.pageSize;
-    const last: number = first + query.pageSize - 1;
-    const requestBody: ChubSearchRequest = {
-      search: query.search,
-      sort: mapSort(query.sort),
-      first: first,
-      last: last,
-      searchtag: query.tag,
-      nsfw: !query.hideNsfw,
-      nsfl: false,
-      explore: false
-    };
-    const body: string = JSON.stringify(requestBody);
-    const url: string = BASE_URL + SEARCH_PATH;
+    const url: string = buildSearchUrl(query);
     const headers: HttpHeaders = buildJsonHeaders();
     const options: HttpRequestOptions = {
-      method: HttpMethod.POST,
+      method: HttpMethod.GET,
       url: url,
       headers: headers,
-      body: body,
       connectTimeoutMs: CONNECT_TIMEOUT_MS,
       readTimeoutMs: READ_TIMEOUT_MS
     };
@@ -134,7 +130,7 @@ export class ChubProvider implements MarketProvider {
         { retryable: response.statusCode >= 500, statusCode: response.statusCode }
       );
     }
-    return parseSearchResponse(response.body, query.page, query.pageSize);
+    return parseSearchResponse(response.body);
   }
 
   /**
@@ -368,18 +364,48 @@ function destroyHttpQuietly(httpRequest: http.HttpRequest): void {
 }
 
 /**
- * 将 MarketSort 映射为 Chub sort 字符串。
+ * 将 MarketSort 映射为 Chub 2026 新 sort 枚举值。
+ * 旧值 recommended/latest/top 已被 API 废弃(服务端直接忽略),改为:
+ * - Recommended → n_favorites(最多收藏,数据池完整)
+ * - Latest → created_at(最新创建)
+ * - Top → download_count(下载最多)
  */
 function mapSort(sort: MarketSort): string {
   switch (sort) {
     case MarketSort.Latest:
-      return 'latest';
+      return 'created_at';
     case MarketSort.Top:
-      return 'top';
+      return 'download_count';
     case MarketSort.Recommended:
     default:
-      return 'recommended';
+      return 'n_favorites';
   }
+}
+
+/**
+ * 构建 Chub 搜索 URL(全部参数放入 query string)。
+ * 2026 API:GET /search?search=..&sort=..&tags=..&nsfw=..&nsfl=..&explore=..&first=..&cursor=..
+ * - first 为每页条数(GraphQL 风格,不是偏移)
+ * - cursor 为空字符串时表示第一页
+ * - 无 search/tag/cursor 时不携带对应参数
+ */
+function buildSearchUrl(query: MarketQuery): string {
+  const parts: string[] = [];
+  if (query.search.length > 0) {
+    parts.push('search=' + encodeURIComponent(query.search));
+  }
+  parts.push('sort=' + mapSort(query.sort));
+  if (query.tag.length > 0) {
+    parts.push('tags=' + encodeURIComponent(query.tag));
+  }
+  parts.push('nsfw=' + (query.hideNsfw ? 'false' : 'true'));
+  parts.push('nsfl=false');
+  parts.push('explore=false');
+  parts.push('first=' + query.pageSize.toString());
+  if (query.cursor.length > 0) {
+    parts.push('cursor=' + encodeURIComponent(query.cursor));
+  }
+  return BASE_URL + SEARCH_PATH + '?' + parts.join('&');
 }
 
 /**
@@ -419,11 +445,11 @@ function truncateForLog(body: string, maxLen: number): string {
 
 /**
  * 解析搜索响应 JSON,转换为 MarketPageResult。
- * 实际响应结构(2026 实测):
- *   { data: { count: number, nodes: [...] } }
- * 旧版假设 { nodes: [...], page: { next } } 已废弃。
+ * 2026 实际响应结构:
+ *   { data: { count: number, nodes: [...], page: number, previous_cursor, cursor } }
+ * cursor 为下一页游标(空字符串表示无更多数据)。
  */
-function parseSearchResponse(body: string, currentPage: number, pageSize: number): MarketPageResult {
+function parseSearchResponse(body: string): MarketPageResult {
   let parsed: Record<string, Object>;
   try {
     parsed = JSON.parse(body) as Record<string, Object>;
@@ -436,21 +462,28 @@ function parseSearchResponse(body: string, currentPage: number, pageSize: number
   // 提取 data 字段(2026 实际响应在 data.nodes 中)
   const dataRaw: Object | undefined = parsed['data'];
   let nodesArr: Object[];
-  let totalCount: number = -1;
+  let page: number = 0;
+  let nextCursor: string = '';
   if (dataRaw !== undefined && dataRaw !== null) {
     const dataObj: Record<string, Object> = dataRaw as Record<string, Object>;
-    const countRaw: Object | undefined = dataObj['count'];
-    if (typeof countRaw === 'number') {
-      totalCount = countRaw as number;
-    }
     const nodesRaw: Object | undefined = dataObj['nodes'];
     if (nodesRaw === undefined || nodesRaw === null) {
       nodesArr = [];
     } else {
       nodesArr = nodesRaw as Object[];
     }
+    // 当前页页码
+    const pageRaw: Object | undefined = dataObj['page'];
+    if (typeof pageRaw === 'number') {
+      page = pageRaw as number;
+    }
+    // 下一页游标(响应中为 null 或无字段时表示无更多数据)
+    const cursorRaw: Object | undefined = dataObj['cursor'];
+    if (cursorRaw !== undefined && cursorRaw !== null && typeof cursorRaw === 'string') {
+      nextCursor = cursorRaw as string;
+    }
   } else {
-    // 兜底:旧版结构直接取顶层 nodes
+    // 兜底:旧版结构直接取顶层 nodes(无游标,不触发加载更多)
     const nodesRaw: Object | undefined = parsed['nodes'];
     nodesArr = (nodesRaw === undefined || nodesRaw === null) ? [] : nodesRaw as Object[];
   }
@@ -464,18 +497,7 @@ function parseSearchResponse(body: string, currentPage: number, pageSize: number
     }
   }
 
-  // 判断是否有更多页
-  let nextPage: number = -1;
-  if (totalCount >= 0) {
-    const fetchedSoFar: number = (currentPage + 1) * pageSize;
-    if (fetchedSoFar < totalCount) {
-      nextPage = currentPage + 1;
-    }
-  } else if (items.length >= pageSize) {
-    // 无 count 时,如果返回的条数等于一页大小,可能有更多
-    nextPage = currentPage + 1;
-  }
-  return createMarketPageResult(items, currentPage, nextPage);
+  return createMarketPageResult(items, page, nextCursor);
 }
 
 /**
@@ -762,17 +784,6 @@ function buildFallbackV2Json(detail: MarketCharacterDetail): string {
 }
 
 // ===== 类型定义 =====
-
-interface ChubSearchRequest {
-  search: string;
-  sort: string;
-  first: number;
-  last: number;
-  searchtag: string;
-  nsfw: boolean;
-  nsfl: boolean;
-  explore: boolean;
-}
 
 interface TavernCardV2Wrapper {
   spec: string;
