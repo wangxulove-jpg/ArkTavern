@@ -46,9 +46,13 @@ import {
 import { ChatMemory } from '../models/ChatMemory';
 import { LorebookService } from './LorebookService';
 import { MacroReplacer } from './MacroReplacer';
+import { Logger } from '../utils/Logger';
 
 /** mes_example 分隔符,与 SillyTavern 规范一致 */
 const EXAMPLE_SEPARATOR: string = '<START>';
+
+/** 日志标签 */
+const LOG_TAG: string = 'PromptBuilder';
 
 /**
  * v12 多层记忆注入参数。
@@ -256,13 +260,30 @@ export class PromptBuilder {
     const sorted: PromptSegment[] = sortSegments(segments);
 
     // 转换为 ChatMessage[](如提供 macroContext,对每条消息内容执行宏替换)
+    // 缓存友好性(T-7.x):头部段(预设/世界书/角色/示例)与 Conversation/记忆段
+    // 使用不含 lastMessage 的稳定宏上下文,保证这些段的替换结果逐轮字节稳定
+    // ({{char}}/{{user}} 等稳定宏仍生效,{{lastMessage}} 保持字面量);
+    // 仅 PostHistory 段使用完整上下文,{{lastMessage}} 在请求尾部展开。
     const macroCtx: MacroContext | undefined = context.macroContext;
+    const stableMacroCtx: MacroContext | undefined = macroCtx !== undefined
+      ? this.buildStableMacroContext(macroCtx)
+      : undefined;
     const resultMessages: ChatMessage[] = [];
     for (let i = 0; i < sorted.length; i++) {
       const seg: PromptSegment = sorted[i];
       let content: string = seg.content;
-      if (macroCtx !== undefined) {
-        content = this.macroReplacer.replace(content, macroCtx);
+      const useFullContext: boolean = seg.position === PromptSegmentPosition.PostHistory;
+      const effectiveCtx: MacroContext | undefined = useFullContext ? macroCtx : stableMacroCtx;
+      if (effectiveCtx !== undefined) {
+        content = this.macroReplacer.replace(content, effectiveCtx);
+      }
+      // 头部段若仍残留 {{lastMessage}} 字面量,提示用户移入 Post-History 指令(缓存稳定性)
+      if (!useFullContext && this.isHeadSegment(seg.position)) {
+        const lowerContent: string = content.toLowerCase();
+        if (lowerContent.includes('{{last_message}}') || lowerContent.includes('{{lastmessage}}')) {
+          Logger.warn(LOG_TAG, 'head segment contains {{lastMessage}} kept literal for cache stability; '
+            + 'move it to Post-History instructions to make it expand');
+        }
       }
       const msg: ChatMessage = createChatMessage(
         seg.id,
@@ -533,5 +554,35 @@ export class PromptBuilder {
       }
     }
     return builder.build();
+  }
+
+  /**
+   * 缓存友好性(T-7.x):构建不含 lastMessage 的稳定宏上下文。
+   * 用于头部段(预设/世界书/角色/示例)与 Conversation/记忆段,
+   * 使这些段逐轮字节稳定;{{lastMessage}} 仅在 PostHistory 段用完整上下文展开。
+   */
+  private buildStableMacroContext(context: MacroContext): MacroContext {
+    const stable: MacroContext = {
+      characterName: context.characterName,
+      userName: context.userName,
+      description: context.description,
+      personality: context.personality,
+      scenario: context.scenario,
+      mesExample: context.mesExample,
+      originalContent: context.originalContent
+    };
+    return stable;
+  }
+
+  /**
+   * 是否为头部稳定段(预设/世界书/角色/对话示例)。
+   * 这些段若残留未展开的 {{lastMessage}} 会提示用户调整。
+   */
+  private isHeadSegment(position: PromptSegmentPosition): boolean {
+    return position === PromptSegmentPosition.PromptPreset
+      || position === PromptSegmentPosition.BeforeCharacter
+      || position === PromptSegmentPosition.Character
+      || position === PromptSegmentPosition.AfterCharacter
+      || position === PromptSegmentPosition.DialogueExamples;
   }
 }

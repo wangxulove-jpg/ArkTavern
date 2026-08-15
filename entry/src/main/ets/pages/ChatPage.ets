@@ -5612,7 +5612,8 @@ struct ChatPage {
     store.setSnapshot({
       chatId: chatId,
       budget: budget,
-      requestMessages: requestMessages
+      requestMessages: requestMessages,
+      cacheUsage: this.viewModel!.getLastCacheStats()
     });
     // 异步刷新 VM 统计(避免阻塞 UI)
     this.budgetViewModel!.refreshFromSnapshot(budget, requestMessages).then((): void => {

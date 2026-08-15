@@ -756,8 +756,8 @@ export class AppServices {
       this.worldSceneRepository,
       this.worldCharacterInstanceRepository
     );
-    // v8.3 Phase 2: 最近原始消息窗口选择器(去重 + 窗口 + 完整轮次)
-    this.recentMessageSelector = new RecentMessageSelector(this.tokenCounter);
+    // v8.3 Phase 2: 对话历史选择器(缓存友好版:记忆边界 + 从头追加,不再限制最近 N 条)
+    this.recentMessageSelector = new RecentMessageSelector();
     // 持久化层组合:全部 Repository 共享同一 DbHelper 实例
     this.chatRepository = new ChatRepository(this.dbHelper);
     this.messageRepository = new MessageRepository(this.dbHelper);

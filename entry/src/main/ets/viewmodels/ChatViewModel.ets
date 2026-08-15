@@ -36,6 +36,7 @@ import { PromptPreset } from '../models/PromptPreset';
 import { Logger } from '../utils/Logger';
 import { MessageSwipeSummary } from '../models/MessageSwipe';
 import { TokenBudget } from '../models/TokenBudget';
+import { CacheUsageStats } from '../models/ChatStreamTypes';
 import {
   ConversationBranchSummary,
   ConversationRecordCounts
@@ -1199,6 +1200,13 @@ export class ChatViewModel {
    */
   getLastTokenBudget(): TokenBudget | undefined {
     return this.chatService.getLastTokenBudget();
+  }
+
+  /**
+   * T-7.x: 获取最近一次请求的缓存命中统计(DeepSeek 前缀缓存,供 UI 展示)。
+   */
+  getLastCacheStats(): CacheUsageStats | undefined {
+    return this.chatService.getLastCacheStats();
   }
 
   /** T-6.4B-1.1: 是否已 dispose(供 onPop 回调安全检查) */

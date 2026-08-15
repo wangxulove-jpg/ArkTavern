@@ -124,11 +124,14 @@ export interface OpenAIChoice {
 
 /**
  * OpenAI Chat Completions 响应中的 usage 对象。
+ * prompt_cache_hit_tokens / prompt_cache_miss_tokens 为 DeepSeek 前缀缓存字段(可选)。
  */
 export interface OpenAIUsage {
   readonly prompt_tokens: number;
   readonly completion_tokens: number;
   readonly total_tokens: number;
+  readonly prompt_cache_hit_tokens?: number;
+  readonly prompt_cache_miss_tokens?: number;
 }
 
 /**
@@ -379,10 +382,15 @@ export function extractResponseBody(obj: Object): ResponseExtractResult {
     const completionTokens: number | undefined = getNumberField(usageObj, 'completion_tokens');
     const totalTokens: number | undefined = getNumberField(usageObj, 'total_tokens');
     if (promptTokens !== undefined && completionTokens !== undefined && totalTokens !== undefined) {
+      // DeepSeek 前缀缓存字段(可选,缺失不报错)
+      const cacheHitTokens: number | undefined = getNumberField(usageObj, 'prompt_cache_hit_tokens');
+      const cacheMissTokens: number | undefined = getNumberField(usageObj, 'prompt_cache_miss_tokens');
       usage = {
         prompt_tokens: promptTokens,
         completion_tokens: completionTokens,
-        total_tokens: totalTokens
+        total_tokens: totalTokens,
+        prompt_cache_hit_tokens: cacheHitTokens,
+        prompt_cache_miss_tokens: cacheMissTokens
       };
     }
   }

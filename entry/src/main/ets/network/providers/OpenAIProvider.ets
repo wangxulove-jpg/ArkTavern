@@ -727,10 +727,14 @@ function parseSuccessResponse(responseBody: string, providerId: string): ChatRes
   let promptTokens: number | undefined = undefined;
   let completionTokens: number | undefined = undefined;
   let totalTokens: number | undefined = undefined;
+  let promptCacheHitTokens: number | undefined = undefined;
+  let promptCacheMissTokens: number | undefined = undefined;
   if (body.usage !== undefined) {
     promptTokens = body.usage.prompt_tokens;
     completionTokens = body.usage.completion_tokens;
     totalTokens = body.usage.total_tokens;
+    promptCacheHitTokens = body.usage.prompt_cache_hit_tokens;
+    promptCacheMissTokens = body.usage.prompt_cache_miss_tokens;
   }
 
   const options: ChatResponseOptions = {
@@ -739,7 +743,9 @@ function parseSuccessResponse(responseBody: string, providerId: string): ChatRes
     providerRequestId: requestId,
     promptTokens: promptTokens,
     completionTokens: completionTokens,
-    totalTokens: totalTokens
+    totalTokens: totalTokens,
+    promptCacheHitTokens: promptCacheHitTokens,
+    promptCacheMissTokens: promptCacheMissTokens
   };
 
   return createChatResponse(firstChoice.message.content, options);

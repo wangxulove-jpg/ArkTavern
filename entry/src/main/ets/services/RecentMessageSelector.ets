@@ -1,22 +1,22 @@
 /**
- * RecentMessageSelector 最近原始消息窗口选择服务
+ * RecentMessageSelector 对话历史选择服务(缓存友好版)
  *
  * 职责:
- * - 从最新向前选择最近原始消息,作为 PromptBuilder 的 Conversation 段
- * - 与长期记忆范围去重:已被记忆覆盖且不在最近窗口的消息不注入原文
+ * - 从头(记忆覆盖边界之后)选择原始消息,作为 PromptBuilder 的 Conversation 段
+ * - 与长期记忆去重:已被记忆覆盖(position <= memoryEndPosition)的旧消息不注入原文
+ * - 不再使用"最近 N 条滑动窗口"(每轮窗口左移会破坏 DeepSeek 前缀缓存命中)
  * - 保留完整 User+Assistant 轮次,不拆开
- * - 根据 Token 预算动态调整保留条数
+ * - 仅在超出 Token 预算时从前往后按完整轮次裁剪(裁剪是低频事件,命中率可快速恢复)
  *
- * 选择规则(优先级从高到低):
- * 1. 必须保留最后一条消息(当前用户输入或待生成目标)
- * 2. 必须保留最近若干完整 User+Assistant 轮次(MIN_COMPLETE_TURNS)
- * 3. 默认目标保留 DEFAULT_RECENT_WINDOW_TARGET 条
- * 4. Token 充足时可多于目标条数(最多全部未覆盖消息)
- * 5. Token 不足时可少于目标条数(但不低于最少完整轮次)
+ * 缓存友好性说明(T-7.x):
+ * - 每轮请求的对话段 = [记忆覆盖边界+1 .. 当前末尾],只随新消息向后追加
+ * - 结合「记忆摘要等动态内容移到对话之后」的重排,对话段构成稳定前缀,
+ *   符合 DeepSeek 自动前缀缓存(prefix cache)的完整匹配命中规则
  *
- * 去重规则:
- * - 若消息 position <= memoryEndPosition 且不在最近窗口内 → 不注入原文
- * - 最近窗口内的消息即使被记忆覆盖也保留原文(保证最近上下文连贯)
+ * 选择规则:
+ * 1. 起始索引 = memoryEndPosition + 1(无记忆则 0),回退到 User 边界保证完整轮次
+ * 2. 保留最后一条消息与最近若干完整 User+Assistant 轮次(MIN_COMPLETE_TURNS)
+ * 3. 超过 Token 预算时从前往后按完整轮次丢弃(每次丢弃会引发一次缓存重置,低频可接受)
  *
  * 设计约束:
  * - 无状态、纯函数式
@@ -27,13 +27,12 @@
 
 import { ChatMessage } from '../models/ChatMessage';
 import { ChatRole } from '../models/ChatRole';
-import { TokenCounter, estimateMessagesTokens } from './TokenCounter';
+import { estimateMessagesTokens } from './TokenCounter';
 import {
   ContextHistorySelection,
   createEmptySelection
 } from '../models/ContextHistorySelection';
 import {
-  DEFAULT_RECENT_WINDOW_TARGET,
   MIN_COMPLETE_TURNS
 } from '../models/ContextBudgetConfig';
 
@@ -43,7 +42,7 @@ const LOG_TAG: string = 'RecentMsgSelector';
  * 最近消息选择选项。
  */
 export interface RecentMessageSelectionOptions {
-  /** 目标保留条数(默认 30) */
+  /** 目标保留条数(诊断用,新实现不再限制条数) */
   readonly targetCount?: number;
   /** 最少完整轮次(默认 2) */
   readonly minCompleteTurns?: number;
@@ -54,17 +53,12 @@ export interface RecentMessageSelectionOptions {
 }
 
 /**
- * 最近原始消息选择器。
+ * 对话历史选择器(缓存友好版)。
+ * 无状态,不依赖外部实例。
  */
 export class RecentMessageSelector {
-  private readonly tokenCounter: TokenCounter;
-
-  constructor(tokenCounter: TokenCounter) {
-    this.tokenCounter = tokenCounter;
-  }
-
   /**
-   * 从最新向前选择最近原始消息。
+   * 从头选择原始消息(缓存友好版)。
    *
    * @param messages 当前 Branch 的全部消息(按 position ASC)
    * @param options 选择选项
@@ -78,115 +72,122 @@ export class RecentMessageSelector {
       return createEmptySelection();
     }
 
-    const targetCount: number = options.targetCount !== undefined
-      ? options.targetCount : DEFAULT_RECENT_WINDOW_TARGET;
     const minTurns: number = options.minCompleteTurns !== undefined
       ? options.minCompleteTurns : MIN_COMPLETE_TURNS;
     const availableTokens: number = options.availableTokens > 0
       ? options.availableTokens : 0;
     const memoryEndPos: number = options.memoryEndPosition;
 
-    // Step 1: 从后向前确定"最近窗口"的边界索引
-    // 最近窗口 = 最后 targetCount 条消息(或全部,如果不足 targetCount)
     const lastIndex: number = messages.length - 1;
-    const windowStartIndex: number = Math.max(0, lastIndex - targetCount + 1);
 
-    // Step 2: 标记每条消息是否应保留(去重 + 窗口)
-    // v8.3 Phase 2 调整:
-    // - 窗口内的消息一律保留(即使被记忆覆盖,保证最近上下文连贯)
-    // - 窗口外的消息一律不保留(无论是否被记忆覆盖,去重自动实现)
-    // - 这样默认只注入最近 targetCount 条原文,早期原文由记忆摘要替代
-    // - "Token 充足时扩展窗口"的能力由 availableTokens 在 Step 4 控制
-    //   (当前实现:availableTokens 仅用于窗口内预算不足时丢弃,不扩展窗口)
-    const shouldKeep: boolean[] = new Array(messages.length).fill(false);
-    let dedupedCount: number = 0;
-    for (let i = 0; i < messages.length; i++) {
-      const inRecentWindow: boolean = i >= windowStartIndex;
-      const coveredByMemory: boolean = memoryEndPos >= 0 && i <= memoryEndPos;
-      if (inRecentWindow) {
-        // 最近窗口内的消息一律保留(即使被记忆覆盖,保证连贯)
-        shouldKeep[i] = true;
-      } else {
-        // 窗口外一律不保留(去重自动实现,早期原文由记忆摘要替代)
-        shouldKeep[i] = false;
-        if (coveredByMemory) {
-          dedupedCount++;
-        }
+    // Step 1: 起始索引 = 记忆覆盖边界 + 1(无记忆则 0)
+    // 已覆盖的前段由尾部记忆摘要替代,不再注入原文
+    let startIndex: number = memoryEndPos >= 0 ? memoryEndPos + 1 : 0;
+    if (startIndex > lastIndex) {
+      startIndex = 0;
+    }
+    // 回退到 User 边界,保证完整轮次(记忆覆盖完整轮次时天然是 User,此为兜底)
+    while (startIndex > 0 && messages[startIndex].role !== ChatRole.User) {
+      startIndex--;
+    }
+
+    // Step 2: 最少保留范围(最近 minTurns 完整轮次 + 最后一条消息)
+    const minKeepIndex: number = this.findMinKeepIndexFromEnd(messages, minTurns);
+
+    // Step 3: 预算裁剪 —— 仅当真实预算提供且超出时,从前往后按完整轮次丢弃
+    // (当前 ChatService 传 MAX_SAFE_INTEGER,实际预算裁剪由 HistoryTrimmer 完成;
+    //  保留此逻辑用于未来传真实预算时对话段预先瘦身)
+    let effectiveStart: number = startIndex;
+    if (availableTokens > 0) {
+      const fullTokens: number = estimateMessagesTokens(messages.slice(startIndex));
+      if (fullTokens > availableTokens && startIndex < minKeepIndex) {
+        effectiveStart = this.dropFrontTurnsForBudget(
+          messages, startIndex, minKeepIndex, availableTokens, fullTokens
+        );
       }
     }
 
-    // Step 3: 从后向前选择,确保完整 User+Assistant 轮次
-    // 先确定最少必须保留的范围(最近 minTurns 完整轮次 + 最后一条)
-    const minKeepFromEnd: number = this.findMinKeepIndexFromEnd(
-      messages, shouldKeep, minTurns
-    );
-
-    // Step 4: 从后向前累加 Token,在预算内尽量多保留
-    const selectedIndices: number[] = [];
-    let accumulatedTokens: number = 0;
-    let budgetExhausted: boolean = false;
-
-    for (let i = lastIndex; i >= 0; i--) {
-      if (!shouldKeep[i]) {
-        continue;
-      }
-      const msg: ChatMessage = messages[i];
-      const msgTokens: number = this.tokenCounter.estimateMessage(msg);
-
-      // 检查是否超出预算(但必须保留 minKeepFromEnd..lastIndex 范围内的消息)
-      const isMustKeep: boolean = i >= minKeepFromEnd;
-      if (!isMustKeep && budgetExhausted) {
-        break;
-      }
-      if (!isMustKeep && accumulatedTokens + msgTokens > availableTokens) {
-        budgetExhausted = true;
-        break;
-      }
-      accumulatedTokens += msgTokens;
-      selectedIndices.push(i);
-    }
-
-    // Step 5: 按原顺序(ASC)输出
-    selectedIndices.reverse();
+    // Step 4: 输出选中消息(ASC)
     const recentMessages: ChatMessage[] = [];
-    for (let i = 0; i < selectedIndices.length; i++) {
-      recentMessages.push(messages[selectedIndices[i]]);
+    for (let i = effectiveStart; i <= lastIndex; i++) {
+      recentMessages.push(messages[i]);
     }
 
-    // 重新精确估算选中消息的 Token(含消息间结构开销)
     const estimatedTokens: number = estimateMessagesTokens(recentMessages);
-
-    // 省略数 = 全部应保留消息数 - 实际选中数(不含去重部分)
-    let totalEligibleCount: number = 0;
-    for (let i = 0; i < shouldKeep.length; i++) {
-      if (shouldKeep[i]) {
-        totalEligibleCount++;
-      }
-    }
-    const omittedCount: number = totalEligibleCount - recentMessages.length;
+    // 省略数 = 起始索引(记忆覆盖去重 + 预算裁剪)
+    const omittedCount: number = effectiveStart;
 
     return {
       recentMessages: recentMessages,
       summarizedRangeEndPosition: memoryEndPos,
       omittedMessageCount: omittedCount,
       estimatedTokens: estimatedTokens,
-      targetCount: targetCount,
+      targetCount: messages.length,
       selectedCount: recentMessages.length
     };
+  }
+
+  /**
+   * 预算超出时,从前往后按完整 User+Assistant 轮次丢弃,直到剩余不超预算。
+   * 返回新的起始索引(不再继续丢弃的最早索引)。
+   *
+   * @param messages 全部消息
+   * @param startIndex 当前起始索引(含)
+   * @param minKeepIndex 最少保留边界(含)
+   * @param availableTokens 可用 Token
+   * @param fullTokens 当前选中段的总 Token
+   * @returns 裁剪后的起始索引
+   */
+  private dropFrontTurnsForBudget(
+    messages: ChatMessage[],
+    startIndex: number,
+    minKeepIndex: number,
+    availableTokens: number,
+    fullTokens: number
+  ): number {
+    let effectiveStart: number = startIndex;
+    let droppedTokens: number = 0;
+    let i: number = startIndex;
+    while (i < minKeepIndex && droppedTokens < fullTokens) {
+      // 只在 User 轮次边界丢弃
+      if (messages[i].role !== ChatRole.User) {
+        i++;
+        continue;
+      }
+      // 找到本轮的结束索引(下一个 User 的前一条,或最后一条)
+      let turnEnd: number = i;
+      for (let j = i + 1; j < messages.length; j++) {
+        if (messages[j].role === ChatRole.User) {
+          break;
+        }
+        turnEnd = j;
+      }
+      // 本轮跨过最少保留边界:不再丢弃
+      if (turnEnd >= minKeepIndex) {
+        break;
+      }
+      const turnTokens: number = estimateMessagesTokens(messages.slice(i, turnEnd + 1));
+      droppedTokens += turnTokens;
+      effectiveStart = turnEnd + 1;
+      if (fullTokens - droppedTokens <= availableTokens) {
+        break;
+      }
+      i = turnEnd + 1;
+    }
+    return effectiveStart;
   }
 
   /**
    * 从末尾向前找到最少必须保留的起始索引。
    * 保证 [result, lastIndex] 范围内包含至少 minTurns 个完整 User+Assistant 轮次。
    *
-   * 完整轮次定义:一条 User 紧跟一条 Assistant(允许中间有 System,但 User/Assistant 必须相邻配对)。
+   * 完整轮次定义:一条 User 紧跟一条 Assistant。
    * 若消息末尾是 User(待生成),该 User 也必须保留,但其前的 Assistant+User 对计入轮次。
    *
    * @return 起始索引(含),若不足 minTurns 则返回 0
    */
   private findMinKeepIndexFromEnd(
     messages: ChatMessage[],
-    shouldKeep: boolean[],
     minTurns: number
   ): number {
     const lastIndex: number = messages.length - 1;
@@ -200,17 +201,10 @@ export class RecentMessageSelector {
 
     while (i >= 1 && turnsFound < minTurns) {
       // 检查 [i-1, i] 是否构成 User + Assistant 对
-      // 只在 shouldKeep 标记的范围内查找
-      if (shouldKeep[i] && shouldKeep[i - 1]) {
-        const curr: ChatMessage = messages[i];
-        const prev: ChatMessage = messages[i - 1];
-        // Assistant 在前,User 在后 → 不算完整轮次(反序)
-        // User 在前,Assistant 在后 → 完整轮次
-        if (prev.role === ChatRole.User && curr.role === ChatRole.Assistant) {
-          turnsFound++;
-          i -= 2;
-          continue;
-        }
+      if (messages[i].role === ChatRole.Assistant && messages[i - 1].role === ChatRole.User) {
+        turnsFound++;
+        i -= 2;
+        continue;
       }
       i--;
     }

@@ -33,6 +33,7 @@ import {
   MIN_CUSTOM_CONTEXT_WINDOW,
   MIN_CUSTOM_RESERVED_OUTPUT_TOKENS
 } from '../models/ContextBudgetConfig';
+import { CacheUsageStats } from '../models/ChatStreamTypes';
 import { Logger } from '../utils/Logger';
 import { ThemePalette } from '../theme/ThemePalette';
 
@@ -45,6 +46,8 @@ struct ContextBudgetPage {
   @State viewModel: ContextBudgetViewModel | null = null;
   /** 当前快照统计(由 ChatPage 写入) */
   @State stats: ContextBudgetStats | null = null;
+  /** 最近一次请求的缓存命中统计(由 ChatPage 写入) */
+  @State cacheUsage: CacheUsageStats | null = null;
   /** 顶部状态栏避让高度 */
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   /** 底部导航栏/手势条避让高度 */
@@ -99,8 +102,10 @@ struct ContextBudgetPage {
     const snapshot = store.getSnapshot(this.chatId);
     if (snapshot === null) {
       this.stats = null;
+      this.cacheUsage = null;
       return;
     }
+    this.cacheUsage = snapshot.cacheUsage !== undefined ? snapshot.cacheUsage : null;
     this.viewModel!.refreshFromSnapshot(snapshot.budget, snapshot.requestMessages).then((): void => {
       this.stats = this.viewModel!.stats;
     }).catch((e: Error): void => {
@@ -140,6 +145,11 @@ struct ContextBudgetPage {
 
           // 当前占用
           this.usageSection()
+
+          Divider().color(ThemePalette.dividerColor(this.effectiveTheme)).margin({ top: 8, bottom: 8 })
+
+          // 缓存命中统计
+          this.cacheSection()
 
           Divider().color(ThemePalette.dividerColor(this.effectiveTheme)).margin({ top: 8, bottom: 8 })
 
@@ -285,6 +295,32 @@ struct ContextBudgetPage {
           .borderRadius(8)
           .padding({ left: 12, right: 12, top: 8, bottom: 8 })
         }
+      }
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+  }
+
+  @Builder
+  cacheSection() {
+    Column() {
+      Text('缓存命中(最近一次请求)')
+        .fontSize($r('app.float.app_font_caption'))
+        .fontColor(ThemePalette.textTertiaryColor(this.effectiveTheme))
+        .margin({ bottom: 8 })
+
+      if (this.cacheUsage === null) {
+        Text('暂无缓存统计数据(需 DeepSeek 返回 prompt_cache_hit_tokens)')
+          .fontSize($r('app.float.app_font_body'))
+          .fontColor(ThemePalette.textSecondaryColor(this.effectiveTheme))
+          .padding({ top: 12, bottom: 12 })
+      } else {
+        this.usageNumberRow('缓存命中 Token',
+          this.formatTokenNumber(this.cacheUsage!.hitTokens))
+        this.usageNumberRow('缓存未命中 Token',
+          this.formatTokenNumber(this.cacheUsage!.missTokens))
+        this.usageNumberRow('缓存命中率',
+          Math.round(this.cacheUsage!.hitRatio * 100).toString() + '%')
       }
     }
     .width('100%')

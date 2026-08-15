@@ -54,11 +54,13 @@ const LOG_TAG: string = 'OpenAIStreamSession';
 /** 错误消息最大长度 */
 const MAX_ERROR_MESSAGE_LENGTH: number = 512;
 
-/** usage 字段提取所需的三个键 */
+/** usage 字段提取所需的三个键(缓存字段可选) */
 interface UsageFields {
   readonly promptTokens: number;
   readonly completionTokens: number;
   readonly totalTokens: number;
+  readonly promptCacheHitTokens?: number;
+  readonly promptCacheMissTokens?: number;
 }
 
 /** id 和 model 元数据提取结果 */
@@ -111,7 +113,7 @@ function getObjectField(obj: Record<string, Object>, key: string): Record<string
 /**
  * 从 SSE event data 的 JSON 对象中提取 usage 字段。
  * @param root 解析后的 JSON 对象
- * @returns UsageFields,缺失任一字段返回 null
+ * @returns UsageFields,缺失任一基础字段返回 null(缓存字段可选)
  */
 function extractUsage(root: Record<string, Object>): UsageFields | null {
   const usageObj: Record<string, Object> | null = getObjectField(root, 'usage');
@@ -124,10 +126,15 @@ function extractUsage(root: Record<string, Object>): UsageFields | null {
   if (promptTokens === undefined || completionTokens === undefined || totalTokens === undefined) {
     return null;
   }
+  // DeepSeek 前缀缓存字段(可选,缺失不影响)
+  const promptCacheHitTokens: number | undefined = getNumberField(usageObj, 'prompt_cache_hit_tokens');
+  const promptCacheMissTokens: number | undefined = getNumberField(usageObj, 'prompt_cache_miss_tokens');
   return {
     promptTokens: promptTokens,
     completionTokens: completionTokens,
-    totalTokens: totalTokens
+    totalTokens: totalTokens,
+    promptCacheHitTokens: promptCacheHitTokens,
+    promptCacheMissTokens: promptCacheMissTokens
   };
 }
 
@@ -621,6 +628,10 @@ export class OpenAIStreamSession implements ChatStreamHandle {
     const promptTokens: number | undefined = this.usage !== null ? this.usage.promptTokens : undefined;
     const completionTokens: number | undefined = this.usage !== null ? this.usage.completionTokens : undefined;
     const totalTokens: number | undefined = this.usage !== null ? this.usage.totalTokens : undefined;
+    const promptCacheHitTokens: number | undefined =
+      this.usage !== null ? this.usage.promptCacheHitTokens : undefined;
+    const promptCacheMissTokens: number | undefined =
+      this.usage !== null ? this.usage.promptCacheMissTokens : undefined;
 
     // Phase 4A-3: 将累积的 tool_calls 转为 ArkWebChatToolCall 列表
     // 只在累积非空时输出, 顺序按 index
@@ -647,6 +658,8 @@ export class OpenAIStreamSession implements ChatStreamHandle {
       promptTokens: promptTokens,
       completionTokens: completionTokens,
       totalTokens: totalTokens,
+      promptCacheHitTokens: promptCacheHitTokens,
+      promptCacheMissTokens: promptCacheMissTokens,
       providerRequestId: this.providerRequestId,
       chunkCount: this.chunkCount,
       eventCount: this.eventCount,

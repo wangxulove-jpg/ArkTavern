@@ -30,6 +30,10 @@ export interface ChatResponse {
   readonly completionTokens?: number;
   /** 总 token 数(可选) */
   readonly totalTokens?: number;
+  /** 输入中命中前缀缓存的 token 数(可选,DeepSeek 等 Provider 提供) */
+  readonly promptCacheHitTokens?: number;
+  /** 输入中未命中前缀缓存的 token 数(可选,DeepSeek 等 Provider 提供) */
+  readonly promptCacheMissTokens?: number;
   /** Provider 请求 ID(可选,映射自响应 id 字段,用于问题排查) */
   readonly providerRequestId?: string;
 }
@@ -58,6 +62,8 @@ export function createChatResponse(
     promptTokens: options.promptTokens,
     completionTokens: options.completionTokens,
     totalTokens: options.totalTokens,
+    promptCacheHitTokens: options.promptCacheHitTokens,
+    promptCacheMissTokens: options.promptCacheMissTokens,
     providerRequestId: options.providerRequestId
   };
 }
@@ -71,5 +77,7 @@ export interface ChatResponseOptions {
   readonly promptTokens?: number;
   readonly completionTokens?: number;
   readonly totalTokens?: number;
+  readonly promptCacheHitTokens?: number;
+  readonly promptCacheMissTokens?: number;
   readonly providerRequestId?: string;
 }

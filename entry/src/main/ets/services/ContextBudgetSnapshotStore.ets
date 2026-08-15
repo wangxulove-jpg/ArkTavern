@@ -21,9 +21,10 @@
 
 import { ChatMessage } from '../models/ChatMessage';
 import { TokenBudget } from '../models/TokenBudget';
+import { CacheUsageStats } from '../models/ChatStreamTypes';
 
 /**
- * 上下文预算快照(budget + 请求消息)。
+ * 上下文预算快照(budget + 请求消息 + 缓存命中统计)。
  * 由 ChatPage 写入,ContextBudgetPage 读取。
  */
 export interface ContextBudgetSnapshot {
@@ -33,6 +34,8 @@ export interface ContextBudgetSnapshot {
   readonly budget: TokenBudget | undefined;
   /** 最近一次构建的请求消息(可能为 undefined) */
   readonly requestMessages: ChatMessage[] | undefined;
+  /** 最近一次请求的缓存命中统计(可能为 undefined,DeepSeek 前缀缓存) */
+  readonly cacheUsage: CacheUsageStats | undefined;
 }
 
 /**

@@ -6,8 +6,9 @@
  *
  * 固定顺序:
  * PromptPreset → BeforeCharacter → Character → AfterCharacter
- *   → DialogueExamples → MemoryCore → MemoryChapter → MemoryRolling → MemoryLegacy
- *   → Conversation → PostHistory
+ *   → DialogueExamples → Conversation
+ *   → MemoryCore → MemoryChapter → MemoryRolling → MemoryLegacy → MemorySummary
+ *   → PostHistory
  *
  * v12 多层记忆:
  * - MemoryCore:核心长期事实(最高优先级)
@@ -15,6 +16,11 @@
  * - MemoryRolling:近期滚动摘要
  * - MemoryLegacy:旧数据迁移摘要
  * - MemorySummary:旧版单段摘要(兼容)
+ *
+ * 缓存友好性说明(T-7.x):
+ * 记忆摘要(随轮次变化)与对话示例等动态内容被放置在 Conversation 之后,
+ * 使「稳定头部 + 对话历史」构成每轮请求的字节级稳定前缀,
+ * 符合 DeepSeek 自动前缀缓存(prefix cache)的命中要求——动态内容更新只影响尾部。
  */
 
 import { ChatRole } from './ChatRole';
@@ -92,12 +98,12 @@ const POSITION_ORDER: Record<string, number> = {
   'Character': 2,
   'AfterCharacter': 3,
   'DialogueExamples': 4,
-  'MemoryCore': 5,
-  'MemoryChapter': 6,
-  'MemoryRolling': 7,
-  'MemoryLegacy': 8,
-  'MemorySummary': 9,
-  'Conversation': 10,
+  'Conversation': 5,
+  'MemoryCore': 6,
+  'MemoryChapter': 7,
+  'MemoryRolling': 8,
+  'MemoryLegacy': 9,
+  'MemorySummary': 10,
   'PostHistory': 11
 };
 

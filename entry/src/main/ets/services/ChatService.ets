@@ -65,6 +65,7 @@ import {
   ChatStreamState,
   ChatDelta,
   ChatStreamResult,
+  CacheUsageStats,
   isStreamTerminalState
 } from '../models/ChatStreamTypes';
 import { NetworkError } from '../models/NetworkError';
@@ -75,7 +76,6 @@ import { ProviderConfig } from '../models/ProviderConfig';
 import { TokenBudget, DEFAULT_CONTEXT_WINDOW, DEFAULT_RESERVED_OUTPUT_TOKENS } from '../models/TokenBudget';
 import {
   calculateSafetyMargin,
-  DEFAULT_RECENT_WINDOW_TARGET,
   MIN_COMPLETE_TURNS
 } from '../models/ContextBudgetConfig';
 import { ContextHistorySelection } from '../models/ContextHistorySelection';
@@ -497,6 +497,8 @@ export class ChatService {
   private lastHistoryTrimResult: HistoryTrimResult | undefined = undefined;
   /** 最后一次构建的请求消息(用于 UI 上下文占用估算,可能与实际发送的裁剪后消息不同) */
   private lastBuiltRequestMessages: ChatMessage[] | undefined = undefined;
+  /** 最近一次请求的缓存命中统计(只读,供 UI 展示 DeepSeek 前缀缓存命中率) */
+  private lastCacheUsage: CacheUsageStats | undefined = undefined;
 
   // ===== 持久化状态 =====
   /** 当前会话 id(未初始化时为 undefined) */
@@ -2398,7 +2400,7 @@ export class ChatService {
 
   /**
    * CHAT-STATUS-1A: 注入角色状态输出指令 system message。
-   * 仅当存在用户字段时注入,位置复刻 injectAvatarDialogueStrategy(最后一个 system 之后)。
+   * 仅当存在用户字段时注入,位置为消息列表末尾(缓存友好:动态指令置于请求尾部)。
    */
   private injectStatusInstruction(messages: ChatMessage[]): ChatMessage[] {
     const instruction: string = this.buildStatusInstruction();
@@ -2408,27 +2410,8 @@ export class ChatService {
     const statusMessage: ChatMessage = createChatMessage(
       generateUuid(), ChatRole.System, instruction, Date.now()
     );
-    let lastSystemIndex: number = -1;
-    for (let i = 0; i < messages.length; i++) {
-      if (messages[i].role === ChatRole.System) {
-        lastSystemIndex = i;
-      }
-    }
-    const result: ChatMessage[] = [];
-    if (lastSystemIndex === -1) {
-      result.push(statusMessage);
-      for (let i = 0; i < messages.length; i++) {
-        result.push(messages[i]);
-      }
-    } else {
-      for (let i = 0; i <= lastSystemIndex; i++) {
-        result.push(messages[i]);
-      }
-      result.push(statusMessage);
-      for (let i = lastSystemIndex + 1; i < messages.length; i++) {
-        result.push(messages[i]);
-      }
-    }
+    const result: ChatMessage[] = messages.slice();
+    result.push(statusMessage);
     return result;
   }
 
@@ -2485,6 +2468,41 @@ export class ChatService {
    */
   getLastTokenBudget(): TokenBudget | undefined {
     return this.lastTokenBudget;
+  }
+
+  /**
+   * 获取最近一次请求的缓存命中统计(DeepSeek 前缀缓存)。
+   * 仅在 Provider 返回 prompt_cache_hit_tokens / prompt_cache_miss_tokens 后有值。
+   *
+   * @returns 缓存统计或 undefined(未执行 / Provider 未返回)
+   */
+  getLastCacheStats(): CacheUsageStats | undefined {
+    return this.lastCacheUsage;
+  }
+
+  /**
+   * 记录缓存命中统计。
+   * 只在 Provider 同时返回 hit/miss 时才更新,否则视为不可用(置空)。
+   * 只记录数字,不记录消息内容。
+   */
+  private recordCacheUsage(
+    hitTokens: number | undefined,
+    missTokens: number | undefined
+  ): void {
+    if (hitTokens === undefined || missTokens === undefined) {
+      this.lastCacheUsage = undefined;
+      return;
+    }
+    const total: number = hitTokens + missTokens;
+    const ratio: number = total > 0 ? hitTokens / total : 0;
+    this.lastCacheUsage = {
+      hitTokens: hitTokens,
+      missTokens: missTokens,
+      hitRatio: ratio
+    };
+    Logger.info(LOG_TAG, 'cache usage: hit=' + hitTokens.toString()
+      + ' miss=' + missTokens.toString()
+      + ' ratio=' + ratio.toFixed(3));
   }
 
   /**
@@ -2689,6 +2707,8 @@ export class ChatService {
           Logger.warn(LOG_TAG, 'stale callback ignored type=complete');
           return;
         }
+        // T-7.x: 记录缓存命中统计(DeepSeek 前缀缓存, Provider 未返回时置空)
+        this.recordCacheUsage(result.promptCacheHitTokens, result.promptCacheMissTokens);
         // Phase 4D-8 诊断: 记录 Provider 响应中的 toolCalls 情况
         const tcCount: number = result.toolCalls !== undefined ? result.toolCalls.length : 0;
         Logger.info(LOG_TAG, 'onComplete: toolCalls.count=' + tcCount
@@ -3617,12 +3637,12 @@ export class ChatService {
       }
     }
 
-    // v8.3 Phase 2: 使用 RecentMessageSelector 选择最近原始消息窗口
-    // - 与长期记忆范围去重:已被记忆覆盖且不在最近窗口的消息不注入原文
-    // - 默认保留最近 DEFAULT_RECENT_WINDOW_TARGET(30)条
-    // - 保证最近 MIN_COMPLETE_TURNS(2)完整 User+Assistant 轮次
-    // - availableTokens 传一个宽松上限,让 RecentMessageSelector 主要做去重 + 窗口
-    //   精确 Token 裁剪由后续 HistoryTrimmer 完成
+    // T-7.x 缓存友好:使用 RecentMessageSelector 选择对话历史
+    // - 从记忆覆盖边界之后**从头追加**,不再使用滑动"最近 N 条"窗口
+    //   (滑动窗口每轮左移会破坏 DeepSeek 前缀缓存命中)
+    // - 已被记忆覆盖的旧消息不注入原文(由尾部记忆摘要替代)
+    // - 仅当 Token 预算不足时从前往后按完整轮次裁剪
+    // - availableTokens 传 MAX_SAFE_INTEGER,精确预算裁剪由后续 HistoryTrimmer 完成
     // - 为 null 时回退到旧行为(传全部 sourceMessages)
     let conversationMessages: ChatMessage[] = sourceMessages;
     if (this.recentMessageSelector !== null && this.tokenCounter !== null) {
@@ -3630,7 +3650,7 @@ export class ChatService {
         const selection: ContextHistorySelection = this.recentMessageSelector.select(
           sourceMessages,
           {
-            targetCount: DEFAULT_RECENT_WINDOW_TARGET,
+            targetCount: sourceMessages.length,
             minCompleteTurns: MIN_COMPLETE_TURNS,
             availableTokens: Number.MAX_SAFE_INTEGER,
             memoryEndPosition: memoryEndPosition
@@ -3678,14 +3698,13 @@ export class ChatService {
   /**
    * Phase 4C-1: 注入 Avatar 对话演出策略 system message。
    *
-   * - 策略作为独立 system message 追加到请求消息列表
-   * - 只有 strategy.enabled = true 时才追加
-   * - 不修改原始角色设定文本 / 世界书 / 预设
-   * - 不写入用户消息 / 助手消息
-   * - 不持久化到聊天数据库
+   * - 策略作为独立 system message **追加到消息列表末尾**
+   * - 只在 Avatar Tool Calling 可用时注入
+   * - 不修改角色卡 / 世界书 / 预设 / 用户消息 / 助手消息
+   * - 不持久化, 只参与当前请求
    *
-   * 注入位置: 在最后一个 system message 之后, 第一个 user/assistant 消息之前
-   * (若找不到 system 消息, 则插入到列表头部)
+   * 缓存友好性(T-7.x):策略含随轮次变化的会话状态摘要,
+   * 追加到末尾后其变化只影响尾部,不破坏「稳定头部 + 对话历史」的前缀缓存。
    *
    * @param messages PromptBuilder 输出的消息列表
    * @returns 追加策略 system message 后的消息列表 (不修改原数组)
@@ -3709,34 +3728,9 @@ export class ChatService {
       Date.now()
     );
 
-    // 找到最后一个 system message 的位置
-    let lastSystemIndex: number = -1;
-    for (let i = 0; i < messages.length; i++) {
-      if (messages[i].role === ChatRole.System) {
-        lastSystemIndex = i;
-      } else {
-        // 遇到第一个非 system 消息后停止 (system 段通常在头部)
-        // 但仍继续扫描以处理中间可能存在的 system 段
-      }
-    }
-
-    const result: ChatMessage[] = [];
-    if (lastSystemIndex === -1) {
-      // 无 system 消息: 插入到头部
-      result.push(strategyMessage);
-      for (let i = 0; i < messages.length; i++) {
-        result.push(messages[i]);
-      }
-    } else {
-      // 在最后一个 system message 之后插入
-      for (let i = 0; i <= lastSystemIndex; i++) {
-        result.push(messages[i]);
-      }
-      result.push(strategyMessage);
-      for (let i = lastSystemIndex + 1; i < messages.length; i++) {
-        result.push(messages[i]);
-      }
-    }
+    // 追加到末尾(缓存友好:动态内容置于请求尾部)
+    const result: ChatMessage[] = messages.slice();
+    result.push(strategyMessage);
     return result;
   }
 

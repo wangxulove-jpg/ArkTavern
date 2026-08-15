@@ -73,6 +73,19 @@ export interface ChatDelta {
 }
 
 /**
+ * 缓存命中统计(DeepSeek 前缀缓存)。
+ * 由 Provider 从响应 usage 的 prompt_cache_hit_tokens / prompt_cache_miss_tokens 提取。
+ */
+export interface CacheUsageStats {
+  /** 输入中命中前缀缓存的 token 数 */
+  readonly hitTokens: number;
+  /** 输入中未命中前缀缓存的 token 数 */
+  readonly missTokens: number;
+  /** 命中率 = hit / (hit + miss),0~1 之间 */
+  readonly hitRatio: number;
+}
+
+/**
  * 流式完成结果。
  * onComplete 触发时传递给调用方。
  */
@@ -89,6 +102,10 @@ export interface ChatStreamResult {
   readonly completionTokens?: number;
   /** 总 token 数(可选) */
   readonly totalTokens?: number;
+  /** 输入中命中前缀缓存的 token 数(可选,DeepSeek 等 Provider 提供) */
+  readonly promptCacheHitTokens?: number;
+  /** 输入中未命中前缀缓存的 token 数(可选,DeepSeek 等 Provider 提供) */
+  readonly promptCacheMissTokens?: number;
   /** Provider 请求 ID(可选,映射自响应 id 字段) */
   readonly providerRequestId?: string;
   /** 网络层 chunk 数(诊断用) */
